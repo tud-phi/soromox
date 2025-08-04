@@ -1000,18 +1000,18 @@ class PCS(eqx.Module):
 
         return C
 
-    def _gravitational_full_vector(
+    def _gravitational_force_full(
         self,
         q: Array,
     ) -> Array:
         """
-        Compute the full gravitational vector of the robot.
+        Compute the full gravitational force acting on the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            G (Array): Full gravitational vector of shape (num_strains,).
+            G (Array): Full gravitational force of shape (num_strains,).
         """
 
         def G_i(i):
@@ -1050,20 +1050,20 @@ class PCS(eqx.Module):
 
         return G_full
 
-    def gravitational_vector(
+    def gravitational_force(
         self,
         q: Array,
     ) -> Array:
         """
-        Compute the gravitational vector of the robot.
+        Compute the gravitational force acting on the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            G (Array): Gravitational vector of shape (num_active_strains,).
+            G (Array): Gravitational force of shape (num_active_strains,).
         """
-        G_full = self._gravitational_full_vector(q)
+        G_full = self._gravitational_force_full(q)
 
         G = self.B_xi.T @ G_full
 
@@ -1114,7 +1114,7 @@ class PCS(eqx.Module):
         return K
     
     @eqx.filter_jit
-    def elastic_forces(self, q: Array) -> Array:
+    def elastic_force(self, q: Array) -> Array:
         """
         Compute the elastic forces of the robot.
 
@@ -1220,7 +1220,7 @@ class PCS(eqx.Module):
         """
         B = self.inertia_matrix(q)
         C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_vector(q)
+        G = self.gravitational_force(q)
         K = self.stiffness_matrix()
         D = self.damping_matrix()
         alpha = self.actuation_mapping(q, u)
@@ -1435,7 +1435,7 @@ class PCS(eqx.Module):
             tau_ext = jnp.zeros((q.shape[-1], ))
 
         B, C, G, K, D, alpha = self.dynamical_matrices(q, qd, u)
-        tau_el = self.elastic_forces(q)  # Elastic forces
+        tau_el = self.elastic_force(q)  # Elastic vector
 
         B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
         qdd = B_inv @ (alpha + tau_ext - C @ qd - G - tau_el - D @ qd)  # Compute the acceleration
