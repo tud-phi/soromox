@@ -1,9 +1,8 @@
+import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-
+import numpy as onp
 from typing import Callable, Dict, Tuple, Optional
-
-import equinox as eqx
 
 from .utils import (
     compute_strain_basis,
@@ -1355,7 +1354,7 @@ class PlanarPCS(eqx.Module):
         _, s_local = self.classify_segment(s)
 
         # make operational_space_selector a boolean array
-        operational_space_selector = jnp.array(operational_space_selector, dtype=bool)
+        operational_space_selector = onp.array(operational_space_selector, dtype=bool)
 
         # Jacobian and its time-derivative
         J, J_d = self.jacobian_and_derivative_bodyframe(q, qd, s_local)
