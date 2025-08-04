@@ -1097,6 +1097,21 @@ class PlanarPCS(eqx.Module):
         K = self._stiffness(formulate_in_strain_space=False)
 
         return K
+    
+    def elastic_forces(self, q: Array) -> Array:
+        """
+        Compute the elastic forces of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            tau_el (Array): Elastic forces of shape (num_active_strains,).
+        """
+        K = self.stiffness_matrix()
+        tau_el = K @ q
+
+        return tau_el
 
     def _damping_full_matrix(
         self,
@@ -1404,9 +1419,10 @@ class PlanarPCS(eqx.Module):
             tau_ext = jnp.zeros((q.shape[-1], ))
 
         B, C, G, K, D, alpha = self.dynamical_matrices(q, qd, u)
+        tau_el = self.elastic_forces(q)  # Elastic forces
 
         B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
-        qdd = B_inv @ (alpha + tau_ext - C @ qd - G - K @ q - D @ qd)  # Compute the acceleration
+        qdd = B_inv @ (alpha + tau_ext - C @ qd - G - tau_el - D @ qd)  # Compute the acceleration
 
         y_d = jnp.concatenate([qd, qdd])
 
