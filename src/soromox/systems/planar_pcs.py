@@ -386,6 +386,7 @@ class PlanarPCS(eqx.Module):
         
         return updated_self
 
+    @eqx.filter_jit
     def classify_segment(
         self,
         s: Array,
@@ -409,6 +410,7 @@ class PlanarPCS(eqx.Module):
 
         return segment_idx, s_local
 
+    @eqx.filter_jit
     def strain(
         self,
         q: Array,
@@ -426,6 +428,7 @@ class PlanarPCS(eqx.Module):
 
         return xi
 
+    @eqx.filter_jit
     def chi(
         self,
         xi: Array,
@@ -491,6 +494,7 @@ class PlanarPCS(eqx.Module):
 
         return chi_s
 
+    @eqx.filter_jit
     def forward_kinematics(
         self,
         q: Array,
@@ -624,6 +628,7 @@ class PlanarPCS(eqx.Module):
 
         return J_local
 
+    @eqx.filter_jit
     def jacobian_bodyframe(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a point s along the robot in the body frame.
@@ -641,6 +646,7 @@ class PlanarPCS(eqx.Module):
 
         return J_local
 
+    @eqx.filter_jit
     def jacobian_inertialframe(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a point s along the robot in the inertial frame.
@@ -721,6 +727,7 @@ class PlanarPCS(eqx.Module):
 
         return _J_local, _J_d_local
 
+    @eqx.filter_jit
     def jacobian_and_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
     ) -> Tuple[Array, Array]:
@@ -743,6 +750,7 @@ class PlanarPCS(eqx.Module):
 
         return J_local, J_d_local
 
+    @eqx.filter_jit
     def jacobian_and_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
     ) -> Tuple[Array, Array]:
@@ -783,6 +791,7 @@ class PlanarPCS(eqx.Module):
 
         return J_global, J_d_global
 
+    @eqx.filter_jit
     def jacobian(
         self,
         q: Array,
@@ -802,6 +811,7 @@ class PlanarPCS(eqx.Module):
 
         return J_global
 
+    @eqx.filter_jit
     def jacobian_and_derivative(
         self,
         q: Array,
@@ -903,6 +913,7 @@ class PlanarPCS(eqx.Module):
 
         return B_full
 
+    @eqx.filter_jit
     def inertia_matrix(
         self,
         q: Array,
@@ -962,6 +973,7 @@ class PlanarPCS(eqx.Module):
 
         return C_full
 
+    @eqx.filter_jit
     def coriolis_matrix(
         self,
         q: Array,
@@ -1035,6 +1047,7 @@ class PlanarPCS(eqx.Module):
 
         return G_full
 
+    @eqx.filter_jit
     def gravitational_force(
         self,
         q: Array,
@@ -1084,6 +1097,7 @@ class PlanarPCS(eqx.Module):
 
         return K_full
 
+    @eqx.filter_jit
     def stiffness_matrix(
         self,
     ) -> Array:
@@ -1129,6 +1143,7 @@ class PlanarPCS(eqx.Module):
 
         return D_full
 
+    @eqx.filter_jit
     def damping_matrix(
         self,
     ) -> Array:
@@ -1143,7 +1158,8 @@ class PlanarPCS(eqx.Module):
         D = self.B_xi.T @ D_full @ self.B_xi
 
         return D
-    
+
+    @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
         """
         Compute the actuation matrix of the robot.
@@ -1157,6 +1173,7 @@ class PlanarPCS(eqx.Module):
         A = jnp.identity(self.num_actuators)
         return A
 
+    @eqx.filter_jit
     def actuation_force(
         self,
         q: Array,
@@ -1180,6 +1197,7 @@ class PlanarPCS(eqx.Module):
 
         return tau_u
 
+    @eqx.filter_jit
     def kinetic_energy(
         self,
         q: Array,
@@ -1200,6 +1218,7 @@ class PlanarPCS(eqx.Module):
 
         return T
 
+    @eqx.filter_jit
     def elastic_energy(
         self,
         q: Array,
@@ -1218,6 +1237,7 @@ class PlanarPCS(eqx.Module):
 
         return U_K
 
+    @eqx.filter_jit
     def gravitational_energy(
         self,
         q: Array,
@@ -1257,6 +1277,7 @@ class PlanarPCS(eqx.Module):
 
         return U_G
 
+    @eqx.filter_jit
     def potential_energy(
         self,
         q: Array,
@@ -1275,6 +1296,7 @@ class PlanarPCS(eqx.Module):
 
         return U_K + U_G
 
+    @eqx.filter_jit
     def total_energy(
         self,
         q: Array,
@@ -1295,6 +1317,7 @@ class PlanarPCS(eqx.Module):
         E = T + U
         return E
 
+    @eqx.filter_jit
     def operational_space_dynamical_matrices(
         self,
         q: Array,
@@ -1402,6 +1425,7 @@ class PlanarPCS(eqx.Module):
 
         return y_d
 
+    @eqx.filter_jit
     def resolve_upon_time(
         self,
         q0: Array,
