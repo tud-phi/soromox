@@ -1098,6 +1098,7 @@ class PlanarPCS(eqx.Module):
 
         return K
     
+    @eqx.filter_jit
     def elastic_forces(self, q: Array) -> Array:
         """
         Compute the elastic forces of the robot.
