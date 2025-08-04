@@ -1170,46 +1170,15 @@ class PlanarPCS(eqx.Module):
             u (Array): actuation/control input of shape (num_actuators,).
 
         Returns:
-            alpha (Array): Actuation mapping of shape (num_active_strains, ).
+            tau_u (Array): Actuation force of shape (num_active_strains, ).
         """
         # evaluate the actuation matrix
         A = self.actuation_matrix(q)
 
         # compute the actuation mapping
-        alpha = A @ u
+        tau_u = A @ u
 
-        return alpha
-
-    def dynamical_matrices(
-        self,
-        q: Array,
-        qd: Array,
-        u: Array,
-    ) -> Tuple[Array, Array, Array, Array, Array, Array]:
-        """
-        Compute the dynamical matrices of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-            u (Array): actuation/control input of shape (num_actuators,).
-
-        Returns:
-            B (Array): Inertia matrix of shape (num_active_strains, num_active_strains).
-            C (Array): Coriolis matrix of shape (num_active_strains, num_active_strains).
-            G (Array): Gravitational vector of shape (num_active_strains,).
-            K (Array): Stiffness matrix of shape (num_active_strains, num_active_strains).
-            D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
-            alpha (Array): Actuation vector of shape (num_active_strains, ).
-        """
-        B = self.inertia_matrix(q)
-        C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_force(q)
-        K = self.stiffness_matrix()
-        D = self.damping_matrix()
-        alpha = self.actuation_force(q, u)
-
-        return B, C, G, K, D, alpha
+        return tau_u
 
     def kinetic_energy(
         self,
@@ -1418,11 +1387,16 @@ class PlanarPCS(eqx.Module):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1], ))
 
-        B, C, G, K, D, alpha = self.dynamical_matrices(q, qd, u)
-        tau_el = self.elastic_force(q)  # Elastic vector
+        # evaluate the dynamical matrices
+        B = self.inertia_matrix(q)
+        C = self.coriolis_matrix(q, qd)
+        G = self.gravitational_force(q)
+        D = self.damping_matrix()
+        tau_el = self.elastic_force(q)
+        tau_u = self.actuation_force(q, u)
 
         B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
-        qdd = B_inv @ (alpha + tau_ext - C @ qd - G - tau_el - D @ qd)  # Compute the acceleration
+        qdd = B_inv @ (tau_u + tau_ext - C @ qd - G - tau_el - D @ qd)  # Compute the acceleration
 
         y_d = jnp.concatenate([qd, qdd])
 
