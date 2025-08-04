@@ -1173,13 +1173,13 @@ class PCS(eqx.Module):
         A = self.B_xi.T @ jnp.identity(self.num_strains) @ self.B_xi
         return A
 
-    def actuation_mapping(
+    def actuation_force(
         self,
         q: Array,
         u: Array,
     ) -> Array:
         """
-        Compute the actuation mapping of the robot.
+        Compute the actuation force acting on the soft robot of the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -1216,14 +1216,14 @@ class PCS(eqx.Module):
             G (Array): Gravitational vector of shape (num_active_strains,).
             K (Array): Stiffness matrix of shape (num_active_strains, num_active_strains).
             D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
-            alpha (Array): Actuation mapping of shape (num_active_strains, ).
+            alpha (Array): Actuation vector of shape (num_active_strains, ).
         """
         B = self.inertia_matrix(q)
         C = self.coriolis_matrix(q, qd)
         G = self.gravitational_force(q)
         K = self.stiffness_matrix()
         D = self.damping_matrix()
-        alpha = self.actuation_mapping(q, u)
+        alpha = self.actuation_force(q, u)
 
         return B, C, G, K, D, alpha
 
