@@ -26,10 +26,6 @@ from diffrax import (
     AbstractSolver,
 )
 
-# Function to compute the stiffness matrix for all segments
-compute_stiffness_matrix_for_all_segments_fn = vmap(compute_planar_stiffness_matrix)
-
-
 class PlanarPCS(eqx.Module):
     """
     Planar Piecewise Constant Strain (PCS) model for 2D soft continuum robots.
@@ -120,14 +116,23 @@ class PlanarPCS(eqx.Module):
                 Number of segments in the robot.
             params (Dict[str, Array]):
                 Dictionary containing the robot parameters:
-                - "th0": Initial orientation angle [rad]
-                - "L": Length of each segment [m]
-                - "r": Radius of each segment [m]
-                - "rho": Density of each segment [kg/m^3]
-                - "g": Gravitational acceleration vector [m/s^2]
-                - "E": Elastic modulus of each segment [Pa]
-                - "G": Shear modulus of each segment [Pa]
-                - "D": Damping matrix of each segment
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
+                    Default is 90 degrees (1.57 radians).
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats 
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats 
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
             num_actuators (Optional[int], optional):
                 Number of actuators (control inputs) for the robot. If None, we default to a fully actuated robot (i.e. num_actuators = num_active_strains).
             order_gauss (int, optional):
@@ -224,23 +229,29 @@ class PlanarPCS(eqx.Module):
         """
         Set the parameters of the PCS model.
 
-        Args:
+        Args:    
             params (Dict[str, Array]):
                 Dictionary containing the robot parameters:
-                - "th0": Initial orientation angle [rad]
-                - "L": Length of each segment [m]
-                - "r": Radius of each segment [m]
-                - "rho": Density of each segment [kg/m^3]
-                - "g": Gravitational acceleration vector [m/s^2]
-                - "E": Elastic modulus of each segment [Pa]
-                - "G": Shear modulus of each segment [Pa]
-                - "D": Damping matrix of each segment
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
+                    Default is 90 degrees (1.57 radians).
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats 
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats 
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
         """
         # Initial orientation angle
-        try:
-            th0 = params["th0"]
-        except KeyError:
-            raise KeyError("Parameter 'th0' is required in params dictionary.")
+        th0 = params.get("th0", jnp.pi / 2.0)  # Default to 90 degrees
         if not (isinstance(th0, (float, int, jnp.ndarray))):
             raise TypeError(
                 f"th0 must be a float, int, or an array, got {type(th0).__name__}"
@@ -344,46 +355,101 @@ class PlanarPCS(eqx.Module):
 
         Args:
             params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "th0": Initial orientation angle [rad]
-                - "L": Length of each segment [m]
-                - "r": Radius of each segment [m]
-                - "rho": Density of each segment [kg/m^3]
-                - "g": Gravitational acceleration vector [m/s^2]
-                - "E": Elastic modulus of each segment [Pa]
-                - "G": Shear modulus of each segment [Pa]
-                - "D": Damping matrix of each segment
+                Dictionary that contains the robot parameters to update:
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats 
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats 
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
         """
         # Apply updates sequentially
         updated_self = self
         
         if "th0" in params:
-            updated_self = eqx.tree_at(lambda m: m.th0, updated_self, jnp.asarray(params["th0"], dtype=jnp.float64))
+            th0 = params["th0"]
+            if not (isinstance(th0, (float, int, jnp.ndarray))):
+                raise TypeError(
+                    f"th0 must be a float, int, or an array, got {type(th0).__name__}"
+                )
+            th0 = jnp.asarray(th0, dtype=jnp.float64)
+            updated_self = eqx.tree_at(lambda m: m.th0, updated_self, th0)
         
         if "g" in params:
-            g = jnp.asarray(params["g"], dtype=jnp.float64)
+            g = params["g"]
+            if not (isinstance(g, (list, jnp.ndarray))):
+                raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
+            g = jnp.asarray(g, dtype=jnp.float64)
+            if g.size != 2:
+                raise ValueError(f"g must be a vector of shape (2,), got {g.size}")
             updated_self = eqx.tree_at(lambda m: m.g, updated_self, jnp.concatenate([jnp.zeros(1), g]))
         
         if "L" in params:
-            L = jnp.asarray(params["L"], dtype=jnp.float64)
+            L = params["L"]
+            if not (isinstance(L, (list, jnp.ndarray))):
+                raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
+            L = jnp.asarray(L, dtype=jnp.float64)
+            if L.shape != (self.num_segments,):
+                raise ValueError(f"L must have shape ({self.num_segments},), got {L.shape}")
             L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), L]))
             updated_self = eqx.tree_at(lambda m: (m.L, m.L_cum), updated_self, (L, L_cum))
         
         if "r" in params:
-            updated_self = eqx.tree_at(lambda m: m.r, updated_self, jnp.asarray(params["r"], dtype=jnp.float64))
+            r = params["r"]
+            if not (isinstance(r, (list, jnp.ndarray))):
+                raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
+            r = jnp.asarray(r, dtype=jnp.float64)
+            if r.shape != (self.num_segments,):
+                raise ValueError(f"r must have shape ({self.num_segments},), got {r.shape}")
+            updated_self = eqx.tree_at(lambda m: m.r, updated_self, r)
         
         if "rho" in params:
-            updated_self = eqx.tree_at(lambda m: m.rho, updated_self, jnp.asarray(params["rho"], dtype=jnp.float64))
+            rho = params["rho"]
+            if not (isinstance(rho, (list, jnp.ndarray))):
+                raise TypeError(f"rho must be a list or an array, got {type(rho).__name__}")
+            rho = jnp.asarray(rho, dtype=jnp.float64)
+            if rho.shape != (self.num_segments,):
+                raise ValueError(f"rho must have shape ({self.num_segments},), got {rho.shape}")
+            updated_self = eqx.tree_at(lambda m: m.rho, updated_self, rho)
         
         if "E" in params:
-            updated_self = eqx.tree_at(lambda m: m.E, updated_self, jnp.asarray(params["E"], dtype=jnp.float64))
+            E = params["E"]
+            if not (isinstance(E, (list, jnp.ndarray))):
+                raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
+            E = jnp.asarray(E, dtype=jnp.float64)
+            if E.shape != (self.num_segments,):
+                raise ValueError(f"E must have shape ({self.num_segments},), got {E.shape}")
+            updated_self = eqx.tree_at(lambda m: m.E, updated_self, E)
         
         if "G" in params:
-            updated_self = eqx.tree_at(lambda m: m.G, updated_self, jnp.asarray(params["G"], dtype=jnp.float64))
-        
+            G = params["G"]
+            if not (isinstance(G, (list, jnp.ndarray))):
+                raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
+            G = jnp.asarray(G, dtype=jnp.float64)
+            if G.shape != (self.num_segments,):
+                raise ValueError(f"G must have shape ({self.num_segments},), got {G.shape}")
+            updated_self = eqx.tree_at(lambda m: m.G, updated_self, G)
+
         if "D" in params:
-            updated_self = eqx.tree_at(lambda m: m.D, updated_self, jnp.asarray(params["D"], dtype=jnp.float64))
-        
+            D = params["D"]
+            if not (isinstance(D, (list, jnp.ndarray))):
+                raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
+            D = jnp.asarray(D, dtype=jnp.float64)
+            expected_D_shape = (self.num_strains, self.num_strains)
+            if D.shape != expected_D_shape:
+                raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
+            updated_self = eqx.tree_at(lambda m: m.D, updated_self, D)
+
         return updated_self
 
     @eqx.filter_jit
@@ -1023,7 +1089,7 @@ class PlanarPCS(eqx.Module):
                 )
                 J_j = self._jacobian_bodyframe_full(q, Xs_j)
 
-                return Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
+                return - Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
 
             G_blocks_segment_i = vmap(G_j)(jnp.arange(self.num_gauss_points))
 
@@ -1075,7 +1141,8 @@ class PlanarPCS(eqx.Module):
         Ib = A**2 / (4 * jnp.pi)
 
         # stiffness matrix of shape (num_segments, 3, 3)
-        S_sms = compute_stiffness_matrix_for_all_segments_fn(self.L, A, Ib, self.E, self.G)
+        S_sms = vmap(compute_planar_stiffness_matrix)(self.L, A, Ib, self.E, self.G)
+        
         # we define the elastic matrix of shape (num_strains, num_strains) as K(xi) = K @ xi where K is equal to
         S = blk_diag(S_sms)
 
@@ -1192,7 +1259,7 @@ class PlanarPCS(eqx.Module):
         # evaluate the actuation matrix
         A = self.actuation_matrix(q)
 
-        # compute the actuation mapping
+        # compute the actuation force
         tau_u = A @ u
 
         return tau_u
@@ -1265,7 +1332,7 @@ class PlanarPCS(eqx.Module):
                 p_j = (
                     self.forward_kinematics(q, Xs_j).at[0].set(0.0)
                 )  # Set the orientation angle to 0 for gravitational energy computation
-                return Ws_j * rho_i * A_i * jnp.dot(p_j, self.g)
+                return - Ws_j * rho_i * A_i * jnp.dot(p_j, self.g)
 
             U_G_blocks_segment_i = vmap(U_G_j)(jnp.arange(self.num_gauss_points))
 

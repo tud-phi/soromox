@@ -4,7 +4,6 @@ from jax import numpy as jnp
 import numpy as onp
 from typing import Callable, Dict, Tuple, Optional
 
-
 from .utils import (
     compute_strain_basis,
     compute_spatial_stiffness_matrix,
@@ -26,9 +25,6 @@ from diffrax import (
     ConstantStepSize,
     AbstractSolver,
 )
-
-# define a vectorized version of the stiffness matrix computation
-compute_stiffness_matrix_for_all_segments_fn = vmap(compute_spatial_stiffness_matrix)
 
 
 class PCS(eqx.Module):
@@ -125,20 +121,29 @@ class PCS(eqx.Module):
                 Number of segments in the robot.
             params (Dict[str, Array]):
                 Dictionary containing the robot parameters:
-                - "p0": Initial orientation angle and position in the inertial frame [rad, m]
+                - "p0": (optional) List/Array of shape (6,)
+                    Initial orientation angle and position in the inertial frame [rad, m]
                     [ψ, θ, φ, x0, y0, z0]
-                        where [ψ, θ, φ] are the Euler angles in the ZXZ convention:
+                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
                             ψ (psi) : Rotation around Z axis (fixed axis)
                             θ (thêta) : Rotation around X' axis (movable axis after first rotation)
                             φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
                         [x0, y0, z0] : Position of the robot in the inertial frame
-                - "L": Length of each segment [m]
-                - "r": Radius of each segment [m]
-                - "rho": Density of each segment [kg/m^3]
-                - "g": Gravitational acceleration vector [m/s^2]
-                - "E": Elastic modulus of each segment [Pa]
-                - "G": Shear modulus of each segment [Pa]
-                - "D": Damping matrix of each segment
+                    Defaults to [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] (i.e. no initial rotation and at the origin).
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats 
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats 
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
             num_actuators (Optional[int], optional):
                 Number of actuators (control inputs) for the robot. If None, we default to a fully actuated robot (i.e. num_actuators = num_active_strains).
             order_gauss (int, optional):
@@ -235,31 +240,37 @@ class PCS(eqx.Module):
         Args:
             params (Dict[str, Array]):
                 Dictionary containing the robot parameters:
-                - "p0": Initial orientation angle and position in the inertial frame [rad, m]
+                - "p0": (optional) List/Array of shape (6,)
+                    Initial orientation angle and position in the inertial frame [rad, m]
                     [ψ, θ, φ, x0, y0, z0]
-                        where [ψ, θ, φ] are the Euler angles in the ZXZ convention:
+                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
                             ψ (psi) : Rotation around Z axis (fixed axis)
                             θ (thêta) : Rotation around X' axis (movable axis after first rotation)
                             φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
                         [x0, y0, z0] : Position of the robot in the inertial frame
-                - "L": Length of each segment [m]
-                - "r": Radius of each segment [m]
-                - "rho": Density of each segment [kg/m^3]
-                - "g": Gravitational acceleration vector [m/s^2]
-                - "E": Elastic modulus of each segment [Pa]
-                - "G": Shear modulus of each segment [Pa]
-                - "D": Damping matrix of each segment [Pa*s]
+                    Defaults to [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] (i.e. no initial rotation and at the origin).
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats 
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats 
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
         """
         # Initial position and orientation angle
-        try:
-            p0 = params["p0"]
-        except KeyError:
-            raise KeyError("Parameter 'p0' is required in params dictionary.")
-        # if not (isinstance(p0, (float, int, jnp.ndarray))):
-        #     raise TypeError(
-        #         f"p0 must be a float, int, or an array, got {type(th0).__name__}"
-        #     )
+        p0 = params.get("p0", jnp.zeros(6, dtype=jnp.float64))
+        if not (isinstance(p0, (list, jnp.ndarray))):
+            raise TypeError(f"p0 must be a list or an array, got {type(p0).__name__}")
         p0 = jnp.asarray(p0, dtype=jnp.float64)
+        if p0.size != 6:
+            raise ValueError(f"p0 must have shape (6,), got {p0.size}")
         self.g0 = lie.exp_SE3(p0)
 
         # Gravitational acceleration vector
@@ -358,53 +369,106 @@ class PCS(eqx.Module):
 
         Args:
             params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "p0": Initial orientation angle and position in the inertial frame [rad, m]
+                Dictionary that contains the robot parameters to update:
+                - "p0": (optional) List/Array of shape (6,)
+                    Initial orientation angle and position in the inertial frame [rad, m]
                     [ψ, θ, φ, x0, y0, z0]
-                        where [ψ, θ, φ] are the Euler angles in the ZXZ convention:
+                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
                             ψ (psi) : Rotation around Z axis (fixed axis)
                             θ (thêta) : Rotation around X' axis (movable axis after first rotation)
                             φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
                         [x0, y0, z0] : Position of the robot in the inertial frame
-                - "L": Length of each segment [m]
-                - "r": Radius of each segment [m]
-                - "rho": Density of each segment [kg/m^3]
-                - "g": Gravitational acceleration vector [m/s^2]
-                - "E": Elastic modulus of each segment [Pa]
-                - "G": Shear modulus of each segment [Pa]
-                - "D": Damping matrix of each segment [Pa*s]
+                    Defaults to [0.0, 0.0, 0.0, 0.0, 0.0, 0.0] (i.e. no initial rotation and at the origin).
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats 
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats 
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
         """
         # Apply updates sequentially
         updated_self = self
         
         if "p0" in params:
-            p0 = jnp.asarray(params["p0"], dtype=jnp.float64)
+            p0 = params["p0"]
+            if not (isinstance(p0, (list, jnp.ndarray))):
+                raise TypeError(f"p0 must be a list or an array, got {type(p0).__name__}")
+            p0 = jnp.asarray(p0, dtype=jnp.float64)
             updated_self = eqx.tree_at(lambda m: m.g0, updated_self, lie.exp_SE3(p0))
         
         if "g" in params:
-            g = jnp.asarray(params["g"], dtype=jnp.float64)
+            g = params["g"]
+            if not (isinstance(g, (list, jnp.ndarray))):
+                raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
+            g = jnp.asarray(g, dtype=jnp.float64)
+            if g.size != 3:
+                raise ValueError(f"g must be a vector of shape (3,), got {g.size}")
             updated_self = eqx.tree_at(lambda m: m.g, updated_self, jnp.concatenate([jnp.zeros(3), g]))
         
         if "L" in params:
-            L = jnp.asarray(params["L"], dtype=jnp.float64)
+            L = params["L"]
+            if not (isinstance(L, (list, jnp.ndarray))):
+                raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
+            L = jnp.asarray(L, dtype=jnp.float64)
+            if L.shape != (self.num_segments,):
+                raise ValueError(f"L must have shape ({self.num_segments},), got {L.shape}")
             L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), L]))
             updated_self = eqx.tree_at(lambda m: (m.L, m.L_cum), updated_self, (L, L_cum))
         
         if "r" in params:
-            updated_self = eqx.tree_at(lambda m: m.r, updated_self, jnp.asarray(params["r"], dtype=jnp.float64))
+            r = params["r"]
+            if not (isinstance(r, (list, jnp.ndarray))):
+                raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
+            r = jnp.asarray(r, dtype=jnp.float64)
+            if r.shape != (self.num_segments,):
+                raise ValueError(f"r must have shape ({self.num_segments},), got {r.shape}")
+            updated_self = eqx.tree_at(lambda m: m.r, updated_self, r)
         
         if "rho" in params:
-            updated_self = eqx.tree_at(lambda m: m.rho, updated_self, jnp.asarray(params["rho"], dtype=jnp.float64))
+            rho = params["rho"]
+            if not (isinstance(rho, (list, jnp.ndarray))):
+                raise TypeError(f"rho must be a list or an array, got {type(rho).__name__}")
+            rho = jnp.asarray(rho, dtype=jnp.float64)
+            if rho.shape != (self.num_segments,):
+                raise ValueError(f"rho must have shape ({self.num_segments},), got {rho.shape}")
+            updated_self = eqx.tree_at(lambda m: m.rho, updated_self, rho)
         
         if "E" in params:
-            updated_self = eqx.tree_at(lambda m: m.E, updated_self, jnp.asarray(params["E"], dtype=jnp.float64))
+            E = params["E"]
+            if not (isinstance(E, (list, jnp.ndarray))):
+                raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
+            E = jnp.asarray(E, dtype=jnp.float64)
+            if E.shape != (self.num_segments,):
+                raise ValueError(f"E must have shape ({self.num_segments},), got {E.shape}")
+            updated_self = eqx.tree_at(lambda m: m.E, updated_self, E)
         
         if "G" in params:
-            updated_self = eqx.tree_at(lambda m: m.G, updated_self, jnp.asarray(params["G"], dtype=jnp.float64))
-        
+            G = params["G"]
+            if not (isinstance(G, (list, jnp.ndarray))):
+                raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
+            G = jnp.asarray(G, dtype=jnp.float64)
+            if G.shape != (self.num_segments,):
+                raise ValueError(f"G must have shape ({self.num_segments},), got {G.shape}")
+            updated_self = eqx.tree_at(lambda m: m.G, updated_self, G)
+
         if "D" in params:
-            updated_self = eqx.tree_at(lambda m: m.D, updated_self, jnp.asarray(params["D"], dtype=jnp.float64))
-        
+            D = params["D"]
+            if not (isinstance(D, (list, jnp.ndarray))):
+                raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
+            D = jnp.asarray(D, dtype=jnp.float64)
+            expected_D_shape = (self.num_strains, self.num_strains)
+            if D.shape != expected_D_shape:
+                raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
+            updated_self = eqx.tree_at(lambda m: m.D, updated_self, D)
+
         return updated_self
 
     @eqx.filter_jit
@@ -1034,10 +1098,12 @@ class PCS(eqx.Module):
             def G_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
-                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(self.forward_kinematics(q, Xs_j))
+                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(
+                    self.forward_kinematics(q, Xs_j)
+                )
                 J_j = self._jacobian_bodyframe_full(q, Xs_j)
 
-                return Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
+                return - Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
 
             G_blocks_segment_i = vmap(G_j)(jnp.arange(self.num_gauss_points))
 
@@ -1090,7 +1156,7 @@ class PCS(eqx.Module):
         J = jnp.pi * self.r**4 / 2  # Polar moment of inertia
 
         # stiffness matrix of shape (num_segments, 6, 6)
-        S_sms = compute_stiffness_matrix_for_all_segments_fn(self.L, A, Ib, J, self.E, self.G)
+        S_sms = vmap(compute_spatial_stiffness_matrix)(self.L, A, Ib, J, self.E, self.G)
         # we define the elastic matrix of shape (num_strains, num_strains) as K(xi) = K @ xi where K is equal to
         S = blk_diag(S_sms)
 
@@ -1135,7 +1201,7 @@ class PCS(eqx.Module):
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            tau_el (Array): Elastic forces of shape (num_active_strains,).
+            tau_el (Array): Elastic force of shape (num_active_strains,).
         """
         K = self.stiffness_matrix()
         tau_el = K @ q
@@ -1185,7 +1251,7 @@ class PCS(eqx.Module):
         Returns:
             A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
         """
-        A = self.B_xi.T @ jnp.identity(self.num_strains) @ self.B_xi
+        A = jnp.identity(self.num_actuators)
         return A
 
     @eqx.filter_jit
@@ -1195,7 +1261,7 @@ class PCS(eqx.Module):
         u: Array,
     ) -> Array:
         """
-        Compute the actuation force acting on the soft robot of the robot.
+        Compute the actuation force acting on the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -1280,7 +1346,7 @@ class PCS(eqx.Module):
                 p_j = jnp.concatenate(
                     [jnp.zeros(3), self.forward_kinematics(q, Xs_j)[:3, 3]]
                 )  # Add zeros for the orientation angles
-                return Ws_j * rho_i * A_i * jnp.dot(p_j, self.g)
+                return - Ws_j * rho_i * A_i * jnp.dot(p_j, self.g)
 
             U_G_blocks_segment_i = vmap(U_G_j)(jnp.arange(self.num_gauss_points))
 

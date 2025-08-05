@@ -21,12 +21,16 @@ jnp.set_printoptions(
 )
 
 
-def draw_robot_curve(
-    batched_forward_kinematics: Callable,
-    L_max: float,
+def draw_robot(
+    robot: PlanarPCS,
     q: Array,
     num_points: int = 50,
 ):
+    batched_forward_kinematics = jax.vmap(
+        robot.forward_kinematics, in_axes=(None, 0), out_axes=-1
+    )
+    L_max = jnp.sum(robot.L)
+    
     s_ps = jnp.linspace(0, L_max, num_points)
     chi_ps = batched_forward_kinematics(q, s_ps)
 
@@ -52,11 +56,6 @@ def animate_robot_matplotlib(
             "Cannot use both animation and slider at the same time. Choose one."
         )
 
-    batched_forward_kinematics = jax.vmap(
-        robot.forward_kinematics, in_axes=(None, 0), out_axes=-1
-    )
-    L_max = jnp.sum(robot.L)
-
     width = jnp.linalg.norm(robot.L) * 3
     height = width
 
@@ -64,6 +63,15 @@ def animate_robot_matplotlib(
     ax = fig.add_subplot(111)
     ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
 
+    # Base
+    def draw_base(ax, robot, l=robot.L[0]/2):
+        angle1 = robot.th0 - jnp.pi / 2
+        angle2 = robot.th0 + jnp.pi / 2
+        x1, y1 = l * jnp.cos(angle1), l * jnp.sin(angle1)
+        x2, y2 = l * jnp.cos(angle2), l * jnp.sin(angle2)
+        ax.plot([x1, x2], [y1, y2], color="black", linestyle="-", linewidth=2)
+    
+    
     if animation:
         (line,) = ax.plot([], [], lw=4, color="blue")
         ax.set_xlim(-width / 2, width / 2)
@@ -78,7 +86,8 @@ def animate_robot_matplotlib(
         def update(frame_idx):
             q = q_list[frame_idx]
             t = t_list[frame_idx]
-            curve = draw_robot_curve(batched_forward_kinematics, L_max, q, num_points)
+            draw_base(ax, robot, l=0.1)
+            curve = draw_robot(robot, q, num_points)
             line.set_data(curve[:, 0], curve[:, 1])
             title_text.set_text(f"t = {t:.2f} s")
             return line, title_text
@@ -106,8 +115,9 @@ def animate_robot_matplotlib(
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
+            draw_base(ax, robot, l=0.1)
             q = q_list[frame_idx]
-            curve = draw_robot_curve(batched_forward_kinematics, L_max, q, num_points)
+            curve = draw_robot(robot, q, num_points)
             ax.plot(curve[:, 0], curve[:, 1], lw=4, color="blue")
             fig.canvas.draw_idle()
 
@@ -134,12 +144,12 @@ def animate_robot_matplotlib(
 
 
 if __name__ == "__main__":
-    num_segments = 2
+    num_segments = 1
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
-        "th0": jnp.array(0.0),  # initial orientation angle [rad]
+        "th0": jnp.array(jnp.pi/2),  # initial orientation angle [rad]
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,

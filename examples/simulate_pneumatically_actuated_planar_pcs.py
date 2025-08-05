@@ -30,7 +30,7 @@ params = {
     "l": 1e-1 * jnp.ones((num_segments,)),
     "r": 2e-2 * jnp.ones((num_segments,)),
     "rho": rho,
-    "g": jnp.array([0.0, 9.81]),
+    "g": jnp.array([0.0, -9.81]),
     "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
     "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
     "r_cham_in": 5e-3 * jnp.ones((num_segments,)),
