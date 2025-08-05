@@ -1,4 +1,10 @@
-# Soft Robot Models in jaX (SoRoMoX)
+<div align="center">
+  <img src="docs/assets/logo/soromox_logo.png" alt="SoRoMoX Logo" width="400"/>
+  
+  # Soft Robot Models in jaX (SoRoMoX)
+</div>
+
+<div align="center">
 
 [![Test](https://github.com/tud-phi/soromox/actions/workflows/test.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/test.yml)
 [![Documentation](https://github.com/tud-phi/soromox/actions/workflows/docs.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/docs.yml)
@@ -6,6 +12,8 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
+
+</div>
 
 > **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (General/3D PCS and GVS), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
 

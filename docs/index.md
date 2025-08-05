@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="assets/logo/soromox_logo.png" alt="SoRoMoX Logo" width="400" style="margin-bottom: 20px;"/>
+</div>
+
 # 🤖 Soft Robot Models in jaX (SoRoMoX)
 
 <div class="doc-summary">
