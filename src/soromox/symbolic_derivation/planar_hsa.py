@@ -50,15 +50,15 @@ def symbolically_derive_planar_hsa_model(
     roff_syms = list(
         sp.symbols(f"roff1:{num_segments * num_rods_per_segment + 1}", nonnegative=True)
     )  # radial offset of each rod from the centerline
-    kappa_b_eq_syms = list(
-        sp.symbols(f"kappa_b_eq1:{num_segments * num_rods_per_segment + 1}")
-    )  # equilibrium bending strain of each rod
-    sigma_sh_eq_syms = list(
-        sp.symbols(f"sigma_sh_eq1:{num_segments * num_rods_per_segment + 1}")
-    )  # equilibrium shear strain of each rod
-    sigma_a_eq_syms = list(
-        sp.symbols(f"sigma_a_eq1:{num_segments * num_rods_per_segment + 1}")
-    )  # equilibrium axial strain of each rod
+    kappa_b_ref_syms = list(
+        sp.symbols(f"kappa_b_ref1:{num_segments * num_rods_per_segment + 1}")
+    )  # refuilibrium bending strain of each rod
+    sigma_sh_ref_syms = list(
+        sp.symbols(f"sigma_sh_ref1:{num_segments * num_rods_per_segment + 1}")
+    )  # refuilibrium shear strain of each rod
+    sigma_a_ref_syms = list(
+        sp.symbols(f"sigma_a_ref1:{num_segments * num_rods_per_segment + 1}")
+    )  # refuilibrium axial strain of each rod
     C_varepsilon_syms = list(
         sp.symbols(f"C_varepsilon1:{num_segments * num_rods_per_segment + 1}")
     )
@@ -157,14 +157,14 @@ def symbolically_derive_planar_hsa_model(
     )  # inside radius of each rod
     # radial offset of each rod from the centerline
     roff = sp.Matrix(roff_syms).reshape(num_segments, num_rods_per_segment)
-    # bending rest strain of each rod
-    kappa_b_eq = sp.Matrix(kappa_b_eq_syms).reshape(num_segments, num_rods_per_segment)
-    # shear rest strain of each rod
-    sigma_sh_eq = sp.Matrix(sigma_sh_eq_syms).reshape(
+    # bending reference strain of each rod
+    kappa_b_ref = sp.Matrix(kappa_b_ref_syms).reshape(num_segments, num_rods_per_segment)
+    # shear reference strain of each rod
+    sigma_sh_ref = sp.Matrix(sigma_sh_ref_syms).reshape(
         num_segments, num_rods_per_segment
     )
-    # axial rest strain of each rod
-    sigma_a_eq = sp.Matrix(sigma_a_eq_syms).reshape(num_segments, num_rods_per_segment)
+    # axial reference strain of each rod
+    sigma_a_ref = sp.Matrix(sigma_a_ref_syms).reshape(num_segments, num_rods_per_segment)
     C_varepsilon = sp.Matrix(C_varepsilon_syms).reshape(
         num_segments, num_rods_per_segment
     )  # elongation factor
@@ -307,13 +307,13 @@ def symbolically_derive_planar_hsa_model(
 
             # strains in physical HSA rod
             pxir = _sym_beta_fn(vxi, roff[i, j])
-            pxi_eqr = sp.Matrix(
-                [[kappa_b_eq[i, j]], [sigma_sh_eq[i, j]], [sigma_a_eq[i, j]]]
+            pxi_refr = sp.Matrix(
+                [[kappa_b_ref[i, j]], [sigma_sh_ref[i, j]], [sigma_a_ref[i, j]]]
             )
             # twist angle of the current rod
             phir = phi[i * num_rods_per_segment + j]
 
-            # elongation of the rest length of the current rod
+            # elongation of the reference length of the current rod
             varepsilonr = C_varepsilon[i, j] * h[i, j] / l[i] * phir
 
             # define the stiffness matrix of the current rod
@@ -346,7 +346,7 @@ def symbolically_derive_planar_hsa_model(
             )
 
             # contribution of elastic forces of current rod to the virtual backbone
-            vKr = J_betar.T @ Shatr @ (pxir - pxi_eqr)
+            vKr = J_betar.T @ Shatr @ (pxir - pxi_refr)
             # add contribution of elasticity vector
             K[3 * i : 3 * (i + 1), 0] += vKr
 
@@ -358,7 +358,7 @@ def symbolically_derive_planar_hsa_model(
             # actuation strain of the current rod
             pxiphir = sp.Matrix([[0.0], [0.0], [varepsilonr]])
             # actuation force of the current rod on the strain of the virtual backbone
-            valphar = J_betar.T @ (-Sdeltar @ (pxir - pxi_eqr) + Sr @ pxiphir)
+            valphar = J_betar.T @ (-Sdeltar @ (pxir - pxi_refr) + Sr @ pxiphir)
             alpha[3 * i : 3 * (i + 1), 0] += valphar
 
         # mass of the platform itself
@@ -544,9 +544,9 @@ def symbolically_derive_planar_hsa_model(
             "rout": rout_syms,
             "rin": rin_syms,
             "roff": roff_syms,
-            "kappa_b_eq": kappa_b_eq_syms,
-            "sigma_sh_eq": sigma_sh_eq_syms,
-            "sigma_a_eq": sigma_a_eq_syms,
+            "kappa_b_ref": kappa_b_ref_syms,
+            "sigma_sh_ref": sigma_sh_ref_syms,
+            "sigma_a_ref": sigma_a_ref_syms,
             "C_varepsilon": C_varepsilon_syms,
             "pcudim": pcudim_syms,
             "rhor": rhor_syms,

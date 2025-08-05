@@ -17,7 +17,7 @@ from soromox.math_utils import blk_diag
 def factory(
     filepath: Union[str, Path],
     strain_selector: Array = None,
-    xi_eq: Optional[Array] = None,
+    xi_ref: Optional[Array] = None,
     stiffness_fn: Optional[Callable] = None,
     actuation_mapping_fn: Optional[Callable] = None,
     global_eps: float = 1e-6,
@@ -36,7 +36,7 @@ def factory(
         filepath: path to file containing symbolic expressions
         strain_selector: array of shape (n_xi, ) with boolean values indicating which components of the
                 strain are active / non-zero
-        xi_eq: array of shape (3 * num_segments) with the rest strains of the rod
+        xi_ref: array of shape (3 * num_segments) with the reference strains of the rod
         stiffness_fn: function to compute the stiffness matrix of the system. Should have the signature
             stiffness_fn(params: Dict[str, Array], B_xi, formulate_in_strain_space: bool) -> Array
         actuation_mapping_fn: function to compute the actuation matrix that maps the actuation space to the
@@ -82,15 +82,16 @@ def factory(
         assert strain_selector.shape == (n_xi,)
     B_xi = compute_strain_basis(strain_selector)
 
-    # initialize the rest strain
-    if xi_eq is None:
-        xi_eq = jnp.zeros((n_xi,))
-        # by default, set the axial rest strain (local y-axis) along the entire rod to 1.0
-        rest_strain_reshaped = xi_eq.reshape((-1, 3))
-        rest_strain_reshaped = rest_strain_reshaped.at[:, -1].set(1.0)
-        xi_eq = rest_strain_reshaped.flatten()
+    # initialize the reference strain
+    if xi_ref is None:
+        xi_ref = jnp.zeros((n_xi,))
+        # by default, set the axial reference strain (local y-axis) along the entire rod to 1.0
+        ref_strain_reshaped = xi_ref.reshape((-1, 3))
+        ref_strain_reshaped = ref_strain_reshaped.at[:, -2].set(1.0)
+        
+        xi_ref = ref_strain_reshaped.flatten()
     else:
-        assert xi_eq.shape == (n_xi,)
+        assert xi_ref.shape == (n_xi,)
 
     # concatenate the list of state symbols
     state_syms_cat = sym_exps["state_syms"]["xi"] + sym_exps["state_syms"]["xi_d"]
@@ -245,7 +246,7 @@ def factory(
             jacobian_fn: Callable,
             params: Dict[str, Array],
             B_xi: Array,
-            xi_eq: Array,
+            xi_ref: Array,
             q: Array,
         ) -> Array:
             """
@@ -256,7 +257,7 @@ def factory(
                 jacobian_fn: function to compute the Jacobian
                 params: dictionary with robot parameters
                 B_xi: strain basis matrix
-                xi_eq: equilibrium strains as array of shape (n_xi,)
+                xi_ref: reference strains as array of shape (n_xi,)
                 q: configuration of the robot
             Returns:
                 A: actuation matrix of shape (n_xi, n_xi) where n_xi is the number of strains.
@@ -282,7 +283,7 @@ def factory(
                 and theta is the planar orientation with respect to the x-axis
         """
         # map the configuration to the strains
-        xi = xi_eq + B_xi @ q
+        xi = xi_ref + B_xi @ q
         # add a small number to the bending strain to avoid singularities
         xi_epsed = apply_eps_to_bend_strains(xi, eps)
 
@@ -314,7 +315,7 @@ def factory(
                 where chi_d = J @ q_d. Chi_d consists of [p_x_d, p_y_d, theta_d]
         """
         # map the configuration to the strains
-        xi = xi_eq + B_xi @ q
+        xi = xi_ref + B_xi @ q
         # add a small number to the bending strain to avoid singularities
         xi_epsed = apply_eps_to_bend_strains(xi, eps)
 
@@ -352,7 +353,7 @@ def factory(
             alpha: actuation matrix of shape (n_q, n_tau)
         """
         # map the configuration to the strains
-        xi = xi_eq + B_xi @ q
+        xi = xi_ref + B_xi @ q
         xi_d = B_xi @ q_d
 
         # add a small number to the bending strain to avoid singularities
@@ -362,7 +363,7 @@ def factory(
         K = stiffness_fn(params, B_xi, formulate_in_strain_space=True)
         # compute the actuation matrix
         A = actuation_mapping_fn(
-            forward_kinematics_fn, jacobian_fn, params, B_xi, xi_eq, q
+            forward_kinematics_fn, jacobian_fn, params, B_xi, xi_ref, q
         )
 
         # dissipative matrix from the parameters
@@ -376,7 +377,7 @@ def factory(
         G = B_xi.T @ G_lambda(*params_for_lambdify, *xi_epsed).squeeze()
 
         # apply the strain basis to the elastic and dissipative matrices
-        K = B_xi.T @ K @ (xi - xi_eq)  # evaluate K(xi) = K @ xi
+        K = B_xi.T @ K @ (xi - xi_ref)  # evaluate K(xi) = K @ xi
         D = B_xi.T @ D @ B_xi
 
         # apply the strain basis to the actuation matrix
@@ -414,14 +415,14 @@ def factory(
             U: potential energy of shape ()
         """
         # map the configuration to the strains
-        xi = xi_eq + B_xi @ q
+        xi = xi_ref + B_xi @ q
         # add a small number to the bending strain to avoid singularities
         xi_epsed = apply_eps_to_bend_strains(xi, eps)
 
         # compute the stiffness matrix
         K = stiffness_fn(params, B_xi, formulate_in_strain_space=True)
         # elastic energy
-        U_K = 0.5 * (xi - xi_eq).T @ K @ (xi - xi_eq)  # evaluate K(xi) = K @ xi
+        U_K = 0.5 * (xi - xi_ref).T @ K @ (xi - xi_ref)  # evaluate K(xi) = K @ xi
 
         # gravitational potential energy
         params_for_lambdify = select_params_for_lambdify_fn(params)
@@ -483,7 +484,7 @@ def factory(
                 Shape (n_q, 3)
         """
         ## map the configuration to the strains
-        xi = xi_eq + B_xi @ q
+        xi = xi_ref + B_xi @ q
         xi_d = B_xi @ q_d
         # add a small number to the bending strain to avoid singularities
         xi_epsed = apply_eps_to_bend_strains(xi, eps)

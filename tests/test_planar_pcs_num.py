@@ -14,7 +14,7 @@ from soromox.utils.tolerance import Tolerance
 from typing import Optional, Literal
 
 
-def constant_strain_inverse_kinematics_fn(params, xi_eq, chi, s) -> Array:
+def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     px, py, th = chi
     th0 = params["th0"].item()
@@ -36,7 +36,7 @@ def constant_strain_inverse_kinematics_fn(params, xi_eq, chi, s) -> Array:
             ]
         )
     )
-    q = xi - xi_eq
+    q = xi - xi_ref
     return q
 
 
@@ -72,7 +72,7 @@ def test_planar_cs_num(
     # activate all strains (i.e. bending, shear, and axial)
     strain_selector = jnp.ones((3,), dtype=bool)
 
-    xi_eq = jnp.array([0.0, 0.0, 1.0])
+    xi_ref = jnp.array([0.0, 0.0, 1.0])
 
     num_segments = 1
     if type_of_integration == "gauss-kronrad":
@@ -150,7 +150,7 @@ def test_planar_cs_num(
             print("q = ", q, "s = ", s, "th0 = ", ik_th0)
             chi = forward_kinematics_fn(params_ik, q=q, s=s)
             assert not jnp.isnan(chi).any(), "Forward kinematics output contains NaN!"
-            q_ik = constant_strain_inverse_kinematics_fn(params_ik, xi_eq, chi, s)
+            q_ik = constant_strain_inverse_kinematics_fn(params_ik, xi_ref, chi, s)
             assert not jnp.isnan(q_ik).any(), "Inverse kinematics output contains NaN!"
             assert_allclose(q, q_ik, rtol=Tolerance.rtol(), atol=Tolerance.atol())
             print("[Valid test]\n")

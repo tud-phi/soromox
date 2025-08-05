@@ -57,8 +57,8 @@ class PlanarPCS(eqx.Module):
         Total number of strain components (6 * num_segments).
     B_xi : Array
         Basis matrix for projecting active strains.
-    xi_star : Array
-        Rest strain (reference configuration) of the robot.
+    xi_ref : Array
+        Reference strain (reference configuration) of the robot.
     num_gauss_points : int
         Number of points used for numerical integration.
         Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
@@ -69,11 +69,11 @@ class PlanarPCS(eqx.Module):
     -----
     - The strain vector is composed of 3 components per segment:
       [kappa_z, sigma_x, sigma_y].
-      By default, the rod is assumed to be straight and aligned with the y-axis,
-        so the rest strain is set to [0, 0, 1].
+      By default, the rod is assumed to be straight and aligned with the x-axis,
+        so the reference strain is set to [0, 1, 0].
         Thus:   - kappa_z corresponds to bending around the z-axis,
-                - sigma_x corresponds to shear along the x-axis,
-                - sigma_y corresponds to axial strain along the y-axis.
+                - sigma_x corresponds to axial strain along the x-axis,
+                - sigma_y corresponds to shear along the y-axis.
 
     """
 
@@ -96,7 +96,7 @@ class PlanarPCS(eqx.Module):
     num_gauss_points: int = eqx.field(static=True)  #
     num_strains: int = eqx.field(static=True)  # Number of strains (3 * num_segments)
 
-    xi_star: Array  # Rest configuration strain
+    xi_ref: Array  # Reference configuration strain
     B_xi: Array  # Strain basis matrix
     num_active_strains: Array  # Number of selected strains
 
@@ -110,7 +110,7 @@ class PlanarPCS(eqx.Module):
         num_actuators: Optional[int] = None,
         order_gauss: int = 5,
         strain_selector: Optional[Array] = None,
-        xi_star: Optional[Array] = None,
+        xi_ref: Optional[Array] = None,
     ):
         """
         Initialize the PlanarPCS class.
@@ -136,9 +136,9 @@ class PlanarPCS(eqx.Module):
             strain_selector (Optional[Array], optional):
                 Boolean array of shape (3 * num_segments,) specifying which strain components are active.
                 Defaults to all strains active (i.e. all True).
-            xi_star (Optional[Array], optional):
-                Rest strain of shape (3 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local y-axis).
+            xi_ref (Optional[Array], optional):
+                Reference strain of shape (3 * num_segments,).
+                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
 
         """
         # Number of segments
@@ -193,23 +193,23 @@ class PlanarPCS(eqx.Module):
 
         self.num_active_strains = jnp.sum(strain_selector)
 
-        # Rest configuration strain
-        if xi_star is None:
-            xi_star = jnp.tile(
-                jnp.array([0.0, 0.0, 1.0], dtype=jnp.float64), (self.num_segments, 1)
+        # Reference configuration strain
+        if xi_ref is None:
+            xi_ref = jnp.tile(
+                jnp.array([0.0, 1.0, 0.0], dtype=jnp.float64), (self.num_segments, 1)
             ).reshape(self.num_strains)
         else:
-            if not isinstance(xi_star, (list, jnp.ndarray)):
+            if not isinstance(xi_ref, (list, jnp.ndarray)):
                 raise TypeError(
-                    f"xi_star must be a list or an array, got {type(xi_star).__name__}"
+                    f"xi_ref must be a list or an array, got {type(xi_ref).__name__}"
                 )
-            xi_star = jnp.asarray(xi_star)
-            if xi_star.size != self.num_strains:
+            xi_ref = jnp.asarray(xi_ref)
+            if xi_ref.size != self.num_strains:
                 raise ValueError(
-                    f"xi_star must have {self.num_strains} elements, got {xi_star.size}"
+                    f"xi_ref must have {self.num_strains} elements, got {xi_ref.size}"
                 )
-            xi_star = xi_star.reshape(self.num_strains)
-        self.xi_star = xi_star
+            xi_ref = xi_ref.reshape(self.num_strains)
+        self.xi_ref = xi_ref
 
         # Number of actuators
         if num_actuators is None:
@@ -424,7 +424,7 @@ class PlanarPCS(eqx.Module):
         Returns:
             xi (Array): strain vector of shape (num_active_strains,)
         """
-        xi = self.B_xi @ q + self.xi_star
+        xi = self.B_xi @ q + self.xi_ref
 
         return xi
 

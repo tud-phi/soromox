@@ -112,7 +112,7 @@ if __name__ == "__main__":
     )
 
     # test the actuation mapping function
-    xi_eq = jnp.array([0.0, 0.0, 1.0])[None].repeat(num_segments, axis=0).flatten()
+    xi_ref = jnp.array([0.0, 0.0, 1.0])[None].repeat(num_segments, axis=0).flatten()
     B_xi = strain_basis
     # call the actuation mapping function
     A = actuation_mapping_fn(
@@ -120,7 +120,7 @@ if __name__ == "__main__":
         auxiliary_fns["jacobian_fn"],
         params,
         B_xi,
-        xi_eq,
+        xi_ref,
         jnp.zeros_like(q0),
     )
     print("A =\n", A)

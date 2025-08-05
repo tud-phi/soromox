@@ -202,24 +202,24 @@ def factory(
         return vxi
 
     @jit
-    def rest_strains_fn(params: Dict[str, Array]) -> Array:
+    def ref_strains_fn(params: Dict[str, Array]) -> Array:
         """
-        Compute the rest strains of the virtual backbone
+        Compute the reference strains of the virtual backbone
         Args:
             params: Dictionary of robot parameters
 
         Returns:
-            vxi_eq: rest strains of the virtual backbone of shape (n_xi, )
+            vxi_ref: reference strains of the virtual backbone of shape (n_xi, )
         """
-        # rest strains of the physical rods
-        pxi_eq = jnp.zeros((num_segments, num_rods_per_segment, 3))
-        pxi_eq = pxi_eq.at[:, :, 0].set(params["kappa_b_eq"])
-        pxi_eq = pxi_eq.at[:, :, 1].set(params["sigma_sh_eq"])
-        pxi_eq = pxi_eq.at[:, :, 2].set(params["sigma_a_eq"])
+        # ref strains of the physical rods
+        pxi_ref = jnp.zeros((num_segments, num_rods_per_segment, 3))
+        pxi_ref = pxi_ref.at[:, :, 0].set(params["kappa_b_ref"])
+        pxi_ref = pxi_ref.at[:, :, 1].set(params["sigma_sh_ref"])
+        pxi_ref = pxi_ref.at[:, :, 2].set(params["sigma_a_ref"])
 
-        # map the rest strains from the physical rods to the virtual backbone
-        vxi_eq = beta_inv_fn(params, pxi_eq)
-        return vxi_eq
+        # map the ref strains from the physical rods to the virtual backbone
+        vxi_ref = beta_inv_fn(params, pxi_ref)
+        return vxi_ref
 
     @jit
     def configuration_to_strains_fn(params: Dict[str, Array], q: Array) -> Array:
@@ -231,11 +231,11 @@ def factory(
         Returns:
             xi: strains of the virtual backbone of shape (n_xi, )
         """
-        # rest strains of the virtual backbone
-        xi_eq = rest_strains_fn(params)
+        # ref strains of the virtual backbone
+        xi_ref = ref_strains_fn(params)
 
         # map the configuration to the strains
-        xi = xi_eq + B_xi @ q
+        xi = xi_ref + B_xi @ q
 
         return xi
 
@@ -544,11 +544,11 @@ def factory(
             )
         )
 
-        # rest strains of the virtual backbone
-        vxi_eq = rest_strains_fn(params)
+        # ref strains of the virtual backbone
+        vxi_ref = ref_strains_fn(params)
 
         # map the strains to the generalized coordinates
-        q = jnp.linalg.pinv(B_xi) @ (vxi - vxi_eq)
+        q = jnp.linalg.pinv(B_xi) @ (vxi - vxi_ref)
 
         return q
 
@@ -676,7 +676,7 @@ def factory(
         "select_params_for_lambdify_fn": select_params_for_lambdify_fn,
         "beta_fn": beta_fn,
         "beta_inv_fn": beta_inv_fn,
-        "rest_strains_fn": rest_strains_fn,
+        "ref_strains_fn": ref_strains_fn,
         "B_xi": B_xi,
         "configuration_to_strains_fn": configuration_to_strains_fn,
         "apply_eps_to_bend_strains_fn": apply_eps_to_bend_strains_fn,

@@ -12,7 +12,7 @@ from soromox.systems import euler_lagrangian, planar_pcs_sym
 from soromox.utils.tolerance import Tolerance
 
 
-def constant_strain_inverse_kinematics_fn(params, xi_eq, chi, s) -> Array:
+def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     px, py, th = chi
     th0 = params["th0"].item()
@@ -34,7 +34,7 @@ def constant_strain_inverse_kinematics_fn(params, xi_eq, chi, s) -> Array:
             ]
         )
     )
-    q = xi - xi_eq
+    q = xi - xi_ref
     return q
 
 
@@ -54,9 +54,9 @@ def test_planar_cs():
     # activate all strains (i.e. bending, shear, and axial)
     strain_selector = jnp.ones((3,), dtype=bool)
 
-    xi_eq = jnp.array([0.0, 0.0, 1.0])
+    xi_ref = jnp.array([0.0, 0.0, 1.0])
     strain_basis, forward_kinematics_fn, dynamical_matrices_fn, auxiliary_fns = (
-        planar_pcs_sym.factory(sym_exp_filepath, strain_selector, xi_eq)
+        planar_pcs_sym.factory(sym_exp_filepath, strain_selector, xi_ref)
     )
     forward_dynamics_fn = partial(
         euler_lagrangian.forward_dynamics, dynamical_matrices_fn
@@ -115,7 +115,7 @@ def test_planar_cs():
             print("q = ", q, "s = ", s, "th0 = ", ik_th0)
             chi = forward_kinematics_fn(params_ik, q=q, s=s)
             assert not jnp.isnan(chi).any(), "Forward kinematics output contains NaN!"
-            q_ik = constant_strain_inverse_kinematics_fn(params_ik, xi_eq, chi, s)
+            q_ik = constant_strain_inverse_kinematics_fn(params_ik, xi_ref, chi, s)
             assert not jnp.isnan(q_ik).any(), "Inverse kinematics output contains NaN!"
             assert_allclose(q, q_ik, rtol=Tolerance.rtol(), atol=Tolerance.atol())
             print("[Valid test]\n")

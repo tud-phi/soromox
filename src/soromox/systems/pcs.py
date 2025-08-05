@@ -58,8 +58,8 @@ class PCS(eqx.Module):
         Total number of strain components (6 * num_segments).
     B_xi : Array
         Basis matrix for projecting active strains.
-    xi_star : Array
-        Rest strain (reference configuration) of the robot.
+    xi_ref : Array
+        Reference configuration strain of the robot.
     num_gauss_points : int
         Number of points used for numerical integration.
         Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
@@ -70,14 +70,14 @@ class PCS(eqx.Module):
     -----
     - The strain vector is composed of 6 components per segment:
       [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z].
-      By default, the rod is assumed to be straight and aligned with the z-axis,
-        so the rest strain is set to [0, 0, 0, 0, 0, 1].
-        Thus:   - kappa_x corresponds to bending around the x-axis,
+      By default, the rod is assumed to be straight and aligned with the x-axis,
+        so the reference strain is set to [0, 0, 0, 1, 0, 0].
+        Thus:   - kappa_x corresponds to torsion around the x-axis,
                 - kappa_y corresponds to bending around the y-axis,
-                - kappa_z corresponds to torsion around the z-axis,
-                - sigma_x corresponds to shear along the x-axis,
+                - kappa_z corresponds to bending around the z-axis,
+                - sigma_x corresponds to axial strain along the x-axis,
                 - sigma_y corresponds to shear along the y-axis,
-                - sigma_z corresponds to axial strain along the z-axis.
+                - sigma_z corresponds to shear along the z-axis.
 
     """
 
@@ -100,7 +100,7 @@ class PCS(eqx.Module):
     num_gauss_points: int = eqx.field(static=True)  #
     num_strains: int = eqx.field(static=True)  # Number of strains (6 * num_segments)
 
-    xi_star: Array  # Rest configuration strain
+    xi_ref: Array  # Reference configuration strain
     B_xi: Array  # Strain basis matrix
 
     num_active_strains: Array  # Number of selected strains
@@ -115,7 +115,7 @@ class PCS(eqx.Module):
         num_actuators: Optional[int] = None,
         order_gauss: int = 5,
         strain_selector: Optional[Array] = None,
-        xi_star: Optional[Array] = None,
+        xi_ref: Optional[Array] = None,
     ):
         """
         Initialize the PCS class.
@@ -147,9 +147,9 @@ class PCS(eqx.Module):
             strain_selector (Optional[Array], optional):
                 Boolean array of shape (6 * num_segments,) specifying which strain components are active.
                 Defaults to all strains active (i.e. all True).
-            xi_star (Optional[Array], optional):
-                Rest strain of shape (6 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local z-axis).
+            xi_ref (Optional[Array], optional):
+                Reference strain of shape (6 * num_segments,).
+                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
 
         """
         # Number of segments
@@ -204,24 +204,24 @@ class PCS(eqx.Module):
 
         self.num_active_strains = jnp.sum(strain_selector)
 
-        # Rest configuration strain
-        if xi_star is None:
-            xi_star = jnp.tile(
-                jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0], dtype=jnp.float64),
+        # Reference configuration strain
+        if xi_ref is None:
+            xi_ref = jnp.tile(
+                jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64),
                 (num_segments, 1),
             ).reshape(num_strains)
         else:
-            if not isinstance(xi_star, (list, jnp.ndarray)):
+            if not isinstance(xi_ref, (list, jnp.ndarray)):
                 raise TypeError(
-                    f"xi_star must be a list or an array, got {type(xi_star).__name__}"
+                    f"xi_ref must be a list or an array, got {type(xi_ref).__name__}"
                 )
-            xi_star = jnp.asarray(xi_star)
-            if xi_star.size != num_strains:
+            xi_ref = jnp.asarray(xi_ref)
+            if xi_ref.size != num_strains:
                 raise ValueError(
-                    f"xi_star must have {num_strains} elements, got {xi_star.size}"
+                    f"xi_ref must have {num_strains} elements, got {xi_ref.size}"
                 )
-            xi_star = xi_star.reshape(num_strains)
-        self.xi_star = xi_star
+            xi_ref = xi_ref.reshape(num_strains)
+        self.xi_ref = xi_ref
 
         # Number of actuators
         if num_actuators is None:
@@ -445,7 +445,7 @@ class PCS(eqx.Module):
         Returns:
             xi (Array): strain vector of shape (num_active_strains,)
         """
-        xi = self.B_xi @ q + self.xi_star
+        xi = self.B_xi @ q + self.xi_ref
 
         return xi
 

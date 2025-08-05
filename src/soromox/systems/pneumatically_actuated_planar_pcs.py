@@ -44,7 +44,7 @@ def factory(
         jacobian_fn: Callable,
         params: Dict[str, Array],
         B_xi: Array,
-        xi_eq: Array,
+        xi_ref: Array,
         q: Array,
     ) -> Array:
         """
@@ -54,7 +54,7 @@ def factory(
             jacobian_fn: function to compute the Jacobian
             params: dictionary with robot parameters
             B_xi: strain basis matrix
-            xi_eq: equilibrium strains as array of shape (n_xi,)
+            xi_ref: reference strains as array of shape (n_xi,)
             q: configuration of the robot
         Returns:
             A: actuation matrix of shape (n_xi, n_act) where n_xi is the number of strains and

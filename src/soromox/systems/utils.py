@@ -116,7 +116,8 @@ def compute_planar_stiffness_matrix(
     l: Array, A: Array, Ib: Array, E: Array, G: Array
 ) -> Array:
     """
-    Compute the stiffness matrix of the system.
+    Compute the stiffness matrix of a planar system for a rod aligned along the x-axis.
+    
     Args:
         l: length of the segment of shape ()
         A: cross-sectional area of shape ()
@@ -127,7 +128,16 @@ def compute_planar_stiffness_matrix(
     Returns:
         S: stiffness matrix of shape (3, 3)
     """
-    S = l * jnp.diag(jnp.stack([Ib * E, 4 / 3 * A * G, A * E], axis=0))
+    S = l * jnp.diag(
+        jnp.stack(
+            [
+                E * Ib, # bending Z
+                A * E, # axial X
+                4 / 3 * A * G, # shear Y
+            ], 
+            axis=0
+        )
+    )
 
     return S
 
@@ -136,7 +146,7 @@ def compute_spatial_stiffness_matrix(
     l: Array, A: Array, Ib: Array, J: Array, E: Array, G: Array
 ) -> Array:
     """
-    Compute the stiffness matrix of the system.
+    Compute the stiffness matrix of a spatial system for a rod aligned along the x-axis.
     Args:
         l: length of the segment of shape ()
         A: cross-sectional area of shape ()
@@ -151,12 +161,12 @@ def compute_spatial_stiffness_matrix(
     S = l * jnp.diag(
         jnp.stack(
             [
-                E * Ib,  # bending X
+                G * J,  # torsion X
                 E * Ib,  # bending Y
-                G * J,  # torsion Z
-                4 / 3 * A * G,  # shear X (approx.)
-                4 / 3 * A * G,  # shear Y (approx.)
-                A * E,  # axial Z
+                E * Ib,  # bending Z
+                A * E,  # axial X
+                4 / 3 * A * G,  # shear Y
+                4 / 3 * A * G,  # shear Z
             ],
             axis=0,
         )
