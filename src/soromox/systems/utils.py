@@ -134,7 +134,6 @@ def compute_planar_stiffness_matrix(
                 E * Ib, # bending Z
                 A * E, # axial X
                 4 / 3 * A * G, # shear Y
-                # A * E, # axial X
             ], 
             axis=0
         )
