@@ -1385,7 +1385,7 @@ class PCS(eqx.Module):
         operational_space_selector = onp.array(operational_space_selector, dtype=bool)
 
         # Jacobian and its time-derivative
-        J, Jd = self.jacobian_and_derivative_bodyframe(q, qd, s_local)
+        J, Jd = self.jacobian_and_derivative_inertialframe(q, qd, s_local)
 
         J = J[operational_space_selector, :]
         Jd = Jd[operational_space_selector, :]
