@@ -30,7 +30,7 @@ params = {
     "l": 1e-1 * jnp.ones((num_segments,)),
     "r": 2e-2 * jnp.ones((num_segments,)),
     "rho": rho,
-    "g": jnp.array([0.0, -9.81]),
+    "g": jnp.array([0.0, 9.81]), # gravitational acceleration [m/s^2] UP!
     "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
     "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
     "r_cham_in": 5e-3 * jnp.ones((num_segments,)),
@@ -180,7 +180,7 @@ def simulate_robot():
     # the evolution of the generalized coordinates
     q_ts = sol.ys[:, :n_q]
     # the evolution of the generalized velocities
-    q_d_ts = sol.ys[:, n_q:]
+    qd_ts = sol.ys[:, n_q:]
 
     # evaluate the forward kinematics along the trajectory
     chi_ee_ts = vmap(forward_kinematics_fn, in_axes=(None, 0, None))(
@@ -241,7 +241,7 @@ def simulate_robot():
         partial(auxiliary_fns["potential_energy_fn"], params)
     )
     U_ts = potential_energy_fn_vmapped(q_ts)
-    T_ts = kinetic_energy_fn_vmapped(q_ts, q_d_ts)
+    T_ts = kinetic_energy_fn_vmapped(q_ts, qd_ts)
     plt.figure()
     plt.plot(ts, U_ts, label="Potential energy")
     plt.plot(ts, T_ts, label="Kinetic energy")

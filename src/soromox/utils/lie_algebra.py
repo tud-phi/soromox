@@ -792,10 +792,3 @@ def compute_weighted_sums(M: Array, vecm: Array, idx: int) -> Array:
     # Sum over j for each i : (N, m)
     result = masked_prod.sum(axis=1)  # (N, m)
     return result
-
-
-if __name__ == "__main__":
-    vec6 = jnp.array([1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
-    exp_SE3_result = exp_SE3(vec6)
-    print("Exponential map of SE(3):")
-    print(exp_SE3_result)

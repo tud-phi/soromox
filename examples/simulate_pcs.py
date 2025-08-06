@@ -11,9 +11,9 @@ from matplotlib.widgets import Slider
 import numpy as onp
 from typing import Callable
 
+jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.systems.pcs import PCS
 
-jax.config.update("jax_enable_x64", True)  # double precision
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
@@ -143,12 +143,12 @@ if __name__ == "__main__":
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
         "p0": jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+            [jnp.pi/2, jnp.pi/2, 0.0, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
-        "g": jnp.array([0.0, 0.0, -9.81]),  # Gravity vector [m/s^2]
+        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
         "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
     }
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     # =====================================================
     # Initial configuration
     q0 = jnp.repeat(
-        jnp.array([5.0 * jnp.pi, 0.0, 0.0, 0.0, 0.1, 0.2])[None, :],
+        jnp.array([0.0, 0.0, 5.0 * jnp.pi, 0.1, 0.2, 0.0])[None, :],
         num_segments,
         axis=0,
     ).flatten()
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
 
-    ts, q_ts, q_d_ts = robot.resolve_upon_time(
+    ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
         u=u,
@@ -246,7 +246,7 @@ if __name__ == "__main__":
     # Energy computation upon time
     # =====================================================
     U_ts = jax.vmap(jax.jit(partial(robot.potential_energy)))(q_ts)
-    T_ts = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(q_ts, q_d_ts)
+    T_ts = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(q_ts, qd_ts)
 
     plt.figure()
     plt.plot(ts, U_ts, label="Potential Energy")

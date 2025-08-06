@@ -52,8 +52,8 @@ def factory_fn(
     jacobian_end_effector_fn = jit(partial(jacobian_end_effector_fn, params))
 
     def residual_fn(q: Array, phi: Array) -> Array:
-        q_d = jnp.zeros_like(q)
-        _, _, G, K, _, alpha = dynamical_matrices_fn(q, q_d, phi=phi)
+        qd = jnp.zeros_like(q)
+        _, _, G, K, _, alpha = dynamical_matrices_fn(q, qd, phi=phi)
         res = alpha - G - K
         return jnp.square(res).mean()
 

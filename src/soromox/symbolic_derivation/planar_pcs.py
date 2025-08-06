@@ -44,7 +44,7 @@ def symbolically_derive_planar_pcs_model(
 
     # planar strains and their derivatives
     xi_syms = list(sp.symbols(f"xi1:{num_dof + 1}", nonzero=True))  # strains
-    xi_d_syms = list(sp.symbols(f"xi_d1:{num_dof + 1}"))  # strain time derivatives
+    xid_syms = list(sp.symbols(f"xid1:{num_dof + 1}"))  # strain time derivatives
 
     # construct the symbolic matrices
     rho = sp.Matrix(rho_syms)  # volumetric mass density [kg/m^3]
@@ -54,12 +54,12 @@ def symbolically_derive_planar_pcs_model(
 
     # configuration variables and their derivatives
     xi = sp.Matrix(xi_syms)  # strains
-    xi_d = sp.Matrix(xi_d_syms)  # strain time derivatives
+    xid = sp.Matrix(xid_syms)  # strain time derivatives
 
     # matrix with symbolic expressions to derive the poses along each segment
     chi_sms = []
     # Jacobians (positional + orientation) in each segment as a function of the point coordinate s and its time derivative
-    J_sms, J_d_sms = [], []
+    J_sms, Jd_sms = [], []
     # tendon lengths for each segment as a function of the point coordinate s
     L_tend_sms = []
     # tendon length jacobians for each segment as a function of the point coordinate s
@@ -127,8 +127,8 @@ def symbolically_derive_planar_pcs_model(
         J_sms.append(J)
 
         # compute the time derivative of the Jacobian
-        J_d = compute_dAdt(J, xi, xi_d)  # time derivative of the end-effector Jacobian
-        J_d_sms.append(J_d)
+        Jd = compute_dAdt(J, xi, xid)  # time derivative of the end-effector Jacobian
+        Jd_sms.append(Jd)
 
         # derivative of mass matrix with respect to the point coordinate s
         dB_ds = rho[i] * A[i] * Jp.T @ Jp + rho[i] * I[i] * Jo.T @ Jo
@@ -175,7 +175,7 @@ def symbolically_derive_planar_pcs_model(
         B = sp.simplify(B)
     print("B =\n", B)
 
-    C = compute_coriolis_matrix(B, xi, xi_d, simplify=simplify_expressions)
+    C = compute_coriolis_matrix(B, xi, xid, simplify=simplify_expressions)
     print("C =\n", C)
 
     # compute the gravity force vector
@@ -195,7 +195,7 @@ def symbolically_derive_planar_pcs_model(
         },
         "state_syms": {
             "xi": xi_syms,
-            "xi_d": xi_d_syms,
+            "xid": xid_syms,
             "s": s,
         },
         "exps": {
@@ -207,8 +207,8 @@ def symbolically_derive_planar_pcs_model(
             "Jee": J_sms[-1].subs(
                 s, l[-1]
             ),  # end-effector Jacobian of shape (3, num_dof)
-            "J_d_sms": J_d_sms,  # list of time derivatives of Jacobians (for each segment)
-            "Jee_d": J_d_sms[-1].subs(
+            "Jd_sms": Jd_sms,  # list of time derivatives of Jacobians (for each segment)
+            "Jeed": Jd_sms[-1].subs(
                 s, l[-1]
             ),  # time derivative of end-effector Jacobian of shape (3, num_dof)
             "B": B,  # mass matrix

@@ -31,7 +31,7 @@ def symbolically_derive_pendulum_model(
 
     # configuration variables and their derivatives
     q_syms = list(sp.symbols(f"q1:{num_links + 1}"))  # joint angle
-    q_d_syms = list(sp.symbols(f"q_d1:{num_links + 1}"))  # joint velocity
+    qd_syms = list(sp.symbols(f"qd1:{num_links + 1}"))  # joint velocity
 
     # construct the symbolic matrices
     m = sp.Matrix(m_syms)  # mass of each link
@@ -42,7 +42,7 @@ def symbolically_derive_pendulum_model(
 
     # configuration variables and their derivatives
     q = sp.Matrix(q_syms)  # joint angle
-    q_d = sp.Matrix(q_d_syms)  # joint velocity
+    qd = sp.Matrix(qd_syms)  # joint velocity
 
     # matrix with tip of link and center of mass positions
     chi_ls, chic_ls = [], []
@@ -113,7 +113,7 @@ def symbolically_derive_pendulum_model(
     B = sp.simplify(B)
     print("B =\n", B)
 
-    C = compute_coriolis_matrix(B, q, q_d)
+    C = compute_coriolis_matrix(B, q, qd)
     print("C =\n", C)
 
     # compute the gravity force vector
@@ -131,7 +131,7 @@ def symbolically_derive_pendulum_model(
         },
         "state_syms": {
             "q": q_syms,
-            "q_d": q_d_syms,
+            "qd": qd_syms,
         },
         "exps": {
             "chi_ls": chi_ls,  # matrix with tip poses of shape (3, n_q)

@@ -31,7 +31,7 @@ params = {
     "l": 1e-1 * jnp.ones((num_segments,)),
     "r": 2e-2 * jnp.ones((num_segments,)),
     "rho": rho,
-    "g": jnp.array([0.0, -9.81]),
+    "g": jnp.array([0.0, 9.81]), # gravitational acceleration [m/s^2] UP!
     "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
     "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
     "d": 2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0),  # distance of tendons from the central axis [m]
@@ -148,7 +148,7 @@ if __name__ == "__main__":
     # the evolution of the generalized coordinates
     q_ts = sol.ys[:, :n_q]
     # the evolution of the generalized velocities
-    q_d_ts = sol.ys[:, n_q:]
+    qd_ts = sol.ys[:, n_q:]
 
     # evaluate the forward kinematics along the trajectory
     chi_ee_ts = vmap(forward_kinematics_fn, in_axes=(None, 0, None))(
@@ -213,7 +213,7 @@ if __name__ == "__main__":
         partial(auxiliary_fns["potential_energy_fn"], params)
     )
     U_ts = potential_energy_fn_vmapped(q_ts)
-    T_ts = kinetic_energy_fn_vmapped(q_ts, q_d_ts)
+    T_ts = kinetic_energy_fn_vmapped(q_ts, qd_ts)
     plt.figure()
     plt.plot(video_ts, U_ts, label="Potential energy")
     plt.plot(video_ts, T_ts, label="Kinetic energy")

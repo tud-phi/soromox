@@ -87,7 +87,7 @@ def factory(
     B_xi = compute_strain_basis(strain_selector)
 
     # concatenate the list of state symbols
-    state_syms_cat = sym_exps["state_syms"]["xi"] + sym_exps["state_syms"]["xi_d"]
+    state_syms_cat = sym_exps["state_syms"]["xi"] + sym_exps["state_syms"]["xid"]
 
     # lambdify symbolic expressions
     chiv_lambda_sms = []
@@ -135,9 +135,9 @@ def factory(
         sym_exps["exps"]["Jee"],
         "jax",
     )
-    Jee_d_lambda = sp.lambdify(
-        params_syms_cat + sym_exps["state_syms"]["xi"] + sym_exps["state_syms"]["xi_d"],
-        sym_exps["exps"]["Jee_d"],
+    Jeed_lambda = sp.lambdify(
+        params_syms_cat + sym_exps["state_syms"]["xi"] + sym_exps["state_syms"]["xid"],
+        sym_exps["exps"]["Jeed"],
         "jax",
     )
 
@@ -556,7 +556,7 @@ def factory(
     def dynamical_matrices_fn(
         params: Dict[str, Array],
         q: Array,
-        q_d: Array,
+        qd: Array,
         z: Optional[Array] = None,
         phi: Array = jnp.zeros((num_segments * num_rods_per_segment,)),
         eps: float = 1e4 * global_eps,
@@ -566,7 +566,7 @@ def factory(
         Args:
             params: Dictionary of robot parameters
             q: generalized coordinates of shape (n_q, )
-            q_d: generalized velocities of shape (n_q, )
+            qd: generalized velocities of shape (n_q, )
             z: state variables of the hysteresis model of shape (n_z, )
             phi: motor positions / twist angles of shape (num_segments * num_rods_per_segment, )
             eps: small number to avoid singularities (e.g., division by zero)
@@ -580,7 +580,7 @@ def factory(
         """
         # map the configuration to the strains
         xi = configuration_to_strains_fn(params, q)
-        xi_d = B_xi @ q_d
+        xid = B_xi @ qd
 
         # add a small number to the bending strain to avoid singularities
         xi_epsed = apply_eps_to_bend_strains_fn(xi, eps)
@@ -588,7 +588,7 @@ def factory(
         # evaluate the symbolic expressions
         params_for_lambdify = select_params_for_lambdify_fn(params)
         B = B_lambda(*params_for_lambdify, *xi_epsed)
-        C_xi = C_lambda(*params_for_lambdify, *xi_epsed, *xi_d)
+        C_xi = C_lambda(*params_for_lambdify, *xi_epsed, *xid)
         G = G_lambda(*params_for_lambdify, *xi_epsed).squeeze()
         K = K_lambda(*params_for_lambdify, *xi).squeeze()
         Shat = Shat_lambda(*params_for_lambdify)
@@ -617,7 +617,7 @@ def factory(
     def operational_space_dynamical_matrices_fn(
         params: Dict[str, Array],
         q: Array,
-        q_d: Array,
+        qd: Array,
         B: Array,
         C: Array,
         eps: float = 1e4 * global_eps,
@@ -629,7 +629,7 @@ def factory(
         Args:
             params: dictionary of parameters
             q: generalized coordinates of shape (n_q,)
-            q_d: generalized velocities of shape (n_q,)
+            qd: generalized velocities of shape (n_q,)
             B: inertia matrix in the generalized coordinates of shape (n_q, n_q)
             C: coriolis matrix derived with Christoffer symbols in the generalized coordinates of shape (n_q, n_q)
             eps: small number to avoid singularities (e.g., division by zero)
@@ -637,14 +637,14 @@ def factory(
             Lambda: inertia matrix in the operational space of shape (n_x, n_x)
             mu: matrix with corioli and centrifugal terms in the operational space of shape (n_x, n_x)
             Jee: Jacobian of the end-effector pose with respect to the generalized coordinates of shape (3, n_q)
-            Jee_d: time-derivative of the Jacobian of the end-effector pose with respect to the generalized coordinates
+            Jeed: time-derivative of the Jacobian of the end-effector pose with respect to the generalized coordinates
             JeeB_pinv: Dynamically-consistent pseudo-inverse of the Jacobian. Allows the mapping of torques
                 from the generalized coordinates to the operational space: f = JB_pinv.T @ tau_q
                 Shape (n_q, n_x)
         """
         # map the configuration to the strains
         xi = configuration_to_strains_fn(params, q)
-        xi_d = B_xi @ q_d
+        xid = B_xi @ qd
         # add a small number to the bending strain to avoid singularities
         xi_epsed = apply_eps_to_bend_strains_fn(xi, eps)
 
@@ -653,7 +653,7 @@ def factory(
 
         # end-effector Jacobian and its time-derivative
         Jee = Jee_lambda(*params_for_lambdify, *xi_epsed)
-        Jee_d = Jee_d_lambda(*params_for_lambdify, *xi_epsed, *xi_d)
+        Jeed = Jeed_lambda(*params_for_lambdify, *xi_epsed, *xid)
 
         # inverse of the inertia matrix in the configuration space
         B_inv = jnp.linalg.inv(B)
@@ -662,14 +662,14 @@ def factory(
             Jee @ B_inv @ Jee.T
         )  # inertia matrix in the operational space
         mu = Lambda @ (
-            Jee @ B_inv @ C - Jee_d
+            Jee @ B_inv @ C - Jeed
         )  # coriolis and centrifugal matrix in the operational space
 
         JeeB_pinv = (
             B_inv @ Jee.T @ Lambda
         )  # dynamically-consistent pseudo-inverse of the Jacobian
 
-        return Lambda, mu, Jee, Jee_d, JeeB_pinv
+        return Lambda, mu, Jee, Jeed, JeeB_pinv
 
     sys_helpers = {
         "eps": global_eps,
@@ -703,12 +703,12 @@ def ode_factory(
     consider_hysteresis: bool = False,
 ) -> Callable[[float, Array], Array]:
     """
-    Make an ODE function of the form ode_fn(t, x) -> x_dot.
+    Make an ODE function of the form ode_fn(t, x) -> xd.
     This function assumes a constant torque input (i.e. zero-order hold).
     Args:
         dynamical_matrices_fn: Callable that returns B, C, G, K, D, alpha_fn. Needs to conform to the signature:
-            dynamical_matrices_fn(params, q, q_d, z, phi) -> Tuple[B, C, G, K, D, A]
-            where q and q_d are the configuration and velocity vectors, respectively,
+            dynamical_matrices_fn(params, q, qd, z, phi) -> Tuple[B, C, G, K, D, A]
+            where q and qd are the configuration and velocity vectors, respectively,
             B is the inertia matrix of shape (n_q, n_q),
             C is the Coriolis matrix of shape (n_q, n_q),
             G is the gravity vector of shape (n_q, ),
@@ -724,7 +724,7 @@ def ode_factory(
             model is considered with the identity matrix as the actuation matrix.
         consider_hysteresis: If True, Bouc-Wen is used to model hysteresis. Otherwise, hysteresis will be neglected.
     Returns:
-        ode_fn: ODE function of the form ode_fn(t, x) -> x_dot
+        ode_fn: ODE function of the form ode_fn(t, x) -> xd
     """
     num_rods = params["rout"].shape[0] * params["rout"].shape[1]
 
@@ -735,14 +735,14 @@ def ode_factory(
         Args:
             t: time
             x: state vector of shape (2 * n_q + n_z, ) where n_q is the number of configuration variables and n_z is the
-                number of state variables of the hysteresis model. The state vector is of the form [q, q_d, z]
+                number of state variables of the hysteresis model. The state vector is of the form [q, qd, z]
             u: input to the system.
                 - if consider_underactuation_model is True, then this is an array of shape (n_phi) with
                     motor positions / twist angles of the proximal end of the rods
                 - if consider_underactuation_model is False, then this is an array of shape (n_q) with
                     the generalized torques
         Returns:
-            x_d: time-derivative of the state vector of shape (2 * n_q, )
+            xd: time-derivative of the state vector of shape (2 * n_q, )
         """
         if consider_hysteresis is True:
             hys_params = params["hysteresis"]
@@ -750,19 +750,19 @@ def ode_factory(
 
             n_z = B_z.shape[1]
             n_q = (x.shape[0] - n_z) // 2
-            q, q_d, z = x[:n_q], x[n_q : 2 * n_q], x[2 * n_q :]
+            q, qd, z = x[:n_q], x[n_q : 2 * n_q], x[2 * n_q :]
 
-            z_d = (B_z.T @ q_d) * (
+            zd = (B_z.T @ qd) * (
                 hys_params["A"]
                 - jnp.abs(z) ** hys_params["n"]
                 * (
                     hys_params["gamma"]
-                    + hys_params["beta"] * jnp.sign((B_z.T @ q_d) * z)
+                    + hys_params["beta"] * jnp.sign((B_z.T @ qd) * z)
                 )
             )
         else:
             n_q = x.shape[0] // 2
-            q, q_d = x[:n_q], x[n_q:]
+            q, qd = x[:n_q], x[n_q:]
             z = None
 
         if control_fn is not None:
@@ -770,10 +770,10 @@ def ode_factory(
 
         if consider_underactuation_model is True:
             phi = u
-            B, C, G, K, D, tau_q = dynamical_matrices_fn(params, q, q_d, z=z, phi=phi)
+            B, C, G, K, D, tau_q = dynamical_matrices_fn(params, q, qd, z=z, phi=phi)
         else:
             B, C, G, K, D, _ = dynamical_matrices_fn(
-                params, q, q_d, z=z, phi=jnp.zeros((num_rods,))
+                params, q, qd, z=z, phi=jnp.zeros((num_rods,))
             )
             tau_q = u
 
@@ -781,13 +781,13 @@ def ode_factory(
         B_inv = jnp.linalg.inv(B)
 
         # compute the acceleration
-        q_dd = B_inv @ (tau_q - C @ q_d - G - K - D @ q_d)
+        qdd = B_inv @ (tau_q - C @ qd - G - K - D @ qd)
 
         if consider_hysteresis is True:
-            x_d = jnp.concatenate([q_d, q_dd, z_d])
+            xd = jnp.concatenate([qd, qdd, zd])
         else:
-            x_d = jnp.concatenate([x[n_q:], q_dd])
+            xd = jnp.concatenate([x[n_q:], qdd])
 
-        return x_d
+        return xd
 
     return ode_fn

@@ -52,7 +52,7 @@ def factory(filepath: Union[str, Path]) -> Tuple[Callable, Callable]:
     n_q = len(sym_exps["state_syms"]["q"])
 
     # concatenate the list of state symbols
-    state_syms_cat = sym_exps["state_syms"]["q"] + sym_exps["state_syms"]["q_d"]
+    state_syms_cat = sym_exps["state_syms"]["q"] + sym_exps["state_syms"]["qd"]
 
     # lambdify symbolic expressions
     chi_lambda_ls = []
@@ -102,14 +102,14 @@ def factory(filepath: Union[str, Path]) -> Tuple[Callable, Callable]:
 
     @jit
     def dynamical_matrices_fn(
-        params: Dict[str, Array], q: Array, q_d: Array
+        params: Dict[str, Array], q: Array, qd: Array
     ) -> Tuple[Array, Array, Array, Array, Array, Array]:
         """
         Compute the dynamical matrices of the system.
         Args:
             params: Dictionary of robot parameters
             q: generalized coordinates of shape (n_q, )
-            q_d: generalized velocities of shape (n_q, )
+            qd: generalized velocities of shape (n_q, )
         Returns:
             B: mass / inertia matrix of shape (n_q, n_q)
             C: coriolis / centrifugal matrix of shape (n_q, n_q)
@@ -126,7 +126,7 @@ def factory(filepath: Union[str, Path]) -> Tuple[Callable, Callable]:
         params_for_lambdify = select_params_for_lambdify(params)
 
         B = B_lambda(*params_for_lambdify, *q)
-        C = C_lambda(*params_for_lambdify, *q, *q_d)
+        C = C_lambda(*params_for_lambdify, *q, *qd)
         G = G_lambda(*params_for_lambdify, *q).squeeze()
 
         # compute elastic matrices as K(q) = K q

@@ -2,14 +2,14 @@ import sympy as sp
 
 
 def compute_coriolis_matrix(
-    B: sp.Matrix, q: sp.Matrix, q_d: sp.Matrix, simplify: bool = True
+    B: sp.Matrix, q: sp.Matrix, qd: sp.Matrix, simplify: bool = True
 ) -> sp.Matrix:
     """
-    Compute the matrix C(q, q_d) containing the coriolis and centrifugal terms using Christoffel symbols.
+    Compute the matrix C(q, qd) containing the coriolis and centrifugal terms using Christoffel symbols.
     Args:
         B: mass / inertial matrix of shape (num_dof, num_dof)
         q: vector of generalized coordinates of shape (num_dof,)
-        q_d: vector of generalized velocities of shape (num_dof,)
+        qd: vector of generalized velocities of shape (num_dof,)
         simplify: whether to simplify the result
     Returns:
         C: matrix of shape (num_dof, num_dof) containing the coriolis and centrifugal terms
@@ -36,7 +36,7 @@ def compute_coriolis_matrix(
     for i in range(num_dof):
         for j in range(num_dof):
             for k in range(num_dof):
-                C[i, j] = C[i, j] + Ch[i, j, k] * q_d[k]
+                C[i, j] = C[i, j] + Ch[i, j, k] * qd[k]
     if simplify:
         # simplify coriolis and centrifugal force matrix
         C = sp.simplify(C)

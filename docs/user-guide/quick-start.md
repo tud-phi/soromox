@@ -37,8 +37,8 @@ Let's dive right in with a classic example - simulating a double pendulum to und
 
     # Set initial conditions
     q0 = jnp.array([jnp.pi/4, jnp.pi/6])  # Initial angles [rad]
-    q_dot0 = jnp.array([0.0, 0.0])        # Initial velocities [rad/s]
-    state0 = jnp.concatenate([q0, q_dot0])
+    qd0 = jnp.array([0.0, 0.0])        # Initial velocities [rad/s]
+    state0 = jnp.concatenate([q0, qd0])
     ```
 
 === "⚡ Simulate"
@@ -68,7 +68,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     t = solution.ts
     states = solution.ys
     q = states[:, :num_links]
-    q_dot = states[:, num_links:]
+    qd = states[:, num_links:]
 
     # Compute end-effector trajectory
     end_effector_positions = jnp.array([
@@ -87,8 +87,8 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     ax1.grid(True, alpha=0.3)
 
     # Joint velocities over time
-    ax2.plot(t, q_dot[:, 0], label='Joint 1', linewidth=2, color='#1f77b4')
-    ax2.plot(t, q_dot[:, 1], label='Joint 2', linewidth=2, color='#ff7f0e')
+    ax2.plot(t, qd[:, 0], label='Joint 1', linewidth=2, color='#1f77b4')
+    ax2.plot(t, qd[:, 1], label='Joint 2', linewidth=2, color='#ff7f0e')
     ax2.set_ylabel('Joint Velocities [rad/s]')
     ax2.set_title('💨 Joint Velocities vs Time')
     ax2.legend()
@@ -161,8 +161,8 @@ Robot states follow a consistent `[positions, velocities]` format:
 ```python title="State Vector"
 # For an n-DOF system:
 positions = q      # Shape: (n,)
-velocities = q_dot # Shape: (n,)
-state = jnp.concatenate([q, q_dot])  # Shape: (2n,)
+velocities = qd # Shape: (n,)
+state = jnp.concatenate([q, qd])  # Shape: (2n,)
 ```
 
 ---

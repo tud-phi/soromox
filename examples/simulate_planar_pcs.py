@@ -10,10 +10,9 @@ from matplotlib.widgets import Slider
 import numpy as onp
 from typing import Callable, Dict
 
+jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.systems.planar_pcs import PlanarPCS
 
-
-jax.config.update("jax_enable_x64", True)  # double precision
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
@@ -144,7 +143,7 @@ def animate_robot_matplotlib(
 
 
 if __name__ == "__main__":
-    num_segments = 1
+    num_segments = 2
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
@@ -153,7 +152,7 @@ if __name__ == "__main__":
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
-        "g": jnp.array([0.0, -9.81]),
+        "g": jnp.array([0.0, 9.81]), # gravity vector [m/s^2] UP!
         "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
     }
@@ -172,6 +171,11 @@ if __name__ == "__main__":
         params=params,
         order_gauss=5,
     )
+    
+    J, Jd = robot.jacobian_and_derivative(
+        q=jnp.zeros((3*num_segments,)), 
+        qd=jnp.zeros((3*num_segments,)), 
+        s=params["L"][0])
 
     # =====================================================
     # Simulation upon time
@@ -195,7 +199,7 @@ if __name__ == "__main__":
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
 
-    ts, q_ts, q_d_ts = robot.resolve_upon_time(
+    ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
         u=u,
@@ -243,7 +247,7 @@ if __name__ == "__main__":
     # Energy computation upon time
     # =====================================================
     U_ts = jax.vmap(jax.jit(partial(robot.potential_energy)))(q_ts)
-    T_ts = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(q_ts, q_d_ts)
+    T_ts = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(q_ts, qd_ts)
 
     plt.figure()
     plt.plot(ts, U_ts, label="Potential Energy")
