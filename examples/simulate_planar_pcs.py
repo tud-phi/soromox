@@ -233,6 +233,17 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.show()
 
+    # end effector orientation vs. time
+    plt.figure()
+    plt.plot(ts, chi_ee_ts[:, 0] / jnp.pi * 180, label="End-effector Orientation $\theta$ [deg]")
+    plt.xlabel("Time [s]")
+    plt.ylabel("End-effector Orientation [deg]")
+    plt.legend()
+    plt.grid(True)
+    plt.box(True)
+    plt.tight_layout()
+    plt.show()
+
     plt.figure()
     plt.scatter(chi_ee_ts[:, 1], chi_ee_ts[:, 2], c=ts, cmap="viridis")
     plt.axis("equal")

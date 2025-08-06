@@ -9,14 +9,14 @@ This script updates version information across all relevant files:
 - src/soromox.egg-info/PKG-INFO (if it exists)
 
 Usage:
-    conda run -n jsrm python bump_version.py <new_version>
-    conda run -n jsrm python bump_version.py --patch  # increment patch version (0.1.0 -> 0.1.1)
-    conda run -n jsrm python bump_version.py --minor  # increment minor version (0.1.0 -> 0.2.0)
-    conda run -n jsrm python bump_version.py --major  # increment major version (0.1.0 -> 1.0.0)
+    python bump_version.py <new_version>
+    python bump_version.py --patch  # increment patch version (0.1.0 -> 0.1.1)
+    python bump_version.py --minor  # increment minor version (0.1.0 -> 0.2.0)
+    python bump_version.py --major  # increment major version (0.1.0 -> 1.0.0)
 
 Examples:
-    conda run -n jsrm python bump_version.py 0.2.0
-    conda run -n jsrm python bump_version.py --minor
+    python bump_version.py 0.2.0
+    python bump_version.py --minor
 """
 
 import argparse

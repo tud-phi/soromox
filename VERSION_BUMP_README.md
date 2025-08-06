@@ -60,16 +60,16 @@ make bump-version VERSION=0.2.0
 
 ```bash
 # Preview changes without making them
-conda run -n jsrm python bump_version.py --patch --dry-run
+python bump_version.py --patch --dry-run
 
 # Bump version with git operations
-conda run -n jsrm python bump_version.py --minor --yes --create-tag --push
+python bump_version.py --minor --yes --create-tag --push
 
 # Skip confirmation prompt
-conda run -n jsrm python bump_version.py --patch --yes
+python bump_version.py --patch --yes
 
 # Create tag but don't push automatically
-conda run -n jsrm python bump_version.py --patch --yes --create-tag
+python bump_version.py --patch --yes --create-tag
 ```
 
 ## 🤖 Automated GitHub Release Process
