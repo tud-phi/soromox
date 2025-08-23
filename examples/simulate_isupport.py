@@ -41,7 +41,7 @@ def draw_robot_curve(
 
 
 def animate_robot_matplotlib(
-    robot: PCS,
+    robot: ISupport,
     t_list: Array,  # shape (T,)
     q_list: Array,  # shape (T, DOF)
     num_points: int = 50,
@@ -166,7 +166,7 @@ if __name__ == "__main__":
     }
     gamma_t = 806  # translational damping constant [1/s]
     gamma_r = 1.9416 * 10**(-4)  # rotational damping constant [m^2/s]
-    params["D"] = 1e-3 * jnp.diag(
+    params["D"] = jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]]), num_segments, axis=0
@@ -194,8 +194,12 @@ if __name__ == "__main__":
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
-    # Actuation parameters
-    u = jnp.zeros_like(q0)
+    # compute the actuation matrix at q0
+    A = robot.actuation_matrix(q0)
+    print("A:\n", A)
+
+    # Actuation pressures
+    u = jnp.array([0e5, 0.0, 0.0])
 
     # Simulation time parameters
     t0 = 0.0
