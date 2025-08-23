@@ -984,8 +984,9 @@ class PCS(eqx.Module):
         rho_i = self.rho[i]
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
         I_i = self._local_second_moment_of_area(i)  # Second moment of area
+        J_i = self._local_polar_moment_of_inertia(i)  # Polar moment of inertia
 
-        M_i = rho_i * jnp.diag(jnp.array([I_i, I_i, I_i, A_i, A_i, A_i]))
+        M_i = rho_i * jnp.diag(jnp.array([J_i, I_i, I_i, A_i, A_i, A_i]))
         return M_i
 
     # ===========================================
