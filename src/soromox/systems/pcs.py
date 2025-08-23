@@ -617,7 +617,7 @@ class PCS(eqx.Module):
         tuple_J_0 = (J_0_L0, J_0_s)
 
         # Iteration function
-        def J_i(tuple_J_prev: Array, i: int) -> Tuple[Tuple[Array, Array], Array]:
+        def J_i(tuple_J_prev: Array, i: Array) -> Tuple[Tuple[Array, Array], Array]:
             J_prev_Lprev, _ = tuple_J_prev
 
             xi_i = xi[i]
@@ -928,12 +928,12 @@ class PCS(eqx.Module):
     # Useful functions for the system
 
     @eqx.filter_jit
-    def _local_cross_sectional_area(self, i: int) -> Array:
+    def _local_cross_sectional_area(self, i: Array) -> Array:
         """
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
@@ -943,12 +943,12 @@ class PCS(eqx.Module):
         return A_i
 
     @eqx.filter_jit
-    def _local_second_moment_of_area(self, i: int) -> Array:
+    def _local_second_moment_of_area(self, i: Array) -> Array:
         """
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             I_i (Array): local second moment of area of the i-th segment
@@ -957,12 +957,12 @@ class PCS(eqx.Module):
         I_i = jnp.pi * self.r[i] ** 4 / 4
         return I_i
 
-    def _local_polar_moment_of_inertia(self, i: int) -> Array:
+    def _local_polar_moment_of_inertia(self, i: Array) -> Array:
         """
         Compute the local polar moment of inertia for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             J_i (Array): local polar moment of inertia of the i-th segment
@@ -972,12 +972,12 @@ class PCS(eqx.Module):
         return J_i
 
     @eqx.filter_jit
-    def _local_mass_matrix(self, i: int) -> Array:
+    def _local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
         Returns:
             M_i (Array): local mass matrix of shape (6, 6) for the i-th segment
         """
@@ -1174,12 +1174,12 @@ class PCS(eqx.Module):
         return G
 
     @eqx.filter_jit
-    def _local_stiffness_matrix(self, i: int) -> Array:
+    def _local_stiffness_matrix(self, i: Array) -> Array:
         """
         Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             S_i (Array): Local stiffness matrix of shape (6, 6) for the i-th segment.
