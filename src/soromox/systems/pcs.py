@@ -933,7 +933,7 @@ class PCS(eqx.Module):
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
@@ -948,7 +948,7 @@ class PCS(eqx.Module):
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
             I_i (Array): local second moment of area of the i-th segment
@@ -962,7 +962,7 @@ class PCS(eqx.Module):
         Compute the local polar moment of inertia for the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
             J_i (Array): local polar moment of inertia of the i-th segment
@@ -977,7 +977,7 @@ class PCS(eqx.Module):
         Compute the local mass matrix for the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
         Returns:
             M_i (Array): local mass matrix of shape (6, 6) for the i-th segment
         """
@@ -1180,7 +1180,7 @@ class PCS(eqx.Module):
         Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
             S_i (Array): Local stiffness matrix of shape (6, 6) for the i-th segment.
