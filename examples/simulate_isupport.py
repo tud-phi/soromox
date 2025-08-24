@@ -60,7 +60,7 @@ def animate_robot_matplotlib(
     batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
     L_max = jnp.sum(robot.L)
 
-    width = jnp.linalg.norm(robot.L) * 3
+    width = jnp.linalg.norm(robot.L) * 1.5
     height = width
 
     fig = plt.figure()
@@ -155,17 +155,22 @@ if __name__ == "__main__":
             [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
         "L": 190 * 1e-3 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
+        "r": 35.6 * 1e-3 * jnp.ones((num_segments,)),
         "rho": 1104 * jnp.ones((num_segments,)),  # material density of TPU 80 A LF by BASF [kg/m^3]
-        "g": jnp.array([0.0, 0.0, -9.81]),  # Gravity vector [m/s^2]
+        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
         "E": E * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": G * jnp.ones((num_segments,)),  # Shear modulus [Pa]
         "r_chamber_in": 6.39 * 1e-3 * jnp.ones((num_segments,)),  # inner radius of each segment's pneumatic chamber [m]
         "r_chamber_out": 7.79 * 1e-3 * jnp.ones((num_segments,)),  # outer radius of each segment's pneumatic chamber [m]
         "d_chamber": 20 * 1e-3 * jnp.ones((num_segments,)),  # radial distance of the center of the chambers from the centerline of the backbone [m]
     }
-    gamma_t = 806  # translational damping constant [1/s]
-    gamma_r = 1.9416 * 10**(-4)  # rotational damping constant [m^2/s]
+
+    # damping coefficient
+    # these values are from the paper but they seem way too large
+    # gamma_t = 806  # translational damping constant [1/s]
+    # gamma_r = 1.9416 * 10**(-4)  # rotational damping constant [m^2/s]
+    gamma_t = 806 * 1e-3  # translational damping constant [1/s]
+    gamma_r = 1.0 * 1e-4  # rotational damping constant [m^2/s]
     params["D"] = jnp.diag(
         (
             jnp.repeat(
@@ -187,24 +192,24 @@ if __name__ == "__main__":
     # =====================================================
     # Initial configuration
     q0 = jnp.repeat(
-        jnp.array([0.0, 0.0, 5.0 * jnp.pi, 0.1, 0.2, 0.0])[None, :],
+        jnp.array([0.0, 0.0, -1.0 * jnp.pi, 0.1, 0.2, 0.0])[None, :],
         num_segments,
         axis=0,
     ).flatten()
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
-    # compute the actuation matrix at q0
-    A = robot.actuation_matrix(q0)
-    print("A:\n", A)
+    # # compute the actuation matrix at q0
+    # A = robot.actuation_matrix(q0)
+    # print("A:\n", A)
 
     # Actuation pressures
-    u = jnp.array([0e5, 0.0, 0.0])
+    u = jnp.array([2e-1, 0.0, 0.0]) * 1e5
 
     # Simulation time parameters
     t0 = 0.0
     t1 = 2.0
-    dt = 1e-4
+    dt = 5e-5
     skip_step = 100  # how many time steps to skip in between video frames
 
     # Solver
@@ -221,6 +226,9 @@ if __name__ == "__main__":
         solver=solver,
         max_steps=None,
     )
+
+    q1 = q_ts[-1]
+    print("q1:\n", q1)
 
     # =====================================================
     # End-effector position upon time
