@@ -951,25 +951,15 @@ class PCS(eqx.Module):
             i (Array): index of the segment as array of shape ()
 
         Returns:
-            I_i (Array): local second moment of area of the i-th segment
+            I_i (Array): local second moment of area of the i-th segment as array of shape (3, ) where the entries correspond to [I_xx, I_yy, I_zz]
         """
         # Second moment of area for a circular cross-section
-        I_i = jnp.pi * self.r[i] ** 4 / 4
+        I_i = jnp.array([
+            jnp.pi * self.r[i] ** 4 / 2,  # I_xx
+            jnp.pi * self.r[i] ** 4 / 4,  # I_yy
+            jnp.pi * self.r[i] ** 4 / 4,  # I_zz
+        ])
         return I_i
-
-    def _local_polar_moment_of_inertia(self, i: Array) -> Array:
-        """
-        Compute the local polar moment of inertia for the i-th segment.
-
-        Args:
-            i (Array): index of the segment as array of shape ()
-
-        Returns:
-            J_i (Array): local polar moment of inertia of the i-th segment
-        """
-        # Polar moment of inertia for a circular cross-section
-        J_i = jnp.pi * self.r[i] ** 4 / 2
-        return J_i
 
     @eqx.filter_jit
     def _local_mass_matrix(self, i: Array) -> Array:
@@ -983,10 +973,9 @@ class PCS(eqx.Module):
         """
         rho_i = self.rho[i]
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area
-        J_i = self._local_polar_moment_of_inertia(i)  # Polar moment of inertia
+        I_i = self._local_second_moment_of_area(i)  # Second moment of area as array of shape (3, )
 
-        M_i = rho_i * jnp.diag(jnp.array([J_i, I_i, I_i, A_i, A_i, A_i]))
+        M_i = rho_i * jnp.diag(jnp.array([I_i[0], I_i[1], I_i[2], A_i, A_i, A_i]))
         return M_i
 
     # ===========================================
@@ -1185,16 +1174,15 @@ class PCS(eqx.Module):
         Returns:
             S_i (Array): Local stiffness matrix of shape (6, 6) for the i-th segment.
         """
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area
+        I_i = self._local_second_moment_of_area(i)  # Second moment of area as array of shape (3, )
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
-        J_i = self._local_polar_moment_of_inertia(i)  # Polar moment of inertia
 
         S_i = self.L[i] * jnp.diag(
             jnp.stack(
                 [
-                    self.G[i] * J_i,  # torsion X
-                    self.E[i] * I_i,  # bending Y
-                    self.E[i] * I_i,  # bending Z
+                    self.G[i] * I_i[0],  # torsion X
+                    self.E[i] * I_i[1],  # bending Y
+                    self.E[i] * I_i[2],  # bending Z
                     A_i * self.E[i],  # axial X
                     4 / 3 * A_i * self.G[i],  # shear Y
                     4 / 3 * A_i * self.G[i],  # shear Z

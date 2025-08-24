@@ -366,7 +366,7 @@ class ISupport(PCS):
         Compute the polar angles of the chambers in the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
             varphi_chambers_i (Array): polar angles of the i-th pneumatic chamber as Array of shape (num_chambers_per_segment, )
@@ -380,7 +380,7 @@ class ISupport(PCS):
         Compute the position of the centroid of one pneumatic actuator in the local reference frame of the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
             varphi_angle (Array): polar angle of the actuator center from the local z-axis as Array of shape ()
         Returns:
             centroid_actuator (Array): position of the centroid of one pneumatic actuator in the local reference frame of the i-th segment as array of shape (3, )
@@ -400,7 +400,7 @@ class ISupport(PCS):
         Instead, it represents the cross-sectional area of the actuator itself that is considered for inertial and stiffness calculations.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
             A_one_actuator_i (Array): local cross-sectional area of one actuator of the i-th segment
@@ -415,10 +415,10 @@ class ISupport(PCS):
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
-            A_i (Array): local cross-sectional area of the i-th segment
+            A_i (Array): local cross-sectional area of the i-th segment as array of shape ()
         """
         A_one_actuator_i = self._local_actuator_cross_sectional_area(i)
         # we assume that the cross-section only consists of the actuators
@@ -433,7 +433,7 @@ class ISupport(PCS):
         Instead, it represents the second moment of area of the actuator itself that is considered for inertial and stiffness calculations.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
             varphi_chamber (Array): polar angle of the chamber center from the local z-axis as Array of shape ()
         Returns:
             I_one_actuator_i (Array): local second moment of area of one actuator of the i-th segment as array of shape (3, )
@@ -461,10 +461,10 @@ class ISupport(PCS):
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (Array): index of the segment
+            i (Array): index of the segment as array of shape ()
 
         Returns:
-            I_i (Array): local second moment of area of the i-th segment
+            I_i (Array): local second moment of area of the i-th segment as array of shape (3, )
         """
 
         # compute the polar angles of the actuators
