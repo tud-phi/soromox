@@ -1,146 +1,437 @@
+__all__ = ["Pendulum"]
 import dill
-import jax
-from jax import Array, debug, jit, lax, vmap
+import equinox as eqx
+from jax import Array, jit, lax
 from jax import numpy as jnp
 import sympy as sp
 from pathlib import Path
-from typing import Callable, Dict, Iterable, List, Sequence, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union, Optional
+
+# Diffrax (for time integration helpers)
+from diffrax import (
+    diffeqsolve,
+    ODETerm,
+    SaveAt,
+    Tsit5,
+    PIDController,
+    ConstantStepSize,
+    AbstractSolver,
+)
 
 from .utils import concatenate_params_syms
 
 
-def factory(filepath: Union[str, Path]) -> Tuple[Callable, Callable]:
+class Pendulum(eqx.Module):
     """
-    Create jax functions from file containing symbolic expressions.
-    Args:
-        filepath: path to file containing symbolic expressions
-    Returns:
-        forward_kinematics_fn: function that returns the p vector of shape (3, n_q) with the positions
-        dynamical_matrices_fn: function that returns the B, C, G, K, D, and alpha matrices
+    N-link planar pendulum with symbolic kinematics and dynamics.
+
+    Loads symbolic expressions (generated via symbolic_derivation.pendulum)
+    and exposes JAX-compiled forward kinematics and dynamics, following
+    the class-based style used by other systems.
     """
-    # load saved symbolic data
-    sym_exps = dill.load(open(str(filepath), "rb"))
 
-    # symbols for robot parameters
-    params_syms = sym_exps["params_syms"]
+    # Static fields
+    num_links: int = eqx.field(static=True)
 
-    @jit
-    def select_params_for_lambdify(params: Dict[str, Array]) -> List[Array]:
+    # Parameter cache used for lambdified calls
+    params_for_lambdify: List[Array]
+
+    # Lambdified symbolic expressions
+    chi_lambda_ls: List[Callable]
+    B_lambda: Callable
+    C_lambda: Callable
+    G_lambda: Callable
+
+    # Optional linear elasticity/damping (defaults to zero)
+    K_mat: Array
+    D_mat: Array
+
+    def __init__(
+        self,
+        sym_exp_filepath: Union[str, Path],
+        params: Dict[str, Array],
+    ) -> None:
         """
-        Select the parameters for lambdify
+        Initialize the Pendulum model from pre-computed symbolic expressions.
+
         Args:
-            params: Dictionary of robot parameters
-        Returns:
-            params_for_lambdify: list of with each robot parameter
+            sym_exp_filepath (Union[str, Path]):
+                Path to the `.dill` file with symbolic expressions.
+            params (Dict[str, Array]):
+                Dictionary of robot parameters. Expected keys include:
+                - "m": masses of each link, shape (n,)
+                - "I": inertias of each link, shape (n,)
+                - "L": lengths of each link, shape (n,)
+                - "Lc": COM distances of each link, shape (n,)
+                - "g": planar gravity vector [gx, gy], shape (2,)
+                Optional:
+                - "K": stiffness matrix, shape (n, n)
+                - "D": damping matrix, shape (n, n)
         """
-        params_for_lambdify = []
-        for params_key, params_vals in sorted(params.items()):
-            if params_key in params_syms.keys():
-                for param in params_vals:
-                    params_for_lambdify.append(param)
-        return params_for_lambdify
+        # Load symbolic expressions
+        sym_exps = dill.load(open(str(sym_exp_filepath), "rb"))
 
-    # symbols of state variables
-    state_syms = sym_exps["state_syms"]
-    # symbolic expressions
-    exps = sym_exps["exps"]
+        # Parameter symbols and state symbols
+        params_syms = sym_exps["params_syms"]
+        state_syms = sym_exps["state_syms"]
 
-    # concatenate the robot params symbols
-    params_syms_cat = concatenate_params_syms(params_syms)
+        # rename "Lc" to "lc" for consistency in params_syms
+        params_syms["Lc"] = params_syms.pop("lc")
 
-    # number of degrees of freedom
-    n_q = len(sym_exps["state_syms"]["q"])
+        # Number of links = DoFs
+        self.num_links = len(state_syms["q"])  # n_q
 
-    # concatenate the list of state symbols
-    state_syms_cat = sym_exps["state_syms"]["q"] + sym_exps["state_syms"]["qd"]
+        # Build list of parameters in the order required by lambdified functions
+        params_for_lambdify: List[Array] = []
+        for k, vals in sorted(params.items()):
+            if k in params_syms.keys():
+                # flatten to ensure scalar unpack works in lambdify calls
+                for v in jnp.asarray(vals).flatten():
+                    params_for_lambdify.append(v)
+        self.params_for_lambdify = params_for_lambdify
 
-    # lambdify symbolic expressions
-    chi_lambda_ls = []
-    # iterate through symbolic expressions for each segment
-    for chi_exp in sym_exps["exps"]["chi_ls"]:
-        chi_lambda = sp.lambdify(
-            params_syms_cat + sym_exps["state_syms"]["q"], chi_exp, "jax"
+        # Concatenate sympy symbols
+        params_syms_cat = concatenate_params_syms(params_syms)
+        state_syms_cat = state_syms["q"] + state_syms["qd"]
+
+        # Lambdify kinematics for each link tip pose
+        chi_lambda_ls: List[Callable] = []
+        for chi_exp in sym_exps["exps"]["chi_ls"]:
+            chi_lambda = sp.lambdify(
+                params_syms_cat + state_syms["q"], chi_exp, "jax"
+            )
+            chi_lambda_ls.append(chi_lambda)
+        self.chi_lambda_ls = chi_lambda_ls
+
+        # Lambdify dynamics
+        self.B_lambda = sp.lambdify(
+            params_syms_cat + state_syms["q"], sym_exps["exps"]["B"], "jax"
         )
-        chi_lambda_ls.append(chi_lambda)
+        self.C_lambda = sp.lambdify(
+            params_syms_cat + state_syms_cat, sym_exps["exps"]["C"], "jax"
+        )
+        self.G_lambda = sp.lambdify(
+            params_syms_cat + state_syms["q"], sym_exps["exps"]["G"], "jax"
+        )
 
-    # lambdify symbolic expressions
-    B_lambda = sp.lambdify(
-        params_syms_cat + sym_exps["state_syms"]["q"], sym_exps["exps"]["B"], "jax"
-    )
-    C_lambda = sp.lambdify(
-        params_syms_cat + state_syms_cat, sym_exps["exps"]["C"], "jax"
-    )
-    G_lambda = sp.lambdify(
-        params_syms_cat + sym_exps["state_syms"]["q"], sym_exps["exps"]["G"], "jax"
-    )
+        # Optional linear elasticity and damping matrices
+        n_q = self.num_links
+        self.K_mat = jnp.asarray(params.get("K", jnp.zeros((n_q, n_q))))
+        self.D_mat = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
 
-    @jit
-    def forward_kinematics_fn(
-        params: Dict[str, Array], q: Array, link_idx: Array
-    ) -> Array:
+    def update_params(self, params: Dict[str, Array]) -> "Pendulum":
         """
-        Evaluate the forward kinematics the tip of the links
+        Update internal parameters.
+
+        Supports updating physical parameters (m, I, L, Lc, g) and linear
+        stiffness/damping matrices (K, D). Returns an updated eqx tree for
+        JIT-friendliness (functional style).
+
         Args:
-            params: Dictionary of robot parameters
-            q: generalized coordinates of shape (n_q, )
-            link_idx: index of link to evaluate with shape ()
+            params (Dict[str, Array]): Dictionary of parameters to update.
+
         Returns:
-            chi: pose of the tip of the link in Cartesian-space with shape (3, )
-                Consists of [p_x, p_y, theta]
-                where p_x is the x-position, p_y is the y-position,
-                and theta is the planar orientation with respect to the x-axis
+            updated (Pendulum): A new instance with updated fields.
         """
-        # convert the dictionary of parameters to a list, which we can pass to the lambda function
-        params_for_lambdify = select_params_for_lambdify(params)
+        # Rebuild params_for_lambdify list
+        new_params_for_lambdify: List[Array] = []
+        # Conservative approach: keep ordering consistent by sorting keys
+        for v in params.values():
+            pass  # placeholder to satisfy potential empty loop in tracing
+        # Since lambdify ordering depends on original params_syms, for safety
+        # require caller to pass the full set of physical params when changing
+        # them. Otherwise, only update K/D.
+        updated = self
+        if any(k in params for k in ["m", "I", "L", "Lc", "g"]):
+            # If physical parameters change, rebuild the flattened list from
+            # available values; missing keys would lead to wrong ordering, so
+            # we expect the caller to provide all physical keys.
+            for k, vals in sorted(params.items()):
+                if k in ["m", "I", "L", "Lc", "g"]:
+                    for vv in jnp.asarray(vals).flatten():
+                        new_params_for_lambdify.append(vv)
+            updated = eqx.tree_at(
+                lambda x: x.params_for_lambdify, updated, new_params_for_lambdify
+            )
+        if "K" in params:
+            updated = eqx.tree_at(
+                lambda x: x.K_mat, updated, jnp.asarray(params["K"])
+            )
+        if "D" in params:
+            updated = eqx.tree_at(
+                lambda x: x.D_mat, updated, jnp.asarray(params["D"])
+            )
+        return updated
 
-        chi = lax.switch(link_idx, chi_lambda_ls, *params_for_lambdify, *q).squeeze()
+    @eqx.filter_jit
+    def forward_kinematics(self, q: Array, link_idx: Array) -> Array:
+        """
+        Compute the forward kinematics at a given link.
 
-        return chi
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+            link_idx (Array): Link index (0-based), scalar array.
+                Use `n_q - 1` to query the end-effector.
 
-    # actuation matrix
-    alpha = jnp.identity(n_q)
+        Returns:
+            chi (Array): Pose [p_x, p_y, theta], shape (3,).
+        """
+        q_list = [q[i] for i in range(self.num_links)]
+        chi = lax.switch(
+            link_idx, self.chi_lambda_ls, *self.params_for_lambdify, *q_list
+        )
+        return chi.squeeze()
 
-    @jit
-    def dynamical_matrices_fn(
-        params: Dict[str, Array], q: Array, qd: Array
+    # -------------------------------
+    # Standardized dynamics interface
+    # -------------------------------
+
+    def mass_matrix(self, q: Array) -> Array:
+        """
+        Compute the mass (inertia) matrix of the pendulum.
+
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+
+        Returns:
+            B (Array): Inertia matrix of shape (n_q, n_q).
+        """
+        q_list = [q[i] for i in range(self.num_links)]
+        return self.B_lambda(*self.params_for_lambdify, *q_list)
+
+    def coriolis_matrix(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the Coriolis/centrifugal matrix of the pendulum.
+
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+            qd (Array): Joint velocities of shape (n_q,).
+
+        Returns:
+            C (Array): Coriolis matrix of shape (n_q, n_q).
+        """
+        q_list = [q[i] for i in range(self.num_links)]
+        qd_list = [qd[i] for i in range(self.num_links)]
+        return self.C_lambda(*self.params_for_lambdify, *q_list, *qd_list)
+
+    def gravitational_force(self, q: Array) -> Array:
+        """
+        Compute the gravitational generalized forces.
+
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+
+        Returns:
+            G (Array): Gravity vector of shape (n_q,).
+        """
+        q_list = [q[i] for i in range(self.num_links)]
+        return self.G_lambda(*self.params_for_lambdify, *q_list).squeeze()
+
+    def stiffness_matrix(self) -> Array:
+        """
+        Return the linear stiffness matrix.
+
+        Returns:
+            K (Array): Stiffness matrix of shape (n_q, n_q).
+        """
+        return self.K_mat
+
+    def elastic_force(self, q: Array) -> Array:
+        """
+        Compute the elastic generalized forces.
+
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+
+        Returns:
+            Kq (Array): Elastic force K @ q of shape (n_q,).
+        """
+        return self.K_mat @ q
+
+    def damping_matrix(self) -> Array:
+        """
+        Return the linear viscous damping matrix.
+
+        Returns:
+            D (Array): Damping matrix of shape (n_q, n_q).
+        """
+        return self.D_mat
+
+    def actuation_matrix(self, q: Array) -> Array:
+        """
+        Compute the actuation matrix (identity for fully actuated joints).
+
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+
+        Returns:
+            A (Array): Actuation matrix of shape (n_q, n_q).
+        """
+        return jnp.eye(self.num_links)
+
+    def actuation_force(self, q: Array, u: Array) -> Array:
+        """
+        Compute the generalized actuation forces.
+
+        Args:
+            q (Array): Joint angles of shape (n_q,).
+            u (Array): Actuation inputs (torques) of shape (n_q,).
+
+        Returns:
+            tau_u (Array): Generalized forces of shape (n_q,).
+        """
+        return u
+
+    @eqx.filter_jit
+    def dynamical_matrices(
+        self, q: Array, qd: Array
     ) -> Tuple[Array, Array, Array, Array, Array, Array]:
         """
-        Compute the dynamical matrices of the system.
+        Compute the standard dynamical matrices of the pendulum.
+
         Args:
-            params: Dictionary of robot parameters
-            q: generalized coordinates of shape (n_q, )
-            qd: generalized velocities of shape (n_q, )
+            q (Array): Joint angles of shape (n_q,).
+            qd (Array): Joint velocities of shape (n_q,).
+
         Returns:
-            B: mass / inertia matrix of shape (n_q, n_q)
-            C: coriolis / centrifugal matrix of shape (n_q, n_q)
-            G: gravity vector of shape (n_q, )
-            K: elastic vector of shape (n_q, )
-            D: dissipative matrix of shape (n_q, n_q)
-            alpha: actuation matrix of shape (n_q, n_tau)
+            B (Array): Inertia matrix, shape (n_q, n_q).
+            C (Array): Coriolis/centrifugal matrix, shape (n_q, n_q).
+            G (Array): Gravity vector, shape (n_q,).
+            Kq (Array): Elastic force K @ q, shape (n_q,).
+            D (Array): Damping matrix, shape (n_q, n_q).
+            A (Array): Actuation matrix, shape (n_q, n_q).
         """
-        # elastic and dissipative matrices
-        K = params.get("K", jnp.zeros((n_q, n_q)))
-        D = params.get("D", jnp.zeros((n_q, n_q)))
+        B = self.mass_matrix(q)
+        C = self.coriolis_matrix(q, qd)
+        G = self.gravitational_force(q)
+        K = self.elastic_force(q)
+        D = self.damping_matrix()
+        A = self.actuation_matrix(q)
+        return B, C, G, K, D, A
+    
+    def forward_dynamics(
+        self,
+        t: Array,
+        y: Array,
+        actuation_args: Optional[Tuple] = None,
+    ) -> Array:
+        """
+        Forward dynamics function in state space.
 
-        # convert the dictionary of parameters to a list, which we can pass to the lambda function
-        params_for_lambdify = select_params_for_lambdify(params)
+        Computes yd = [qd, qdd] given the current state and actuation.
 
-        B = B_lambda(*params_for_lambdify, *q)
-        C = C_lambda(*params_for_lambdify, *q, *qd)
-        G = G_lambda(*params_for_lambdify, *q).squeeze()
+        Args:
+            t (Array): Current time.
+            y (Array): State vector [q, qd] of shape (2 * n_q,).
+            actuation_args (Optional[Tuple]):
+                None -> u=0, tau_ext=0;
+                (u,) -> tau_ext=0;
+                (u, tau_ext) -> both provided.
 
-        # compute elastic matrices as K(q) = K q
-        K = K @ q
+        Returns:
+            yd (Array): Time derivative of the state, shape (2 * n_q,).
+        """
+        q, qd = jnp.split(y, 2)
 
-        return B, C, G, K, D, alpha
+        if actuation_args is None:
+            u, tau_ext = None, None
+        elif len(actuation_args) == 1:
+            u, tau_ext = actuation_args[0], None
+        elif len(actuation_args) == 2:
+            u, tau_ext = actuation_args
+        else:
+            raise ValueError("actuation_args must be None, (u,), or (u, tau_ext)")
 
-    return forward_kinematics_fn, dynamical_matrices_fn
+        if u is None:
+            u = jnp.zeros((self.num_links,))
+        if tau_ext is None:
+            tau_ext = jnp.zeros((self.num_links,))
+
+        B = self.mass_matrix(q)
+        C = self.coriolis_matrix(q, qd)
+        G = self.gravitational_force(q)
+        D = self.damping_matrix()
+        tau_el = self.elastic_force(q)
+        tau_u = self.actuation_force(q, u)
+
+        qdd = jnp.linalg.inv(B) @ (tau_u + tau_ext - C @ qd - G - tau_el - D @ qd)
+        return jnp.concatenate([qd, qdd])
+
+    def resolve_upon_time(
+        self,
+        q0: Array,
+        qd0: Array,
+        u: Optional[Array] = None,
+        tau_ext: Optional[Array] = None,
+        t0: Optional[float] = 0.0,
+        t1: Optional[float] = 10.0,
+        dt: Optional[float] = 1e-3,
+        skip_steps: Optional[int] = 0,
+        solver: Optional[AbstractSolver] = Tsit5(),
+        stepsize_controller: Optional[PIDController] = ConstantStepSize(),
+        max_steps: Optional[int] = None,
+    ) -> Tuple[Array, Array, Array]:
+        """
+        Resolve the system dynamics over time using Diffrax.
+
+        Args:
+            q0 (Array): Initial joint angles of shape (n_q,).
+            qd0 (Array): Initial joint velocities of shape (n_q,).
+            u (Optional[Array]): Constant actuation torques of shape (n_q,).
+            tau_ext (Optional[Array]): Constant external torques of shape (n_q,).
+            t0 (float): Start time.
+            t1 (float): End time.
+            dt (float): Initial integration step size.
+            skip_steps (int): Save every Nth step (downsampling).
+            solver (AbstractSolver): Diffrax solver.
+            stepsize_controller (PIDController): Diffrax step size controller.
+            max_steps (Optional[int]): Max steps for the solver.
+
+        Returns:
+            ts (Array): Saved time points, shape (N,).
+            qs (Array): Joint angles over time, shape (N, n_q).
+            qds (Array): Joint velocities over time, shape (N, n_q).
+        """
+        y0 = jnp.concatenate([q0, qd0])
+        if u is None:
+            u = jnp.zeros((self.num_links,))
+        if tau_ext is None:
+            tau_ext = jnp.zeros((self.num_links,))
+
+        # Use a simple lambda to avoid jit/method descriptor issues
+        term = ODETerm(lambda t, y, args: self.forward_dynamics(t, y, args))
+        t = jnp.arange(t0, t1, dt)
+        saveat = SaveAt(ts=t[::skip_steps])
+
+        sol = diffeqsolve(
+            terms=term,
+            solver=solver,
+            t0=t[0],
+            t1=t[-1],
+            dt0=dt,
+            y0=y0,
+            args=(u, tau_ext),
+            saveat=saveat,
+            stepsize_controller=stepsize_controller,
+            max_steps=max_steps,
+        )
+
+        ts = sol.ts
+        ys = sol.ys
+        qs, qds = jnp.split(ys, 2, axis=1)
+        return ts, qs, qds
 
 
 @jit
 def normalize_joint_angles(q: Array) -> Array:
     """
-    Normalize the joint angles `q` to the interval [-pi, pi].
+    Normalize joint angles to the interval [-pi, pi].
+
+    Args:
+        q (Array): Joint angles.
+
+    Returns:
+        q_norm (Array): Normalized joint angles.
     """
     q_norm = jnp.mod(q + jnp.pi, 2 * jnp.pi) - jnp.pi
     return q_norm

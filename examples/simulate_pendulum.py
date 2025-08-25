@@ -1,5 +1,4 @@
 import cv2  # importing cv2
-from diffrax import diffeqsolve, Dopri5, ODETerm, SaveAt
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -10,7 +9,6 @@ from pathlib import Path
 from typing import Callable, Dict
 
 import soromox
-from soromox import ode_factory
 from soromox.systems import pendulum
 
 num_links = 2
@@ -24,7 +22,7 @@ params = {
     "m": jnp.array([10.0, 6.0]),
     "I": jnp.array([3.0, 2.0]),
     "L": jnp.array([2.0, 1.0]),
-    "lc": jnp.array([1.0, 0.5]),
+    "Lc": jnp.array([1.0, 0.5]),
     "g": jnp.array([0.0, -9.81]),
 }
 
@@ -35,7 +33,6 @@ q0 = jnp.zeros((num_links,))
 dt = 1e-4  # time step
 ts = jnp.arange(0.0, 5, dt)  # time steps
 skip_step = 100  # how many time steps to skip in between video frames
-video_ts = ts[::skip_step]  # time steps for video
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
@@ -57,9 +54,7 @@ def draw_robot(
     # poses along the robot of shape (3, N)
     link_indices = jnp.arange(params["L"].shape[0], dtype=jnp.int32)
     chi_ls = jnp.zeros((3, link_indices.shape[0] + 1))
-    chi_ls = chi_ls.at[:, 1:].set(
-        batched_forward_kinematics_fn(params, q, link_indices)
-    )
+    chi_ls = chi_ls.at[:, 1:].set(batched_forward_kinematics_fn(q, link_indices))
 
     img = 255 * onp.ones((w, h, 3), dtype=jnp.uint8)  # initialize background to white
     curve_origin = onp.array(
@@ -76,29 +71,36 @@ def draw_robot(
 
 
 if __name__ == "__main__":
-    forward_kinematics_fn, dynamical_matrices_fn = pendulum.factory(sym_exp_filepath)
+    # Instantiate the pendulum model directly
+    robot = pendulum.Pendulum(sym_exp_filepath, params)
+
+    # Thin wrappers to match expected signatures in the rest of the example
+    def forward_kinematics_fn(q: Array, link_idx: Array) -> Array:
+        return robot.forward_kinematics(q, link_idx)
+
     batched_forward_kinematics = vmap(
-        forward_kinematics_fn, in_axes=(None, None, 0), out_axes=-1
+        forward_kinematics_fn, in_axes=(None, 0), out_axes=-1
     )
 
-    x0 = jnp.zeros((2 * q0.shape[0],))  # initial condition
-    x0 = x0.at[: q0.shape[0]].set(q0)  # set initial configuration
-    tau = jnp.zeros_like(q0)  # torques
+    # initialize velocities and actuation
+    qd0 = jnp.zeros_like(q0)  # initial velocities
+    tau = jnp.zeros_like(q0)  # torques (actuation)
 
-    ode_fn = ode_factory(dynamical_matrices_fn, params, tau)
-    term = ODETerm(ode_fn)
+    # call the forward dynamics
+    yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (tau, ))
+    print("yd:\n", yd)
 
-    sol = diffeqsolve(
-        term,
-        solver=Dopri5(),
+    # Integrate using the model's built-in solver
+    ts_out, qs, qds = robot.resolve_upon_time(
+        q0=q0,
+        qd0=qd0,
+        u=tau,
         t0=ts[0],
         t1=ts[-1],
-        dt0=dt,
-        y0=x0,
-        max_steps=None,
-        saveat=SaveAt(ts=video_ts),
+        dt=dt,
+        skip_steps=skip_step,
     )
-    print("sol.ys =\n", sol.ys)
+    video_ts = ts_out
 
     # create video
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -111,11 +113,10 @@ if __name__ == "__main__":
     )
 
     for time_idx, t in enumerate(video_ts):
-        x = sol.ys[time_idx]
         img = draw_robot(
             batched_forward_kinematics,
             params,
-            x[: (x.shape[0] // 2)],
+            qs[time_idx],
             video_width,
             video_height,
         )

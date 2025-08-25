@@ -22,7 +22,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     num_links = 2
     params = {
         "L": jnp.array([0.5, 0.3]),      # Link lengths [m]
-        "lc": jnp.array([0.25, 0.15]),   # Center of mass positions [m]
+        "Lc": jnp.array([0.25, 0.15]),   # Center of mass positions [m]
         "m": jnp.array([1.0, 0.5]),      # Masses [kg]
         "I": jnp.array([0.1, 0.05]),     # Moments of inertia [kg⋅m²]
         "g": 9.81,                       # Gravity [m/s²]
