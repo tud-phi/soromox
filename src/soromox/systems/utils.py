@@ -1,79 +1,85 @@
+__all__ = [
+    "forward_dynamics", "nonlinear_state_space", 
+    "concatenate_params_syms", 
+    "compute_strain_basis", 
+    "gauss_quadrature", "scale_gaussian_quadrature"
+]
 from copy import deepcopy
+from functools import partial
 import jax
-
+from jax import Array, jit
 from jax import numpy as jnp
 import sympy as sp
-
-# For documentation purposes
-from jax import Array
-from typing import Dict, List, Tuple, Union
+from typing import Callable, Dict, List, Tuple, Union
 
 
-def substitute_params_into_all_symbolic_expressions(
-    sym_exps: Dict, params: Dict[str, Array]
-) -> Dict:
-    """
-    Substitute robot parameters into symbolic expressions.
-    Args:
-        sym_exps: dictionary with entries
-            params_syms: dictionary of list with symbols for parameters
-            state_syms: dictionary of lists with symbols for state variables
-            exps: dictionary of symbolic expressions
-        params: dictionary of robot parameters
-    Returns:
-        sym_exps: dictionary with entries
-            params_syms: dictionary of robot parameters
-            state_syms: dictionary of state variables
-            exps: dictionary of symbolic expressions
-    """
-    # symbols for robot parameters
-    params_syms = sym_exps["params_syms"]
-    # symbolic expressions
-    exps = deepcopy(sym_exps["exps"])
-
-    for exp_key, exp_val in exps.items():
-        if issubclass(type(exp_val), list):
-            for exp_item_idx, exp_item_val in enumerate(exp_val):
-                exps[exp_key][exp_item_idx] = (
-                    substitute_params_into_single_symbolic_expression(
-                        exp_item_val, params_syms, params
-                    )
-                )
-        else:
-            exps[exp_key] = substitute_params_into_single_symbolic_expression(
-                exp_val, params_syms, params
-            )
-
-    return exps
-
-
-def substitute_params_into_single_symbolic_expression(
-    sym_exp: sp.Expr,
-    params_syms: Dict[str, List[sp.Symbol]],
+@partial(jit, static_argnums=0, static_argnames="dynamical_matrices_fn")
+def forward_dynamics(
+    dynamical_matrices_fn: Callable,
     params: Dict[str, Array],
-) -> sp.Expr:
+    q: Array,
+    qd: Array,
+    tau: Array,
+):
     """
-    Substitute robot parameters into a single symbolic expression.
+    Compute the forward dynamics of a Lagrangian system.
     Args:
-        sym_exp: symbolic expression
-        params_syms: Dictionary of list with symbols for parameters
-        params: Dictionary of jax arrays with numerical values for parameters
-
+        dynamical_matrices_fn: Callable that returns the B, C, G, K, D, and alpha matrices. Needs to conform to the signature:
+            dynamical_matrices_fn(params, q, qd) -> Tuple[B, C, G, K, D, alpha]
+            where q and qd are the configuration and velocity vectors, respectively,
+            B is the inertia matrix of shape (n_q, n_q),
+            C is the Coriolis matrix of shape (n_q, n_q),
+            G is the gravity vector of shape (n_q, ),
+            K is the stiffness vector of shape (n_q, ),
+            D is the damping matrix of shape (n_q, n_q),
+            and alpha is the actuation matrix of shape (n_q, n_tau).
+        params: Dictionary with robot parameters
+        q: configuration vector of shape (n_q, )
+        qd: configuration velocity vector of shape (n_q, )
+        tau: generalized torque vector of shape (n_tau, )
     Returns:
-        sym_exp: symbolic expression with parameters substituted
+        qdd: configuration acceleration vector of shape (n_q, )
     """
-    for param_key, param_sym in params_syms.items():
-        if issubclass(type(param_sym), list):
-            for idx, param_sym_item in enumerate(param_sym):
-                if param_sym_item in sym_exp.free_symbols:
-                    sym_exp = sym_exp.subs(
-                        param_sym_item, params[param_key].flatten()[idx]
-                    )
-        else:
-            if param_sym in sym_exp.free_symbols:
-                sym_exp = sym_exp.subs(param_sym, params[param_key])
+    B, C, G, K, D, alpha = dynamical_matrices_fn(params, q, qd)
 
-    return sym_exp
+    # inverse of B
+    B_inv = jnp.linalg.inv(B)
+
+    # compute the acceleration
+    qdd = B_inv @ (alpha @ tau - C @ qd - G - K - D @ qd)
+
+    return qdd
+
+
+@partial(jit, static_argnums=0, static_argnames="dynamical_matrices_fn")
+def nonlinear_state_space(
+    dynamical_matrices_fn: Callable,
+    params: Dict[str, Array],
+    x: Array,
+    tau: Array,
+) -> jnp.array:
+    """
+    Compute the nonlinear state space dynamics of a Lagrangian system (i.e. the ODE function).
+    Args:
+        dynamical_matrices_fn: Callable that returns the B, C, G, K, D, and A matrices. Needs to conform to the signature:
+            dynamical_matrices_fn(params, q, qd) -> Tuple[B, C, G, K, D, A]
+            where q and qd are the configuration and velocity vectors, respectively,
+            B is the inertia matrix of shape (n_q, n_q),
+            C is the Coriolis matrix of shape (n_q, n_q),
+            G is the gravity vector of shape (n_q, ),
+            K is the stiffness vector of shape (n_q, ),
+            D is the damping matrix of shape (n_q, n_q),
+            and alpha is the actuation matrix of shape (n_q, n_tau).
+        params: Dictionary with robot parameters
+        x: state vector of shape (2 * n_q, ) containing the configuration and velocity vectors
+        tau: generalized torque vector of shape (n_tau, )
+    Returns:
+        xd: state derivative vector of shape (2 * n_q, ) containing the velocity and acceleration vectors
+    """
+    n_q = x.shape[0] // 2
+    qdd = forward_dynamics(dynamical_matrices_fn, params, x[:n_q], x[n_q:], tau)
+    xd = jnp.concatenate([x[n_q:], qdd])
+    return xd
 
 
 def concatenate_params_syms(

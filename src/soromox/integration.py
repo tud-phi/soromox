@@ -1,12 +1,12 @@
 from jax import Array
 from typing import Callable, Dict
 
-from soromox.systems import euler_lagrangian
+from soromox.systems.utils import nonlinear_state_space
 
 
 def ode_factory(
     dynamical_matrices_fn: Callable, params: Dict[str, Array], tau: Array
-) -> Callable[[float, Array], Array]:
+) -> Callable[[Array, Array], Array]:
     """
     Make an ODE function of the form ode_fn(t, x) -> xd.
     This function assumes a constant torque input (i.e. zero-order hold).
@@ -26,7 +26,7 @@ def ode_factory(
         ode_fn: ODE function of the form ode_fn(t, x) -> xd
     """
 
-    def ode_fn(t: float, x: Array, *args) -> Array:
+    def ode_fn(t: Array, x: Array, *args) -> Array:
         """
         ODE of the dynamical Lagrangian system.
         Args:
@@ -36,7 +36,7 @@ def ode_factory(
         Returns:
             xd: time-derivative of the state vector of shape (2 * n_q, )
         """
-        xd = euler_lagrangian.nonlinear_state_space(
+        xd = nonlinear_state_space(
             dynamical_matrices_fn,
             params,
             x,
@@ -49,7 +49,7 @@ def ode_factory(
 
 def ode_with_forcing_factory(
     dynamical_matrices_fn: Callable, params: Dict[str, Array]
-) -> Callable[[float, Array], Array]:
+) -> Callable[[Array, Array, Array], Array]:
     """
     Make an ODE function of the form ode_fn(t, x) -> xd.
     This function assumes a constant torque input (i.e. zero-order hold).
@@ -69,7 +69,7 @@ def ode_with_forcing_factory(
     """
 
     def ode_fn(
-        t: float,
+        t: Array,
         x: Array,
         tau: Array,
     ) -> Array:
@@ -82,7 +82,7 @@ def ode_with_forcing_factory(
         Returns:
             xd: time-derivative of the state vector of shape (2 * n_q, )
         """
-        xd = euler_lagrangian.nonlinear_state_space(
+        xd = nonlinear_state_space(
             dynamical_matrices_fn,
             params,
             x,
