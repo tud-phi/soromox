@@ -1,17 +1,4 @@
-import dill
-from jax import Array, lax
-from jax import numpy as jnp
-import sympy as sp
-from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Union
-
-from .utils import (
-    concatenate_params_syms,
-    compute_strain_basis,
-)
-
 import equinox as eqx
-
 from diffrax import (
     diffeqsolve,
     ODETerm,
@@ -21,9 +8,21 @@ from diffrax import (
     ConstantStepSize,
     AbstractSolver,
 )
+import dill
+from jax import Array, lax
+from jax import numpy as jnp
+import sympy as sp
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple, Union
+
+from .base_system import BaseSystem
+from .utils import (
+    concatenate_params_syms,
+    compute_strain_basis,
+)
 
 
-class PlanarHSA(eqx.Module):
+class PlanarHSA(BaseSystem):
     """
     TODO: Add docstring for PlanarHSA class.
 

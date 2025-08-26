@@ -74,27 +74,23 @@ if __name__ == "__main__":
     # Instantiate the pendulum model directly
     robot = pendulum.Pendulum(sym_exp_filepath, params)
 
-    # Thin wrappers to match expected signatures in the rest of the example
-    def forward_kinematics_fn(q: Array, link_idx: Array) -> Array:
-        return robot.forward_kinematics(q, link_idx)
-
     batched_forward_kinematics = vmap(
-        forward_kinematics_fn, in_axes=(None, 0), out_axes=-1
+        robot.forward_kinematics, in_axes=(None, 0), out_axes=-1
     )
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities
-    tau = jnp.zeros_like(q0)  # torques (actuation)
+    u = jnp.zeros_like(q0)  # torques (actuation)
 
     # call the forward dynamics
-    yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (tau, ))
+    yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (u, ))
     print("yd:\n", yd)
 
     # Integrate using the model's built-in solver
     ts_out, qs, qds = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
-        u=tau,
+        u=u,
         t0=ts[0],
         t1=ts[-1],
         dt=dt,

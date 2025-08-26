@@ -18,10 +18,11 @@ from diffrax import (
     AbstractSolver,
 )
 
+from .base_system import BaseSystem
 from .utils import concatenate_params_syms
 
 
-class Pendulum(eqx.Module):
+class Pendulum(BaseSystem):
     """
     N-link planar pendulum with symbolic kinematics and dynamics.
 
@@ -356,70 +357,6 @@ class Pendulum(eqx.Module):
 
         qdd = jnp.linalg.inv(B) @ (tau_u + tau_ext - C @ qd - G - tau_el - D @ qd)
         return jnp.concatenate([qd, qdd])
-
-    def resolve_upon_time(
-        self,
-        q0: Array,
-        qd0: Array,
-        u: Optional[Array] = None,
-        tau_ext: Optional[Array] = None,
-        t0: Optional[float] = 0.0,
-        t1: Optional[float] = 10.0,
-        dt: Optional[float] = 1e-3,
-        skip_steps: Optional[int] = 0,
-        solver: Optional[AbstractSolver] = Tsit5(),
-        stepsize_controller: Optional[PIDController] = ConstantStepSize(),
-        max_steps: Optional[int] = None,
-    ) -> Tuple[Array, Array, Array]:
-        """
-        Resolve the system dynamics over time using Diffrax.
-
-        Args:
-            q0 (Array): Initial joint angles of shape (n_q,).
-            qd0 (Array): Initial joint velocities of shape (n_q,).
-            u (Optional[Array]): Constant actuation torques of shape (n_q,).
-            tau_ext (Optional[Array]): Constant external torques of shape (n_q,).
-            t0 (float): Start time.
-            t1 (float): End time.
-            dt (float): Initial integration step size.
-            skip_steps (int): Save every Nth step (downsampling).
-            solver (AbstractSolver): Diffrax solver.
-            stepsize_controller (PIDController): Diffrax step size controller.
-            max_steps (Optional[int]): Max steps for the solver.
-
-        Returns:
-            ts (Array): Saved time points, shape (N,).
-            qs (Array): Joint angles over time, shape (N, n_q).
-            qds (Array): Joint velocities over time, shape (N, n_q).
-        """
-        y0 = jnp.concatenate([q0, qd0])
-        if u is None:
-            u = jnp.zeros((self.num_links,))
-        if tau_ext is None:
-            tau_ext = jnp.zeros((self.num_links,))
-
-        # Use a simple lambda to avoid jit/method descriptor issues
-        term = ODETerm(lambda t, y, args: self.forward_dynamics(t, y, args))
-        t = jnp.arange(t0, t1, dt)
-        saveat = SaveAt(ts=t[::skip_steps])
-
-        sol = diffeqsolve(
-            terms=term,
-            solver=solver,
-            t0=t[0],
-            t1=t[-1],
-            dt0=dt,
-            y0=y0,
-            args=(u, tau_ext),
-            saveat=saveat,
-            stepsize_controller=stepsize_controller,
-            max_steps=max_steps,
-        )
-
-        ts = sol.ts
-        ys = sol.ys
-        qs, qds = jnp.split(ys, 2, axis=1)
-        return ts, qs, qds
 
 
 @jit
