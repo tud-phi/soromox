@@ -47,14 +47,14 @@ class TendonActuatedPCS(PCS):
         Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
     Xs, Ws : Array
         Gauss-Legendre quadrature nodes and weights for numerical integration.
-    d: Array
-        Distances of the straight tendons from the segment's backbone.
-    alpha: Array
-        Angles of the longitudinal planes where the tendons lie, 0 if aligned to the z-axis
-    x_n: Array
-        Depths of the attachment points of the tendons, along the x-axis
-    segment_indices_to_actuate : Array
-        Indices of the segments that are actuated.
+    tendon_params : Dict[str, Array]
+        Dictionary of arrays of length n_actuators representing the tendon parameters.
+    d_s : Callable
+        Function that returns the homogeneous vector (4D) of the distance of the tendons 
+        from the central backbone at a given abscissa point.
+    dd_s_ds : Callable
+        Function that returns the homogeneous vector (4D) of the derivative over s of
+        the d_s.
 
     Notes:
     -----
@@ -71,22 +71,20 @@ class TendonActuatedPCS(PCS):
 
     """
 
-    segment_indices_to_actuate: Array  # indices of the segments that are actuated, shape (num_actuated_segments,)
-    ry: Array
-    rz: Array
-    my: Array
-    mz: Array
-    l_t: Array
+    tendon_params: Dict[str, Array]
+    d_s: Callable
+    dd_s_ds: Callable
 
     def __init__(
         self,
         num_segments: int,
         params: Dict[str, Array],
+        tendon_params: Dict[str, Array],
+        actuation_basis: Dict[str, Callable],
         order_gauss: int = 5,
         num_actuators: Optional[int] = None,
         strain_selector: Optional[Array] = None,
         xi_ref: Optional[Array] = None,
-        segment_actuation_selector: Optional[Array] = None,
     ):
         super().__init__(
             num_segments=num_segments,
@@ -97,213 +95,85 @@ class TendonActuatedPCS(PCS):
             xi_ref=xi_ref,
         )
 
-        if segment_actuation_selector is None:
-            segment_actuation_selector = jnp.ones(num_segments, dtype=bool)
-
-        self.segment_indices_to_actuate = jnp.array(
-            [i for i, act in enumerate(segment_actuation_selector) if act]
-        )
-
         self._set_params(params)
-        self.num_actuators = len(self.ry)
+        self._set_tendon_params(tendon_params)
+        self._set_actuation_basis(actuation_basis)
 
-    def _set_params(self, params: Dict[str, Array]):
-        """
-        Set the parameters of the tendon-driven planar PCS.
 
-        Args:
-            params (Dict[str, Array]): Dictionary containing the parameters of the robot.
-                Dictionary containing the robot parameters:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                    Default is 90 degrees (1.57 radians).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "d": List/Array of num_tendon floats
-                    Distance of the tendons from the segment's backbone [m]
-                - "alpha": List/Array of num_tendon floats
-                    Angles of the longitudinal planes where the tendons lie [rad]
-                - "x_n": List/Array of num_tendon floats
-                    Depths of the attachment points of the tendons, along the x-axis [m]
-        """
-        super()._set_params(params)
+    def _set_tendon_params(self, tendon_params: Dict[str, Array]):
+        if not isinstance(tendon_params, (dict)):
+            raise TypeError("The parameter 'tendon_params' must be a dictionary of jnp.ndarrays.")
+        self.tendon_params = tendon_params
+        self.tendon_params['f'] =   tendon_params['lt'] / self.L_cum[-1]
+        self.num_actuators = len(self.tendon_params['ry'])
 
-        # 
-        try:
-            ry = params["ry"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'ry' () is required for the tendon-driven PCS."
-            )
-        if not isinstance(ry, (list, jnp.ndarray)):
-            raise TypeError("The parameter 'ry' must be a list or a jnp.ndarray.")
-        self.ry = jnp.asarray(ry, dtype=jnp.float64)
+    def _set_actuation_basis(self, actuation_basis: Dict[str, Callable]):
+        self.d_s = actuation_basis['d_s']
+        self.dd_s_ds = actuation_basis['dd_s_ds']
+    
+    def update_tendon_params(self, tendon_params: Dict[str, Array]) -> "TendonActuatedPCS":
+        updated_self = self
 
-        # 
-        try:
-            rz = params["rz"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'rz' () is required for the tendon-driven PCS."
-            )
-        if not isinstance(rz, (list, jnp.ndarray)):
-            raise TypeError("The parameter 'rz' must be a list or a jnp.ndarray.")
-        self.rz = jnp.asarray(rz, dtype=jnp.float64)
+        # Recompute derived parameters
+        tendon_params = dict(tendon_params)
+        tendon_params["f"] = tendon_params["lt"] / self.L_cum[-1]
+        num_actuators = len(tendon_params["ry"])
 
-        # 
-        try:
-            my = params["my"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'my' () is required for the tendon-driven PCS."
-            )
-        if not isinstance(my, (list, jnp.ndarray)):
-            raise TypeError("The parameter 'my' must be a list or a jnp.ndarray.")
-        self.my = jnp.asarray(my, dtype=jnp.float64)
-
-        # 
-        try:
-            mz = params["mz"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'mz' () is required for the tendon-driven PCS."
-            )
-        if not isinstance(mz, (list, jnp.ndarray)):
-            raise TypeError("The parameter 'mz' must be a list or a jnp.ndarray.")
-        self.mz = jnp.asarray(mz, dtype=jnp.float64)
-
-        # Depths of the attachment points of the tendons, along the x-axis
-        try:
-            l_t = params["l_t"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'l_t' (depths of the attachment points of the tendons) is required for the tendon-driven PCS."
-            )
-        if not isinstance(l_t, (list, jnp.ndarray)):
-            raise TypeError("The parameter 'l_t' must be a list or a jnp.ndarray.")
-        self.l_t = jnp.asarray(l_t, dtype=jnp.float64)
-
-    def update_params(self, params: Dict[str, Array]) -> "TendonActuatedPCS":
-        """
-        Update the parameters of the tendon-driven planar PCS.
-
-        Args:
-            params (Dict[str, Array]):
-                Dictionary that contains the robot parameters to update:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "d": List/Array of num_segments floats
-                    Distance of the tendons from the segment's backbone [m]
-
-        Returns:
-            updated_self (TendonActuatedPlanarPCS):
-                A new instance of TendonActuatedPlanarPCS with updated parameters.
-        """
-        # Apply updates sequentially
-        updated_self = super().update_params(params)
-
-        if "ry" in params:
-            ry = params["ry"]
-            if not isinstance(ry, (list, jnp.ndarray)):
-                raise TypeError("The parameter 'ry' must be a list or a jnp.ndarray.")
-            updated_self = eqx.tree_at(
-                lambda x: x.ry, updated_self, jnp.asarray(ry, dtype=jnp.float64)
-            )
-
-        if "rz" in params:
-            rz = params["rz"]
-            if not isinstance(rz, (list, jnp.ndarray)):
-                raise TypeError("The parameter 'rz' must be a list or a jnp.ndarray.")
-            updated_self = eqx.tree_at(
-                lambda x: x.rz, updated_self, jnp.asarray(rz, dtype=jnp.float64)
-            )
-
-        if "my" in params:
-            my = params["my"]
-            if not isinstance(my, (list, jnp.ndarray)):
-                raise TypeError("The parameter 'my' must be a list or a jnp.ndarray.")
-            updated_self = eqx.tree_at(
-                lambda x: x.my, updated_self, jnp.asarray(my, dtype=jnp.float64)
-            )
-
-        if "mz" in params:
-            mz = params["mz"]
-            if not isinstance(mz, (list, jnp.ndarray)):
-                raise TypeError("The parameter 'mz' must be a list or a jnp.ndarray.")
-            updated_self = eqx.tree_at(
-                lambda x: x.mz, updated_self, jnp.asarray(mz, dtype=jnp.float64)
-            )
-
-        if "l_t" in params:
-            l_t = params["l_t"]
-            if not isinstance(l_t, (list, jnp.ndarray)):
-                raise TypeError("The parameter 'l_t' must be a list or a jnp.ndarray.")
-            updated_self = eqx.tree_at(
-                lambda x: x.l_t, updated_self, jnp.asarray(l_t, dtype=jnp.float64)
-            )
+        # update all fields
+        updated_self = eqx.tree_at(lambda x: x.tendon_params, updated_self, tendon_params)
+        updated_self = eqx.tree_at(lambda x: x.num_actuators, updated_self, num_actuators)
 
         return updated_self
 
+    
     @eqx.filter_jit
     def _actuation_matrix(self, q: Array, s: Array) -> Array:
         """
+        Compute the local actuation matrix at current abscissa s.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,)
+            s (Array): abscissa points (num_gauss_points,)
+
+        Returns:
+            A (Array): Actuation matrix of shape at s (num_active_strains, num_actuators)
         """
 
-        def Phi_a_k(k, j):
-            idx = 6*j
-            column = jnp.array([
-            (f[k]*s*self.my[k] + self.ry[k])*(f[k]*self.mz[k] + xi[idx]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+5]) + \
-             (-f[k]*s*self.mz[k] - self.rz[k])*(f[k]*self.my[k] - xi[idx]*(f[k]*s*self.mz[k] + self.rz[k]) + xi[idx+4]),
-            (f[k]*s*self.mz[k] + self.rz[k])*(xi[idx+1]*(f[k]*s*self.mz[k] + self.rz[k]) - xi[idx+2]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+3]),
-            (-f[k]*s*self.my[k] - self.ry[k])*(xi[idx+1]*(f[k]*s*self.mz[k] + self.rz[k]) - xi[idx+2]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+3]),
-            xi[idx+1]*(f[k]*s*self.mz[k] + self.rz[k]) - xi[idx+2]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+3],
-            f[k]*self.my[k] - xi[idx]*(f[k]*s*self.mz[k] + self.rz[k]) + xi[idx+4],
-            f[k]*self.mz[k] + xi[idx]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+5]
-            ])
-            term = jnp.array([
-                xi[idx+1]*(f[k]*s*self.mz[k] + self.rz[k]) - xi[idx+2]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+3],
-                f[k]*self.my[k] - xi[idx]*(f[k]*s*self.mz[k] + self.rz[k]) + xi[idx+4],
-                f[k]*self.mz[k] + xi[idx]*(f[k]*s*self.my[k] + self.ry[k]) + xi[idx+5]
-                ])
-            norm = jnp.linalg.norm(term)
-            return column / norm    # (6,)
+        def Phi_a_kj(tendon_params, j):
+            def get_block(xi, j, block_size=6):
+                return lax.dynamic_slice(xi, (block_size*j,), (block_size,))
+            
+            def tilde(vec):
+                """
+                (3,3)
+                """
+                return jnp.array([[0, -vec[2], vec[1]], [vec[2], 0, -vec[0]], [-vec[1], vec[0], 0]])
+
+            def hat(vec):
+                """
+                (4,4)
+                """
+                return jnp.vstack([jnp.column_stack([tilde(vec[:3]), vec[3:]]), jnp.zeros(4)])
+            
+            xi_  =  get_block(xi, j, block_size=6)  # strains of segment j (6,)
+            d_s  =  self.d_s(tendon_params, s)      # (4,)
+            dd_s =  self.dd_s_ds(tendon_params, s)  # (4,)
+
+            term =  (dd_s + hat(xi_) @ d_s)[:-1]    # (3,)
+            norm =  jnp.linalg.norm(term)           # ()
+            t    =  term / norm                     # (3,)
+
+            return jnp.hstack([tilde(d_s) @ t, t])  # (6,)
 
         xi = self.strain(q)
-        f = self.l_t / self.L_cum[-1]
 
         Phi_a = vmap(
-            vmap(Phi_a_k, in_axes=(0, None), out_axes=1),
+            vmap(Phi_a_kj, in_axes=(0, None), out_axes=1),
             in_axes=(None, 0),
-            out_axes=0)(jnp.arange(self.num_actuators), jnp.arange(self.num_segments))  # (num_segments, 6, num_num_actuators)
-        Phi_a = Phi_a.reshape((6*self.num_segments, self.num_actuators), order='C')     # (num_segments*6, num_num_actuators)
+            out_axes=0)(self.tendon_params, jnp.arange(self.num_segments))              # (num_segments, 6, num_actuators)
+        Phi_a = Phi_a.reshape((6*self.num_segments, self.num_actuators), order='C')     # (num_segments*6, num_actuators)
 
-        A_local = self.B_xi.T @ Phi_a                                                   # (num_segments*6, num_num_actuators)
+        A_local = self.B_xi.T @ Phi_a                                                   # (num_segments*6, num_actuators)
 
         return A_local
 
@@ -317,7 +187,6 @@ class TendonActuatedPCS(PCS):
                 return Ws_j * A_jj
 
             A_blocks_i = vmap(A_j)(jnp.arange(self.num_gauss_points))
-            #print('A_blocks_i', A_blocks_i.shape)
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_j(j) for j in range(self.num_gauss_points)], axis=0)
@@ -325,12 +194,25 @@ class TendonActuatedPCS(PCS):
             return A_blocks_i
 
         A_blocks_tot = vmap(A_i)(jnp.arange(self.num_segments))
-        #print('A_blocks_tot', A_blocks_tot.shape)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_i(i) for i in range(self.num_segments)], axis=0)
 
         A_full = jnp.sum(A_blocks_tot, axis=(0, 1))  # Sum over segments and Gauss points
-        #print('A_full', A_full.shape)
         
         return A_full
+    
+    @eqx.filter_jit
+    def actuation_matrix(self, q: Array) -> Array:
+        """
+        Compute the actuation matrix of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
+        """
+        A = self.compute_actuation_matrix(q)
+        return A
+

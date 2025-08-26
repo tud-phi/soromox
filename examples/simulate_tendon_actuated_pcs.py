@@ -137,6 +137,25 @@ def animate_robot_matplotlib(
         )  # Slider cannot be converted to HTML
 
 
+def linear_routing(tendon_params, s):
+    ry      =   tendon_params['ry']
+    my      =   tendon_params['my']
+    rz      =   tendon_params['rz']
+    mz      =   tendon_params['mz']
+    f       =   tendon_params['f']
+    d_s     =   jnp.array([0.0, ry + my*s*f, rz + mz*s*f, 1.0])
+    return d_s
+
+
+def d_linear_routing_ds(tendon_params, s):
+    my      =   tendon_params['my']
+    mz      =   tendon_params['mz']
+    f       =   tendon_params['f']
+    dd_s_ds =   jnp.array([0.0, my*f, mz*f, 1.0])
+    return dd_s_ds
+
+
+
 if __name__ == "__main__":
     num_segments = 2
     rho = 1070 * jnp.ones(
@@ -152,11 +171,6 @@ if __name__ == "__main__":
         "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
         "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "ry": 2e-2* jnp.array([1.0, -1.0]),  # y-coordinate of the pulling point of the tendons [m]
-        "rz": jnp.array([0.0, 0.0]),  # z-coordinate of the pulling point of the tendons [m]
-        "my": jnp.array([0.0, 0.0]),  # [-]
-        "mz": jnp.array([0.0, 0.0]),  # [-]
-        "l_t": jnp.array([1e-1*num_segments, 1e-1*num_segments]),  # length of the tendons = x-coordinate of the attachment points [m]
     }
     params["D"] = 1e-3 * jnp.diag(
         (
@@ -166,6 +180,14 @@ if __name__ == "__main__":
             * params["L"][:, None]
         ).flatten()
     )
+    actuation_basis = {'d_s': linear_routing, 'dd_s_ds': d_linear_routing_ds}
+    tendon_params = {
+        "ry": 2e-2* jnp.array([1.0, -1.0]), # y-coordinate of the pulling point of the tendons [m]
+        "rz": jnp.array([0.0, 0.0]),        # z-coordinate of the pulling point of the tendons [m]
+        "my": jnp.array([0.0, 0.0]),        # slope coefficient in the x-y plane of the tendons [-]
+        "mz": jnp.array([0.0, 0.0]),        # slope coefficient in the x-z plane of the tendons [-]
+        "lt": jnp.array([2e-1, 2e-1]),     # length of the tendons = x-coordinate of the attachment points [m]
+    }
 
     # ======================================================
     # Robot initialization
@@ -173,6 +195,8 @@ if __name__ == "__main__":
     robot = TendonActuatedPCS(
         num_segments=num_segments,
         params=params,
+        tendon_params=tendon_params,
+        actuation_basis={'d_s': linear_routing, 'dd_s_ds': d_linear_routing_ds},
         order_gauss=5,
     )
 
@@ -189,17 +213,11 @@ if __name__ == "__main__":
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    u = jnp.zeros(robot.num_actuators)
-
+    u = jnp.array([1., 0.])
     print("u =\n", u)
 
-    # call the actuation mapping function
-    A = robot.actuation_matrix(
-        q0,
-    )
-    print("A =\n", A.shape)
-    print(A)
-    A = robot.compute_actuation_matrix(q0)
+    # Actuation matrix
+    A = robot.actuation_matrix(q0)
     print("A =\n", A.shape)
     print(A)
 
@@ -212,7 +230,7 @@ if __name__ == "__main__":
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
 
-    '''ts, q_ts, qd_ts = robot.resolve_upon_time(
+    ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
         u=u,
