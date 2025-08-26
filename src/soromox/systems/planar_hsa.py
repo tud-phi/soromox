@@ -24,43 +24,134 @@ from .utils import (
 
 class PlanarHSA(BaseSystem):
     """
-    TODO: Add docstring for PlanarHSA class.
+    A kinematic and dynamic model for planar Handed Shearing Auxetics (HSA) robots.
 
-    Args:
-        eqx (_type_): _description_
+    This class implements the geometric and dynamic modeling of planar HSA robots
+    using a piecewise constant strain assumption. It supports computation of forward 
+    kinematics, inverse kinematics, Jacobians, and dynamical matrices. The model
+    accounts for hysteresis effects using the Bouc-Wen model when enabled.
+
+    Based on the publication:
+        Stölzle, M., Rus, D., & Della Santina, C. (2023, November). An experimental 
+        study of model-based control for planar handed shearing auxetics robots. 
+        In International Symposium on Experimental Robotics (pp. 153-167). 
+        Cham: Springer Nature Switzerland.
+        https://link.springer.com/chapter/10.1007/978-3-031-63596-0_14
+
+    Attributes:
+    ----------
+    num_segments : int
+        Number of segments along the robot.
+    num_rods_per_segment : int
+        Number of physical rods per segment.
+    num_dofs : int
+        Number of degrees of freedom (active strain components).
+    consider_hysteresis : bool
+        Whether to consider hysteresis effects in the model.
+    num_hysteresis : int
+        Number of hysteresis state variables.
+
+    chiv_lambda_sms : List[Callable]
+        Lambda functions for virtual backbone forward kinematics per segment.
+    chir_lambda_sms : List[Callable]
+        Lambda functions for physical rod forward kinematics per segment.
+    chip_lambda_sms : List[Callable]
+        Lambda functions for platform forward kinematics per segment.
+
+    chiee_lambda : Callable
+        Lambda function for end-effector forward kinematics.
+    Jee_lambda : Callable
+        Lambda function for end-effector Jacobian.
+    Jeed_lambda : Callable
+        Lambda function for end-effector Jacobian time derivative.
+
+    B_lambda : Callable
+        Lambda function for inertia matrix computation.
+    C_lambda : Callable
+        Lambda function for Coriolis matrix computation.
+    G_lambda : Callable
+        Lambda function for gravitational force computation.
+    Shat_lambda : Callable
+        Lambda function for nominal stiffness matrix computation.
+    K_lambda : Callable
+        Lambda function for elastic force computation.
+    D_lambda : Callable
+        Lambda function for damping matrix computation.
+    alpha_lambda : Callable
+        Lambda function for actuation force computation.
+
+    B_xi : Array
+        Strain basis matrix for mapping active strain components.
+
+    kappa_b_ref : Array
+        Reference bending curvatures for each rod. Shape: (num_segments, num_rods_per_segment).
+    sigma_sh_ref : Array
+        Reference shear strains for each rod. Shape: (num_segments, num_rods_per_segment).
+    sigma_a_ref : Array
+        Reference axial strains for each rod. Shape: (num_segments, num_rods_per_segment).
+
+    L : Array
+        Segment lengths. Shape: (num_segments,).
+    L_cum : Array
+        Cumulative segment lengths. Shape: (num_segments + 1,).
+    Lmax : Array
+        Total robot length (sum of all segments).
+    roff : Array
+        Rod offset from centerline. Shape: (num_segments, num_rods_per_segment).
+    pcudim : Array
+        Platform dimensions (width, height, depth). Shape: (num_segments, 3).
+    lpc : Array
+        Length of rigid proximal rod caps. Shape: (num_segments,).
+    ldc : Array
+        Length of rigid distal rod caps. Shape: (num_segments,).
+    chiee_off : Array
+        End-effector offset transformation [theta, p_x, p_y]. Shape: (3,).
+
+    B_hyst : Array
+        Hysteresis basis matrix. Shape: (num_dofs, num_hysteresis).
+    hyst_alpha : Array
+        Bouc-Wen hysteresis parameter: ratio of post-yield to pre-yield stiffness.
+    hyst_A : Array
+        Bouc-Wen hysteresis parameter A.
+    hyst_n : Array
+        Bouc-Wen hysteresis parameter n.
+    hyst_beta : Array
+        Bouc-Wen hysteresis parameter beta.
+    hyst_gamma : Array
+        Bouc-Wen hysteresis parameter gamma.
+
+    params_for_lambdify : List[Array]
+        Flattened parameter list for symbolic function evaluation.
+    global_eps : float
+        Small number for numerical stability to avoid singularities.
+
+    Notes:
+    -----
+    - The strain vector is composed of 3 components per segment:
+      [kappa_b, sigma_sh, sigma_a] representing bending curvature, 
+      shear strain, and axial strain respectively.
+    - The robot uses a virtual backbone representation with physical 
+      rod mapping for accurate modeling of HSA mechanics.
+    - Hysteresis modeling is optional and uses the Bouc-Wen model
+      when consider_hysteresis=True.
     """
-
-    global_eps: float = 1e-6
-
-    consider_hysteresis: bool = eqx.static_field()
-    num_hysteresis: int = eqx.static_field()
-    B_hyst: Array
-    hyst_alpha: Array
-    hyst_A: Array
-    hyst_n: Array
-    hyst_beta: Array
-    hyst_gamma: Array
-
-    num_segments: int = eqx.static_field()
-    num_rods_per_segment: int = eqx.static_field()
-    num_dofs: int = eqx.static_field()
-
-    B_xi: Array
-
-    params_for_lambdify: List[Array]
-
-    L: Array
-    L_cum: Array
-    Lmax: Array  # Maximum length of the robot (sum of all segments)
+    # static settings
+    num_segments: int = eqx.field(static=True)
+    num_rods_per_segment: int = eqx.field(static=True)
+    num_dofs: int = eqx.field(static=True)
+    consider_hysteresis: bool = eqx.field(static=True)
+    num_hysteresis: int = eqx.field(static=True)
 
     chiv_lambda_sms: List[Callable]
     chir_lambda_sms: List[Callable]
     chip_lambda_sms: List[Callable]
 
+    # kinematic lambda functions
     chiee_lambda: Callable
     Jee_lambda: Callable
     Jeed_lambda: Callable
 
+    # dynamic lambda functions
     B_lambda: Callable
     C_lambda: Callable
     G_lambda: Callable
@@ -69,29 +160,52 @@ class PlanarHSA(BaseSystem):
     D_lambda: Callable
     alpha_lambda: Callable
 
-    roff: Array
+    # strain basis
+    B_xi: Array
+
+    # reference strains
     kappa_b_ref: Array
     sigma_sh_ref: Array
     sigma_a_ref: Array
 
+    # geometric parameters of the robot
+    L: Array  # Array of segment lengths
+    L_cum: Array  # Cumulative length of the robot as array of size (num_segments, )
+    Lmax: Array  # Maximum length of the robot (sum of all segments)
+    roff: Array
     pcudim: Array
     lpc: Array
     ldc: Array
     chiee_off: Array
 
+    # hysteresis parameters
+    B_hyst: Array
+    hyst_alpha: Array
+    hyst_A: Array
+    hyst_n: Array
+    hyst_beta: Array
+    hyst_gamma: Array
+
+    # parameters for lambdify
+    params_for_lambdify: List[Array]
+
+    # epsilon for numerical stability
+    global_eps: float
+
     def __init__(
         self,
         sym_exp_filepath: Union[str, Path],
-        params: Dict[str, Array] = None,
-        strain_selector: Array = None,
+        params: Dict[str, Array],
+        strain_selector: Optional[Array] = None,
         global_eps: float = 1e-6,
         consider_hysteresis: bool = False,
-    ) -> "PlanarHSA":
+    ) -> None:
         """
         Initialize the PlanarHSA system.
 
         Args:
             sym_exp_filepath: path to file containing symbolic expressions
+            params: dictionary with robot parameters
             strain_selector: array of shape (num_dofs, ) with boolean values indicating which components of the
                     strain are active / non-zero
             global_eps: small number to avoid singularities (e.g., division by zero)
@@ -281,7 +395,7 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify chiee. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify chiee. Check the symbolic expressions file.")
         self.chiee_lambda = chiee_lambda
 
         try:
@@ -291,7 +405,7 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify Jee. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify Jee. Check the symbolic expressions file.")
         self.Jee_lambda = Jee_lambda
 
         try:
@@ -303,7 +417,7 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify Jeed. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify Jeed. Check the symbolic expressions file.")
         self.Jeed_lambda = Jeed_lambda
 
         # dynamical matrices
@@ -314,7 +428,7 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify B. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify B. Check the symbolic expressions file.")
         self.B_lambda = B_lambda
 
         try:
@@ -322,7 +436,7 @@ class PlanarHSA(BaseSystem):
                 params_syms_cat + state_syms_cat, sym_exps["exps"]["C"], "jax"
             )
         except ValueError:
-            raise "Fail to lambdify C. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify C. Check the symbolic expressions file.")
         self.C_lambda = C_lambda
 
         try:
@@ -332,13 +446,13 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify G. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify G. Check the symbolic expressions file.")
         self.G_lambda = G_lambda
 
         try:
             Shat_lambda = sp.lambdify(params_syms_cat, sym_exps["exps"]["Shat"], "jax")
         except ValueError:
-            raise "Fail to lambdify Shat. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify Shat. Check the symbolic expressions file.")
         self.Shat_lambda = Shat_lambda
 
         try:
@@ -348,13 +462,13 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify K. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify K. Check the symbolic expressions file.")
         self.K_lambda = K_lambda
 
         try:
             D_lambda = sp.lambdify(params_syms_cat, sym_exps["exps"]["D"], "jax")
         except ValueError:
-            raise "Fail to lambdify D. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify D. Check the symbolic expressions file.")
         self.D_lambda = D_lambda
 
         try:
@@ -366,7 +480,7 @@ class PlanarHSA(BaseSystem):
                 "jax",
             )
         except ValueError:
-            raise "Fail to lambdify alpha. Check the symbolic expressions file."
+            raise ValueError("Fail to lambdify alpha. Check the symbolic expressions file.")
         self.alpha_lambda = alpha_lambda
 
     def _set_params(
@@ -1326,13 +1440,13 @@ class PlanarHSA(BaseSystem):
 
     @eqx.filter_jit
     def forward_dynamics(
-        self, t: float, y: Array, actuation_args: Tuple[Array, Callable, bool] = None
+        self, t: Array, y: Array, actuation_args: Tuple[Array, Callable, bool]
     ) -> Array:
         """
         Forward dynamics function.
 
         Args:
-            t (float): Current time.
+            t (Array): Current time.
             y (Array): State vector containing configuration, velocity, and possibly hysteresis state.
                 Shape is (2 * num_dofs + num_hysteresis,).
             actuation_args (Tuple): Additional arguments for the actuation function.
