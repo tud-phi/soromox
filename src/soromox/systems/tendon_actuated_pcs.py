@@ -5,6 +5,8 @@ from jax import numpy as jnp
 import numpy as onp
 from typing import Callable, Dict, Tuple, Optional
 
+import soromox.utils.lie_algebra as lie
+
 from .utils import (
     compute_strain_basis,
     gauss_quadrature,
@@ -12,6 +14,54 @@ from .utils import (
 )
 
 from .pcs import PCS
+
+
+def linear_routing(tendon_routing_params, s):
+    """
+    Function representing the routing of linear tendons as function of s. Specifically, d_s
+    is the vector between the centerline of the robot and the tendon position, in the 
+    cross-sectional plane at abscissa s.
+
+    Args:
+            tendon_routing_params (Dict[Array]): parameters of the linear tendons (6,)
+                ry: y-coordinate of the pulling point of the tendons [m]
+                my: slope coefficient in the x-y plane of the tendons [-]
+                rz: z-coordinate of the pulling point of the tendons [m]
+                mz: slope coefficient in the x-z plane of the tendons [-]
+            s (Array): abscissa points (num_gauss_points,)
+
+        Returns:
+            d_s (Array): position of the tendon at s wrt centerline, in homogeneous coordinates (4,)
+    """
+
+    ry      =   tendon_routing_params['ry']
+    my      =   tendon_routing_params['my']
+    rz      =   tendon_routing_params['rz']
+    mz      =   tendon_routing_params['mz']
+    d_s     =   jnp.array([0.0, ry + my*s, rz + mz*s, 1.0])
+    return d_s
+
+
+def linear_routing_derivative(tendon_routing_params, s):
+    """
+    Function representing the spatial derivative of the routing of linear tendons as function of s. 
+    Specifically, dd_s_ds is the derivative of d_s over s, at s.
+
+    Args:
+            tendon_routing_params (Dict[Array]): parameters of the linear tendons (6,)
+                my: slope coefficient in the x-y plane of the tendons [-]
+                mz: slope coefficient in the x-z plane of the tendons [-]
+            s (Array): abscissa points (num_gauss_points,)
+
+        Returns:
+            dd_s_ds (Array): path of the tendon at s wrt centerline, in homogeneous coordinates (4,)
+    """
+
+    my      =   tendon_routing_params['my']
+    mz      =   tendon_routing_params['mz']
+    dd_s_ds =   jnp.array([0.0, my, mz, 1.0])
+    return dd_s_ds
+
 
 class TendonActuatedPCS(PCS):
     """
@@ -47,7 +97,7 @@ class TendonActuatedPCS(PCS):
         Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
     Xs, Ws : Array
         Gauss-Legendre quadrature nodes and weights for numerical integration.
-    tendon_params : Dict[str, Array]
+    tendon_routing_params : Dict[str, Array]
         Dictionary of arrays of length n_actuators representing the tendon parameters.
     d_s : Callable
         Function that returns the homogeneous vector (4D) of the distance of the tendons 
@@ -71,7 +121,7 @@ class TendonActuatedPCS(PCS):
 
     """
 
-    tendon_params: Dict[str, Array]
+    tendon_routing_params: Dict[str, Array]
     d_s: Callable
     dd_s_ds: Callable
 
@@ -79,8 +129,14 @@ class TendonActuatedPCS(PCS):
         self,
         num_segments: int,
         params: Dict[str, Array],
-        tendon_params: Dict[str, Array],
-        actuation_basis: Dict[str, Callable],
+        tendon_routing_basis: Dict[str, Callable] = {'d_s': linear_routing, 'dd_s_ds': linear_routing_derivative},
+        tendon_routing_params: Dict[str, Array] = {
+            "ry": jnp.array([]),
+            "rz": jnp.array([]),
+            "my": jnp.array([]),
+            "mz": jnp.array([]),
+            "lt": jnp.array([]),
+        },
         order_gauss: int = 5,
         num_actuators: Optional[int] = None,
         strain_selector: Optional[Array] = None,
@@ -96,38 +152,36 @@ class TendonActuatedPCS(PCS):
         )
 
         self._set_params(params)
-        self._set_tendon_params(tendon_params)
-        self._set_actuation_basis(actuation_basis)
+        self._set_tendon_routing_basis(tendon_routing_basis)
+        self._set_tendon_routing_params(tendon_routing_params)
 
 
-    def _set_tendon_params(self, tendon_params: Dict[str, Array]):
-        if not isinstance(tendon_params, (dict)):
-            raise TypeError("The parameter 'tendon_params' must be a dictionary of jnp.ndarrays.")
-        self.tendon_params = tendon_params
-        self.tendon_params['f'] =   tendon_params['lt'] / self.L_cum[-1]
-        self.num_actuators = len(self.tendon_params['ry'])
+    def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
+        if not isinstance(tendon_routing_params, (dict)):
+            raise TypeError("The parameter 'tendon_routing_params' must be a dictionary of jnp.ndarrays.")
+        self.tendon_routing_params = tendon_routing_params
+        self.num_actuators = len(self.tendon_routing_params['ry'])
 
-    def _set_actuation_basis(self, actuation_basis: Dict[str, Callable]):
-        self.d_s = actuation_basis['d_s']
-        self.dd_s_ds = actuation_basis['dd_s_ds']
+    def _set_tendon_routing_basis(self, tendon_routing_basis: Dict[str, Callable]):
+        self.d_s = tendon_routing_basis['d_s']
+        self.dd_s_ds = tendon_routing_basis['dd_s_ds']
     
-    def update_tendon_params(self, tendon_params: Dict[str, Array]) -> "TendonActuatedPCS":
+    def update_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]) -> "TendonActuatedPCS":
         updated_self = self
 
         # Recompute derived parameters
-        tendon_params = dict(tendon_params)
-        tendon_params["f"] = tendon_params["lt"] / self.L_cum[-1]
-        num_actuators = len(tendon_params["ry"])
+        tendon_routing_params = dict(tendon_routing_params)
+        num_actuators = len(tendon_routing_params["ry"])
 
         # update all fields
-        updated_self = eqx.tree_at(lambda x: x.tendon_params, updated_self, tendon_params)
+        updated_self = eqx.tree_at(lambda x: x.tendon_routing_params, updated_self, tendon_routing_params)
         updated_self = eqx.tree_at(lambda x: x.num_actuators, updated_self, num_actuators)
 
         return updated_self
 
     
     @eqx.filter_jit
-    def _actuation_matrix(self, q: Array, s: Array) -> Array:
+    def _actuation_matrix_s1(self, q: Array, s: Array) -> Array:
         """
         Compute the local actuation matrix at current abscissa s.
 
@@ -139,51 +193,94 @@ class TendonActuatedPCS(PCS):
             A (Array): Actuation matrix of shape at s (num_active_strains, num_actuators)
         """
 
-        def Phi_a_kj(tendon_params, j):
+        def Phi_a_kj(pars, j):
             def get_block(xi, j, block_size=6):
                 return lax.dynamic_slice(xi, (block_size*j,), (block_size,))
-            
-            def tilde(vec):
-                """
-                (3,3)
-                """
-                return jnp.array([[0, -vec[2], vec[1]], [vec[2], 0, -vec[0]], [-vec[1], vec[0], 0]])
+                        
+            xi_  =  get_block(xi, j, block_size=6)              # strains of segment j (6,)
+            d_s  =  self.d_s(pars, s)                           # (4,)
+            dd_s =  self.dd_s_ds(pars, s)                       # (4,)
 
-            def hat(vec):
-                """
-                (4,4)
-                """
-                return jnp.vstack([jnp.column_stack([tilde(vec[:3]), vec[3:]]), jnp.zeros(4)])
-            
-            xi_  =  get_block(xi, j, block_size=6)  # strains of segment j (6,)
-            d_s  =  self.d_s(tendon_params, s)      # (4,)
-            dd_s =  self.dd_s_ds(tendon_params, s)  # (4,)
-
-            term =  (dd_s + hat(xi_) @ d_s)[:-1]    # (3,)
-            norm =  jnp.linalg.norm(term)           # ()
-            t    =  term / norm                     # (3,)
-
-            return jnp.hstack([tilde(d_s) @ t, t])  # (6,)
+            term =  (dd_s + lie.hat_SE3(xi_) @ d_s)[:-1]        # (3,)
+            norm =  jnp.linalg.norm(term)                       # ()
+            t    =  term / norm                                 # (3,)
+            return jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t]) # (6,)
 
         xi = self.strain(q)
 
         Phi_a = vmap(
             vmap(Phi_a_kj, in_axes=(0, None), out_axes=1),
             in_axes=(None, 0),
-            out_axes=0)(self.tendon_params, jnp.arange(self.num_segments))              # (num_segments, 6, num_actuators)
+            out_axes=0)(self.tendon_routing_params, jnp.arange(self.num_segments))      # (num_segments, 6, num_actuators)
+        
         Phi_a = Phi_a.reshape((6*self.num_segments, self.num_actuators), order='C')     # (num_segments*6, num_actuators)
 
         A_local = self.B_xi.T @ Phi_a                                                   # (num_segments*6, num_actuators)
 
         return A_local
 
-    def compute_actuation_matrix(self, q: Array) -> Array:
+    
+    @eqx.filter_jit
+    def _actuation_matrix_s(self, q: Array, s: Array) -> Array:
+        """
+        Compute the local actuation matrix at current abscissa s.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,)
+            s (Array): abscissa points (num_gauss_points,)
+
+        Returns:
+            A_s (Array): Actuation matrix of shape at s (num_active_strains, num_actuators)
+        """
+
+        def Phi_a_kj(tendon_routing_params, j):
+            def get_block(xi, j, block_size=6):
+                return lax.dynamic_slice(xi, (block_size*j,), (block_size,))
+            
+            attachment_segment_idx = tendon_routing_params['lt']        # ()
+            cond = attachment_segment_idx >= j                          # ()
+                        
+            xi_  =  get_block(xi, j, block_size=6)                      # strains of segment j (6,)
+            d_s  =  self.d_s(tendon_routing_params, s)                  # (4,)
+            dd_s =  self.dd_s_ds(tendon_routing_params, s)              # (4,)
+
+            term =  (dd_s + lie.hat_SE3(xi_) @ d_s)[:-1]                # (3,)
+            norm =  jnp.linalg.norm(term)                               # ()
+            t    =  term / norm                                         # (3,)
+
+            return  cond*jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])   # (6,)
+
+        xi = self.strain(q)
+
+        Phi_a = vmap(
+            vmap(Phi_a_kj, in_axes=(0, None), out_axes=1),
+            in_axes=(None, 0),
+            out_axes=0)(self.tendon_routing_params, jnp.arange(self.num_segments))  # (num_segments, 6, num_actuators)
+        
+        Phi_a = Phi_a.reshape((6*self.num_segments, self.num_actuators), order='C') # (num_segments*6, num_actuators)
+
+        A_s = self.B_xi.T @ Phi_a                                                   # (num_segments*6, num_actuators)
+
+        return A_s
+
+
+    @eqx.filter_jit
+    def actuation_matrix(self, q: Array) -> Array:
+        """
+        Compute the actuation matrix of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
+        """
         def A_i(i):
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1])
             def A_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
-                A_jj = self._actuation_matrix(q, Xs_j)
+                A_jj = self._actuation_matrix_s(q, Xs_j)
                 return Ws_j * A_jj
 
             A_blocks_i = vmap(A_j)(jnp.arange(self.num_gauss_points))
@@ -202,17 +299,37 @@ class TendonActuatedPCS(PCS):
         
         return A_full
     
+
     @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
+    def tendon_kinematics(self, q: Array, s: Array) -> Array:
         """
-        Compute the actuation matrix of the robot.
+            Compute the forward kinematics of the robot at a point s along the robot.
 
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+            Args:
+                q (Array): generalized coordinates of shape (num_active_strains,).
+                s (Array): point coordinate along the robot in the interval [0, L]. (n_s,)
 
-        Returns:
-            A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
-        """
-        A = self.compute_actuation_matrix(q)
-        return A
+            Returns:
+                t (Array): 3D position of the tendons at s, shape (n_tendons, n_s, 3)
+            """
+        
+        def tendon_i_kinematics(tendon_routing_params: Dict[str, Array], s_val: Array) -> Array:
+            g_s = self.forward_kinematics(q, s_val)             # (4,4)
+            t_s = g_s @ self.d_s(tendon_routing_params, s_val)  # (4,)
+            t_s = t_s[:-1]                                      # (3,)
+            
+            lt = self.L_cum[tendon_routing_params["lt"] + 1]    # ()
+            mask = s_val <= lt                                  # ()
+
+            t_s = jnp.where(mask, t_s, jnp.nan)                 # (3,)
+
+            return t_s
+        
+        t = vmap(
+                vmap(tendon_i_kinematics, in_axes=(None, 0), out_axes=0),
+                in_axes=(0, None), 
+                out_axes=0,
+            )(self.tendon_routing_params, s)
+
+        return t
 
