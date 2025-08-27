@@ -387,8 +387,8 @@ if __name__ == "__main__":
     robot = TendonActuatedPCS(
         num_segments=num_segments,
         params=params,
-        tendon_routing_params=tendon_routing_params,
         tendon_routing_basis={'d_s': linear_routing, 'dd_s_ds': linear_routing_derivative},
+        tendon_routing_params=tendon_routing_params,
         order_gauss=5,
     )
 

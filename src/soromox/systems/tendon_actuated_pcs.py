@@ -250,16 +250,18 @@ class TendonActuatedPCS(PCS):
 
             return  cond*jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])   # (6,)
 
-        xi = self.strain(q)
+        xi = self.strain(q)                                             # strains (6*num_segments,)
 
         Phi_a = vmap(
             vmap(Phi_a_kj, in_axes=(0, None), out_axes=1),
             in_axes=(None, 0),
-            out_axes=0)(self.tendon_routing_params, jnp.arange(self.num_segments))  # (num_segments, 6, num_actuators)
+            out_axes=0)(self.tendon_routing_params,
+                        jnp.arange(self.num_segments))                  # (num_segments, 6, num_actuators)
         
-        Phi_a = Phi_a.reshape((6*self.num_segments, self.num_actuators), order='C') # (num_segments*6, num_actuators)
+        Phi_a = Phi_a.reshape((6*self.num_segments,
+                               self.num_actuators))                     # (6*num_segments, num_actuators)
 
-        A_s = self.B_xi.T @ Phi_a                                                   # (num_segments*6, num_actuators)
+        A_s = self.B_xi.T @ Phi_a                                       # (6*num_segments, num_actuators)
 
         return A_s
 
