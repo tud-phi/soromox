@@ -9,7 +9,7 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as onp
-from typing import Callable
+from typing import Callable, Dict
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.systems.pcs import PCS
@@ -37,13 +37,14 @@ def draw_robot_curve(
 
 
 def draw_tendon_curves(
-        tendon_kinematics: Callable,
+        batched_forward_kinematics_tendons: Callable,
+        tendon_routing_params: Dict[str, Array],
         L_max: float,
         q: Array,
         num_points: int = 50,
 ):
     s_ps = jnp.linspace(0, L_max, num_points)
-    ps   = tendon_kinematics(q, s_ps)
+    ps   = batched_forward_kinematics_tendons(tendon_routing_params, q, s_ps)
     
     curves = jnp.array(ps, dtype=jnp.float64)
     return curves  # (n_tendons, N, 3)
@@ -153,6 +154,7 @@ def animate_robot_matplotlib(
 
 def animate_robot_tendons_matplotlib(
     robot,
+    tendon_routing_params: Dict[str, Array],
     t_list: jnp.ndarray,   # shape (T,)
     q_list: jnp.ndarray,   # shape (T, DOF)
     num_points: int = 50,
@@ -167,13 +169,18 @@ def animate_robot_tendons_matplotlib(
         raise ValueError("Cannot use both animation and slider at the same time. Choose one.")
 
     batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
+    batched_forward_kinematics_tendons = jax.vmap(
+            jax.vmap(robot.forward_kinematics_tendons, in_axes=(None, None, 0), out_axes=0),
+            in_axes=(0, None, None),
+            out_axes=0,
+        )
     L_max = jnp.sum(robot.L)
 
     width = jnp.linalg.norm(robot.L) * 3
     height = width
 
     # backbone linewidth
-    backbone_lw = float(jnp.max(robot.r) * 1.25e3)
+    backbone_lw = 4#float(jnp.max(robot.r) * 1.25e3)
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
@@ -186,7 +193,7 @@ def animate_robot_tendons_matplotlib(
         lambda q: draw_robot_curve(batched_forward_kinematics, L_max, q, num_points)
     )
     batched_tendon_curve = jax.vmap(
-        lambda q: draw_tendon_curves(robot.tendon_kinematics, L_max, q, num_points)
+        lambda q: draw_tendon_curves(batched_forward_kinematics_tendons, tendon_routing_params, L_max, q, num_points)
     )
 
     all_robot_curves = batched_robot_curve(q_list)       # (T, num_points, 3)
@@ -355,14 +362,14 @@ if __name__ == "__main__":
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
         "p0": jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
+            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]#[jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        "g": jnp.array([9.81, 0.0, 0.0]),       # Gravity vector [m/s^2]
+        "E": 2e3 * jnp.ones((num_segments,)),   # Elastic modulus [Pa]
+        "G": 1e3 * jnp.ones((num_segments,)),   # Shear modulus [Pa]
     }
     params["D"] = 1e-3 * jnp.diag(
         (
@@ -378,7 +385,7 @@ if __name__ == "__main__":
         "rz": 2e-2*jnp.array([0.0, 0.0]),   # z-coordinate of the pulling point of the tendons [m]
         "my": jnp.array([0.0, 0.0]),        # slope coefficient in the x-y plane of the tendons [-]
         "mz": jnp.array([0.0, 0.0]),        # slope coefficient in the x-z plane of the tendons [-]
-        "lt": jnp.array([1, 0]),            # length of the tendons = x-coordinate of the attachment points [m]
+        "lt": jnp.array([0, 0]),            # length of the tendons = x-coordinate of the attachment points [m]
     }
 
     # ======================================================
@@ -401,11 +408,12 @@ if __name__ == "__main__":
         num_segments,
         axis=0,
     ).flatten()
+    q0 = jnp.zeros(6*num_segments)
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    u = jnp.array([1., 0.])
+    u = jnp.array([-1., 0.])
     print("u =\n", u)
 
     # Actuation matrix
@@ -415,30 +423,15 @@ if __name__ == "__main__":
     
     # Tendons
     s1 = jnp.linspace(0, robot.L_cum[-1], 4)
-    t = robot.tendon_kinematics(q0, s1)
+    pars = {"ry": 2e-2,"rz": 2e-2, "my": 0.0, "mz": 0.0, "lt": 1}
+    t = robot.forward_kinematics_tendons(pars, q0, 0.)
+    t1 = jax.vmap(
+            jax.vmap(robot.forward_kinematics_tendons, in_axes=(None, None, 0), out_axes=0),
+            in_axes=(0, None, None),
+            out_axes=0,
+        )(tendon_routing_params, q0, s1)
     print("t =\n", t.shape)
-    
-
-    # TODO: debug visualization of tendons: some kinematics is wrong
-    # print(robot.g0)
-    # pars = {
-    #     "ry": 2e-2,  # y-coordinate of the pulling point of the tendons [m]
-    #     "rz": 0.,   # z-coordinate of the pulling point of the tendons [m]
-    #     "my": 0.,        # slope coefficient in the x-y plane of the tendons [-]
-    #     "mz": 0.,        # slope coefficient in the x-z plane of the tendons [-]
-    #     "lt": 1,            # length of the tendons = x-coordinate of the attachment points [m]
-    # }
-    # g_s = robot.forward_kinematics(q0, 0.)             # (4,4)
-    # tendon = linear_routing(pars, 0.)
-    # t_s = g_s @ tendon              # (4,)
-    # t_s = t_s[:-1]
-    # print("\ng_s =\n", g_s.shape)
-    # print(g_s)
-    # print("\ntendon =\n", tendon.shape)
-    # print(tendon)
-    # print("\nt_s =\n", t_s.shape)
-    # print(t_s)
-
+    print("t1 =\n", t1.shape)
 
     # Simulation time parameters
     t0 = 0.0
@@ -520,6 +513,7 @@ if __name__ == "__main__":
     # =====================================================
     animate_robot_tendons_matplotlib(
         robot,
+        tendon_routing_params,
         t_list=ts,  # shape (T,)
         q_list=q_ts,  # shape (T, DOF)
         num_points=50,
