@@ -285,10 +285,7 @@ class Pendulum(BaseSystem):
         chi_all = jnp.stack([p_coms[:, 0], p_coms[:, 1], theta], axis=-1)
         return chi_all
 
-    # Backward-compatible alias
-    forward_kinematics = forward_kinematics_tips
-
-    def _linear_jacobians(self, q: Array) -> Array:
+    def _linear_jacobians_coms(self, q: Array) -> Array:
         """
         Compute linear velocity Jacobians for all link centers of mass.
 
@@ -315,7 +312,7 @@ class Pendulum(BaseSystem):
         Jv = jnp.stack([col_x, col_y], axis=1)  # (n,2,n)
         return Jv
 
-    def _linear_jacobians_tip(self, q: Array) -> Array:
+    def _linear_jacobians_tips(self, q: Array) -> Array:
         """
         Compute linear velocity Jacobians for the distal tips of all links.
 
@@ -372,7 +369,7 @@ class Pendulum(BaseSystem):
             J_all (Array): J_all with shape (N, 3, N), where for each i:
                    J_all[i] = [Jv_x; Jv_y; Jw] at joint i.
         """
-        Jv_tip = self._linear_jacobians_tip(q)  # (N,2,N)
+        Jv_tip = self._linear_jacobians_tips(q)  # (N,2,N)
         # Build linear Jacobians at joints: i=0 -> zeros; i>0 -> tip of (i-1)
         Jv_joints = jnp.zeros_like(Jv_tip)
         Jv_joints = Jv_joints.at[1:].set(Jv_tip[:-1])
@@ -392,7 +389,7 @@ class Pendulum(BaseSystem):
         Returns:
             J_all (Array): Spatial Jacobian J ∈ R^{3×N} (rows: [Jv_x, Jv_y, Jw]).
         """
-        Jv_all_tip = self._linear_jacobians_tip(q)  # (N,2,N)
+        Jv_all_tip = self._linear_jacobians_tips(q)  # (N,2,N)
         Jw_all = self._angular_jacobians()          # (N,N)
         J_all = jnp.concatenate([Jv_all_tip, Jw_all[:, None, :]], axis=1)
         return J_all
@@ -408,13 +405,10 @@ class Pendulum(BaseSystem):
         Returns:
             J_all (Array): Spatial Jacobian J ∈ R^{3×N} (rows: [Jv_x, Jv_y, Jw]).
         """
-        Jv_all_com = self._linear_jacobians(q)  # (N,2,N)
+        Jv_all_com = self._linear_jacobians_coms(q)  # (N,2,N)
         Jw_all = self._angular_jacobians()      # (N,N)
         J_all = jnp.concatenate([Jv_all_com, Jw_all[:, None, :]], axis=1)
         return J_all
-
-    # Backward-compatible alias
-    jacobian = jacobians_tips
 
     # -------------------------------
     # Standardized dynamics interface
@@ -434,7 +428,7 @@ class Pendulum(BaseSystem):
         Returns:
             B (Array): Generalized mass matrix, shape (N, N) [kg⋅m²]
         """
-        Jv = self._linear_jacobians(q)  # (n,2,n)
+        Jv = self._linear_jacobians_coms(q)  # (n,2,n)
         Jw = self._angular_jacobians()  # (n,n)
         # B = Σ ( m_i Jv_i^T Jv_i + I_i Jw_i^T Jw_i )
         m_terms = jnp.einsum("i,ika,ikb->ab", self.m, Jv, Jv)
@@ -485,11 +479,12 @@ class Pendulum(BaseSystem):
         Returns:
             G (Array): Generalized gravity vector, shape (N,) [N⋅m]
         """
-        Jv = self._linear_jacobians(q)  # (n,2,n)
+        Jv = self._linear_jacobians_coms(q)  # (N,2,N) -> indices (link, component, joint)
         # Force on COM i: f_i = m_i * g
-        f = self.m[:, None] * self.g[None, :]  # (n,2)
-        # Contribution: Jv_i^T f_i -> shape (n,)
-        G = -jnp.einsum("ika,ia->k", Jv, f)
+        f = self.m[:, None] * self.g[None, :]  # (N,2)
+        # Gravity torque: G = - Σ_i Jv_i^T f_i (shape: (N,))
+        # Correctly sum over links and Cartesian components, leaving joint index free.
+        G = -jnp.einsum("icj,ic->j", Jv, f)
         return G
 
     @eqx.filter_jit

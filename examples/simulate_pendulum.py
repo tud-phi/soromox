@@ -2,7 +2,7 @@ import cv2  # importing cv2
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from jax import Array, vmap
+from jax import Array, lax, vmap
 from jax import numpy as jnp
 import numpy as onp
 from pathlib import Path
@@ -40,21 +40,18 @@ video_path = Path(__file__).parent / "videos" / f"{sym_exp_filepath.stem}.mp4"
 
 
 def draw_robot(
-    batched_forward_kinematics_fn: Callable,
-    params: Dict[str, Array],
+    robot: pendulum.Pendulum,
     q: Array,
     width: int,
     height: int,
 ) -> onp.ndarray:
     # plotting in OpenCV
     h, w = height, width  # img height and width
-    ppm = h / (2.5 * jnp.sum(params["L"]))  # pixel per meter
+    ppm = h / (2.5 * jnp.sum(robot.L))  # pixel per meter
     robot_color = (0, 0, 0)  # black robot_color in BGR
 
-    # poses along the robot of shape (3, N)
-    link_indices = jnp.arange(params["L"].shape[0], dtype=jnp.int32)
-    chi_ls = jnp.zeros((3, link_indices.shape[0] + 1))
-    chi_ls = chi_ls.at[:, 1:].set(batched_forward_kinematics_fn(q, link_indices))
+    # poses along the robot of shape (N, 3)
+    chi_ls = robot.forward_kinematics_tips(q)
 
     img = 255 * onp.ones((w, h, 3), dtype=jnp.uint8)  # initialize background to white
     curve_origin = onp.array(
@@ -62,7 +59,7 @@ def draw_robot(
     )  # in x-y pixel coordinates
     # transform robot poses to pixel coordinates
     # should be of shape (N, 2)
-    curve = onp.array((curve_origin + chi_ls[:2, :].T * ppm), dtype=onp.int32)
+    curve = onp.array((curve_origin + chi_ls[:, :2] * ppm), dtype=onp.int32)
     # invert the v pixel coordinate
     curve[:, 1] = h - curve[:, 1]
     cv2.polylines(img, [curve], isClosed=False, color=robot_color, thickness=10)
@@ -72,11 +69,8 @@ def draw_robot(
 
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = pendulum.Pendulum(sym_exp_filepath, params)
+    robot = pendulum.Pendulum(params)
 
-    batched_forward_kinematics = vmap(
-        robot.forward_kinematics, in_axes=(None, 0), out_axes=-1
-    )
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities
@@ -84,7 +78,7 @@ if __name__ == "__main__":
 
     # call the forward dynamics
     yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (u, ))
-    print("yd:\n", yd)
+    print("yd0:\n", yd)
 
     # Integrate using the model's built-in solver
     ts_out, qs, qds = robot.resolve_upon_time(
@@ -110,8 +104,7 @@ if __name__ == "__main__":
 
     for time_idx, t in enumerate(video_ts):
         img = draw_robot(
-            batched_forward_kinematics,
-            params,
+            robot,
             qs[time_idx],
             video_width,
             video_height,
