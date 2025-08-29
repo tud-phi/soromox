@@ -80,9 +80,8 @@ nav:
       - PCS Systems:
         - General PCS: api/pcs.md
         - Planar PCS: api/planar-pcs.md
-        - Planar PCS Symbolic: api/planar-pcs-sym.md
-        - Pneumatic Planar PCS: api/pneumatic-planar-pcs.md
-        - Tendon Planar PCS: api/tendon-planar-pcs.md
+        - Pneumatic Actuated Planar PCS: api/pneumatic-actuated-planar-pcs.md
+        - Tendon Actuated Planar PCS: api/tendon-actuated-planar-pcs.md
       - Planar HSA: api/planar-hsa.md
     - Utilities:
       - Overview: api/utils.md

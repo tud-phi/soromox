@@ -18,6 +18,14 @@ class Pendulum(BaseSystem):
     are computed on-the-fly using Jacobian-based rigid-body formulas that are fully
     JAX compatible (supporting JIT, vmap, grad, etc.).
 
+    Notes
+    ----
+    By providing non-zero joint stiffness `K` and/or damping `D`, the model can be
+    used as a planar articulated soft robot with linear elastic and viscous joints.
+    In this "soft-joint" mode, additional joint torques act as
+        τ_el = K q,   τ_d = D qd,
+    which endow the otherwise rigid chain with distributed elasticity and dissipation.
+
     Modeling Overview
     -----------------
     The system consists of N planar links connected by revolute joints (out-of-plane z-axis).

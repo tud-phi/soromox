@@ -1310,9 +1310,6 @@ class PlanarHSA(BaseSystem):
         """
         Compute the full damping matrix of the robot.
 
-        Args:
-            None
-
         Returns:
             D (Array): Full damping matrix of shape (num_dofs_max, num_dofs_max).
         """
@@ -1324,9 +1321,6 @@ class PlanarHSA(BaseSystem):
     def damping_matrix(self) -> Array:
         """
         Compute the damping matrix of the robot.
-
-        Args:
-            None
 
         Returns:
             D (Array): Damping matrix of shape (num_dofs, num_dofs).
