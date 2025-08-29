@@ -439,30 +439,50 @@ class Pendulum(BaseSystem):
     @eqx.filter_jit
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
         """
-        Compute the Coriolis matrix using Christoffel symbols.
-        
-        The Coriolis matrix encodes velocity-dependent forces:
-        C(q,q̇) = Σ_k Γ_{ij}^k * q̇_k
-        where Γ_{ij}^k are Christoffel symbols of the second kind.
-        
+        Closed-form Coriolis/centrifugal matrix using Jacobian time derivatives.
+
+        We avoid autodiff by leveraging that for planar revolute chains:
+          - Linear Jacobian columns are Jv_i[:, j] = z × (p_com_i - p_joint_j) for j <= i
+          - Their time-derivative columns are d/dt Jv_i[:, j] = z × (v_com_i - v_joint_j)
+          - Angular Jacobians are constant (Jw does not depend on q), hence d/dt Jw = 0
+
+        The Coriolis/centrifugal matrix C is defined such that
+            C(q, qd) @ qd = Σ_i m_i Jv_i(q)^T (d/dt Jv_i(q) @ qd)
+        and we return one valid matrix realization:
+            C(q, qd) = Σ_i m_i Jv_i(q)^T d/dt Jv_i(q)
+
         Args:
             q (Array): Joint angles, shape (N,) [rad]
             qd (Array): Joint velocities, shape (N,) [rad/s]
-            
+
         Returns:
-            C (Array): Coriolis matrix, shape (N, N) [kg⋅m²/s]
+            C (Array): Coriolis/centrifugal matrix, shape (N, N)
         """
-        from jax import jacfwd
+        n = self.num_links
+        # Linear Jacobians at COMs and at joints (proximal ends)
+        Jv = self._linear_jacobians_coms(q)        # (N, 2, N) for COMs
+        Jv_tip = self._linear_jacobians_tips(q)  # (N, 2, N) for tips
+        # Build joint linear Jacobians: joint 0 at origin (zero), joint j>0 equals tip of link j-1
+        Jv_joints = jnp.zeros_like(Jv_tip)
+        Jv_joints = Jv_joints.at[1:].set(Jv_tip[:-1])  # (N, 2, N)
 
-        def B_func(q_inner):
-            return self.inertia_matrix(q_inner)
+        # COM and joint linear velocities
+        v_com = jnp.einsum("icj,j->ic", Jv, qd)         # (N, 2)
+        v_joint = jnp.einsum("icj,j->ic", Jv_joints, qd) # (N, 2)
 
-        dB_dq = jacfwd(B_func)(q)  # shape (n, n, n) with k,i,j order
-        # C_{ij} = 0.5 Σ_k ( ∂B_{ij}/∂q_k + ∂B_{ik}/∂q_j - ∂B_{jk}/∂q_i ) qd_k
-        term1 = jnp.einsum("kij,k->ij", dB_dq, qd)
-        term2 = jnp.einsum("jik,k->ij", dB_dq, qd)
-        term3 = jnp.einsum("ijk,k->ij", dB_dq, qd)
-        return 0.5 * (term1 + term2 - term3)
+        # Time derivative of linear Jacobians columns: d/dt Jv_i[:, j]
+        # For j <= i: z × (v_com_i - v_joint_j); else 0
+        dv = v_com[:, None, :] - v_joint[None, :, :]  # (N, N, 2) indexed by (i, j, xy)
+        # z × a in 2D -> [-a_y, a_x]
+        Jvdot_x = -dv[..., 1]
+        Jvdot_y =  dv[..., 0]
+        # mask for j <= i
+        mask = jnp.tril(jnp.ones((n, n), dtype=q.dtype))
+        Jvdot = jnp.stack([Jvdot_x * mask, Jvdot_y * mask], axis=1)  # (n, 2, n)
+
+        # Assemble C = Σ_i m_i Jv_i^T Jvdot_i  (shape (n, n))
+        C = jnp.einsum("i,iaj,iak->jk", self.m, Jv, Jvdot)
+        return C
 
     @eqx.filter_jit
     def gravitational_force(self, q: Array) -> Array:
@@ -508,7 +528,7 @@ class Pendulum(BaseSystem):
         Returns:
             tau_el (Array): Elastic force vector τ_el = K @ q, shape (N,) [N⋅m]
         """
-        tau_el = -self.K @ q
+        tau_el = self.K @ q
         return tau_el
 
     @eqx.filter_jit
