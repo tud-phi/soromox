@@ -28,7 +28,7 @@ params = {
 
 # define initial configuration
 q0 = jnp.zeros((num_links,))
-# q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
+q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
 
 # set simulation parameters
 dt = 1e-4  # time step
@@ -73,11 +73,17 @@ if __name__ == "__main__":
     robot = pendulum.Pendulum(params)
 
     # initialize velocities and actuation
-    qd0 = jnp.zeros_like(q0)  # initial velocities
+    qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
     u = jnp.zeros_like(q0)  # torques (actuation)
 
+    # compute the operational space matrices
+    Lambda, mu, J, Jd, JB_inv = robot.operational_space_dynamical_matrices(
+        q0, qd0, link_idx=1
+    )
+    print("Lambda:\n", Lambda)
+
     # call the forward dynamics
-    yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (u, ))
+    yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (u,))
     print("yd0:\n", yd)
 
     # Integrate using the model's built-in solver
