@@ -12,7 +12,7 @@ from .base_system import BaseSystem
 class Pendulum(BaseSystem):
     """
     Planar N-link serial pendulum (revolute chain) with closed-form JAX dynamics.
-    
+
     This class provides a lightweight rigid-body model of an N-link planar pendulum
     without relying on pre-generated symbolic expressions. Kinematics and dynamics
     are computed on-the-fly using Jacobian-based rigid-body formulas that are fully
@@ -100,7 +100,9 @@ class Pendulum(BaseSystem):
 
         n_q = m.shape[0]
         # Consistency checks (lightweight; JIT friendly if shapes static)
-        assert I.shape[0] == n_q and L.shape[0] == n_q and Lc.shape[0] == n_q, "Parameter length mismatch"
+        assert I.shape[0] == n_q and L.shape[0] == n_q and Lc.shape[0] == n_q, (
+            "Parameter length mismatch"
+        )
         assert g.shape[0] == 2, "Gravity vector must be length 2"
 
         self.num_links = int(n_q)
@@ -116,10 +118,10 @@ class Pendulum(BaseSystem):
     def update_params(self, params: Dict[str, Array]) -> "Pendulum":
         """
         Update the system parameters and return a new instance (functional style).
-        
+
         This method creates a new Pendulum instance with updated parameters while
         preserving the original instance (immutable update pattern for JAX compatibility).
-        
+
         Args:
             params (Dict[str, Array]): Dictionary with robot parameters. Supported keys:
                 - "m": Masses of the links, shape (N,) [kg]
@@ -129,7 +131,7 @@ class Pendulum(BaseSystem):
                 - "g": Planar gravity vector, shape (2,) [m/s²]
                 - "K": Joint stiffness matrix, shape (N,N) [N⋅m/rad] (optional)
                 - "D": Joint damping matrix, shape (N,N) [N⋅m⋅s/rad] (optional)
-                
+
         Returns:
             Pendulum: New instance with updated parameters.
         """
@@ -156,10 +158,10 @@ class Pendulum(BaseSystem):
     def _cumulative_angles(self, q: Array) -> Array:
         """
         Compute cumulative joint angles from relative joint angles.
-        
+
         Args:
             q (Array): Relative joint angles, shape (N,) [rad]
-            
+
         Returns:
             Array: Cumulative angles θ_i = Σ_{k=0..i} q[k], shape (N,) [rad]
         """
@@ -168,10 +170,10 @@ class Pendulum(BaseSystem):
     def _directions(self, q: Array) -> Array:
         """
         Compute unit direction vectors for each link based on cumulative angles.
-        
+
         Args:
             q (Array): Relative joint angles, shape (N,) [rad]
-            
+
         Returns:
             dirs (Array): Unit direction vectors [cos(θ), sin(θ)] for each link, shape (N, 2)
         """
@@ -182,12 +184,12 @@ class Pendulum(BaseSystem):
     def _joint_positions(self, q: Array) -> Array:
         """
         Compute positions of all joint centers (proximal ends of links).
-        
+
         Joint 0 is at the origin. Joint i is at the distal end of link i-1.
-        
+
         Args:
             q (Array): Relative joint angles, shape (N,) [rad]
-            
+
         Returns:
             p_joints (Array): Joint positions, shape (N, 2) [m]
                    p_joints[i] = position of proximal end of link i as array of shape (2, )
@@ -205,10 +207,10 @@ class Pendulum(BaseSystem):
     def _com_positions(self, q: Array) -> Array:
         """
         Compute center-of-mass positions for all links.
-        
+
         Args:
             q (Array): Relative joint angles, shape (N,) [rad]
-            
+
         Returns:
             p_coms (Array): COM positions, shape (N, 2) [m]
                    p_coms[i] = center of mass of link i
@@ -221,10 +223,10 @@ class Pendulum(BaseSystem):
     def _tip_positions(self, q: Array) -> Array:
         """
         Compute distal tip positions for all links.
-        
+
         Args:
             q (Array): Relative joint angles, shape (N,) [rad]
-            
+
         Returns:
             p_tips (Array): Link tip positions, shape (N, 2) [m]
                    p_tips[i] = distal end position of link i
@@ -233,7 +235,7 @@ class Pendulum(BaseSystem):
         seg_vecs = self.L[:, None] * dirs
         p_tips = jnp.cumsum(seg_vecs, axis=0)  # (n,2)
         return p_tips
-    
+
     @eqx.filter_jit
     def forward_kinematics_joints(self, q: Array) -> Array:
         """
@@ -303,10 +305,10 @@ class Pendulum(BaseSystem):
         """
         n = self.num_links
         p_joint = self._joint_positions(q)  # (n,2)
-        p_com = self._com_positions(q)      # (n,2)
+        p_com = self._com_positions(q)  # (n,2)
         r = p_com[:, None, :] - p_joint[None, :, :]  # (n,n,2)
         col_x = -r[..., 1]  # (n,n)  # z x r
-        col_y =  r[..., 0]  # (n,n)
+        col_y = r[..., 0]  # (n,n)
         mask = jnp.tril(jnp.ones((n, n), dtype=q.dtype))
         col_x = col_x * mask
         col_y = col_y * mask
@@ -326,10 +328,10 @@ class Pendulum(BaseSystem):
         """
         n = self.num_links
         p_joint = self._joint_positions(q)  # (n,2)
-        p_tip = self._tip_positions(q)      # (n,2)
+        p_tip = self._tip_positions(q)  # (n,2)
         r = p_tip[:, None, :] - p_joint[None, :, :]  # (n,n,2)
         col_x = -r[..., 1]  # (n,n)
-        col_y =  r[..., 0]  # (n,n)
+        col_y = r[..., 0]  # (n,n)
         mask = jnp.tril(jnp.ones((n, n), dtype=q.dtype))
         col_x = col_x * mask
         col_y = col_y * mask
@@ -339,10 +341,10 @@ class Pendulum(BaseSystem):
     def _angular_jacobians(self) -> Array:
         """
         Compute angular velocity Jacobians for all links.
-        
+
         For planar pendulums, the angular velocity Jacobian has a simple pattern:
         Jw[i,j] = 1 if j <= i, 0 otherwise (lower triangular matrix of ones).
-        
+
         Returns:
             Jw (Array): Angular velocity Jacobians, shape (N, N)
                    Jw[i,j] = ∂(link_i angular velocity)/∂qd[j]
@@ -352,7 +354,7 @@ class Pendulum(BaseSystem):
         idxs = jnp.arange(n)
         Jw = (idxs[None, :] <= idxs[:, None]).astype(self.m.dtype)  # (n,n)
         return Jw
-    
+
     @eqx.filter_jit
     def jacobians_joints(self, q: Array) -> Array:
         """
@@ -393,12 +395,14 @@ class Pendulum(BaseSystem):
                    J_tips[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at tip i.
         """
         Jv_all_tip = self._linear_jacobians_tips(q)  # (N,2,N)
-        Jw_all = self._angular_jacobians()          # (N,N)
+        Jw_all = self._angular_jacobians()  # (N,N)
         J_tips = jnp.concatenate([Jw_all[:, None, :], Jv_all_tip], axis=1)
         return J_tips
 
     @eqx.filter_jit
-    def jacobians_and_derivatives_tips(self, q: Array, qd: Array) -> Tuple[Array, Array]:
+    def jacobians_and_derivatives_tips(
+        self, q: Array, qd: Array
+    ) -> Tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 
@@ -430,13 +434,13 @@ class Pendulum(BaseSystem):
         Jv_joints = J_joints[:, 1:, :]
 
         # Linear velocities of tips and joints
-        v_tips = jnp.einsum("icj,j->ic", Jv_tips, qd)       # (N,2)
+        v_tips = jnp.einsum("icj,j->ic", Jv_tips, qd)  # (N,2)
         v_joints = jnp.einsum("icj,j->ic", Jv_joints, qd)  # (N,2)
 
         # Time derivative of linear Jacobians columns via z × (Δv)
         dv = v_tips[:, None, :] - v_joints[None, :, :]  # (N,N,2) as (i,j,xy)
         Jvdot_x = -dv[..., 1]
-        Jvdot_y =  dv[..., 0]
+        Jvdot_y = dv[..., 0]
         mask = jnp.tril(jnp.ones((N, N), dtype=q.dtype))
         Jvd = jnp.stack([Jvdot_x * mask, Jvdot_y * mask], axis=1)  # (N,2,N)
 
@@ -458,7 +462,7 @@ class Pendulum(BaseSystem):
                    J_coms[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at COM i.
         """
         Jv_all_com = self._linear_jacobians_coms(q)  # (N,2,N)
-        Jw_all = self._angular_jacobians()      # (N,N)
+        Jw_all = self._angular_jacobians()  # (N,N)
         J_coms = jnp.concatenate([Jw_all[:, None, :], Jv_all_com], axis=1)
         return J_coms
 
@@ -470,13 +474,13 @@ class Pendulum(BaseSystem):
     def inertia_matrix(self, q: Array) -> Array:
         """
         Compute the generalized mass (inertia) matrix using Jacobian formulation.
-        
+
         The mass matrix aggregates contributions from all links:
         B(q) = Σ_i ( m_i * Jv_i^T * Jv_i + I_i * Jw_i^T * Jw_i )
-        
+
         Args:
             q (Array): Joint angles, shape (N,) [rad]
-            
+
         Returns:
             B (Array): Generalized mass matrix, shape (N, N) [kg⋅m²]
         """
@@ -512,22 +516,22 @@ class Pendulum(BaseSystem):
         """
         N = self.num_links
         # Linear Jacobians at COMs and at joints (proximal ends)
-        Jv = self._linear_jacobians_coms(q)        # (N, 2, N) for COMs
+        Jv = self._linear_jacobians_coms(q)  # (N, 2, N) for COMs
         Jv_tip = self._linear_jacobians_tips(q)  # (N, 2, N) for tips
         # Build joint linear Jacobians: joint 0 at origin (zero), joint j>0 equals tip of link j-1
         Jv_joints = jnp.zeros_like(Jv_tip)
         Jv_joints = Jv_joints.at[1:].set(Jv_tip[:-1])  # (N, 2, N)
 
         # COM and joint linear velocities
-        v_com = jnp.einsum("icj,j->ic", Jv, qd)         # (N, 2)
-        v_joint = jnp.einsum("icj,j->ic", Jv_joints, qd) # (N, 2)
+        v_com = jnp.einsum("icj,j->ic", Jv, qd)  # (N, 2)
+        v_joint = jnp.einsum("icj,j->ic", Jv_joints, qd)  # (N, 2)
 
         # Time derivative of linear Jacobians columns: d/dt Jv_i[:, j]
         # For j <= i: z × (v_com_i - v_joint_j); else 0
         dv = v_com[:, None, :] - v_joint[None, :, :]  # (N, N, 2) indexed by (i, j, xy)
         # z × a in 2D -> [-a_y, a_x]
         Jvdot_x = -dv[..., 1]
-        Jvdot_y =  dv[..., 0]
+        Jvdot_y = dv[..., 0]
         # mask for j <= i
         mask = jnp.tril(jnp.ones((N, N), dtype=q.dtype))
         Jvdot = jnp.stack([Jvdot_x * mask, Jvdot_y * mask], axis=1)  # (n, 2, n)
@@ -540,18 +544,20 @@ class Pendulum(BaseSystem):
     def gravitational_force(self, q: Array) -> Array:
         """
         Compute the generalized gravitational force vector.
-        
+
         The gravitational force is computed by projecting gravity effects
         through the linear velocity Jacobians:
         G(q) = Σ_i Jv_i^T ( m_i * g )
-        
+
         Args:
             q (Array): Joint angles, shape (N,) [rad]
-            
+
         Returns:
             G (Array): Generalized gravity vector, shape (N,) [N⋅m]
         """
-        Jv = self._linear_jacobians_coms(q)  # (N,2,N) -> indices (link, component, joint)
+        Jv = self._linear_jacobians_coms(
+            q
+        )  # (N,2,N) -> indices (link, component, joint)
         # Force on COM i: f_i = m_i * g
         f = self.m[:, None] * self.g[None, :]  # (N,2)
         # Gravity torque: G = - Σ_i Jv_i^T f_i (shape: (N,))
@@ -563,7 +569,7 @@ class Pendulum(BaseSystem):
     def stiffness_matrix(self) -> Array:
         """
         Return the linear stiffness matrix for joint elasticity.
-        
+
         Returns:
             K (Array): Stiffness matrix, shape (N, N) [N⋅m/rad]
         """
@@ -573,10 +579,10 @@ class Pendulum(BaseSystem):
     def elastic_force(self, q: Array) -> Array:
         """
         Compute the generalized elastic force from joint stiffness.
-        
+
         Args:
             q (Array): Joint angles, shape (N,) [rad]
-            
+
         Returns:
             tau_el (Array): Elastic force vector τ_el = K @ q, shape (N,) [N⋅m]
         """
@@ -597,10 +603,10 @@ class Pendulum(BaseSystem):
     def actuation_matrix(self, q: Array) -> Array:
         """
         Return the actuation matrix (identity for direct joint torques).
-        
+
         Args:
             q (Array): Joint angles, shape (N,) [rad] (unused for pendulum)
-            
+
         Returns:
             A (Array): Actuation matrix (identity), shape (N, N)
         """
@@ -610,16 +616,16 @@ class Pendulum(BaseSystem):
     def actuation_force(self, q: Array, u: Array) -> Array:
         """
         Compute generalized actuation forces from control inputs.
-        
+
         Args:
             q (Array): Joint angles, shape (N,) [rad] (unused)
             u (Array): Control torques, shape (N,) [N⋅m]
-            
+
         Returns:
             tau_u (Array): Generalized actuation forces τ_u = u, shape (N,) [N⋅m]
         """
         return u
-    
+
     @eqx.filter_jit
     def forward_dynamics(
         self,
@@ -774,7 +780,7 @@ class Pendulum(BaseSystem):
         U = self.potential_energy(q)
         E = T + U
         return E
-    
+
     @eqx.filter_jit
     def operational_space_dynamical_matrices(
         self,
