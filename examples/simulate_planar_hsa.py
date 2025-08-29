@@ -1,20 +1,14 @@
+import cv2  # importing cv2
 import jax
 import jax.numpy as jnp
+jax.config.update("jax_enable_x64", True)  # double precision
+from pathlib import Path
 
 import soromox
 from soromox.parameters.hsa_params import (
     PARAMS_FPU_CONTROL,
     PARAMS_FPU_HYSTERESIS_CONTROL,
 )
-
-from diffrax import Tsit5
-
-import cv2  # importing cv2
-
-from pathlib import Path
-
-jax.config.update("jax_enable_x64", True)  # double precision
-
 from soromox.systems.planar_hsa import PlanarHSA
 from soromox.rendering.planar_hsa.opencv_renderer import draw_robot, animate_robot
 
@@ -93,9 +87,6 @@ if __name__ == "__main__":
     dt = 5e-5  # time step
     skip_step = 100  # how many time steps to skip in between video frames
 
-    # Solver
-    solver = Tsit5()
-
     actuation_args = (phi, None, True)  # actuation arguments
 
     ts, q_ts, qd_ts = robot.resolve_upon_time(
@@ -106,7 +97,6 @@ if __name__ == "__main__":
         t1=t1,
         dt=dt,
         skip_steps=skip_step,
-        solver=solver,
         max_steps=None,
     )
 

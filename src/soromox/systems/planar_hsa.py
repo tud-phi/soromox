@@ -856,11 +856,18 @@ class PlanarHSA(BaseSystem):
 
     @eqx.filter_jit
     def apply_eps_to_bend_strains_fn(
-        self, xi: Array, eps: Optional[float] = global_eps
+        self, xi: Array, eps: Optional[float] = None
     ) -> Array:
         """
         Add a small number to the bending strain to avoid singularities
+        Args:
+            xi: strains of the virtual backbone of shape (num_dofs, )
+            eps: small number to add to the bending strain (optional). By default, it will be initialized to as self.global_eps
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = self.global_eps
+        
         xi_reshaped = xi.reshape((-1, 3))
 
         xi_bend_sign = jnp.sign(xi_reshaped[:, 0])
@@ -1135,17 +1142,21 @@ class PlanarHSA(BaseSystem):
         return q
 
     @eqx.filter_jit
-    def _inertia_full_matrix(self, q: Array, eps: float = 1e4 * global_eps) -> Array:
+    def _inertia_full_matrix(self, q: Array, eps: Optional[float] = None) -> Array:
         """
         Compute the full inertia matrix of the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
-            eps (float): small number to avoid singularities (e.g., division by zero).
+            eps (float): small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             B_full (Array): Full inertia matrix of shape (num_dofs_max, num_dofs_max).
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
         xi = self.strain(q)
 
         # add a small number to the bending strain to avoid singularities
@@ -1156,17 +1167,20 @@ class PlanarHSA(BaseSystem):
         return B_full
 
     @eqx.filter_jit
-    def inertia_matrix(self, q: Array, eps: float = 1e4 * global_eps) -> Array:
+    def inertia_matrix(self, q: Array, eps: Optional[float] = None) -> Array:
         """
         Compute the inertia matrix of the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
-            eps (float): small number to avoid singularities (e.g., division by zero).
+            eps (float): small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             B (Array): Inertia matrix of shape (num_dofs, num_dofs).
         """
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
         B_full = self._inertia_full_matrix(q, eps)
 
         B = self.B_xi.T @ B_full @ self.B_xi
@@ -1175,7 +1189,7 @@ class PlanarHSA(BaseSystem):
 
     @eqx.filter_jit
     def _coriolis_full_matrix(
-        self, q: Array, qd: Array, eps: float = 1e4 * global_eps
+        self, q: Array, qd: Array, eps: Optional[float] = None
     ) -> Array:
         """
         Compute the full Coriolis matrix of the robot.
@@ -1183,11 +1197,15 @@ class PlanarHSA(BaseSystem):
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
             qd (Array): time-derivative of the generalized coordinates of shape (num_dofs,).
-            eps (float): small number to avoid singularities (e.g., division by zero).
+            eps (float): small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             C_full (Array): Full Coriolis matrix of shape (num_dofs_max, num_dofs_max).
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
         xi = self.strain(q)
         xid = self.B_xi @ qd
 
@@ -1200,7 +1218,7 @@ class PlanarHSA(BaseSystem):
 
     @eqx.filter_jit
     def coriolis_matrix(
-        self, q: Array, qd: Array, eps: float = 1e4 * global_eps
+        self, q: Array, qd: Array, eps: Optional[float] = None
     ) -> Array:
         """
         Compute the Coriolis matrix of the robot.
@@ -1208,11 +1226,15 @@ class PlanarHSA(BaseSystem):
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
             qd (Array): time-derivative of the generalized coordinates of shape (num_dofs,).
-            eps (float): small number to avoid singularities (e.g., division by zero).
+            eps (float): small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             C (Array): Coriolis matrix of shape (num_dofs, num_dofs).
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
         C_full = self._coriolis_full_matrix(q, qd, eps)
 
         C = self.B_xi.T @ C_full @ self.B_xi
@@ -1221,18 +1243,21 @@ class PlanarHSA(BaseSystem):
 
     @eqx.filter_jit
     def _gravitational_full_force(
-        self, q: Array, eps: float = 1e4 * global_eps
+        self, q: Array, eps: Optional[float] = None
     ) -> Array:
         """
         Compute the full gravitational vector of the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
-            eps (float): small number to avoid singularities (e.g., division by zero).
+            eps (float): small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             G (Array): Full gravitational vector of shape (num_dofs_max,).
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
 
         xi = self.strain(q)
 
@@ -1244,17 +1269,21 @@ class PlanarHSA(BaseSystem):
         return G_full
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array, eps: float = 1e4 * global_eps) -> Array:
+    def gravitational_force(self, q: Array, eps: Optional[float] = None) -> Array:
         """
         Compute the gravitational vector of the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
-            eps (float): small number to avoid singularities (e.g., division by zero).
+            eps (float): small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             G (Array): Gravitational vector of shape (num_dofs,).
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
         G_full = self._gravitational_full_force(q, eps)
 
         G = self.B_xi.T @ G_full
@@ -1382,7 +1411,7 @@ class PlanarHSA(BaseSystem):
 
     @eqx.filter_jit
     def operational_space_dynamical_matrices(
-        self, q: Array, qd: Array, eps: float = 1e4 * global_eps
+        self, q: Array, qd: Array, eps: Optional[float] = None
     ) -> Tuple[Array, Array, Array, Array, Array]:
         """
         Compute the dynamics in operational space.
@@ -1392,7 +1421,7 @@ class PlanarHSA(BaseSystem):
         Args:
             q: generalized coordinates of shape (num_dofs,)
             qd: generalized velocities of shape (num_dofs,)
-            eps: small number to avoid singularities (e.g., division by zero)
+            eps: small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
 
         Returns:
             Lambda: inertia matrix in the operational space of shape (n_x, n_x)
@@ -1403,6 +1432,10 @@ class PlanarHSA(BaseSystem):
                 from the generalized coordinates to the operational space: f = JB_pinv.T @ tau_q
                 Shape (num_dofs, n_x)
         """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
         # map the configuration to the strains
         xi = self.strain(q)
         xid = self.B_xi @ qd
