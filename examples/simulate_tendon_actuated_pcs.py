@@ -21,7 +21,6 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-jnp.set_printoptions(precision=4, suppress=True)
 
 
 def draw_robot_curve(
@@ -49,108 +48,6 @@ def draw_tendon_curves(
     
     curves = jnp.array(ps, dtype=jnp.float64)
     return curves  # (n_tendons, N, 3)
-
-
-def animate_robot_matplotlib(
-    robot: PCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    num_points: int = 50,
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = jnp.sum(robot.L)
-
-    width = jnp.linalg.norm(robot.L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    if animation:
-        (line,) = ax.plot([], [], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(-width / 2, width / 2)
-        ax.set_zlim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            line.set_3d_properties([])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            curve = draw_robot_curve(batched_forward_kinematics, L_max, q, num_points)
-            line.set_data(curve[:, 0], curve[:, 1])
-            line.set_3d_properties(curve[:, 2])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(-width / 2, width / 2)
-            ax.set_zlim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            q = q_list[frame_idx]
-            curve = draw_robot_curve(batched_forward_kinematics, L_max, q, num_points)
-            ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
 
 
 def animate_robot_tendons_matplotlib(
@@ -363,12 +260,12 @@ if __name__ == "__main__":
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
         "p0": jnp.array(
-            [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]#[jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
+            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
-        "L": 1.6e-1 * jnp.ones((num_segments,)),
-        "r": 1.5e-2 * jnp.ones((num_segments,)),
+        "L": 1e-1 * jnp.ones((num_segments,)),  # default: 1e-1
+        "r": 2e-2 * jnp.ones((num_segments,)),  # default: 2e-2
         "rho": rho,
-        "g": jnp.array([9.81, 0.0, 0.0]),       # Gravity vector [m/s^2]
+        "g": jnp.array([0.0, 0.0, 9.81]),       # Gravity vector [m/s^2]
         "E": 2e3 * jnp.ones((num_segments,)),   # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),   # Shear modulus [Pa]
     }
@@ -382,18 +279,11 @@ if __name__ == "__main__":
     )
     tendon_routing_basis = {'d_s': linear_routing, 'dd_s_ds': linear_routing_derivative}
     tendon_routing_params = {
-        "ry": 2.1e-2*jnp.array([1.0, 0.0]),  # y-coordinate of the pulling point of the tendons [m]
-        "rz": 1.5e-2*jnp.array([0.0, -1.0]),   # z-coordinate of the pulling point of the tendons [m]
+        "ry": 2e-2*jnp.array([1.0, -1.0]),  # y-coordinate of the pulling point of the tendons [m]
+        "rz": 2e-2*jnp.array([0.0, 0.0]),   # z-coordinate of the pulling point of the tendons [m]
         "my": jnp.array([0.0, 0.0]),        # slope coefficient in the x-y plane of the tendons [-]
         "mz": jnp.array([0.0, 0.0]),        # slope coefficient in the x-z plane of the tendons [-]
         "lt": jnp.array([1, 0]),            # length of the tendons = x-coordinate of the attachment points [m]
-    }
-    tendon_routing_params = {
-        "ry": jnp.array([0.0, -0.0139, 0.0139, -0.0139, 0.0, 0.0139]),  
-        "rz": jnp.array([0.016, -0.008, -0.008, 0.008, -0.016, 0.008]),
-        "my": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        "mz": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        "lt": jnp.array([0, 0, 0, 1, 1, 1]),
     }
 
     # ======================================================
@@ -416,9 +306,6 @@ if __name__ == "__main__":
         num_segments,
         axis=0,
     ).flatten()
-    q0 = jnp.zeros(6*num_segments)
-    q0 = jnp.array([0.9143, -0.0292, 0.6006, -0.7162, -0.1565, 0.8315,
-                    0.5844, 0.9190, 0.3115, -0.9286, 0.6983, 0.8680])
 
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
@@ -432,22 +319,6 @@ if __name__ == "__main__":
     print("A =\n", A.shape)
     print(A)
 
-    # A1 = robot.actuation_matrix1(q0)
-    # print("A1 =\n", A1.shape)
-    # print(A1)
-    
-    # Tendons
-    s1 = jnp.linspace(0, robot.L_cum[-1], 4)
-    pars = {"ry": 2e-2,"rz": 2e-2, "my": 0.0, "mz": 0.0, "lt": 1}
-    t = robot.forward_kinematics_tendons(pars, q0, 0.)
-    t1 = jax.vmap(
-            jax.vmap(robot.forward_kinematics_tendons, in_axes=(None, None, 0), out_axes=0),
-            in_axes=(0, None, None),
-            out_axes=0,
-        )(tendon_routing_params, q0, s1)
-    # print("t =\n", t.shape)
-    # print("t1 =\n", t1.shape)
-
     # Simulation time parameters
     t0 = 0.0
     t1 = 2.0
@@ -457,7 +328,7 @@ if __name__ == "__main__":
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
 
-    '''ts, q_ts, qd_ts = robot.resolve_upon_time(
+    ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
         u=u,
