@@ -28,6 +28,7 @@ params = {
 
 # define initial configuration
 q0 = jnp.zeros((num_links,))
+# q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
 
 # set simulation parameters
 dt = 1e-4  # time step
@@ -58,8 +59,8 @@ def draw_robot(
         [w // 2, h // 2], dtype=onp.int32
     )  # in x-y pixel coordinates
     # transform robot poses to pixel coordinates
-    # should be of shape (N, 2)
-    curve = onp.array((curve_origin + chi_ls[:, :2] * ppm), dtype=onp.int32)
+    # extract (px, py) which are now columns 1 and 2
+    curve = onp.array((curve_origin + chi_ls[:, 1:] * ppm), dtype=onp.int32)
     # invert the v pixel coordinate
     curve[:, 1] = h - curve[:, 1]
     cv2.polylines(img, [curve], isClosed=False, color=robot_color, thickness=10)
@@ -70,7 +71,6 @@ def draw_robot(
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
     robot = pendulum.Pendulum(params)
-
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities
@@ -91,6 +91,7 @@ if __name__ == "__main__":
         skip_steps=skip_step,
     )
     video_ts = ts_out
+    print("Final configuration:\n", qs[-1])
 
     # create video
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")

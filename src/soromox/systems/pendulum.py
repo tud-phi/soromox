@@ -244,13 +244,13 @@ class Pendulum(BaseSystem):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            chi_all (Array): Joint poses stacked as [px; py; theta] with shape (N, 3)
-                   - px, py: Cartesian positions of each joint (m)
+            chi_all (Array): Joint poses stacked as [theta; px; py] with shape (N, 3)
                    - theta: Orientation angle at each joint (rad)
+                   - px, py: Cartesian positions of each joint (m)
         """
-        p_j = self._joint_positions(q)  # (N,2)
+        p_joints = self._joint_positions(q)  # (N,2)
         theta = self._cumulative_angles(q)  # (N,)
-        chi_all = jnp.stack([p_j[:, 0], p_j[:, 1], theta], axis=-1)
+        chi_all = jnp.concatenate([theta[:, None], p_joints], axis=-1)
         return chi_all
 
     @eqx.filter_jit
@@ -262,11 +262,11 @@ class Pendulum(BaseSystem):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            chi_all (Array): Link tip poses [p_x, p_y, θ] of shape (N, 3).
+            chi_all (Array): Link tip poses [θ, p_x, p_y] of shape (N, 3).
         """
         p_tips = self._tip_positions(q)  # (N,2)
-        theta = self._cumulative_angles(q)
-        chi_all = jnp.stack([p_tips[:, 0], p_tips[:, 1], theta], axis=-1)
+        theta = self._cumulative_angles(q)  # (N,)
+        chi_all = jnp.concatenate([theta[:, None], p_tips], axis=-1)
         return chi_all
 
     @eqx.filter_jit
@@ -278,11 +278,11 @@ class Pendulum(BaseSystem):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            chi_all (Array): COM poses [p_x, p_y, θ] of shape (N, 3).
+            chi_all (Array): COM poses [θ, p_x, p_y] of shape (N, 3).
         """
         p_coms = self._com_positions(q)  # (N,2)
-        theta = self._cumulative_angles(q)
-        chi_all = jnp.stack([p_coms[:, 0], p_coms[:, 1], theta], axis=-1)
+        theta = self._cumulative_angles(q)  # (N,)
+        chi_all = jnp.concatenate([theta[:, None], p_coms], axis=-1)
         return chi_all
 
     def _linear_jacobians_coms(self, q: Array) -> Array:
@@ -366,8 +366,8 @@ class Pendulum(BaseSystem):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            J_all (Array): J_all with shape (N, 3, N), where for each i:
-                   J_all[i] = [Jv_x; Jv_y; Jw] at joint i.
+            J_all (Array): array of spatial Jacobians with shape (N, 3, N), where for each i:
+                   J_all[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at joint i.
         """
         Jv_tip = self._linear_jacobians_tips(q)  # (N,2,N)
         # Build linear Jacobians at joints: i=0 -> zeros; i>0 -> tip of (i-1)
@@ -375,7 +375,8 @@ class Pendulum(BaseSystem):
         Jv_joints = Jv_joints.at[1:].set(Jv_tip[:-1])
 
         Jw = self._angular_jacobians()  # (N,N)
-        J_all = jnp.concatenate([Jv_joints, Jw[:, None, :]], axis=1)  # (N,3,N)
+        # Order rows as [Jw; Jv_x; Jv_y]
+        J_all = jnp.concatenate([Jw[:, None, :], Jv_joints], axis=1)  # (N,3,N)
         return J_all
 
     @eqx.filter_jit
@@ -387,11 +388,12 @@ class Pendulum(BaseSystem):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            J_all (Array): Spatial Jacobian J ∈ R^{3×N} (rows: [Jv_x, Jv_y, Jw]).
+            J_all (Array): array of spatial Jacobians with shape (N, 3, N), where for each i:
+                   J_all[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at tip i.
         """
         Jv_all_tip = self._linear_jacobians_tips(q)  # (N,2,N)
         Jw_all = self._angular_jacobians()          # (N,N)
-        J_all = jnp.concatenate([Jv_all_tip, Jw_all[:, None, :]], axis=1)
+        J_all = jnp.concatenate([Jw_all[:, None, :], Jv_all_tip], axis=1)
         return J_all
 
     @eqx.filter_jit
@@ -403,11 +405,12 @@ class Pendulum(BaseSystem):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            J_all (Array): Spatial Jacobian J ∈ R^{3×N} (rows: [Jv_x, Jv_y, Jw]).
+            J_all (Array): array of spatial Jacobians with shape (N, 3, N), where for each i:
+                   J_all[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at COM i.
         """
         Jv_all_com = self._linear_jacobians_coms(q)  # (N,2,N)
         Jw_all = self._angular_jacobians()      # (N,N)
-        J_all = jnp.concatenate([Jv_all_com, Jw_all[:, None, :]], axis=1)
+        J_all = jnp.concatenate([Jw_all[:, None, :], Jv_all_com], axis=1)
         return J_all
 
     # -------------------------------
@@ -458,7 +461,7 @@ class Pendulum(BaseSystem):
         Returns:
             C (Array): Coriolis/centrifugal matrix, shape (N, N)
         """
-        n = self.num_links
+        N = self.num_links
         # Linear Jacobians at COMs and at joints (proximal ends)
         Jv = self._linear_jacobians_coms(q)        # (N, 2, N) for COMs
         Jv_tip = self._linear_jacobians_tips(q)  # (N, 2, N) for tips
@@ -477,7 +480,7 @@ class Pendulum(BaseSystem):
         Jvdot_x = -dv[..., 1]
         Jvdot_y =  dv[..., 0]
         # mask for j <= i
-        mask = jnp.tril(jnp.ones((n, n), dtype=q.dtype))
+        mask = jnp.tril(jnp.ones((N, N), dtype=q.dtype))
         Jvdot = jnp.stack([Jvdot_x * mask, Jvdot_y * mask], axis=1)  # (n, 2, n)
 
         # Assemble C = Σ_i m_i Jv_i^T Jvdot_i  (shape (n, n))
