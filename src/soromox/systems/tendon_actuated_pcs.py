@@ -256,16 +256,33 @@ class TendonActuatedPCS(PCS):
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
 
+            def build_block(n1, n2, j, step):
+                a = jnp.zeros((n1, n2), dtype=jnp.int32)
+                block = jnp.ones((step, n2), dtype=jnp.int32)
+                # j_clipped = jnp.clip(j, 0, n2 + step)
+                return lax.dynamic_update_slice(
+                    a, block, (j, jnp.array(0, dtype=jnp.int32))
+                )
+
+            step = 6
+            mask = build_block(
+                step * self.num_segments,
+                self.num_actuators,
+                jnp.array(step * i, dtype=jnp.int32),
+                step,
+            )
+
             def A_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 A_jj = self._local_actuation_matrix(q, Xs_j)
-                return Ws_j * A_jj
+                return Ws_j * A_jj * mask
 
             A_blocks_i = vmap(A_j)(jnp.arange(self.num_gauss_points))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_j(j) for j in range(self.num_gauss_points)], axis=0)
+            # print('A_blocks_i =\n', A_blocks_i.shape)
 
             return A_blocks_i
 
@@ -273,6 +290,7 @@ class TendonActuatedPCS(PCS):
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_i(i) for i in range(self.num_segments)], axis=0)
+        # print('A_blocks_tot =\n', A_blocks_tot.shape)
 
         A_full = jnp.sum(
             A_blocks_tot, axis=(0, 1)

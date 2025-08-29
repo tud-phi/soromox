@@ -21,6 +21,7 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+jnp.set_printoptions(precision=4, suppress=True)
 
 
 def draw_robot_curve(
@@ -364,8 +365,8 @@ if __name__ == "__main__":
         "p0": jnp.array(
             [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]#[jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
+        "L": 1.6e-1 * jnp.ones((num_segments,)),
+        "r": 1.5e-2 * jnp.ones((num_segments,)),
         "rho": rho,
         "g": jnp.array([9.81, 0.0, 0.0]),       # Gravity vector [m/s^2]
         "E": 2e3 * jnp.ones((num_segments,)),   # Elastic modulus [Pa]
@@ -381,11 +382,18 @@ if __name__ == "__main__":
     )
     tendon_routing_basis = {'d_s': linear_routing, 'dd_s_ds': linear_routing_derivative}
     tendon_routing_params = {
-        "ry": 2e-2*jnp.array([1.0, -1.0]),  # y-coordinate of the pulling point of the tendons [m]
-        "rz": 2e-2*jnp.array([0.0, 0.0]),   # z-coordinate of the pulling point of the tendons [m]
+        "ry": 2.1e-2*jnp.array([1.0, 0.0]),  # y-coordinate of the pulling point of the tendons [m]
+        "rz": 1.5e-2*jnp.array([0.0, -1.0]),   # z-coordinate of the pulling point of the tendons [m]
         "my": jnp.array([0.0, 0.0]),        # slope coefficient in the x-y plane of the tendons [-]
         "mz": jnp.array([0.0, 0.0]),        # slope coefficient in the x-z plane of the tendons [-]
-        "lt": jnp.array([0, 0]),            # length of the tendons = x-coordinate of the attachment points [m]
+        "lt": jnp.array([1, 0]),            # length of the tendons = x-coordinate of the attachment points [m]
+    }
+    tendon_routing_params = {
+        "ry": jnp.array([0.0, -0.0139, 0.0139, -0.0139, 0.0, 0.0139]),  
+        "rz": jnp.array([0.016, -0.008, -0.008, 0.008, -0.016, 0.008]),
+        "my": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        "mz": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        "lt": jnp.array([0, 0, 0, 1, 1, 1]),
     }
 
     # ======================================================
@@ -409,6 +417,9 @@ if __name__ == "__main__":
         axis=0,
     ).flatten()
     q0 = jnp.zeros(6*num_segments)
+    q0 = jnp.array([0.9143, -0.0292, 0.6006, -0.7162, -0.1565, 0.8315,
+                    0.5844, 0.9190, 0.3115, -0.9286, 0.6983, 0.8680])
+
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
@@ -420,6 +431,10 @@ if __name__ == "__main__":
     A = robot.actuation_matrix(q0)
     print("A =\n", A.shape)
     print(A)
+
+    # A1 = robot.actuation_matrix1(q0)
+    # print("A1 =\n", A1.shape)
+    # print(A1)
     
     # Tendons
     s1 = jnp.linspace(0, robot.L_cum[-1], 4)
@@ -430,8 +445,8 @@ if __name__ == "__main__":
             in_axes=(0, None, None),
             out_axes=0,
         )(tendon_routing_params, q0, s1)
-    print("t =\n", t.shape)
-    print("t1 =\n", t1.shape)
+    # print("t =\n", t.shape)
+    # print("t1 =\n", t1.shape)
 
     # Simulation time parameters
     t0 = 0.0
@@ -442,7 +457,7 @@ if __name__ == "__main__":
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
 
-    ts, q_ts, qd_ts = robot.resolve_upon_time(
+    '''ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
         u=u,
