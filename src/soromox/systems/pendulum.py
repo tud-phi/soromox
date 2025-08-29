@@ -3,6 +3,7 @@ import equinox as eqx
 import jax
 from jax import Array, jit, lax
 from jax import numpy as jnp
+import numpy as onp
 from typing import Dict, List, Tuple, Union, Optional
 
 from .base_system import BaseSystem
@@ -773,6 +774,62 @@ class Pendulum(BaseSystem):
         U = self.potential_energy(q)
         E = T + U
         return E
+    
+    @eqx.filter_jit
+    def operational_space_dynamical_matrices(
+        self,
+        q: Array,
+        qd: Array,
+        link_idx: Array,
+        operational_space_selector: Tuple = (True, True, True),
+    ) -> Tuple[Array, Array, Array, Array, Array]:
+        """
+        Compute the operational space dynamical matrices for the tip of the specified link.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
+            link_idx (Array): index of the link to compute the operational space dynamics for.
+            operational_space_selector (Tuple): Selector for the operational space dimensions.
+                Default is (True, True, True) for all dimensions.
+
+        Returns:
+            Lambda (Array): Inertia matrix in the operational space, shape (num_operational_space_dims, num_operational_space_dims).
+            mu (Array): Coriolis and centrifugal matrix in the operational space, shape (num_operational_space_dims,).
+            J (Array): Jacobian of the forward kinematics at point s in the body frame, shape (num_operational_space_dims, num_active_strains).
+            Jd (Array): Time-derivative of the Jacobian at point s in the body frame, shape (num_operational_space_dims, num_active_strains).
+            JB_pinv (Array): Dynamically-consistent pseudo-inverse of the Jacobian, shape (num_active_strains, num_operational_space_dims).
+        """
+        # make operational_space_selector a boolean array
+        operational_space_selector = onp.array(operational_space_selector, dtype=bool)
+
+        # Jacobian and its time-derivative
+        J_tips, Jd_tips = self.jacobians_and_derivatives_tips(q, qd)
+
+        # select the appropiate link
+        J = J_tips[link_idx]
+        Jd = Jd_tips[link_idx]
+
+        J = J[operational_space_selector, :]
+        Jd = Jd[operational_space_selector, :]
+
+        # inverse of the inertia matrix in the configuration space
+        B = self.inertia_matrix(q)
+        B_inv = jnp.linalg.inv(B)
+        C = self.coriolis_matrix(q, qd)
+
+        Lambda = jnp.linalg.inv(
+            J @ B_inv @ J.T
+        )  # inertia matrix in the operational space
+        mu = Lambda @ (
+            J @ B_inv @ C - Jd
+        )  # coriolis and centrifugal matrix in the operational space
+
+        JB_pinv = (
+            B_inv @ J.T @ Lambda
+        )  # dynamically-consistent pseudo-inverse of the Jacobian
+
+        return Lambda, mu, J, Jd, JB_pinv
 
 
 @jit
