@@ -261,22 +261,21 @@ class TendonActuatedPCS(PCS):
                 block = jnp.ones((step, n2), dtype=jnp.int32)
                 # j_clipped = jnp.clip(j, 0, n2 + step)
                 return lax.dynamic_update_slice(
-                    a, block, (j, jnp.array(0, dtype=jnp.int32))
+                    a, block, (jnp.array(j, dtype=jnp.int32), jnp.array(0, dtype=jnp.int32))
                 )
 
-            step = 6
-            mask = build_block(
-                step * self.num_segments,
-                self.num_actuators,
-                jnp.array(step * i, dtype=jnp.int32),
-                step,
+            strain_mask = build_block(
+                6 * self.num_segments, # numer of rows
+                self.num_actuators, # number of columns
+                6 * i, # starting index
+                6, # number of rows set to 1 starting from starting index
             )
 
             def A_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 A_jj = self._local_actuation_matrix(q, Xs_j)
-                return Ws_j * A_jj * mask
+                return Ws_j * A_jj * strain_mask
 
             A_blocks_i = vmap(A_j)(jnp.arange(self.num_gauss_points))
 
