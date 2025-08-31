@@ -60,7 +60,6 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     """
 
     d: Array  # distance of the tendons from the segment's backbone, shape (num_segments,)
-
     segment_indices_to_actuate: Array  # indices of the segments that are actuated, shape (num_actuated_segments,)
 
     def __init__(
