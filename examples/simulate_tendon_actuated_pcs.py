@@ -1,19 +1,21 @@
 from diffrax import Tsit5
-from functools import partial
 
-from IPython.display import HTML
 import jax
 from jax import Array
 import jax.numpy as jnp
-from matplotlib.animation import FuncAnimation
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
+from matplotlib.animation import FuncAnimation
+from IPython.display import HTML
+
 import numpy as onp
 from typing import Callable, Dict
+from functools import partial
+
+from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pcs import PCS
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 
 
 jnp.set_printoptions(

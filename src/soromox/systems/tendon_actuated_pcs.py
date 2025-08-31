@@ -2,16 +2,11 @@ import equinox as eqx
 import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-import numpy as onp
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, Dict, Optional
 
 import soromox.utils.lie_algebra as lie
 
-from .utils import (
-    compute_strain_basis,
-    gauss_quadrature,
-    scale_gaussian_quadrature,
-)
+from .utils import scale_gaussian_quadrature
 
 from .pcs import PCS
 
@@ -107,8 +102,7 @@ class TendonActuatedPCS(PCS):
         d_x is always equal to 0.
 
     dd_s_ds : Callable
-        Function that returns the homogeneous vector (4D) of the derivative over s of
-        the d_s.
+        Function that returns the homogeneous vector of the derivative over s of d_s.
 
     Notes:
     -----
@@ -252,30 +246,32 @@ class TendonActuatedPCS(PCS):
         """
 
         def A_i(i):
-            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
-                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
-            )
-
             def build_block(n1, n2, j, step):
                 a = jnp.zeros((n1, n2), dtype=jnp.int32)
                 block = jnp.ones((step, n2), dtype=jnp.int32)
                 # j_clipped = jnp.clip(j, 0, n2 + step)
                 return lax.dynamic_update_slice(
-                    a, block, (jnp.array(j, dtype=jnp.int32), jnp.array(0, dtype=jnp.int32))
+                    a,
+                    block,
+                    (jnp.array(j, dtype=jnp.int32), jnp.array(0, dtype=jnp.int32)),
                 )
-
-            strain_mask = build_block(
-                6 * self.num_segments, # numer of rows
-                self.num_actuators, # number of columns
-                6 * i, # starting index
-                6, # number of rows set to 1 starting from starting index
-            )
 
             def A_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 A_jj = self._local_actuation_matrix(q, Xs_j)
                 return Ws_j * A_jj * strain_mask
+            
+            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
+                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
+            )
+            
+            strain_mask = build_block(
+                6 * self.num_segments,  # numer of rows of the mask matrix
+                self.num_actuators,  # number of columns of the mask matrix
+                6 * i,  # starting index
+                6,  # number of rows set to 1 starting from starting index
+            )
 
             A_blocks_i = vmap(A_j)(jnp.arange(self.num_gauss_points))
 
