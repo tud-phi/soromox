@@ -8,13 +8,8 @@ from typing import Callable, Dict, Tuple, Optional
 
 import soromox.utils.lie_algebra as lie
 
-from .utils import (
-    compute_strain_basis,
-    gauss_quadrature,
-    scale_gaussian_quadrature,
-)
-
 from .pcs import PCS
+from .utils import scale_gaussian_quadrature
 
 
 def linear_routing(tendon_routing_params, s):
