@@ -139,6 +139,70 @@ class TendonActuatedPCS(PCS):
         tendon_routing_params: Dict[str, Array],
         **kwargs,
     ):
+        """
+        Initialize the TendonActuatedPCS class.
+
+        Args:
+            num_segments (int):
+                Number of segments in the robot.
+            params (Dict[str, Array]):
+                Dictionary containing the robot parameters:
+                - "p0": (optional) List/Array of shape (6,)
+                    Initial orientation and position in the inertial frame [rad, m]
+                    [ψ, θ, φ, x0, y0, z0]
+                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
+                            ψ (psi): Rotation around Z axis (fixed axis)
+                            θ (theta): Rotation around X' axis (after first rotation)
+                            φ (phi): Rotation about Z' axis (after the first two rotations)
+                        [x0, y0, z0]: Base position in the inertial frame
+                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0].
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 3 floats [gx, gy, gz]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats
+                    Shear modulus of each segment [Pa]
+                - "D": Array of shape (6*num_segments, 6*num_segments)
+                    Damping matrix [Pa·s]
+            order_gauss (int, optional):
+                Order of the Gauss-Legendre quadrature for integration over each segment.
+                Defaults to 5.
+            strain_selector (Optional[Array], optional):
+                Boolean array of shape (6 * num_segments,) specifying which strain components are active.
+                Defaults to all strains active (i.e. all True).
+            xi_ref (Optional[Array], optional):
+                Reference strain of shape (6 * num_segments,).
+                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
+            tendon_routing_basis (Optional[Dict[str, Callable]]):
+                Dictionary with the tendon routing functions. If None, a linear routing is used.
+                Expected keys and signatures:
+                - "d_s": Callable[[Dict[str, Array], Array], Array]
+                    Returns the homogeneous 4D vector [d_x, d_y, d_z, 1] giving the tendon position
+                    with respect to the local cross-section at abscissa s. For typical routing,
+                    d_x = 0 as the offset lies in the cross-sectional plane.
+                - "dd_s_ds": Callable[[Dict[str, Array], Array], Array]
+                    Returns the homogeneous 4D derivative over s of d_s.
+            tendon_routing_params (Dict[str, Array]):
+                Dictionary describing the tendon routing parameters for each actuator (length n_actuators).
+                When using the default linear routing, the following keys are expected:
+                - "ry": Array (n_actuators,)
+                    y-intercept of the tendon line at the base [m].
+                - "my": Array (n_actuators,)
+                    Slope in the x–y plane [-].
+                - "rz": Array (n_actuators,)
+                    z-intercept of the tendon line at the base [m].
+                - "mz": Array (n_actuators,)
+                    Slope in the x–z plane [-].
+                - "lt": Array (n_actuators,)
+                    Attachment segment index for each tendon (0-based, inclusive). The tendon contributes
+                    along the backbone up to and including this segment’s distal end.
+        """
         super().__init__(
             num_segments,
             params,
