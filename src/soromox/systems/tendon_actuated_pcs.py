@@ -1,3 +1,4 @@
+__all__ = ["linear_routing", "linear_routing_derivative", "TendonActuatedPCS"]
 import equinox as eqx
 import jax
 from jax import Array, lax, vmap

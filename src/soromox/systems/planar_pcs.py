@@ -1,3 +1,4 @@
+__all__ = ["PlanarPCS"]
 import equinox as eqx
 import jax
 from jax import Array, lax, vmap
@@ -78,7 +79,7 @@ class PlanarPCS(DynamicalSystem):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    global_eps: float = jnp.finfo(jnp.float64).eps
+    global_eps: float = float(jnp.finfo(jnp.float64).eps)
 
     num_segments: int = eqx.field(static=True)
     num_actuators: int = eqx.field(static=True)  # Number of actuators

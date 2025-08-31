@@ -1,3 +1,4 @@
+__all__ = ["TendonActuatedPlanarPCS"]
 from jax import Array, vmap
 import jax.numpy as jnp
 from typing import Dict, Optional
