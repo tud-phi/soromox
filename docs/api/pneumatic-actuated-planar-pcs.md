@@ -8,7 +8,7 @@ This module extends the planar PCS model (based on the discrete Cosserat approac
 
 ## API Reference
 
-::: soromox.systems.pneumatically_actuated_planar_pcs
+::: soromox.systems.pneumatic_actuated_planar_pcs
     options:
       show_root_heading: true
       show_source: false

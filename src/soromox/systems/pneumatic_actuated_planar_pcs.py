@@ -7,7 +7,7 @@ import equinox as eqx
 from .planar_pcs import PlanarPCS
 
 
-class PneumaticallyActuatedPlanarPCS(PlanarPCS):
+class PneumaticActuatedPlanarPCS(PlanarPCS):
     """
     Pneumatically Actuated Planar Piecewise Constant Strain (PCS) model for 2D soft continuum robots.
 
@@ -47,12 +47,18 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
         Outer radius of each segment's pneumatic chamber.
     phi_chamber : Array
         Sector angle of each segment's pneumatic chamber.
+    d_chamber : Array
+        Radial distance of the center of the chambers from the centerline of the backbone for each segment.
     num_chambers_per_segment : int
-        Number of pneumatic chambers per segment (default is 4).
+        Number of pneumatic chambers per segment (default is 2).
     actuation_basis : Array
         Actuation basis matrix for mapping control inputs to segment strains.
     simplified_actuation_mapping : bool
         If True, uses a simplified actuation mapping (default is False).
+    chamber_cross_section_geometry : str 
+        The cross sectional geometry of the chambers.        
+    pneumatic_load_distribution_assumption : str 
+        Determines the assumption used to map the pneumatic forces into configuration space.
 
     Notes:
     -----
@@ -63,53 +69,72 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
         Thus:   - kappa_z corresponds to bending around the z-axis,
                 - sigma_x corresponds to axial strain along the x-axis,
                 - sigma_y corresponds to shear along the y-axis.
-                
-    - The actuation mapping assumes that each segment contains four identical and symmetric pneumatic chambers with pressures
-        p1, p2, p3, and p4, where:
-            - p1 and p3 are the right and left chamber pressures respectively,
-            - p2 and p4 are the back and front chamber pressures respectively.
-        The front and back chambers do not exert a level arm (i.e., a bending moment) on the segment.
+
+    - The actuation mapping assumes that each segment contains two identical and symmetric pneumatic chambers with pressures p1 and p2, which correspond to the right and left chamber pressures, respectively.
         The control inputs u1 and u2 are mapped as follows to the pressures:
             - p1 = u1 (right chamber)
-            - p2 = (u1 + u2) / 2
-            - p3 = u2 (left chamber)
-            - p4 = (u1 + u2) / 2
+            - p2 = u2 (left chamber)
 
     """
+    num_actuators: int = eqx.field(static=True)  # number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS)
+    num_chambers_per_segment: int = eqx.field(static=True, default=2)  # number of pneumatic chambers per segment
+    
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
     r_chamber_out: (
         Array  # outer radius of each segment's chamber, shape (num_segments,)
     )
     phi_chamber: Array  # sector angle of each segment's chamber, shape (num_segments,)
-    num_chambers_per_segment: int = eqx.field(static=True, default=4)  # number of pneumatic chambers per segment
+    d_chamber: Array  # radial distance of the center of the chambers from the centerline of the backbone, shape (num_segments,)
 
     actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
-    simplified_actuation_mapping: bool = eqx.field(static=True, default=False)
+    chamber_cross_section_geometry: str = eqx.field(static=True, default="circular")
+    pneumatic_load_distribution_assumption: str = eqx.field(static=True, default="infitesimal")
 
     def __init__(
         self,
         num_segments: int,
         params: Dict[str, Array],
-        order_gauss: int = 5,
-        strain_selector: Optional[Array] = None,
-        xi_ref: Optional[Array] = None,
+        # order_gauss: int = 5,
+        # strain_selector: Optional[Array] = None,
+        # xi_ref: Optional[Array] = None,
+        *args,
         segment_actuation_selector: Optional[Array] = None,
-        simplified_actuation_mapping: bool = False,
+        chamber_cross_section_geometry: str = "circular",
+        pneumatic_load_distribution_assumption: str = "infitesimal",
+        **kwargs,
     ):
+        """
+        Initialize the PneumaticallyActuatedPlanarPCS class
+        Args:
+            num_segments (int): number of segments in the robot
+            params (Dict[str, Array]): dictionary containing the robot parameters
+            order_gauss (int): order of the Gauss quadrature rule
+            strain_selector (Optional[Array]): array to select which strains are active. All six strains are active by default.
+            xi_ref (Optional[Array]): reference configuration for the robot
+            segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
+            chamber_cross_section_geometry: the cross sectional geometry of the chambers. Options:
+                - circular: assumes circular chamber cross sections with outside radius "r_chamber_out" and inside radius "r_chamber_in" with their center at a distance of "d_chamber" from the centerline of the backbone
+                - concentric: assumes chambers that are concentric with the circular geometry of the soft robot cross sectional geometry with outside radius "r_chamber_out", inside radius "r_chamber_in", and sector angle "phi_chamber".
+            pneumatic_load_distribution_assumption: determines the assumption used to map the pneumatic forces into configuration space. Options:
+                - infitesimal: assumes infitesimally thin chambers (in terms of height) such that the pneumatic forces and torques directly act on the generalized coordinates
+                - cap_bodyframe_jacobians: assumes that the pneumatic chambers contain two discrete caps at the proximal and distal end of the segment, respectively. Then, the bodyframe jacobian is used to map the wrenches on the generalized coordinates
+        """
         super().__init__(
-            num_segments=num_segments,
-            params=params,
-            order_gauss=order_gauss,
-            strain_selector=strain_selector,
-            xi_ref=xi_ref,
+            num_segments,
+            params,
+            # order_gauss=order_gauss,
+            # strain_selector=strain_selector,
+            # xi_ref=xi_ref,
+            *args,
+            **kwargs,
         )
 
         if segment_actuation_selector is None:
             segment_actuation_selector = jnp.ones(num_segments, dtype=bool)
 
         self.num_actuators = (
-            int(jnp.sum(segment_actuation_selector)) * 2
+            int(jnp.sum(segment_actuation_selector)) * self.num_chambers_per_segment
         )  # each segment has two control inputs u1 and u2
 
         actuation_basis = jnp.zeros((2 * self.num_segments, self.num_actuators))
@@ -121,13 +146,14 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
                 actuation_basis = actuation_basis.at[2 * i + 1, j + 1].set(1.0)
         self.actuation_basis = actuation_basis
 
-        self.simplified_actuation_mapping = simplified_actuation_mapping
+        self.chamber_cross_section_geometry = chamber_cross_section_geometry
+        self.pneumatic_load_distribution_assumption = pneumatic_load_distribution_assumption
 
         self._set_params(params)
 
     def _set_params(self, params: Dict[str, Array]):
         """
-        Set the parameters of the tendon-driven planar PCS.
+        Set the parameters of the PneumaticallyActuatedPlanarPCS.
 
         Args:
             params (Dict[str, Array]): Dictionary containing the parameters of the robot.
@@ -153,13 +179,15 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
                     Inner radius of each segment's pneumatic chamber [m]
                 - "r_chamber_out" : Array of num_segments floats
                     Outer radius of each segment's pneumatic chamber [m]
-                -"phi_chamber" : Array of num_segments floats
+                - "phi_chamber" : Array of num_segments floats
                     Sector angle of each segment's pneumatic chamber [rad]
+                - "d_chamber" : Array of num_segments floats
+                    Radial distance of the center of the chambers from the centerline of the backbone [m]
 
         """
         super()._set_params(params)
 
-        # Chamfer parameters
+        # Pneumatic chamber parameters
         try:
             r_chamber_in = params["r_chamber_in"]
         except KeyError:
@@ -175,6 +203,7 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
                 f"The parameter 'r_chamber_in' must have the same length as the number of segments ({self.num_segments})."
             )
         self.r_chamber_in = jnp.asarray(r_chamber_in, dtype=jnp.float64)
+
         try:
             r_chamber_out = params["r_chamber_out"]
         except KeyError:
@@ -190,12 +219,8 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
                 f"The parameter 'r_chamber_out' must have the same length as the number of segments ({self.num_segments})."
             )
         self.r_chamber_out = jnp.asarray(r_chamber_out, dtype=jnp.float64)
-        try:
-            phi_chamber = params["phi_chamber"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'phi_chamber' (sector angle of each segment's pneumatic chamber) is required for the pneumatically actuated planar PCS."
-            )
+
+        phi_chamber = params.get("phi_chamber", jnp.ones((self.num_segments, )))
         if not isinstance(phi_chamber, (list, jnp.ndarray)):
             raise TypeError(
                 "The parameter 'phi_chamber' must be a list or a jnp.ndarray."
@@ -206,11 +231,22 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
             )
         self.phi_chamber = jnp.asarray(phi_chamber, dtype=jnp.float64)
 
+        d_chamber = params.get("d_chamber", jnp.ones((self.num_segments, )))
+        if not isinstance(d_chamber, (list, jnp.ndarray)):
+            raise TypeError(
+                "The parameter 'd_chamber' must be a list or a jnp.ndarray."
+            )
+        if len(d_chamber) != self.num_segments:
+            raise ValueError(
+                f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
+            )
+        self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)        
+
     def update_params(
         self, params: Dict[str, Array]
-    ) -> "PneumaticallyActuatedPlanarPCS":
+    ) -> "PneumaticActuatedPlanarPCS":
         """
-        Update the parameters of the tendon-driven planar PCS.
+        Update the parameters of the PneumaticallyActuatedPlanarPCS.
 
         Args:
             params (Dict[str, Array]):
@@ -235,8 +271,10 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
                     Inner radius of each segment's pneumatic chamber [m]
                 - "r_chamber_out" : Array of num_segments floats
                     Outer radius of each segment's pneumatic chamber [m]
-                -"phi_chamber" : Array of num_segments floats
+                - "phi_chamber" : Array of num_segments floats
                     Sector angle of each segment's pneumatic chamber [rad]
+                - "d_chamber" : Array of num_segments floats
+                    Radial distance of the center of the chambers from the centerline of the backbone [m]
         Returns:
             updated_self (PneumaticallyActuatedPlanarPCS):
                 A new instance of PneumaticallyActuatedPlanarPCS with updated parameters.
@@ -292,6 +330,22 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
                 jnp.asarray(phi_chamber, dtype=jnp.float64),
             )
 
+        if "d_chamber" in params:
+            d_chamber = params["d_chamber"]
+            if not isinstance(d_chamber, (list, jnp.ndarray)):
+                raise TypeError(
+                    "The parameter 'd_chamber' must be a list or a jnp.ndarray."
+                )
+            if len(d_chamber) != self.num_segments:
+                raise ValueError(
+                    f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
+                )
+            updated_self = eqx.tree_at(
+                lambda x: x.d_chamber,
+                updated_self,
+                jnp.asarray(d_chamber, dtype=jnp.float64),
+            )
+
         return updated_self
 
     @eqx.filter_jit
@@ -305,11 +359,17 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
         Returns:
             A_one_chamber_i (Array): local cross-sectional area of one pneumatic chamber of the i-th segment
         """
-        A_one_chamber_i = (
-            self.phi_chamber[i]
-            / 2
-            * (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
-        )
+        match self.chamber_cross_section_geometry:
+            case "circular":
+                A_one_chamber_i = jnp.pi * (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
+            case "concentric":
+                A_one_chamber_i = (
+                    self.phi_chamber[i]
+                    / 2
+                    * (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
+                )
+            case _:
+                raise NotImplementedError(f"The chamber cross section geometry {self.chamber_cross_section_geometry} has not been implemented yet.")
 
         return A_one_chamber_i
 
@@ -345,11 +405,18 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
         Returns:
             I_one_chamber_i (Array): local second moment of area of one pneumatic chamber of the i-th segment
         """
-        I_one_chamber_i = (
-            (self.phi_chamber[i] - jnp.sin(self.phi_chamber[i]))
-            / 8
-            * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)
-        )
+        match self.chamber_cross_section_geometry:
+            case "circular":
+                I_one_chamber_i = (
+                    jnp.pi / 4 * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)  # second moment of area of the annulus itself
+                    + self._local_chamber_cross_sectional_area(i) * self.d_chamber[i] ** 2  # parallel axis theorem
+                )
+            case "concentric":
+                I_one_chamber_i = (
+                    (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4) * (self.phi_chamber[i] - 2 * jnp.sin(self.phi_chamber[i] / 2) * jnp.cos(self.phi_chamber[i] / 2)) / 8
+                )
+            case _:
+                raise NotImplementedError(f"The chamber cross section geometry {self.chamber_cross_section_geometry} has not been implemented yet.")
 
         return I_one_chamber_i
 
@@ -374,20 +441,15 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
 
         return I_i
 
-    # @eqx.filter_jit
+    @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
         """
         Compute the actuation matrix of the robot.
-        We assume that each segment contains four identical and symmetric pneumatic chambers with pressures
-        p1, p2, p3, and p4, where:
-            - p1 and p3 are the right and left chamber pressures respectively,
-            - p2 and p4 are the back and front chamber pressures respectively.
-        The front and back chambers do not exert a level arm (i.e., a bending moment) on the segment.
+        We assume that each segment contains two identical and symmetric pneumatic chambers with pressures,
+            where p1 and p2 are the right and left chamber pressures respectively.
         We map the control inputs u1 and u2 as follows to the pressures:
             p1 = u1 (right chamber)
-            p2 = (u1 + u2) / 2
-            p3 = u2 (left chamber)
-            p4 = (u1 + u2) / 2
+            p2 = u2 (left chamber)
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -396,69 +458,76 @@ class PneumaticallyActuatedPlanarPCS(PlanarPCS):
             A (Array): Actuation matrix of shape (num_active_strains, num_actuators)
         """
 
-        def A_segment_i(i: int) -> Array:
+        def _actuation_matrix_segment_i(i: int) -> Array:
             # Area of one pneumatic chamber
             A_one_chamber = self._local_chamber_cross_sectional_area(i)
 
-            # Distance from the center of the segment to the center of pressure of one chamber
-            r_center_of_pressure = (
-                2
-                / 3
-                * jnp.sinc(self.phi_chamber[i] / 2)
-                * (self.r_chamber_out[i] ** 3 - self.r_chamber_in[i] ** 3)
-                / (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
-            )
+            match self.chamber_cross_section_geometry:
+                case "circular":
+                    r_center_of_pressure = self.d_chamber[i]
+                case "concentric":
+                    # Distance from the center of the segment to the center of pressure of one chamber
+                    r_center_of_pressure = (
+                        2
+                        / 3
+                        * jnp.sinc(self.phi_chamber[i] / 2)
+                        * (self.r_chamber_out[i] ** 3 - self.r_chamber_in[i] ** 3)
+                        / (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
+                    )
 
-            if self.simplified_actuation_mapping:
-                A_full_segment_i = jnp.array(
-                    [
+            match self.pneumatic_load_distribution_assumption:
+                case "infitesimal":
+                    A_full_segment_i = jnp.array(
                         [
-                            A_one_chamber * r_center_of_pressure,
-                            -A_one_chamber * r_center_of_pressure,
-                        ],  # actuation on the bending
-                        [
-                            2 * A_one_chamber,
-                            2 * A_one_chamber,
-                        ],  # actuation on the axial strain
-                        [0.0, 0.0],  # actuation on the shear strain
-                    ]
-                )
+                            [
+                                A_one_chamber * r_center_of_pressure,
+                                -A_one_chamber * r_center_of_pressure,
+                            ],  # actuation on the bending
+                            [
+                                A_one_chamber,
+                                A_one_chamber,
+                            ],  # actuation on the axial strain
+                            [0.0, 0.0],  # actuation on the shear strain
+                        ]
+                    )
 
-                A_segment_i = self.B_xi.T @ A_full_segment_i
-            else:
-                # Jacobians at the base and tip of the segment
-                J_base_i = self.jacobian_bodyframe(q, self.L_cum[i])
-                J_tip_i = self.jacobian_bodyframe(q, self.L_cum[i + 1])
+                    A_segment_i = self.B_xi.T @ A_full_segment_i
+                case "cap_bodyframe_jacobians":
+                    # Jacobians at the base and tip of the segment
+                    J_base_i = self.jacobian_bodyframe(q, self.L_cum[i])
+                    J_tip_i = self.jacobian_bodyframe(q, self.L_cum[i + 1])
 
-                # Contribution of the proximal end
-                A_segment_i_proximal_end = J_base_i.T @ jnp.array(
-                    [
+                    # Contribution of the proximal end
+                    A_segment_i_proximal_end = J_base_i.T @ jnp.array(
                         [
-                            -A_one_chamber * r_center_of_pressure,
-                            A_one_chamber * r_center_of_pressure,
-                        ],
-                        [-2 * A_one_chamber, -2 * A_one_chamber],
-                        [0.0, 0.0],
-                    ]
-                )
-                # Contribution of the distal end
-                A_segment_i_distal_end = J_tip_i.T @ jnp.array(
-                    [
+                            [
+                                -A_one_chamber * r_center_of_pressure,
+                                A_one_chamber * r_center_of_pressure,
+                            ],
+                            [-A_one_chamber, -A_one_chamber],
+                            [0.0, 0.0],
+                        ]
+                    )
+                    # Contribution of the distal end
+                    A_segment_i_distal_end = J_tip_i.T @ jnp.array(
                         [
-                            A_one_chamber * r_center_of_pressure,
-                            -A_one_chamber * r_center_of_pressure,
-                        ],
-                        [2 * A_one_chamber, 2 * A_one_chamber],
-                        [0.0, 0.0],
-                    ]
-                )
+                            [
+                                A_one_chamber * r_center_of_pressure,
+                                -A_one_chamber * r_center_of_pressure,
+                            ],
+                            [A_one_chamber, A_one_chamber],
+                            [0.0, 0.0],
+                        ]
+                    )
 
-                # sum the contributions of the distal and proximal ends
-                A_segment_i = A_segment_i_distal_end + A_segment_i_proximal_end
+                    # sum the contributions of the distal and proximal ends
+                    A_segment_i = A_segment_i_distal_end + A_segment_i_proximal_end
+                case _:
+                    raise NotImplementedError(f"The pneumatic load distribution assumption {self.pneumatic_load_distribution_assumption} is not (fully) implemented yet.")
 
             return A_segment_i
 
-        A_blocks_tot = vmap(A_segment_i)(
+        A_blocks_tot = vmap(_actuation_matrix_segment_i)(
             jnp.arange(self.num_segments),
         )
 

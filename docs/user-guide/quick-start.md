@@ -8,7 +8,7 @@
 
 ## 🎯 Your First Simulation
 
-Let's dive right in with a classic example - simulating a double pendulum to understand the basics:
+Let's dive right in with a classic example - simulating a double pendulum to understand the basics using the new Pendulum class API:
 
 === "🔧 Setup"
 
@@ -16,29 +16,28 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     import jax.numpy as jnp
     import matplotlib.pyplot as plt
     from soromox.systems import pendulum
-    import diffrax
 
     # Define parameters for a double pendulum
     num_links = 2
     params = {
         "L": jnp.array([0.5, 0.3]),      # Link lengths [m]
-        "lc": jnp.array([0.25, 0.15]),   # Center of mass positions [m]
+        "Lc": jnp.array([0.25, 0.15]),   # Center of mass positions [m]
         "m": jnp.array([1.0, 0.5]),      # Masses [kg]
         "I": jnp.array([0.1, 0.05]),     # Moments of inertia [kg⋅m²]
-        "g": 9.81,                       # Gravity [m/s²]
+        "g": jnp.array([0.0, -9.81]),    # Planar gravity vector [m/s²]
     }
     ```
 
 === "🏗️ Initialize"
 
     ```python
-    # Create the system using the factory pattern
-    ode_fn, forward_kinematics, jacobian_end_effector, _ = pendulum.factory(num_links)
+    # Create the system using the class API
+    robot = pendulum.Pendulum(params)
 
     # Set initial conditions
-    q0 = jnp.array([jnp.pi/4, jnp.pi/6])  # Initial angles [rad]
-    qd0 = jnp.array([0.0, 0.0])        # Initial velocities [rad/s]
-    state0 = jnp.concatenate([q0, qd0])
+    q0 = jnp.array([jnp.pi/4, jnp.pi/6])   # Initial angles [rad]
+    qd0 = jnp.array([0.0, 0.0])            # Initial velocities [rad/s]
+    state0 = jnp.concatenate([q0, qd0])    # State = [q, qd]
     ```
 
 === "⚡ Simulate"
@@ -47,17 +46,19 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     # Configure simulation
     t_span = (0.0, 5.0)  # 5 seconds
     dt = 0.01           # 10ms timestep
-    saveat = diffrax.SaveAt(ts=jnp.arange(0, 5.0, dt))
 
-    # Solve the differential equation
-    solution = diffrax.diffeqsolve(
-        diffrax.ODETerm(lambda t, state, args: ode_fn(params, state)),
-        diffrax.Dopri5(),  # 5th-order Runge-Kutta
+    # Zero control torques
+    u = jnp.zeros((num_links,))
+
+    # Integrate using the class helper (Diffrax under the hood)
+    ts, qs, qds = robot.resolve_upon_time(
+        q0=q0,
+        qd0=qd0,
+        u=u,
         t0=t_span[0],
         t1=t_span[1],
-        dt0=dt,
-        y0=state0,
-        saveat=saveat,
+        dt=dt,
+        skip_steps=1,
     )
     ```
 
@@ -65,14 +66,13 @@ Let's dive right in with a classic example - simulating a double pendulum to und
 
     ```python
     # Extract results
-    t = solution.ts
-    states = solution.ys
-    q = states[:, :num_links]
-    qd = states[:, num_links:]
+    t = ts
+    q = qs
+    qd = qds
 
-    # Compute end-effector trajectory
+    # Compute end-effector (last tip) trajectory — returns [theta, px, py]
     end_effector_positions = jnp.array([
-        forward_kinematics(params, q_i)[-2:] for q_i in q  # Get [x, y] position
+        robot.forward_kinematics_tips(q_i)[-1, 1:] for q_i in q  # Get [px, py]
     ])
 
     # Create visualization

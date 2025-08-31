@@ -1,79 +1,14 @@
-from copy import deepcopy
+__all__ = [
+    "concatenate_params_syms", 
+    "compute_strain_basis", 
+    "gauss_quadrature", "scale_gaussian_quadrature"
+]
+from functools import partial
 import jax
-
+from jax import Array, jit
 from jax import numpy as jnp
 import sympy as sp
-
-# For documentation purposes
-from jax import Array
-from typing import Dict, List, Tuple, Union
-
-
-def substitute_params_into_all_symbolic_expressions(
-    sym_exps: Dict, params: Dict[str, Array]
-) -> Dict:
-    """
-    Substitute robot parameters into symbolic expressions.
-    Args:
-        sym_exps: dictionary with entries
-            params_syms: dictionary of list with symbols for parameters
-            state_syms: dictionary of lists with symbols for state variables
-            exps: dictionary of symbolic expressions
-        params: dictionary of robot parameters
-    Returns:
-        sym_exps: dictionary with entries
-            params_syms: dictionary of robot parameters
-            state_syms: dictionary of state variables
-            exps: dictionary of symbolic expressions
-    """
-    # symbols for robot parameters
-    params_syms = sym_exps["params_syms"]
-    # symbolic expressions
-    exps = deepcopy(sym_exps["exps"])
-
-    for exp_key, exp_val in exps.items():
-        if issubclass(type(exp_val), list):
-            for exp_item_idx, exp_item_val in enumerate(exp_val):
-                exps[exp_key][exp_item_idx] = (
-                    substitute_params_into_single_symbolic_expression(
-                        exp_item_val, params_syms, params
-                    )
-                )
-        else:
-            exps[exp_key] = substitute_params_into_single_symbolic_expression(
-                exp_val, params_syms, params
-            )
-
-    return exps
-
-
-def substitute_params_into_single_symbolic_expression(
-    sym_exp: sp.Expr,
-    params_syms: Dict[str, List[sp.Symbol]],
-    params: Dict[str, Array],
-) -> sp.Expr:
-    """
-    Substitute robot parameters into a single symbolic expression.
-    Args:
-        sym_exp: symbolic expression
-        params_syms: Dictionary of list with symbols for parameters
-        params: Dictionary of jax arrays with numerical values for parameters
-
-    Returns:
-        sym_exp: symbolic expression with parameters substituted
-    """
-    for param_key, param_sym in params_syms.items():
-        if issubclass(type(param_sym), list):
-            for idx, param_sym_item in enumerate(param_sym):
-                if param_sym_item in sym_exp.free_symbols:
-                    sym_exp = sym_exp.subs(
-                        param_sym_item, params[param_key].flatten()[idx]
-                    )
-        else:
-            if param_sym in sym_exp.free_symbols:
-                sym_exp = sym_exp.subs(param_sym, params[param_key])
-
-    return sym_exp
+from typing import Callable, Dict, List, Tuple, Union
 
 
 def concatenate_params_syms(

@@ -13,13 +13,13 @@ from IPython.display import HTML
 from matplotlib.widgets import Slider
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pneumatically_actuated_planar_pcs import (
-    PneumaticallyActuatedPlanarPCS,
+from soromox.systems.pneumatic_actuated_planar_pcs import (
+    PneumaticActuatedPlanarPCS,
 )
 
 
 def draw_robot(
-    robot: PneumaticallyActuatedPlanarPCS,
+    robot: PneumaticActuatedPlanarPCS,
     q: Array,
     num_points: int = 50,
 ):
@@ -37,7 +37,7 @@ def draw_robot(
 
 
 def animate_robot_matplotlib(
-    robot: PneumaticallyActuatedPlanarPCS,
+    robot: PneumaticActuatedPlanarPCS,
     t_list: Array,  # shape (T,)
     q_list: Array,  # shape (T, DOF)
     num_points: int = 50,
@@ -140,7 +140,7 @@ def animate_robot_matplotlib(
 
 
 def sweep_actuation_mapping(
-    robot: PneumaticallyActuatedPlanarPCS,
+    robot: PneumaticActuatedPlanarPCS,
 ):
     # Actuation mapping for a straight backbone
     q = jnp.zeros(
@@ -297,12 +297,11 @@ if __name__ == "__main__":
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PneumaticallyActuatedPlanarPCS(
+    robot = PneumaticActuatedPlanarPCS(
         num_segments=num_segments,
         params=params,
-        order_gauss=5,
         strain_selector=strain_selector,
-        # simplified_actuation_mapping=True,
+        chamber_cross_section_geometry="concentric"
     )
 
     print("A=", robot.actuation_matrix(q=jnp.zeros(robot.num_active_strains)))
