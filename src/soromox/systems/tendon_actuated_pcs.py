@@ -134,32 +134,24 @@ class TendonActuatedPCS(PCS):
         self,
         num_segments: int,
         params: Dict[str, Array],
-        tendon_routing_basis: Dict[str, Callable] = {
-            "d_s": linear_routing,
-            "dd_s_ds": linear_routing_derivative,
-        },
-        tendon_routing_params: Dict[str, Array] = {
-            "ry": jnp.array([]),
-            "rz": jnp.array([]),
-            "my": jnp.array([]),
-            "mz": jnp.array([]),
-            "lt": jnp.array([]),
-        },
-        order_gauss: int = 5,
-        num_actuators: Optional[int] = None,
-        strain_selector: Optional[Array] = None,
-        xi_ref: Optional[Array] = None,
+        *args,
+        tendon_routing_basis: Optional[Dict[str, Callable]] = None,
+        tendon_routing_params: Dict[str, Array],
+        **kwargs,
     ):
         super().__init__(
-            num_segments=num_segments,
-            params=params,
-            order_gauss=order_gauss,
-            num_actuators=num_actuators,
-            strain_selector=strain_selector,
-            xi_ref=xi_ref,
+            num_segments,
+            params,
+            *args,
+            **kwargs,
         )
 
-        self._set_params(params)
+        # Set default tendon routing basis to linear routing if not provided
+        if tendon_routing_basis is None:
+            tendon_routing_basis = {
+                "d_s": linear_routing,
+                "dd_s_ds": linear_routing_derivative,
+            }
         self._set_tendon_routing_basis(tendon_routing_basis)
         self._set_tendon_routing_params(tendon_routing_params)
 
