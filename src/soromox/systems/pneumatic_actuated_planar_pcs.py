@@ -1,3 +1,4 @@
+__all__ = ["PneumaticActuatedPlanarPCS"]
 from jax import Array, vmap
 import jax.numpy as jnp
 from typing import Dict, Optional
@@ -76,18 +77,15 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             - p2 = u2 (left chamber)
 
     """
-    num_actuators: int = eqx.field(static=True)  # number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS)
-    num_chambers_per_segment: int = eqx.field(static=True, default=2)  # number of pneumatic chambers per segment
-    
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
-    r_chamber_out: (
-        Array  # outer radius of each segment's chamber, shape (num_segments,)
-    )
+    r_chamber_out: Array  # outer radius of each segment's chamber, shape (num_segments,)
     phi_chamber: Array  # sector angle of each segment's chamber, shape (num_segments,)
     d_chamber: Array  # radial distance of the center of the chambers from the centerline of the backbone, shape (num_segments,)
 
     actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
+    # fields with default values
+    num_chambers_per_segment: int = eqx.field(static=True, default=2)  # number of pneumatic chambers per segment
     chamber_cross_section_geometry: str = eqx.field(static=True, default="circular")
     pneumatic_load_distribution_assumption: str = eqx.field(static=True, default="infitesimal")
 
@@ -95,9 +93,6 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         self,
         num_segments: int,
         params: Dict[str, Array],
-        # order_gauss: int = 5,
-        # strain_selector: Optional[Array] = None,
-        # xi_ref: Optional[Array] = None,
         *args,
         segment_actuation_selector: Optional[Array] = None,
         chamber_cross_section_geometry: str = "circular",
@@ -123,9 +118,6 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         super().__init__(
             num_segments,
             params,
-            # order_gauss=order_gauss,
-            # strain_selector=strain_selector,
-            # xi_ref=xi_ref,
             *args,
             **kwargs,
         )
@@ -349,12 +341,12 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         return updated_self
 
     @eqx.filter_jit
-    def _local_chamber_cross_sectional_area(self, i: int) -> Array:
+    def _local_chamber_cross_sectional_area(self, i: Array) -> Array:
         """
         Compute the local cross-sectional area of one pneumatic chamber for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             A_one_chamber_i (Array): local cross-sectional area of one pneumatic chamber of the i-th segment
@@ -374,12 +366,12 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         return A_one_chamber_i
 
     @eqx.filter_jit
-    def _local_cross_sectional_area(self, i: int) -> Array:
+    def _local_cross_sectional_area(self, i: Array) -> Array:
         """
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
@@ -395,12 +387,12 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         return A_i
 
     @eqx.filter_jit
-    def _local_chamber_second_moment_of_area(self, i: int) -> Array:
+    def _local_chamber_second_moment_of_area(self, i: Array) -> Array:
         """
         Compute the local second moment of area of one pneumatic chamber for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             I_one_chamber_i (Array): local second moment of area of one pneumatic chamber of the i-th segment
@@ -421,12 +413,12 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         return I_one_chamber_i
 
     @eqx.filter_jit
-    def _local_second_moment_of_area(self, i: int) -> Array:
+    def _local_second_moment_of_area(self, i: Array) -> Array:
         """
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             I_i (Array): local second moment of area of the i-th segment
@@ -458,7 +450,12 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             A (Array): Actuation matrix of shape (num_active_strains, num_actuators)
         """
 
-        def _actuation_matrix_segment_i(i: int) -> Array:
+        def _actuation_matrix_segment_i(i: Array) -> Array:
+            """
+            Compute the actuation matrix for the i-th segment.
+            Args:
+                i (Array): index of the segment
+            """
             # Area of one pneumatic chamber
             A_one_chamber = self._local_chamber_cross_sectional_area(i)
 

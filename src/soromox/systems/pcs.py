@@ -1,22 +1,23 @@
+__all__ = ["PCS"]
 import equinox as eqx
 import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 import numpy as onp
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, ClassVar, Dict, Tuple, Optional
 
-from .utils import (
-    compute_strain_basis,
-    gauss_quadrature,
-    scale_gaussian_quadrature,
-)
+
 from soromox.math_utils import (
     blk_diag,
     compute_weighted_sums,
 )
 import soromox.utils.lie_algebra as lie
-
 from .dynamical_system import DynamicalSystem
+from .utils import (
+    compute_strain_basis,
+    gauss_quadrature,
+    scale_gaussian_quadrature,
+)
 
 
 class PCS(DynamicalSystem):
@@ -81,7 +82,8 @@ class PCS(DynamicalSystem):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    global_eps: float = jnp.finfo(jnp.float64).eps
+    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
+    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
 
     num_segments: int = eqx.field(static=True)
     num_actuators: int = eqx.field(static=True)  # Number of actuators

@@ -1,3 +1,4 @@
+__all__ = ["TendonActuatedPlanarPCS"]
 from jax import Array, vmap
 import jax.numpy as jnp
 from typing import Dict, Optional
@@ -59,24 +60,57 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     """
 
     d: Array  # distance of the tendons from the segment's backbone, shape (num_segments,)
-
     segment_indices_to_actuate: Array  # indices of the segments that are actuated, shape (num_actuated_segments,)
 
     def __init__(
         self,
         num_segments: int,
         params: Dict[str, Array],
-        order_gauss: int = 5,
-        strain_selector: Optional[Array] = None,
-        xi_ref: Optional[Array] = None,
+        *args,
         segment_actuation_selector: Optional[Array] = None,
+        **kwargs
     ):
+        """
+        Initialize the TendonActuatedPlanarPCS class
+        Args:
+            num_segments (int): number of segments in the robot
+            params (Dict[str, Array]):
+                Dictionary containing the robot parameters:
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
+                    Default is 90 degrees (1.57 radians).
+                - "L": List/Array of num_segments floats
+                    Length of each segment [m]
+                - "r": List/Array of num_segments floats
+                    Radius of each segment [m]
+                - "rho": List/Array of num_segments floats
+                    Density of each segment [kg/m^3]
+                - "g": List/Array of 2 floats [gx, gy]
+                    Gravitational acceleration vector [m/s^2]
+                - "E": List/Array of num_segments floats
+                    Elastic modulus of each segment [Pa]
+                - "G": List/Array of num_segments floats
+                    Shear modulus of each segment [Pa]
+                - "D": List/Array of (num_segments x num_segments) floats
+                    Damping matrix of each segment [Pa*s]
+                - "d": List/Array of num_segments floats
+                    Distance of the tendons from the segment's backbone [m]
+            order_gauss (int, optional):
+                Order of the Gauss-Legendre quadrature for integration over each segment.
+                Defaults to 5.
+            strain_selector (Optional[Array], optional):
+                Boolean array of shape (3 * num_segments,) specifying which strain components are active.
+                Defaults to all strains active (i.e. all True).
+            xi_ref (Optional[Array], optional):
+                Reference strain of shape (3 * num_segments,).
+                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
+            segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
+        """
         super().__init__(
-            num_segments=num_segments,
-            params=params,
-            order_gauss=order_gauss,
-            strain_selector=strain_selector,
-            xi_ref=xi_ref,
+            num_segments,
+            params,
+            *args,
+            **kwargs
         )
 
         if segment_actuation_selector is None:

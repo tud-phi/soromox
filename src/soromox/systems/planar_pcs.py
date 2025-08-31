@@ -1,9 +1,10 @@
+__all__ = ["PlanarPCS"]
 import equinox as eqx
 import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 import numpy as onp
-from typing import Callable, Dict, Tuple, Optional
+from typing import Callable, Dict, Tuple, Optional, ClassVar
 
 from soromox.math_utils import (
     blk_diag,
@@ -78,7 +79,8 @@ class PlanarPCS(DynamicalSystem):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    global_eps: float = jnp.finfo(jnp.float64).eps
+    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
+    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
 
     num_segments: int = eqx.field(static=True)
     num_actuators: int = eqx.field(static=True)  # Number of actuators
@@ -515,7 +517,7 @@ class PlanarPCS(DynamicalSystem):
         )  # Initial configuration [theta, x, y]
 
         # Iteration function
-        def chi_i(chi_prev: Array, i: int) -> Tuple[Array, Array]:
+        def chi_i(chi_prev: Array, i: Array) -> Tuple[Array, Array]:
             th_prev = chi_prev[0]
             p_prev = chi_prev[1:]
 
@@ -615,7 +617,7 @@ class PlanarPCS(DynamicalSystem):
         tuple_J_0 = (J_0_L0, J_0_s)
 
         # Iteration function
-        def J_i(tuple_J_prev: Array, i: int) -> Tuple[Tuple[Array, Array], Array]:
+        def J_i(tuple_J_prev: Array, i: Array) -> Tuple[Tuple[Array, Array], Array]:
             J_prev_Lprev, _ = tuple_J_prev
 
             xi_i = xi[i]
@@ -933,12 +935,12 @@ class PlanarPCS(DynamicalSystem):
     # Useful functions for the system
 
     @eqx.filter_jit
-    def _local_cross_sectional_area(self, i: int) -> Array:
+    def _local_cross_sectional_area(self, i: Array) -> Array:
         """
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
@@ -948,12 +950,12 @@ class PlanarPCS(DynamicalSystem):
         return A_i
 
     @eqx.filter_jit
-    def _local_second_moment_of_area(self, i: int) -> Array:
+    def _local_second_moment_of_area(self, i: Array) -> Array:
         """
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             I_i (Array): local second moment of area of the i-th segment
@@ -963,12 +965,12 @@ class PlanarPCS(DynamicalSystem):
         return I_i
 
     @eqx.filter_jit
-    def _local_mass_matrix(self, i: int) -> Array:
+    def _local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
         Returns:
             M_i (Array): local mass matrix of shape (3, 3) for the i-th segment
         """
@@ -1167,12 +1169,12 @@ class PlanarPCS(DynamicalSystem):
         return G
 
     @eqx.filter_jit
-    def _local_stiffness_matrix(self, i: int) -> Array:
+    def _local_stiffness_matrix(self, i: Array) -> Array:
         """
         Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             S_i (Array): Local stiffness matrix of shape (3, 3) for the i-th segment.

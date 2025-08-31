@@ -1,3 +1,4 @@
+__all__ = ["PlanarHSA"]
 import equinox as eqx
 from diffrax import (
     diffeqsolve,
