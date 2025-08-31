@@ -6,10 +6,10 @@ from jax import numpy as jnp
 import numpy as onp
 from typing import Dict, List, Tuple, Union, Optional
 
-from .base_system import BaseSystem
+from .dynamical_system import DynamicalSystem
 
 
-class Pendulum(BaseSystem):
+class Pendulum(DynamicalSystem):
     """
     Planar N-link serial pendulum (revolute chain) with closed-form JAX dynamics.
 

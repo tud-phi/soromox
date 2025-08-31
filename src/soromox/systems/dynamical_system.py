@@ -1,4 +1,4 @@
-__all__ = ["BaseSystem"]
+__all__ = ["DynamicalSystem"]
 import equinox as eqx
 from jax import Array, jit, lax
 from jax import numpy as jnp
@@ -18,7 +18,7 @@ from diffrax import (
 )
 
 
-class BaseSystem(eqx.Module):
+class DynamicalSystem(eqx.Module):
     def resolve_upon_time(
         self,
         q0: Array,

@@ -11,7 +11,7 @@ from soromox.math_utils import (
 )
 import soromox.utils.lie_algebra as lie
 
-from .base_system import BaseSystem
+from .dynamical_system import DynamicalSystem
 from .utils import (
     compute_strain_basis,
     gauss_quadrature,
@@ -19,7 +19,7 @@ from .utils import (
 )
 
 
-class PlanarPCS(BaseSystem):
+class PlanarPCS(DynamicalSystem):
     """
     Planar Piecewise Constant Strain (PCS) model for 2D soft continuum robots.
 

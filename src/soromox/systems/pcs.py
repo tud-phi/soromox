@@ -16,10 +16,10 @@ from soromox.math_utils import (
 )
 import soromox.utils.lie_algebra as lie
 
-from .base_system import BaseSystem
+from .dynamical_system import DynamicalSystem
 
 
-class PCS(BaseSystem):
+class PCS(DynamicalSystem):
     """
     Piecewise Constant Strain (PCS) model for 3D soft continuum robots.
 

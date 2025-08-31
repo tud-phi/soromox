@@ -15,14 +15,14 @@ import sympy as sp
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from .base_system import BaseSystem
+from .dynamical_system import DynamicalSystem
 from .utils import (
     concatenate_params_syms,
     compute_strain_basis,
 )
 
 
-class PlanarHSA(BaseSystem):
+class PlanarHSA(DynamicalSystem):
     """
     A kinematic and dynamic model for planar Handed Shearing Auxetics (HSA) robots.
 
