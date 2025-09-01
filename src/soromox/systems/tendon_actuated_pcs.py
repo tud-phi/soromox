@@ -239,8 +239,9 @@ class TendonActuatedPCS(PCS):
 
             return cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
 
-        xi = self.strain(q)  # strains (6*num_segments,)
+        xi = self.strain(q)  # strains (6 * num_segments,)
 
+        # Vectorize first over each tendon and then over each segment
         Phi_a = vmap(
             vmap(Phi_a_kj, in_axes=(0, None), out_axes=1), in_axes=(None, 0), out_axes=0
         )(
@@ -249,9 +250,9 @@ class TendonActuatedPCS(PCS):
 
         Phi_a = Phi_a.reshape(
             (6 * self.num_segments, self.num_actuators)
-        )  # (6*num_segments, num_actuators)
+        )  # (6 * num_segments, num_actuators)
 
-        A_s = self.B_xi.T @ Phi_a  # (6*num_segments, num_actuators)
+        A_s = self.B_xi.T @ Phi_a  # (6 * num_segments, num_actuators)
 
         return A_s
 
@@ -278,16 +279,16 @@ class TendonActuatedPCS(PCS):
                 A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
             """
 
-            def compute_strains_mask(n1: int, n2: int, j: int, step: int):
+            def compute_strains_mask(n1: int, n2: int, j: Array, step: Array):
                 """
                 Compute the strains mask for the actuation matrix of segment j of the robot. This matrix sets to 0 the
                 strains of the strain matrix (num_active_strains, num_active_strains) that are not within the current segment.
 
                 Args:
-                    n1 (int): numer of rows of the mask matrix ()
-                    n2 (int): numer of columns of the mask matrix ()
-                    j (int): index of the first row to set to 1 ()
-                    step (int): number of rows to set to 1 starting from index j ()
+                    n1 (int): number of rows of the mask matrix ()
+                    n2 (int): number of columns of the mask matrix ()
+                    j (Array): index of the first row to set to 1 ()
+                    step (Array): number of rows to set to 1 starting from index j ()
 
                 Returns:
                     A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
@@ -335,6 +336,7 @@ class TendonActuatedPCS(PCS):
 
             return A_segment_i
 
+        # vectorize the actuation matrix computation for all segments
         A_blocks_tot = vmap(A_i)(jnp.arange(self.num_segments))
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
@@ -385,6 +387,7 @@ class TendonActuatedPCS(PCS):
 
             return t_k_s
 
+        # Vectorize the forward kinematics computation for all tendons
         t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, None, None))(
             self.tendon_routing_params, q, s
         )  # (n_actuators, 3)
