@@ -16,14 +16,6 @@ Core mathematical operations and linear algebra utilities.
 - Linear algebra helper functions
 - Numerical computation utilities
 
-### [Integration](integration.md)
-Numerical integration methods for differential equations.
-
-- Gauss-Legendre quadrature
-- Integration schemes for robot dynamics
-- Numerical differentiation utilities
-- Solver interfaces
-
 ### [Parameters](parameters.md)
 Parameter handling and configuration management.
 
