@@ -12,7 +12,6 @@ from .pcs import PCS
 from .utils import scale_gaussian_quadrature
 
 
-
 class TendonActuatedPCS(PCS):
     """
     Piecewise Constant Strain (PCS) model for 3D soft continuum robots.
@@ -160,27 +159,55 @@ class TendonActuatedPCS(PCS):
             *args,
             **kwargs,
         )
-        
+
         # Set default tendon routing basis to linear routing if not provided
         if tendon_routing_basis is None:
             tendon_routing_basis = {
                 "d_s": act.linear_routing,
                 "dd_s_ds": act.linear_routing_derivative,
             }
+        self._set_B_xi_segments()
         self._set_tendon_routing_basis(tendon_routing_basis)
         self._set_tendon_routing_params(tendon_routing_params)
-        self._set_B_xi_segments()
 
     def _set_B_xi_segments(self):
-        def B_xi_segment_j(i: Array):
-            idx = 6*i
+        """
+        Compute the strains basis by segments. While the full strains basis B_xi
+        is a block diagonal matrix composed by the 6x6 strain basis of each segment,
+        this function extracts each diagonal block and returns it as a matrix of shape
+        (num_segments, num_active_strains, num_active_strains). This is used for the
+        computation of the actuation matrix.
+
+        Returns:
+            B_xi_segments (Array): strain basis of each segments (num_segments, num_active_strains, num_active_strains)
+        """
+
+        def B_xi_segment_j(j: Array):
+            """
+            Compute the strains basis of segment j.
+
+            Args:
+                i (Array): index of the segment
+
+            Returns:
+                B_xi_j (Array): strain basis of segment j (num_active_strains, num_active_strains)
+            """
+            idx = 6 * j
             B_xi_j = jnp.zeros_like(self.B_xi, dtype=self.B_xi.dtype)
             B_block = lax.dynamic_slice(self.B_xi, (idx, idx), (6, 6))
             B_xi_j = lax.dynamic_update_slice(B_xi_j, B_block, (idx, idx))
             return B_xi_j
+
         self.B_xi_segments = vmap(B_xi_segment_j)(jnp.arange(self.num_segments))
 
     def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
+        """
+        This internal function stores as attributes of the class the parameters of
+        the tendon routings specified by the user.
+
+        Args:
+            tendon_routing_params (Dict[str, Array]): parameters of the tendons
+        """
         if not isinstance(tendon_routing_params, (dict)):
             raise TypeError(
                 "The parameter 'tendon_routing_params' must be a dictionary of jax.Array."
@@ -194,28 +221,86 @@ class TendonActuatedPCS(PCS):
         for idx in tendon_routing_params["idx_seg_att"]:
             if idx >= self.num_segments:
                 raise ValueError(
-                    f"The indexes of the segments of attachment (tendon_routing_params[\"idx_seg_att\"]) must be strictly " + \
-                          "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
+                    f'The indexes of the segments of attachment (tendon_routing_params["idx_seg_att"]) must be strictly '
+                    + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
                 )
+        if self._check_tendon_routings(tendon_routing_params):
+            raise UserWarning(f"Tendon(s) exit the robot body.")
         self.tendon_routing_params = tendon_routing_params
-        if self.check_tendon_routings():
-            raise UserWarning(
-                f"Tendon(s) exit the robot body."
-            )
-        
 
     def _set_tendon_routing_basis(self, tendon_routing_basis: Dict[str, Callable]):
+        """
+        This internal function stores as attributes of the class the basis functions of
+        the tendon routings specified by the user.
+
+        Args:
+            tendon_routing_basis (Dict[str, Callable]): basis functions of the tendons
+        """
         self.d_s = tendon_routing_basis["d_s"]
         self.dd_s_ds = tendon_routing_basis["dd_s_ds"]
+
+    def _check_tendon_routings(self, tendon_routing_params):
+        """
+        Checks whether the tendons are correctly inside the robot body. This function
+        computes the distance between the centerline of the cross-section and the tendons
+        w.r.t. the local frame for a set of abscissa points along the body. If the any of
+        such distances is greater than the radius of the respective segment, it yields
+        true.
+
+        Args:
+            tendon_routing_params (Dict[str, Array]): parameters of the tendons (6,)
+
+        Returns:
+            flag (bool): True if any of the tendons is out of the body
+        """
+
+        def r_s(s: Array):
+            """
+            Returns the radius of the body at the specified abscissa point s.
+
+            Args:
+                s (Array): abscissa point along the body
+
+            Returns:
+                r_s (Array): radius of the robot at s
+            """
+            cond = self.L_cum <= s
+            idx = jnp.sum(cond) - 1
+            return self.r[idx]
+
+        s = jnp.linspace(0.0, self.L_cum[-1], 75)
+        t = vmap(
+            vmap(self.d_s, in_axes=(None, 0), out_axes=0), in_axes=(0, None), out_axes=0
+        )(tendon_routing_params, s)  # (num_tendons, N, 3)
+        d = t[:, :, 1:]  # (num_tendons, N, 2)
+        radii = jnp.linalg.norm(d, axis=2)  # (num_tendons, N)
+        r = vmap(r_s)(s)  # (N,)
+        check = radii > r  # (num_tendons, N)
+        flag = check.any()
+
+        # idxs = jnp.argwhere(check)
+        # tendon_idx = idxs[0,0]
+        # s_val = idxs[1,0]
+
+        return flag
 
     def update_tendon_routing_params(
         self, tendon_routing_params: Dict[str, Array]
     ) -> "TendonActuatedPCS":
+        """
+        This function updates the parameters of the tendon routings of the object.
+
+        Args:
+            tendon_routing_params (Dict[str, Array]): parameters of the tendons
+
+        Returns:
+            updated self (TendonActuatedPCS): self object with updated parameters
+        """
         updated_self = self
 
         # Recompute derived parameters
         tendon_routing_params = dict(tendon_routing_params)
-        num_actuators = len(tendon_routing_params["ry"])
+        num_actuators = len(list(tendon_routing_params.values())[0])
 
         # update all fields
         updated_self = eqx.tree_at(
@@ -226,30 +311,6 @@ class TendonActuatedPCS(PCS):
         )
 
         return updated_self
-    
-    def check_tendon_routings(self):
-        def r_s(s):
-            cond = self.L_cum <= s
-            idx = jnp.sum(cond) - 1
-            return self.r[idx]
-        
-        s = jnp.linspace(0., self.L_cum[-1], 75)
-        t = vmap(
-                vmap(self.d_s, in_axes=(None, 0), out_axes=0),
-                in_axes=(0, None),
-                out_axes=0
-                )(self.tendon_routing_params, s) # (num_tendons, N, 3)
-        d = t[:,:,1:] # (num_tendons, N, 2)
-        radii = jnp.linalg.norm(d, axis=2) # (num_tendons, N)
-        r = vmap(r_s)(s) # (N,)
-        check = radii > r # (num_tendons, N)
-        flag = check.any()
-
-        # idxs = jnp.argwhere(check)
-        # tendon_idx = idxs[0,0]
-        # s_val = idxs[1,0]
-
-        return flag
 
     @eqx.filter_jit
     def _local_actuation_basis(self, q: Array, s: Array) -> Array:
@@ -278,9 +339,13 @@ class TendonActuatedPCS(PCS):
             attachment_segment_idx = single_tendon_routing_params["idx_seg_att"]  # ()
             cond = attachment_segment_idx >= j  # ()
 
-            xi_j = jnp.reshape(xi, (6, self.num_segments), order='F')[:,j] # strains of segment j (6,)
+            xi_j = jnp.reshape(xi, (6, self.num_segments), order="F")[
+                :, j
+            ]  # strains of segment j (6,)
             d_s = jnp.append(self.d_s(single_tendon_routing_params, s), 1.0)  # (4,)
-            dd_s = jnp.append(self.dd_s_ds(single_tendon_routing_params, s), 1.0)  # (4,)
+            dd_s = jnp.append(
+                self.dd_s_ds(single_tendon_routing_params, s), 1.0
+            )  # (4,)
 
             term = (dd_s + lie.hat_SE3(xi_j) @ d_s)[:-1]  # (3,)
             norm = jnp.linalg.norm(term)  # ()
@@ -325,6 +390,7 @@ class TendonActuatedPCS(PCS):
             Returns:
                 A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
             """
+
             def A_point_j(j: Array):
                 """
                 Compute the actuation matrix at the abscissa point corresponding to the gaussian point j.
@@ -338,14 +404,16 @@ class TendonActuatedPCS(PCS):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 Phi_a_j = self._local_actuation_basis(q, Xs_j)
-                A_j = B_xi_i.T @ Phi_a_j # A_s = B_xi.T @ Phi_a
+                A_j = B_xi_i.T @ Phi_a_j  # A_s = B_xi.T @ Phi_a
                 return Ws_j * A_j
 
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
-            B_xi_i = self.B_xi_segments[i] # (num_active_strains, num_active_strains)
-            A_i = vmap(A_point_j)(jnp.arange(self.num_gauss_points)) # (num_gauss_points, num_active_strains, num_actuators)
+            B_xi_i = self.B_xi_segments[i]  # (num_active_strains, num_active_strains)
+            A_i = vmap(A_point_j)(
+                jnp.arange(self.num_gauss_points)
+            )  # (num_gauss_points, num_active_strains, num_actuators)
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_point_j(j) for j in range(self.num_gauss_points)], axis=0)
@@ -354,15 +422,15 @@ class TendonActuatedPCS(PCS):
             return A_i
 
         # vectorize the actuation matrix computation for all segments
-        A_blocks = vmap(A_segment_i)(jnp.arange(self.num_segments)) # (num_segments, num_gauss_points, num_active_strains, num_actuators)
+        A_blocks = vmap(A_segment_i)(
+            jnp.arange(self.num_segments)
+        )  # (num_segments, num_gauss_points, num_active_strains, num_actuators)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_segment_i(i) for i in range(self.num_segments)], axis=0)
         # print('A_blocks_tot =\n', A_blocks_tot.shape)
 
-        A = jnp.sum(
-            A_blocks, axis=(0, 1)
-        )  # Sum over segments and Gauss points
+        A = jnp.sum(A_blocks, axis=(0, 1))  # Sum over segments and Gauss points
 
         return A
 
@@ -396,10 +464,12 @@ class TendonActuatedPCS(PCS):
                 t_k_s (Array): cartesian position of the tendons at s, shape (n_actuators, 3)
             """
             lt = self.L_cum[single_tendon_routing_params["idx_seg_att"] + 1]  # ()
-            s_val = jnp.clip(s, 0., lt)
+            s_val = jnp.clip(s, 0.0, lt)  # ()
 
             g_s = self.forward_kinematics(q, s_val)  # (4,4)
-            t_k_s = g_s @ jnp.append(self.d_s(single_tendon_routing_params, s_val), 1.0)  # (4,)
+            t_k_s = g_s @ jnp.append(
+                self.d_s(single_tendon_routing_params, s_val), 1.0
+            )  # (4,)
             t_k_s = t_k_s[:-1]  # (3,)
 
             return t_k_s
