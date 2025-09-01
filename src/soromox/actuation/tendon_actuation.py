@@ -1,24 +1,24 @@
+__all__ = ["linear_routing", "linear_routing_derivative"]
 from jax import numpy as jnp
 
 
 def linear_routing(tendon_routing_params, s):
     """
-    Function representing the routing of linear tendons as function of s. Specifically, d_s
-    is the vector between the centerline of the robot and the tendon position, in the
-    cross-sectional plane at abscissa s.
+    Routing of linear tendons as a function of ``s``.
+
+    Specifically, ``d_s`` is the vector between the centerline of the robot and the
+    tendon position in the cross-sectional plane at abscissa ``s``.
 
     Args:
-            tendon_routing_params (Dict[Array]): parameters of the linear tendons (6,)
+        tendon_routing_params (Dict[str, Array]): Parameters of the linear tendons.
                 ry: y-coordinate of the pulling point of the tendons [m]
                 my: slope coefficient in the x-y plane of the tendons [-]
                 rz: z-coordinate of the pulling point of the tendons [m]
                 mz: slope coefficient in the x-z plane of the tendons [-]
-            s (Array): abscissa points (num_gauss_points,)
+        s (Array): Abscissa points ``(num_gauss_points,)``.
 
-        Returns:
-            d_s (Array): position of the tendon at s wrt the centerline (3,)
-                [d_x, d_y, d_z]. Note that d_x is usually 0 as the robot is 
-                aligned with the local x-axis.
+    Returns:
+        d_s (Array): Position of the tendon at ``s`` w.r.t. the centerline ``(3,)``.
     """
 
     ry = tendon_routing_params["ry"]
@@ -31,19 +31,18 @@ def linear_routing(tendon_routing_params, s):
 
 def linear_routing_derivative(tendon_routing_params, s):
     """
-    Function representing the spatial derivative of the routing of linear tendons as function of s.
-    Specifically, dd_s_ds is the derivative of d_s over s, at s.
+    Spatial derivative of the linear tendon routing as a function of ``s``.
+
+    Specifically, ``dd_s_ds`` is the derivative of ``d_s`` with respect to ``s``.
 
     Args:
-            tendon_routing_params (Dict[Array]): parameters of the linear tendons (6,)
+        tendon_routing_params (Dict[str, Array]): Parameters of the linear tendons.
                 my: slope coefficient in the x-y plane of the tendons [-]
                 mz: slope coefficient in the x-z plane of the tendons [-]
-            s (Array): abscissa points (num_gauss_points,)
+        s (Array): Abscissa points ``(num_gauss_points,)``.
 
-        Returns:
-            dd_s_ds (Array): path of the tendon at s wrt the centerline (3,)
-                [dd_s_ds_x, dd_s_ds_y, dd_s_ds_z]. Note that dd_s_ds_x is usually 0 
-                as the robot is aligned with the local x-axis.
+    Returns:
+        dd_s_ds (Array): Path of the tendon at ``s`` w.r.t. the centerline ``(3,)``.
     """
 
     my = tendon_routing_params["my"]

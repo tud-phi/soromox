@@ -83,10 +83,10 @@ nav:
         - Pneumatic Actuated Planar PCS: api/pneumatic-actuated-planar-pcs.md
         - Tendon Actuated Planar PCS: api/tendon-actuated-planar-pcs.md
       - Planar HSA: api/planar-hsa.md
+    - Actuation: api/actuation.md
     - Utilities:
       - Overview: api/utils.md
       - Math Utils: api/math-utils.md
-      - Integration: api/integration.md
       - Parameters: api/parameters.md
       - Rendering: api/rendering.md
       - Symbolic Derivation: api/symbolic-derivation.md

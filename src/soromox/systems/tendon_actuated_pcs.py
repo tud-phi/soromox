@@ -52,11 +52,12 @@ class TendonActuatedPCS(PCS):
     tendon_routing_params : Dict[str, Array]
         Dictionary of arrays of length n_actuators representing the tendon parameters.
     d_s : Callable
-        Function that returns the vector [d_x, d_y, d_z] of the tendon position wrt 
-        the central backbone within the cross-sectional plane at a given abscissa
-        point s. The first 3 entries represent the coordinate of the tendon position
-        with respect to the local cross-sectional frame at s. For this reason, d_x is
-        always equal to 0.
+        Function that returns the vector [d_x, d_y, d_z] of the tendon
+        position w.r.t. the central backbone within the cross-sectional plane at a given
+        abscissa point s. The three entries represent the coordinate of the tendon
+        position with respect to the local cross-sectional frame at s. For this reason,
+        d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
+
     dd_s_ds : Callable
         Function that returns the vector of the derivative over s of d_s.
 
@@ -247,8 +248,9 @@ class TendonActuatedPCS(PCS):
 
             return cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
 
-        xi = self.strain(q)  # strains (6*num_segments,)
+        xi = self.strain(q)  # strains (6 * num_segments,)
 
+        # Vectorize first over each tendon and then over each segment
         Phi_a_s = vmap(
             vmap(Phi_a_kj, in_axes=(0, None), out_axes=1), in_axes=(None, 0), out_axes=0
         )(
@@ -257,7 +259,7 @@ class TendonActuatedPCS(PCS):
 
         Phi_a_s = Phi_a_s.reshape(
             (6 * self.num_segments, self.num_actuators)
-        )  # (6*num_segments, num_actuators)
+        )  # (6 * num_segments, num_actuators)
 
         return Phi_a_s
 
@@ -283,6 +285,30 @@ class TendonActuatedPCS(PCS):
             Returns:
                 A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
             """
+
+            def compute_strains_mask(n1: int, n2: int, j: Array, step: Array):
+                """
+                Compute the strains mask for the actuation matrix of segment j of the robot. This matrix sets to 0 the
+                strains of the strain matrix (num_active_strains, num_active_strains) that are not within the current segment.
+
+                Args:
+                    n1 (int): number of rows of the mask matrix ()
+                    n2 (int): number of columns of the mask matrix ()
+                    j (Array): index of the first row to set to 1 ()
+                    step (Array): number of rows to set to 1 starting from index j ()
+
+                Returns:
+                    A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
+                """
+                a = jnp.zeros((n1, n2), dtype=jnp.int32)
+                block = jnp.ones((step, n2), dtype=jnp.int32)
+                # j_clipped = jnp.clip(j, 0, n2 + step)
+                return lax.dynamic_update_slice(
+                    a,
+                    block,
+                    (jnp.array(j, dtype=jnp.int32), jnp.array(0, dtype=jnp.int32)),
+                )
+
             def A_j(j: Array):
                 """
                 Compute the actuation matrix at the abscissa point corresponding to the gaussian point j.
@@ -310,6 +336,7 @@ class TendonActuatedPCS(PCS):
 
             return A_segment_i
 
+        # vectorize the actuation matrix computation for all segments
         A_blocks_tot = vmap(A_i)(jnp.arange(self.num_segments)) # (num_segments, num_gauss_points, num_active_strains, num_actuators)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
@@ -358,6 +385,7 @@ class TendonActuatedPCS(PCS):
 
             return t_k_s
 
+        # Vectorize the forward kinematics computation for all tendons
         t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, None, None))(
             self.tendon_routing_params, q, s
         )  # (n_actuators, 3)
