@@ -246,7 +246,7 @@ if __name__ == "__main__":
         "mz": jnp.array(
             [0.0, 0.0]
         ),  # slope coefficient in the x-z plane of the tendons [-]
-        "lt": jnp.array(
+        "idx_seg_att": jnp.array(
             [1, 0]
         ),  # length of the tendons = x-coordinate of the attachment points [m]
     }
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     #     'rz': jnp.array([0.016, -0.008, -0.008, 0.008, -0.016, 0.008]),
     #     'my': jnp.zeros(6),
     #     'mz': jnp.zeros(6),
-    #     'lt': jnp.array([0, 0, 0, 1, 1, 1]),
+    #     'idx_seg_att': jnp.array([0, 0, 0, 1, 1, 1]),
     # }
 
     # ======================================================
@@ -295,7 +295,7 @@ if __name__ == "__main__":
     t_s = robot.forward_kinematics_tendons(q0, robot.L_cum[-1])
     print("t_s =\n", t_s.shape)
     print(t_s)
-
+    
     # Simulation time parameters
     t0 = 0.0
     t1 = 2.0
