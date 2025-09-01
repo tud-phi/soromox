@@ -50,11 +50,11 @@ class TendonActuatedPCS(PCS):
     tendon_routing_params : Dict[str, Array]
         Dictionary of arrays of length n_actuators representing the tendon parameters.
     d_s : Callable
-        Function that returns the homogeneous vector [d_x, d_y, d_z, 1] of the tendon
-        position wrt the central backbone within the cross-sectional plane at a given
-        abscissa point s. The first 3 entries represent the coordinate of the tendon
+        Function that returns the vector [d_x, d_y, d_z] of the tendon
+        position w.r.t. the central backbone within the cross-sectional plane at a given
+        abscissa point s. The three entries represent the coordinate of the tendon
         position with respect to the local cross-sectional frame at s. For this reason,
-        d_x is always equal to 0.
+        d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
 
     dd_s_ds : Callable
         Function that returns the homogeneous vector of the derivative over s of d_s.
