@@ -23,7 +23,7 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
+jnp.set_printoptions(precision=4, suppress=True)
 
 def draw_robot_curve(
     batched_forward_kinematics: Callable,
@@ -250,6 +250,13 @@ if __name__ == "__main__":
             [1, 0]
         ),  # length of the tendons = x-coordinate of the attachment points [m]
     }
+    # tendon_routing_params = {
+    #     'ry': jnp.array([0., -0.0139, 0.0139, -0.0139, 0., 0.0139]),
+    #     'rz': jnp.array([0.016, -0.008, -0.008, 0.008, -0.016, 0.008]),
+    #     'my': jnp.zeros(6),
+    #     'mz': jnp.zeros(6),
+    #     'lt': jnp.array([0, 0, 0, 1, 1, 1]),
+    # }
 
     # ======================================================
     # Robot initialization
@@ -270,6 +277,7 @@ if __name__ == "__main__":
         num_segments,
         axis=0,
     ).flatten()
+    #q0 = jnp.array([0.9143,-0.0292,0.6006,-0.7162,-0.1565,0.8315,0.5844,0.9190,0.3115,-0.9286,0.6983,0.8680])
 
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
@@ -282,6 +290,11 @@ if __name__ == "__main__":
     A = robot.actuation_matrix(q0)
     print("A =\n", A.shape)
     print(A)
+
+    # Tendons' position
+    t_s = robot.forward_kinematics_tendons(q0, robot.L_cum[-1])
+    print("t_s =\n", t_s.shape)
+    print(t_s)
 
     # Simulation time parameters
     t0 = 0.0

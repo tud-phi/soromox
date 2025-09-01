@@ -39,7 +39,9 @@ class TendonActuatedPCS(PCS):
     num_strains : int
         Total number of strain components (6 * num_segments).
     B_xi : Array
-        Basis matrix for projecting active strains.
+        Basis matrix for projecting active strains (num_active_strains, num_active_strains).
+    B_xi_segments : Array
+        Basis matrix for projecting active strains, by segments (num_segments, num_active_strains, num_active_strains).
     xi_ref : Array
         Reference strain (reference configuration) of the robot.
     num_gauss_points : int
@@ -50,14 +52,13 @@ class TendonActuatedPCS(PCS):
     tendon_routing_params : Dict[str, Array]
         Dictionary of arrays of length n_actuators representing the tendon parameters.
     d_s : Callable
-        Function that returns the homogeneous vector [d_x, d_y, d_z, 1] of the tendon
-        position wrt the central backbone within the cross-sectional plane at a given
-        abscissa point s. The first 3 entries represent the coordinate of the tendon
-        position with respect to the local cross-sectional frame at s. For this reason,
-        d_x is always equal to 0.
-
+        Function that returns the vector [d_x, d_y, d_z] of the tendon position wrt 
+        the central backbone within the cross-sectional plane at a given abscissa
+        point s. The first 3 entries represent the coordinate of the tendon position
+        with respect to the local cross-sectional frame at s. For this reason, d_x is
+        always equal to 0.
     dd_s_ds : Callable
-        Function that returns the homogeneous vector of the derivative over s of d_s.
+        Function that returns the vector of the derivative over s of d_s.
 
     Notes:
     -----
@@ -75,6 +76,7 @@ class TendonActuatedPCS(PCS):
     """
 
     tendon_routing_params: Dict[str, Array]
+    B_xi_segments: Array
     d_s: Callable
     dd_s_ds: Callable
 
@@ -166,6 +168,16 @@ class TendonActuatedPCS(PCS):
             }
         self._set_tendon_routing_basis(tendon_routing_basis)
         self._set_tendon_routing_params(tendon_routing_params)
+        self._set_B_xi_segments()
+
+    def _set_B_xi_segments(self):
+        strains_masks = []
+        for i in range(self.num_segments):
+            idx = 6*i
+            strais_mask_i = jnp.zeros_like(self.B_xi, dtype=self.B_xi.dtype)
+            strais_mask_i = strais_mask_i.at[idx:idx+6, idx:idx+6].set(self.B_xi[idx:idx+6, idx:idx+6])
+            strains_masks.append(strais_mask_i)
+        self.B_xi_segments = jnp.array(strains_masks)
 
     def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
         if not isinstance(tendon_routing_params, (dict)):
@@ -199,41 +211,37 @@ class TendonActuatedPCS(PCS):
         return updated_self
 
     @eqx.filter_jit
-    def _local_actuation_matrix(self, q: Array, s: Array) -> Array:
+    def _local_actuation_basis(self, q: Array, s: Array) -> Array:
         """
-        Compute the local actuation matrix at current abscissa s.
+        Compute the local actuation basis at current abscissa s.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,)
             s (Array): abscissa points (num_gauss_points,)
 
         Returns:
-            A_s (Array): actuation matrix of shape at s (num_active_strains, num_actuators)
+            Phi_a_s (Array): actuation basis at s of shape (num_active_strains, num_actuators)
         """
 
-        def Phi_a_kj(tendon_routing_params: Dict[str, Array], j: Array):
+        def Phi_a_kj(single_tendon_routing_params: Dict[str, Array], j: Array):
             """
-            Compute the the actuation basis of the tendon at the segment j of the robot.
+            Compute the actuation basis of one tendon at the segment j of the robot.
 
             Args:
-                tendon_routing_params (Dict[str, Array]): parameters of the linear tendons (6,)
+                single_tendon_routing_params (Dict[str, Array]): parameters of one tendon (6,)
                 j (Array): index of the segment ()
 
             Returns:
-                A (Array): actuation basis vector of shape (6,).
+                Phi_a_kj (Array): actuation basis of one tendon at one segment of shape (6,)
             """
-
-            def get_block(xi: Array, j: Array, block_size: int = 6):
-                return lax.dynamic_slice(xi, (block_size * j,), (block_size,))
-
-            attachment_segment_idx = tendon_routing_params["lt"]  # ()
+            attachment_segment_idx = single_tendon_routing_params["lt"]  # ()
             cond = attachment_segment_idx >= j  # ()
 
-            xi_ = get_block(xi, j, block_size=6)  # strains of segment j (6,)
-            d_s = jnp.append(self.d_s(tendon_routing_params, s), 1.0)  # (4,)
-            dd_s = jnp.append(self.dd_s_ds(tendon_routing_params, s), 1.0)  # (4,)
+            xi_j = jnp.reshape(xi, (6, self.num_segments), order='F')[:,j] # strains of segment j (6,)
+            d_s = jnp.append(self.d_s(single_tendon_routing_params, s), 1.0)  # (4,)
+            dd_s = jnp.append(self.dd_s_ds(single_tendon_routing_params, s), 1.0)  # (4,)
 
-            term = (dd_s + lie.hat_SE3(xi_) @ d_s)[:-1]  # (3,)
+            term = (dd_s + lie.hat_SE3(xi_j) @ d_s)[:-1]  # (3,)
             norm = jnp.linalg.norm(term)  # ()
             t = term / norm  # (3,)
 
@@ -241,19 +249,17 @@ class TendonActuatedPCS(PCS):
 
         xi = self.strain(q)  # strains (6*num_segments,)
 
-        Phi_a = vmap(
+        Phi_a_s = vmap(
             vmap(Phi_a_kj, in_axes=(0, None), out_axes=1), in_axes=(None, 0), out_axes=0
         )(
             self.tendon_routing_params, jnp.arange(self.num_segments)
         )  # (num_segments, 6, num_actuators)
 
-        Phi_a = Phi_a.reshape(
+        Phi_a_s = Phi_a_s.reshape(
             (6 * self.num_segments, self.num_actuators)
         )  # (6*num_segments, num_actuators)
 
-        A_s = self.B_xi.T @ Phi_a  # (6*num_segments, num_actuators)
-
-        return A_s
+        return Phi_a_s
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
@@ -277,30 +283,6 @@ class TendonActuatedPCS(PCS):
             Returns:
                 A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
             """
-
-            def compute_strains_mask(n1: int, n2: int, j: int, step: int):
-                """
-                Compute the strains mask for the actuation matrix of segment j of the robot. This matrix sets to 0 the
-                strains of the strain matrix (num_active_strains, num_active_strains) that are not within the current segment.
-
-                Args:
-                    n1 (int): numer of rows of the mask matrix ()
-                    n2 (int): numer of columns of the mask matrix ()
-                    j (int): index of the first row to set to 1 ()
-                    step (int): number of rows to set to 1 starting from index j ()
-
-                Returns:
-                    A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
-                """
-                a = jnp.zeros((n1, n2), dtype=jnp.int32)
-                block = jnp.ones((step, n2), dtype=jnp.int32)
-                # j_clipped = jnp.clip(j, 0, n2 + step)
-                return lax.dynamic_update_slice(
-                    a,
-                    block,
-                    (jnp.array(j, dtype=jnp.int32), jnp.array(0, dtype=jnp.int32)),
-                )
-
             def A_j(j: Array):
                 """
                 Compute the actuation matrix at the abscissa point corresponding to the gaussian point j.
@@ -309,25 +291,18 @@ class TendonActuatedPCS(PCS):
                     j (Array): index of the gaussian point ()
 
                 Returns:
-                    A_j (Array): local actuation matricx of shape (num_active_strains, num_actuators).
+                    A_j (Array): local actuation matrix of shape (num_active_strains, num_actuators).
                 """
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
-                A_jj = self._local_actuation_matrix(q, Xs_j)
-                return Ws_j * A_jj * strains_mask
+                Phi_a_j = self._local_actuation_basis(q, Xs_j)
+                return Ws_j * B_xi_i.T @ Phi_a_j # A_s = B_xi.T @ Phi_a
 
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
-
-            strains_mask = compute_strains_mask(
-                6 * self.num_segments,  #
-                self.num_actuators,  # number of columns of the mask matrix
-                6 * i,  # starting index
-                6,  # number of rows set to 1 starting from starting index
-            )
-
-            A_segment_i = vmap(A_j)(jnp.arange(self.num_gauss_points))
+            B_xi_i = self.B_xi_segments[i] # (num_active_strains, num_active_strains)
+            A_segment_i = vmap(A_j)(jnp.arange(self.num_gauss_points)) # (num_gauss_points, num_active_strains, num_actuators)
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_j(j) for j in range(self.num_gauss_points)], axis=0)
@@ -335,7 +310,7 @@ class TendonActuatedPCS(PCS):
 
             return A_segment_i
 
-        A_blocks_tot = vmap(A_i)(jnp.arange(self.num_segments))
+        A_blocks_tot = vmap(A_i)(jnp.arange(self.num_segments)) # (num_segments, num_gauss_points, num_active_strains, num_actuators)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_i(i) for i in range(self.num_segments)], axis=0)
@@ -361,27 +336,25 @@ class TendonActuatedPCS(PCS):
         """
 
         def forward_kinematics_tendon_k(
-            tendon_routing_params: Dict[str, float], q: Array, s: Array
+            single_tendon_routing_params: Dict[str, Array], q: Array, s: Array
         ) -> Array:
             """
-            Compute the forward kinematics of the specified tendon actuator at a point s along the robot.
+            Compute the forward kinematics of one tendon actuator at a point s along the robot.
 
             Args:
-                tendon_routing_params (Dict[str, float]): parameters of the tendon (6,)
+                single_tendon_routing_params (Dict[str, Array]): parameters of one tendon (6,)
                 q (Array): generalized coordinates of shape (num_active_strains,)
                 s (Array): point coordinate along the robot ()
 
             Returns:
                 t_k_s (Array): cartesian position of the tendons at s, shape (n_actuators, 3)
             """
-            g_s = self.forward_kinematics(q, s)  # (4,4)
-            t_k_s = g_s @ jnp.append(self.d_s(tendon_routing_params, s), 1.0)  # (4,)
+            lt = self.L_cum[single_tendon_routing_params["lt"] + 1]  # ()
+            s_val = jnp.clip(s, 0., lt)
+
+            g_s = self.forward_kinematics(q, s_val)  # (4,4)
+            t_k_s = g_s @ jnp.append(self.d_s(single_tendon_routing_params, s_val), 1.0)  # (4,)
             t_k_s = t_k_s[:-1]  # (3,)
-
-            lt = self.L_cum[tendon_routing_params["lt"] + 1]  # ()
-            mask = s <= lt  # ()
-
-            t_k_s = jnp.where(mask, t_k_s, jnp.nan)  # (3,)
 
             return t_k_s
 

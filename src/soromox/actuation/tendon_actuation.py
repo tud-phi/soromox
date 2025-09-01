@@ -17,6 +17,8 @@ def linear_routing(tendon_routing_params, s):
 
         Returns:
             d_s (Array): position of the tendon at s wrt the centerline (3,)
+                [d_x, d_y, d_z]. Note that d_x is usually 0 as the robot is 
+                aligned with the local x-axis.
     """
 
     ry = tendon_routing_params["ry"]
@@ -40,6 +42,8 @@ def linear_routing_derivative(tendon_routing_params, s):
 
         Returns:
             dd_s_ds (Array): path of the tendon at s wrt the centerline (3,)
+                [dd_s_ds_x, dd_s_ds_y, dd_s_ds_z]. Note that dd_s_ds_x is usually 0 
+                as the robot is aligned with the local x-axis.
     """
 
     my = tendon_routing_params["my"]
