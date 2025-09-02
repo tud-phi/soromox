@@ -56,7 +56,6 @@ class TendonActuatedPCS(PCS):
         abscissa point s. The three entries represent the coordinate of the tendon
         position with respect to the local cross-sectional frame at s. For this reason,
         d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
-
     dd_s_ds : Callable
         Function that returns the vector of the derivative over s of d_s.
 
@@ -166,11 +165,11 @@ class TendonActuatedPCS(PCS):
                 "d_s": act.linear_routing,
                 "dd_s_ds": act.linear_routing_derivative,
             }
-        self._set_B_xi_segments()
+        self.B_xi_segments = self._B_xi_segments()
         self._set_tendon_routing_basis(tendon_routing_basis)
         self._set_tendon_routing_params(tendon_routing_params)
 
-    def _set_B_xi_segments(self):
+    def _B_xi_segments(self):
         """
         Compute the strains basis by segments. While the full strains basis B_xi
         is a block diagonal matrix composed by the 6x6 strain basis of each segment,
@@ -198,7 +197,9 @@ class TendonActuatedPCS(PCS):
             B_xi_j = lax.dynamic_update_slice(B_xi_j, B_block, (idx, idx))
             return B_xi_j
 
-        self.B_xi_segments = vmap(B_xi_segment_j)(jnp.arange(self.num_segments))
+        B_xi_segments = vmap(B_xi_segment_j)(jnp.arange(self.num_segments))
+        
+        return B_xi_segments
 
     def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
         """
@@ -224,7 +225,7 @@ class TendonActuatedPCS(PCS):
                     f'The indexes of the segments of attachment (tendon_routing_params["idx_seg_att"]) must be strictly '
                     + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
                 )
-        if self._check_tendon_routings(tendon_routing_params):
+        if self._check_tendon_routing_in_body(tendon_routing_params):
             raise UserWarning(f"Tendon(s) exit the robot body.")
         self.tendon_routing_params = tendon_routing_params
 
@@ -239,7 +240,7 @@ class TendonActuatedPCS(PCS):
         self.d_s = tendon_routing_basis["d_s"]
         self.dd_s_ds = tendon_routing_basis["dd_s_ds"]
 
-    def _check_tendon_routings(self, tendon_routing_params):
+    def _check_tendon_routing_in_body(self, tendon_routing_params):
         """
         Checks whether the tendons are correctly inside the robot body. This function
         computes the distance between the centerline of the cross-section and the tendons
@@ -273,9 +274,9 @@ class TendonActuatedPCS(PCS):
             vmap(self.d_s, in_axes=(None, 0), out_axes=0), in_axes=(0, None), out_axes=0
         )(tendon_routing_params, s)  # (num_tendons, N, 3)
         d = t[:, :, 1:]  # (num_tendons, N, 2)
-        radii = jnp.linalg.norm(d, axis=2)  # (num_tendons, N)
-        r = vmap(r_s)(s)  # (N,)
-        check = radii > r  # (num_tendons, N)
+        r_tendons = jnp.linalg.norm(d, axis=2)  # (num_tendons, N)
+        r_body = vmap(r_s)(s)  # (N,)
+        check = r_tendons > r_body  # (num_tendons, N)
         flag = check.any()
 
         # idxs = jnp.argwhere(check)
@@ -410,7 +411,10 @@ class TendonActuatedPCS(PCS):
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
+            # Retrieve strain basis of the current segment
             B_xi_i = self.B_xi_segments[i]  # (num_active_strains, num_active_strains)
+
+            # Vectorize the actuation matrix computation for all gaussian points
             A_i = vmap(A_point_j)(
                 jnp.arange(self.num_gauss_points)
             )  # (num_gauss_points, num_active_strains, num_actuators)
@@ -421,7 +425,7 @@ class TendonActuatedPCS(PCS):
 
             return A_i
 
-        # vectorize the actuation matrix computation for all segments
+        # Vectorize the actuation matrix computation for all segments
         A_blocks = vmap(A_segment_i)(
             jnp.arange(self.num_segments)
         )  # (num_segments, num_gauss_points, num_active_strains, num_actuators)
@@ -461,7 +465,7 @@ class TendonActuatedPCS(PCS):
                 s (Array): point coordinate along the robot ()
 
             Returns:
-                t_k_s (Array): cartesian position of the tendons at s, shape (n_actuators, 3)
+                t_k_s (Array): cartesian position of the tendons at s, shape (3,)
             """
             lt = self.L_cum[single_tendon_routing_params["idx_seg_att"] + 1]  # ()
             s_val = jnp.clip(s, 0.0, lt)  # ()
