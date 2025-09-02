@@ -215,9 +215,7 @@ if __name__ == "__main__":
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
-        "p0": jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
+        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # Initial position and orientation
         "L": 1e-1 * jnp.ones((num_segments,)),  # default: 1e-1
         "r": 2e-2 * jnp.ones((num_segments,)),  # default: 2e-2
         "rho": rho,
