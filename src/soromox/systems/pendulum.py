@@ -555,7 +555,7 @@ class Pendulum(DynamicalSystem):
 
         The gravitational force is computed by projecting gravity effects
         through the linear velocity Jacobians:
-        G(q) = Σ_i Jv_i^T ( m_i * g )
+        G(q) = -Σ_i Jv_i^T ( m_i * g )
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
@@ -718,7 +718,7 @@ class Pendulum(DynamicalSystem):
 
         The gravitational energy is computed by summing the potential energy
         of each link's center of mass:
-        U_G = Σ_i m_i * g^T @ p_com_i
+        U_G = -Σ_i m_i * g^T @ p_com_i
         where p_com_i is the center of mass position of link i.
 
         Args:
@@ -729,7 +729,7 @@ class Pendulum(DynamicalSystem):
         """
         p_coms = self._com_positions(q)  # (n, 2)
         # U_G = Σ_i m_i * g^T @ p_com_i
-        U_G = jnp.sum(self.m * jnp.dot(p_coms, self.g))
+        U_G = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
         return U_G
 
     @eqx.filter_jit

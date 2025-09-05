@@ -1,9 +1,11 @@
 import cv2  # importing cv2
+from functools import partial
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array, lax, vmap
 from jax import numpy as jnp
+import matplotlib.pyplot as plt
 import numpy as onp
 from pathlib import Path
 from typing import Callable, Dict
@@ -12,12 +14,6 @@ import soromox
 from soromox.systems import pendulum
 
 num_links = 2
-
-sym_exp_filepath = (
-    Path(soromox.__file__).parent
-    / "symbolic_expressions"
-    / f"pendulum_nl-{num_links}.dill"
-)
 params = {
     "m": jnp.array([10.0, 6.0]),
     "I": jnp.array([3.0, 2.0]),
@@ -37,7 +33,7 @@ skip_step = 100  # how many time steps to skip in between video frames
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
-video_path = Path(__file__).parent / "videos" / f"{sym_exp_filepath.stem}.mp4"
+video_path = Path(__file__).parent / "videos" / f"pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(
@@ -51,8 +47,10 @@ def draw_robot(
     ppm = h / (2.5 * jnp.sum(robot.L))  # pixel per meter
     robot_color = (0, 0, 0)  # black robot_color in BGR
 
-    # poses along the robot of shape (N, 3)
+    # poses along the robot of shape (num_links, 3)
     chi_ls = robot.forward_kinematics_tips(q)
+    # add zeros
+    chi_ls = jnp.vstack([jnp.zeros((1, 3)), chi_ls])  # add origin
 
     img = 255 * onp.ones((w, h, 3), dtype=jnp.uint8)  # initialize background to white
     curve_origin = onp.array(
@@ -87,7 +85,7 @@ if __name__ == "__main__":
     print("yd0:\n", yd)
 
     # Integrate using the model's built-in solver
-    ts_out, qs, qds = robot.resolve_upon_time(
+    ts_out, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
         u=u,
@@ -97,7 +95,78 @@ if __name__ == "__main__":
         skip_steps=skip_step,
     )
     video_ts = ts_out
-    print("Final configuration:\n", qs[-1])
+    print("Final configuration:\n", q_ts[-1])
+
+    # =====================================================
+    # End-effector position upon time
+    # =====================================================
+    chi_ee_ts = jax.vmap(robot.forward_kinematics_tips,)(q_ts)[:, -1, :]
+
+    plt.figure()
+    for link_idx in range(num_links):
+        plt.plot(
+            ts_out,
+            q_ts[:, link_idx] / jnp.pi * 180,
+            label=r"$q_{" + str(link_idx + 1) + "}$ [deg]",
+        )
+    plt.xlabel("Time [s]")
+    plt.ylabel("Configuration")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
+
+    # plot end-effector position vs time
+    plt.figure()
+    plt.plot(ts_out, chi_ee_ts[:, 1], label="End-effector x [m]")
+    plt.plot(ts_out, chi_ee_ts[:, 2], label="End-effector y [m]")
+    plt.xlabel("Time [s]")
+    plt.ylabel("End-effector position [m]")
+    plt.legend()
+    plt.grid(True)
+    plt.box(True)
+    plt.tight_layout()
+    plt.show()
+
+    # end effector orientation vs. time
+    plt.figure()
+    plt.plot(ts_out, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.xlabel("Time [s]")
+    plt.ylabel("End-effector Orientation [deg]")
+    plt.legend()
+    plt.grid(True)
+    plt.box(True)
+    plt.tight_layout()
+    plt.show()
+
+    # plot the end-effector position in the x-y plane as a scatter plot with the time as the color
+    plt.figure()
+    plt.scatter(chi_ee_ts[:, 1], chi_ee_ts[:, 2], c=ts_out, cmap="viridis")
+    plt.axis("equal")
+    plt.grid(True)
+    plt.xlabel("End-effector x [m]")
+    plt.ylabel("End-effector y [m]")
+    plt.colorbar(label="Time [s]")
+    plt.tight_layout()
+    plt.show()
+
+    # =====================================================
+    # Energy computation upon time
+    # =====================================================
+    U_ts = jax.vmap(jax.jit(partial(robot.potential_energy)))(q_ts)
+    T_ts = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(q_ts, qd_ts)
+
+    plt.figure()
+    plt.plot(ts_out, U_ts, label="Potential Energy")
+    plt.plot(ts_out, T_ts, label="Kinetic Energy")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Energy (J)")
+    plt.legend()
+    plt.title("Energy over Time")
+    plt.grid(True)
+    plt.box(True)
+    plt.tight_layout()
+    plt.show()
 
     # create video
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -112,7 +181,7 @@ if __name__ == "__main__":
     for time_idx, t in enumerate(video_ts):
         img = draw_robot(
             robot,
-            qs[time_idx],
+            q_ts[time_idx],
             video_width,
             video_height,
         )
