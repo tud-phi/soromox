@@ -728,7 +728,7 @@ class Pendulum(DynamicalSystem):
             U_G (Array): Gravitational potential energy [J] (scalar)
         """
         p_coms = self._com_positions(q)  # (n, 2)
-        # U_G = Σ_i m_i * g^T @ p_com_i
+        # U_G = -Σ_i m_i * g^T @ p_com_i
         U_G = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
         return U_G
 
