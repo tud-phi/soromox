@@ -425,7 +425,7 @@ def test_jacobian_inertialframe_matches_autodiff(s):
         f"\nJ_impl:\n{onp.array(J_impl)}\nJ_ad:\n{onp.array(J_ad)}"
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_velocity_consistency(s):
+def test_inertial_velocity_consistency(s):
     model, params = make_planar_pcs(2)
     key = jax.random.PRNGKey(4)
     q  = random_q(model, key, scale=0.03)
@@ -454,18 +454,20 @@ def test_jacobian_inertialframe_matches_central_differences(s):
 
     # J by central finite differences
     n = q.shape[0]
-    J_fd = onp.zeros((3, n))
-    eye = onp.eye(n)
+    J_fd_ls = []
+    eye = jnp.eye(n)
     for j in range(n):
         qp = q + eps * eye[j]
         qm = q - eps * eye[j]
-        fp = onp.array(model.forward_kinematics(qp, s))
-        fm = onp.array(model.forward_kinematics(qm, s))
-        J_fd[:, j] = (fp - fm) / (2 * eps)
+        fp = model.forward_kinematics(qp, s)
+        fm = model.forward_kinematics(qm, s)
+        J_fd_ls.append((fp - fm) / (2 * eps))
 
-    assert onp.allclose(onp.array(J_impl), J_fd, rtol=5e-5, atol=5e-7), \
-        f"\nJ_impl:\n{onp.array(J_impl)}\nJ_fd:\n{J_fd}"
-        
+    J_fd = jnp.stack(J_fd_ls, axis=1)
+
+    assert jnp.allclose(J_impl, J_fd, rtol=5e-5, atol=5e-7), \
+        f"\nJ_impl:\n{J_impl}\nJ_fd:\n{J_fd}"
+
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_Jd_bodyframeframe_matches_jvp_directional_derivative(s):
     model, params = make_planar_pcs(2)
