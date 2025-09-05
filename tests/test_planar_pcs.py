@@ -75,33 +75,7 @@ def test_planar_cs_num():
     """
     Test the planar constant strain system with numerical integration and Jacobian for 1 segment.
     """
-    # params = {
-    #     "th0": jnp.array(0.0),  # initial orientation angle [rad]
-    #     "L": jnp.array([1e-1]),
-    #     "r": jnp.array([2e-2]),
-    #     "rho": 1000 * jnp.ones((1,)),
-    #     "g": jnp.array([0.0, -9.81]),
-    #     "E": 1e8 * jnp.ones((1,)),  # Elastic modulus [Pa]
-    #     "G": 1e7 * jnp.ones((1,)),  # Shear modulus [Pa]
-    # }
-    # params["D"] = 1e-3 * jnp.diag(
-    #     (jnp.array([[1e0, 1e3, 1e3]]) * params["L"][:, None]).flatten()
-    # )
-    # # activate all strains (i.e. bending, shear, and axial)
-    # strain_selector = jnp.ones((3,), dtype=bool)
-
-    # xi_ref = jnp.array([0.0, 0.0, 1.0])
-    xi_ref = None
-
-    # num_segments = 1
-
-    # robot = PlanarPCS(
-    #     num_segments=num_segments,
-    #     params=params,
-    #     strain_selector=strain_selector,
-    #     xi_ref=xi_ref,
-    # )
-    robot, params = make_planar_pcs(num_segments=1, th0=0.0, xi_ref=xi_ref)
+    robot, params = make_planar_pcs(num_segments=1, th0=0.0)
 
     # ========================================
     # Test of the functions
