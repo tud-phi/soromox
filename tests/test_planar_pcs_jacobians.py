@@ -38,7 +38,7 @@ def random_q(model, key=jax.random.PRNGKey(0), scale=0.1):
     return scale * jax.random.normal(key, (n,))
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_jacobian_matches_autodiff(s):
+def test_jacobian_inertialframe_matches_autodiff(s):
     model = make_model(2)
     q = random_q(model, jax.random.PRNGKey(1), scale=0.05)
 
@@ -73,7 +73,7 @@ def test_velocity_consistency(s):
         f"\npred: {onp.array(xdot_pred)}\nfd: {onp.array(xdot_fd)}"
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_jacobian_matches_central_differences(s):
+def test_jacobian_inertialframe_matches_central_differences(s):
     model = make_model(2)
     q = random_q(model, jax.random.PRNGKey(5), scale=0.02)
     eps = 1e-6
@@ -96,7 +96,24 @@ def test_jacobian_matches_central_differences(s):
         f"\nJ_impl:\n{onp.array(J_impl)}\nJ_fd:\n{J_fd}"
         
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_Jdot_matches_jvp_directional_derivative(s):
+def test_Jd_bodyframeframe_matches_jvp_directional_derivative(s):
+    model = make_model(2)
+    key = jax.random.PRNGKey(3)
+    q = random_q(model, key, scale=0.05)
+    qd = random_q(model, jax.random.split(key)[0], scale=0.2)
+
+    J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+
+    # Directionnal derivative via jvp: d/dt J(q(t)) |_{t=0}, q(t)=q + t*qd
+    def J_of_q(q_):
+        return model.jacobian_bodyframe(q_, s)
+    _, Jdot_dir = jax.jvp(J_of_q, (q,), (qd,))
+
+    assert jnp.allclose(Jd_impl, Jdot_dir, rtol=1e-6, atol=1e-7), \
+        f"\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jdot_dir)}"
+    
+@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
+def test_Jd_inertialframe_matches_jvp_directional_derivative(s):
     model = make_model(2)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
@@ -110,4 +127,7 @@ def test_Jdot_matches_jvp_directional_derivative(s):
     _, Jdot_dir = jax.jvp(J_of_q, (q,), (qd,))
 
     assert jnp.allclose(Jd_impl, Jdot_dir, rtol=1e-6, atol=1e-7), \
-        f"\nJd_impl:\n{onp.array(Jd_impl)}\nJdot_dir:\n{onp.array(Jdot_dir)}"
+        f"\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jdot_dir)}"
+
+if __name__ == "__main__":
+    pytest.main([__file__])
