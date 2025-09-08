@@ -192,10 +192,10 @@ class TendonActuatedPendulum(Pendulum):
         #         "all entries must be zero."
         # )
 
-        assert ("R_pt" in tendon_params and "K_pt" in tendon_params) or (
-            "R_pt" not in tendon_params and "K_pt" not in tendon_params
+        assert ("R_pt" in tendon_params and "k_pt" in tendon_params) or (
+            "R_pt" not in tendon_params and "k_pt" not in tendon_params
         ), (
-            "'R_pt' and 'K_pt' are mutually dependent. If one of them is specified, the other must be specified too."
+            "'R_pt' and 'k_pt' are mutually dependent. If one of them is specified, the other must be specified too."
         )
 
     def _check_routing_feasibility(self, A: jnp.ndarray) -> bool:
