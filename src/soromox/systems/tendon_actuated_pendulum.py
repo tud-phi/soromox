@@ -104,13 +104,13 @@ class TendonActuatedPendulum(Pendulum):
         Vector of the elastic force due to the pre-stretch of the passive tendons (zeros if L_pt0 is omitted).
     """
 
-    R_at: Array  # = eqx.field(static=True)
-    A_at: Array  # = eqx.field(static=True)
-    R_pt: Array  # = eqx.field(static=True)
-    A_pt: Array  # = eqx.field(static=True)
-    K_pt: Array  # = eqx.field(static=True)
-    D_pt: Array  # = eqx.field(static=True)
-    L_pt0: Array  # = eqx.field(static=True)
+    R_at: Array 
+    A_at: Array
+    R_pt: Array
+    A_pt: Array
+    K_pt: Array 
+    D_pt: Array
+    L_pt0: Array
     tau_pt0: Array
 
     def __init__(
@@ -147,7 +147,7 @@ class TendonActuatedPendulum(Pendulum):
         self.A_at = self.R_at.T
 
         # Actuation matrix of passive tendons
-        self.R_pt = jnp.asarray(tendon_params.get("R_pt", jnp.identity(N)))
+        self.R_pt = jnp.asarray(tendon_params.get("R_pt", jnp.zeros((N, N))))
         self.A_pt = self.R_pt.T
         Np = len(self.R_pt)
 
@@ -178,19 +178,20 @@ class TendonActuatedPendulum(Pendulum):
             + f"got R_at = (., {self.R_at.shape[1]}), R_pt = (., {self.R_pt.shape[1]})."
         )
 
-        assert (
-            jnp.linalg.matrix_rank(self.R_at) == self.R_at.shape[0]
-            and jnp.linalg.matrix_rank(self.R_pt) == Np
-        ), (
-            f"R_at and R_pt must be full rank. Got shape(R_at) = {self.R_at.shape}, "
-            + f"rank(R_at) = {jnp.linalg.matrix_rank(self.R_at)}; shape(R_pt) = {self.R_pt.shape}, rank(R_pt) = "
-            + f"{jnp.linalg.matrix_rank(self.R_pt)}."
+        assert jnp.linalg.matrix_rank(self.R_at) == self.R_at.shape[0], (
+            f"R_at must be full rank. Got shape(R_at) = {self.R_at.shape}, "
+            + f"rank(R_at) = {jnp.linalg.matrix_rank(self.R_at)}."
         )
 
-        # assert self._check_routing_feasibility(self.R_at) and self._check_routing_feasibility(self.R_pt), (
-        #     "Tendons cannot skip joints. For each row in R_at and R_pt, after the first zero " + \
-        #         "all entries must be zero."
-        # )
+        assert "R_pt" not in tendon_params or jnp.linalg.matrix_rank(self.R_pt) == Np, (
+            f"R_pt must be full rank. Got shape(R_pt) = {self.R_pt.shape}, "
+            + f"rank(R_pt) = {jnp.linalg.matrix_rank(self.R_pt)}."
+        )
+
+        assert self._check_routing_feasibility(self.R_at) and self._check_routing_feasibility(self.R_pt), (
+            "Tendons cannot skip joints. For each row in R_at and R_pt, after the first zero " + \
+                "all entries must be zero."
+        )
 
         assert ("R_pt" in tendon_params and "k_pt" in tendon_params) or (
             "R_pt" not in tendon_params and "k_pt" not in tendon_params
