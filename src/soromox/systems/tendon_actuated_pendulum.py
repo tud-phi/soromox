@@ -339,16 +339,4 @@ class TendonActuatedPendulum(Pendulum):
         """
         return self.A_at
 
-    def actuation_force(self, q: Array, u: Array) -> Array:
-        """
-        Compute generalized actuation forces from control inputs.
 
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-            u (Array): Control torques, shape (N,) [N⋅m]
-
-        Returns:
-            tau_u (Array): Generalized actuation forces τ_u = A @ u, shape (N,) [N⋅m]
-        """
-        tau_u = self.actuation_matrix(q) @ u
-        return tau_u

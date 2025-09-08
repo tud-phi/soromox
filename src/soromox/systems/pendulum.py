@@ -632,7 +632,8 @@ class Pendulum(DynamicalSystem):
         Returns:
             tau_u (Array): Generalized actuation forces τ_u = u, shape (N,) [N⋅m]
         """
-        return u
+        tau_u = self.actuation_matrix(q) @ u
+        return tau_u
 
     @eqx.filter_jit
     def forward_dynamics(
