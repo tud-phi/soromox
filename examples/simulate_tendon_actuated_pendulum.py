@@ -13,11 +13,6 @@ from soromox.systems.tendon_actuated_pendulum import TendonActuatedPendulum
 
 num_links = 2
 
-sym_exp_filepath = (
-    Path(soromox.__file__).parent
-    / "symbolic_expressions"
-    / f"pendulum_nl-{num_links}.dill"
-)
 params = {
     "m": jnp.array([10.0, 6.0]),
     "I": jnp.array([3.0, 2.0]),
@@ -26,14 +21,14 @@ params = {
     "g": jnp.array([0.0, -9.81]),
 }
 tendon_params = {
-    "Ra": jnp.array([[0.2, -0.25]]),
-    #"Rp": jnp.array([[-0.2, 0.3]]),
+    "R_at": jnp.array([[0.2, -0.25]]),
+    # "R_pt": jnp.array([[-0.2, 0.3]]),
 }
 
 # define initial configuration
 q0 = jnp.zeros((num_links,))
 q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
-q0 = jnp.array([-jnp.pi / 2, 0.])
+q0 = jnp.array([-jnp.pi / 2, 0.0])
 
 # set simulation parameters
 dt = 1e-4  # time step
@@ -42,7 +37,7 @@ skip_step = 100  # how many time steps to skip in between video frames
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
-video_path = Path(__file__).parent / "videos" / f"{sym_exp_filepath.stem}.mp4"
+video_path = Path(__file__).parent / "videos" / f"pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(
@@ -51,53 +46,61 @@ def draw_robot(
     width: int,
     height: int,
 ) -> onp.ndarray:
-    
     # Color cables
-    colors_p    =   [(255,0,0), (0,0,255), (0,255,0)]               # BGR
+    colors_p = [(255, 0, 0), (0, 0, 255), (0, 255, 0)]  # BGR
 
     # Plot in OpenCV
-    h, w        =   height, width                                   # img height and width
-    ppm         =   h / (2.5 * jnp.sum(params["L"]))                # pixel per meter
-    robot_color =   (0, 0, 0)                                       # black robot_color in BGR
+    h, w = height, width  # img height and width
+    ppm = h / (2.5 * jnp.sum(params["L"]))  # pixel per meter
+    robot_color = (0, 0, 0)  # black robot_color in BGR
 
     # Poses along the robot of shape (N, 3)
-    chi_ls      =   robot.forward_kinematics_tips(q)
+    chi_ls = robot.forward_kinematics_tips(q)
     N = chi_ls.shape[0]
 
     # Initialize image background and origin of the pixel frame
-    img         =   255*onp.ones((w, h, 3), dtype=jnp.uint8)        # initialize background to white
-    curve_og    =   onp.array([w // 2, h // 2], dtype=onp.int32)    # in x-y pixel coordinates
+    img = 255 * onp.ones((w, h, 3), dtype=jnp.uint8)  # initialize background to white
+    curve_og = onp.array([w // 2, h // 2], dtype=onp.int32)  # in x-y pixel coordinates
 
     # Transform robot poses to pixel coordinates. Should be of shape (N, 2)
-    curve       =   onp.array((curve_og + chi_ls[:, 1:] * ppm), dtype=onp.int32)
-    curve       =   onp.vstack([curve_og, curve]) # (N + 1, 2)
+    curve = onp.array((curve_og + chi_ls[:, 1:] * ppm), dtype=onp.int32)
+    curve = onp.vstack([curve_og, curve])  # (N + 1, 2)
 
     # Invert the y pixel coordinate
-    curve[:, 1] =   h - curve[:, 1]
+    curve[:, 1] = h - curve[:, 1]
     for i in range(curve.shape[0] - 1):
-        pts     =   onp.array([curve[i,:], curve[i+1,:]]).reshape((-1,1,2))
+        pts = onp.array([curve[i, :], curve[i + 1, :]]).reshape((-1, 1, 2))
         cv2.polylines(img, [pts], isClosed=False, color=colors_p[i], thickness=10)
 
     # Retrieve angles of the links
-    angles      =   chi_ls[:,0] + onp.pi/2                        # (N,)
+    angles = chi_ls[:, 0] + onp.pi / 2  # (N,)
 
     # Pulleys and cables
-    if not onp.array_equal(onp.asarray(robot.Ra), onp.eye(N)):
+    if not onp.array_equal(onp.asarray(robot.R_at), onp.eye(N)):
         chi = onp.vstack([jnp.zeros(3), chi_ls])
-        act  =   robot.A
+        act = robot.A_at
         for i in range(act.shape[1]):
             cable_pts = []
             for j in range(act.shape[0]):
-                cv2.circle(img, center=tuple(curve[j,:]), radius=int(abs(act[j,i]*ppm)), color=colors_p[i], thickness=2)
-                idx         =   max(0, j - 1)
-                cable_pt    =   chi[j,1:] + act[j,i]*onp.array([onp.cos(angles[idx]), onp.sin(angles[idx])])
-                cable_pts.append(curve_og + cable_pt*ppm)
-            cable_pts       =   onp.array(cable_pts, dtype=onp.int32)
-            cable_pts[:, 1] =   h - cable_pts[:, 1]
-            cv2.polylines(img, [cable_pts], isClosed=False, color=colors_p[i], thickness=2)
+                cv2.circle(
+                    img,
+                    center=tuple(curve[j, :]),
+                    radius=int(abs(act[j, i] * ppm)),
+                    color=colors_p[i],
+                    thickness=2,
+                )
+                idx = max(0, j - 1)
+                cable_pt = chi[j, 1:] + act[j, i] * onp.array(
+                    [onp.cos(angles[idx]), onp.sin(angles[idx])]
+                )
+                cable_pts.append(curve_og + cable_pt * ppm)
+            cable_pts = onp.array(cable_pts, dtype=onp.int32)
+            cable_pts[:, 1] = h - cable_pts[:, 1]
+            cv2.polylines(
+                img, [cable_pts], isClosed=False, color=colors_p[i], thickness=2
+            )
 
     return img
-
 
 
 if __name__ == "__main__":
@@ -106,7 +109,7 @@ if __name__ == "__main__":
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
-    u = jnp.array([50.])  # torques (actuation)
+    u = jnp.array([50.0])  # torques (actuation)
 
     # compute the operational space matrices
     Lambda, mu, J, Jd, JB_inv = robot.operational_space_dynamical_matrices(
@@ -119,20 +122,20 @@ if __name__ == "__main__":
     print("yd0:\n", yd)
 
     # check tendons' contributions
-    print('Ra =', robot.Ra.shape)
-    print(robot.Ra)
-    print('A =', robot.A.shape)
-    print(robot.A)
-    print('Rp =', robot.Rp.shape)
-    print(robot.Rp)
-    print('Ap =', robot.Ap.shape)
-    print(robot.Ap)
-    print('Kp =', robot.Kp.shape)
-    print(robot.Kp)
-    print('Dp =', robot.Dp.shape)
-    print(robot.Dp)
-    print('Lp0 =', robot.Lp0.shape)
-    print(robot.Lp0)
+    print("R_at =", robot.R_at.shape)
+    print(robot.R_at)
+    print("A_at =", robot.A_at.shape)
+    print(robot.A_at)
+    print("R_pt =", robot.R_pt.shape)
+    print(robot.R_pt)
+    print("A_pt =", robot.A_pt.shape)
+    print(robot.A_pt)
+    print("K_pt =", robot.K_pt.shape)
+    print(robot.K_pt)
+    print("D_pt =", robot.D_pt.shape)
+    print(robot.D_pt)
+    print("L_pt0 =", robot.L_pt0.shape)
+    print(robot.L_pt0)
 
     # Integrate using the model's built-in solver
     ts_out, qs, qds = robot.resolve_upon_time(
@@ -167,4 +170,4 @@ if __name__ == "__main__":
         video.write(img)
 
     video.release()
-    print(f"Video saved to {video_path}")   # '''
+    print(f"Video saved to {video_path}")  # '''
