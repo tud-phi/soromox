@@ -134,8 +134,8 @@ if __name__ == "__main__":
     print(robot.K_pt)
     print("D_pt =", robot.D_pt.shape)
     print(robot.D_pt)
-    print("L_pt0 =", robot.L_pt0.shape)
-    print(robot.L_pt0)
+    print("l_pt0 =", robot.l_pt0.shape)
+    print(robot.l_pt0)
 
     # Integrate using the model's built-in solver
     ts_out, qs, qds = robot.resolve_upon_time(
