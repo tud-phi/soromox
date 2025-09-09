@@ -748,7 +748,7 @@ class Pendulum(DynamicalSystem):
         Returns:
             U_K (Array): Elastic potential energy [J] (scalar)
         """
-        U_K = 0.5 * q.T @ self.K @ q
+        U_K = 0.5 * q.T @ self.stiffness_matrix() @ q
         return U_K
 
     @eqx.filter_jit

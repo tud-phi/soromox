@@ -341,3 +341,26 @@ class TendonActuatedPendulum(Pendulum):
             A (Array): Actuation matrix, shape (N, Na)
         """
         return self.A_at
+    
+    @eqx.filter_jit
+    def elastic_energy(self, q: Array) -> Array:
+        """
+        Compute the elastic potential energy stored in joint and tendon springs.
+
+        The elastic energy is computed as:
+        U_K = 0.5 * q^T @ K_tot @ q + 0.5 * l_pt0 @ K_pt @ l_pt0
+        where K_tot is the total stiffness matrix, K_pt is the stiffness matrix of 
+        the tendons, and l_pt0 is the initial pre-stretch of the tendon springs.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            U_K_tot (Array): Total elastic potential energy [J] (scalar)
+        """
+        U_K_tot = 0.5 * q.T @ self.stiffness_matrix() @ q + 0.5 * self.l_pt0.T @ self.K_pt @ self.l_pt0
+        return U_K_tot
+
+
+
+

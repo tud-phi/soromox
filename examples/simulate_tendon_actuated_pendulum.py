@@ -8,8 +8,13 @@ import numpy as onp
 from pathlib import Path
 from typing import Callable, Dict
 
+from functools import partial
+
 import soromox
 from soromox.systems.tendon_actuated_pendulum import TendonActuatedPendulum
+
+import matplotlib.pyplot as plt
+
 
 num_links = 2
 
@@ -150,7 +155,32 @@ if __name__ == "__main__":
     video_ts = ts_out
     print("Final configuration:\n", qs[-1])
 
-    # create video
+
+    # =====================================================
+    # Energy computation upon time
+    # =====================================================
+    G_ts_out = jax.vmap(jax.jit(partial(robot.gravitational_energy)))(qs)
+    K_ts_out = jax.vmap(jax.jit(partial(robot.elastic_energy)))(qs)
+    U_ts_out = jax.vmap(jax.jit(partial(robot.potential_energy)))(qs)
+    T_ts_out = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(qs, qds)
+
+    plt.figure()
+    plt.plot(ts_out, G_ts_out, label="Gravitational Energy")
+    plt.plot(ts_out, K_ts_out, label="Elastic Energy")
+    plt.plot(ts_out, T_ts_out, label="Kinetic Energy")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Energy (J)")
+    plt.legend()
+    plt.title("Energy over Time")
+    plt.grid(True)
+    plt.box(True)
+    plt.tight_layout()
+    plt.show()
+
+
+    # =====================================================
+    # Create video
+    # =====================================================
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_path.parent.mkdir(parents=True, exist_ok=True)
     video = cv2.VideoWriter(
