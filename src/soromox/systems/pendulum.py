@@ -477,7 +477,6 @@ class Pendulum(DynamicalSystem):
     # -------------------------------
     # Standardized dynamics interface
     # -------------------------------
-
     @eqx.filter_jit
     def inertia_matrix(self, q: Array) -> Array:
         """
@@ -691,7 +690,6 @@ class Pendulum(DynamicalSystem):
     # ---------------------
     # Energy methods
     # ---------------------
-
     @eqx.filter_jit
     def kinetic_energy(self, q: Array, qd: Array) -> Array:
         """
@@ -790,6 +788,9 @@ class Pendulum(DynamicalSystem):
         E = T + U
         return E
 
+    # --------------------------
+    # Operational space dynamics
+    # --------------------------
     @eqx.filter_jit
     def operational_space_dynamical_matrices(
         self,

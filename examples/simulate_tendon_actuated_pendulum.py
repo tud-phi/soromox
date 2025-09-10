@@ -24,16 +24,19 @@ params = {
     "L": jnp.array([2.0, 1.0]),
     "Lc": jnp.array([1.0, 0.5]),
     "g": jnp.array([0.0, -9.81]),
+    "K": jnp.diag(jnp.array([1.5, 2.0]))
 }
 tendon_params = {
-    "R_at": jnp.array([[0.2, -0.25]]),
-    # "R_pt": jnp.array([[-0.2, 0.3]]),
+    # "R_at": jnp.array([[0.2, -0.25]]),
+    # "R_pt": jnp.array([[-0.15, 0.3]]),
+    # "k_pt": jnp.array([2.75]),
+    # "l_pt0": jnp.array([0.5])
 }
 
 # define initial configuration
 q0 = jnp.zeros((num_links,))
 q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
-q0 = jnp.array([-jnp.pi / 2, 0.0])
+#q0 = jnp.array([-jnp.pi / 2, 0.0])
 
 # set simulation parameters
 dt = 1e-4  # time step
@@ -114,7 +117,8 @@ if __name__ == "__main__":
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
-    u = jnp.array([50.0])  # torques (actuation)
+    u = jnp.array([0.0])  # torques (actuation)
+    u = jnp.zeros_like(q0)
 
     # compute the operational space matrices
     Lambda, mu, J, Jd, JB_inv = robot.operational_space_dynamical_matrices(
@@ -163,11 +167,14 @@ if __name__ == "__main__":
     K_ts_out = jax.vmap(jax.jit(partial(robot.elastic_energy)))(qs)
     U_ts_out = jax.vmap(jax.jit(partial(robot.potential_energy)))(qs)
     T_ts_out = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(qs, qds)
+    E_ts_out = jax.vmap(jax.jit(partial(robot.total_energy)))(qs, qds)
 
     plt.figure()
-    plt.plot(ts_out, G_ts_out, label="Gravitational Energy")
-    plt.plot(ts_out, K_ts_out, label="Elastic Energy")
+    # plt.plot(ts_out, G_ts_out, label="Gravitational Energy")
+    # plt.plot(ts_out, K_ts_out, label="Elastic Energy")
+    plt.plot(ts_out, U_ts_out, label="Potential Energy")
     plt.plot(ts_out, T_ts_out, label="Kinetic Energy")
+    plt.plot(ts_out, E_ts_out, label="Total Energy")
     plt.xlabel("Time (s)")
     plt.ylabel("Energy (J)")
     plt.legend()

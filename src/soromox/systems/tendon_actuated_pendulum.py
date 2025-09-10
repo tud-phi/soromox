@@ -3,7 +3,7 @@ import equinox as eqx
 import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 import soromox.utils.lie_algebra as lie
 import soromox.actuation.tendon_actuation as act
@@ -112,6 +112,8 @@ class TendonActuatedPendulum(Pendulum):
     D_pt: Array
     l_pt0: Array
     tau_pt0: Array
+    # h_q: Array
+    # h_q_inv: Array
 
     def __init__(
         self,
@@ -165,6 +167,9 @@ class TendonActuatedPendulum(Pendulum):
         # Elastic force due to pre-stretch of the passive tendons
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
 
+        # Set actuation coordinates transformation
+        #self._set_conf2act_tranformation()
+
         # Consistency checks (lightweight; JIT friendly if shapes static)
         assert (
             self.R_pt.shape[0] == Np
@@ -188,11 +193,12 @@ class TendonActuatedPendulum(Pendulum):
             + f"rank(R_pt) = {jnp.linalg.matrix_rank(self.R_pt)}."
         )
 
-        assert self._check_routing_feasibility(
-            self.R_at
-        ) and self._check_routing_feasibility(self.R_pt), (
-            "Tendons cannot skip joints. For each row in R_at and R_pt, after the first zero "
-            + "all entries must be zero."
+        assert "R_at" not in tendon_params or self._check_routing_feasibility(self.R_at), (
+            "Tendons cannot skip joints. For each row in R_at, after the first zero all entries must be zero."
+        )
+
+        assert "R_pt" not in tendon_params or self._check_routing_feasibility(self.R_pt), (
+            "Tendons cannot skip joints. For each row in R_pt, after the first zero all entries must be zero."
         )
 
         assert ("R_pt" in tendon_params and "k_pt" in tendon_params) or (
@@ -277,6 +283,9 @@ class TendonActuatedPendulum(Pendulum):
             updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
         return updated
 
+    # -------------------------------------------------
+    # Internal helpers (geometry & Jacobians, pure JAX)
+    # -------------------------------------------------
     @eqx.filter_jit
     def passive_tendon_length(self, q: Array) -> Array:
         """
@@ -291,6 +300,9 @@ class TendonActuatedPendulum(Pendulum):
         L_p = self.R_pt @ q + self.l_pt0
         return L_p
 
+    # -------------------------------
+    # Standardized dynamics interface
+    # -------------------------------
     @eqx.filter_jit
     def stiffness_matrix(self) -> Array:
         """
@@ -342,6 +354,9 @@ class TendonActuatedPendulum(Pendulum):
         """
         return self.A_at
     
+    # ---------------------
+    # Energy methods
+    # ---------------------
     @eqx.filter_jit
     def elastic_energy(self, q: Array) -> Array:
         """
@@ -358,9 +373,76 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             U_K_tot (Array): Total elastic potential energy [J] (scalar)
         """
-        U_K_tot = 0.5 * q.T @ self.stiffness_matrix() @ q + 0.5 * self.l_pt0.T @ self.K_pt @ self.l_pt0
+        #        U_K_tot = 0.5 * q.T @ self.stiffness_matrix() @ q + 0.5 * self.l_pt0.T @ self.K_pt @ self.l_pt0 + self.l_pt0.T @ self.K_pt @ (self.R_pt @ q)
+        U_K_tot = 0.5 * q.T @ self.K @ q + 0.5 * (self.R_pt @ q + self.l_pt0).T @ self.K_pt @ (self.R_pt @ q + self.l_pt0)
         return U_K_tot
 
+    # ---------------------
+    # Actuation coordinates
+    # ---------------------
+    def _set_conf2act_tranformation(self):
+        def basis_expansion(A: jnp.ndarray, tol: float = 1e-12
+                                    ) -> Tuple[jnp.ndarray, jnp.ndarray, int]:
+            """
+            Given A (shape (n, m), with m < n), return:
+            - extra (shape (n, n - r)) : columns that complete A to full rank (where r is numerical rank)
+            - M     (shape (n, n))     : concatenation [A, extra] (if m < n, else returns a square matrix)
+            - r     (int)             : numerical rank of A (0 <= r <= m)
 
+            Behavior:
+            - If A has numerical rank r < m, we detect r and return n-r extra columns (so M is n-by-n and rank n).
+            - The extra columns are orthonormal and lie in the orthogonal complement of span(A).
+            - Uses QR with `mode='complete'` and SVD to estimate rank.
+            """
+            A = jnp.asarray(A)
+            n, m = A.shape
+            if m >= n:
+                raise ValueError("This function assumes m < n (you gave m >= n).")
+
+            # Numerical singular values to estimate rank robustly
+            s = jnp.linalg.svd(A, compute_uv=False)
+            # tolerance: relative to largest singular value (user can override tol)
+            max_s = jnp.where(s.size > 0, jnp.max(s), 0.0)
+            rank_tol = jnp.maximum(tol, jnp.finfo(A.dtype).eps * max(1.0, max_s))
+            r = int(jnp.sum(s > rank_tol))
+
+            # full (complete) orthonormal Q (shape n x n)
+            Q_complete, _ = jnp.linalg.qr(A, mode='complete')  # Q_complete @ R = A (R may be padded zeros)
+            # take the part spanning orthogonal complement
+            extra = Q_complete[:, r:]            # shape (n, n - r)
+
+            # assemble M = [A, extra] -> shape (n, m + (n-r)) ; if r < m then some original columns are dependent
+            # to make a square n x n matrix we append only (n - r) columns; if you want always exactly (n-m)
+            # extra columns you may append extra[:, :(n-m)] but that assumes A has numerical rank m.
+            M = jnp.concatenate([A, extra], axis=1)
+
+            # If you want a square n x n matrix specifically (regardless of r<m), slice/reshape:
+            # - If r == m: M has shape (n, m + (n-m)) = (n,n) already.
+            # - If r < m: M has shape (n, m + (n-r)) = (n, n + (m - r))  (more than n columns)
+            # To always return a square matrix, we take the first n columns of M:
+            M_square = M[:, :n]
+
+            return extra, M_square, r
+        v = self.A_at
+        _, v_full, _ = basis_expansion(v)
+        h_q_inv = v_full.T
+        self.h_q = jnp.linalg.inv(h_q_inv)
+        self.h_q_inv = h_q_inv
+    
+    def conf2act_coords(self, q: Array):
+        return self.h_q @ q
+    
+    def act2conf_coords(self, y: Array):
+        return self.h_q_inv @ y
+    
+    def conf2act_space_jacobian(self, q: Array):
+        return self.h_q
+    
+    def act2conf_space_jacobian(self, y: Array):
+        return self.h_q_inv
+    
+    def actuation_space_dynamics(self):
+        return 
+    
 
 
