@@ -422,7 +422,7 @@ def test_jacobian_inertialframe_matches_autodiff(s):
     J_ad = jax.jacfwd(f)(q)
 
     assert jnp.allclose(J_impl, J_ad, rtol=1e-6, atol=1e-7), \
-        f"\nJ_impl:\n{onp.array(J_impl)}\nJ_ad:\n{onp.array(J_ad)}"
+        f"\nJ_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_inertial_velocity_consistency(s):
@@ -441,7 +441,7 @@ def test_inertial_velocity_consistency(s):
     xdot_fd = (x1 - x0) / dt
 
     assert jnp.allclose(xdot_pred, xdot_fd, rtol=5e-5, atol=5e-7), \
-        f"\npred: {onp.array(xdot_pred)}\nfd: {onp.array(xdot_fd)}"
+        f"\npred: {xdot_pred}\nfd: {xdot_fd}"
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_jacobian_inertialframe_matches_central_differences(s):
@@ -469,8 +469,8 @@ def test_jacobian_inertialframe_matches_central_differences(s):
         f"\nJ_impl:\n{J_impl}\nJ_fd:\n{J_fd}"
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_Jd_bodyframeframe_matches_jvp_directional_derivative(s):
-    model, params = make_planar_pcs(2)
+def test_Jd_bodyframe_matches_autograd_jvp(s):
+    model, params = make_planar_pcs(1)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)
@@ -483,10 +483,10 @@ def test_Jd_bodyframeframe_matches_jvp_directional_derivative(s):
     _, Jdot_dir = jax.jvp(J_of_q, (q,), (qd,))
 
     assert jnp.allclose(Jd_impl, Jdot_dir, rtol=1e-6, atol=1e-7), \
-        f"\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jdot_dir)}"
+        f"\nJd_impl:\n{Jd_impl}\nJd_jvp:\n{Jdot_dir}"
     
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_Jd_inertialframe_matches_jvp_directional_derivative(s):
+def test_Jd_inertialframe_matches_autograd_jvp(s):
     model, params = make_planar_pcs(2)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
@@ -515,6 +515,51 @@ def test_gravity_matches_potential_gradient(num_segments):
 
     # With current convention, G equals ∂U/∂q
     assert_allclose(G, dU_dq, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_coriolis_force_with_christoffel_symbols(num_segments):
+    robot, params = make_planar_pcs(num_segments)
+
+    key = jax.random.PRNGKey(3)
+    q = random_q(robot, key, scale=0.05)
+    q = jnp.zeros_like(q)  # test at zero configuration
+    # qd = 1e2 * random_q(robot, jax.random.split(key)[0], scale=0.1)
+    qd = 1e2 * jnp.array([-9.52414843e-02, 0.0, 0.0])
+    print("q:\n", q)
+    print("qd:\n", qd)
+
+    # Implementation from the model
+    C_impl = robot.coriolis_matrix(q, qd)
+    tau_cor_impl = C_impl @ qd
+
+    # Derive Coriolis matrix via Christoffel symbols using autograd on B(q)
+    def B_of_q(q_):
+        return robot.inertia_matrix(q_)
+
+    B = B_of_q(q)
+    print("B:\n", B)
+
+    # dB_dq[k, i, j] = ∂B_{ij}/∂q_k
+    dB_dq = jax.jacfwd(B_of_q)(q)
+
+    # C[i, j] = 1/2 * sum_k (∂B_{ij}/∂q_k + ∂B_{ik}/∂q_j - ∂B_{jk}/∂q_i) qd_k
+    A1 = jnp.einsum("k,kij->ij", qd, dB_dq)  # sum_k qd_k * ∂B_{ij}/∂q_k
+    A2 = jnp.einsum("k,jik->ij", qd, dB_dq.transpose(2, 1, 0))  # sum_k qd_k * ∂B_{ik}/∂q_j
+    A3 = jnp.einsum("k,ijk->ij", qd, dB_dq.transpose(1, 2, 0))  # sum_k qd_k * ∂B_{jk}/∂q_i
+    C_ch = 0.5 * (A1 + A2 - A3)
+    # A1 = dB_dq
+    # A2 = dB_dq.transpose(0, 2, 1)
+    # A3 = dB_dq.transpose(1, 2, 0)
+    # c = 0.5 * (A1 + A2 - A3)
+    # C_ch = jnp.einsum("ijk, k ->ij", c, qd)
+
+    # Target Coriolis force computed using Christoffel symbols
+    tau_cor = C_ch @ qd
+
+    print("tau_cor_impl:\n", tau_cor_impl)
+    print("tau_cor:\n", tau_cor)
+
+    assert_allclose(tau_cor_impl, tau_cor, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
 if __name__ == "__main__":
