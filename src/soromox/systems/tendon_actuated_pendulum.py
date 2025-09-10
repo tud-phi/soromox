@@ -429,19 +429,35 @@ class TendonActuatedPendulum(Pendulum):
         self.h_q_inv = h_q_inv
     
     def conf2act_coords(self, q: Array):
-        return self.h_q @ q
+        return self.h_q_inv @ q
     
     def act2conf_coords(self, y: Array):
-        return self.h_q_inv @ y
+        return self.h_q @ y
     
     def conf2act_space_jacobian(self, q: Array):
-        return self.h_q
-    
-    def act2conf_space_jacobian(self, y: Array):
         return self.h_q_inv
     
-    def actuation_space_dynamics(self):
-        return 
+    def act2conf_space_jacobian(self, q: Array):
+        return self.h_q
+    
+    def actuation_space_dynamics(
+        self,
+        q: Array,
+        qd: Array,
+    ) -> Tuple[Array, Array, Array, Array]:
+        """
+        """
+        J_h_q = self.conf2act_space_jacobian(q)
+        J_h_q_inv = self.act2conf_space_jacobian(q)
+        M_inv = jnp.linalg.inv(self.inertia_matrix(q))
+        C = self.coriolis_matrix(q, qd)
+        M_y = jnp.linalg.inv(
+            J_h_q_inv.T @ self.inertia_matrix(q) @ J_h_q_inv
+        )  # inertia matrix in the actuation space
+        eta_y = M_y @ (J_h_q @ M_inv @ C) @ J_h_q_inv # coriolis and centrifugal matrix in the actuation space
+
+
+        return M_y, eta_y, J_h_q, J_h_q_inv
     
 
 
