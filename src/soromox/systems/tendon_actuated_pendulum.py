@@ -373,7 +373,6 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             U_K_tot (Array): Total elastic potential energy [J] (scalar)
         """
-        #        U_K_tot = 0.5 * q.T @ self.stiffness_matrix() @ q + 0.5 * self.l_pt0.T @ self.K_pt @ self.l_pt0 + self.l_pt0.T @ self.K_pt @ (self.R_pt @ q)
         U_K_tot = 0.5 * q.T @ self.K @ q + 0.5 * (self.R_pt @ q + self.l_pt0).T @ self.K_pt @ (self.R_pt @ q + self.l_pt0)
         return U_K_tot
 
