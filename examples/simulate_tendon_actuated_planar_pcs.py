@@ -43,8 +43,8 @@ def draw_robot(
 
 def animate_robot_matplotlib(
     robot: TendonActuatedPlanarPCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
+    t_ts: Array,  # shape (T,)
+    q_ts: Array,  # shape (T, DOF)
     num_points: int = 50,
     interval: int = 50,
     slider: bool = None,
@@ -151,7 +151,7 @@ def animate_robot_matplotlib(
 
 
 if __name__ == "__main__":
-    num_segments = 1  # number of segments in the robot
+    num_segments = 3  # number of segments in the robot
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
@@ -160,8 +160,8 @@ if __name__ == "__main__":
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
-        "g": jnp.array([0.0, 9.81]),  # gravitational acceleration [m/s^2] UP!
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        "g": 1 * jnp.array([0.0, 9.81]),  # gravitational acceleration [m/s^2] UP!
+        "E": 5e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
         "d": 2e-2
         * jnp.array([[1.0, -1.0]]).repeat(
@@ -190,12 +190,13 @@ if __name__ == "__main__":
         segment_actuation_selector=segment_actuation_selector,
     )
 
+    w, h = 400, 400  # image height and width
     rendering_fn = partial(
         render_planar_pcs,
         robot,
-        width=800,
-        height=800,
-        length_scale=3.0,
+        width=w,
+        height=h,
+        length_scale=2.0,
         num_points=100,
     )
 
@@ -226,11 +227,17 @@ if __name__ == "__main__":
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    u = (
-        jnp.array([1.0, 1.0])[None].repeat(num_segments, axis=0).flatten()
-    )  # tendon tensions
-    # u = jnp.zeros(robot.num_actuators)
-
+    # u = (
+    #     jnp.array([1.0, 0.0])[None].repeat(num_segments, axis=0).flatten()
+    # )  # tendon tensions
+    # u = jnp.zeros((robot.num_actuators,))  # no actuation
+    # randomly sample actuation
+    u = jax.random.uniform(
+        key,
+        shape=(robot.num_actuators,),
+        minval=0.0,
+        maxval=2e0,
+    )
     print("u =\n", u)
 
     # call the actuation mapping function
@@ -362,8 +369,8 @@ if __name__ == "__main__":
         t_ts=onp.array(ts),
         q_ts=onp.array(q_ts),
         filepath=videos_dir / "tendon_actuated_planar_pcs_cv2.mp4",
-        width=400,
-        height=400,
+        width=w,
+        height=h,
         speed_up=1.0,
         skip_step=skip_step,
         rgb_to_bgr=False,
