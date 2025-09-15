@@ -13,7 +13,7 @@ def render_planar_pcs(
     width: int,
     height: int,
     origin_uv: Optional[Tuple] = None,
-    length_scale: float = 1.6,
+    length_scale: float = 2.0,
     backbone_thickness: Optional[int] = None,
     num_points: int = 50,
 ) -> onp.ndarray:
