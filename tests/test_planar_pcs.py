@@ -480,10 +480,40 @@ def test_Jd_bodyframe_matches_autograd_jvp(s):
     # Directionnal derivative via jvp: d/dt J(q(t)) |_{t=0}, q(t)=q + t*qd
     def J_of_q(q_):
         return model.jacobian_bodyframe(q_, s)
-    _, Jdot_dir = jax.jvp(J_of_q, (q,), (qd,))
+    _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
 
-    assert jnp.allclose(Jd_impl, Jdot_dir, rtol=1e-6, atol=1e-7), \
-        f"\nJd_impl:\n{Jd_impl}\nJd_jvp:\n{Jdot_dir}"
+    print("Jd_impl =\n", Jd_impl)
+    print("Jd_jvp =\n", Jd_jvp)
+
+    assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), \
+        f"\nJd_impl:\n{Jd_impl}\nJd_jvp:\n{Jd_jvp}"
+    
+@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
+def test_Jd_bodyframe_matches_central_differences(s):
+    model, params = make_planar_pcs(1)
+    key = jax.random.PRNGKey(3)
+    q = random_q(model, key, scale=0.05)
+    qd = random_q(model, jax.random.split(key)[0], scale=0.2)
+    eps = 1e-6
+
+    J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+
+    # Jd by jacobian-vector product using central differences for dJ/dq
+    eye = jnp.eye(q.shape[0])
+    dJ_cols = []
+    for j in range(q.shape[0]):
+        qp = q + eps * eye[j]
+        qm = q - eps * eye[j]
+        Jp = model.jacobian_bodyframe(qp, s)
+        Jm = model.jacobian_bodyframe(qm, s)
+        dJ_cols.append((Jp - Jm) / (2 * eps))
+    dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
+    Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
+
+    print("Jd_impl =\n", Jd_impl)
+    print("Jd_num =\n", Jd_num)
+    assert jnp.allclose(Jd_impl, Jd_num, rtol=5e-5, atol=5e-7), \
+        f"\nJd_impl:\n{Jd_impl}\nJd_num:\n{Jd_num}"
     
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_Jd_inertialframe_matches_autograd_jvp(s):
