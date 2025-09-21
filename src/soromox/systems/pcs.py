@@ -1184,8 +1184,8 @@ class PCS(DynamicalSystem):
                     self.E[i] * I_i,  # bending Y
                     self.E[i] * I_i,  # bending Z
                     A_i * self.E[i],  # axial X
-                    4 / 3 * A_i * self.G[i],  # shear Y
-                    4 / 3 * A_i * self.G[i],  # shear Z
+                    A_i * self.G[i],  # shear Y
+                    A_i * self.G[i],  # shear Z
                 ],
                 axis=0,
             )
