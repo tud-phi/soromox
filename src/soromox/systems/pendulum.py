@@ -477,7 +477,6 @@ class Pendulum(DynamicalSystem):
     # -------------------------------
     # Standardized dynamics interface
     # -------------------------------
-
     @eqx.filter_jit
     def inertia_matrix(self, q: Array) -> Array:
         """
@@ -633,7 +632,8 @@ class Pendulum(DynamicalSystem):
         Returns:
             tau_u (Array): Generalized actuation forces τ_u = u, shape (N,) [N⋅m]
         """
-        return u
+        tau_u = self.actuation_matrix(q) @ u
+        return tau_u
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -691,7 +691,6 @@ class Pendulum(DynamicalSystem):
     # ---------------------
     # Energy methods
     # ---------------------
-
     @eqx.filter_jit
     def kinetic_energy(self, q: Array, qd: Array) -> Array:
         """
@@ -748,7 +747,7 @@ class Pendulum(DynamicalSystem):
         Returns:
             U_K (Array): Elastic potential energy [J] (scalar)
         """
-        U_K = 0.5 * q.T @ self.K @ q
+        U_K = 0.5 * q.T @ self.stiffness_matrix() @ q
         return U_K
 
     @eqx.filter_jit
@@ -790,6 +789,9 @@ class Pendulum(DynamicalSystem):
         E = T + U
         return E
 
+    # --------------------------
+    # Operational space dynamics
+    # --------------------------
     @eqx.filter_jit
     def operational_space_dynamical_matrices(
         self,

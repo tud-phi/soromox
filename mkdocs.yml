@@ -76,7 +76,9 @@ nav:
   - API Reference:
     - Overview: api/systems.md
     - Systems:
-      - Pendulum: api/pendulum.md
+      - Pendulum Systems:
+        - Classical Pendulum: api/pendulum/pendulum.md
+        - Tendon Actuated Pendulum: api/pendulum/tendon-actuated-pendulum.md
       - PCS Systems:
         - General PCS: api/pcs.md
         - Planar PCS: api/planar-pcs.md

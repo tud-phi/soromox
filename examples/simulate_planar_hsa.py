@@ -85,7 +85,7 @@ if __name__ == "__main__":
     t0 = 0.0
     t1 = 5.0
     dt = 5e-5  # time step
-    skip_step = 100  # how many time steps to skip in between video frames
+    save_every_n_steps = 100
 
     actuation_args = (phi, None, True)  # actuation arguments
 
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         t0=t0,
         t1=t1,
         dt=dt,
-        skip_steps=skip_step,
+        save_every_n_steps=save_every_n_steps,
         max_steps=None,
     )
 
