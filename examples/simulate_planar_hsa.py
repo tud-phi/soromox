@@ -96,7 +96,7 @@ if __name__ == "__main__":
         t0=t0,
         t1=t1,
         dt=dt,
-        output_skip_steps=save_every_n_steps,
+        save_every_n_steps=save_every_n_steps,
         max_steps=None,
     )
 
