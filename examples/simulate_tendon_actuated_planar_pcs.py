@@ -250,7 +250,7 @@ if __name__ == "__main__":
     t0 = 0.0
     t1 = 10.0
     dt = 1e-4
-    skip_step = 10  # how many time steps to skip in between video frames
+    save_every_n_steps = 10
 
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
@@ -262,7 +262,7 @@ if __name__ == "__main__":
         t0=t0,
         t1=t1,
         dt=dt,
-        skip_steps=skip_step,
+        save_every_n_steps=save_every_n_steps,
         solver=solver,
         max_steps=None,
     )
@@ -372,6 +372,6 @@ if __name__ == "__main__":
         width=w,
         height=h,
         speed_up=1.0,
-        skip_step=skip_step,
+        skip_step=save_every_n_steps,
         rgb_to_bgr=False,
     )

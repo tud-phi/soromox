@@ -1546,7 +1546,7 @@ class PlanarHSA(DynamicalSystem):
         t0: Optional[float] = 0.0,
         t1: Optional[float] = 10.0,
         dt: Optional[float] = 1e-4,
-        skip_steps: Optional[int] = 0,
+        save_every_n_steps: int = 1,
         solver: Optional[AbstractSolver] = Tsit5(),
         stepsize_controller: Optional[PIDController] = ConstantStepSize(),
         max_steps: Optional[int] = None,
@@ -1580,9 +1580,10 @@ class PlanarHSA(DynamicalSystem):
                 Default is 10.0.
             dt (float, optionnal): Time step for the solver.
                 Default is 1e-4.
-            skip_steps (int, optionnal): Number of steps to skip in the output.
-                This allows to reduce the number of saved time points.
-                Default is 0.
+            save_every_n_steps (int, optional): Determines how many time steps to skip
+                when saving the output. For example, if set to 1, every time step is saved;
+                if set to 10, every 10th time step is saved.
+                Default is 1 (save every step).
             solver (AbstractSolver, optional): Solver to use for the ODE integration.
                 Default is Tsit5() (Runge-Kutta 5(4) method).
             stepsize_controller (PIDController, optional): Stepsize controller for the solver.
@@ -1600,7 +1601,10 @@ class PlanarHSA(DynamicalSystem):
         term = ODETerm(self.forward_dynamics)
 
         t = jnp.arange(t0, t1, dt)  # Time points for the solution
-        saveat = SaveAt(ts=t[::skip_steps])  # Save at specified time points
+        
+        assert save_every_n_steps > 0, "save_every_n_steps must be a positive integer."
+        assert isinstance(save_every_n_steps, int), "save_every_n_steps must be an integer."
+        saveat = SaveAt(ts=t[::save_every_n_steps])  # Save at specified time points
 
         # Prepare the actuation arguments
         actuation_args = (u0, control_fn, consider_underactuation_model)
