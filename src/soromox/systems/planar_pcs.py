@@ -1187,7 +1187,7 @@ class PlanarPCS(DynamicalSystem):
                 [
                     I_i * self.E[i],  # bending Z
                     A_i * self.E[i],  # axial X
-                    4 / 3 * A_i * self.G[i],  # shear Y
+                    A_i * self.G[i],  # shear Y
                 ],
                 axis=0,
             )
