@@ -42,13 +42,13 @@ class DynamicalSystem(eqx.Module):
             u (Array, optional): Actuation/control input.
                 Default is None (no actuation).
             tau_ext (Array, optional): External forces/torques applied to the system.
-            t0 (float, optionnal): Initial time.
+            t0 (float, optional): Initial time.
                 Default is 0.0.
-            t1 (float, optionnal): Final time.
+            t1 (float, optional): Final time.
                 Default is 10.0.
-            dt (float, optionnal): Time step for the solver.
+            dt (float, optional): Time step for the solver.
                 Default is 1e-4.
-            skip_steps (int, optionnal): Number of steps to skip in the output.
+            skip_steps (int, optional): Number of steps to skip in the output.
                 This allows to reduce the number of saved time points.
                 Default is 0.
             solver (AbstractSolver, optional): Solver to use for the ODE integration.
