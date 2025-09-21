@@ -283,7 +283,6 @@ def Tangent_gi_se2(
         Array: shape (3, 3)
             A 3x3 matrix representing the tangent transformation of the input screw vector at the specified position.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
     theta = xi_i[0]  # Angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
 
@@ -316,6 +315,74 @@ def Tangent_gi_se2(
     )
 
     return Tangent
+
+
+def Tangent_dot_gi_se2(
+    xi_i: Array,
+    xid_i: Array,
+    s_i: Array,
+    eps: float,
+) -> Array:
+    """
+    Computes the time derivative of the tangent representation of a position of a points at s_i (local curvilinear coordinate)
+    along a rod in SE(2) deformed in the current segment according to a strain vector xi_i.
+    Args:
+        xi_i (Array): array-like, shape (3,1)
+            A 3-dimensional vector representing the screw in SE(2).
+        xid_i (Array): array-like, shape (3,1)
+            A 3-dimensional vector representing the time derivative of the screw in SE(2).
+        s_i (Array):
+            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
+        eps (float): small value to avoid division by zero
+    Returns:
+        Tangent_dot: Array of shape (3, 3)
+            A 3x3 matrix representing the time derivative of the tangent transformation of the input screw vector at the specified position.
+    """
+    theta = xi_i[0]  # Angular part
+    thetad = xid_i[0]  # Time derivative of the angular part
+    adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
+    adjoint_dot_xi_i = adjoint_se2(xid_i)  # Adjoint representation of the input vector
+
+    cos = jnp.cos(s_i * theta)
+    sin = jnp.sin(s_i * theta)
+
+    def _tangent_dot_nonzero() -> Array:
+        adjoint_xi_i_square = jnp.linalg.matrix_power(adjoint_xi_i, 2)
+        adjoint_xi_i_cube = jnp.linalg.matrix_power(adjoint_xi_i, 3)
+        adjoint_xi_i_quad = jnp.linalg.matrix_power(adjoint_xi_i, 4)
+        adjoint_dot_xi_i_square = jnp.linalg.matrix_power(adjoint_dot_xi_i, 2)
+        adjoint_dot_xi_i_cube = jnp.linalg.matrix_power(adjoint_dot_xi_i, 3)
+        adjoint_dot_xi_i_quad = jnp.linalg.matrix_power(adjoint_dot_xi_i, 4)
+
+        coeff_theta_common = -8 + (8 - s_i**2 * theta**2) * cos + 5 * s_i * theta * sin
+        coeff_theta_alt = -8 * s_i * theta + (15 - s_i**2 * theta**2) * sin - 7 * s_i * theta * cos
+
+        coeff1_theta = thetad / (2 * theta**3) * coeff_theta_common
+        coeff1 = (4 - 4 * cos - s_i * theta * sin) / (2 * theta**2)
+
+        coeff2_theta = thetad / (2 * theta**4) * coeff_theta_alt
+        coeff2 = (4 * s_i * theta - 5 * sin + s_i * theta * cos) / (2 * theta**3)
+
+        coeff3_theta = thetad / (2 * theta**5) * coeff_theta_common
+        coeff3 = (2 - 2 * cos - s_i * theta * sin) / (2 * theta**4)
+
+        coeff4_theta = thetad / (2 * theta**6) * coeff_theta_alt
+        coeff4 = (2 * s_i * theta - 3 * sin + s_i * theta * cos) / (2 * theta**5)
+
+        term1 = coeff1_theta * adjoint_xi_i + coeff1 * adjoint_dot_xi_i
+        term2 = coeff2_theta * adjoint_xi_i_square + coeff2 * adjoint_dot_xi_i_square
+        term3 = coeff3_theta * adjoint_xi_i_cube + coeff3 * adjoint_dot_xi_i_cube
+        term4 = coeff4_theta * adjoint_xi_i_quad + coeff4 * adjoint_dot_xi_i_quad
+
+        return term1 + term2 + term3 + term4
+
+    Tangent_dot = lax.cond(
+        jnp.abs(theta) <= eps,
+        lambda _: s_i**2 / 2 * adjoint_dot_xi_i,
+        lambda _: _tangent_dot_nonzero(),
+        operand=None,
+    )
+    return Tangent_dot
 
 
 # ================================================================================================
