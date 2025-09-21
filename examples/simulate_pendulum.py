@@ -174,7 +174,7 @@ if __name__ == "__main__":
     video = cv2.VideoWriter(
         str(video_path),
         fourcc,
-        1 / (skip_steps * dt),  # fps
+        1 / (save_every_n_steps * dt),  # fps
         (video_width, video_height),
     )
 
