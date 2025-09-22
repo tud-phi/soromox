@@ -5,7 +5,7 @@ from typing import Dict, Optional
 
 import equinox as eqx
 
-from .planar_pcs import PlanarPCS
+from soromox.systems.planar_pcs import PlanarPCS
 
 
 class TendonActuatedPlanarPCS(PlanarPCS):

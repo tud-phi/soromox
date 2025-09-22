@@ -2,7 +2,6 @@ __all__ = ["DynamicalSystem"]
 import equinox as eqx
 from jax import Array, jit, lax
 from jax import numpy as jnp
-import numpy as onp
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple, Type, Union, Optional
 
@@ -19,6 +18,8 @@ from diffrax import (
 
 
 class DynamicalSystem(eqx.Module):
+    num_actuators: int = eqx.field(static=True)  # Number of actuators
+
     def resolve_upon_time(
         self,
         q0: Array,

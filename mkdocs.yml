@@ -88,7 +88,6 @@ nav:
     - Actuation: api/actuation.md
     - Utilities:
       - Overview: api/utils.md
-      - Math Utils: api/math-utils.md
       - Parameters: api/parameters.md
       - Rendering: api/rendering.md
       - Symbolic Derivation: api/symbolic-derivation.md

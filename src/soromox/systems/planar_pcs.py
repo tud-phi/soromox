@@ -6,18 +6,19 @@ from jax import numpy as jnp
 import numpy as onp
 from typing import Callable, Dict, Tuple, Optional, ClassVar
 
-from soromox.math_utils import (
+from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.utils.array_math import (
     blk_diag,
     compute_weighted_sums,
 )
-import soromox.utils.lie_algebra as lie
-
-from .dynamical_system import DynamicalSystem
-from .utils import (
+from soromox.utils.basic import (
     compute_strain_basis,
+)
+from soromox.utils.integration import (   
     gauss_quadrature,
     scale_gaussian_quadrature,
 )
+import soromox.utils.lie_algebra as lie
 
 
 class PlanarPCS(DynamicalSystem):
@@ -83,7 +84,6 @@ class PlanarPCS(DynamicalSystem):
     global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
 
     num_segments: int = eqx.field(static=True)
-    num_actuators: int = eqx.field(static=True)  # Number of actuators
     num_gauss_points: int = eqx.field(static=True)  #
     num_strains: int = eqx.field(static=True)  # Number of strains (3 * num_segments)
 
@@ -876,7 +876,7 @@ class PlanarPCS(DynamicalSystem):
         J_global = self._final_size_jacobian(_J_global) @ self.B_xi
 
         # TODO:
-        # J_d = d(Ad_g * J_local) / dt
+        # Jd = d(Ad_g * J_local) / dt
         #       = Ad_g * d(J_local) / dt + d(Ad_g) / dt * J_local
         # we need to add the term d(Ad_g) / dt * J_local !!!
 
@@ -1486,13 +1486,13 @@ class PlanarPCS(DynamicalSystem):
 
     @eqx.filter_jit
     def forward_dynamics(
-        self, t: float, y: Array, actuation_args: Optional[Tuple] = None
+        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
     ) -> Array:
         """
         Forward dynamics function.
 
         Args:
-            t (float): Current time.
+            t (Array): Current time.
             y (Array): State vector containing configuration and velocity.
                 Shape is (2 * num_strains,).
             actuation_args (Tuple, optional): Additional arguments for the actuation mapping function.

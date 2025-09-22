@@ -6,7 +6,7 @@ from jax import numpy as jnp
 import numpy as onp
 from typing import Dict, List, Tuple, Union, Optional
 
-from .dynamical_system import DynamicalSystem
+from soromox.systems.dynamical_system import DynamicalSystem
 
 
 class Pendulum(DynamicalSystem):
@@ -61,6 +61,8 @@ class Pendulum(DynamicalSystem):
     ----------
     num_links : int (static)
         Number of links / DoFs.
+    num_actuators: int (static)
+        Number of joint actuators. Equal to num_links.
     m, I, L, Lc : Array (shape (N,))
         Physical link properties.
     g : Array (shape (2,))
@@ -114,6 +116,9 @@ class Pendulum(DynamicalSystem):
         assert g.shape[0] == 2, "Gravity vector must be length 2"
 
         self.num_links = int(n_q)
+        self.num_actuators = self.num_links
+
+        # set parameters
         self.m = m
         self.I = I
         self.L = L

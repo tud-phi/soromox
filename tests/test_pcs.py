@@ -167,7 +167,7 @@ def test_planar_cs_num():
     robot = robot.update_params(params_bis)
     print("q = ", q, "qd = ", qd, "u = ", u, "g = ", params_bis["g"])
     y = jnp.concatenate([q, qd])
-    yd = robot.forward_dynamics(0.0, y, (u,))
+    yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qdd, qdres = jnp.split(yd, 2)
     assert not jnp.isnan(qdd).any(), "Forward dynamics output contains NaN!"
     assert_allclose(qdd, jnp.zeros((6,)), rtol=Tolerance.rtol(), atol=Tolerance.atol())

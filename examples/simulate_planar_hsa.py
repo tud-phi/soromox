@@ -50,6 +50,7 @@ if __name__ == "__main__":
         sym_exp_filepath=sym_exp_filepath,
         params=params,
         strain_selector=strain_selector,
+        consider_underactuation=True,
         consider_hysteresis=consider_hysteresis,
     )
     print(
@@ -86,8 +87,6 @@ if __name__ == "__main__":
     t1 = 5.0
     dt = 5e-5  # time step
     save_every_n_steps = 100
-
-    actuation_args = (phi, None, True)  # actuation arguments
 
     ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,

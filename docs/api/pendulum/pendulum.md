@@ -37,7 +37,7 @@ G = robot.gravitational_force(q)
 # Forward dynamics derivative of state y=[q, qd]
 u = jnp.zeros_like(q)
 y = jnp.concatenate([q, qd])
-yd = robot.forward_dynamics(0.0, y, (u,))
+yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
 ```
 
 ## API Reference

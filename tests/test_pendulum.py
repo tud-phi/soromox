@@ -239,7 +239,7 @@ def test_forward_dynamics_rest_with_zero_forces(N):
     qd = jnp.zeros((N,))
     u = jnp.zeros((N,))
     y = jnp.concatenate([q, qd])
-    yd = robot.forward_dynamics(0.0, y, (u,))
+    yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qd_out, qdd_out = jnp.split(yd, 2)
 
     assert_allclose(qd_out, qd, rtol=Tolerance.rtol(), atol=Tolerance.atol())

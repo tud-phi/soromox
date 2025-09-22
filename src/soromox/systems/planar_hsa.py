@@ -5,7 +5,7 @@ from diffrax import (
     ODETerm,
     SaveAt,
     Tsit5,
-    PIDController,
+    AbstractStepSizeController,
     ConstantStepSize,
     AbstractSolver,
 )
@@ -16,8 +16,8 @@ import sympy as sp
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
-from .dynamical_system import DynamicalSystem
-from .utils import (
+from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.utils.basic import (
     concatenate_params_syms,
     compute_strain_basis,
 )
@@ -47,6 +47,10 @@ class PlanarHSA(DynamicalSystem):
         Number of physical rods per segment.
     num_dofs : int
         Number of degrees of freedom (active strain components).
+    num_actuators: int
+        Number of actuators in the robot.
+    consider_underactuation : bool
+        Whether to consider underactuation in the model.
     consider_hysteresis : bool
         Whether to consider hysteresis effects in the model.
     num_hysteresis : int
@@ -140,6 +144,7 @@ class PlanarHSA(DynamicalSystem):
     num_segments: int = eqx.field(static=True)
     num_rods_per_segment: int = eqx.field(static=True)
     num_dofs: int = eqx.field(static=True)
+    consider_underactuation: bool = eqx.field(static=True)
     consider_hysteresis: bool = eqx.field(static=True)
     num_hysteresis: int = eqx.field(static=True)
 
@@ -199,6 +204,7 @@ class PlanarHSA(DynamicalSystem):
         params: Dict[str, Array],
         strain_selector: Optional[Array] = None,
         global_eps: float = 1e-6,
+        consider_underactuation: bool = True,
         consider_hysteresis: bool = False,
     ) -> None:
         """
@@ -210,6 +216,8 @@ class PlanarHSA(DynamicalSystem):
             strain_selector: array of shape (num_dofs, ) with boolean values indicating which components of the
                     strain are active / non-zero
             global_eps: small number to avoid singularities (e.g., division by zero)
+            consider_underactuation (bool): If True, the underactuation model is considered. Otherwise, the fully-actuated
+                    model is considered with the identity matrix as the actuation matrix.
             consider_hysteresis: If True, Bouc-Wen is used to model hysteresis. Otherwise, hysteresis will be neglected.
         """
         self.global_eps = global_eps
@@ -295,6 +303,15 @@ class PlanarHSA(DynamicalSystem):
                 f"Symbolic expressions file does not contain 'state_syms'. Please generate the symbolic expressions first."
             )
         self.num_dofs = num_dofs
+
+        # set number of actuators
+        self.consider_underactuation = consider_underactuation
+        if self.consider_underactuation:
+            # the number of actuators equals the number of HSA rods
+            self.num_actuators = num_rods_per_segment * num_segments
+        else:
+            # the number of actuators equals the number of degrees of freedom as we consider an identity actuation matrix
+            self.num_actuators = self.num_dofs
 
         # Hysteresis
         self.consider_hysteresis = consider_hysteresis
@@ -1468,7 +1485,7 @@ class PlanarHSA(DynamicalSystem):
 
     @eqx.filter_jit
     def forward_dynamics(
-        self, t: Array, y: Array, actuation_args: Tuple[Array, Callable, bool]
+        self, t: Array, y: Array, actuation_args: Tuple[Array, Callable]
     ) -> Array:
         """
         Forward dynamics function.
@@ -1479,20 +1496,18 @@ class PlanarHSA(DynamicalSystem):
                 Shape is (2 * num_dofs + num_hysteresis,).
             actuation_args (Tuple): Additional arguments for the actuation function.
                 - u (Array): Initial actuation input.
-                    If consider_underactuation_model is True, this is an array of shape (num_hysteresis, ) with
+                    If consider_underactuation is True, this is an array of shape (num_hysteresis, ) with
                     motor positions / twist angles of the proximal end of the rods.
-                    If consider_underactuation_model is False, this is an array of shape (num_dofs, ) with
+                    If consider_underactuation is False, this is an array of shape (num_dofs, ) with
                     the configuration-space torques.
-                - control_fn (Callable): Callable that returns the forcing function of the form control_fn(t, x) -> phi. If consider_underactuation_model is True,
-                    then phi is an array of shape (num_dofs, ) with the configuration-space torques. If consider_underactuation_model is False,
+                - control_fn (Callable): Callable that returns the forcing function of the form control_fn(t, x) -> phi. If consider_underactuation is True,
+                    then phi is an array of shape (num_dofs, ) with the configuration-space torques. If consider_underactuation is False,
                     then phi is an array of shape (num_hysteresis, ) with the motor positions / twist angles of the proximal end of the rods.
-                - consider_underactuation_model (bool): If True, the underactuation model is considered. Otherwise, the fully-actuated
-                    model is considered with the identity matrix as the actuation matrix.
 
         Returns:
             yd: Time derivative of the state vector of shape (2 * num_dofs + num_hysteresis, ).
         """
-        u, control_fn, consider_underactuation_model = actuation_args
+        u, control_fn = actuation_args
 
         q, qd, z = jnp.split(y, [self.num_dofs, 2 * self.num_dofs])
 
@@ -1505,12 +1520,12 @@ class PlanarHSA(DynamicalSystem):
         if control_fn is not None:
             u = u + control_fn(t, y)
 
-        if consider_underactuation_model is True:
+        if self.consider_underactuation is True:
             phi = u
             B = self.inertia_matrix(q)
             C = self.coriolis_matrix(q, qd)
             G = self.gravitational_force(q)
-            tauel = self.elastic_force(q, z)
+            tau_el = self.elastic_force(q, z)
             D = self.damping_matrix()
             alpha = self.actuation_force(q, phi)
 
@@ -1518,7 +1533,7 @@ class PlanarHSA(DynamicalSystem):
             B = self.inertia_matrix(q)
             C = self.coriolis_matrix(q, qd)
             G = self.gravitational_force(q)
-            tauel = self.elastic_force(q, z)
+            tau_el = self.elastic_force(q, z)
             D = self.damping_matrix()
 
             phi = jnp.zeros((self.num_segments * self.num_rods_per_segment,))
@@ -1529,7 +1544,7 @@ class PlanarHSA(DynamicalSystem):
         B_inv = jnp.linalg.inv(B)
 
         # Compute the acceleration
-        qdd = B_inv @ (-C @ qd - G - tauel - D @ qd + alpha)
+        qdd = B_inv @ (-C @ qd - G - tau_el - D @ qd + alpha)
 
         yd = jnp.concatenate([qd, qdd, zd])
 
@@ -1542,13 +1557,12 @@ class PlanarHSA(DynamicalSystem):
         qd0: Array,
         u0: Array,
         control_fn: Optional[Callable] = None,
-        consider_underactuation_model: Optional[bool] = True,
         t0: Optional[float] = 0.0,
         t1: Optional[float] = 10.0,
         dt: Optional[float] = 1e-4,
         save_every_n_steps: int = 1,
         solver: Optional[AbstractSolver] = Tsit5(),
-        stepsize_controller: Optional[PIDController] = ConstantStepSize(),
+        stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
         max_steps: Optional[int] = None,
     ) -> Tuple[Array, Array, Array]:
         """
@@ -1558,22 +1572,19 @@ class PlanarHSA(DynamicalSystem):
             q0 (Array): Initial configuration (strains).
             qd0 (Array): Initial velocity (strains).
             u0 (Array): Initial actuation input.
-                If consider_underactuation_model is True,
-                    array of shape (num_hysteresis, ) with
+                If consider_underactuation is True,
+                    array of shape (num_actuators, ) with
                     motor positions / twist angles of the proximal end of the rods.
-                If consider_underactuation_model is False,
+                If consider_underactuation is False,
                     array of shape (num_dofs, ) with
                     the configuration-space torques.
             control_fn (Callable, optional): Callable that returns the forcing function of the form control_fn(t, [q, qd]) -> phi.
-                If consider_underactuation_model is True,
-                    then phi is an array of shape (num_dofs, )
+                If consider_underactuation is True,
+                    then phi is an array of shape (num_actuators, )
                     with the configuration-space torques.
-                If consider_underactuation_model is False,
-                    then phi is an array of shape (num_hysteresis, )
+                If consider_underactuation is False,
+                    then phi is an array of shape (num_dofs, )
                     with the motor positions / twist angles of the proximal end of the rods.
-            consider_underactuation_model (bool, optional):
-                If True, the underactuation model is considered.
-                Otherwise, the fully-actuated model is considered with the identity matrix as the actuation matrix.
             t0 (float, optionnal): Initial time.
                 Default is 0.0.
             t1 (float, optionnal): Final time.
@@ -1607,7 +1618,7 @@ class PlanarHSA(DynamicalSystem):
         saveat = SaveAt(ts=t[::save_every_n_steps])  # Save at specified time points
 
         # Prepare the actuation arguments
-        actuation_args = (u0, control_fn, consider_underactuation_model)
+        actuation_args = (u0, control_fn)
 
         sol = diffeqsolve(
             terms=term,

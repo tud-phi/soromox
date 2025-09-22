@@ -1,6 +1,6 @@
+__all__ = ["blk_diag", "blk_concat", "compute_weighted_sums"]
 from jax import numpy as jnp
 from jax import Array, lax
-
 
 def blk_diag(a: Array) -> Array:
     """
@@ -14,7 +14,7 @@ def blk_diag(a: Array) -> Array:
 
     """
 
-    def assign_block_diagonal(i, _b):
+    def assign_block_diagonal(i: Array, _b: Array):
         """
         Save the ith block  into the block-diagonal matrix `_b`
         Args:
