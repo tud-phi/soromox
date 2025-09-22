@@ -118,7 +118,7 @@ class PCS(DynamicalSystem):
                     [ψ, θ, φ, x0, y0, z0]
                         [ψ, θ, φ] are the Euler angles in the ZXZ convention:
                             ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
+                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
                             φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
                         [x0, y0, z0] : Position of the robot in the inertial frame
                     Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
@@ -232,7 +232,7 @@ class PCS(DynamicalSystem):
                     [ψ, θ, φ, x0, y0, z0]
                         [ψ, θ, φ] are the Euler angles in the ZXZ convention:
                             ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
+                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
                             φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
                         [x0, y0, z0] : Position of the robot in the inertial frame
                     Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
@@ -364,7 +364,7 @@ class PCS(DynamicalSystem):
                     [ψ, θ, φ, x0, y0, z0]
                         [ψ, θ, φ] are the Euler angles in the ZXZ convention:
                             ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
+                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
                             φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
                         [x0, y0, z0] : Position of the robot in the inertial frame
                 - "L": List/Array of num_segments floats

@@ -32,7 +32,7 @@ class JointOperand:
 
     def tree_flatten(self):
         children = (self.axis_idx, self.pitch, self.plane_idx)
-        aux_data = None  # aucun champ statique à exclure ici
+        aux_data = None  # no static field to exclude here
         return children, aux_data
 
     @classmethod
@@ -82,7 +82,7 @@ class GeometricOperand:
             self.a_params,
             self.b_params,
         )
-        aux_data = None  # aucun champ statique à exclure ici
+        aux_data = None  # no static field to exclude here
         return children, aux_data
 
     @classmethod

@@ -204,10 +204,10 @@ def draw_robot(
 
     if show:
         win = "Planar HSA"
-        # fenêtre redimensionnable (utile sur macOS/Linux/HiDPI)
+        # resizable window (useful on macOS/Linux/HiDPI)
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.imshow(win, img)
-        # attend jusqu'à une touche (ferme si on appuie sur ESC ou 'q')
+        # wait until a key is pressed (close if ESC or 'q' is pressed)
         key = cv2.waitKey(0) & 0xFF
         if key in (27, ord("q")):
             cv2.destroyWindow(win)

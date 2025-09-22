@@ -624,7 +624,7 @@ class GVS(DynamicalSystem):
             operand=geometric_operand,
         )
 
-        # Préparation des vecteurs composants
+        # Prepare the component vectors
         Ms_diag = jnp.stack([Ix_p, Iy_p, Iz_p, A_p, A_p, A_p], axis=1)  # Shape: (np, 6)
         Es_diag = jnp.stack(
             [G * Ix_p, E * Iy_p, E * Iz_p, E * A_p, G * A_p, G * A_p], axis=1
@@ -1925,7 +1925,7 @@ class GVS(DynamicalSystem):
 
                 return (g_next, Jd_next, eta_next), None
 
-            # Cas 1 : segment entièrement avant s → on consomme toutes les cellules
+            # Case 1: segment entirely before s → consume every cell
             def do_full_link() -> Tuple[Array, Array, Array]:
                 """Segment before target `s`: integrate all its cells (Jdot).
 
@@ -1937,7 +1937,7 @@ class GVS(DynamicalSystem):
                 )
                 return g_end, Jd_end, eta_end
 
-            # Cas 2 : segment contenant s → cellules complètes jusqu'à j-1 puis cellule partielle Hp
+            # Case 2: segment containing s → full cells up to j-1 then partial cell Hp
             def do_partial_link() -> Tuple[Array, Array, Array]:
                 """Segment containing `s`: consume up to j-1, then partial cell.
 
@@ -1947,7 +1947,7 @@ class GVS(DynamicalSystem):
                 x = s_local / length_i
                 j = jnp.clip(jnp.searchsorted(Xs_i, x) - 1, 0, self.max_nip - 2)
 
-                # consomme jusqu'à j-1 (masqué)
+                # consume up to j-1 (masked)
                 def full_cell_masked(carry: Array, idx: Array) -> Tuple[Tuple[Array, Array, Array], None]:
                     """Advance only for idx < j; keep state otherwise.
 
@@ -1970,13 +1970,13 @@ class GVS(DynamicalSystem):
                     full_cell_masked, (g_j, Jd_j, eta_j), jnp.arange(self.max_nip - 1)
                 )
 
-                # cellule partielle j de taille Hp
+                # partial cell j of size Hp
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 Xp = jnp.array(
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
-                )  # deux points de Gauss partiels
+                )  # two partial Gauss points
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
 
                 xi_Z1 = (Bp[0] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
@@ -2030,14 +2030,14 @@ class GVS(DynamicalSystem):
                 operand=None,
             )
 
-            # rééchelle pour l'état passé au segment suivant (comme dans les autres fonctions)
+            # rescale the state passed to the next segment (same as the other functions)
             g_pass = g_out.at[0:3, 3].multiply(length_i)
             Jd_pass = Jd_out.at[:, :, 3:6, :].multiply(length_i)
             eta_pass = eta_out.at[3:6].multiply(length_i)
 
             return (g_pass, Jd_pass, eta_pass), (g_pass, Jd_pass, eta_pass)
 
-        # Parcours de la chaîne, on fige l'état après le segment contenant s
+        # Traverse the chain; freeze the state after the segment containing s
         def step(carry: Array, i: Array) -> Tuple[Tuple[Array, Array, Array], None]:
             """Walk segments; freeze state after the segment containing `s`.
 
