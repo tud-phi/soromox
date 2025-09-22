@@ -209,7 +209,7 @@ def test_tangent_gi_se2_derivative_zero_without_motion():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_tangent_dot_gi_se2_zero_theta_matches_truncated_series():
+def test_tangent_derivative_gi_se2_zero_theta_matches_truncated_series():
     xi = jnp.array([0.0, 0.5, -0.1])
     xid = jnp.array([0.1, -0.4, 0.2])
     s = jnp.array(0.2)
@@ -220,7 +220,7 @@ def test_tangent_dot_gi_se2_zero_theta_matches_truncated_series():
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
-def test_tangent_dot_matches_autodiff(N: int = 10):
+def test_tangent_derivative_matches_autodiff(N: int = 10):
     key = jax.random.PRNGKey(0)
     for _i in range(N):
         key, subkey1, subkey2, subkey3 = jax.random.split(key, num=4)
@@ -255,6 +255,6 @@ if __name__ == "__main__":
     # test_adjoint_gi_se2_inverse_matches_identity()
     # test_tangent_gi_se2_zero_theta_matches_truncated_series()
     # test_tangent_gi_se2_derivative_zero_without_motion()
-    # test_tangent_dot_gi_se2_zero_theta_matches_truncated_series()
-    # test_tangent_dot_matches_autodiff()
+    # test_tangent_derivative_gi_se2_zero_theta_matches_truncated_series()
+    # test_tangent_derivative_matches_autodiff()
     pytest.main([__file__])
