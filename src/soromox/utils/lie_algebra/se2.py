@@ -81,7 +81,7 @@ def adjoint_se2(vec3: Array) -> Array:
             and the last two elements correspond to the linear component.
 
     Returns:
-        Array: shape (3, 3)
+        adj: shape (3, 3)
             A 3x3 matrix representing the adjoint transformation of the input screw vector.
     """
     vec3 = vec3.reshape(-1)  # Ensure vec6 is a 1D array
@@ -107,7 +107,7 @@ def coadjoint_se2(vec3: Array) -> Array:
             and the last two elements correspond to the linear component.
 
     Returns:
-        Array: shape (3, 3)
+        coadj: shape (3, 3)
             A 3x3 matrix representing the co-adjoint transformation of the input screw vector.
     """
     vec3 = vec3.reshape(-1)  # Ensure vec6 is a 1D array
@@ -131,7 +131,7 @@ def Adjoint_g_SE2(mat3: Array) -> Array:
             A 4x4 matrix representing the transformation.
 
     Returns:
-        Array: shape (3, 3)
+        Adjoint: shape (3, 3)
             A 3x3 matrix representing the Adjoint transformation of the input matrix.
     """
     R = mat3[:2, :2]  # Extract the angular part (top-left 2x2 block)
@@ -156,7 +156,7 @@ def Adjoint_g_inv_SE2(mat3: Array) -> Array:
             A 4x4 matrix representing the transformation.
 
     Returns:
-        Array: shape (3, 3)
+        Adjoint: shape (3, 3)
             A 3x3 matrix representing the Adjoint transformation of the input matrix.
     """
     Adj = Adjoint_g_SE2(mat3)  # Adjoint representation of the input matrix
@@ -195,7 +195,7 @@ def Adjoint_gi_se2(
         eps (float): small value to avoid division by zero
 
     Returns:
-        Array: shape (3, 3)
+        Adjoint: shape (3, 3)
             A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
     """
     # We suppose here that theta is not zero thanks to a previous use of apply_eps
@@ -247,7 +247,7 @@ def Adjoint_gi_se2_inv(
         eps (float): small value to avoid division by zero
 
     Returns:
-        Array: shape (3, 3)
+        Adjoint_inv: shape (3, 3)
             A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
     """
     Adj = Adjoint_gi_se2(
@@ -261,14 +261,14 @@ def Adjoint_gi_se2_inv(
     # Compute the inverse using the Schur complement
     R_inv = jnp.transpose(R)  # Since R is a rotation matrix, R^-1=R^T
     # Construct the inverse Adjoint matrix
-    inverse_Adjoint = jnp.concatenate(
+    Adjoint_inv = jnp.concatenate(
         [
             jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-R_inv @ mJt, R_inv], axis=1),
         ]
     )
 
-    return inverse_Adjoint
+    return Adjoint_inv
 
 
 def Tangent_gi_se2(
@@ -288,7 +288,7 @@ def Tangent_gi_se2(
         eps (float): small value to avoid division by zero
 
     Returns:
-        Array: shape (3, 3)
+        Tangent: shape (3, 3)
             A 3x3 matrix representing the tangent transformation of the input screw vector at the specified position.
     """
     # We suppose here that theta is not zero thanks to a previous use of apply_eps
