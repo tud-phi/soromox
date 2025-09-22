@@ -753,53 +753,29 @@ class PlanarPCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            _J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
-            _Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 3, 3)
+            J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
+            Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 3, 3)
         """
+        # Compute strain and strain rate
         xi = self.strain(q).reshape(self.num_segments, 3)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
-
-        # Classify the point along the robot to the corresponding segment
-        segment_idx, _ = self.classify_segment(s)
-
-        _J_local = self._J_local(q, s)
-
-        # =================================
-        # Computation of the time-derivative of the Jacobian
-
-        # idx_range = jnp.arange(self.num_segments)
-        # J_i = vmap(
-        #     lambda i: lax.dynamic_index_in_dim(_J_local, i, axis=0, keepdims=False)
-        # )(idx_range)  # shape: (num_segments, 3, 3)
-        # sum_Jj_xid_j = compute_weighted_sums(
-        #     _J_local, xid, self.num_segments
-        # )  # shape: (num_segments, 3)
-        # adjoint_sum = vmap(lie.adjoint_se2)(sum_Jj_xid_j)  # shape: (num_segments, 3, 3)
-
-        # # Compute the time-derivative of the Jacobian
-        # _Jd_local = jnp.einsum(
-        #     "ijk, ikl->ijl", adjoint_sum, J_i
-        # )  # shape: (num_segments, 3, 3)
-
-        # # Replace the elements of Jd_segment_SE2 for i > segment_idx by null matrices
-        # _Jd_local = jnp.where(
-        #     jnp.arange(self.num_segments)[:, None, None] > segment_idx,
-        #     jnp.zeros_like(_Jd_local),
-        #     _Jd_local,
-        # )
+        
         # TODO: The below implementation only works for a single segment robot
-        # Ad_g_inv = lie.Adjoint_g_inv_SE2(
-        #     lie.exp_SE2(self.forward_kinematics(q, s))
-        # )
         Ad_g_inv = lie.Adjoint_gi_se2_inv(xi[0], s, eps=self.global_eps)
         T = lie.Tangent_gi_se2(xi[0], s, eps=self.global_eps)
         Td = lie.Tangent_derivative_gi_se2(xi[0], xid[0], s, eps=self.global_eps)
 
-        _J_local2 = (Ad_g_inv @ T)[None]
-        _Jd_local = (Ad_g_inv @ Td)[None]
+        # compute the Jacobian at point s
+        J_local = self._J_local(q, s)
+        # compute the body frame velocity at point s
+        eta = J_local @ qd  # Strain rate vector at point s
+        # compute the body frame velocity
+        Ad_g_inv_derivative = -lie.adjoint_se2(eta) @ Ad_g_inv
 
+        # compute the time-derivative of the Jacobian at point s
+        Jd_local = (Ad_g_inv_derivative @ T + Ad_g_inv @ Td)[None]
 
-        return _J_local, _Jd_local
+        return J_local, Jd_local
 
     @eqx.filter_jit
     def _jacobian_and_derivative_bodyframe_full(
