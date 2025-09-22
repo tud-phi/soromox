@@ -482,7 +482,6 @@ class Pendulum(DynamicalSystem):
     # -------------------------------
     # Standardized dynamics interface
     # -------------------------------
-
     @eqx.filter_jit
     def inertia_matrix(self, q: Array) -> Array:
         """
@@ -560,7 +559,7 @@ class Pendulum(DynamicalSystem):
 
         The gravitational force is computed by projecting gravity effects
         through the linear velocity Jacobians:
-        G(q) = Σ_i Jv_i^T ( m_i * g )
+        G(q) = -Σ_i Jv_i^T ( m_i * g )
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
@@ -637,7 +636,8 @@ class Pendulum(DynamicalSystem):
         Returns:
             tau_u (Array): Generalized actuation forces τ_u = u, shape (N,) [N⋅m]
         """
-        return u
+        tau_u = self.actuation_matrix(q) @ u
+        return tau_u
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -695,7 +695,6 @@ class Pendulum(DynamicalSystem):
     # ---------------------
     # Energy methods
     # ---------------------
-
     @eqx.filter_jit
     def kinetic_energy(self, q: Array, qd: Array) -> Array:
         """
@@ -723,7 +722,7 @@ class Pendulum(DynamicalSystem):
 
         The gravitational energy is computed by summing the potential energy
         of each link's center of mass:
-        U_G = Σ_i m_i * g^T @ p_com_i
+        U_G = -Σ_i m_i * g^T @ p_com_i
         where p_com_i is the center of mass position of link i.
 
         Args:
@@ -734,7 +733,7 @@ class Pendulum(DynamicalSystem):
         """
         p_coms = self._com_positions(q)  # (n, 2)
         # U_G = Σ_i m_i * g^T @ p_com_i
-        U_G = jnp.sum(self.m * jnp.dot(p_coms, self.g))
+        U_G = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
         return U_G
 
     @eqx.filter_jit
@@ -752,7 +751,7 @@ class Pendulum(DynamicalSystem):
         Returns:
             U_K (Array): Elastic potential energy [J] (scalar)
         """
-        U_K = 0.5 * q.T @ self.K @ q
+        U_K = 0.5 * q.T @ self.stiffness_matrix() @ q
         return U_K
 
     @eqx.filter_jit
@@ -794,6 +793,9 @@ class Pendulum(DynamicalSystem):
         E = T + U
         return E
 
+    # --------------------------
+    # Operational space dynamics
+    # --------------------------
     @eqx.filter_jit
     def operational_space_dynamical_matrices(
         self,

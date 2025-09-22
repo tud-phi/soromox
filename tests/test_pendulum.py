@@ -217,15 +217,15 @@ def test_coriolis_christoffel_identity(N):
 
 
 @pytest.mark.parametrize("N", [2, 3])
-def test_gravity_matches_negative_potential_gradient(N):
+def test_gravity_matches_potential_gradient(N):
     robot = make_pendulum(N)
     q = jnp.linspace(-0.25, 0.5, N)
 
     G = robot.gravitational_force(q)
     dU_dq = jax.grad(robot.gravitational_energy)(q)
 
-    # With current convention, G equals -∂U/∂q
-    assert_allclose(G, -dU_dq, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    # With current convention, G equals ∂U/∂q
+    assert_allclose(G, dU_dq, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
 @pytest.mark.parametrize("N", [2, 3])

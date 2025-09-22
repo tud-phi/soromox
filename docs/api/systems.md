@@ -13,7 +13,12 @@ SoRoMoX provides implementations for various robot systems, from classical rigid
 
 ## Available Systems
 
-### [Pendulum Systems](pendulum.md)
+### Pendulum Systems
+
+Multiple implementations of pendulum-based robot systems, from classical rigid-body chains to cable-driven mechanisms.
+
+#### [Classical Pendulum](pendulum/pendulum.md)
+
 Classical (optionally articulated) N-link pendulum implementation
 
 - Rigid-body dynamics
@@ -21,10 +26,21 @@ Classical (optionally articulated) N-link pendulum implementation
 - Configurable number of links
 - Optional: turn into an articulated soft robot by adding elastic and dissipative forces at the pendulum joints.
 
+#### [Tendon Actuated Pendulum](pendulum/tendon-actuated-pendulum.md)
+
+N-link pendulum systems with active and passive tendon actuation
+
+- Cable-driven actuation mechanisms
+- Active and passive tendon support
+- Spring-damper systems for compliance
+- Hybrid rigid-soft robot characteristics
+
 ### PCS (Piecewise Constant Strain) Systems
+
 Multiple implementations of continuum soft robots using piecewise constant strain modeling.
 
 #### [General PCS](pcs.md)
+
 Core PCS implementation providing the fundamental framework.
 
 - Base PCS mathematical framework
@@ -32,6 +48,7 @@ Core PCS implementation providing the fundamental framework.
 - General continuum robot modeling
 
 #### [Planar PCS](planar-pcs.md)
+
 Planar PCS continuum soft robots in 2D.
 
 - Cosserat rod theory based
@@ -40,6 +57,7 @@ Planar PCS continuum soft robots in 2D.
 - Suitable for real-time applications
 
 #### [Pneumatic Planar PCS](pneumatic-actuated-planar-pcs.md)
+
 Pneumatically actuated planar PCS robots.
 
 - Pressure-based actuation
@@ -48,6 +66,7 @@ Pneumatically actuated planar PCS robots.
 - Real-time pressure control
 
 #### [Tendon Planar PCS](tendon-actuated-planar-pcs.md)
+
 Tendon actuated planar PCS robots.
 
 - Cable-driven actuation
@@ -56,6 +75,7 @@ Tendon actuated planar PCS robots.
 - Cable-driven continuum robots
 
 ### [Planar HSA Systems](planar-hsa.md)
+
 Handed Shearing Auxetics (HSA) soft robots with unique mechanical properties.
 
 - Auxetic material properties
