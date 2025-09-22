@@ -1,6 +1,7 @@
 import jax
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
+import pytest
 
 from soromox.utils.lie_algebra.se2 import (
     Adjoint_g_SE2,
@@ -174,15 +175,41 @@ def test_tangent_dot_gi_se2_zero_theta_matches_truncated_series():
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
-def test_tangent_dot_matches_autodiff():
-    xi = jnp.array([0.7, -0.3, 0.25])
-    xid = jnp.array([-0.2, 0.4, -0.35])
-    s = jnp.array(0.6)
+def test_tangent_dot_matches_autodiff(N: int = 10):
+    key = jax.random.PRNGKey(0)
+    for _i in range(N):
+        key, subkey1, subkey2, subkey3 = jax.random.split(key, num=4)
 
-    def tangent_map(xi_):
-        return Tangent_gi_se2(xi_, s, eps=EPS)
+        # xi = jnp.array([0.7, -0.3, 0.25])
+        # xid = jnp.array([-0.2, 0.4, -0.35])
+        # s = jnp.array(0.6)
+        # randomly sample xi, xid, s
+        xi = jax.random.uniform(subkey1, shape=(3,), minval=-1.0, maxval=1.0)
+        xid = jax.random.uniform(subkey2, shape=(3,), minval=-1.0, maxval=1.0)
+        s = jax.random.uniform(subkey3, shape=(), minval=0.1, maxval=1.0)
 
-    _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
-    closed_form = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+        def tangent_map(xi_):
+            return Tangent_gi_se2(xi_, s, eps=EPS)
 
-    assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
+        _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
+        closed_form = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+        jax.debug.print("autodiff: {x}", x=autodiff)
+        jax.debug.print("closed_form: {x}", x=closed_form)
+
+        assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
+
+if __name__ == "__main__":
+    # run pytest with activated stdout
+    # test_hat_se2_returns_expected_matrix()
+    # test_exp_se2_produces_rotation_and_translation()
+    # test_adjoint_se2_matches_closed_form()
+    # test_coadjoint_se2_matches_closed_form()
+    # test_adjoint_g_se2_matches_manual_construction()
+    # test_adjoint_g_inv_se2_is_matrix_inverse()
+    # test_adjoint_gi_se2_zero_theta_matches_first_order_series()
+    # test_adjoint_gi_se2_inverse_matches_identity()
+    # test_tangent_gi_se2_zero_theta_matches_truncated_series()
+    # test_tangent_gi_se2_derivative_zero_without_motion()
+    # test_tangent_dot_gi_se2_zero_theta_matches_truncated_series()
+    # test_tangent_dot_matches_autodiff()
+    pytest.main([__file__])
