@@ -6,6 +6,7 @@ from jax import vmap, lax, Array
 import math
 from typing import Callable, ClassVar, List, Optional, Tuple
 from typing import cast
+import warnings
 
 
 from soromox.systems.dynamical_system import DynamicalSystem
@@ -222,6 +223,8 @@ class GVS(DynamicalSystem):
         - Internal arrays are padded to `max_dof` and `max_nip` to allow vectorized
         batched computations across all segments.
         """
+        warnings.warn("GVS is not fully validated yet and might not match the behavior of PlanarPCS and PCS.")
+
         if (
             len(links_list) != len(joints_list)
             or len(links_list) != len(basis_list)
