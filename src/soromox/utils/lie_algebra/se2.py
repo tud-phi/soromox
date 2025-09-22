@@ -352,29 +352,32 @@ def Tangent_dot_gi_se2(
     cos = jnp.cos(s_i * theta)
     sin = jnp.sin(s_i * theta)
 
-    def _adjoint_dot_power(r: int) -> Array:
-        if r == 1:
-            return adjoint_xid_i
-
-        adjoint_dot_power_r = jnp.zeros_like(adjoint_xi_i)
-        for u in range(1, r + 1):
-            adjoint_dot_power_r = (
-                adjoint_dot_power_r
-                + jnp.linalg.matrix_power(adjoint_xi_i, r - u)
-                @ adjoint_xid_i
-                @ jnp.linalg.matrix_power(adjoint_xi_i, u - 1)
-            )
-        return adjoint_dot_power_r
-
-
     def _tangent_dot_nonzero() -> Array:
-        adjoint_xi_i_square = jnp.linalg.matrix_power(adjoint_xi_i, 2)
-        adjoint_xi_i_cube = jnp.linalg.matrix_power(adjoint_xi_i, 3)
-        adjoint_xi_i_quad = jnp.linalg.matrix_power(adjoint_xi_i, 4)
-        adjoint_dot_xi_i = _adjoint_dot_power(1)
-        adjoint_dot_xi_i_square = _adjoint_dot_power(2)
-        adjoint_dot_xi_i_cube = _adjoint_dot_power(3)
-        adjoint_dot_xi_i_quad = _adjoint_dot_power(4)
+        def _adjoint_powers_with_derivatives(max_power: int):
+            # Recursively build A^k and d/dt(A^k) using P_k = P_{k-1} @ A.
+            current = jnp.eye(3)
+            dot_current = jnp.zeros_like(adjoint_xi_i)
+            powers = [current]
+            dot_powers = [dot_current]
+
+            for _ in range(max_power):
+                dot_next = dot_current @ adjoint_xi_i + current @ adjoint_xid_i
+                current = current @ adjoint_xi_i
+                powers.append(current)
+                dot_powers.append(dot_next)
+                dot_current = dot_next
+
+            return powers, dot_powers
+
+        powers, dot_powers = _adjoint_powers_with_derivatives(4)
+
+        adjoint_xi_i_square = powers[2]
+        adjoint_xi_i_cube = powers[3]
+        adjoint_xi_i_quad = powers[4]
+        adjoint_dot_xi_i = dot_powers[1]
+        adjoint_dot_xi_i_square = dot_powers[2]
+        adjoint_dot_xi_i_cube = dot_powers[3]
+        adjoint_dot_xi_i_quad = dot_powers[4]
 
         coeff_theta_common = -8 + (8 - s_i**2 * theta**2) * cos + 5 * s_i * theta * sin
         coeff_theta_alt = -8 * s_i * theta + (15 - s_i**2 * theta**2) * sin - 7 * s_i * theta * cos
