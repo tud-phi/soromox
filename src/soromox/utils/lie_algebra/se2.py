@@ -1,6 +1,9 @@
 __all__ = [
+    "tilde_SE2",
     "hat_SE2",
     "exp_SE2",
+    "log_SE2",
+    "exp_gn_SE2",
     "adjoint_se2",
     "coadjoint_se2",
     "Adjoint_g_SE2",
@@ -16,6 +19,20 @@ from jax import Array, lax
 
 
 J = jnp.array([[0, -1], [1, 0]])
+
+
+def tilde_SE2(angle: Array) -> Array:
+    """Return the skew-symmetric matrix associated with a planar angle.
+
+    Args:
+        angle (Array): array-like broadcastable to a scalar representing the rotation angle.
+
+    Returns:
+        Array: shape (2, 2) skew-symmetric matrix encoding the cross-product in SE(2).
+    """
+
+    theta = jnp.asarray(angle).reshape(-1)[0]
+    return theta * J
 
 
 def hat_SE2(vec3: Array) -> Array:
@@ -68,6 +85,70 @@ def exp_SE2(vec3: Array) -> Array:
     g = jnp.block([[R, p], [jnp.zeros((1, 2)), jnp.ones((1, 1))]])
 
     return g
+
+
+def log_SE2(g: Array, eps: float) -> Array:
+    """Compute the logarithmic map from SE(2) to se(2).
+
+    Args:
+        g (Array): shape (3, 3) homogeneous transform in SE(2).
+        eps (float): small positive tolerance for angle regularisation.
+
+    Returns:
+        Array: shape (3,) twist coordinates corresponding to ``g``.
+    """
+
+    R = g[:2, :2]
+    p = g[:2, 2]
+
+    theta = jnp.arctan2(R[1, 0], R[0, 0])
+    theta = lax.cond(
+        jnp.abs(theta) < eps,
+        lambda _: jnp.zeros((), dtype=theta.dtype),
+        lambda _: theta,
+        operand=None,
+    )
+
+    return jnp.concatenate([jnp.array([theta]), p])
+
+
+def exp_gn_SE2(vec3: Array, eps: float) -> Array:
+    """Compute the exponential map using the Magnus expansion for SE(2).
+
+    Args:
+        vec3 (Array): shape (3,) screw coordinates.
+        eps (float): threshold for switching to the series expansion.
+
+    Returns:
+        Array: shape (3, 3) matrix exponential of ``vec3`` in SE(2).
+    """
+
+    vec3 = vec3.reshape(-1)
+    theta = jnp.abs(vec3[0])
+    vec3_hat = hat_SE2(vec3)
+
+    costheta = jnp.cos(theta)
+    sintheta = jnp.sin(theta)
+
+    def _series(_: None) -> Array:
+        return (
+            jnp.eye(3)
+            + vec3_hat
+            + 0.5 * jnp.linalg.matrix_power(vec3_hat, 2)
+            + (1.0 / 6.0) * jnp.linalg.matrix_power(vec3_hat, 3)
+        )
+
+    def _closed(_: None) -> Array:
+        theta_sq = theta**2
+        theta_cu = theta**3
+        return (
+            jnp.eye(3)
+            + vec3_hat
+            + ((1 - costheta) / theta_sq) * jnp.linalg.matrix_power(vec3_hat, 2)
+            + ((theta - sintheta) / theta_cu) * jnp.linalg.matrix_power(vec3_hat, 3)
+        )
+
+    return lax.cond(theta <= eps, _series, _closed, operand=None)
 
 
 def adjoint_se2(vec3: Array) -> Array:

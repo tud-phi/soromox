@@ -1,5 +1,6 @@
 import jax
 from jax import numpy as jnp
+from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
 import pytest
 
@@ -14,6 +15,9 @@ from soromox.utils.lie_algebra.se2 import (
     coadjoint_se2,
     exp_SE2,
     hat_SE2,
+    exp_gn_SE2,
+    log_SE2,
+    tilde_SE2,
 )
 from soromox.utils.tolerance import Tolerance
 
@@ -25,6 +29,47 @@ RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
 EPS = 1e-6
 J = jnp.array([[0.0, -1.0], [1.0, 0.0]])
+
+
+def test_tilde_se2_returns_skew_matrix():
+    theta = jnp.array(0.5)
+    expected = theta * J
+
+    result = tilde_SE2(theta)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se2_inverts_exp_se2():
+    vec = jnp.array([0.4, -0.7, 1.2])
+
+    g = exp_SE2(vec)
+    recovered = log_SE2(g, eps=EPS)
+
+    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se2_inverts_exp_se2_zero_angle():
+    vec = jnp.array([0.0, 0.3, -0.2])
+
+    g = exp_SE2(vec)
+    recovered = log_SE2(g, eps=EPS)
+
+    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize(
+    "vec",
+    [
+        jnp.array([0.3, -0.2, 0.5]),
+        jnp.array([1e-8, 0.7, -0.4]),
+    ],
+)
+def test_exp_gn_se2_matches_matrix_exponential(vec):
+    result = exp_gn_SE2(vec, EPS)
+    expected = expm(hat_SE2(vec))
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
 def test_hat_se2_returns_expected_matrix():
