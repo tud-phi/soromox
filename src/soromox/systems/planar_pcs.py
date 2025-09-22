@@ -792,8 +792,12 @@ class PlanarPCS(DynamicalSystem):
         #     lie.exp_SE2(self.forward_kinematics(q, s))
         # )
         Ad_g_inv = lie.Adjoint_gi_se2_inv(xi[0], s, eps=self.global_eps)
-        Tangent_dot = lie.Tangent_dot_gi_se2(xi[0], xid[0], s, eps=self.global_eps)
-        _Jd_local = (Ad_g_inv @ Tangent_dot @ self.B_xi)[None]
+        T = lie.Tangent_gi_se2(xi[0], s, eps=self.global_eps)
+        Td = lie.Tangent_derivative_gi_se2(xi[0], xid[0], s, eps=self.global_eps)
+
+        _J_local2 = (Ad_g_inv @ T)[None]
+        _Jd_local = (Ad_g_inv @ Td)[None]
+
 
         return _J_local, _Jd_local
 

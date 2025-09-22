@@ -8,7 +8,7 @@ from soromox.utils.lie_algebra.se2 import (
     Adjoint_g_inv_SE2,
     Adjoint_gi_se2,
     Adjoint_gi_se2_inv,
-    Tangent_dot_gi_se2,
+    Tangent_derivative_gi_se2,
     Tangent_gi_se2,
     adjoint_se2,
     coadjoint_se2,
@@ -158,7 +158,7 @@ def test_tangent_gi_se2_derivative_zero_without_motion():
     xid = jnp.zeros((3,))
     s = jnp.array(0.6)
 
-    result = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+    result = Tangent_derivative_gi_se2(xi, xid, s, eps=EPS)
     expected = jnp.zeros((3, 3))
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -171,7 +171,7 @@ def test_tangent_dot_gi_se2_zero_theta_matches_truncated_series():
 
     expected = 0.5 * s**2 * adjoint_se2(xid)
 
-    result = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+    result = Tangent_derivative_gi_se2(xi, xid, s, eps=EPS)
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
@@ -192,7 +192,7 @@ def test_tangent_dot_matches_autodiff(N: int = 10):
             return Tangent_gi_se2(xi_, s, eps=EPS)
 
         _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
-        closed_form = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+        closed_form = Tangent_derivative_gi_se2(xi, xid, s, eps=EPS)
         jax.debug.print("autodiff: {x}", x=autodiff)
         jax.debug.print("closed_form: {x}", x=closed_form)
 
