@@ -355,11 +355,16 @@ def Tangent_dot_gi_se2(
     sin = jnp.sin(s_i * theta)
 
     def _adjoint_dot_power(r: int) -> Array:
+        if r == 1:
+            return adjoint_xid_i
+
         adjoint_dot_power_r = jnp.zeros_like(adjoint_xi_i)
-        for u in range(1, r):
+        for u in range(1, r + 1):
             adjoint_dot_power_r = (
-                adjoint_dot_power_r 
-                + jnp.linalg.matrix_power(adjoint_xi_i, r - u) @ adjoint_xid_i @ jnp.linalg.matrix_power(adjoint_xi_i, u - 1)
+                adjoint_dot_power_r
+                + jnp.linalg.matrix_power(adjoint_xi_i, r - u)
+                @ adjoint_xid_i
+                @ jnp.linalg.matrix_power(adjoint_xi_i, u - 1)
             )
         return adjoint_dot_power_r
 
