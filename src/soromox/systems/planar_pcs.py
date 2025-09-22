@@ -756,6 +756,7 @@ class PlanarPCS(DynamicalSystem):
             _J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
             _Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 3, 3)
         """
+        xi = self.strain(q).reshape(self.num_segments, 3)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
         # Classify the point along the robot to the corresponding segment
@@ -766,26 +767,33 @@ class PlanarPCS(DynamicalSystem):
         # =================================
         # Computation of the time-derivative of the Jacobian
 
-        idx_range = jnp.arange(self.num_segments)
-        J_i = vmap(
-            lambda i: lax.dynamic_index_in_dim(_J_local, i, axis=0, keepdims=False)
-        )(idx_range)  # shape: (num_segments, 3, 3)
-        sum_Jj_xid_j = compute_weighted_sums(
-            _J_local, xid, self.num_segments
-        )  # shape: (num_segments, 3)
-        adjoint_sum = vmap(lie.adjoint_se2)(sum_Jj_xid_j)  # shape: (num_segments, 3, 3)
+        # idx_range = jnp.arange(self.num_segments)
+        # J_i = vmap(
+        #     lambda i: lax.dynamic_index_in_dim(_J_local, i, axis=0, keepdims=False)
+        # )(idx_range)  # shape: (num_segments, 3, 3)
+        # sum_Jj_xid_j = compute_weighted_sums(
+        #     _J_local, xid, self.num_segments
+        # )  # shape: (num_segments, 3)
+        # adjoint_sum = vmap(lie.adjoint_se2)(sum_Jj_xid_j)  # shape: (num_segments, 3, 3)
 
-        # Compute the time-derivative of the Jacobian
-        _Jd_local = jnp.einsum(
-            "ijk, ikl->ijl", adjoint_sum, J_i
-        )  # shape: (num_segments, 3, 3)
+        # # Compute the time-derivative of the Jacobian
+        # _Jd_local = jnp.einsum(
+        #     "ijk, ikl->ijl", adjoint_sum, J_i
+        # )  # shape: (num_segments, 3, 3)
 
-        # Replace the elements of Jd_segment_SE2 for i > segment_idx by null matrices
-        _Jd_local = jnp.where(
-            jnp.arange(self.num_segments)[:, None, None] > segment_idx,
-            jnp.zeros_like(_Jd_local),
-            _Jd_local,
-        )
+        # # Replace the elements of Jd_segment_SE2 for i > segment_idx by null matrices
+        # _Jd_local = jnp.where(
+        #     jnp.arange(self.num_segments)[:, None, None] > segment_idx,
+        #     jnp.zeros_like(_Jd_local),
+        #     _Jd_local,
+        # )
+        # TODO: The below implementation only works for a single segment robot
+        # Ad_g_inv = lie.Adjoint_g_inv_SE2(
+        #     lie.exp_SE2(self.forward_kinematics(q, s))
+        # )
+        Ad_g_inv = lie.Adjoint_gi_se2_inv(xi[0], s, eps=self.global_eps)
+        Tangent_dot = lie.Tangent_dot_gi_se2(xi[0], xid[0], s, eps=self.global_eps)
+        _Jd_local = (Ad_g_inv @ Tangent_dot @ self.B_xi)[None]
 
         return _J_local, _Jd_local
 
