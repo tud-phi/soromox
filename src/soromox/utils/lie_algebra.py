@@ -341,18 +341,29 @@ def Tangent_dot_gi_se2(
     theta = xi_i[0]  # Angular part
     thetad = xid_i[0]  # Time derivative of the angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
-    adjoint_dot_xi_i = adjoint_se2(xid_i)  # Adjoint representation of the input vector
+    adjoint_xid_i = adjoint_se2(xid_i)  # Adjoint representation of the input vector
 
     cos = jnp.cos(s_i * theta)
     sin = jnp.sin(s_i * theta)
+
+    def _adjoint_dot_power(r: int) -> Array:
+        adjoint_dot_power_r = jnp.zeros_like(adjoint_xi_i)
+        for u in range(1, r):
+            adjoint_dot_power_r = (
+                adjoint_dot_power_r 
+                + jnp.linalg.matrix_power(adjoint_xi_i, r - u) @ adjoint_xid_i @ jnp.linalg.matrix_power(adjoint_xi_i, u - 1)
+            )
+        return adjoint_dot_power_r
+
 
     def _tangent_dot_nonzero() -> Array:
         adjoint_xi_i_square = jnp.linalg.matrix_power(adjoint_xi_i, 2)
         adjoint_xi_i_cube = jnp.linalg.matrix_power(adjoint_xi_i, 3)
         adjoint_xi_i_quad = jnp.linalg.matrix_power(adjoint_xi_i, 4)
-        adjoint_dot_xi_i_square = jnp.linalg.matrix_power(adjoint_dot_xi_i, 2)
-        adjoint_dot_xi_i_cube = jnp.linalg.matrix_power(adjoint_dot_xi_i, 3)
-        adjoint_dot_xi_i_quad = jnp.linalg.matrix_power(adjoint_dot_xi_i, 4)
+        adjoint_dot_xi_i = _adjoint_dot_power(1)
+        adjoint_dot_xi_i_square = _adjoint_dot_power(2)
+        adjoint_dot_xi_i_cube = _adjoint_dot_power(3)
+        adjoint_dot_xi_i_quad = _adjoint_dot_power(4)
 
         coeff_theta_common = -8 + (8 - s_i**2 * theta**2) * cos + 5 * s_i * theta * sin
         coeff_theta_alt = -8 * s_i * theta + (15 - s_i**2 * theta**2) * sin - 7 * s_i * theta * cos
@@ -378,7 +389,7 @@ def Tangent_dot_gi_se2(
 
     Tangent_dot = lax.cond(
         jnp.abs(theta) <= eps,
-        lambda _: s_i**2 / 2 * adjoint_dot_xi_i,
+        lambda _: s_i**2 / 2 * adjoint_xid_i,
         lambda _: _tangent_dot_nonzero(),
         operand=None,
     )
