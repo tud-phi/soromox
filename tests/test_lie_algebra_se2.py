@@ -1,0 +1,188 @@
+import jax
+from jax import numpy as jnp
+from numpy.testing import assert_allclose
+
+from soromox.utils.lie_algebra.se2 import (
+    Adjoint_g_SE2,
+    Adjoint_g_inv_SE2,
+    Adjoint_gi_se2,
+    Adjoint_gi_se2_inv,
+    Tangent_dot_gi_se2,
+    Tangent_gi_se2,
+    adjoint_se2,
+    coadjoint_se2,
+    exp_SE2,
+    hat_SE2,
+)
+from soromox.utils.tolerance import Tolerance
+
+
+jax.config.update("jax_enable_x64", True)
+
+
+RTOL = Tolerance.rtol()
+ATOL = Tolerance.atol()
+EPS = 1e-6
+J = jnp.array([[0.0, -1.0], [1.0, 0.0]])
+
+
+def test_hat_se2_returns_expected_matrix():
+    vec = jnp.array([0.5, 2.0, -1.0])
+    expected = jnp.array(
+        [
+            [0.0, -0.5, 2.0],
+            [0.5, 0.0, -1.0],
+            [0.0, 0.0, 0.0],
+        ]
+    )
+
+    result = hat_SE2(vec)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_exp_se2_produces_rotation_and_translation():
+    vec = jnp.array([jnp.pi / 2.0, 1.0, -2.0])
+    expected = jnp.array(
+        [
+            [0.0, -1.0, 1.0],
+            [1.0, 0.0, -2.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+
+    result = exp_SE2(vec)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_adjoint_se2_matches_closed_form():
+    vec = jnp.array([0.5, 2.0, -1.0])
+    v1, v2 = vec[1], vec[2]
+    ang = vec[0]
+    expected = jnp.array(
+        [
+            [0.0, 0.0, 0.0],
+            [v2, 0.0, -ang],
+            [-v1, ang, 0.0],
+        ]
+    )
+
+    result = adjoint_se2(vec)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_coadjoint_se2_matches_closed_form():
+    vec = jnp.array([0.5, 2.0, -1.0])
+    v1, v2 = vec[1], vec[2]
+    ang = vec[0]
+    expected = jnp.array(
+        [
+            [0.0, v2, -v1],
+            [0.0, 0.0, -ang],
+            [0.0, ang, 0.0],
+        ]
+    )
+
+    result = coadjoint_se2(vec)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_adjoint_g_se2_matches_manual_construction():
+    vec = jnp.array([jnp.pi / 3.0, 0.5, -0.2])
+    g = exp_SE2(vec)
+    R = g[:2, :2]
+    t = g[:2, 2].reshape((2, 1))
+    expected = jnp.concatenate(
+        [
+            jnp.concatenate([jnp.ones((1, 1)), jnp.zeros((1, 2))], axis=1),
+            jnp.concatenate([-J @ t, R], axis=1),
+        ],
+        axis=0,
+    )
+
+    result = Adjoint_g_SE2(g)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_adjoint_g_inv_se2_is_matrix_inverse():
+    vec = jnp.array([jnp.pi / 4.0, 0.2, -0.7])
+    g = exp_SE2(vec)
+
+    adj = Adjoint_g_SE2(g)
+    adj_inv = Adjoint_g_inv_SE2(g)
+
+    assert_allclose(adj @ adj_inv, jnp.eye(3), rtol=RTOL, atol=ATOL)
+    assert_allclose(adj_inv @ adj, jnp.eye(3), rtol=RTOL, atol=ATOL)
+
+
+def test_adjoint_gi_se2_zero_theta_matches_first_order_series():
+    xi = jnp.array([0.0, 1.0, -2.0])
+    s = jnp.array(0.3)
+
+    expected = jnp.eye(3) + s * adjoint_se2(xi)
+
+    result = Adjoint_gi_se2(xi, s, eps=EPS)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_adjoint_gi_se2_inverse_matches_identity():
+    xi = jnp.array([0.7, 0.25, -0.1])
+    s = jnp.array(0.5)
+
+    adj = Adjoint_gi_se2(xi, s, eps=EPS)
+    adj_inv = Adjoint_gi_se2_inv(xi, s, eps=EPS)
+
+    assert_allclose(adj @ adj_inv, jnp.eye(3), rtol=RTOL, atol=ATOL)
+    assert_allclose(adj_inv @ adj, jnp.eye(3), rtol=RTOL, atol=ATOL)
+
+
+def test_tangent_gi_se2_zero_theta_matches_truncated_series():
+    xi = jnp.array([0.0, 1.0, -0.5])
+    s = jnp.array(0.4)
+
+    expected = s * jnp.eye(3) + 0.5 * s**2 * adjoint_se2(xi)
+
+    result = Tangent_gi_se2(xi, s, eps=EPS)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_tangent_gi_se2_derivative_zero_without_motion():
+    xi = jnp.array([0.7, 0.2, -0.3])
+    xid = jnp.zeros((3,))
+    s = jnp.array(0.6)
+
+    result = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+    expected = jnp.zeros((3, 3))
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_tangent_dot_gi_se2_zero_theta_matches_truncated_series():
+    xi = jnp.array([0.0, 0.5, -0.1])
+    xid = jnp.array([0.1, -0.4, 0.2])
+    s = jnp.array(0.2)
+
+    expected = 0.5 * s**2 * adjoint_se2(xid)
+
+    result = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+def test_tangent_dot_matches_autodiff():
+    xi = jnp.array([0.7, -0.3, 0.25])
+    xid = jnp.array([-0.2, 0.4, -0.35])
+    s = jnp.array(0.6)
+
+    def tangent_map(xi_):
+        return Tangent_gi_se2(xi_, s, eps=EPS)
+
+    _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
+    closed_form = Tangent_dot_gi_se2(xi, xid, s, eps=EPS)
+
+    assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
