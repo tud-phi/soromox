@@ -8,6 +8,7 @@ __all__ = [
     "Adjoint_gi_se2",
     "Adjoint_gi_se2_inv",
     "Tangent_gi_se2",
+    "Tangent_dot_gi_se2",
 ]
 
 import jax.numpy as jnp
