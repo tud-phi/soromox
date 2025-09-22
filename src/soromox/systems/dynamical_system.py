@@ -29,7 +29,7 @@ class DynamicalSystem(eqx.Module):
         t0: Optional[float] = 0.0,
         t1: Optional[float] = 10.0,
         dt: Optional[float] = 1e-4,
-        save_every_n_steps: int = 1,
+        n_save_steps: Optional[int] = 2,
         solver: Optional[AbstractSolver] = Tsit5(),
         stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
         max_steps: Optional[int] = None,
@@ -49,10 +49,11 @@ class DynamicalSystem(eqx.Module):
                 Default is 10.0.
             dt (float, optional): Time step for the solver.
                 Default is 1e-4.
-            save_every_n_steps (int, optional): Determines how many time steps to skip
-                when saving the output. For example, if set to 1, every time step is saved;
-                if set to 10, every 10th time step is saved.
-                Default is 1 (save every step).
+            n_save_steps (int, optional): Determines the number of time steps to save in the
+                output. For example, if set to 1, only the first time step is saved; if set
+                to 2, only the first and the last time steps are saved; if set to 10, 10
+                linearly spaced time steps between t0 and t1 are saved.
+                Default is 2 (end time steps).
             solver (AbstractSolver, optional): Solver to use for the ODE integration.
                 Default is Tsit5() (Runge-Kutta 5(4) method).
             stepsize_controller (PIDController, optional): Stepsize controller for the solver.
@@ -72,12 +73,8 @@ class DynamicalSystem(eqx.Module):
             tau_ext = jnp.zeros((q0.shape[-1],))
 
         term = ODETerm(self.forward_dynamics)
-
-        t = jnp.arange(t0, t1, dt)  # Time points for the solution
-        
-        assert save_every_n_steps > 0, "save_every_n_steps must be a positive integer."
-        assert isinstance(save_every_n_steps, int), "save_every_n_steps must be an integer."
-        saveat = SaveAt(ts=t[::save_every_n_steps])  # Save at specified time points
+        t = jnp.linspace(t0, t1, n_save_steps)  # Time points for the solution
+        saveat = SaveAt(ts=t)  # Save at specified time points
 
         sol = diffeqsolve(
             terms=term,
