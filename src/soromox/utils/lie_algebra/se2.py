@@ -198,7 +198,6 @@ def Adjoint_gi_se2(
         Adjoint: shape (3, 3)
             A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
     theta = jnp.linalg.norm(xi_i[0])  # Angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
 
@@ -291,7 +290,6 @@ def Tangent_gi_se2(
         Tangent: shape (3, 3)
             A 3x3 matrix representing the tangent transformation of the input screw vector at the specified position.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
     theta = jnp.linalg.norm(xi_i[0])  # Angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
 
@@ -346,7 +344,7 @@ def Tangent_dot_gi_se2(
         Tangent_dot: Array of shape (3, 3)
             A 3x3 matrix representing the time derivative of the tangent transformation of the input screw vector at the specified position.
     """
-    theta = xi_i[0]  # Angular part
+    theta = jnp.linalg.norm(xi_i[0])  # Angular part
     thetad = xid_i[0]  # Time derivative of the angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
     adjoint_xid_i = adjoint_se2(xid_i)  # Adjoint representation of the input vector
