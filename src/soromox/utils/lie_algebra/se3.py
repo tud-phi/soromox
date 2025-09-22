@@ -324,7 +324,6 @@ def Adjoint_gi_se3(
         Array: shape (4, 4)
             A 4x4 matrix representing the adjoint transformation of the input screw vector at the specified position.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
     ang = xi_i[:3].reshape((3, 1))  # Angular as a (3,1) vector
     theta = jnp.linalg.norm(ang)  # Compute the norm of the angular part
     adjoint_xi_i = adjoint_se3(xi_i)  # Adjoint representation of the input vector
@@ -418,7 +417,6 @@ def Tangent_gi_se3(
         T (Array): shape (6, 6)
             A 6x6 matrix representing the tangent transformation of the input screw vector at the specified position.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
     ang = xi_i[:3].reshape((3, 1))  # Angular as a (3,1) vector
     theta = jnp.linalg.norm(ang)  # Compute the norm of the angular part
     adjoint_xi_i = adjoint_se3(xi_i)  # Adjoint representation of the input vector
@@ -453,9 +451,11 @@ def Tangent_gi_se3(
 
     return T
 
-
 def Tangent_derivative_gi_se3(
-    xi_i: Array, xid_i: Array, s_i: Array, eps: float
+    xi_i: Array,
+    xid_i: Array,
+    s_i: Array,
+    eps: float,
 ) -> Array:
     """
     Computes the tangent derivative representation of a position of a points at s_i (local curvilinear coordinate)
@@ -478,72 +478,75 @@ def Tangent_derivative_gi_se3(
         Td (Array): shape (6, 6)
             A 6x6 matrix representing the tangent derivative transformation of the input screw vector at the specified position.
     """
+    # extract the angular parts of xi_i and xid_i
     k = xi_i[:3]
     kd = xid_i[:3]
 
-    theta = jnp.linalg.norm(k)  # Compute the norm of the angular part
-    adj_vec6 = adjoint_se3(
-        xi_i
-    )  # Compute the adjoint representation of the screw vector
+    # Compute the norm of the angular part
+    theta = jnp.linalg.norm(k)
+    # Compute the adjoint representation of the screw vector
+    adjoint_xi_i = adjoint_se3(xi_i)
 
     thetad = jnp.dot(kd, k) / theta
-    adj_vec6d = adjoint_se3(
-        xid_i
-    )  # Compute the adjoint representation of the derivative screw vector
+    # Compute the adjoint representation of the derivative screw vector
+    adjoint_xid_i = adjoint_se3(xid_i)
 
-    costheta = jnp.cos(theta)
-    sintheta = jnp.sin(theta)
+    cos_theta = jnp.cos(s_i * theta)
+    sin_theta = jnp.sin(s_i * theta)
 
-    adj_vec6d_2 = adj_vec6d @ adj_vec6 + adj_vec6 @ adj_vec6d
-    adj_vec6d_3 = (
-        adj_vec6d_2 @ adj_vec6 + jnp.linalg.matrix_power(adj_vec6, 2) @ adj_vec6d
-    )
-    adj_vec6d_4 = (
-        adj_vec6d_3 @ adj_vec6 + jnp.linalg.matrix_power(adj_vec6, 3) @ adj_vec6d
-    )
+    def _tangent_dot_nonzero() -> Array:
+        def _adjoint_powers_with_derivatives(max_power: int):
+            # Recursively build A^k and d/dt(A^k) using P_k = P_{k-1} @ A.
+            current = jnp.eye(6)
+            dot_current = jnp.zeros_like(adjoint_xi_i)
+            powers = [current]
+            dot_powers = [dot_current]
+
+            for _ in range(max_power):
+                dot_next = dot_current @ adjoint_xi_i + current @ adjoint_xid_i
+                current = current @ adjoint_xi_i
+                powers.append(current)
+                dot_powers.append(dot_next)
+                dot_current = dot_next
+
+            return powers, dot_powers
+
+        powers, dot_powers = _adjoint_powers_with_derivatives(4)
+
+        adjoint_xi_i_square = powers[2]
+        adjoint_xi_i_cube = powers[3]
+        adjoint_xi_i_quad = powers[4]
+        adjoint_dot_xi_i = dot_powers[1]
+        adjoint_dot_xi_i_square = dot_powers[2]
+        adjoint_dot_xi_i_cube = dot_powers[3]
+        adjoint_dot_xi_i_quad = dot_powers[4]
+
+        coeff_theta_common = -8 + (8 - s_i**2 * theta**2) * cos_theta + 5 * s_i * theta * sin_theta
+        coeff_theta_alt = -8 * s_i * theta + (15 - s_i**2 * theta**2) * sin_theta - 7 * s_i * theta * cos_theta
+
+        coeff1_theta = thetad / (2 * theta**3) * coeff_theta_common
+        coeff1 = (4 - 4 * cos_theta - s_i * theta * sin_theta) / (2 * theta**2)
+
+        coeff2_theta = thetad / (2 * theta**4) * coeff_theta_alt
+        coeff2 = (4 * s_i * theta - 5 * sin_theta + s_i * theta * cos_theta) / (2 * theta**3)
+
+        coeff3_theta = thetad / (2 * theta**5) * coeff_theta_common
+        coeff3 = (2 - 2 * cos_theta - s_i * theta * sin_theta) / (2 * theta**4)
+
+        coeff4_theta = thetad / (2 * theta**6) * coeff_theta_alt
+        coeff4 = (2 * s_i * theta - 3 * sin_theta + s_i * theta * cos_theta) / (2 * theta**5)
+
+        term1 = coeff1_theta * adjoint_xi_i + coeff1 * adjoint_dot_xi_i
+        term2 = coeff2_theta * adjoint_xi_i_square + coeff2 * adjoint_dot_xi_i_square
+        term3 = coeff3_theta * adjoint_xi_i_cube + coeff3 * adjoint_dot_xi_i_cube
+        term4 = coeff4_theta * adjoint_xi_i_quad + coeff4 * adjoint_dot_xi_i_quad
+
+        return term1 + term2 + term3 + term4
 
     Td = lax.cond(
-        theta <= eps,
-        lambda _: 1 / 2 * adj_vec6d,
-        lambda _: (
-            (thetad / (2 * jnp.power(theta, 3)))
-            * (-8 + (8 - jnp.power(theta, 2)) * costheta + 5 * theta * sintheta)
-            * adj_vec6
-            + 1
-            / (2 * jnp.power(theta, 2))
-            * (4 - 4 * costheta - theta * sintheta)
-            * adj_vec6d
-            + (thetad / (2 * jnp.power(theta, 4)))
-            * (
-                -8 * theta
-                + (15 - jnp.power(theta, 2)) * sintheta
-                - 7 * theta * costheta
-            )
-            * jnp.linalg.matrix_power(adj_vec6, 2)
-            + 1
-            / (2 * jnp.power(theta, 3))
-            * (4 * theta - 5 * sintheta + theta * costheta)
-            * adj_vec6d_2
-            + (thetad / (2 * jnp.power(theta, 5)))
-            * (-8 + (8 - jnp.power(theta, 2)) * costheta + 5 * theta * sintheta)
-            * jnp.linalg.matrix_power(adj_vec6, 3)
-            + 1
-            / (2 * jnp.power(theta, 4))
-            * (2 - 2 * costheta - theta * sintheta)
-            * adj_vec6d_3
-            + (thetad / (2 * jnp.power(theta, 6)))
-            * (
-                -8 * theta
-                + (15 - jnp.power(theta, 2)) * sintheta
-                - 7 * theta * costheta
-            )
-            * jnp.linalg.matrix_power(adj_vec6, 4)
-            + 1
-            / (2 * jnp.power(theta, 5))
-            * (2 * theta - 3 * sintheta + theta * costheta)
-            * adj_vec6d_4
-        ),
+        jnp.abs(theta) <= eps,
+        lambda _: s_i**2 / 2 * adjoint_xid_i,
+        lambda _: _tangent_dot_nonzero(),
         operand=None,
     )
-
     return Td

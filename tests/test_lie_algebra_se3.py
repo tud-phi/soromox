@@ -244,3 +244,8 @@ def test_tangent_derivative_matches_autodiff_random(N: int = 10):
 
         assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
         samples += 1
+
+
+if __name__ == "__main__":
+    # test_tangent_derivative_matches_autodiff_random()
+    pytest.main([__file__])
