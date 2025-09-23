@@ -1,26 +1,30 @@
-from diffrax import Tsit5
+import cv2
 from functools import partial
-from IPython.display import HTML
 import jax
-import jax.numpy as jnp
+
+from diffrax import Tsit5
 from jax import Array
-import matplotlib.pyplot as plt
+from jax import numpy as jnp
+from IPython.display import HTML
 from matplotlib.animation import FuncAnimation
+import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
 import numpy as onp
+from pathlib import Path
+
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.rendering.animation import animate_cv2
+from soromox.rendering.planar_pcs.opencv_renderer import render_planar_pcs
+from soromox.systems.tendon_actuated_planar_pcs import TendonActuatedPlanarPCS
 
-jnp.set_printoptions(
-    threshold=jnp.inf,
-    linewidth=jnp.inf,
-    formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
-)
+
+videos_dir = Path("videos")
+videos_dir.mkdir(parents=True, exist_ok=True)
 
 
 def draw_robot(
-    robot: PlanarPCS,
+    robot: TendonActuatedPlanarPCS,
     q: Array,
     num_points: int = 50,
 ):
@@ -38,9 +42,9 @@ def draw_robot(
 
 
 def animate_robot_matplotlib(
-    robot: PlanarPCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
+    robot: TendonActuatedPlanarPCS,
+    t_ts: Array,  # shape (T,)
+    q_ts: Array,  # shape (T, DOF)
     num_points: int = 50,
     interval: int = 50,
     slider: bool = None,
@@ -59,7 +63,8 @@ def animate_robot_matplotlib(
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
+    if slider:
+        ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
 
     # Base
     def draw_base(ax, robot, L=robot.L[0] / 2):
@@ -70,7 +75,7 @@ def animate_robot_matplotlib(
         ax.plot([x1, x2], [y1, y2], color="black", linestyle="-", linewidth=2)
 
     if animation:
-        (line,) = ax.plot([], [], lw=4, color="blue")
+        (line,) = ax.plot([], [], lw=10, color="blue")
         ax.set_xlim(-width / 2, width / 2)
         ax.set_ylim(0, height)
         title_text = ax.set_title("t = 0.00 s")
@@ -81,8 +86,8 @@ def animate_robot_matplotlib(
             return line, title_text
 
         def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
+            q = q_ts[frame_idx]
+            t = t_ts[frame_idx]
             draw_base(ax, robot, L=0.1)
             curve = draw_robot(robot, q, num_points)
             line.set_data(curve[:, 0], curve[:, 1])
@@ -92,7 +97,7 @@ def animate_robot_matplotlib(
         ani = FuncAnimation(
             fig,
             update,
-            frames=len(q_list),
+            frames=len(q_ts),
             init_func=init,
             blit=False,
             interval=interval,
@@ -100,6 +105,11 @@ def animate_robot_matplotlib(
 
         if show:
             plt.show()
+
+        # Save animation as video
+        print("Saving animation as video...")
+        ani.save(videos_dir / "tendon_actuated_planar_pcs_animation.mp4", writer="ffmpeg", dpi=200)
+
         plt.close(fig)
         return HTML(ani.to_jshtml())
 
@@ -111,9 +121,9 @@ def animate_robot_matplotlib(
             ax.set_ylim(0, height)
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
+            ax.set_title(f"t = {t_ts[frame_idx]:.2f} s")
             draw_base(ax, robot, L=0.1)
-            q = q_list[frame_idx]
+            q = q_ts[frame_idx]
             curve = draw_robot(robot, q, num_points)
             ax.plot(curve[:, 0], curve[:, 1], lw=4, color="blue")
             fig.canvas.draw_idle()
@@ -123,7 +133,7 @@ def animate_robot_matplotlib(
             ax=ax_slider,
             label="Frame",
             valmin=0,
-            valmax=len(t_list) - 1,
+            valmax=len(t_ts) - 1,
             valinit=0,
             valstep=1,
         )
@@ -141,7 +151,7 @@ def animate_robot_matplotlib(
 
 
 if __name__ == "__main__":
-    num_segments = 1
+    num_segments = 3  # number of segments in the robot
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
@@ -150,9 +160,13 @@ if __name__ == "__main__":
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
-        "g": jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        "g": 1 * jnp.array([0.0, 9.81]),  # gravitational acceleration [m/s^2] UP!
+        "E": 5e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        "d": 2e-2
+        * jnp.array([[1.0, -1.0]]).repeat(
+            num_segments, axis=0
+        ),  # distance of tendons from the central axis [m]
     }
     params["D"] = 1e-3 * jnp.diag(
         (
@@ -161,39 +175,82 @@ if __name__ == "__main__":
         ).flatten()
     )
 
+    # activate all strains (i.e. bending, shear, and axial)
+    strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
+    # actuation selector for the segments
+    segment_actuation_selector = jnp.ones((num_segments,), dtype=bool)
+
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PlanarPCS(
+    robot = TendonActuatedPlanarPCS(
         num_segments=num_segments,
         params=params,
-        order_gauss=5,
+        strain_selector=strain_selector,
+        segment_actuation_selector=segment_actuation_selector,
     )
 
-    J, Jd = robot.jacobian_and_derivative(
-        q=jnp.zeros((3 * num_segments,)),
-        qd=jnp.zeros((3 * num_segments,)),
-        s=params["L"][0],
+    w, h = 400, 400  # image height and width
+    rendering_fn = partial(
+        render_planar_pcs,
+        robot,
+        width=w,
+        height=h,
+        length_scale=2.0,
+        num_points=100,
     )
 
     # =====================================================
     # Simulation upon time
     # =====================================================
     # Initial configuration
-    q0 = jnp.repeat(
-        jnp.array([5.0 * jnp.pi, 0.2, 0.1])[None, :], num_segments, axis=0
+    # q0 = jnp.repeat(
+    #     jnp.array([5.0 * jnp.pi, 0.2, 0.1])[None, :], num_segments, axis=0
+    # ).flatten()
+    # q0 = jnp.zeros_like(q0)
+    # randomly sample initial configuration
+    key = jax.random.PRNGKey(0)
+    q0 = jax.random.normal(key, shape=int(robot.num_active_strains)) * jnp.repeat(
+        jnp.array([5.0 * jnp.pi, 0.1, 0.05])[None, :], num_segments, axis=0
     ).flatten()
+    print("q0 =\n", q0)
+
+    # # visualize initial configuration
+    # cv2.imshow(
+    #     "Robot",
+    #     rendering_fn(q0),
+    # )
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    u = jnp.zeros_like(q0)
+    # u = (
+    #     jnp.array([1.0, 0.0])[None].repeat(num_segments, axis=0).flatten()
+    # )  # tendon tensions
+    # u = jnp.zeros((robot.num_actuators,))  # no actuation
+    # randomly sample actuation
+    u = jax.random.uniform(
+        key,
+        shape=(robot.num_actuators,),
+        minval=0.0,
+        maxval=2e0,
+    )
+    print("u =\n", u)
+
+    # call the actuation mapping function
+    A = robot.actuation_matrix(
+        q0,
+    )
+    print("A =\n", A)
 
     # Simulation time parameters
     t0 = 0.0
-    t1 = 2.0
+    t1 = 10.0
     dt = 1e-4
-    save_every_n_steps = 100
+    save_every_n_steps = 10
 
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
@@ -231,21 +288,19 @@ if __name__ == "__main__":
         plt.plot(
             ts,
             q_ts[:, 3 * segment_idx + 2],
-            label=r"$\sigma_\mathrm{sh," + str(segment_idx + 1) + "}$ [-]",
+            label=r"$\sigma_\mathrm{ax," + str(segment_idx + 1) + "}$ [-]",
         )
         plt.plot(
             ts,
             q_ts[:, 3 * segment_idx + 1],
-            label=r"$\sigma_\mathrm{ax," + str(segment_idx + 1) + "}$ [-]",
+            label=r"$\sigma_\mathrm{sh," + str(segment_idx + 1) + "}$ [-]",
         )
     plt.xlabel("Time [s]")
     plt.ylabel("Configuration")
     plt.legend()
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
 
-    # plot end-effector position vs time
     plt.figure()
     plt.plot(ts, chi_ee_ts[:, 1], label="End-effector x [m]")
     plt.plot(ts, chi_ee_ts[:, 2], label="End-effector y [m]")
@@ -255,18 +310,20 @@ if __name__ == "__main__":
     plt.grid(True)
     plt.box(True)
     plt.tight_layout()
-    plt.show()
 
     # end effector orientation vs. time
     plt.figure()
-    plt.plot(ts, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.plot(
+        ts,
+        chi_ee_ts[:, 0] / jnp.pi * 180,
+        label=r"End-effector Orientation $\theta$ [deg]",
+    )
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector Orientation [deg]")
     plt.legend()
     plt.grid(True)
     plt.box(True)
     plt.tight_layout()
-    plt.show()
 
     # plot the end-effector position in the x-y plane as a scatter plot with the time as the color
     plt.figure()
@@ -277,7 +334,6 @@ if __name__ == "__main__":
     plt.ylabel("End-effector y [m]")
     plt.colorbar(label="Time [s]")
     plt.tight_layout()
-    plt.show()
 
     # =====================================================
     # Energy computation upon time
@@ -302,9 +358,20 @@ if __name__ == "__main__":
     # =====================================================
     animate_robot_matplotlib(
         robot=robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
+        t_ts=ts,  # shape (T,)
+        q_ts=q_ts,  # shape (T, DOF)
         num_points=50,
         interval=100,  # ms
         slider=True,
+    )
+    animate_cv2(
+        rendering_fn=rendering_fn,
+        t_ts=onp.array(ts),
+        q_ts=onp.array(q_ts),
+        filepath=videos_dir / "tendon_actuated_planar_pcs_cv2.mp4",
+        width=w,
+        height=h,
+        speed_up=1.0,
+        skip_step=save_every_n_steps,
+        rgb_to_bgr=False,
     )

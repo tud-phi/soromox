@@ -101,7 +101,7 @@ if __name__ == "__main__":
 
     # create video
     video_width, video_height = 700, 700  # img height and width
-    video_path = Path(__file__).parent / "videos" / "planar_hsa.mp4"
+    video_path = Path("videos") / "planar_hsa.mp4"
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     animate_robot(
