@@ -579,7 +579,7 @@ class PlanarPCS(DynamicalSystem):
     @eqx.filter_jit
     def _J_local(self, q: Array, s: Array) -> Array:
         """
-        Compute the Jacobian of the forward kinematics at a point s along the robot.
+        Compute the body frame Jacobian of the forward kinematics at a point s along the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -737,9 +737,9 @@ class PlanarPCS(DynamicalSystem):
         Returns:
             J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (3, num_active_strains)
         """
-        _J_local = self._J_local(q, s)
+        J_local_ = self._J_local(q, s)
 
-        J_local = self._final_size_jacobian(_J_local) @ self.B_xi
+        J_local = self._final_size_jacobian(J_local_) @ self.B_xi
 
         return J_local
 
@@ -755,24 +755,24 @@ class PlanarPCS(DynamicalSystem):
         Returns:
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (3, num_active_strains)
         """
-        _J_local = self._J_local(q, s)
+        J_local_ = self._J_local(q, s)
 
         chi = self.forward_kinematics(q, s)
         theta = chi[0]
-        g_i = lie.exp_SE2(
-            jnp.stack([theta, 0.0, 0.0])
-        )  # SE(2) transformation at point s
-        Adj_gi = lie.Adjoint_g_SE2(
-            g_i
-        )  # Adjoint representation of the SE(2) transformation
+        # SE(2) transformation at point s
+        g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
+        # Adjoint representation of the SE(2) transformation
+        Ad_g = lie.Adjoint_g_SE2(g)
 
-        _J_global = jnp.einsum(
+        # Rotate the Jacobian to the inertial frame
+        J_global_ = jnp.einsum(
             "ij, njk -> nik",
-            Adj_gi,
-            _J_local,
+            Ad_g,
+            J_local_,
         )
 
-        J_global = self._final_size_jacobian(_J_global) @ self.B_xi
+        # Reduce to the active strains
+        J_global = self._final_size_jacobian(J_global_) @ self.B_xi
 
         return J_global
 
@@ -968,10 +968,10 @@ class PlanarPCS(DynamicalSystem):
             J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (3, num_active_strains)
             Jd_local (Array): Time-derivative of the Jacobian at point s in the body frame, shape (3, num_active_strains)
         """
-        _J_local, _Jd_local = self._J_Jd_local(q, qd, s)
+        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
 
-        J_local = self._final_size_jacobian(_J_local) @ self.B_xi
-        Jd_local = self._final_size_jacobian(_Jd_local) @ self.B_xi
+        J_local = self._final_size_jacobian(J_local_) @ self.B_xi
+        Jd_local = self._final_size_jacobian(Jd_local_) @ self.B_xi
 
         return J_local, Jd_local
 
