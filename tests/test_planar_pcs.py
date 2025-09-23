@@ -625,6 +625,4 @@ def test_coriolis_force_with_christoffel_symbols(num_segments):
 
 if __name__ == "__main__":
     # run pytest with activated stdout
-    test_Jd_bodyframe_matches_autograd_jvp(num_segments=2)
-    test_Jd_bodyframe_matches_central_differences(num_segments=2)
     pytest.main([__file__])
