@@ -945,10 +945,10 @@ class PlanarPCS(DynamicalSystem):
             J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
             Jd_local (Array): Time-derivative of the Jacobian at point s in the body frame, shape (6, num_active_strains)
         """
-        _J_local, _Jd_local = self._J_Jd_local(q, qd, s)
+        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
 
-        J_local = self._final_size_jacobian(_J_local)
-        Jd_local = self._final_size_jacobian(_Jd_local)
+        J_local = self._final_size_jacobian(J_local_)
+        Jd_local = self._final_size_jacobian(Jd_local_)
 
         return J_local, Jd_local
 
@@ -991,47 +991,59 @@ class PlanarPCS(DynamicalSystem):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (3, num_active_strains)
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (3, num_active_strains)
         """
-        _J_local, _Jd_local = self._J_Jd_local(q, qd, s)
+        # Compute the strains and strain rates
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
+        # Compute the bodyframe Jacobian and its derivative
+        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)  # shape (num_segments, 3, 3)
+
+        # Compute the forward kinematics to get the pose at point s
         chi = self.forward_kinematics(q, s)
         theta = chi[0]
-        g_i = lie.exp_SE2(
-            jnp.stack([theta, 0.0, 0.0])
-        )  # SE(2) transformation at point s
-        Adj_gi = lie.Adjoint_g_SE2(g_i)
+        # SE(2) transformation at point s
+        g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
+        # # Bodyframe velocity twist at point s
+        # eta = jnp.einsum("nij,nj->ni", J_local_, xid)
+        # # Compute time derivative of g
+        # gd = g @ lie.hat_SE2(eta)
 
-        _J_global = jnp.einsum(
+        # Adjoint representation of the SE(2) transformation
+        Ad_g = lie.Adjoint_g_SE2(g)
+        # # Derivative of the Adjoint
+        # Ad_g_dot = Ad_g @ lie.adjoint_se2(eta)
+
+        # Compute Ad_g_dot using jax.jvp
+        def Ad_of_q(q_):
+            chi = self.forward_kinematics(q_, s)
+            theta = chi[0]
+            g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
+            Ad_g = lie.Adjoint_g_SE2(g)
+            return Ad_g
+        _, Ad_g_dot = jax.jvp(Ad_of_q, (q,), (qd,))
+        
+
+        # Rotate the Jacobian to the inertial frame
+        J_global_ = jnp.einsum(
             "ij, njk -> nik",
-            Adj_gi,
-            _J_local,
+            Ad_g,
+            J_local_,
         )
-        J_global = self._final_size_jacobian(_J_global) @ self.B_xi
 
-        # TODO:
-        # Jd = d(Ad_g * J_local) / dt
-        #       = Ad_g * d(J_local) / dt + d(Ad_g) / dt * J_local
-        # we need to add the term d(Ad_g) / dt * J_local !!!
+        # compute the inertial frame Jacobian derivative
+        Jd_global_ = jnp.einsum(
+            "ij, njk -> nik",
+            Ad_g,
+            Jd_local_,
+        ) + jnp.einsum(
+            "ij, njk -> nik",
+            Ad_g_dot,
+            J_local_,
+        )
 
-        # d(Ad_g) / dt = Ad_g @ adj_eta
-
-        # Not working yet, still corrections to be done
-        # J_local = self._final_size_jacobian(_J_local) @ self.B_xi
-        # eta_i = J_local @ qd  # Strain rate vector at point s
-        # print(f"eta_i: {eta_i}")
-        # thetad = eta_i[0]  # Angular velocity component
-        # adj_eta_i = lie.adjoint_se2(jnp.stack([thetad, 0.0, 0.0]))
-        # d_Adj_gi_dt = Adj_gi @ adj_eta_i
-        # _Jd_global = (
-        #     jnp.einsum("ij, njk -> nik", Adj_gi, _Jd_local) +
-        #     jnp.einsum("ij, njk -> nik", d_Adj_gi_dt,  _J_local)
-        # )
-        # Jd_global = self._final_size_jacobian(_Jd_global) @ self.B_xi
-
-        # Meanwhile
-        def J_of_q(q_):
-            return self.jacobian_inertialframe(q_, s)
-
-        _, Jd_global = jax.jvp(J_of_q, (q,), (qd,))
+        # reduce to the active strains
+        J_global = self._final_size_jacobian(J_global_) @ self.B_xi
+        Jd_global = self._final_size_jacobian(Jd_global_) @ self.B_xi
 
         return J_global, Jd_global
 
