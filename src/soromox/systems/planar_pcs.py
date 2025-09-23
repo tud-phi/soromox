@@ -992,7 +992,6 @@ class PlanarPCS(DynamicalSystem):
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (3, num_active_strains)
         """
         # Compute the strains and strain rates
-        xi = self.strain(q).reshape(self.num_segments, 3)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
         # Compute the bodyframe Jacobian and its derivative
@@ -1000,28 +999,17 @@ class PlanarPCS(DynamicalSystem):
 
         # Compute the forward kinematics to get the pose at point s
         chi = self.forward_kinematics(q, s)
+        # extract the orientation
         theta = chi[0]
         # SE(2) transformation at point s
         g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
-        # # Bodyframe velocity twist at point s
-        # eta = jnp.einsum("nij,nj->ni", J_local_, xid)
-        # # Compute time derivative of g
-        # gd = g @ lie.hat_SE2(eta)
+        # Rotational velocity twist at point s
+        eta_rot = jnp.einsum("nj,nj->", J_local_[:, 0, :], xid)
 
         # Adjoint representation of the SE(2) transformation
         Ad_g = lie.Adjoint_g_SE2(g)
-        # # Derivative of the Adjoint
-        # Ad_g_dot = Ad_g @ lie.adjoint_se2(eta)
-
-        # Compute Ad_g_dot using jax.jvp
-        def Ad_of_q(q_):
-            chi = self.forward_kinematics(q_, s)
-            theta = chi[0]
-            g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
-            Ad_g = lie.Adjoint_g_SE2(g)
-            return Ad_g
-        _, Ad_g_dot = jax.jvp(Ad_of_q, (q,), (qd,))
-        
+        # Derivative of the Adjoint of g
+        Ad_g_dot = Ad_g @ lie.adjoint_se2(jnp.stack([eta_rot, 0.0, 0.0])[:, None])
 
         # Rotate the Jacobian to the inertial frame
         J_global_ = jnp.einsum(
