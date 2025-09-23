@@ -40,9 +40,9 @@ def hat_SE2(vec3: Array) -> Array:
     Computes the hat operator for a 3D vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw.
-            The first element correspond to the angular component,
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] in se(2).
+            The first element corresponds to the angular component,
             and the last two elements correspond to the linear components.
 
     Returns:
@@ -66,9 +66,8 @@ def exp_SE2(vec3: Array) -> Array:
     Computes the exponential map for a 3D vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the position.
-            [theta, x, y] where theta is the rotation angle and (x, y) is the translation vector.
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] where theta is the rotation angle and (vx, vy) is the translation vector.
     Returns:
         g: shape (3, 3)
             A 3x3 matrix representing the exponential map of the input screw vector.
@@ -156,19 +155,19 @@ def adjoint_se2(vec3: Array) -> Array:
     Computes the adjoint representation of a vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3, 1)
-            A 3-dimensional vector representing the screw.
-            The first element correspond to the angular component,
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] in se(2).
+            The first element corresponds to the angular component,
             and the last two elements correspond to the linear component.
 
     Returns:
         ad: shape (3, 3)
             A 3x3 matrix representing the adjoint transformation of the input screw vector.
     """
-    vec3 = vec3.reshape(-1)  # Ensure vec6 is a 1D array
+    vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
 
     ang = vec3[0]
-    lin = vec3[1:].reshape((2, 1))  # Linear as a (3,1) vector
+    lin = vec3[1:].reshape((2, 1))  # Linear as a (2,1) vector
 
     ad = jnp.concatenate(
         [jnp.zeros((1, 3)), jnp.concatenate([-J @ lin, ang * J], axis=1)]
@@ -182,19 +181,19 @@ def coadjoint_se2(vec3: Array) -> Array:
     Computes the co-adjoint representation of a vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3, 1)
-            A 3-dimensional vector representing the screw.
-            The first element correspond to the angular component,
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] in se(2).
+            The first element corresponds to the angular component,
             and the last two elements correspond to the linear component.
 
     Returns:
         coad: shape (3, 3)
             A 3x3 matrix representing the co-adjoint transformation of the input screw vector.
     """
-    vec3 = vec3.reshape(-1)  # Ensure vec6 is a 1D array
+    vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
 
     ang = vec3[0]
-    lin = vec3[1:].reshape((2, 1))  # Linear as a (3,1) vector
+    lin = vec3[1:].reshape((2, 1))  # Linear as a (2,1) vector
 
     coad = jnp.concatenate(
         [jnp.zeros((3, 1)), jnp.concatenate([lin.T @ J, ang * J], axis=0)], axis=1
@@ -205,15 +204,15 @@ def coadjoint_se2(vec3: Array) -> Array:
 
 def Adjoint_g_SE2(mat3: Array) -> Array:
     """
-    Computes the adjoint representation of a 3x3 matrix.
+    Computes the adjoint representation of an SE(2) homogeneous transform.
 
     Args:
-        mat4 (Array): array-like, shape (4,4)
-            A 4x4 matrix representing the transformation.
+        mat3 (Array): shape (3, 3)
+            Homogeneous transform in SE(2).
 
     Returns:
-        Ad: shape (3, 3)
-            A 3x3 matrix representing the Adjoint transformation of the input matrix.
+        Ad (Array): shape (3, 3)
+            Adjoint matrix associated with ``mat3``.
     """
     R = mat3[:2, :2]  # Extract the angular part (top-left 2x2 block)
     t = mat3[:2, 2].reshape((2, 1))  # Extract the linear part (top-right column)
@@ -230,15 +229,15 @@ def Adjoint_g_SE2(mat3: Array) -> Array:
 
 def Adjoint_g_inv_SE2(mat3: Array) -> Array:
     """
-    Computes the adjoint representation of a 3x3 matrix.
+    Computes the inverse adjoint representation of an SE(2) homogeneous transform.
 
     Args:
-        mat4 (Array): array-like, shape (4,4)
-            A 4x4 matrix representing the transformation.
+        mat3 (Array): shape (3, 3)
+            Homogeneous transform in SE(2).
 
     Returns:
-        Ad_inv: shape (3, 3)
-            A 3x3 matrix representing the Adjoint transformation of the input matrix.
+        Ad_inv (Array): shape (3, 3)
+            Inverse of ``Adjoint_g_SE2(mat3)``.
     """
     Ad = Adjoint_g_SE2(mat3)  # Adjoint representation of the input matrix
 
@@ -265,19 +264,17 @@ def Adjoint_gi_se2(
     eps: float,
 ) -> Array:
     """
-    Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed ine the current segment according to a strain vector xi_i.
+    Computes the adjoint at arclength ``s_i`` for a segment strained by ``xi_i``.
 
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in the current segment.
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the current segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
-        Ad: shape (3, 3)
-            A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
+        Array: shape (3, 3)
+            Adjoint matrix evaluated at ``s_i``.
     """
     theta = jnp.linalg.norm(xi_i[0])  # Angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
@@ -316,19 +313,17 @@ def Adjoint_gi_se2_inv(
     eps: float,
 ) -> Array:
     """
-    Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed ine the current segment according to a strain vector xi_i.
+    Computes the inverse adjoint at arclength ``s_i`` for a segment strained by ``xi_i``.
 
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in SE(2).
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
-        Adjoint_inv: shape (3, 3)
-            A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
+        Array: shape (3, 3)
+            Inverse adjoint matrix evaluated at ``s_i``.
     """
     Adj = Adjoint_gi_se2(
         xi_i, s_i, eps=eps
@@ -341,14 +336,14 @@ def Adjoint_gi_se2_inv(
     # Compute the inverse using the Schur complement
     R_inv = jnp.transpose(R)  # Since R is a rotation matrix, R^-1=R^T
     # Construct the inverse Adjoint matrix
-    Adjoint_inv = jnp.concatenate(
+    Ad_inv = jnp.concatenate(
         [
             jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-R_inv @ mJt, R_inv], axis=1),
         ]
     )
 
-    return Adjoint_inv
+    return Ad_inv
 
 
 def Tangent_gi_se2(
@@ -357,19 +352,17 @@ def Tangent_gi_se2(
     eps: float,
 ) -> Array:
     """
-    Computes the tangent representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed in the current segment according to a strain vector xi_i.
+    Computes the tangent operator accumulated over arclength ``s_i`` for strain ``xi_i``.
 
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in SE(2).
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
-        T: shape (3, 3)
-            A 3x3 matrix representing the tangent transformation of the input screw vector at the specified position.
+        Array: shape (3, 3)
+            Tangent matrix evaluated at ``s_i``.
     """
     theta = jnp.linalg.norm(xi_i[0])  # Angular part
     adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
@@ -411,19 +404,19 @@ def Tangent_derivative_gi_se2(
     eps: float,
 ) -> Array:
     """
-    Computes the time derivative of the tangent representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed in the current segment according to a strain vector xi_i.
+    Computes the time derivative of the tangent operator at arclength ``s_i``.
+
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in SE(2).
-        xid_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the time derivative of the screw in SE(2).
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        xid_i (Array): shape (3,) or (3, 1)
+            Time derivative of the strain vector.
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
+
     Returns:
-        Td: Array of shape (3, 3)
-            A 3x3 matrix representing the time derivative of the tangent transformation of the input screw vector at the specified position.
+        Array: shape (3, 3)
+            Time derivative of the tangent matrix evaluated at ``s_i``.
     """
     theta = jnp.linalg.norm(xi_i[0])  # Angular part
     thetad = xid_i[0]  # Time derivative of the angular part

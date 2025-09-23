@@ -22,8 +22,8 @@ def tilde_SE3(vec3: Array) -> Array:
     Computes the tilde operator of SE(3) for a 3D vector.
 
     Args:
-        vec3 (Array): array-like, shape (3,1)
-            A 3-dimensional vector.
+        vec3 (Array): shape (3,) or (3, 1)
+            3D vector [x, y, z].
 
     Returns:
         tilde: shape (3, 3)
@@ -44,14 +44,14 @@ def hat_SE3(vec6: Array) -> Array:
     Computes the hat operator for a 6D vector of se(3).
 
     Args:
-        vec6 (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the screw.
+        vec6 (Array): shape (6,) or (6, 1)
+            Screw coordinates [omega, v] in se(3).
             The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear components.
+            and the last three elements correspond to the linear component.
 
     Returns:
         hat: shape (4, 4)
-            A 4x4 matrix representing the hat operator of the input screw vector.
+            Matrix representation of the Lie algebra element.
     """
     vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
 
@@ -70,10 +70,8 @@ def exp_SE3(vec6: Array) -> Array:
     Computes the exponential map for a 6D vector of se(3).
 
     Args:
-        vec6 (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the position.
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
+        vec6 (Array): shape (6,) or (6, 1)
+            Screw coordinates [phi, theta, psi, vx, vy, vz] with ZYX Euler convention for the rotation part.
     Returns:
         g: shape (4, 4)
             A 4x4 matrix representing the exponential map of the input screw vector.
@@ -105,13 +103,13 @@ def log_SE3(g: Array, eps: float) -> Array:
     Computes the logarithm map from SE(3) to se(3), i.e., extracts the twist from a transformation matrix.
 
     Args:
-        g (Array): array-like, shape (4, 4)
-            A transformation matrix in SE(3).
+        g (Array): shape (4, 4)
+            Homogeneous transform in SE(3).
         eps (float): tolerance to avoid division by zero in small angle approximations.
 
     Returns:
         log: shape (6,)
-            A 6D vector (twist) representing the logarithm of the transformation.
+            Twist coordinates corresponding to ``g``.
     """
     R = g[:3, :3]
     p = g[:3, 3].reshape((3, 1))
@@ -163,12 +161,12 @@ def exp_gn_SE3(vec6: Array, eps: float) -> Array:
     Function to compute the exponential map of the Magnus expansion.
 
     Args:
-        vec6 (Array): shape (6,) JAX array
-            The screw vector representing the Magnus expansion.
+        vec6 (Array): shape (6,) or (6, 1)
+            Screw coordinates used in the Magnus expansion.
 
     Returns:
-        g (Array): shape (4, 4) JAX array
-            The exponential map of the Magnus expansion.
+        g (Array): shape (4, 4)
+            Homogeneous transform obtained from the Magnus expansion.
     """
     theta = jnp.linalg.norm(vec6[:3])  # Compute the norm of the angular part
     vec6_hat = hat_SE3(vec6)  # Compute the hat
@@ -207,14 +205,14 @@ def adjoint_se3(vec6: Array) -> Array:
     Computes the adjoint representation of a vector of se(3).
 
     Args:
-        vec6 (Array): array-like, shape (3, 1)
-            A 6-dimensional vector representing the screw.
+        vec6 (Array): shape (6,) or (6, 1)
+            Screw coordinates [omega, v] in se(3).
             The first three elements correspond to the angular component,
             and the last three elements correspond to the linear component.
 
     Returns:
-        ad: shape (4, 4)
-            A 4x4 matrix representing the adjoint transformation of the input screw vector.
+        Array: shape (6, 6)
+            Adjoint representation of ``vec6``.
     """
     vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
 
@@ -234,14 +232,14 @@ def coadjoint_se3(vec6: Array) -> Array:
     Computes the co-adjoint representation of a vector of se(3).
 
     Args:
-        vec6 (Array): array-like, shape (3, 1)
-            A 6-dimensional vector representing the screw.
+        vec6 (Array): shape (6,) or (6, 1)
+            Screw coordinates [omega, v] in se(3).
             The first three elements correspond to the angular component,
             and the last three elements correspond to the linear component.
 
     Returns:
-        coad: shape (4, 4)
-            A 4x4 matrix representing the co-adjoint transformation of the input screw vector.
+        Array: shape (6, 6)
+            Co-adjoint representation of ``vec6``.
     """
     vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
 
@@ -261,12 +259,12 @@ def Adjoint_g_SE3(mat4: Array) -> Array:
     Computes the adjoint representation of a 4x4 matrix.
 
     Args:
-        mat4 (Array): array-like, shape (4,4)
-            A 4x4 matrix representing the transformation.
+        mat4 (Array): shape (4, 4)
+            Homogeneous transform in SE(3).
 
     Returns:
-        Ad: shape (4, 4)
-            A 4x4 matrix representing the Adjoint transformation of the input matrix.
+        Array: shape (6, 6)
+            Adjoint matrix associated with ``mat4``.
     """
     R = mat4[:3, :3]  # Extract the angular part (top-left 3x3 block)
     t = mat4[:3, 3].reshape((3, 1))  # Extract the linear part (top-right column)
@@ -283,12 +281,12 @@ def Adjoint_g_inv_SE3(mat4: Array) -> Array:
     Computes the adjoint representation of a 4x4 matrix.
 
     Args:
-        mat4 (Array): array-like, shape (4,4)
-            A 4x4 matrix representing the transformation.
+        mat4 (Array): shape (4, 4)
+            Homogeneous transform in SE(3).
 
     Returns:
-        Ad_inv: shape (4, 4)
-            A 4x4 matrix representing the Adjoint transformation of the input matrix.
+        Array: shape (6, 6)
+            Inverse adjoint matrix associated with ``mat4``.
     """
     R = mat4[:3, :3]  # Extract the angular part (top-left 3x3 block)
     t = mat4[:3, 3].reshape((3, 1))  # Extract the linear part (top-right column)
@@ -312,17 +310,14 @@ def Adjoint_gi_se3(
     along a rod in SE(3) deformed ine the current segment according to a strain vector xi_i.
 
     Args:
-        xi_i (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the screw in the current segment.
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the current segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (6,) or (6, 1)
+            Constant strain vector in the segment, [omega, v].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
-        Array: shape (4, 4)
-            A 4x4 matrix representing the adjoint transformation of the input screw vector at the specified position.
+        Array: shape (6, 6)
+            Adjoint matrix evaluated at ``s_i``.
     """
     ang = xi_i[:3].reshape((3, 1))  # Angular as a (3,1) vector
     theta = jnp.linalg.norm(ang)  # Compute the norm of the angular part
@@ -366,17 +361,14 @@ def Adjoint_gi_se3_inv(
     along a rod in SE(3) deformed ine the current segment according to a strain vector xi_i.
 
     Args:
-        xi_i (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the screw in SE(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (6,) or (6, 1)
+            Constant strain vector in the segment, [omega, v].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
-        Ad_inv: shape (4, 4)
-            A 4x4 matrix representing the adjoint transformation of the input screw vector at the specified position.
+        Array: shape (6, 6)
+            Inverse adjoint matrix evaluated at ``s_i``.
     """
     Ad = Adjoint_gi_se3(
         xi_i, s_i, eps=eps
@@ -405,13 +397,10 @@ def Tangent_gi_se3(
     along a rod in SE(3) deformed in the current segment according to a strain vector xi_i.
 
     Args:
-        xi_i (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the screw in SE(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (6,) or (6, 1)
+            Constant strain vector in the segment, [omega, v].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
         T (Array): shape (6, 6)
@@ -462,17 +451,12 @@ def Tangent_derivative_gi_se3(
     along a rod in SE(3) deformed in the current segment according to a strain vector xi_i and its derivative xid_i.
 
     Args:
-        xi_i (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the screw in SE(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
-        xid_i (Array): array-like, shape (6,1)
-            A 6-dimensional vector representing the derivative of the screw in SE(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (6,) or (6, 1)
+            Constant strain vector in the segment, [omega, v].
+        xid_i (Array): shape (6,) or (6, 1)
+            Time derivative of the strain vector.
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
         Td (Array): shape (6, 6)
