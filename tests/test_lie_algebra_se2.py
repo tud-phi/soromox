@@ -238,8 +238,6 @@ def test_tangent_derivative_matches_autodiff(N: int = 10):
 
         _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
         closed_form = Tangent_derivative_gi_se2(xi, xid, s, eps=EPS)
-        jax.debug.print("autodiff: {x}", x=autodiff)
-        jax.debug.print("closed_form: {x}", x=closed_form)
 
         assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
 
