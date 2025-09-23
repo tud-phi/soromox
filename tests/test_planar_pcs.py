@@ -470,7 +470,7 @@ def test_jacobian_inertialframe_matches_central_differences(s):
 
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_Jd_bodyframe_matches_autograd_jvp(s):
-    model, params = make_planar_pcs(1)
+    model, params = make_planar_pcs(num_segments=2)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)
@@ -490,7 +490,7 @@ def test_Jd_bodyframe_matches_autograd_jvp(s):
     
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_Jd_bodyframe_matches_central_differences(s):
-    model, params = make_planar_pcs(1)
+    model, params = make_planar_pcs(num_segments=2)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)
@@ -517,7 +517,7 @@ def test_Jd_bodyframe_matches_central_differences(s):
     
 @pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
 def test_Jd_inertialframe_matches_autograd_jvp(s):
-    model, params = make_planar_pcs(2)
+    model, params = make_planar_pcs(num_segments=2)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)

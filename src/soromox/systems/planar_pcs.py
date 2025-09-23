@@ -586,7 +586,7 @@ class PlanarPCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            _J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
+            J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
             where each row corresponds to a segment.
         """
         xi = self.strain(q).reshape(self.num_segments, 3)
@@ -617,7 +617,7 @@ class PlanarPCS(DynamicalSystem):
         tuple_J_0 = (J_0_L0, J_0_s)
 
         # Iteration function
-        def J_i(tuple_J_prev: Array, i: Array) -> Tuple[Tuple[Array, Array], Array]:
+        def J_i(tuple_J_prev: Tuple[Array, Array], i: Array) -> Tuple[Tuple[Array, Array], Array]:
             J_prev_Lprev, _ = tuple_J_prev
 
             xi_i = xi[i]
@@ -631,14 +631,14 @@ class PlanarPCS(DynamicalSystem):
             mat_i_Li = Ad_gi_inv_Li @ T_gi_Li
             mat_i_s = Ad_gi_inv_s @ T_gi_s
 
-            J_i_s = lax.dynamic_update_slice(
-                jnp.einsum("ij, njk->nik", Ad_gi_inv_s, J_prev_Lprev),
-                mat_i_s[jnp.newaxis, ...],
-                (i, 0, 0),
-            )
             J_i_Li = lax.dynamic_update_slice(
                 jnp.einsum("ij, njk->nik", Ad_gi_inv_Li, J_prev_Lprev),
                 mat_i_Li[jnp.newaxis, ...],
+                (i, 0, 0),
+            )
+            J_i_s = lax.dynamic_update_slice(
+                jnp.einsum("ij, njk->nik", Ad_gi_inv_s, J_prev_Lprev),
+                mat_i_s[jnp.newaxis, ...],
                 (i, 0, 0),
             )
 
@@ -652,11 +652,11 @@ class PlanarPCS(DynamicalSystem):
         J_array = jnp.concatenate([J_0_s[jnp.newaxis, ...], J_array], axis=0)
 
         # Extract the Jacobian for the segment that contains the point s
-        _J_local = lax.dynamic_index_in_dim(
+        J_local = lax.dynamic_index_in_dim(
             J_array, segment_idx, axis=0, keepdims=False
         )
 
-        return _J_local
+        return J_local
 
     @eqx.filter_jit
     def _final_size_jacobian(self, J_full: Array) -> Array:
@@ -667,7 +667,7 @@ class PlanarPCS(DynamicalSystem):
             J_full (Array): Full Jacobian of shape (num_segments, 3, 3)
 
         Returns:
-            J_selected (Array): Jacobian for the selected strains of shape (3, num_strains)
+            J_final (Array): Jacobian for the selected strains of shape (3, num_strains)
         """
         J_final = J_full.transpose(1, 0, 2).reshape(3, self.num_strains)
 
@@ -759,21 +759,143 @@ class PlanarPCS(DynamicalSystem):
         # Compute strain and strain rate
         xi = self.strain(q).reshape(self.num_segments, 3)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
-        
-        # TODO: The below implementation only works for a single segment robot
-        Ad_g_inv = lie.Adjoint_gi_se2_inv(xi[0], s, eps=self.global_eps)
-        T = lie.Tangent_gi_se2(xi[0], s, eps=self.global_eps)
-        Td = lie.Tangent_derivative_gi_se2(xi[0], xid[0], s, eps=self.global_eps)
 
-        # compute the Jacobian at point s
-        J_local = self._J_local(q, s)
-        # compute the body frame velocity at point s
-        eta = J_local @ qd  # Strain rate vector at point s
-        # compute the body frame velocity
-        Ad_g_inv_derivative = -lie.adjoint_se2(eta) @ Ad_g_inv
+        # Classify the point along the robot to the corresponding segment
+        segment_idx, s_local = self.classify_segment(s)
 
-        # compute the time-derivative of the Jacobian at point s
-        Jd_local = (Ad_g_inv_derivative @ T + Ad_g_inv @ Td)[None]
+        # parameters of the first segment
+        xi_0 = xi[0]  # initial strain
+        xid_0 = xid[0]  # initial strain rate
+        L_0 = self.L[0]  # length of the first segment
+
+        # compute the initial Adjoint inverse
+        Ad_g0_inv_L0 = lie.Adjoint_gi_se2_inv(xi_0, L_0, eps=self.global_eps)
+        Ad_g0_inv_s = lie.Adjoint_gi_se2_inv(xi_0, s_local, eps=self.global_eps)
+
+        # compute the Tangents for the first segment
+        T_g0_L0 = lie.Tangent_gi_se2(xi_0, L_0, eps=self.global_eps)
+        T_g0_s = lie.Tangent_gi_se2(xi_0, s_local, eps=self.global_eps)
+
+        # compute the time-derivative of the Tangents for the first segment
+        Td_g0_L0 = lie.Tangent_derivative_gi_se2(
+            xi_0, xid_0, L_0, eps=self.global_eps
+        )
+        Td_g0_s = lie.Tangent_derivative_gi_se2(
+            xi_0, xid_0, s_local, eps=self.global_eps
+        )
+
+        # define the Jacobians for the first segment
+        J_0_L0 = jnp.concatenate(
+            [(Ad_g0_inv_L0 @ T_g0_L0)[None, :, :], jnp.zeros((self.num_segments - 1, 3, 3))], axis=0
+        )
+        J_0_s = jnp.concatenate(
+            [(Ad_g0_inv_s @ T_g0_s)[None, :, :], jnp.zeros((self.num_segments - 1, 3, 3))], axis=0
+        )
+
+        # compute the body frame velocities for the first segment
+        eta_0_L0 = J_0_L0[0] @ xid_0
+        eta_0_s = J_0_s[0] @ xid_0
+
+        # compute the Adjoint inverse derivatives for the first segment
+        Ad_g0_inv_derivative_L0 = -lie.adjoint_se2(eta_0_L0) @ Ad_g0_inv_L0
+        Ad_g0_inv_derivative_s = -lie.adjoint_se2(eta_0_s) @ Ad_g0_inv_s
+
+        # compute the Jacobian time-derivatives for the first segment
+        Jd_0_L0 = jnp.concatenate(
+            [
+                (Ad_g0_inv_L0 @ Td_g0_L0 + Ad_g0_inv_derivative_L0 @ T_g0_L0)[None, :, :], 
+                jnp.zeros((self.num_segments - 1, 3, 3))
+            ], axis=0
+        )
+        Jd_0_s = jnp.concatenate(
+            [
+                (Ad_g0_inv_s @ Td_g0_s + Ad_g0_inv_derivative_s @ T_g0_s)[None, :, :], 
+                jnp.zeros((self.num_segments - 1, 3, 3))
+            ], axis=0
+        )
+
+        # Initial carry
+        carry_init = ((J_0_L0, Jd_0_L0), (J_0_s, Jd_0_s))
+
+        # Iteration function
+        def _J_Jd_i(carry: Tuple[Tuple[Array, Array], Tuple[Array, Array]], i: Array) -> Tuple[Tuple[Tuple[Array, Array], Tuple[Array, Array]], Tuple[Array, Array]]:
+            (J_prev_Lprev, Jd_prev_Lprev), _ = carry
+
+            # extract the strain and strain rate for the current segment
+            xi_i = xi[i]
+            xid_i = xid[i]
+
+            # Adjoint inverse
+            Ad_gi_inv_Li = lie.Adjoint_gi_se2_inv(xi_i, self.L[i], eps=self.global_eps)
+            Ad_gi_inv_s = lie.Adjoint_gi_se2_inv(xi_i, s_local, eps=self.global_eps)
+
+            # Tangent
+            T_gi_Li = lie.Tangent_gi_se2(xi_i, self.L[i], eps=self.global_eps)
+            T_gi_s = lie.Tangent_gi_se2(xi_i, s_local, eps=self.global_eps)
+
+            # Time-derivative of the Tangent
+            Td_gi_Li = lie.Tangent_derivative_gi_se2(
+                xi_i, xid[i], self.L[i], eps=self.global_eps
+            )
+            Td_gi_s = lie.Tangent_derivative_gi_se2(
+                xi_i, xid[i], s_local, eps=self.global_eps
+            )
+
+            # compute the Jacobian for the segment
+            J_i_Li = lax.dynamic_update_slice(
+                jnp.einsum("ij, njk->nik", Ad_gi_inv_Li, J_prev_Lprev),
+                (Ad_gi_inv_Li @ T_gi_Li)[jnp.newaxis, ...],
+                (i, 0, 0),
+            )
+            J_i_s = lax.dynamic_update_slice(
+                jnp.einsum("ij, njk->nik", Ad_gi_inv_s, J_prev_Lprev),
+                (Ad_gi_inv_s @ T_gi_s)[jnp.newaxis, ...],
+                (i, 0, 0),
+            )
+
+            # compute the body frame velocities
+            eta_i_Li = lax.dynamic_index_in_dim(J_i_Li, index=i, axis=0) @ xid_i
+            eta_i_s = lax.dynamic_index_in_dim(J_i_s, index=i, axis=0) @ xid_i
+
+            # compute the body frame velocity
+            Ad_gi_inv_derivative_Li = -lie.adjoint_se2(eta_i_Li) @ Ad_gi_inv_Li
+            Ad_gi_inv_derivative_s = -lie.adjoint_se2(eta_i_s) @ Ad_gi_inv_s
+
+            # compute the time-derivative of the Jacobian for the segment
+            Jd_i_Li = lax.dynamic_update_slice(
+                (
+                    jnp.einsum("ij, njk->nik", Ad_gi_inv_Li, Jd_prev_Lprev)
+                    + jnp.einsum("ij, njk->nik", Ad_gi_inv_derivative_Li, J_prev_Lprev)
+                ),
+                (Ad_gi_inv_derivative_Li @ T_gi_Li + Ad_gi_inv_Li @ Td_gi_Li)[jnp.newaxis, ...],
+                (i, 0, 0),
+            )
+            Jd_i_s = lax.dynamic_update_slice(
+                (
+                    jnp.einsum("ij, njk->nik", Ad_gi_inv_s, Jd_prev_Lprev)
+                    + jnp.einsum("ij, njk->nik", Ad_gi_inv_derivative_s, J_prev_Lprev)
+                ),
+                (Ad_gi_inv_derivative_s @ T_gi_s + Ad_gi_inv_s @ Td_gi_s)[jnp.newaxis, ...],
+                (i, 0, 0),
+            )
+
+            return ((J_i_Li, Jd_i_Li), (J_i_s, Jd_i_s)), (J_i_s, Jd_i_s)
+
+        indices_links = jnp.arange(1, self.num_segments)
+
+        _, (J_sgs, Jd_sgs) = lax.scan(f=_J_Jd_i, init=carry_init, xs=indices_links)
+
+        # Add the initial condition to the Jacobian array
+        J_sgs = jnp.concatenate([J_0_s[jnp.newaxis, ...], J_sgs], axis=0)
+        Jd_sgs = jnp.concatenate([Jd_0_s[jnp.newaxis, ...], Jd_sgs], axis=0)
+
+        # Extract the Jacobian for the segment that contains the point s
+        J_local = lax.dynamic_index_in_dim(
+            J_sgs, segment_idx, axis=0, keepdims=False
+        )
+        Jd_local = lax.dynamic_index_in_dim(
+            Jd_sgs, segment_idx, axis=0, keepdims=False
+        )
 
         return J_local, Jd_local
 
