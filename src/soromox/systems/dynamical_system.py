@@ -29,7 +29,7 @@ class DynamicalSystem(eqx.Module):
         t0: Optional[float] = 0.0,
         t1: Optional[float] = 10.0,
         dt: Optional[float] = 1e-4,
-        n_save_steps: Optional[int] = 2,
+        saveat_ts: Optional[Array] = None,
         solver: Optional[AbstractSolver] = Tsit5(),
         stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
         max_steps: Optional[int] = None,
@@ -49,11 +49,8 @@ class DynamicalSystem(eqx.Module):
                 Default is 10.0.
             dt (float, optional): Time step for the solver.
                 Default is 1e-4.
-            n_save_steps (int, optional): Determines the number of time steps to save in the
-                output. For example, if set to 1, only the first time step is saved; if set
-                to 2, only the first and the last time steps are saved; if set to 10, 10
-                linearly spaced time steps between t0 and t1 are saved.
-                Default is 2 (end time steps).
+            saveat_ts (Array, optional): Array of time steps to be saved in the output.
+                Default is only t1.
             solver (AbstractSolver, optional): Solver to use for the ODE integration.
                 Default is Tsit5() (Runge-Kutta 5(4) method).
             stepsize_controller (PIDController, optional): Stepsize controller for the solver.
@@ -71,16 +68,17 @@ class DynamicalSystem(eqx.Module):
             u = jnp.zeros((self.num_actuators,))
         if tau_ext is None:
             tau_ext = jnp.zeros((q0.shape[-1],))
+        if saveat_ts is None:
+            saveat_ts = jnp.array([t1])
 
         term = ODETerm(self.forward_dynamics)
-        t = jnp.linspace(t0, t1, n_save_steps)  # Time points for the solution
-        saveat = SaveAt(ts=t)  # Save at specified time points
+        saveat = SaveAt(ts=saveat_ts)  # Save at specified time points
 
         sol = diffeqsolve(
             terms=term,
             solver=solver,
-            t0=t[0],
-            t1=t[-1],
+            t0=t0,
+            t1=t1,
             dt0=dt,
             y0=y0,
             args=(u, tau_ext),
