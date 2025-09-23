@@ -626,6 +626,37 @@ def test_coriolis_force_with_christoffel_symbols(num_segments):
     assert_allclose(tau_cor_impl, tau_cor, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
+    robot, _ = make_planar_pcs(num_segments)
+
+    key = jax.random.PRNGKey(7)
+    key_q, key_qd = jax.random.split(key)
+    q = random_q(robot, key_q, scale=0.05)
+    qd = random_q(robot, key_qd, scale=0.2)
+    print("q:\n", q)
+    print("qd:\n", qd)
+
+    tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
+
+    dT_dq = jax.grad(robot.kinetic_energy, argnums=0)
+    dT_dqd = jax.grad(robot.kinetic_energy, argnums=1)
+
+    grad_T_q = dT_dq(q, qd)
+    jac_T_q = jax.jacobian(lambda qq: dT_dqd(qq, qd))(q)
+    tau_cor_autograd = jac_T_q @ qd - grad_T_q
+
+    print("tau_cor_impl:\n", tau_cor_impl)
+    print("tau_cor_autograd:\n", tau_cor_autograd)
+
+    assert_allclose(
+        tau_cor_impl,
+        tau_cor_autograd,
+        rtol=Tolerance.rtol(),
+        atol=Tolerance.atol(),
+    )
+
+
 if __name__ == "__main__":
     # run pytest with activated stdout
     pytest.main([__file__])
