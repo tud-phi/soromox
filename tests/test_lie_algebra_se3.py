@@ -247,5 +247,4 @@ def test_tangent_derivative_matches_autodiff_random(N: int = 10):
 
 
 if __name__ == "__main__":
-    # test_tangent_derivative_matches_autodiff_random()
     pytest.main([__file__])
