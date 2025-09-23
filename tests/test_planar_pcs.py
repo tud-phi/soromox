@@ -559,8 +559,6 @@ def test_Jd_inertialframe_matches_autograd_jvp(num_segments):
 
         _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
 
-        jax.debug.print("J_d_impl = \n{Jd_impl}", Jd_impl=Jd_impl)
-        jax.debug.print("J_d_jvp = \n{Jd_jvp}", Jd_jvp=Jd_jvp)
 
         assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), (
             f"num_segments={num_segments}, s={s}\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jd_jvp)}"
