@@ -1009,7 +1009,7 @@ class PlanarPCS(DynamicalSystem):
         # Adjoint representation of the SE(2) transformation
         Ad_g = lie.Adjoint_g_SE2(g)
         # Derivative of the Adjoint of g
-        Ad_g_dot = Ad_g @ lie.adjoint_se2(jnp.stack([eta_rot, 0.0, 0.0])[:, None])
+        Ad_g_dot = Ad_g @ lie.adjoint_se2(jnp.stack([eta_rot, 0.0, 0.0]))
 
         # Rotate the Jacobian to the inertial frame
         J_global_ = jnp.einsum(
