@@ -4,7 +4,7 @@ from jax import numpy as jnp
 import numpy as onp
 from numpy.testing import assert_allclose
 import pytest
-from typing import Optional
+from typing import List, Optional
 
 from soromox.systems.planar_pcs import PlanarPCS
 from soromox.utils.tolerance import Tolerance
@@ -12,14 +12,23 @@ from soromox.utils.tolerance import Tolerance
 jax.config.update("jax_enable_x64", True)  # double precision
 
 
-def make_planar_pcs(num_segments: int = 2, th0: float = jnp.pi / 2, xi_ref: Optional[Array] = None):
+PLANAR_TOTAL_LENGTH = 2e-1
+
+
+def make_planar_pcs(
+    num_segments: int = 2,
+    th0: float = jnp.pi / 2,
+    xi_ref: Optional[Array] = None,
+    total_length: Optional[float] = None,
+):
     """
     Create a planar constant strain model.
     """
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density of Dragon Skin 20 [kg/m^3]
+    segment_length = 1e-1 if total_length is None else total_length / num_segments
     params = {
         "th0": jnp.array(th0),  # initial orientation angle [rad]
-        "L": 1e-1 * jnp.ones((num_segments,)),
+        "L": segment_length * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
         "g": jnp.array([0.0, -9.81]),  # gravity vector [m/s^2] UP!
@@ -40,6 +49,21 @@ def make_planar_pcs(num_segments: int = 2, th0: float = jnp.pi / 2, xi_ref: Opti
     )
     
     return model, params
+
+
+def sample_arc_lengths(model: PlanarPCS) -> List[float]:
+    """Select representative arc-lengths in (0, L_tot] for the provided model."""
+    lengths = jnp.asarray(model.L)
+    cumulative = jnp.cumsum(lengths)
+    total = float(cumulative[-1])
+
+    near_zero = max(total * 1e-3, 1e-9)
+    mids = (cumulative - lengths / 2.0).tolist()
+    boundaries = cumulative.tolist()
+
+    values = [near_zero] + mids + boundaries
+    unique_sorted = sorted({float(v) for v in values if 0.0 < float(v) <= total})
+    return unique_sorted
 
 def random_q(model, key=jax.random.PRNGKey(0), scale=0.1):
     n = int(model.num_active_strains.item())
@@ -408,129 +432,136 @@ def test_individual_call():
         print(f"[Error] Forward dynamics computation failed: {e}")
 
 
-@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_jacobian_inertialframe_matches_autodiff(s):
-    model, params = make_planar_pcs(2)
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
+def test_jacobian_inertialframe_matches_autodiff(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     q = random_q(model, jax.random.PRNGKey(1), scale=0.05)
 
-    # J via class
-    J_impl = model.jacobian_inertialframe(q, s)
+    for s in sample_arc_lengths(model):
+        J_impl = model.jacobian_inertialframe(q, s)
 
-    # J via autodiff from forward_kinematics
-    def f(q_):
-        return model.forward_kinematics(q_, s)  # [theta, x, y] in inertial reference frame
-    J_ad = jax.jacfwd(f)(q)
+        def f(q_):
+            return model.forward_kinematics(q_, s)  # [theta, x, y]
 
-    assert jnp.allclose(J_impl, J_ad, rtol=1e-6, atol=1e-7), \
-        f"\nJ_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
+        J_ad = jax.jacfwd(f)(q)
 
-@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_inertial_velocity_consistency(s):
-    model, params = make_planar_pcs(2)
+        assert jnp.allclose(J_impl, J_ad, rtol=1e-6, atol=1e-7), (
+            f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
+        )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
+def test_inertial_velocity_consistency(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(4)
-    q  = random_q(model, key, scale=0.03)
+    q = random_q(model, key, scale=0.03)
     qd = random_q(model, jax.random.split(key)[0], scale=0.1)
 
-    J = model.jacobian_inertialframe(q, s)
-    xdot_pred = J @ qd  # (3,)
+    for s in sample_arc_lengths(model):
+        J = model.jacobian_inertialframe(q, s)
+        xdot_pred = J @ qd
 
-    # Finite time difference on kinematics
-    dt = 1e-6
-    x1 = model.forward_kinematics(q + dt*qd, s)
-    x0 = model.forward_kinematics(q, s)
-    xdot_fd = (x1 - x0) / dt
+        dt = 1e-6
+        x1 = model.forward_kinematics(q + dt * qd, s)
+        x0 = model.forward_kinematics(q, s)
+        xdot_fd = (x1 - x0) / dt
 
-    assert jnp.allclose(xdot_pred, xdot_fd, rtol=5e-5, atol=5e-7), \
-        f"\npred: {xdot_pred}\nfd: {xdot_fd}"
+        assert jnp.allclose(xdot_pred, xdot_fd, rtol=5e-5, atol=5e-7), (
+            f"num_segments={num_segments}, s={s}\npred: {xdot_pred}\nfd: {xdot_fd}"
+        )
 
-@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_jacobian_inertialframe_matches_central_differences(s):
-    model, params = make_planar_pcs(2)
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
+def test_jacobian_inertialframe_matches_central_differences(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     q = random_q(model, jax.random.PRNGKey(5), scale=0.02)
     eps = 1e-6
 
-    # J by class implementation
-    J_impl = model.jacobian_inertialframe(q, s)
+    for s in sample_arc_lengths(model):
+        J_impl = model.jacobian_inertialframe(q, s)
 
-    # J by central finite differences
-    n = q.shape[0]
-    J_fd_ls = []
-    eye = jnp.eye(n)
-    for j in range(n):
-        qp = q + eps * eye[j]
-        qm = q - eps * eye[j]
-        fp = model.forward_kinematics(qp, s)
-        fm = model.forward_kinematics(qm, s)
-        J_fd_ls.append((fp - fm) / (2 * eps))
+        n = q.shape[0]
+        J_fd_ls = []
+        eye = jnp.eye(n)
+        for j in range(n):
+            qp = q + eps * eye[j]
+            qm = q - eps * eye[j]
+            fp = model.forward_kinematics(qp, s)
+            fm = model.forward_kinematics(qm, s)
+            J_fd_ls.append((fp - fm) / (2 * eps))
 
-    J_fd = jnp.stack(J_fd_ls, axis=1)
+        J_fd = jnp.stack(J_fd_ls, axis=1)
 
-    assert jnp.allclose(J_impl, J_fd, rtol=5e-5, atol=5e-7), \
-        f"\nJ_impl:\n{J_impl}\nJ_fd:\n{J_fd}"
+        assert jnp.allclose(J_impl, J_fd, rtol=5e-5, atol=5e-7), (
+            f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_fd:\n{J_fd}"
+        )
 
-@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_Jd_bodyframe_matches_autograd_jvp(s):
-    model, params = make_planar_pcs(num_segments=2)
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
+def test_Jd_bodyframe_matches_autograd_jvp(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)
 
-    J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+    for s in sample_arc_lengths(model):
+        J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
 
-    # Directionnal derivative via jvp: d/dt J(q(t)) |_{t=0}, q(t)=q + t*qd
-    def J_of_q(q_):
-        return model.jacobian_bodyframe(q_, s)
-    _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
+        def J_of_q(q_):
+            return model.jacobian_bodyframe(q_, s)
 
-    print("Jd_impl =\n", Jd_impl)
-    print("Jd_jvp =\n", Jd_jvp)
+        _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
 
-    assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), \
-        f"\nJd_impl:\n{Jd_impl}\nJd_jvp:\n{Jd_jvp}"
-    
-@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_Jd_bodyframe_matches_central_differences(s):
-    model, params = make_planar_pcs(num_segments=2)
+        assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), (
+            f"num_segments={num_segments}, s={s}\nJd_impl:\n{Jd_impl}\nJd_jvp:\n{Jd_jvp}"
+        )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
+def test_Jd_bodyframe_matches_central_differences(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)
     eps = 1e-6
 
-    J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+    for s in sample_arc_lengths(model):
+        J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
 
-    # Jd by jacobian-vector product using central differences for dJ/dq
-    eye = jnp.eye(q.shape[0])
-    dJ_cols = []
-    for j in range(q.shape[0]):
-        qp = q + eps * eye[j]
-        qm = q - eps * eye[j]
-        Jp = model.jacobian_bodyframe(qp, s)
-        Jm = model.jacobian_bodyframe(qm, s)
-        dJ_cols.append((Jp - Jm) / (2 * eps))
-    dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
-    Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
+        eye = jnp.eye(q.shape[0])
+        dJ_cols = []
+        for j in range(q.shape[0]):
+            qp = q + eps * eye[j]
+            qm = q - eps * eye[j]
+            Jp = model.jacobian_bodyframe(qp, s)
+            Jm = model.jacobian_bodyframe(qm, s)
+            dJ_cols.append((Jp - Jm) / (2 * eps))
+        dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
+        Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
 
-    print("Jd_impl =\n", Jd_impl)
-    print("Jd_num =\n", Jd_num)
-    assert jnp.allclose(Jd_impl, Jd_num, rtol=5e-5, atol=5e-7), \
-        f"\nJd_impl:\n{Jd_impl}\nJd_num:\n{Jd_num}"
-    
-@pytest.mark.parametrize("s", [0.0, 0.05, 0.15, 0.19, 0.20])  # various points, at the edges & inside
-def test_Jd_inertialframe_matches_autograd_jvp(s):
-    model, params = make_planar_pcs(num_segments=2)
+        assert jnp.allclose(Jd_impl, Jd_num, rtol=5e-5, atol=5e-7), (
+            f"num_segments={num_segments}, s={s}\nJd_impl:\n{Jd_impl}\nJd_num:\n{Jd_num}"
+        )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
+def test_Jd_inertialframe_matches_autograd_jvp(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
     q = random_q(model, key, scale=0.05)
     qd = random_q(model, jax.random.split(key)[0], scale=0.2)
 
-    J_impl, Jd_impl = model.jacobian_and_derivative_inertialframe(q, qd, s)
+    for s in sample_arc_lengths(model):
+        J_impl, Jd_impl = model.jacobian_and_derivative_inertialframe(q, qd, s)
 
-    # Directionnal derivative via jvp: d/dt J(q(t)) |_{t=0}, q(t)=q + t*qd
-    def J_of_q(q_):
-        return model.jacobian_inertialframe(q_, s)
-    _, Jdot_dir = jax.jvp(J_of_q, (q,), (qd,))
+        def J_of_q(q_):
+            return model.jacobian_inertialframe(q_, s)
 
-    assert jnp.allclose(Jd_impl, Jdot_dir, rtol=1e-6, atol=1e-7), \
-        f"\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jdot_dir)}"
+        _, Jdot_dir = jax.jvp(J_of_q, (q,), (qd,))
+
+        assert jnp.allclose(Jd_impl, Jdot_dir, rtol=1e-6, atol=1e-7), (
+            f"num_segments={num_segments}, s={s}\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jdot_dir)}"
+        )
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -594,4 +625,6 @@ def test_coriolis_force_with_christoffel_symbols(num_segments):
 
 if __name__ == "__main__":
     # run pytest with activated stdout
+    test_Jd_bodyframe_matches_autograd_jvp(num_segments=2)
+    test_Jd_bodyframe_matches_central_differences(num_segments=2)
     pytest.main([__file__])
