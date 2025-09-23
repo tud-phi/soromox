@@ -577,7 +577,7 @@ class PlanarPCS(DynamicalSystem):
         return chi
 
     @eqx.filter_jit
-    def _J_local(self, q: Array, s: Array) -> Array:
+    def _J(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a point s along the robot.
 
