@@ -560,7 +560,6 @@ class Pendulum(DynamicalSystem):
         The gravitational force is computed by projecting gravity effects
         through the linear velocity Jacobians:
         G(q) = -Σ_i Jv_i^T ( m_i * g )
-        G(q) = -Σ_i Jv_i^T ( m_i * g )
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
