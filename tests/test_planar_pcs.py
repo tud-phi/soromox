@@ -584,11 +584,10 @@ def test_gravity_matches_potential_gradient(num_segments):
 def test_coriolis_force_with_christoffel_symbols(num_segments):
     robot, params = make_planar_pcs(num_segments)
 
-    key = jax.random.PRNGKey(3)
-    q = random_q(robot, key, scale=0.05)
-    q = jnp.zeros_like(q)  # test at zero configuration
-    # qd = 1e2 * random_q(robot, jax.random.split(key)[0], scale=0.1)
-    qd = 1e2 * jnp.array([-9.52414843e-02, 0.0, 0.0])
+    key = jax.random.PRNGKey(7)
+    key_q, key_qd = jax.random.split(key)
+    q = random_q(robot, key_q, scale=0.05)
+    qd = random_q(robot, key_qd, scale=0.2)
     print("q:\n", q)
     print("qd:\n", qd)
 
@@ -601,24 +600,14 @@ def test_coriolis_force_with_christoffel_symbols(num_segments):
         return robot.inertia_matrix(q_)
 
     B = B_of_q(q)
-    print("B:\n", B)
 
-    # dB_dq[k, i, j] = ∂B_{ij}/∂q_k
+    # dB_dq[i, j, k] = ∂B_{ij}/∂q_k
     dB_dq = jax.jacfwd(B_of_q)(q)
 
-    # C[i, j] = 1/2 * sum_k (∂B_{ij}/∂q_k + ∂B_{ik}/∂q_j - ∂B_{jk}/∂q_i) qd_k
-    A1 = jnp.einsum("k,kij->ij", qd, dB_dq)  # sum_k qd_k * ∂B_{ij}/∂q_k
-    A2 = jnp.einsum("k,jik->ij", qd, dB_dq.transpose(2, 1, 0))  # sum_k qd_k * ∂B_{ik}/∂q_j
-    A3 = jnp.einsum("k,ijk->ij", qd, dB_dq.transpose(1, 2, 0))  # sum_k qd_k * ∂B_{jk}/∂q_i
-    C_ch = 0.5 * (A1 + A2 - A3)
-    # A1 = dB_dq
-    # A2 = dB_dq.transpose(0, 2, 1)
-    # A3 = dB_dq.transpose(1, 2, 0)
-    # c = 0.5 * (A1 + A2 - A3)
-    # C_ch = jnp.einsum("ijk, k ->ij", c, qd)
-
-    # Target Coriolis force computed using Christoffel symbols
-    tau_cor = C_ch @ qd
+    # τ_i = Σ_{j,k} ∂B_{ij}/∂q_k q̇_j q̇_k - ½ Σ_{j,k} ∂B_{jk}/∂q_i q̇_j q̇_k
+    term1 = jnp.einsum("ijk,j,k->i", dB_dq, qd, qd)
+    term2 = jnp.einsum("jki,j,k->i", dB_dq, qd, qd)
+    tau_cor = term1 - 0.5 * term2
 
     print("tau_cor_impl:\n", tau_cor_impl)
     print("tau_cor:\n", tau_cor)
