@@ -243,16 +243,4 @@ def test_tangent_derivative_matches_autodiff(N: int = 10):
 
 if __name__ == "__main__":
     # run pytest with activated stdout
-    # test_hat_se2_returns_expected_matrix()
-    # test_exp_se2_produces_rotation_and_translation()
-    # test_adjoint_se2_matches_closed_form()
-    # test_coadjoint_se2_matches_closed_form()
-    # test_adjoint_g_se2_matches_manual_construction()
-    # test_adjoint_g_inv_se2_is_matrix_inverse()
-    # test_adjoint_gi_se2_zero_theta_matches_first_order_series()
-    # test_adjoint_gi_se2_inverse_matches_identity()
-    # test_tangent_gi_se2_zero_theta_matches_truncated_series()
-    # test_tangent_gi_se2_derivative_zero_without_motion()
-    # test_tangent_derivative_gi_se2_zero_theta_matches_truncated_series()
-    # test_tangent_derivative_matches_autodiff()
     pytest.main([__file__])
