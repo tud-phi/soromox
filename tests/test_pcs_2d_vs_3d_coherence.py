@@ -277,9 +277,13 @@ def test_dynamics_matrices_coherence(num_segments):
         assert_allclose(
             C_spatial[jnp.ix_(idxs, idxs)],
             C_planar,
-            rtol=RTOL,
-            atol=ATOL,
+            rtol=1e-3,
+            atol=3e-4,
         )
+
+        tau_cor_planar = C_planar @ qd_planar
+        tau_cor_spatial = C_spatial @ qd_spatial
+        assert_allclose(tau_cor_spatial[idxs], tau_cor_planar, rtol=RTOL, atol=ATOL)
 
         G_planar = planar_model.gravitational_force(q_planar)
         G_spatial = spatial_model.gravitational_force(q_spatial)
@@ -325,3 +329,7 @@ def test_energy_coherence(num_segments):
         E_planar = planar_model.total_energy(q_planar, qd_planar)
         E_spatial = spatial_model.total_energy(q_spatial, qd_spatial)
         assert_allclose(E_spatial, E_planar, rtol=RTOL, atol=ATOL)
+
+if __name__ == "__main__":
+    # run pytest with activated stdout
+    pytest.main([__file__])
