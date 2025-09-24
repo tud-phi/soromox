@@ -46,8 +46,6 @@ Key options:
 - `--json` / `--csv`: optional export paths for the raw timing table.
 - `--plot` / `--show-plot`: create a Matplotlib overview of compile and execution
   trends.
-- `--double-precision`: enable 64-bit computations when the extra accuracy is
-  required.
 
 All timings are printed to stdout and stored alongside metadata about the run so
 regressions can be compared across commits or machines.
