@@ -312,8 +312,8 @@ class Pendulum(DynamicalSystem):
             q (Array): Relative joint angles, shape (N,) [rad]
 
         Returns:
-            Jv (Array): Linear velocity Jacobians, shape (N, 2, N)
-                   Jv[i, :, j] = ∂(COM_i position)/∂qd[j]
+            Jv_coms (Array): Linear velocity Jacobians, shape (N, 2, N)
+                   Jv_coms[i, :, j] = ∂(COM_i position)/∂qd[j]
                    Axis order: (link, cartesian_component, joint)
         """
         n = self.num_links
@@ -325,8 +325,8 @@ class Pendulum(DynamicalSystem):
         mask = jnp.tril(jnp.ones((n, n), dtype=q.dtype))
         col_x = col_x * mask
         col_y = col_y * mask
-        Jv = jnp.stack([col_x, col_y], axis=1)  # (n,2,n)
-        return Jv
+        Jv_coms = jnp.stack([col_x, col_y], axis=1)  # (n,2,n)
+        return Jv_coms
 
     def _linear_jacobians_tips(self, q: Array) -> Array:
         """
@@ -336,7 +336,7 @@ class Pendulum(DynamicalSystem):
             q (Array): Relative joint angles, shape (N,) [rad]
 
         Returns:
-            Jv_tip (Array): Linear Jacobians at link tips, shape (N, 2, N)
+            Jv_tips (Array): Linear Jacobians at link tips, shape (N, 2, N)
                             Axis order: (link, cartesian_component, joint)
         """
         n = self.num_links
@@ -348,25 +348,25 @@ class Pendulum(DynamicalSystem):
         mask = jnp.tril(jnp.ones((n, n), dtype=q.dtype))
         col_x = col_x * mask
         col_y = col_y * mask
-        Jv_tip = jnp.stack([col_x, col_y], axis=1)  # (n,2,n)
-        return Jv_tip
+        Jv_tips = jnp.stack([col_x, col_y], axis=1)  # (n,2,n)
+        return Jv_tips
 
     def _angular_jacobians(self) -> Array:
         """
         Compute angular velocity Jacobians for all links.
 
         For planar pendulums, the angular velocity Jacobian has a simple pattern:
-        Jw[i,j] = 1 if j <= i, 0 otherwise (lower triangular matrix of ones).
+        Jw_links[i,j] = 1 if j <= i, 0 otherwise (lower triangular matrix of ones).
 
         Returns:
-            Jw (Array): Angular velocity Jacobians, shape (N, N)
-                   Jw[i,j] = ∂(link_i angular velocity)/∂qd[j]
+            Jw_links (Array): Angular velocity Jacobians, shape (N, N)
+                   Jw_links[i,j] = ∂(link_i angular velocity)/∂qd[j]
         """
         # Jw_i for planar: ones for joints <= i else 0. Shape (n, n)
         n = self.num_links
         idxs = jnp.arange(n)
-        Jw = (idxs[None, :] <= idxs[:, None]).astype(self.m.dtype)  # (n,n)
-        return Jw
+        Jw_links = (idxs[None, :] <= idxs[:, None]).astype(self.m.dtype)  # (n,n)
+        return Jw_links
 
     @eqx.filter_jit
     def jacobians_joints(self, q: Array) -> Array:
