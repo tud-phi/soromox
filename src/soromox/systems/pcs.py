@@ -578,51 +578,61 @@ class PCS(DynamicalSystem):
 
         segment_idx, s_local = self.classify_segment(s)
 
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        mask = indices <= segment_idx
+        arc_lengths = jnp.where(indices == segment_idx, s_local, self.L)
+        arc_lengths = jnp.where(mask, arc_lengths, 0.0)
+
+        eye = jnp.eye(6, dtype=xi.dtype)
         zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
-        zero_slice = jnp.zeros((6, 6), dtype=xi.dtype)
 
-        def integrate_segment(J_prev: Array, xi_i: Array, arc_len: Array, idx: Array) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+        def make_segment(
+            xi_i: Array,
+            arc_i: Array,
+            active: Array,
+        ) -> Tuple[Array, Array]:
+            def compute(_: Tuple[Array, Array]) -> Tuple[Array, Array]:
+                xi_val, arc_val = _
+                Ad_val = lie.Adjoint_gi_se3_inv(xi_val, arc_val, eps=self.global_eps)
+                T_val = lie.Tangent_gi_se3(xi_val, arc_val, eps=self.global_eps)
+                return Ad_val, T_val
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[idx].set(Ad_inv @ T)
-            return J_next
+            def inactive(_: Tuple[Array, Array]) -> Tuple[Array, Array]:
+                return eye, jnp.zeros((6, 6), dtype=xi.dtype)
 
-        def scan_body(
-            carry: Tuple[Array, Array, Array],
-            i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array], Array]:
-            J_prev, J_target, done = carry
+            return lax.cond(active, compute, inactive, operand=(xi_i, arc_i))
 
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
-                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
-                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
-                arc_len = jnp.where(i == segment_idx, s_local, L_i)
+        Ad_inv, T = vmap(make_segment)(xi, arc_lengths, mask)
 
-                J_next = integrate_segment(J_prev, xi_i, arc_len, i)
+        A = jnp.einsum("nij,njk->nik", Ad_inv, T)
 
-                is_target = i == segment_idx
-                J_target_next = jnp.where(is_target, J_next, J_target)
-                done_next = jnp.logical_or(done, is_target)
+        def suffix_scan(carry: Array, data: Tuple[Array, Array]) -> Tuple[Array, Array]:
+            Ad_i, active = data
 
-                return (J_next, J_target_next, done_next), zero_slice
+            outputs = carry
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
-                return (J_prev, J_target, done), zero_slice
+            carry_next = lax.cond(
+                active,
+                lambda _: carry @ Ad_i,
+                lambda _: carry,
+                operand=None,
+            )
 
-            branch_index = lax.convert_element_type(done, jnp.int32)
+            return carry_next, outputs
 
-            return lax.switch(branch_index, (compute_branch, skip_branch), operand=None)
-
-        carry_init = (
-            zeros,
-            zeros,
-            jnp.array(False, dtype=jnp.bool_),
+        init_suffix = eye
+        _, suffix = lax.scan(
+            suffix_scan,
+            init_suffix,
+            (Ad_inv, mask),
+            reverse=True,
         )
 
-        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
-        (_, J_target, _), _ = lax.scan(scan_body, carry_init, indices)
+        J_target = jnp.where(
+            mask[:, None, None],
+            jnp.einsum("nij,njk->nik", suffix, A),
+            zeros,
+        )
 
         return J_target
 
@@ -722,80 +732,97 @@ class PCS(DynamicalSystem):
 
         segment_idx, s_local = self.classify_segment(s)
 
-        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
-        zero_slice = jnp.zeros((6, 6), dtype=xi.dtype)
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        mask = indices <= segment_idx
+        mask_vec = mask[:, None]
 
-        def integrate_segment(
-            J_prev: Array,
-            Jd_prev: Array,
+        arc_lengths = jnp.where(indices == segment_idx, s_local, self.L)
+        arc_lengths = jnp.where(mask, arc_lengths, 0.0)
+
+        eye = jnp.eye(6, dtype=xi.dtype)
+        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
+
+        def make_segment(
             xi_i: Array,
             xid_i: Array,
-            arc_len: Array,
-            idx: Array,
-        ) -> Tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(xi_i, xid_i, arc_len, eps=self.global_eps)
-
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[idx].set(Ad_inv @ T)
-
-            eta = J_next[idx] @ xid_i
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
-
-            Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_prev) + jnp.einsum(
-                "ij, njk->nik", Ad_inv_dot, J_prev
-            )
-            Jd_next = Jd_rot.at[idx].set(Ad_inv_dot @ T + Ad_inv @ Td)
-
-            return J_next, Jd_next
-
-        def scan_body(
-            carry: Tuple[Array, Array, Array, Array, Array],
-            i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
-            J_prev, Jd_prev, J_target, Jd_target, done = carry
-
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
-                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
-                xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
-                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
-                arc_len = jnp.where(i == segment_idx, s_local, L_i)
-
-                J_next, Jd_next = integrate_segment(
-                    J_prev, Jd_prev, xi_i, xid_i, arc_len, i
+            arc_i: Array,
+            active: Array,
+        ) -> Tuple[Array, Array, Array]:
+            def compute(args: Tuple[Array, Array, Array]) -> Tuple[Array, Array, Array]:
+                xi_val, xid_val, arc_val = args
+                Ad_val = lie.Adjoint_gi_se3_inv(xi_val, arc_val, eps=self.global_eps)
+                T_val = lie.Tangent_gi_se3(xi_val, arc_val, eps=self.global_eps)
+                Td_val = lie.Tangent_derivative_gi_se3(
+                    xi_val, xid_val, arc_val, eps=self.global_eps
                 )
+                return Ad_val, T_val, Td_val
 
-                is_target = i == segment_idx
-                J_target_next = jnp.where(is_target, J_next, J_target)
-                Jd_target_next = jnp.where(is_target, Jd_next, Jd_target)
-                done_next = jnp.logical_or(done, is_target)
+            def inactive(_: Tuple[Array, Array, Array]) -> Tuple[Array, Array, Array]:
+                return eye, jnp.zeros((6, 6), dtype=xi.dtype), jnp.zeros((6, 6), dtype=xi.dtype)
 
-                return (
-                    J_next,
-                    Jd_next,
-                    J_target_next,
-                    Jd_target_next,
-                    done_next,
-                ), zero_slice
+            return lax.cond(active, compute, inactive, operand=(xi_i, xid_i, arc_i))
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
-                return (J_prev, Jd_prev, J_target, Jd_target, done), zero_slice
+        Ad_inv, T, Td = vmap(make_segment)(xi, xid, arc_lengths, mask)
 
-            branch_index = lax.convert_element_type(done, jnp.int32)
+        A = jnp.einsum("nij,njk->nik", Ad_inv, T)
+        xid_masked = jnp.where(mask_vec, xid, 0.0)
+        eta = jnp.einsum("nij,nj->ni", A, xid_masked)
 
-            return lax.switch(branch_index, (compute_branch, skip_branch), operand=None)
-
-        carry_init = (
-            zeros,
-            zeros,
-            zeros,
-            zeros,
-            jnp.array(False, dtype=jnp.bool_),
+        Ad_inv_dot = -jnp.einsum(
+            "nij,njk->nik",
+            vmap(lie.adjoint_se3)(eta),
+            Ad_inv,
         )
 
-        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
-        (_, _, J_target, Jd_target, _), _ = lax.scan(scan_body, carry_init, indices)
+        B = jnp.einsum("nij,njk->nik", Ad_inv_dot, T) + jnp.einsum(
+            "nij,njk->nik", Ad_inv, Td
+        )
+
+        def suffix_with_derivative(
+            carry: Tuple[Array, Array],
+            data: Tuple[Array, Array, Array],
+        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
+            suffix, suffix_dot = carry
+            Ad_i, Ad_dot_i, active = data
+
+            outputs = (suffix, suffix_dot)
+
+            def update(_: None) -> Tuple[Array, Array]:
+                next_suffix = suffix @ Ad_i
+                next_suffix_dot = suffix_dot @ Ad_i + suffix @ Ad_dot_i
+                return next_suffix, next_suffix_dot
+
+            next_suffix, next_suffix_dot = lax.cond(
+                active,
+                update,
+                lambda _: (suffix, suffix_dot),
+                operand=None,
+            )
+
+            return (next_suffix, next_suffix_dot), outputs
+
+        init_suffix = (eye, jnp.zeros((6, 6), dtype=xi.dtype))
+        (_, _), (suffix, suffix_dot) = lax.scan(
+            suffix_with_derivative,
+            init_suffix,
+            (Ad_inv, Ad_inv_dot, mask),
+            reverse=True,
+        )
+
+        mask_blocks = mask[:, None, None]
+
+        J_target = jnp.where(
+            mask_blocks,
+            jnp.einsum("nij,njk->nik", suffix, A),
+            zeros,
+        )
+
+        Jd_target = jnp.where(
+            mask_blocks,
+            jnp.einsum("nij,njk->nik", suffix_dot, A)
+            + jnp.einsum("nij,njk->nik", suffix, B),
+            zeros,
+        )
 
         return J_target, Jd_target
 
