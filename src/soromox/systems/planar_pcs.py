@@ -7,10 +7,7 @@ import numpy as onp
 from typing import Callable, Dict, Tuple, Optional, ClassVar
 
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.utils.array_math import (
-    blk_diag,
-    compute_weighted_sums,
-)
+from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
 )
