@@ -224,14 +224,6 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
 
 
 def _build_system_registry() -> Mapping[str, SystemBenchmark]:
-    runtime_cases_common: Sequence[str] = (
-        "forward_kinematics",
-        "jacobian",
-        "jacobian_and_derivative",
-        "forward_dynamics",
-        "total_energy",
-        "resolve_upon_time",
-    )
 
     pendulum_cases = (
         BenchmarkCase(
