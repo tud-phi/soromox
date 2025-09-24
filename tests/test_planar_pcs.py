@@ -12,6 +12,10 @@ from soromox.utils.tolerance import Tolerance
 jax.config.update("jax_enable_x64", True)  # double precision
 
 
+RTOL = Tolerance.rtol()
+ATOL = Tolerance.atol()
+EPS = 1e-6
+
 PLANAR_TOTAL_LENGTH = 2e-1
 NUM_RANDOM_SAMPLES = 5
 
@@ -135,7 +139,7 @@ def test_planar_cs_num():
         print("q = ", q, "s = ", s)
         chi = robot.forward_kinematics(q=q, s=s)
         assert not jnp.isnan(chi).any(), "Forward kinematics output contains NaN!"
-        assert_allclose(chi, expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(chi, expected, rtol=RTOL, atol=ATOL)
         print("[Valid test]\n")
 
     # test dynamical matrices
@@ -203,14 +207,14 @@ def test_planar_cs_num():
     E_kin = robot.kinetic_energy(q, qd)
     assert not jnp.isnan(E_kin).any(), "Kinetic energy contains NaN!"
     E_kin_th = 0.0
-    assert_allclose(E_kin, E_kin_th, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(E_kin, E_kin_th, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
     print("Testing potential energy...")
     E_pot = robot.potential_energy(q)
     assert not jnp.isnan(E_pot).any(), "Potential energy contains NaN!"
     E_pot_th = jnp.array(0.0)
-    assert_allclose(E_pot, E_pot_th, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(E_pot, E_pot_th, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
     # test jacobian
@@ -222,10 +226,10 @@ def test_planar_cs_num():
     print("Jacobian J =\n", J)
     # Test the differential relation: delta_chi ≈ J * delta_q
     print("Testing differential relation: delta_chi ≈ J * delta_q")
-    delta_q = jnp.array([1e-6, -1e-6, 2e-6])
+    delta_q = jnp.array([EPS, -EPS, 2 * EPS])
     chi_plus = robot.forward_kinematics(q=q + delta_q, s=params["L"][0])
     chi_pred = chi + J @ delta_q
-    assert_allclose(chi_plus, chi_pred, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(chi_plus, chi_pred, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
     # test forward dynamics
@@ -241,8 +245,8 @@ def test_planar_cs_num():
     yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qdd, qdres = jnp.split(yd, 2)
     assert not jnp.isnan(qdd).any(), "Forward dynamics output contains NaN!"
-    assert_allclose(qdd, jnp.zeros((3,)), rtol=Tolerance.rtol(), atol=Tolerance.atol())
-    assert_allclose(qdres, qd, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(qdd, jnp.zeros((3,)), rtol=RTOL, atol=ATOL)
+    assert_allclose(qdres, qd, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
     # test inverse kinematics
@@ -265,7 +269,7 @@ def test_planar_cs_num():
             assert not jnp.isnan(chi).any(), "Forward kinematics output contains NaN!"
             q_ik = constant_strain_inverse_kinematics_fn(params_ik, robot_ik.xi_ref, chi, s)
             assert not jnp.isnan(q_ik).any(), "Inverse kinematics output contains NaN!"
-            assert_allclose(q, q_ik, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+            assert_allclose(q, q_ik, rtol=RTOL, atol=ATOL)
             print("[Valid test]\n")
 
 
@@ -459,7 +463,7 @@ def test_inertial_velocity_consistency(num_segments):
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
     qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
 
-    dt = 1e-6
+    dt = EPS
     for q_key, qd_key in zip(q_keys, qd_keys):
         q = random_q(model, q_key, scale=0.03)
         qd = random_q(model, qd_key, scale=0.1)
@@ -480,7 +484,6 @@ def test_inertial_velocity_consistency(num_segments):
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
 def test_jacobian_inertialframe_matches_central_differences(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
-    eps = 1e-6
 
     key = jax.random.PRNGKey(5)
     for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
@@ -493,11 +496,11 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments):
             J_fd_ls = []
             eye = jnp.eye(n)
             for j in range(n):
-                qp = q + eps * eye[j]
-                qm = q - eps * eye[j]
+                qp = q + EPS * eye[j]
+                qm = q - EPS * eye[j]
                 fp = model.forward_kinematics(qp, s)
                 fm = model.forward_kinematics(qm, s)
-                J_fd_ls.append((fp - fm) / (2 * eps))
+                J_fd_ls.append((fp - fm) / (2 * EPS))
 
             J_fd = jnp.stack(J_fd_ls, axis=1)
 
@@ -535,7 +538,6 @@ def test_Jd_bodyframe_matches_autograd_jvp(num_segments):
 def test_Jd_bodyframe_matches_central_differences(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
-    eps = 1e-6
 
     key_q, key_qd = jax.random.split(key)
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
@@ -551,11 +553,11 @@ def test_Jd_bodyframe_matches_central_differences(num_segments):
             eye = jnp.eye(q.shape[0])
             dJ_cols = []
             for j in range(q.shape[0]):
-                qp = q + eps * eye[j]
-                qm = q - eps * eye[j]
+                qp = q + EPS * eye[j]
+                qm = q - EPS * eye[j]
                 Jp = model.jacobian_bodyframe(qp, s)
                 Jm = model.jacobian_bodyframe(qm, s)
-                dJ_cols.append((Jp - Jm) / (2 * eps))
+                dJ_cols.append((Jp - Jm) / (2 * EPS))
             dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
             Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
 
@@ -601,7 +603,7 @@ def test_gravity_matches_potential_gradient(num_segments):
         dU_dq = jax.grad(robot.gravitational_energy)(q)
 
         # With current convention, G equals ∂U/∂q
-        assert_allclose(G, dU_dq, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments):
@@ -639,7 +641,7 @@ def test_coriolis_force_with_christoffel_symbols(num_segments):
         print("tau_cor_impl:\n", tau_cor_impl)
         print("tau_cor:\n", tau_cor)
 
-        assert_allclose(tau_cor_impl, tau_cor, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(tau_cor_impl, tau_cor, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -672,8 +674,8 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
         assert_allclose(
             tau_cor_impl,
             tau_cor_autograd,
-            rtol=Tolerance.rtol(),
-            atol=Tolerance.atol(),
+            rtol=RTOL,
+            atol=ATOL,
         )
 
 

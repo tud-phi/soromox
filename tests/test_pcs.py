@@ -1,13 +1,99 @@
 import jax
+from jax import Array, jacfwd, jvp
+from jax import numpy as jnp
+from numpy.testing import assert_allclose
+import numpy as onp
+import pytest
+from typing import List, Optional
+
+from soromox.systems.pcs import PCS
+from soromox.utils.lie_algebra.se3 import Adjoint_g_SE3, log_SE3
+from soromox.utils.tolerance import Tolerance
+
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
-from soromox.systems.pcs import PCS
 
-from jax import numpy as jnp
-from numpy.testing import assert_allclose
+RTOL = Tolerance.rtol()
+ATOL = Tolerance.atol()
+EPS = 1e-6
 
-from soromox.utils.tolerance import Tolerance
+PCS_TOTAL_LENGTH = 2e-1
+NUM_RANDOM_SAMPLES = 5
+
+
+def make_pcs(
+    num_segments: int = 2,
+    xi_ref: Optional[Array] = None,
+    total_length: float = PCS_TOTAL_LENGTH,
+    order_gauss: int = 3,
+):
+    segment_length = total_length / num_segments
+    L = segment_length * jnp.ones((num_segments,))
+    params = {
+        "p0": jnp.zeros((6,)),
+        "L": L,
+        "r": 2e-2 * jnp.ones((num_segments,)),
+        "rho": 1070 * jnp.ones((num_segments,)),
+        "g": jnp.array([0.0, 0.0, -9.81]),
+        "E": 2e3 * jnp.ones((num_segments,)),
+        "G": 1e3 * jnp.ones((num_segments,)),
+    }
+    diag_vals = jnp.repeat(jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0)
+    params["D"] = 1e-3 * jnp.diag((diag_vals * L[:, None]).flatten())
+
+    if xi_ref is None:
+        xi_ref = jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments)
+
+    model = PCS(
+        num_segments=num_segments,
+        params=params,
+        order_gauss=order_gauss,
+        xi_ref=xi_ref,
+    )
+
+    return model, params
+
+
+def sample_arc_lengths(model: PCS) -> List[float]:
+    lengths = jnp.asarray(model.L)
+    cumulative = jnp.cumsum(lengths)
+    total = float(cumulative[-1])
+
+    near_zero = max(total * 1e-3, 1e-9)
+    mids = (cumulative - lengths / 2.0).tolist()
+    boundaries = cumulative.tolist()
+
+    values = [near_zero] + mids + boundaries
+    unique_sorted = sorted({float(v) for v in values if 0.0 < float(v) <= total})
+    return unique_sorted
+
+
+def random_q(model: PCS, key: Array, scale: float = 0.05) -> Array:
+    n = int(model.num_active_strains.item())
+    return scale * jax.random.normal(key, (n,))
+
+
+def se3_inverse(g: Array) -> Array:
+    R = g[:3, :3]
+    p = g[:3, 3]
+    g_inv = jnp.eye(4)
+    R_T = R.T
+    g_inv = g_inv.at[:3, :3].set(R_T)
+    g_inv = g_inv.at[:3, 3].set(-R_T @ p)
+    return g_inv
+
+
+def body_twist_between(g_base: Array, g_target: Array) -> Array:
+    g_rel = se3_inverse(g_base) @ g_target
+    return log_SE3(g_rel, eps=EPS)
+
+
+def spatial_from_body(g: Array, xi_body: Array) -> Array:
+    g_rot = jnp.block(
+        [[g[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
+    )
+    return Adjoint_g_SE3(g_rot) @ xi_body
 
 
 def test_planar_cs_num():
@@ -69,7 +155,7 @@ def test_planar_cs_num():
         print("q = ", q, "s = ", s)
         g_i = robot.forward_kinematics(q=q, s=s)
         assert not jnp.isnan(g_i).any(), "Forward kinematics output contains NaN!"
-        assert_allclose(g_i, expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(g_i, expected, rtol=RTOL, atol=ATOL)
         print("[Valid test]\n")
 
     # test dynamical matrices
@@ -140,7 +226,7 @@ def test_planar_cs_num():
     E_kin = robot.kinetic_energy(q, qd)
     assert not jnp.isnan(E_kin).any(), "Kinetic energy contains NaN!"
     E_kin_th = 0.0
-    assert_allclose(E_kin, E_kin_th, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(E_kin, E_kin_th, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
     print("Testing potential energy...")
@@ -154,7 +240,7 @@ def test_planar_cs_num():
         * jnp.linalg.norm(params["g"])
         * params["L"][0] ** 2
     )
-    assert_allclose(E_pot, E_pot_th, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(E_pot, E_pot_th, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
     # test forward dynamics
@@ -170,8 +256,8 @@ def test_planar_cs_num():
     yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qdd, qdres = jnp.split(yd, 2)
     assert not jnp.isnan(qdd).any(), "Forward dynamics output contains NaN!"
-    assert_allclose(qdd, jnp.zeros((6,)), rtol=Tolerance.rtol(), atol=Tolerance.atol())
-    assert_allclose(qdres, qd, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(qdd, jnp.zeros((6,)), rtol=RTOL, atol=ATOL)
+    assert_allclose(qdres, qd, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
 
 
@@ -335,6 +421,238 @@ def test_individual_call():
         print("[Valid test] Forward dynamics computation successful.")
     except Exception as e:
         print(f"[Error] Forward dynamics computation failed: {e}")
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(1)
+    q = random_q(model, key, scale=0.05)
+
+    for s in sample_arc_lengths(model):
+        J_impl = model.jacobian_inertialframe(q, s)
+        J_body = model.jacobian_bodyframe(q, s)
+        g = model.forward_kinematics(q, s)
+        J_expected = spatial_from_body(g, J_body)
+
+        assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
+            f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_expected:\n{J_expected}"
+        )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_inertial_velocity_consistency(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(4)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    dt = EPS
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(model, q_key, scale=0.03)
+        qd = random_q(model, qd_key, scale=0.1)
+
+        for s in sample_arc_lengths(model):
+            if s < 1e-3:
+                continue
+            J = model.jacobian_inertialframe(q, s)
+            xdot_pred = J @ qd
+
+            g0 = model.forward_kinematics(q, s)
+            g1 = model.forward_kinematics(q + dt * qd, s)
+            xi_body = body_twist_between(g0, g1) / dt
+            xdot_fd = spatial_from_body(g0, xi_body)
+
+            assert jnp.allclose(xdot_pred, xdot_fd, rtol=5e-5, atol=5e-7), (
+                f"num_segments={num_segments}, s={s}\npred: {xdot_pred}\nfd: {xdot_fd}"
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_matches_central_differences(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(5)
+
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(model, q_key, scale=0.02)
+
+        for s in sample_arc_lengths(model):
+            if s < 1e-3:
+                continue
+            J_impl = model.jacobian_inertialframe(q, s)
+
+            xi_cols = []
+            n = q.shape[0]
+            eye = jnp.eye(n)
+            for j in range(n):
+                qp = q + EPS * eye[j]
+                qm = q - EPS * eye[j]
+                g_plus = model.forward_kinematics(qp, s)
+                g_minus = model.forward_kinematics(qm, s)
+                xi_body = body_twist_between(g_minus, g_plus) / (2 * EPS)
+                xi_cols.append(spatial_from_body(g_minus, xi_body))
+
+            J_fd = jnp.stack(xi_cols, axis=1)
+            J_body = model.jacobian_bodyframe(q, s)
+            J_rot_expected = spatial_from_body(model.forward_kinematics(q, s), J_body)
+
+            assert jnp.allclose(J_impl[:3], J_rot_expected[:3], rtol=1e-6, atol=1e-7), (
+                f"num_segments={num_segments}, s={s}\nrot_impl:\n{J_impl[:3]}\nrot_expected:\n{J_rot_expected[:3]}"
+            )
+            assert jnp.allclose(J_impl[3:], J_fd[3:], rtol=1e-3, atol=5e-6), (
+                f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_fd:\n{J_fd}"
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_Jd_bodyframe_matches_autograd_jvp(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(3)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(model, q_key, scale=0.05)
+        qd = random_q(model, qd_key, scale=0.2)
+
+        for s in sample_arc_lengths(model):
+            J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+
+            def J_body(q_):
+                return model.jacobian_bodyframe(q_, s)
+
+            _, Jd_jvp = jvp(J_body, (q,), (qd,))
+
+            assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), (
+                f"num_segments={num_segments}, s={s}\nJd_impl:\n{Jd_impl}\nJd_jvp:\n{Jd_jvp}"
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_Jd_bodyframe_matches_central_differences(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(3)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(model, q_key, scale=0.05)
+        qd = random_q(model, qd_key, scale=0.2)
+
+        for s in sample_arc_lengths(model):
+            J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+
+            eye = jnp.eye(q.shape[0])
+            dJ_cols = []
+            for j in range(q.shape[0]):
+                qp = q + EPS * eye[j]
+                qm = q - EPS * eye[j]
+                Jp = model.jacobian_bodyframe(qp, s)
+                Jm = model.jacobian_bodyframe(qm, s)
+                dJ_cols.append((Jp - Jm) / (2 * EPS))
+            dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
+            Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
+
+            assert jnp.allclose(Jd_impl, Jd_num, rtol=1e-3, atol=5e-6), (
+                f"num_segments={num_segments}, s={s}\nJd_impl:\n{Jd_impl}\nJd_num:\n{Jd_num}"
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_Jd_inertialframe_matches_autograd_jvp(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(3)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(model, q_key, scale=0.05)
+        qd = random_q(model, qd_key, scale=0.2)
+
+        for s in sample_arc_lengths(model):
+            J_impl, Jd_impl = model.jacobian_and_derivative_inertialframe(q, qd, s)
+
+            def J_global(q_):
+                return model.jacobian_inertialframe(q_, s)
+
+            _, Jd_jvp = jvp(J_global, (q,), (qd,))
+
+            assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), (
+                f"num_segments={num_segments}, s={s}\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jd_jvp)}"
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_gravity_matches_potential_gradient(num_segments: int):
+    robot, _ = make_pcs(num_segments=num_segments)
+    key = jax.random.PRNGKey(8)
+
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(robot, q_key, scale=0.05)
+        G = robot.gravitational_force(q)
+        dU_dq = jax.grad(robot.gravitational_energy)(q)
+
+        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_coriolis_force_with_christoffel_symbols(num_segments: int):
+    robot, _ = make_pcs(num_segments=num_segments)
+    key = jax.random.PRNGKey(9)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
+
+        C_impl = robot.coriolis_matrix(q, qd)
+        tau_cor_impl = C_impl @ qd
+
+        def B_of_q(q_):
+            return robot.inertia_matrix(q_)
+
+        dB_dq = jacfwd(B_of_q)(q)
+
+        term1 = jnp.einsum("ijk,j,k->i", dB_dq, qd, qd)
+        term2 = jnp.einsum("jki,j,k->i", dB_dq, qd, qd)
+        tau_cor = term1 - 0.5 * term2
+
+        assert_allclose(tau_cor_impl, tau_cor, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
+    robot, _ = make_pcs(num_segments=num_segments)
+    key = jax.random.PRNGKey(10)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    dT_dq = jax.grad(robot.kinetic_energy, argnums=0)
+    dT_dqd = jax.grad(robot.kinetic_energy, argnums=1)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
+
+        tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
+
+        grad_T_q = dT_dq(q, qd)
+        jac_T_q = jacfwd(lambda qq: dT_dqd(qq, qd))(q)
+        tau_cor_autograd = jac_T_q @ qd - grad_T_q
+
+        assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_coriolis_force_matches_kinetic_energy_autogra(num_segments: int):
+    test_coriolis_force_matches_kinetic_energy_autograd(num_segments)
 
 
 if __name__ == "__main__":
