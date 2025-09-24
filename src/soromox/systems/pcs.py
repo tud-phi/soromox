@@ -491,7 +491,7 @@ class PCS(DynamicalSystem):
         """
 
         # Classify the point along the robot to the corresponding segment
-        segment_idx = jnp.clip(jnp.sum(s > self.L_cum) - 1, 0, self.num_segments - 1)
+        segment_idx = jnp.clip(jnp.sum(s > self.L_cum) - 1, 0, self.num_segments - 1).astype(jnp.int32)
 
         # Compute the point coordinate along the segment in the interval [0, l_segment]
         s_local = s - self.L_cum[segment_idx]
