@@ -86,7 +86,14 @@ def se3_inverse(g: Array) -> Array:
 
 def body_twist_between(g_base: Array, g_target: Array) -> Array:
     g_rel = se3_inverse(g_base) @ g_target
-    return log_SE3(g_rel, eps=EPS)
+    xi = log_SE3(g_rel, eps=1e-12)
+    R = g_rel[:3, :3]
+    omega = xi[:3]
+    alt_omega = 0.5 * jnp.array(
+        [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]]
+    )
+    omega = jnp.where(jnp.linalg.norm(omega) < 1e-10, alt_omega, omega)
+    return xi.at[:3].set(omega)
 
 
 def spatial_from_body(g: Array, xi_body: Array) -> Array:
