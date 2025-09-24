@@ -589,7 +589,6 @@ class PlanarPCS(DynamicalSystem):
         xi = self.strain(q).reshape(self.num_segments, 3)
 
         segment_idx, s_local = self.classify_segment(s)
-        s_local = jnp.asarray(s_local, dtype=xi.dtype)
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
@@ -790,7 +789,6 @@ class PlanarPCS(DynamicalSystem):
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
         segment_idx, s_local = self.classify_segment(s)
-        s_local = jnp.asarray(s_local, dtype=xi.dtype)
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
