@@ -663,7 +663,6 @@ def test_coriolis_force_matches_kinetic_energy_autogra(num_segments: int):
 
 
 if __name__ == "__main__":
-    print("Running tests for Planar Constant Strain (1 segment)...")
-    test_planar_cs_num()
-    print("Running individual call tests for Planar Constant Strain (1 segment)...")
-    test_individual_call()
+    # test_gravity_matches_potential_gradient(num_segments=1)
+    # run pytest with activated stdout
+    pytest.main([__file__])
