@@ -114,7 +114,7 @@ def plot_results(
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Visualise Soromox benchmark results")
+    parser = argparse.ArgumentParser(description="Visualize Soromox benchmark results")
     parser.add_argument("input", type=Path, help="Path to the benchmark JSON or CSV file")
     parser.add_argument("--systems", nargs="*", help="Optional list of systems to include")
     parser.add_argument("--functions", nargs="*", help="Optional list of function names to include")
