@@ -574,6 +574,123 @@ class PlanarPCS(DynamicalSystem):
         return chi
 
     @eqx.filter_jit
+    def _compute_relative_segment_poses(self, chi_tips: Array) -> Array:
+        """
+        Compute the relative pose differences of each segment tip w.r.t. the previous segment tip 
+        in a vectorized fashion.
+
+        Args:
+            chi_tips (Array): absolute tip poses of shape (num_segments, 3) where each row is [theta, x, y]
+                              representing the pose of each segment tip in the global frame.
+
+        Returns:
+            chi_rel (Array): relative poses of shape (num_segments, 3) where each row is [delta_theta, delta_x, delta_y]
+                            representing the relative pose change from the previous segment tip.
+                            The first segment's relative pose is computed w.r.t. the base at (0, 0, 0).
+        """
+        # Ensure chi_tips has the correct shape
+        chi_tips = chi_tips.reshape(self.num_segments, 3)
+        
+        # Base pose at the origin: [theta=self.th0, x=0, y=0]
+        base_pose = jnp.array([self.th0, 0.0, 0.0])
+        
+        # Create array of previous poses: base + all segment tips except the last
+        prev_poses = jnp.concatenate([base_pose[None, :], chi_tips[:-1]], axis=0)
+        
+        # Compute relative poses vectorized
+        # For SE(2), the relative transformation between poses chi_prev and chi_curr is:
+        # delta_chi = log(exp(chi_prev)^(-1) @ exp(chi_curr))
+        # But for computational efficiency, we can compute this more directly:
+        
+        # Extract angles and positions
+        theta_prev = prev_poses[:, 0]  # (num_segments,)
+        p_prev = prev_poses[:, 1:]     # (num_segments, 2)
+        
+        theta_curr = chi_tips[:, 0]    # (num_segments,)
+        p_curr = chi_tips[:, 1:]       # (num_segments, 2)
+        
+        # Relative angle is simply the difference
+        delta_theta = theta_curr - theta_prev  # (num_segments,)
+        
+        # Relative position needs to be rotated to the previous frame
+        cos_prev = jnp.cos(theta_prev)  # (num_segments,)
+        sin_prev = jnp.sin(theta_prev)  # (num_segments,)
+        
+        # Relative position in global frame
+        delta_p_global = p_curr - p_prev  # (num_segments, 2)
+        
+        # Transform relative position to the previous segment frame using rotation matrix transpose
+        # R_prev^T @ delta_p_global for each segment
+        delta_x = cos_prev * delta_p_global[:, 0] + sin_prev * delta_p_global[:, 1]
+        delta_y = -sin_prev * delta_p_global[:, 0] + cos_prev * delta_p_global[:, 1]
+
+        # Combine relative transformations
+        chi_rel = jnp.column_stack([delta_theta, delta_x, delta_y])  # (num_segments, 3)
+        
+        return chi_rel
+
+    @eqx.filter_jit
+    def inverse_kinematics(self, chi_tips: Array) -> Array:
+        """
+        Execute inverse kinematics to find the generalized coordinates / configurations.
+        Instead of an iterative IK procedure, we leverage here the closed-form solution for the mapping
+        the relative tip poses of each segment distal end with respect to the proximal end of the segment
+        to the planar constant strain parameters.
+
+        Args:
+            chi_tips (Array): the tip poses of shape (num_segments, 3)
+                where each row is [theta, x, y] for the corresponding segment tip.
+        Returns:
+            q (Array): the generalized coordinates of shape (num_active_strains,)
+        """
+        # Compute the relative poses of each segment tip w.r.t. the previous segment tip
+        chi_rel = self._compute_relative_segment_poses(chi_tips)
+
+        def _inverse_kinematics_single_segment(chi_rel_i: Array, s_i: Array) -> Array:
+            """
+            Compute the inverse kinematics for a single segment given its relative tip pose and arc-length.
+
+            Args:
+                chi_rel_i (Array): relative tip pose of shape (3,) : [delta_theta, delta_x, delta_y]
+                s_i (Array): arc-length position of the tip along the segment.
+            Returns:
+                xi_i (Array): strain parameters of shape (3,) : [kappa_z, sigma_x, sigma_y]
+            """
+            th, px, py = chi_rel_i
+
+            # compute the inverse kinematics for the virtual backbone
+            divisor = (jnp.cos(th) - 1)
+            xi = lax.select(
+                jnp.abs(th) < self.global_eps,
+                jnp.array([0.0, px / s_i, py / s_i]),
+                (
+                    th
+                    / (2 * s_i)
+                    * jnp.stack(
+                        [
+                            2 * jnp.ones((), dtype=th.dtype),
+                            py - (px * jnp.sin(th)) / divisor,
+                            -px - (py * jnp.sin(th)) / divisor,
+                        ]
+                    )
+                )
+            )
+            return xi
+
+        # define the local arc-length positions of each segment tip
+        s_local = self.L
+
+        # apply the closed-form inverse kinematics for each segment using the
+        xi_sgs = vmap(_inverse_kinematics_single_segment)(chi_rel, s_local)
+        # flatten to (3*num_segments,)
+        xi = xi_sgs.reshape(-1)
+
+        # use the pseudo-inverse of the strain basis matrix to map to generalized coordinates
+        q = jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
+
+        return q
+
+    @eqx.filter_jit
     def _J_local(self, q: Array, s: Array) -> Array:
         """
         Compute the body frame Jacobian of the forward kinematics at a point s along the robot.

@@ -679,6 +679,294 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
         )
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_inverse_kinematics_consistency(num_segments):
+    """
+    Test that the inverse kinematics method correctly inverts forward kinematics.
+    
+    This test verifies that:
+    1. Forward kinematics followed by inverse kinematics returns the original configuration
+    2. The method works for different numbers of segments
+    3. Multiple random configurations are handled correctly
+    """
+    model, params = make_planar_pcs(num_segments=num_segments)
+    
+    # Test with multiple random configurations
+    key = jax.random.PRNGKey(42)
+    num_test_configs = 10
+    
+    for i in range(num_test_configs):
+        key, subkey = jax.random.split(key)
+        
+        # Generate a random configuration (generalized coordinates)
+        q_original = random_q(model, key=subkey, scale=0.3)  # Slightly larger scale for better testing
+        
+        # Compute forward kinematics at segment tips
+        s_tips = model.L_cum[1:]  # End of each segment
+        chi_tips = jnp.array([model.forward_kinematics(q_original, s) for s in s_tips])
+        
+        # Apply inverse kinematics
+        q_recovered = model.inverse_kinematics(chi_tips)
+        
+        # Check that the recovered configuration matches the original
+        assert_allclose(
+            q_recovered,
+            q_original,
+            rtol=RTOL * 10,  # Slightly more lenient tolerance for inverse kinematics
+            atol=ATOL * 10,
+            err_msg=f"Inverse kinematics failed for configuration {i} with {num_segments} segments"
+        )
+        
+        # Additional verification: forward kinematics of recovered configuration
+        # should match the original tip poses
+        chi_tips_recovered = jnp.array([model.forward_kinematics(q_recovered, s) for s in s_tips])
+        
+        assert_allclose(
+            chi_tips_recovered,
+            chi_tips,
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=f"Forward kinematics of recovered configuration failed for config {i} with {num_segments} segments"
+        )
+
+
+@pytest.mark.parametrize("num_segments", [2, 3])
+def test_inverse_kinematics_with_known_straight_configuration(num_segments):
+    """
+    Test inverse kinematics with a known straight configuration.
+    
+    For a straight robot (no bending, only extension), the inverse kinematics
+    should recover zero curvature and appropriate extension strains.
+    """
+    model, params = make_planar_pcs(num_segments=num_segments, th0=0.0)
+    
+    # Create a straight configuration: no rotation, only extension along x-axis
+    segment_length = model.L[0]  # Assume all segments have same length
+    chi_tips = jnp.array([
+        [0.0, (i + 1) * segment_length * 1.1, 0.0]  # 10% extension per segment
+        for i in range(num_segments)
+    ])
+    
+    # Apply inverse kinematics
+    q_recovered = model.inverse_kinematics(chi_tips)
+    print("Recovered q:", q_recovered)
+    
+    # Convert to strain space to check the result
+    xi_recovered = model.strain(q_recovered).reshape(num_segments, 3)
+    print("Recovered strains (kappa_z, sigma_x, sigma_y):", xi_recovered)
+    
+    # For a straight extended robot:
+    # - Curvature (kappa_z) should be approximately zero
+    # - Extension strain (sigma_x) should be positive (around 0.1 for 10% extension)
+    # - Shear strain (sigma_y) should be approximately zero
+    
+    expected_kappa = jnp.zeros(num_segments)  # No curvature
+    expected_sigma_x = jnp.ones(num_segments) * 1.1  # 10% extension 
+    expected_sigma_y = jnp.zeros(num_segments)  # No shear
+    print("Expected strains (kappa_z, sigma_x, sigma_y):", expected_kappa, expected_sigma_x, expected_sigma_y)
+    
+    # Check curvature is small
+    assert_allclose(
+        xi_recovered[:, 0],  # kappa_z
+        expected_kappa,
+        rtol=RTOL,
+        atol=1e-3,  # Allow small numerical errors
+        err_msg=f"Curvature should be zero for straight configuration with {num_segments} segments"
+    )
+    
+    # Check extension strain is approximately correct
+    assert_allclose(
+        xi_recovered[:, 1],  # sigma_x  
+        expected_sigma_x,
+        rtol=0.1,  # Allow 10% relative error
+        atol=0.01,  # Allow small absolute error
+        err_msg=f"Extension strain should be approximately 0.1 for straight configuration with {num_segments} segments"
+    )
+    
+    # Check shear is small
+    assert_allclose(
+        xi_recovered[:, 2],  # sigma_y
+        expected_sigma_y,
+        rtol=RTOL,
+        atol=1e-3,  # Allow small numerical errors
+        err_msg=f"Shear strain should be zero for straight configuration with {num_segments} segments"
+    )
+
+
+def test_inverse_kinematics_relative_pose_computation():
+    """
+    Test the relative pose computation method used in inverse kinematics.
+    
+    This test verifies that the relative pose computation correctly handles
+    the transformation between consecutive segment tips.
+    """
+    num_segments = 3
+    model, params = make_planar_pcs(num_segments=num_segments)
+    
+    # Create test tip poses
+    chi_tips = jnp.array([
+        [0.1, 0.05, 0.02],   # Tip of segment 1
+        [0.3, 0.12, 0.08],   # Tip of segment 2  
+        [0.5, 0.18, 0.15],   # Tip of segment 3
+    ])
+    
+    # Compute relative poses
+    chi_rel = model._compute_relative_segment_poses(chi_tips)
+    
+    # Verify the shape
+    assert chi_rel.shape == (num_segments, 3), f"Expected shape {(num_segments, 3)}, got {chi_rel.shape}"
+    
+    # Manually compute the first relative pose (segment 1 w.r.t. base)
+    base_pose = jnp.array([model.th0, 0.0, 0.0])
+    expected_rel_0 = chi_tips[0] - base_pose
+    expected_rel_0 = expected_rel_0.at[1:].set(
+        jnp.array([
+            jnp.cos(base_pose[0]) * expected_rel_0[1] + jnp.sin(base_pose[0]) * expected_rel_0[2],
+            -jnp.sin(base_pose[0]) * expected_rel_0[1] + jnp.cos(base_pose[0]) * expected_rel_0[2]
+        ])
+    )
+    
+    # Check the first relative pose
+    assert_allclose(
+        chi_rel[0],
+        expected_rel_0,
+        rtol=RTOL,
+        atol=ATOL,
+        err_msg="First relative pose computation is incorrect"
+    )
+
+
+@pytest.mark.parametrize("num_segments", [2, 3])
+def test_inverse_kinematics_with_deactivated_strains(num_segments):
+    """
+    Test inverse kinematics with deactivated strain components.
+    
+    This test verifies that inverse kinematics works correctly when some strain
+    components are deactivated (e.g., shear strain is turned off).
+    """
+    # Test case 1: Deactivate shear strains (sigma_y)
+    strain_selector = jnp.tile(jnp.array([True, True, False]), num_segments)  # [kappa, sigma_x, sigma_y] per segment
+    
+    model, params = make_planar_pcs(num_segments=num_segments)
+    model_reduced = PlanarPCS(
+        num_segments=num_segments, 
+        params=params, 
+        strain_selector=strain_selector
+    )
+    
+    # Test with multiple random configurations
+    key = jax.random.PRNGKey(123)
+    num_test_configs = 5
+    
+    for i in range(num_test_configs):
+        key, subkey = jax.random.split(key)
+        
+        # Generate a random configuration for the reduced model
+        q_original = random_q(model_reduced, key=subkey, scale=0.2)
+        
+        # Compute forward kinematics at segment tips
+        s_tips = model_reduced.L_cum[1:]  # End of each segment
+        chi_tips = jnp.array([model_reduced.forward_kinematics(q_original, s) for s in s_tips])
+        
+        # Apply inverse kinematics
+        q_recovered = model_reduced.inverse_kinematics(chi_tips)
+        
+        # Check that the recovered configuration matches the original
+        assert_allclose(
+            q_recovered,
+            q_original,
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=f"Inverse kinematics failed for reduced model config {i} with {num_segments} segments"
+        )
+        
+        # Additional verification: forward kinematics of recovered configuration
+        chi_tips_recovered = jnp.array([model_reduced.forward_kinematics(q_recovered, s) for s in s_tips])
+        
+        assert_allclose(
+            chi_tips_recovered,
+            chi_tips,
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=f"Forward kinematics of recovered configuration failed for reduced model config {i}"
+        )
+    
+    # Test case 2: Deactivate curvature strains (kappa_z)
+    strain_selector_no_curvature = jnp.tile(jnp.array([False, True, True]), num_segments)
+    
+    model_no_curvature = PlanarPCS(
+        num_segments=num_segments, 
+        params=params, 
+        strain_selector=strain_selector_no_curvature
+    )
+    
+    # Test one configuration with no curvature model
+    q_original = random_q(model_no_curvature, key=jax.random.PRNGKey(456), scale=0.1)
+    s_tips = model_no_curvature.L_cum[1:]
+    chi_tips = jnp.array([model_no_curvature.forward_kinematics(q_original, s) for s in s_tips])
+    
+    q_recovered = model_no_curvature.inverse_kinematics(chi_tips)
+    
+    assert_allclose(
+        q_recovered,
+        q_original,
+        rtol=RTOL,
+        atol=ATOL,
+        err_msg="Inverse kinematics failed for no-curvature model"
+    )
+
+def test_inverse_kinematics_strain_selector_edge_cases():
+    """
+    Test inverse kinematics with edge cases of strain selection.
+    """
+    num_segments = 2
+    model, params = make_planar_pcs(num_segments=num_segments)
+    
+    # Edge case 1: Only curvature strains active
+    strain_selector_curvature_only = jnp.tile(jnp.array([True, False, False]), num_segments)
+    model_curvature_only = PlanarPCS(
+        num_segments=num_segments, 
+        params=params, 
+        strain_selector=strain_selector_curvature_only
+    )
+    
+    # Test with a simple configuration
+    q_test = random_q(model_curvature_only, key=jax.random.PRNGKey(111), scale=0.1)
+    s_tips = model_curvature_only.L_cum[1:]
+    chi_tips = jnp.array([model_curvature_only.forward_kinematics(q_test, s) for s in s_tips])
+    
+    q_recovered = model_curvature_only.inverse_kinematics(chi_tips)
+    
+    assert_allclose(
+        q_recovered,
+        q_test,
+        rtol=RTOL,
+        atol=ATOL,
+        err_msg="Inverse kinematics failed for curvature-only model"
+    )
+    
+    # Edge case 2: Only extension strains active (sigma_x)
+    strain_selector_extension_only = jnp.tile(jnp.array([False, True, False]), num_segments)
+    model_extension_only = PlanarPCS(
+        num_segments=num_segments, 
+        params=params, 
+        strain_selector=strain_selector_extension_only
+    )
+    
+    q_test2 = random_q(model_extension_only, key=jax.random.PRNGKey(222), scale=0.05)
+    chi_tips2 = jnp.array([model_extension_only.forward_kinematics(q_test2, s) for s in s_tips])
+    
+    q_recovered2 = model_extension_only.inverse_kinematics(chi_tips2)
+    
+    assert_allclose(
+        q_recovered2,
+        q_test2,
+        rtol=RTOL,
+        atol=ATOL,
+        err_msg="Inverse kinematics failed for extension-only model"
+    )
+
+
 if __name__ == "__main__":
     # run pytest with activated stdout
     pytest.main([__file__])
