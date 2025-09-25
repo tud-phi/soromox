@@ -172,7 +172,7 @@ class TendonActuatedPendulum(Pendulum):
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
 
         # Set actuation coordinates transformation
-        h_q , h_q_inv = self._set_conf2act_tranformation(self.A_at)
+        h_q, h_q_inv = self._set_conf2act_tranformation(self.A_at)
         self.h_q = h_q
         self.h_q_inv = h_q_inv
 
@@ -199,11 +199,15 @@ class TendonActuatedPendulum(Pendulum):
             + f"rank(R_pt) = {jnp.linalg.matrix_rank(self.R_pt)}."
         )
 
-        assert "R_at" not in tendon_params or self._check_routing_feasibility(self.R_at), (
+        assert "R_at" not in tendon_params or self._check_routing_feasibility(
+            self.R_at
+        ), (
             "Tendons cannot skip joints. For each row in R_at, after the first zero all entries must be zero."
         )
 
-        assert "R_pt" not in tendon_params or self._check_routing_feasibility(self.R_pt), (
+        assert "R_pt" not in tendon_params or self._check_routing_feasibility(
+            self.R_pt
+        ), (
             "Tendons cannot skip joints. For each row in R_pt, after the first zero all entries must be zero."
         )
 
@@ -359,7 +363,7 @@ class TendonActuatedPendulum(Pendulum):
             A (Array): Actuation matrix, shape (N, Na)
         """
         return self.A_at
-    
+
     # ---------------------
     # Energy methods
     # ---------------------
@@ -370,7 +374,7 @@ class TendonActuatedPendulum(Pendulum):
 
         The elastic energy is computed as:
         U_K = 0.5 * q^T @ K_tot @ q + 0.5 * l_pt0 @ K_pt @ l_pt0
-        where K_tot is the total stiffness matrix, K_pt is the stiffness matrix of 
+        where K_tot is the total stiffness matrix, K_pt is the stiffness matrix of
         the tendons, and l_pt0 is the initial pre-stretch of the tendon springs.
 
         Args:
@@ -379,7 +383,9 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             U_K_tot (Array): Total elastic potential energy [J] (scalar)
         """
-        U_K_tot = 0.5 * q.T @ self.K @ q + 0.5 * (self.R_pt @ q + self.l_pt0).T @ self.K_pt @ (self.R_pt @ q + self.l_pt0)
+        U_K_tot = 0.5 * q.T @ self.K @ q + 0.5 * (
+            self.R_pt @ q + self.l_pt0
+        ).T @ self.K_pt @ (self.R_pt @ q + self.l_pt0)
         return U_K_tot
 
     # ---------------------
@@ -397,6 +403,7 @@ class TendonActuatedPendulum(Pendulum):
             h_q (Array): transformation matrix such that y = h_q(q), shape (N, N)
             h_q_inv (Array): transformation matrix such that q = h_q_inv(q), shape (N, N)
         """
+
         def basis_expansion(A: Array) -> Array:
             """
             Computes the basis expansion of a rectangular matrix via QR method. It is assumed that A is full rank.
@@ -411,77 +418,79 @@ class TendonActuatedPendulum(Pendulum):
             r = jnp.linalg.matrix_rank(A)
 
             # Full orthonormal Q (n, n)
-            Q_complete, _ = jnp.linalg.qr(A, mode='complete')   # Q_complete @ R = A (R may be padded zeros)
+            Q_complete, _ = jnp.linalg.qr(
+                A, mode="complete"
+            )  # Q_complete @ R = A (R may be padded zeros)
 
             # Span of the orthogonal complement
-            extra = Q_complete[:, r:]                           # (n, n - r)
+            extra = Q_complete[:, r:]  # (n, n - r)
 
             # Expanded input matrix with n - r linearly independent columns
-            A_expanded = jnp.concatenate([A, extra], axis=1)    # (n, m + (n - r))
+            A_expanded = jnp.concatenate([A, extra], axis=1)  # (n, m + (n - r))
 
             return A_expanded
-        
+
         # Compute basis expansion of the actuation matrix
-        A_at_exp = basis_expansion(self.A_at) # (N, N)
+        A_at_exp = basis_expansion(self.A_at)  # (N, N)
 
         # Define change of coordinates between configuration (q) and actuation space (y)
         h_q_inv = A_at_exp.T
         h_q = jnp.linalg.inv(h_q_inv)
-        
+
         return h_q, h_q_inv
-    
+
     def conf2act_coords(self, q: Array) -> Array:
         """
         Compute the actuation coordinates corresponding to the input
         configuration coordinates.
 
         Args:
-            q (Array): configuration coordinates, shape (N, )
+            q (Array): configuration coordinates, shape (N,)
 
         Returns:
-            y (Array): actuation coordinates, shape (N, )
+            y (Array): actuation coordinates, shape (N,)
         """
         return self.h_q_inv @ q
-    
+
     def act2conf_coords(self, y: Array) -> Array:
         """
         Compute the configuration coordinates corresponding to the input
         configuration coordinates.
 
         Args:
-            y (Array): actuation coordinates, shape (N, )
+            y (Array): actuation coordinates, shape (N,)
 
         Returns:
-            q (Array): configuration coordinates, shape (N, )
+            q (Array): configuration coordinates, shape (N,)
         """
         return self.h_q @ y
-    
+
     def conf2act_jacobian(self, q: Array):
         """
         Jacobian of the configuration to actuation map.
 
         Args:
-            q (Array): configuration coordinates, shape (N, )
+            q (Array): configuration coordinates, shape (N,)
 
         Returns:
-            J_h_q_inv (Array): jacobian, shape (N, )
+            J_h_q_inv (Array): jacobian, shape (N,)
         """
         J_h_q_inv = self.h_q_inv
         return J_h_q_inv
-    
+
     def act2conf_jacobian(self, q: Array):
         """
         Jacobian of the actuation to configuration map.
 
         Args:
-            q (Array): configuration coordinates, shape (N, )
+            q (Array): configuration coordinates, shape (N,)
 
         Returns:
-            J_h_q (Array): jacobian, shape (N, )
+            J_h_q (Array): jacobian, shape (N,)
         """
         J_h_q = self.h_q
         return J_h_q
-    
+
     def actuation_space_dynamics(
         self,
         q: Array,
@@ -503,18 +512,20 @@ class TendonActuatedPendulum(Pendulum):
             J_h_q (Array): Jacobian of the h_q map, shape (N, N).
             JhM_pinv (Array): Dynamically-consistent pseudo-inverse of the Jacobian, shape (N, N).
         """
+        # Jacobians
         J_h_q = self.conf2act_jacobian(q)
         J_h_q_inv = self.act2conf_jacobian(q)
-        M_inv = jnp.linalg.inv(self.inertia_matrix(q))
+
+        # Inertia matrix
         M = self.inertia_matrix(q)
+        M_inv = jnp.linalg.inv(M)
+
+        # Coriolis
         C = self.coriolis_matrix(q, qd)
-        M_y = jnp.linalg.inv(
-            J_h_q_inv.T @ M @ J_h_q_inv
-        )
+
+        # Actuation space
+        M_y = jnp.linalg.inv(J_h_q_inv.T @ M @ J_h_q_inv)
         eta_y = M_y @ (J_h_q @ M_inv @ C) @ J_h_q_inv
         JhM_pinv = J_h_q_inv
 
         return M_y, eta_y, J_h_q, JhM_pinv
-    
-
-
