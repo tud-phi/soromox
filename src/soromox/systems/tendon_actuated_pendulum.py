@@ -274,8 +274,11 @@ class TendonActuatedPendulum(Pendulum):
         updated = self
         if "R_at" in tendon_params:
             R_at = jnp.asarray(tendon_params["R_at"])
+            h_q, h_q_inv = self._set_conf2act_tranformation(R_at.T)
             updated = eqx.tree_at(lambda x: x.R_at, updated, R_at)
             updated = eqx.tree_at(lambda x: x.A_at, updated, R_at.T)
+            updated = eqx.tree_at(lambda x: x.h_q, updated, h_q)
+            updated = eqx.tree_at(lambda x: x.h_q_inv, updated, h_q_inv)
         if "R_pt" in tendon_params:
             R_pt = jnp.asarray(tendon_params["R_pt"])
             updated = eqx.tree_at(lambda x: x.R_pt, updated, R_pt)
