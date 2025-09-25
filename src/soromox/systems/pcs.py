@@ -562,6 +562,95 @@ class PCS(DynamicalSystem):
         return g_s
 
     @eqx.filter_jit
+    def _compute_relative_segment_transforms(self, g_tips: Array) -> Array:
+        """Return the SE(3) transforms from each segment base to its distal tip.
+
+        The first entry is measured from the global base pose ``g0``; subsequent entries
+        use the distal pose of the previous segment, mirroring the serial chain geometry.
+
+        Args:
+            g_tips (Array): absolute tip transforms of shape (num_segments, 4, 4).
+
+        Returns:
+            g_rels (Array): relative transforms of shape (num_segments, 4, 4).
+        """
+        g_tips = jnp.asarray(g_tips).reshape(self.num_segments, 4, 4)
+
+        # prepend the base transform so every segment has its proximal pose available
+        g_prev = jnp.concatenate([self.g0[None, :, :], g_tips[:-1]], axis=0)
+
+        def rel_transform(g_prev_i: Array, g_curr_i: Array) -> Array:
+            """
+            Compute ``g_prev_i^{-1} @ g_curr_i`` without explicitly inverting ``g_prev_i``.
+            This is more numerically stable and efficient than computing the inverse directly.
+            Args:
+                g_prev_i (Array): previous segment tip transform of shape (4, 4).
+                g_curr_i (Array): current segment tip transform of shape (4, 4).
+            Returns:
+                g_rel (Array): relative transform of shape (4, 4).
+            """
+            R_prev = g_prev_i[:3, :3]
+            p_prev = g_prev_i[:3, 3]
+
+            R_curr = g_curr_i[:3, :3]
+            p_curr = g_curr_i[:3, 3]
+
+            R_rel = R_prev.T @ R_curr
+            p_rel = R_prev.T @ (p_curr - p_prev)
+
+            upper = jnp.concatenate([R_rel, p_rel[:, None]], axis=1)
+            lower = jnp.array([0.0, 0.0, 0.0, 1.0], dtype=g_curr_i.dtype)[None, :]
+            g_rel = jnp.concatenate([upper, lower], axis=0)
+            return g_rel
+
+        g_rels = vmap(rel_transform)(g_prev, g_tips)
+        return g_rels
+
+    @eqx.filter_jit
+    def inverse_kinematics(self, g_tips: Array) -> Array:
+        """
+        Recover generalized coordinates from the absolute tip poses of each segment.
+
+        The routine converts each tip pose into a body-relative transform, extracts the
+        corresponding twist via the SE(3) logarithmic map, and normalises by segment length
+        to obtain the constant strain representation used by the PCS model.
+
+        Args:
+            g_tips (Array): homogeneous tip transforms of shape (num_segments, 4, 4).
+
+        Returns:
+            q (Array): generalized coordinates ``q`` of shape (num_active_strains,).
+        """
+        # Relative pose of each segment distal tip with respect to its proximal base
+        g_rel = self._compute_relative_segment_transforms(g_tips)
+
+        def _segment_inverse(g_rel_i: Array, length_i: Array) -> Array:
+            """
+            Map the relative tip pose of a segment to its constant strain twist.
+            Args:
+                g_rel_i (Array): relative transform of shape (4, 4).
+                length_i (Array): length of the segment.
+            Returns:
+                xi (Array): strain twist of shape (6,).
+            """
+            xi_mag = lie.log_SE3(g_rel_i, eps=self.global_eps)
+            xi = jnp.where(
+                jnp.abs(length_i) < self.global_eps,
+                jnp.zeros_like(xi_mag),
+                xi_mag / length_i,
+            )
+            return xi
+
+        # Convert every relative transform to segment twist parameters
+        xi_segments = vmap(_segment_inverse)(g_rel, self.L)
+        xi = xi_segments.reshape(-1)
+
+        # Project the strain difference onto the active strain basis to obtain ``q``
+        q = jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
+
+        return q
+
+    @eqx.filter_jit
     def _J_local(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a point s along the robot.

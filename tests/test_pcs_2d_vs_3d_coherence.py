@@ -142,6 +142,16 @@ def random_planar_state(model: PlanarPCS, key: Array, scale: float = 0.05) -> Ar
     return scale * random.normal(key, (size,))
 
 
+def planar_tip_poses(model: PlanarPCS, q: Array) -> Array:
+    s_vals = model.L_cum[1:]
+    return jax.vmap(lambda s: model.forward_kinematics(q, s))(s_vals)
+
+
+def spatial_tip_transforms(model: PCS, q: Array) -> Array:
+    s_vals = model.L_cum[1:]
+    return jax.vmap(lambda s: model.forward_kinematics(q, s))(s_vals)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_coherence(num_segments):
     planar_model = make_planar_model(num_segments)
@@ -329,6 +339,35 @@ def test_energy_coherence(num_segments):
         E_planar = planar_model.total_energy(q_planar, qd_planar)
         E_spatial = spatial_model.total_energy(q_spatial, qd_spatial)
         assert_allclose(E_spatial, E_planar, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_inverse_kinematics_coherence(num_segments):
+    planar_model = make_planar_model(num_segments)
+    spatial_model = make_spatial_model(num_segments)
+
+    key = random.PRNGKey(5)
+    for _ in range(NUM_RANDOM_SAMPLES):
+        key, subkey = random.split(key)
+        q_planar = random_planar_state(planar_model, subkey)
+        q_spatial = lift_planar_configuration(planar_model, spatial_model, q_planar)
+
+        chi_tips = planar_tip_poses(planar_model, q_planar)
+        g_tips = spatial_tip_transforms(spatial_model, q_spatial)
+
+        q_planar_recovered = planar_model.inverse_kinematics(chi_tips)
+        q_spatial_recovered = spatial_model.inverse_kinematics(g_tips)
+
+        assert_allclose(q_planar_recovered, q_planar, rtol=RTOL, atol=ATOL)
+        assert_allclose(q_spatial_recovered, q_spatial, rtol=RTOL, atol=ATOL)
+
+        xi_spatial = spatial_model.B_xi @ q_spatial_recovered + spatial_model.xi_ref
+        xi_planar = xi_spatial.reshape(num_segments, 6)[:, [2, 3, 4]].reshape(-1)
+        xi_planar -= planar_model.xi_ref
+        q_planar_from_spatial = jnp.linalg.pinv(planar_model.B_xi) @ xi_planar
+
+        assert_allclose(q_planar_from_spatial, q_planar_recovered, rtol=RTOL, atol=ATOL)
+        assert_allclose(q_planar_from_spatial, q_planar, rtol=RTOL, atol=ATOL)
 
 if __name__ == "__main__":
     # run pytest with activated stdout

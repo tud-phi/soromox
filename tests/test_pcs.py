@@ -20,6 +20,7 @@ EPS = 1e-6
 
 PCS_TOTAL_LENGTH = 2e-1
 NUM_RANDOM_SAMPLES = 5
+NUM_IK_SAMPLES = 10
 
 
 def make_pcs(
@@ -27,6 +28,7 @@ def make_pcs(
     xi_ref: Optional[Array] = None,
     total_length: float = PCS_TOTAL_LENGTH,
     order_gauss: int = 3,
+    strain_selector: Optional[Array] = None,
 ):
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
@@ -50,6 +52,7 @@ def make_pcs(
         params=params,
         order_gauss=order_gauss,
         xi_ref=xi_ref,
+        strain_selector=strain_selector,
     )
 
     return model, params
@@ -101,6 +104,16 @@ def spatial_from_body(g: Array, xi_body: Array) -> Array:
         [[g[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
     )
     return Adjoint_g_SE3(g_rot) @ xi_body
+
+
+def segment_tip_transforms(model: PCS, q: Array) -> Array:
+    s_vals = model.L_cum[1:]
+
+    def fk_at_s(s: Array) -> Array:
+        return model.forward_kinematics(q, s)
+
+    return jax.vmap(fk_at_s)(s_vals)
+
 
 
 def test_planar_cs_num():
@@ -429,6 +442,45 @@ def test_individual_call():
     except Exception as e:
         print(f"[Error] Forward dynamics computation failed: {e}")
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_inverse_kinematics_consistency(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments)
+    key = jax.random.PRNGKey(123)
+    keys = jax.random.split(key, NUM_IK_SAMPLES)
+
+    for subkey in keys:
+        q = random_q(model, subkey, scale=0.05)
+        g_tips = segment_tip_transforms(model, q)
+        q_recovered = model.inverse_kinematics(g_tips)
+
+        assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_inverse_kinematics_straight_configuration(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments)
+    q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
+
+    g_tips = segment_tip_transforms(model, q)
+    q_recovered = model.inverse_kinematics(g_tips)
+
+    assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_inverse_kinematics_with_deactivated_strains(num_segments: int):
+    selector_per_segment = jnp.array([False, False, True, True, False, False], dtype=bool)
+    strain_selector = jnp.tile(selector_per_segment, num_segments)
+    model, _ = make_pcs(num_segments=num_segments, strain_selector=strain_selector)
+
+    key = jax.random.PRNGKey(456)
+    keys = jax.random.split(key, NUM_IK_SAMPLES)
+
+    for subkey in keys:
+        q = random_q(model, subkey, scale=0.05)
+        g_tips = segment_tip_transforms(model, q)
+        q_recovered = model.inverse_kinematics(g_tips)
+
+        assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
@@ -606,7 +658,7 @@ def test_gravity_matches_potential_gradient(num_segments: int):
         assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
     key = jax.random.PRNGKey(9)
@@ -633,7 +685,7 @@ def test_coriolis_force_with_christoffel_symbols(num_segments: int):
         assert_allclose(tau_cor_impl, tau_cor, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
     key = jax.random.PRNGKey(10)
@@ -655,11 +707,6 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
         tau_cor_autograd = jac_T_q @ qd - grad_T_q
 
         assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)
-
-
-@pytest.mark.parametrize("num_segments", [1, 2])
-def test_coriolis_force_matches_kinetic_energy_autogra(num_segments: int):
-    test_coriolis_force_matches_kinetic_energy_autograd(num_segments)
 
 
 if __name__ == "__main__":
