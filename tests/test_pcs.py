@@ -710,6 +710,5 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
 
 
 if __name__ == "__main__":
-    # test_gravity_matches_potential_gradient(num_segments=1)
     # run pytest with activated stdout
     pytest.main([__file__])

@@ -1110,7 +1110,8 @@ class PCS(DynamicalSystem):
                 J_j = self._jacobian_bodyframe_full(q, Xs_j)
                 return Ws_j * J_j.T @ M_i @ J_j
 
-            B_blocks_i = vmap(B_j)(jnp.arange(self.num_gauss_points))
+            # we can skip the first and last quadrature points since their weight is zero
+            B_blocks_i = vmap(B_j)(jnp.arange(1, self.num_gauss_points - 1))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # B_blocks_i = jnp.stack(
@@ -1175,7 +1176,8 @@ class PCS(DynamicalSystem):
                     @ (M_i @ Jd_j + lie.coadjoint_se3(J_j @ self.B_xi @ qd) @ M_i @ J_j)
                 )
 
-            C_blocks_i = vmap(C_j)(jnp.arange(self.num_gauss_points))
+            # we can skip the first and last quadrature points since their weight is zero
+            C_blocks_i = vmap(C_j)(jnp.arange(1, self.num_gauss_points - 1))
 
             return C_blocks_i
 
@@ -1229,7 +1231,8 @@ class PCS(DynamicalSystem):
 
                 return -Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
 
-            G_blocks_segment_i = vmap(G_j)(jnp.arange(self.num_gauss_points))
+            # we can skip the first and last quadrature points since their weight is zero
+            G_blocks_segment_i = vmap(G_j)(jnp.arange(1, self.num_gauss_points - 1))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # G_blocks_segment_i = jnp.stack(
@@ -1474,7 +1477,8 @@ class PCS(DynamicalSystem):
                 )  # Add zeros for the orientation angles
                 return -Ws_j * rho_i * A_i * jnp.dot(p_j, self.g)
 
-            U_G_blocks_segment_i = vmap(U_G_j)(jnp.arange(self.num_gauss_points))
+            # we can skip the first and last quadrature points since their weight is zero
+            U_G_blocks_segment_i = vmap(U_G_j)(jnp.arange(1, self.num_gauss_points - 1))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # U_G_blocks_segment_i = jnp.stack(

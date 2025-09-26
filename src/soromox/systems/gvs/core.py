@@ -2122,9 +2122,10 @@ class GVS(DynamicalSystem):
                     J_j.T @ Ms_j @ J_j
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
+            # we can skip the first and last quadrature points since their weight is zero
             B_blocks_segment_i = vmap(B_eval_points)(
-                jnp.arange(self.max_nip)
-            )  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+                jnp.arange(1, self.max_nip - 1)
+            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
             # # For debugging purposes, we can use a list comprehension
             # B_blocks_segment_i = jnp.stack([B_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
@@ -2222,9 +2223,10 @@ class GVS(DynamicalSystem):
                     @ (Ms_j @ Jd_j + lie.coadjoint_se3(J_j @ qd_flat) @ Ms_j @ J_j)
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
+            # we can skip the first and last quadrature points since their weight is zero
             C_blocks_segment_i = vmap(C_eval_points)(
-                jnp.arange(self.max_nip)
-            )  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+                jnp.arange(1, self.max_nip - 1)
+            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
             # For debugging purposes, we can use a list comprehension
             # C_blocks_segment_i = jnp.stack([C_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
@@ -2318,9 +2320,10 @@ class GVS(DynamicalSystem):
                     Ws_j * J_j.T @ M_j @ Ad_g_j_inv @ self.g
                 )  # (num_segments * 2 * max_dof, 1)
 
+            # we can skip the first and last quadrature points since their weight is zero
             G_blocks_segment_i = vmap(G_eval_points)(
-                jnp.arange(self.max_nip)
-            )  # (max_nip, num_segments * 2 * max_dof, 1)
+                jnp.arange(1, self.max_nip - 1)
+            )  # (max_nip - 2, num_segments * 2 * max_dof, 1)
 
             # For debugging purposes, we can use a list comprehension
             # G_blocks_segment_i = jnp.stack([G_eval_points(i_eval) for i_eval in range(self.max_nip)])
@@ -2407,10 +2410,11 @@ class GVS(DynamicalSystem):
 
                 return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
 
+            # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
-                jnp.sum(vmap(K_eval_points)(jnp.arange(self.max_nip)), axis=0)
+                jnp.sum(vmap(K_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
                 * length_i**2
-            )  # (max_nip, max_dof, max_dof)
+            )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with K_joint_i and K_segment_i
             K_blocks_segment_i = jnp.stack([K_joint_i, K_link_i], axis=0)
@@ -2511,10 +2515,11 @@ class GVS(DynamicalSystem):
 
                 return Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)
 
+            # we can skip the first and last quadrature points since their weight is zero
             D_link_i = (
-                jnp.sum(vmap(D_eval_points)(jnp.arange(self.max_nip)), axis=0)
+                jnp.sum(vmap(D_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
                 * length_i**2
-            )  # (max_nip, max_dof, max_dof)
+            )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with D_joint_i and D_segment_i
             D_blocks_segment_i = jnp.stack([D_joint_i, D_link_i], axis=0)
