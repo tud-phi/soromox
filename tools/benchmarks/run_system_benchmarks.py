@@ -175,7 +175,9 @@ def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
     q = jnp.linspace(-0.2, 0.2, dof)
     qd = jnp.linspace(0.25, -0.25, dof)
     s_vals = system.L_cum[1:]
-    chi_tips = jax.vmap(lambda s: system.forward_kinematics(q, s))(s_vals)
+    def _forward_kinematics_at_s(s):
+        return system.forward_kinematics(q, s)
+    chi_tips = jax.vmap(_forward_kinematics_at_s)(s_vals)
     ctx: MutableMapping[str, Array] = {
         "q": q,
         "qd": qd,
