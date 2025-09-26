@@ -965,6 +965,42 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
             atol=ATOL,
         )
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_dynamics_matches_manual_computation(num_segments: int):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
+
+    num_strains = int(model.num_active_strains.item())
+    key = jax.random.PRNGKey(42 + num_segments)
+
+    for _ in range(NUM_RANDOM_SAMPLES):
+        key, key_q = jax.random.split(key)
+        q = jax.random.normal(key_q, (num_strains,))
+
+        key, key_qd = jax.random.split(key)
+        qd = jax.random.normal(key_qd, (num_strains,))
+
+        key, key_u = jax.random.split(key)
+        u = jax.random.normal(key_u, (model.num_actuators,))
+
+        key, key_tau = jax.random.split(key)
+        tau_ext = jax.random.normal(key_tau, (num_strains,))
+
+        y = jnp.concatenate([q, qd])
+        yd = model.forward_dynamics(0.0, y, (u, tau_ext))
+
+        B = model.inertia_matrix(q)
+        C = model.coriolis_matrix(q, qd)
+        G = model.gravitational_force(q)
+        D = model.damping_matrix()
+        tau_el = model.elastic_force(q)
+        tau_u = model.actuation_force(q, u)
+
+        B_inv = jnp.linalg.inv(B)
+        qdd_expected = B_inv @ (tau_u + tau_ext - C @ qd - G - tau_el - D @ qd)
+        yd_expected = jnp.concatenate([qd, qdd_expected])
+
+        assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
+
 
 if __name__ == "__main__":
     # run pytest with activated stdout
