@@ -1021,12 +1021,12 @@ class PCS(DynamicalSystem):
     # Useful functions for the system
 
     @eqx.filter_jit
-    def _local_cross_sectional_area(self, i: int) -> Array:
+    def _local_cross_sectional_area(self, i: Array) -> Array:
         """
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
@@ -1036,12 +1036,12 @@ class PCS(DynamicalSystem):
         return A_i
 
     @eqx.filter_jit
-    def _local_second_moment_of_area(self, i: int) -> Array:
+    def _local_second_moment_of_area(self, i: Array) -> Array:
         """
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             I_i (Array): local second moment of area of the i-th segment
@@ -1051,12 +1051,12 @@ class PCS(DynamicalSystem):
         return I_i
 
     @eqx.filter_jit
-    def _local_polar_moment_of_inertia(self, i: int) -> Array:
+    def _local_polar_moment_of_inertia(self, i: Array) -> Array:
         """
         Compute the local polar moment of inertia for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             J_i (Array): local polar moment of inertia of the i-th segment
@@ -1066,12 +1066,12 @@ class PCS(DynamicalSystem):
         return J_i
 
     @eqx.filter_jit
-    def _local_mass_matrix(self, i: int) -> Array:
+    def _local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
         Returns:
             M_i (Array): local mass matrix of shape (6, 6) for the i-th segment
         """
@@ -1217,13 +1217,13 @@ class PCS(DynamicalSystem):
             G (Array): Full gravitational force of shape (num_strains,).
         """
 
-        def G_i(i):
+        def G_i(i: Array) -> Array:
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
             M_i = self._local_mass_matrix(i)
 
-            def G_j(j):
+            def G_j(j: Array) -> Array:
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 Ad_g_inv_j = lie.Adjoint_g_inv_SE3(self.forward_kinematics(q, Xs_j))
@@ -1272,12 +1272,12 @@ class PCS(DynamicalSystem):
         return G
 
     @eqx.filter_jit
-    def _local_stiffness_matrix(self, i: int) -> Array:
+    def _local_stiffness_matrix(self, i: Array) -> Array:
         """
         Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
 
         Args:
-            i (int): index of the segment
+            i (Array): index of the segment
 
         Returns:
             S_i (Array): Local stiffness matrix of shape (6, 6) for the i-th segment.

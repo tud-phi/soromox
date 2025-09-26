@@ -71,13 +71,13 @@ def gauss_quadrature(N_GQ: int, a: Array = jnp.zeros(()), b: Array = jnp.ones(()
         Returns:
             needs_more_its (Array): Boolean array of shape () that contains True if another iteration is required; False otherwise.
         """
-        _L_ls = [jnp.ones_like(y), y]
+        L_ls_ = [jnp.ones_like(y), y]
         for k in range(2, N1 + 1):
-            Lk = ((2 * k - 1) * y * _L_ls[-1] - (k - 1) * _L_ls[-2]) / k
-            _L_ls.append(Lk)
-        _L = jnp.stack(_L_ls, axis=1)
-        Lp = N2 * (_L[:, N1 - 1] - y * _L[:, N1]) / (1 - y**2)
-        y_new = y - _L[:, N1] / Lp
+            Lk = ((2 * k - 1) * y * L_ls_[-1] - (k - 1) * L_ls_[-2]) / k
+            L_ls_.append(Lk)
+        L_ = jnp.stack(L_ls_, axis=1)
+        Lp = N2 * (L_[:, N1 - 1] - y * L_[:, N1]) / (1 - y**2)
+        y_new = y - L_[:, N1] / Lp
         needs_more_its = jnp.max(jnp.abs(y_new - y)) > jnp.finfo(jnp.float32).eps
         return needs_more_its
 
