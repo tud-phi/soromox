@@ -73,6 +73,7 @@ class Pendulum(DynamicalSystem):
 
     # Static field
     num_links: int = eqx.field(static=True)
+    num_actuators: int = eqx.field(static=True)
 
     # Stored physical parameters
     m: Array

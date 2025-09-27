@@ -151,6 +151,7 @@ class TendonActuatedPendulum(Pendulum):
         # Actuation matrix of active tendons
         self.R_at = jnp.asarray(tendon_params.get("R_at", jnp.identity(N)))
         self.A_at = self.R_at.T
+        self.num_actuators = self.R_at.shape[0]
 
         # Actuation matrix of passive tendons
         self.R_pt = jnp.asarray(tendon_params.get("R_pt", jnp.zeros((N, N))))
@@ -269,7 +270,7 @@ class TendonActuatedPendulum(Pendulum):
                 - "l_pt0": initial length of the passive tendons (Np,) (optional)
 
         Returns:
-            TendonActuatedPendulum: New instance with updated parameters.
+            TendonActuatedPendulum: new instance with updated parameters.
         """
         updated = self
         if "R_at" in tendon_params:
@@ -291,8 +292,8 @@ class TendonActuatedPendulum(Pendulum):
             updated = eqx.tree_at(lambda x: x.D_pt, updated, jnp.diag(d_pt))
         if "l_pt0" in tendon_params:
             l_pt0 = jnp.asarray(tendon_params["l_pt0"])
-            updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
             tau_pt0 = updated.A_pt @ updated.K_pt @ updated.l_pt0
+            updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
             updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
         return updated
 
@@ -407,18 +408,19 @@ class TendonActuatedPendulum(Pendulum):
             h_q_inv (Array): transformation matrix such that q = h_q_inv(q), shape (N, N)
         """
 
-        def basis_expansion(A: Array) -> Array:
+        def basis_expansion(A: Array, r: int) -> Array:
             """
-            Computes the basis expansion of a rectangular matrix via QR method. It is assumed that A is full rank.
+            Computes the basis expansion of a rectangular matrix via QR method. It is assumed that A is full rank = r.
 
             Args:
                 A (Array): rectangular matrix, shape (n, m)
+                r (int): number of columns to expand the matrix (r <= n)
 
             Returns:
-                A_expanded (Array): square matrix which last n - m columns are linearly independent from the first m, shape (n, n)
+                A_expanded (Array): square matrix which last n - r columns are linearly independent from the first m, shape (n, n)
             """
-            # Rank the input matrix
-            r = jnp.linalg.matrix_rank(A)
+            # Rank the input matrix ASSUMED to be equal to self.num_actuators
+            #r = jnp.linalg.matrix_rank(A)
 
             # Full orthonormal Q (n, n)
             Q_complete, _ = jnp.linalg.qr(
@@ -434,7 +436,7 @@ class TendonActuatedPendulum(Pendulum):
             return A_expanded
 
         # Compute basis expansion of the actuation matrix
-        A_at_exp = basis_expansion(self.A_at)  # (N, N)
+        A_at_exp = basis_expansion(self.A_at, self.num_actuators)  # (N, N)
 
         # Define change of coordinates between configuration (q) and actuation space (y)
         h_q_inv = A_at_exp.T
@@ -481,12 +483,12 @@ class TendonActuatedPendulum(Pendulum):
         J_h_q_inv = self.h_q_inv
         return J_h_q_inv
 
-    def act2conf_jacobian(self, q: Array):
+    def act2conf_jacobian(self, y: Array):
         """
-        Jacobian of the actuation to configuration map.
+        Jacobian of the actuation to configuration map, J_(h_q)^{-1} = d (h_q)^{-1}(y) / d y
 
         Args:
-            q (Array): configuration coordinates, shape (N,)
+            y (Array): actuation coordinates, shape (N,)
 
         Returns:
             J_h_q (Array): jacobian, shape (N,)
@@ -512,12 +514,14 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             M_y (Array): Inertia matrix in the actuation space, shape (N, N).
             eta_y (Array): Coriolis and centrifugal matrix in the actuation space, shape (N,).
-            J_h_q (Array): Jacobian of the h_q map, shape (N, N).
+            J (Array): Jacobian of the h_q map, shape (N, N).
             JhM_pinv (Array): Dynamically-consistent pseudo-inverse of the Jacobian, shape (N, N).
         """
         # Jacobians
-        J_h_q = self.conf2act_jacobian(q)
-        J_h_q_inv = self.act2conf_jacobian(q)
+        J = self.conf2act_jacobian(q)
+        # Even J_inv = self.conf2act_jacobian(y=h_q_inv(q)) in this case becuase it is linear, it is in general not true.
+        # Below is reported the right computation in the general case (when (J_h_q)^{-1} != J_(h_q)^{-1})
+        J_inv = jnp.linalg.inv(J)
 
         # Inertia matrix
         M = self.inertia_matrix(q)
@@ -526,9 +530,9 @@ class TendonActuatedPendulum(Pendulum):
         # Coriolis
         C = self.coriolis_matrix(q, qd)
 
-        # Actuation space
-        M_y = jnp.linalg.inv(J_h_q_inv.T @ M @ J_h_q_inv)
-        eta_y = M_y @ (J_h_q @ M_inv @ C) @ J_h_q_inv
-        JhM_pinv = J_h_q_inv
+        # Actuation space dynamics
+        M_y = jnp.linalg.inv(J_inv.T @ M @ J_inv)
+        eta_y = M_y @ (J @ M_inv @ C) @ J_inv
+        JhM_pinv = J_inv
 
-        return M_y, eta_y, J_h_q, JhM_pinv
+        return M_y, eta_y, J, JhM_pinv
