@@ -1618,10 +1618,76 @@ class PCS(DynamicalSystem):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        # evaluate the dynamical matrices
-        B = self.inertia_matrix(q)
-        C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_force(q)
+        # compute the strains and their derivatives based on the current configuration and velocity
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
+
+        def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
+            """
+            Compute the integrand for the dynamical matrices at the i-th segment.
+            Args:
+                i (Array): index of the segment
+            Returns:
+                Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
+            """
+            # Get the Gauss quadrature points and weights for the current segment
+            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
+                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
+            )
+            M_i = self._local_mass_matrix(i)
+
+            def dynamical_matrices_j(j: Array) -> Tuple[Array, Array, Array]:
+                """
+                Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
+                Args:
+                    j (Array): index of the quadrature point
+                Returns:
+                    Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
+                """
+                # select the j-th quadrature point and weight
+                Xs_j = Xs_scaled[j]
+                Ws_j = Ws_scaled[j]
+
+                # compute the pose of the j-th quadrature point
+                g_j = self.forward_kinematics(q, Xs_j)
+
+                # compute the jacobian and its time-derivative in the body frame
+                J_j, Jd_j = self._jacobian_and_derivative_bodyframe_full(q, qd, Xs_j)
+                
+                # compute the lie algebra expressions.
+                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(g_j)
+
+                # compute the inertia matrix integrand
+                B_j = Ws_j * J_j.T @ M_i @ J_j
+
+                # compute the coriolis matrix integrand
+                C_j = Ws_j * (
+                    J_j.T
+                    @ (M_i @ Jd_j + lie.coadjoint_se3(J_j @ self.B_xi @ qd) @ M_i @ J_j)
+                )
+
+                # compute the gravitational force integrand
+                G_j = -Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
+
+                return B_j, C_j, G_j 
+
+            # we can skip the first and last quadrature points since their weight is zero
+            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_j)(jnp.arange(1, self.num_gauss_points - 1))
+
+            return B_blocks_i, C_blocks_i, G_blocks_i
+
+        # compute the dynamical matrices for each segment
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(jnp.arange(self.num_segments))
+
+        # sum over segments and Gauss points
+        B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
+        C_full = jnp.sum(C_blocks_tot, axis=(0, 1))
+        G_full = jnp.sum(G_blocks_tot, axis=(0, 1))
+
+        # construct the dynamical matrices
+        B = self.B_xi.T @ B_full @ self.B_xi
+        C = self.B_xi.T @ C_full @ self.B_xi
+        G = self.B_xi.T @ G_full
         D = self.damping_matrix()
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
