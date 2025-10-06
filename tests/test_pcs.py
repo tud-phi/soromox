@@ -513,6 +513,33 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments: int):
 
         assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
 
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_local_jacobian_tips_coherence(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(987)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(654), scale=0.1)
+
+    s_tips = model.L_cum[1:]
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_tips, Jd_tips = model._J_Jd_local_tips(q, qd)
+
+        for idx, s_tip in enumerate(s_tips):
+            J_local, Jd_local = model._J_Jd_local(q, qd, s_tip)
+            J_blocks = J_local.reshape(6, model.num_segments, 6).transpose(1, 0, 2)
+            Jd_blocks = Jd_local.reshape(6, model.num_segments, 6).transpose(1, 0, 2)
+
+            assert_allclose(J_blocks[idx], J_tips[idx], rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_blocks[idx], Jd_tips[idx], rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
