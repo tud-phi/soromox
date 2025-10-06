@@ -115,6 +115,20 @@ def segment_tip_transforms(model: PCS, q: Array) -> Array:
     return jax.vmap(fk_at_s)(s_vals)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_kinematics_tips_coherence(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    zero_cfg = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(321)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    for q in (zero_cfg, random_cfg):
+        g_tips_expected = segment_tip_transforms(model, q)
+        g_tips_actual = model.forward_kinematics_tips(q)
+
+        assert_allclose(g_tips_actual, g_tips_expected, rtol=RTOL, atol=ATOL)
+
+
 def test_planar_cs_num():
     """
     Test the planar constant strain system with numerical integration and Jacobian for 1 segment.
