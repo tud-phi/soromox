@@ -970,8 +970,8 @@ class PCS(DynamicalSystem):
             qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, 6)
-            Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, 6)
+            J_local_tips (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, num_strains)
+            Jd_local_tips (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, num_strains)
         """
         # compute the strain and strain rate for each segment
         xi = self.strain(q).reshape(self.num_segments, 6)
