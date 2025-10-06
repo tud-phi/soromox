@@ -1805,6 +1805,10 @@ class PCS(DynamicalSystem):
             self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
         ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
+        # compute the forward kinematics for each quadrature point
+        g_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 4, 4)
+        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 4, 4)  # shape (num_segments, num_gauss_points, 4, 4)
+
         def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
             """
             Compute the integrand for the dynamical matrices at the i-th segment.
@@ -1827,14 +1831,11 @@ class PCS(DynamicalSystem):
                 Xs_j = Xs_scaled[i][j]
                 Ws_j = Ws_scaled[i][j]
 
-                # compute the pose of the j-th quadrature point
-                g_j = self.forward_kinematics(q, Xs_j)
-
                 # compute the jacobian and its time-derivative in the body frame
                 J_j, Jd_j = self._jacobian_and_derivative_bodyframe_full(q, qd, Xs_j)
                 
                 # compute the lie algebra expressions.
-                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(g_j)
+                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(g_ps[i, j])
 
                 # compute the inertia matrix integrand
                 B_j = Ws_j * J_j.T @ M_i @ J_j
