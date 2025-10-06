@@ -530,6 +530,15 @@ class PCS(DynamicalSystem):
         segment_idx, s_local = self.classify_segment(s)
 
         def body_segment_i(g_base_i: Array, i: Array) -> Tuple[Array, Array]:
+            """
+            Compute the forward kinematics of the robot for the i-th segment. Either until the tip of the segment or until the point s_local.
+            Args:
+                g_base_i (Array): transformation matrix of the base of the segment, shape (4, 4).
+                i (Array): index of the segment.
+            Returns:
+                g_i (Array): transformation matrix of the point s_local if i == segment_idx, otherwise the tip of the segment, shape (4, 4).
+                g_i (Array): transformation matrix of the point s_local if i == segment_idx, otherwise the tip of the segment, shape (4, 4).
+            """
             length_i = jnp.where(i == segment_idx, s_local, self.L[i])
             xi_i = xi[i]
 
@@ -547,7 +556,7 @@ class PCS(DynamicalSystem):
 
         g_ini = self.g0  # Initial position and orientation of the robot base
 
-        _, g_list = lax.scan(f=body_segment_i, init=g_ini, xs=indices_link)
+        _, g_ls = lax.scan(f=body_segment_i, init=g_ini, xs=indices_link)
 
         # # For debugging purposes, you can uncomment the following line to see the list of transformations
         # carry = g_ini
@@ -558,7 +567,7 @@ class PCS(DynamicalSystem):
         #     g_list.append(g_list_i)
         # g_list = jnp.array(g_list)
 
-        g_s = g_list[segment_idx]
+        g_s = g_ls[segment_idx]
 
         return g_s
     
@@ -622,10 +631,14 @@ class PCS(DynamicalSystem):
         # collect the base transform for each segment (g0 for the first, previous tip otherwise)
         g_bases = jnp.concatenate([self.g0[None, :, :], g_tips[:-1]], axis=0)
 
+        # compute the magnus expansion for each point
         magnus = s_local_ps.reshape(-1, 1) * xi[segment_indices]
+        # compute the relative transform from the base of the segment to the point
         g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(magnus)
+        # get the base transform for each point
         g_base_points = g_bases[segment_indices]
 
+        # combine to get the absolute transforms
         g_ps = vmap(lambda g_base_i, g_rel_i: g_base_i @ g_rel_i)(g_base_points, g_rel)
 
         return g_ps
