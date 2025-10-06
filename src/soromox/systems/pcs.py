@@ -1042,7 +1042,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def _J_Jd_local_batched(self, q: Array, qd: Array, s_ps: Array) -> Tuple[Array, Array]:
         """
-        Compute the Jacobian and its time-derivative for the forward kinematics at a batch of points along the robot.
+        Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -1050,8 +1050,8 @@ class PCS(DynamicalSystem):
             s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
 
         Returns:
-            _J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, 6)
-            _Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, 6)
+            J_local_ps (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, num_strains)
+            Jd_local_ps (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, num_strains)
         """
         xi = self.strain(q).reshape(self.num_segments, 6)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
