@@ -540,6 +540,29 @@ def test_local_jacobian_tips_coherence(num_segments: int) -> None:
             assert_allclose(Jd_blocks[idx], Jd_tips[idx], rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_local_jacobian_batched_coherence(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(321)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(4321), scale=0.1)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_batch, Jd_batch = model._J_Jd_local_batched(q, qd, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single, Jd_single = model._J_Jd_local(q, qd, s_val)
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
