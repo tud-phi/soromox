@@ -218,6 +218,10 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
     qd = jnp.linspace(0.18, -0.18, dof)
     s_vals = system.L_cum[1:]
     g_tips = jax.vmap(lambda s: system.forward_kinematics(q, s))(s_vals)
+    midpoints = system.L_cum[:-1] + 0.5 * system.L
+    s_points = jnp.concatenate(
+        [jnp.array([0.0], dtype=q.dtype), midpoints, system.L_cum[1:]]
+    )
     ctx: MutableMapping[str, Array] = {
         "q": q,
         "qd": qd,
@@ -227,6 +231,7 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
         "tau_ext": jnp.zeros((dof,)),
         "s_tip": jnp.sum(system.L),
         "g_tips": g_tips,
+        "s_points": s_points,
     }
     return ctx
 
@@ -353,6 +358,13 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
         BenchmarkCase(
             name="forward_kinematics",
             builder=lambda sys, ctx, _: (sys.forward_kinematics, (ctx["q"], ctx["s_tip"])),
+        ),
+        BenchmarkCase(
+            name="forward_kinematics_batched",
+            builder=lambda sys, ctx, _: (
+                sys.forward_kinematics_batched,
+                (ctx["q"], ctx["s_points"]),
+            ),
         ),
         BenchmarkCase(
             name="inverse_kinematics",

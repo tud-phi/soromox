@@ -598,6 +598,39 @@ class PCS(DynamicalSystem):
         return g_tips
 
     @eqx.filter_jit
+    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute the forward kinematics of the robot at a batch of points s_ps along the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+
+        Returns:
+            g_ps: forward kinematics of the robot at all points s_ps, shape (N, 4, 4) :
+                g_si = [[  R,      p],
+                        [0, 0, 0,   1]] where R is the rotation matrix and p is the position vector.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 6)
+
+        # compute the forward kinematics at the tips
+        g_tips = self.forward_kinematics_tips(q)
+
+        # Compute the point coordinates along the segment in the interval [0, L_i]
+        segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
+
+        # collect the base transform for each segment (g0 for the first, previous tip otherwise)
+        g_bases = jnp.concatenate([self.g0[None, :, :], g_tips[:-1]], axis=0)
+
+        magnus = s_local_ps.reshape(-1, 1) * xi[segment_indices]
+        g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(magnus)
+        g_base_points = g_bases[segment_indices]
+
+        g_ps = vmap(lambda g_base_i, g_rel_i: g_base_i @ g_rel_i)(g_base_points, g_rel)
+
+        return g_ps
+
+    @eqx.filter_jit
     def _compute_relative_segment_transforms(self, g_tips: Array) -> Array:
         """Return the SE(3) transforms from each segment base to its distal tip.
 

@@ -129,6 +129,23 @@ def test_forward_kinematics_tips_coherence(num_segments: int) -> None:
         assert_allclose(g_tips_actual, g_tips_expected, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_kinematics_batched_coherence(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    zero_cfg = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(789)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_values = [0.0] + sample_arc_lengths(model)
+    s_ps = jnp.asarray(s_values, dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        g_batched = model.forward_kinematics_batched(q, s_ps)
+        g_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
+
+        assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
+
+
 def test_planar_cs_num():
     """
     Test the planar constant strain system with numerical integration and Jacobian for 1 segment.
