@@ -731,6 +731,21 @@ class PCS(DynamicalSystem):
         q = jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
 
         return q
+    
+    @eqx.filter_jit
+    def _final_size_jacobian(self, J_full: Array) -> Array:
+        """
+        Convert the Jacobian or its derivative from the full computation form to the selected strains form.
+
+        Args:
+            J_full (Array): Full Jacobian of shape (num_segments, 6, 6)
+
+        Returns:
+            J_selected (Array): Jacobian for the selected strains of shape (6, num_active_strains)
+        """
+        J_final = J_full.transpose(1, 0, 2).reshape(6, self.num_strains)
+
+        return J_final
 
     @eqx.filter_jit
     def _J_local(self, q: Array, s: Array) -> Array:
@@ -742,7 +757,7 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            _J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, 6)
+            J_local (Array): Jacobian of the forward kinematics at point s, shape (6, num_strains)
             where each row corresponds to a segment.
         """
         xi = self.strain(q).reshape(self.num_segments, 6)
@@ -799,38 +814,7 @@ class PCS(DynamicalSystem):
         indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
         (_, J_target, _), _ = lax.scan(scan_body, carry_init, indices)
 
-        return J_target
-
-    @eqx.filter_jit
-    def _final_size_jacobian(self, J_full: Array) -> Array:
-        """
-        Convert the Jacobian or its derivative from the full computation form to the selected strains form.
-
-        Args:
-            J_full (Array): Full Jacobian of shape (num_segments, 6, 6)
-
-        Returns:
-            J_selected (Array): Jacobian for the selected strains of shape (6, num_active_strains)
-        """
-        J_final = J_full.transpose(1, 0, 2).reshape(6, self.num_strains)
-
-        return J_final
-
-    @eqx.filter_jit
-    def _jacobian_bodyframe_full(self, q: Array, s: Array) -> Array:
-        """
-        Compute the Jacobian of the forward kinematics at a point s along the robot in the body frame (for every strains)
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            s (Array): point coordinate along the robot in the interval [0, L].
-
-        Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_strains)
-        """
-        _J_local = self._J_local(q, s)
-
-        J_local = self._final_size_jacobian(_J_local)
+        J_local = self._final_size_jacobian(J_target)
 
         return J_local
 
@@ -846,9 +830,7 @@ class PCS(DynamicalSystem):
         Returns:
             J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
         """
-        _J_local = self._J_local(q, s)
-
-        J_local = self._final_size_jacobian(_J_local) @ self.B_xi
+        J_local = self._J_local(q, s) @ self.B_xi
 
         return J_local
 
@@ -864,7 +846,8 @@ class PCS(DynamicalSystem):
         Returns:
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
         """
-        J_local_ = self._J_local(q, s)
+        # compute the Jacobian in the body frame
+        J_local = self._J_local(q, s)
 
         g_s = self.forward_kinematics(q, s)
         # construct g with zero translation for the Adjoint transformation
@@ -873,8 +856,8 @@ class PCS(DynamicalSystem):
         )
         Ad_g = lie.Adjoint_g_SE3(g_rot)
 
-        J_global_ = jnp.einsum("ij, njk->nik", Ad_g, J_local_)
-        J_global = self._final_size_jacobian(J_global_) @ self.B_xi
+        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local)
+        J_global = J_global_ @ self.B_xi
 
         return J_global
 
@@ -889,8 +872,8 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            _J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, 6)
-            _Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, 6)
+            J_local (Array): Jacobian of the forward kinematics at point s, shape (6, num_strains)
+            Jd_local (Array): Time-derivative of the Jacobian at point s, shape (6, num_strains)
         """
         xi = self.strain(q).reshape(self.num_segments, 6)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
@@ -971,6 +954,12 @@ class PCS(DynamicalSystem):
 
         indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
         (_, _, J_target, Jd_target, _), _ = lax.scan(scan_body, carry_init, indices)
+
+        J_local = self._final_size_jacobian(J_target)
+        Jd_local = self._final_size_jacobian(Jd_target)
+
+        return J_local, Jd_local
+
 
         return J_target, Jd_target
     
@@ -1086,12 +1075,7 @@ class PCS(DynamicalSystem):
             J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
             Jd_local (Array): Time-derivative of the Jacobian at point s in the body frame, shape (6, num_active_strains)
         """
-        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
-
-        J_local = self._final_size_jacobian(J_local_)
-        Jd_local = self._final_size_jacobian(Jd_local_)
-
-        return J_local, Jd_local
+        return self._J_Jd_local(q, qd, s)
 
     @eqx.filter_jit
     def jacobian_and_derivative_bodyframe(
@@ -1111,8 +1095,8 @@ class PCS(DynamicalSystem):
         """
         J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
 
-        J_local = self._final_size_jacobian(J_local_) @ self.B_xi
-        Jd_local = self._final_size_jacobian(Jd_local_) @ self.B_xi
+        J_local = J_local_ @ self.B_xi
+        Jd_local = Jd_local_ @ self.B_xi
 
         return J_local, Jd_local
 
@@ -1134,28 +1118,30 @@ class PCS(DynamicalSystem):
         """
         J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
 
+        # compute the Adjoint transformation matrix at point s
         g_s = self.forward_kinematics(q, s)
         g_rot = jnp.block(
             [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
         )
         Ad_g = lie.Adjoint_g_SE3(g_rot)
 
-        J_body_full = self._final_size_jacobian(J_local_)
-        J_body = J_body_full @ self.B_xi
+        # compute the body twist eta
+        J_body = J_local_ @ self.B_xi
         eta_body = J_body @ qd
 
         omega = eta_body[:3]
         eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
         Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
 
-        J_global_ = jnp.einsum("ij, njk->nik", Ad_g, J_local_)
+        # rotate both J and Jd to the inertial frame
+        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local_)
         Jd_global_ = (
-            jnp.einsum("ij, njk->nik", Ad_g, Jd_local_)
-            + jnp.einsum("ij, njk->nik", Ad_g_dot, J_local_)
+            jnp.einsum("ij, jk->ik", Ad_g, Jd_local_)
+            + jnp.einsum("ij, jk->ik", Ad_g_dot, J_local_)
         )
 
-        J_global = self._final_size_jacobian(J_global_) @ self.B_xi
-        Jd_global = self._final_size_jacobian(Jd_global_) @ self.B_xi
+        J_global = J_global_ @ self.B_xi
+        Jd_global = Jd_global_ @ self.B_xi
 
         return J_global, Jd_global
 
@@ -1285,7 +1271,7 @@ class PCS(DynamicalSystem):
             def B_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
-                J_j = self._jacobian_bodyframe_full(q, Xs_j)
+                J_j = self._J_local(q, Xs_j)
                 return Ws_j * J_j.T @ M_i @ J_j
 
             # we can skip the first and last quadrature points since their weight is zero
@@ -1405,7 +1391,7 @@ class PCS(DynamicalSystem):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 Ad_g_inv_j = lie.Adjoint_g_inv_SE3(self.forward_kinematics(q, Xs_j))
-                J_j = self._jacobian_bodyframe_full(q, Xs_j)
+                J_j = self._J_local(q, Xs_j)
 
                 return -Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
 
