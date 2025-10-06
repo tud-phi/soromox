@@ -603,7 +603,24 @@ def main(argv: Sequence[str] | None = None) -> int:
                 fn, call_args = case.builder(system, ctx, runtime)
                 print(f"  -> {case.name} ...", end=" ", flush=True)
                 compile_time, exec_time = _measure_jitted_call(fn, call_args, runtime.execution_repeats)
-                print(f"compile {compile_time:.4f}s | exec {exec_time:.4f}s")
+
+                per_point_note = ""
+                if case.name == "forward_kinematics_batched" and len(call_args) >= 2:
+                    s_arg = call_args[1]
+                    num_points = None
+                    if hasattr(s_arg, "shape") and s_arg.shape:
+                        num_points = int(s_arg.shape[0])
+                    else:
+                        try:
+                            num_points = int(len(s_arg))
+                        except TypeError:
+                            num_points = None
+                    if num_points and num_points > 0:
+                        compile_time /= num_points
+                        exec_time /= num_points
+                        per_point_note = f" (per point over {num_points})"
+
+                print(f"compile {compile_time:.4f}s | exec {exec_time:.4f}s{per_point_note}")
                 results.append(
                     {
                         "system": system_name,
