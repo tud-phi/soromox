@@ -1081,8 +1081,8 @@ class PCS(DynamicalSystem):
             s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
 
         Returns:
-            J_local_ps (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, num_strains)
-            Jd_local_ps (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, num_strains)
+            J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_strains)
+            Jd_local_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_strains)
         """
         # num points
         N = s_ps.shape[0]
