@@ -724,6 +724,7 @@ def test_inverse_kinematics_strain_selector_edge_cases():
         err_msg="Inverse kinematics failed for extension-only model"
     )
 
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
 def test_jacobian_inertialframe_matches_autodiff(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
