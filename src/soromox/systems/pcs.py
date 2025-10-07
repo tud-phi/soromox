@@ -769,15 +769,15 @@ class PCS(DynamicalSystem):
 
         def integrate_segment(
             J_prev: Array,
+            i: Array,
             xi_i: Array,
             arc_len: Array,
-            idx: Array,
         ) -> Array:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
             T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[idx].set(Ad_inv @ T)
+            J_next = J_rot.at[i].set(Ad_inv @ T)
 
             return J_next
 
@@ -792,7 +792,7 @@ class PCS(DynamicalSystem):
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
-                J_next = integrate_segment(J_prev, xi_i, arc_len, i)
+                J_next = integrate_segment(J_prev, i, xi_i, arc_len)
 
                 is_target = i == segment_idx
                 J_target_next = jnp.where(is_target, J_next, J_target)
@@ -925,19 +925,19 @@ class PCS(DynamicalSystem):
         def integrate_segment(
             J_prev: Array,
             Jd_prev: Array,
+            i: Array,
             xi_i: Array,
             xid_i: Array,
             arc_len: Array,
-            idx: Array,
         ) -> Tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
             T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
             Td = lie.Tangent_derivative_gi_se3(xi_i, xid_i, arc_len, eps=self.global_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[idx].set(Ad_inv @ T)
+            J_next = J_rot.at[i].set(Ad_inv @ T)
 
-            J_next_slice = lax.dynamic_index_in_dim(J_next, idx, axis=0, keepdims=False)
+            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
             eta = jnp.matmul(J_next_slice, xid_i)
 
             Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
@@ -945,7 +945,7 @@ class PCS(DynamicalSystem):
             Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_prev) + jnp.einsum(
                 "ij, njk->nik", Ad_inv_dot, J_prev
             )
-            Jd_next = Jd_rot.at[idx].set(Ad_inv_dot @ T + Ad_inv @ Td)
+            Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T + Ad_inv @ Td)
 
             return J_next, Jd_next
 
@@ -962,7 +962,7 @@ class PCS(DynamicalSystem):
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
                 J_next, Jd_next = integrate_segment(
-                    J_prev, Jd_prev, xi_i, xid_i, arc_len, i
+                    J_prev, Jd_prev, i, xi_i, xid_i, arc_len,
                 )
 
                 is_target = i == segment_idx
@@ -1032,11 +1032,13 @@ class PCS(DynamicalSystem):
         # initialize zeros
         zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
 
-        def integrate_segment(
+        def scan_body(
+            carry: Tuple[Array, Array],
             i: Array,
-            J_prev: Array,
-            Jd_prev: Array,
-        ) -> Tuple[Array, Array]:
+        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
+            J_prev, Jd_prev = carry
+
+            # extract the current segment variables
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
             Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
@@ -1055,16 +1057,6 @@ class PCS(DynamicalSystem):
                 "ij, njk->nik", Ad_inv_dot, J_prev
             )
             Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T_i + Ad_inv_i @ Td_i)
-
-            return J_next, Jd_next
-
-        def scan_body(
-            carry: Tuple[Array, Array],
-            i: Array,
-        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
-            J_prev, Jd_prev = carry
-
-            J_next, Jd_next = integrate_segment(i, J_prev, Jd_prev)
 
             J_i = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
             Jd_i = lax.dynamic_index_in_dim(Jd_next, i, axis=0, keepdims=False)
@@ -1104,7 +1096,6 @@ class PCS(DynamicalSystem):
 
         # compute the Jacobian at the tips
         J_tips, Jd_tips = self._J_Jd_local_tips(q, qd)  # shape (num_segments, 6, num_strains)
-        print("J_tips", J_tips.shape, Jd_tips.shape)
 
         # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
         J_base_pts, Jd_base_pts = J_tips[segment_indices], Jd_tips[segment_indices]
