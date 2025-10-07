@@ -1398,22 +1398,29 @@ class PCS(DynamicalSystem):
         Returns:
             B_full (Array): Full inertia matrix of shape (num_strains, num_strains).
         """
+        # compute the gauss quadrature points and weights for each segment
+        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
+        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        
+        # compute the jacobian for each quadrature point
+        J_ps = self._J_local_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
-        def B_i(i):
-            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
-                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
-            )
+        def B_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
 
-            def B_j(j):
-                Xs_j = Xs_scaled[j]
-                Ws_j = Ws_scaled[j]
-                # TODO: implement batched version of J computation
-                J_j = self._J_local(q, Xs_j)
-                return Ws_j * J_j.T @ M_i @ J_j
+            def B_ij(j: Array) -> Array:
+                # select the j-th quadrature weight
+                Ws_ij = Ws_scaled[i][j]
+                # select the j-th jacobian
+                J_ij = J_ps[i, j]
+
+                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
+                return B_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i = vmap(B_j)(jnp.arange(1, self.num_gauss_points - 1))
+            B_blocks_i = vmap(B_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # B_blocks_i = jnp.stack(
@@ -1462,25 +1469,31 @@ class PCS(DynamicalSystem):
         Returns:
             C_full (Array): Full Coriolis matrix of shape (num_strains, num_strains).
         """
+        # compute the gauss quadrature points and weights for each segment
+        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
+        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        
+        # compute the jacobian and its time-derivative for each quadrature point
+        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        Jd_ps = Jd_ps.reshape(self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
-        def C_i(i):
-            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
-                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
-            )
+        def C_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
 
-            def C_j(j):
-                Xs_j = Xs_scaled[j]
-                Ws_j = Ws_scaled[j]
-                # TODO: implement batched version of J and Jd computation
-                J_j, Jd_j = self._J_Jd_local(q, qd, Xs_j)
-                return Ws_j * (
-                    J_j.T
-                    @ (M_i @ Jd_j + lie.coadjoint_se3(J_j @ self.B_xi @ qd) @ M_i @ J_j)
-                )
+            def C_ij(j: Array) -> Array:
+                # select the j-th quadrature weight
+                Ws_ij = Ws_scaled[i][j]
+                # select the j-th jacobian and its time-derivative
+                J_ij = J_ps[i, j]
+                Jd_ij = Jd_ps[i, j]
+
+                C_ij = Ws_ij * J_ij.T @ (M_i @ Jd_ij + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij)
+                return C_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            C_blocks_i = vmap(C_j)(jnp.arange(1, self.num_gauss_points - 1))
+            C_blocks_i = vmap(C_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
             return C_blocks_i
 
@@ -1519,24 +1532,38 @@ class PCS(DynamicalSystem):
         Returns:
             G (Array): Full gravitational force of shape (num_strains,).
         """
+        # compute the gauss quadrature points and weights for each segment
+        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
+        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+
+        # compute the forward kinematics for each quadrature point
+        g_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 4, 4)
+        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 4, 4)  # shape (num_segments, num_gauss_points, 4, 4)
+        
+        # compute the jacobian for each quadrature point
+        J_ps = self._J_local_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
         def G_i(i: Array) -> Array:
-            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
-                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
-            )
             M_i = self._local_mass_matrix(i)
 
-            def G_j(j: Array) -> Array:
-                Xs_j = Xs_scaled[j]
-                Ws_j = Ws_scaled[j]
-                # TODO: implement batched computation of forward kinematics
-                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(self.forward_kinematics(q, Xs_j))
-                J_j = self._J_local(q, Xs_j)
+            def G_ij(j: Array) -> Array:
+                # select the j-th quadrature weight
+                Ws_ij = Ws_scaled[i][j]
+                # select the j-th Cartesian pose
+                g_ij = g_ps[i, j]
+                # select the j-th jacobian and its time-derivative
+                J_ij = J_ps[i, j]
 
-                return -Ws_j * J_j.T @ M_i @ Ad_g_inv_j @ self.g
+                # compute the inverse Adjoint transformation matrix at point s
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+
+                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
+                return G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            G_blocks_segment_i = vmap(G_j)(jnp.arange(1, self.num_gauss_points - 1))
+            G_blocks_segment_i = vmap(G_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # G_blocks_segment_i = jnp.stack(
