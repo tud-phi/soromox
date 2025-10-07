@@ -541,6 +541,26 @@ def test_J_local_tips_matches_pointwise_evaluation(num_segments: int):
         )
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_local_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(9876)
+    q_random = random_q(model, rng, scale=0.05)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q in (zero_cfg, q_random):
+        J_batch = model._J_local_batched(q, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single = model._J_local(q, s_val)
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
@@ -781,7 +801,7 @@ def test_Jd_bodyframe_matches_central_differences(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_Jd_local_tips_coherence(num_segments: int) -> None:
+def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int) -> None:
     model, _ = make_pcs(num_segments=num_segments)
     dof = int(model.num_active_strains.item())
 
@@ -805,7 +825,7 @@ def test_J_Jd_local_tips_coherence(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_Jd_local_batched_coherence(num_segments: int) -> None:
+def test_J_Jd_local_batched__matches_pointwise_evaluation(num_segments: int) -> None:
     model, _ = make_pcs(num_segments=num_segments)
     dof = int(model.num_active_strains.item())
 

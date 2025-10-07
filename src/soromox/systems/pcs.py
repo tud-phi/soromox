@@ -856,6 +856,67 @@ class PCS(DynamicalSystem):
         J_local_tips = vmap(self._final_size_jacobian)(J_target_tips)
 
         return J_local_tips
+    
+    @eqx.filter_jit
+    def _J_local_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute the Jacobian for the forward kinematics at a batch of points s_ps along the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+
+        Returns:
+            J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_strains)
+        """
+        # num points
+        N = s_ps.shape[0]
+
+        # compute the strain for each segment
+        xi = self.strain(q).reshape(self.num_segments, 6)
+
+        # classify all points along the robot to the corresponding segment and compute local coordinates
+        segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
+
+        # compute the Jacobian at the tips
+        J_tips = self._J_local_tips(q)  # shape (num_segments, 6, num_strains)
+
+        # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
+        J_bases = jnp.concatenate(
+            [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
+        )
+
+        J_base_ps = J_bases[segment_indices]
+        # select the other variables for each point
+        xi_ps = xi[segment_indices]
+        idx_ps = segment_indices
+
+        # reshape for easier indexing
+        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
+
+        def integrate_segment(
+            i: Array,
+            xi_i: Array,
+            s_local: Array,
+            J_base: Array,
+        ) -> Array:
+            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
+            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.global_eps)
+
+            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
+            J_next = J_rot.at[i].set(Ad_inv @ T)
+
+            return J_next
+
+        # vmap the segment integration over all points
+        J_local_ps = vmap(integrate_segment)(
+            idx_ps, xi_ps, s_local_ps, J_base_ps
+        )
+
+        # reshape back to (N, 6, num_strains)
+        J_local_ps = vmap(self._final_size_jacobian)(J_local_ps)
+
+        return J_local_ps
 
     @eqx.filter_jit
     def jacobian_bodyframe(self, q: Array, s: Array) -> Array:
@@ -1073,7 +1134,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def _J_Jd_local_batched(self, q: Array, qd: Array, s_ps: Array) -> Tuple[Array, Array]:
         """
-        Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot.
+        Compute the Jacobian and its time-derivative for the forward kinematics at a batch of points s_ps along the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -1098,15 +1159,15 @@ class PCS(DynamicalSystem):
         J_tips, Jd_tips = self._J_Jd_local_tips(q, qd)  # shape (num_segments, 6, num_strains)
 
         # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
-        J_base_per_segment = jnp.concatenate(
+        J_bases = jnp.concatenate(
             [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
         )
-        Jd_base_per_segment = jnp.concatenate(
+        Jd_bases = jnp.concatenate(
             [jnp.zeros_like(Jd_tips[:1]), Jd_tips[:-1]], axis=0
         )
 
-        J_base_ps = J_base_per_segment[segment_indices]
-        Jd_base_ps = Jd_base_per_segment[segment_indices]
+        J_base_ps = J_bases[segment_indices]
+        Jd_base_ps = Jd_bases[segment_indices]
         # select the other variables for each point
         xi_ps, xid_ps = xi[segment_indices], xid[segment_indices]
         idx_ps = segment_indices
