@@ -1947,7 +1947,7 @@ class PCS(DynamicalSystem):
             """
             M_i = self._local_mass_matrix(i)
 
-            def dynamical_matrices_j(j: Array) -> Tuple[Array, Array, Array]:
+            def dynamical_matrices_ij(j: Array) -> Tuple[Array, Array, Array]:
                 """
                 Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
                 Args:
@@ -1961,27 +1961,27 @@ class PCS(DynamicalSystem):
                 g_ij = g_ps[i, j]
                 # select the j-th jacobian and its time-derivative
                 J_ij = J_ps[i, j]
-                Jd_ij = J_ps[i, j]
+                Jd_ij = Jd_ps[i, j]
                 
                 # compute the lie algebra expressions.
-                Ad_g_inv_j = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
 
                 # compute the inertia matrix integrand
-                B_j = Ws_ij * J_ij.T @ M_i @ J_ij
+                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
 
                 # compute the coriolis matrix integrand
-                C_j = Ws_ij * (
+                C_ij = Ws_ij * (
                     J_ij.T
                     @ (M_i @ Jd_ij + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij)
                 )
 
                 # compute the gravitational force integrand
-                G_j = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_j @ self.g
+                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 
-                return B_j, C_j, G_j 
+                return B_ij, C_ij, G_ij 
 
             # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_j)(jnp.arange(1, self.num_gauss_points - 1))
+            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
             return B_blocks_i, C_blocks_i, G_blocks_i
 
