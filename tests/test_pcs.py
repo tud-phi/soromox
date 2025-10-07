@@ -514,30 +514,31 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments: int):
         assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_local_jacobian_tips_coherence(num_segments: int) -> None:
-    model, _ = make_pcs(num_segments=num_segments)
-    dof = int(model.num_active_strains.item())
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_J_local_tips_matches_pointwise_evaluation(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    q = random_q(model, jax.random.PRNGKey(5), scale=0.03)
 
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
-
-    rng = jax.random.PRNGKey(987)
-    q_random = random_q(model, rng, scale=0.05)
-    qd_random = random_q(model, jax.random.PRNGKey(654), scale=0.1)
-
+    J_tips = model._J_local_tips(q)
     s_tips = model.L_cum[1:]
 
-    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_tips, Jd_tips = model._J_Jd_local_tips(q, qd)
+    for idx, s in enumerate(s_tips):
+        if s < 1e-3:
+            continue
 
-        for idx, s_tip in enumerate(s_tips):
-            J_local, Jd_local = model._J_Jd_local(q, qd, s_tip)
-            J_blocks = J_local.reshape(6, model.num_segments, 6).transpose(1, 0, 2)
-            Jd_blocks = Jd_local.reshape(6, model.num_segments, 6).transpose(1, 0, 2)
+        J_tip_batch = J_tips[idx]
+        J_tip_single = model._J_local(q, s)
 
-            assert_allclose(J_blocks[idx], J_tips[idx], rtol=RTOL, atol=ATOL)
-            assert_allclose(Jd_blocks[idx], Jd_tips[idx], rtol=RTOL, atol=ATOL)
+        assert_allclose(
+            J_tip_batch,
+            J_tip_single,
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=(
+                f"num_segments={num_segments}, s={s}\n"
+                f"J_tip_batch:\n{J_tip_batch}\nJ_tip_single:\n{J_tip_single}"
+            ),
+        )
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -577,33 +578,6 @@ def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
 
         assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
             f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_expected:\n{J_expected}"
-        )
-
-
-@pytest.mark.parametrize("num_segments", [1, 2])
-def test_J_local_tips_matches_pointwise_evaluation(num_segments: int):
-    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
-    q = random_q(model, jax.random.PRNGKey(5), scale=0.03)
-
-    J_tips = model._J_local_tips(q)
-    s_tips = model.L_cum[1:]
-
-    for idx, s in enumerate(s_tips):
-        if s < 1e-3:
-            continue
-
-        J_tip_batch = J_tips[idx]
-        J_tip_single = model._J_local(q, s)
-
-        assert_allclose(
-            J_tip_batch,
-            J_tip_single,
-            rtol=RTOL,
-            atol=ATOL,
-            err_msg=(
-                f"num_segments={num_segments}, s={s}\n"
-                f"J_tip_batch:\n{J_tip_batch}\nJ_tip_single:\n{J_tip_single}"
-            ),
         )
 
 
@@ -827,6 +801,30 @@ def test_Jd_bodyframe_matches_central_differences(num_segments: int):
             assert jnp.allclose(Jd_impl, Jd_num, rtol=1e-3, atol=5e-6), (
                 f"num_segments={num_segments}, s={s}\nJd_impl:\n{Jd_impl}\nJd_num:\n{Jd_num}"
             )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_local_J_Jd_tips_coherence(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(987)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(654), scale=0.1)
+
+    s_tips = model.L_cum[1:]
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_tips, Jd_tips = model._J_Jd_local_tips(q, qd)
+
+        for idx, s_tip in enumerate(s_tips):
+            J_local, Jd_local = model._J_Jd_local(q, qd, s_tip)
+
+            assert_allclose(J_local, J_tips[idx], rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_local, Jd_tips[idx], rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])

@@ -1058,17 +1058,17 @@ class PCS(DynamicalSystem):
             )
             Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T_i + Ad_inv_i @ Td_i)
 
-            J_i = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            Jd_i = lax.dynamic_index_in_dim(Jd_next, i, axis=0, keepdims=False)
-
-            return (J_next, Jd_next), (J_i, Jd_i)
+            return (J_next, Jd_next), (J_next, Jd_next)
 
         carry_init = (zeros, zeros)
 
         indices = jnp.arange(self.num_segments, dtype=jnp.int32)
-        (_, _), (J_tips, Jd_tips) = lax.scan(scan_body, carry_init, indices)
+        (_, _), (J_local_tips, Jd_local_tips) = lax.scan(scan_body, carry_init, indices)
 
-        return J_tips, Jd_tips
+        J_local_tips = vmap(self._final_size_jacobian)(J_local_tips)
+        Jd_local_tips = vmap(self._final_size_jacobian)(Jd_local_tips)
+
+        return J_local_tips, Jd_local_tips
     
     @eqx.filter_jit
     def _J_Jd_local_batched(self, q: Array, qd: Array, s_ps: Array) -> Tuple[Array, Array]:
