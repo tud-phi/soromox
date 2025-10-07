@@ -564,7 +564,7 @@ def test_local_jacobian_batched_coherence(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
+def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     key = jax.random.PRNGKey(1)
     q = random_q(model, key, scale=0.05)
