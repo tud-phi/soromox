@@ -581,6 +581,107 @@ def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_bodyframe_matches_autodiff(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(6)
+
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(model, q_key, scale=0.03)
+
+        for s in sample_arc_lengths(model):
+            if s < 1e-3:
+                continue
+
+            J_body = model.jacobian_bodyframe(q, s)
+            g = model.forward_kinematics(q, s)
+            g_inv = se3_inverse(g)
+
+            def fk(qq: Array) -> Array:
+                return model.forward_kinematics(qq, s)
+
+            n = q.shape[0]
+            eye = jnp.eye(n)
+            cols = []
+            for j in range(n):
+                _, g_tangent = jax.jvp(fk, (q,), (eye[j],))
+                Xi_hat_body = g_inv @ g_tangent
+                skew_body = 0.5 * (Xi_hat_body[:3, :3] - Xi_hat_body[:3, :3].T)
+                omega = jnp.array(
+                    [
+                        skew_body[2, 1],
+                        skew_body[0, 2],
+                        skew_body[1, 0],
+                    ]
+                )
+                v_body = Xi_hat_body[:3, 3]
+                cols.append(jnp.concatenate((omega, v_body)))
+
+            J_ad = jnp.stack(cols, axis=1)
+
+            assert_allclose(
+                J_body,
+                J_ad,
+                rtol=1e-6,
+                atol=1e-7,
+                err_msg=(
+                    f"num_segments={num_segments}, s={s}\n"
+                    f"J_body:\n{J_body}\nJ_ad:\n{J_ad}"
+                ),
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(7)
+
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(model, q_key, scale=0.03)
+
+        for s in sample_arc_lengths(model):
+            if s < 1e-3:
+                continue
+
+            J_impl = model.jacobian_inertialframe(q, s)
+            g = model.forward_kinematics(q, s)
+            R = g[:3, :3]
+            g_inv = se3_inverse(g)
+
+            def fk(qq: Array) -> Array:
+                return model.forward_kinematics(qq, s)
+
+            n = q.shape[0]
+            eye = jnp.eye(n)
+            cols = []
+            for j in range(n):
+                _, g_tangent = jax.jvp(fk, (q,), (eye[j],))
+                Xi_hat_body = g_inv @ g_tangent
+                skew_body = 0.5 * (Xi_hat_body[:3, :3] - Xi_hat_body[:3, :3].T)
+                omega = jnp.array(
+                    [
+                        skew_body[2, 1],
+                        skew_body[0, 2],
+                        skew_body[1, 0],
+                    ]
+                )
+                v_body = Xi_hat_body[:3, 3]
+                cols.append(jnp.concatenate((R @ omega, R @ v_body)))
+
+            J_ad = jnp.stack(cols, axis=1)
+
+            assert_allclose(
+                J_impl,
+                J_ad,
+                rtol=1e-6,
+                atol=1e-7,
+                err_msg=(
+                    f"num_segments={num_segments}, s={s}\n"
+                    f"J_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
+                ),
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
 def test_inertial_velocity_consistency(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     key = jax.random.PRNGKey(4)
