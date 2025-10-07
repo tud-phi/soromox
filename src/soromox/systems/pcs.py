@@ -1092,20 +1092,20 @@ class PCS(DynamicalSystem):
         xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
 
         # classify all points along the robot to the corresponding segment and compute local coordinates
-        segment_indices, s_local_pts = vmap(self.classify_segment)(s_ps)
+        segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
 
         # compute the Jacobian at the tips
         J_tips, Jd_tips = self._J_Jd_local_tips(q, qd)  # shape (num_segments, 6, num_strains)
 
         # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
-        J_base_pts, Jd_base_pts = J_tips[segment_indices], Jd_tips[segment_indices]
+        J_base_ps, Jd_base_ps = J_tips[segment_indices], Jd_tips[segment_indices]
         # select the other variables for each point
-        xi_pts, xid_pts = xi[segment_indices], xid[segment_indices]
-        idx_pts = segment_indices
+        xi_ps, xid_ps = xi[segment_indices], xid[segment_indices]
+        idx_ps = segment_indices
 
         # reshape for easier indexing
-        J_base_pts = J_base_pts.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
-        Jd_base_pts = Jd_base_pts.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
+        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
+        Jd_base_ps = Jd_base_ps.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
 
         def integrate_segment(
             i: Array,
@@ -1136,7 +1136,7 @@ class PCS(DynamicalSystem):
 
         # vmap the segment integration over all points
         J_local_ps, Jd_local_ps = vmap(integrate_segment)(
-            idx_pts, xi_pts, xid_pts, s_local_pts, J_base_pts, Jd_base_pts
+            idx_ps, xi_ps, xid_ps, s_local_ps, J_base_ps, Jd_base_ps
         )
 
         # reshape back to (N, 6, num_strains)
