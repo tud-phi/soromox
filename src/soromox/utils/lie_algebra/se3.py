@@ -471,7 +471,6 @@ def Tangent_derivative_gi_se3(
     # Compute the adjoint representation of the screw vector
     adjoint_xi_i = adjoint_se3(xi_i)
 
-    thetad = jnp.dot(kd, k) / theta
     # Compute the adjoint representation of the derivative screw vector
     adjoint_xid_i = adjoint_se3(xid_i)
 
@@ -496,6 +495,8 @@ def Tangent_derivative_gi_se3(
             return powers, dot_powers
 
         powers, dot_powers = _adjoint_powers_with_derivatives(4)
+
+        thetad = jnp.dot(kd, k) / theta
 
         adjoint_xi_i_square = powers[2]
         adjoint_xi_i_cube = powers[3]
