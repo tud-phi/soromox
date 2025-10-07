@@ -727,19 +727,29 @@ def test_inverse_kinematics_strain_selector_edge_cases():
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
 def test_jacobian_inertialframe_matches_autodiff(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
-    q = random_q(model, jax.random.PRNGKey(1), scale=0.05)
+    key = jax.random.PRNGKey(1)
 
-    for s in sample_arc_lengths(model):
-        J_impl = model.jacobian_inertialframe(q, s)
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(model, q_key, scale=0.05)
 
-        def f(q_):
-            return model.forward_kinematics(q_, s)  # [theta, x, y]
+        for s in sample_arc_lengths(model):
+            J_impl = model.jacobian_inertialframe(q, s)
 
-        J_ad = jax.jacfwd(f)(q)
+            def fk(q_):
+                return model.forward_kinematics(q_, s)  # [theta, x, y]
 
-        assert jnp.allclose(J_impl, J_ad, rtol=1e-6, atol=1e-7), (
-            f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
-        )
+            J_ad = jax.jacfwd(fk)(q)
+
+            assert_allclose(
+                J_impl,
+                J_ad,
+                rtol=1e-6,
+                atol=1e-7,
+                err_msg=(
+                    f"num_segments={num_segments}, s={s}\n"
+                    f"J_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
+                ),
+            )
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
