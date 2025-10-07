@@ -1146,24 +1146,6 @@ class PCS(DynamicalSystem):
         return J_local_ps, Jd_local_ps
 
     @eqx.filter_jit
-    def _jacobian_and_derivative_bodyframe_full(
-        self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
-        """
-        Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the body frame.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-            s (Array): point coordinate along the robot in the interval [0, L].
-
-        Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
-            Jd_local (Array): Time-derivative of the Jacobian at point s in the body frame, shape (6, num_active_strains)
-        """
-        return self._J_Jd_local(q, qd, s)
-
-    @eqx.filter_jit
     def jacobian_and_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
     ) -> Tuple[Array, Array]:
@@ -1420,7 +1402,7 @@ class PCS(DynamicalSystem):
             def C_j(j):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
-                J_j, Jd_j = self._jacobian_and_derivative_bodyframe_full(q, qd, Xs_j)
+                J_j, Jd_j = self._J_Jd_local(q, qd, Xs_j)
                 return Ws_j * (
                     J_j.T
                     @ (M_i @ Jd_j + lie.coadjoint_se3(J_j @ self.B_xi @ qd) @ M_i @ J_j)
