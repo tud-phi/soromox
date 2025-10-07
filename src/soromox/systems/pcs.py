@@ -1098,7 +1098,15 @@ class PCS(DynamicalSystem):
         J_tips, Jd_tips = self._J_Jd_local_tips(q, qd)  # shape (num_segments, 6, num_strains)
 
         # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
-        J_base_ps, Jd_base_ps = J_tips[segment_indices], Jd_tips[segment_indices]
+        J_base_per_segment = jnp.concatenate(
+            [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
+        )
+        Jd_base_per_segment = jnp.concatenate(
+            [jnp.zeros_like(Jd_tips[:1]), Jd_tips[:-1]], axis=0
+        )
+
+        J_base_ps = J_base_per_segment[segment_indices]
+        Jd_base_ps = Jd_base_per_segment[segment_indices]
         # select the other variables for each point
         xi_ps, xid_ps = xi[segment_indices], xid[segment_indices]
         idx_ps = segment_indices
