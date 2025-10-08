@@ -492,7 +492,9 @@ def test_inverse_kinematics_straight_configuration(num_segments: int):
     q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
 
     g_tips = segment_tip_transforms(model, q)
+    print("g_tips:\n", g_tips)
     q_recovered = model.inverse_kinematics(g_tips)
+    print("q_recovered:\n", q_recovered)
 
     assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
 
@@ -680,14 +682,14 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_inertial_velocity_consistency(num_segments: int):
+def test_inertial_velocity_matches_central_differences(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     key = jax.random.PRNGKey(4)
     key_q, key_qd = jax.random.split(key)
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
     qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
 
-    dt = EPS
+    dt = 1e-6
     for q_key, qd_key in zip(q_keys, qd_keys):
         q = random_q(model, q_key, scale=0.03)
         qd = random_q(model, qd_key, scale=0.1)
@@ -696,15 +698,15 @@ def test_inertial_velocity_consistency(num_segments: int):
             if s < 1e-3:
                 continue
             J = model.jacobian_inertialframe(q, s)
-            xdot_pred = J @ qd
+            xd_pred = J @ qd
 
             g0 = model.forward_kinematics(q, s)
             g1 = model.forward_kinematics(q + dt * qd, s)
             xi_body = body_twist_between(g0, g1) / dt
-            xdot_fd = spatial_from_body(g0, xi_body)
+            xd_fd = spatial_from_body(g0, xi_body)
 
-            assert jnp.allclose(xdot_pred, xdot_fd, rtol=5e-5, atol=5e-7), (
-                f"num_segments={num_segments}, s={s}\npred: {xdot_pred}\nfd: {xdot_fd}"
+            assert jnp.allclose(xd_pred, xd_fd, rtol=5e-5, atol=5e-7), (
+                f"num_segments={num_segments}, s={s}\npred: {xd_pred}\nfd: {xd_fd}"
             )
 
 
@@ -713,6 +715,8 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     key = jax.random.PRNGKey(5)
 
+    # delta for finite differences
+    delta = 1e-6
     for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
         q = random_q(model, q_key, scale=0.02)
 
@@ -725,11 +729,11 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments: int):
             n = q.shape[0]
             eye = jnp.eye(n)
             for j in range(n):
-                qp = q + EPS * eye[j]
-                qm = q - EPS * eye[j]
+                qp = q + delta * eye[j]
+                qm = q - delta * eye[j]
                 g_plus = model.forward_kinematics(qp, s)
                 g_minus = model.forward_kinematics(qm, s)
-                xi_body = body_twist_between(g_minus, g_plus) / (2 * EPS)
+                xi_body = body_twist_between(g_minus, g_plus) / (2 * delta)
                 xi_cols.append(spatial_from_body(g_minus, xi_body))
 
             J_fd = jnp.stack(xi_cols, axis=1)
@@ -777,6 +781,7 @@ def test_Jd_bodyframe_matches_central_differences(num_segments: int):
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
     qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
 
+    delta = 1e-6
     for q_key, qd_key in zip(q_keys, qd_keys):
         q = random_q(model, q_key, scale=0.05)
         qd = random_q(model, qd_key, scale=0.2)
@@ -787,11 +792,11 @@ def test_Jd_bodyframe_matches_central_differences(num_segments: int):
             eye = jnp.eye(q.shape[0])
             dJ_cols = []
             for j in range(q.shape[0]):
-                qp = q + EPS * eye[j]
-                qm = q - EPS * eye[j]
+                qp = q + delta * eye[j]
+                qm = q - delta * eye[j]
                 Jp = model.jacobian_bodyframe(qp, s)
                 Jm = model.jacobian_bodyframe(qm, s)
-                dJ_cols.append((Jp - Jm) / (2 * EPS))
+                dJ_cols.append((Jp - Jm) / (2 * delta))
             dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
             Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
 
@@ -1102,4 +1107,5 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> Non
 
 if __name__ == "__main__":
     # run pytest with activated stdout
-    pytest.main([__file__])
+    # pytest.main([__file__])
+    test_inverse_kinematics_straight_configuration(1)
