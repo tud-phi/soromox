@@ -849,15 +849,15 @@ class PlanarPCS(DynamicalSystem):
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
-        def integrate_segment(J_prev: Array, xi_i: Array, arc_len: Array, idx: Array) -> Array:
+        def integrate_segment(J_prev: Array, i: Array, xi_i: Array, arc_len: Array) -> Array:
             """
             Propagate the Jacobian one segment forward and overwrite the active slice.
 
             Args:
                 J_prev (Array): Jacobian accumulated up to the previous segment, shape (num_segments, 3, 3).
+                i (Array): Index of the segment being updated.
                 xi_i (Array): Strain parameters of the current segment, shape (3,).
                 arc_len (Array): Integration length used for this evaluation (either segment length or `s_local`).
-                idx (Array): Index of the segment being updated.
 
             Returns:
                 J_next: Jacobian including the contribution of the current segment, shape (num_segments, 3, 3).
@@ -869,7 +869,7 @@ class PlanarPCS(DynamicalSystem):
             # Rotate the previous Jacobian into the current frame.
             J_rot = jnp.matmul(Ad_inv, J_prev)
             # Overwrite the slice associated with the active segment.
-            J_next = J_rot.at[idx].set(Ad_inv @ T)
+            J_next = J_rot.at[i].set(Ad_inv @ T)
             return J_next
 
         zero_output = jnp.zeros((3, 3), dtype=xi.dtype)
@@ -905,7 +905,7 @@ class PlanarPCS(DynamicalSystem):
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
-                J_next = integrate_segment(J_prev, xi_i, arc_len, i)
+                J_next = integrate_segment(J_prev, i, xi_i, arc_len)
 
                 is_target = i == segment_idx
                 J_target_next = jnp.where(is_target, J_next, J_target)
@@ -1095,10 +1095,10 @@ class PlanarPCS(DynamicalSystem):
         def integrate_segment(
             J_prev: Array,
             Jd_prev: Array,
+            i: Array,
             xi_i: Array,
             xid_i: Array,
             arc_len: Array,
-            idx: Array,
         ) -> Tuple[Array, Array]:
             """
             Propagate Jacobian/Jacobian rate forward by one segment and insert the local contribution.
@@ -1106,10 +1106,10 @@ class PlanarPCS(DynamicalSystem):
             Args:
                 J_prev (Array): Jacobian accumulated up to the previous segment, shape (num_segments, 3, 3).
                 Jd_prev (Array): Time derivative of the Jacobian up to the previous segment, shape (num_segments, 3, 3).
+                i (Array): Index of the segment being updated.
                 xi_i (Array): Strain parameters for the current segment, shape (3,).
                 xid_i (Array): Time derivative of the strain for the current segment, shape (3,).
                 arc_len (Array): Integration length used for this evaluation (either segment length or `s_local`).
-                idx (Array): Index of the segment being updated.
 
             Returns:
                 J_next (Array): Updated Jacobian including the current segment, shape (num_segments, 3, 3).
@@ -1124,17 +1124,17 @@ class PlanarPCS(DynamicalSystem):
             # Rotate the previous Jacobian into the current frame and add the local contribution
             J_rot = jnp.matmul(Ad_inv, J_prev)
             # Overwrite the slice associated with the active segment
-            J_next = J_rot.at[idx].set(Ad_inv @ T)
+            J_next = J_rot.at[i].set(Ad_inv @ T)
 
             # Compute the bodyframe velocity twist at the end of the current segment
-            eta = jnp.matmul(J_next[idx], xid_i)
+            eta = jnp.matmul(J_next[i], xid_i)
             # Time-derivative of the inverse adjoint
             Ad_inv_dot = -lie.adjoint_se2(eta) @ Ad_inv
 
             # Rotate the previous Jacobian rate into the current frame and add the convective term
             Jd_rot = jnp.matmul(Ad_inv, Jd_prev) + jnp.matmul(Ad_inv_dot, J_prev)
             # Overwrite the slice associated with the active segment
-            Jd_next = Jd_rot.at[idx].set(Ad_inv_dot @ T + Ad_inv @ Td)
+            Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T + Ad_inv @ Td)
 
             return J_next, Jd_next
 
@@ -1173,7 +1173,7 @@ class PlanarPCS(DynamicalSystem):
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
                 J_next, Jd_next = integrate_segment(
-                    J_prev, Jd_prev, xi_i, xid_i, arc_len, i
+                    J_prev, Jd_prev, i, xi_i, xid_i, arc_len,
                 )
 
                 is_target = i == segment_idx

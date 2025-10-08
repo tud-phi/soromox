@@ -707,7 +707,7 @@ def test_inertial_velocity_matches_central_differences(num_segments):
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
     qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
 
-    dt = EPS
+    dt = 1e-6
     for q_key, qd_key in zip(q_keys, qd_keys):
         q = random_q(model, q_key, scale=0.03)
         qd = random_q(model, qd_key, scale=0.1)
@@ -730,6 +730,7 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
 
     key = jax.random.PRNGKey(5)
+    delta = 1e-6
     for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
         q = random_q(model, q_key, scale=0.01)
 
@@ -740,11 +741,11 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments):
             J_fd_ls = []
             eye = jnp.eye(n)
             for j in range(n):
-                qp = q + EPS * eye[j]
-                qm = q - EPS * eye[j]
+                qp = q + delta * eye[j]
+                qm = q - delta * eye[j]
                 fp = model.forward_kinematics(qp, s)
                 fm = model.forward_kinematics(qm, s)
-                J_fd_ls.append((fp - fm) / (2 * EPS))
+                J_fd_ls.append((fp - fm) / (2 * delta))
 
             J_fd = jnp.stack(J_fd_ls, axis=1)
 
@@ -787,6 +788,7 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments)
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
     qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
 
+    delta = 1e-6
     for q_key, qd_key in zip(q_keys, qd_keys):
         q = random_q(model, q_key, scale=0.05)
         qd = random_q(model, qd_key, scale=0.2)
@@ -797,11 +799,11 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments)
             eye = jnp.eye(q.shape[0])
             dJ_cols = []
             for j in range(q.shape[0]):
-                qp = q + EPS * eye[j]
-                qm = q - EPS * eye[j]
+                qp = q + delta * eye[j]
+                qm = q - delta * eye[j]
                 Jp = model.jacobian_bodyframe(qp, s)
                 Jm = model.jacobian_bodyframe(qm, s)
-                dJ_cols.append((Jp - Jm) / (2 * EPS))
+                dJ_cols.append((Jp - Jm) / (2 * delta))
             dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
             Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
 
