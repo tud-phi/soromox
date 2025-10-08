@@ -7,6 +7,7 @@ import pytest
 from typing import List, Optional
 
 from soromox.systems.planar_pcs import PlanarPCS
+from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2, exp_SE2
 from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -652,6 +653,24 @@ def test_J_local_batched_matches_pointwise_evaluation(num_segments):
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
+    key = jax.random.PRNGKey(1)
+    q = random_q(model, key, scale=0.05)
+
+    for s in sample_arc_lengths(model):
+        J_impl = model.jacobian_inertialframe(q, s)
+        J_body = model.jacobian_bodyframe(q, s)
+        chi = model.forward_kinematics(q, s)
+        g = exp_SE2(chi)
+        J_expected = Adjoint_g_SE2(g) @ J_body
+
+        assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
+            f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_expected:\n{J_expected}"
+        )
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
 def test_jacobian_inertialframe_matches_autodiff(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
@@ -814,6 +833,59 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
             assert jnp.allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7), (
                 f"num_segments={num_segments}, s={s}\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jd_jvp)}"
             )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(987)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(654), scale=0.1)
+
+    s_tips = model.L_cum[1:]
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_local_tips, Jd_local_tips = model._J_Jd_local_tips(q, qd)
+
+        for idx, s_tip in enumerate(s_tips):
+            J_local, Jd_local = model._J_Jd_local(q, qd, s_tip)
+
+            J_local_full = model._final_size_jacobian(J_local)
+            Jd_local_full = model._final_size_jacobian(Jd_local)
+
+            assert_allclose(J_local_full, J_local_tips[idx], rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_local_full, Jd_local_tips[idx], rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(321)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(4321), scale=0.1)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_batch, Jd_batch = model._J_Jd_local_batched(q, qd, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single, Jd_single = model._J_Jd_local(q, qd, s_val)
+            J_single_full = model._final_size_jacobian(J_single)
+            Jd_single_full = model._final_size_jacobian(Jd_single)
+
+            assert_allclose(J_batch[idx], J_single_full, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single_full, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
