@@ -247,13 +247,16 @@ def test_se2_helpers_are_autodiff_finite_at_zero():
     xid_zero = jnp.zeros((3,))
     s = jnp.array(0.4)
 
+    def assert_autodiff_finite(fn, arg):
+        jac_rev = jax.jacrev(fn)(arg)
+        jac_fwd = jax.jacfwd(fn)(arg)
+        assert jnp.isfinite(jac_rev).all()
+        assert jnp.isfinite(jac_fwd).all()
+
     def tangent_fn(xi):
         return Tangent_gi_se2(xi, s, eps=EPS).reshape(-1)
 
-    jac_rev = jax.jacrev(tangent_fn)(xi_zero)
-    jac_fwd = jax.jacfwd(tangent_fn)(xi_zero)
-    assert jnp.isfinite(jac_rev).all()
-    assert jnp.isfinite(jac_fwd).all()
+    assert_autodiff_finite(tangent_fn, xi_zero)
 
     def tangent_dot_wrt_xi(xi):
         return Tangent_derivative_gi_se2(xi, xid_zero, s, eps=EPS).reshape(-1)
@@ -262,10 +265,19 @@ def test_se2_helpers_are_autodiff_finite_at_zero():
         return Tangent_derivative_gi_se2(xi_zero, xid, s, eps=EPS).reshape(-1)
 
     for fn, arg in ((tangent_dot_wrt_xi, xi_zero), (tangent_dot_wrt_xid, xid_zero)):
-        jac_rev = jax.jacrev(fn)(arg)
-        jac_fwd = jax.jacfwd(fn)(arg)
-        assert jnp.isfinite(jac_rev).all()
-        assert jnp.isfinite(jac_fwd).all()
+        assert_autodiff_finite(fn, arg)
+
+    def exp_gn_fn(xi):
+        return exp_gn_SE2(xi, eps=EPS).reshape(-1)
+
+    assert_autodiff_finite(exp_gn_fn, xi_zero)
+
+    def log_fn(g_flat):
+        g = g_flat.reshape((3, 3))
+        return log_SE2(g, eps=EPS)
+
+    g_identity = jnp.eye(3).reshape(-1)
+    assert_autodiff_finite(log_fn, g_identity)
 
 if __name__ == "__main__":
     # run pytest with activated stdout
