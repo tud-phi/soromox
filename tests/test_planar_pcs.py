@@ -1,5 +1,5 @@
 import jax
-from jax import Array
+from jax import Array, jacfwd, jacrev
 from jax import numpy as jnp
 import numpy as onp
 from numpy.testing import assert_allclose
@@ -73,6 +73,16 @@ def sample_arc_lengths(model: PlanarPCS) -> List[float]:
 def random_q(model, key=jax.random.PRNGKey(0), scale=0.1):
     n = int(model.num_active_strains.item())
     return scale * jax.random.normal(key, (n,))
+
+
+def segment_tip_poses(model: PlanarPCS, q: Array) -> Array:
+    s_vals = model.L_cum[1:]
+
+    def fk_at_s(s: Array) -> Array:
+        return model.forward_kinematics(q, s)
+
+    return jax.vmap(fk_at_s)(s_vals)
+
 
 def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
@@ -486,6 +496,87 @@ def test_inverse_kinematics_consistency(num_segments):
             atol=ATOL,
             err_msg=f"Forward kinematics of recovered configuration failed for config {i} with {num_segments} segments"
         )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_kinematics_tips_coherence(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(777)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    for q in (zero_cfg, random_cfg):
+        chi_expected = segment_tip_poses(model, q)
+        chi_tips = model.forward_kinematics_tips(q)
+
+        assert_allclose(chi_tips, chi_expected, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_kinematics_batched_coherence(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(888)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_values = [0.0] + sample_arc_lengths(model)
+    s_ps = jnp.asarray(s_values, dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        chi_batched = model.forward_kinematics_batched(q, s_ps)
+        chi_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
+
+        assert_allclose(chi_batched, chi_expected, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_local_tips_matches_pointwise_evaluation(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    q = random_q(model, jax.random.PRNGKey(5), scale=0.03)
+
+    J_tips = model._J_local_tips(q)
+    s_tips = model.L_cum[1:]
+
+    for idx, s in enumerate(s_tips):
+        if s < 1e-3:
+            continue
+
+        J_tip_batch = J_tips[idx]
+        J_tip_single = model._final_size_jacobian(model._J_local(q, s))
+
+        assert_allclose(
+            J_tip_batch,
+            J_tip_single,
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=(
+                f"num_segments={num_segments}, s={s}\n"
+                f"J_tip_batch:\n{J_tip_batch}\nJ_tip_single:\n{J_tip_single}"
+            ),
+        )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_local_batched_matches_pointwise_evaluation(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(321)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        J_batch = model._J_local_batched(q, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single = model._final_size_jacobian(model._J_local(q, s_val))
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [2, 3])
@@ -1011,6 +1102,119 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         yd_expected = jnp.concatenate([qd, qdd_expected])
 
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segments: int) -> None:
+    model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    q = jnp.zeros((dof,), dtype=jnp.float64)
+    qd = jnp.zeros((dof,), dtype=jnp.float64)
+    y = jnp.concatenate([q, qd])
+    u = jnp.zeros((model.num_actuators,), dtype=jnp.float64)
+    s = model.L_cum[-1]
+
+    dg_dq = jacfwd(model.forward_kinematics, argnums=0)(q, s)
+    dJ_bodyframe_dq = jacfwd(model.jacobian_bodyframe, argnums=0)(q, s)
+    dJ_inertialframe_dq = jacfwd(model.jacobian_inertialframe, argnums=0)(q, s)
+    _, dJd_bodyframe = jacfwd(model.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    _, dJd_inertialframe = jacfwd(model.jacobian_and_derivative_inertialframe, argnums=0)(q, qd, s)
+
+    assert not jnp.isnan(dg_dq).any()
+    assert not jnp.isnan(dJ_bodyframe_dq).any()
+    assert not jnp.isnan(dJ_inertialframe_dq).any()
+    assert not jnp.isnan(dJd_bodyframe).any()
+    assert not jnp.isnan(dJd_inertialframe).any()
+
+    dB_dq = jacfwd(model.inertia_matrix)(q)
+    dC_dq = jacfwd(model.coriolis_matrix, argnums=0)(q, qd)
+    dC_dqd = jacfwd(model.coriolis_matrix, argnums=1)(q, qd)
+    dG_dq = jacfwd(model.gravitational_force)(q)
+    dtau_el_dq = jacfwd(model.elastic_force)(q)
+    dtau_u_dq = jacfwd(model.actuation_force, argnums=0)(q, u)
+    dtau_u_du = jacfwd(model.actuation_force, argnums=1)(q, u)
+    dy_dy = jacfwd(model.forward_dynamics, argnums=1)(0.0, y, (u,))
+    (dy_du,) = jacfwd(model.forward_dynamics, argnums=2)(0.0, y, (u,))
+
+    assert not jnp.isnan(dB_dq).any()
+    assert not jnp.isnan(dC_dq).any()
+    assert not jnp.isnan(dC_dqd).any()
+    assert not jnp.isnan(dG_dq).any()
+    assert not jnp.isnan(dtau_el_dq).any()
+    assert not jnp.isnan(dtau_u_dq).any()
+    assert not jnp.isnan(dtau_u_du).any()
+    assert not jnp.isnan(dy_dy).any()
+    assert not jnp.isnan(dy_du).any()
+
+    dT_dq = jacfwd(model.kinetic_energy, argnums=0)(q, qd)
+    dT_dqd = jacfwd(model.kinetic_energy, argnums=1)(q, qd)
+    dU_G_dq = jacfwd(model.gravitational_energy)(q)
+    dU_dq = jacfwd(model.potential_energy)(q)
+    dE_dq = jacfwd(model.total_energy, argnums=0)(q, qd)
+    dE_dqd = jacfwd(model.total_energy, argnums=1)(q, qd)
+
+    assert not jnp.isnan(dT_dq).any()
+    assert not jnp.isnan(dT_dqd).any()
+    assert not jnp.isnan(dU_G_dq).any()
+    assert not jnp.isnan(dU_dq).any()
+    assert not jnp.isnan(dE_dq).any()
+    assert not jnp.isnan(dE_dqd).any()
+
+
+def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> None:
+    model, _ = make_planar_pcs(num_segments=2, total_length=PLANAR_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    q = jnp.zeros((dof,), dtype=jnp.float64)
+    qd = jnp.zeros((dof,), dtype=jnp.float64)
+    y = jnp.concatenate([q, qd])
+    u = jnp.zeros((model.num_actuators,), dtype=jnp.float64)
+    s = model.L_cum[-1]
+
+    dg_dq = jacrev(model.forward_kinematics, argnums=0)(q, s)
+    dJ_bodyframe_dq = jacrev(model.jacobian_bodyframe, argnums=0)(q, s)
+    dJ_inertialframe_dq = jacrev(model.jacobian_inertialframe, argnums=0)(q, s)
+    _, dJd_bodyframe = jacrev(model.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    _, dJd_inertialframe = jacrev(model.jacobian_and_derivative_inertialframe, argnums=0)(q, qd, s)
+
+    assert not jnp.isnan(dg_dq).any()
+    assert not jnp.isnan(dJ_bodyframe_dq).any()
+    assert not jnp.isnan(dJ_inertialframe_dq).any()
+    assert not jnp.isnan(dJd_bodyframe).any()
+    assert not jnp.isnan(dJd_inertialframe).any()
+
+    dB_dq = jacrev(model.inertia_matrix)(q)
+    dC_dq = jacrev(model.coriolis_matrix, argnums=0)(q, qd)
+    dC_dqd = jacrev(model.coriolis_matrix, argnums=1)(q, qd)
+    dG_dq = jacrev(model.gravitational_force)(q)
+    dtau_el_dq = jacrev(model.elastic_force)(q)
+    dtau_u_dq = jacrev(model.actuation_force, argnums=0)(q, u)
+    dtau_u_du = jacrev(model.actuation_force, argnums=1)(q, u)
+    dy_dy = jacrev(model.forward_dynamics, argnums=1)(0.0, y, (u,))
+    (dy_du,) = jacrev(model.forward_dynamics, argnums=2)(0.0, y, (u,))
+
+    assert not jnp.isnan(dB_dq).any()
+    assert not jnp.isnan(dC_dq).any()
+    assert not jnp.isnan(dC_dqd).any()
+    assert not jnp.isnan(dG_dq).any()
+    assert not jnp.isnan(dtau_el_dq).any()
+    assert not jnp.isnan(dtau_u_dq).any()
+    assert not jnp.isnan(dtau_u_du).any()
+    assert not jnp.isnan(dy_dy).any()
+    assert not jnp.isnan(dy_du).any()
+
+    dT_dq = jacrev(model.kinetic_energy, argnums=0)(q, qd)
+    dT_dqd = jacrev(model.kinetic_energy, argnums=1)(q, qd)
+    dU_G_dq = jacrev(model.gravitational_energy)(q)
+    dU_dq = jacrev(model.potential_energy)(q)
+    dE_dq = jacrev(model.total_energy, argnums=0)(q, qd)
+    dE_dqd = jacrev(model.total_energy, argnums=1)(q, qd)
+
+    assert not jnp.isnan(dT_dq).any()
+    assert not jnp.isnan(dT_dqd).any()
+    assert not jnp.isnan(dU_G_dq).any()
+    assert not jnp.isnan(dU_dq).any()
+    assert not jnp.isnan(dE_dq).any()
+    assert not jnp.isnan(dE_dqd).any()
 
 
 if __name__ == "__main__":
