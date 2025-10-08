@@ -1,5 +1,5 @@
 import jax
-from jax import Array, jacfwd, jvp
+from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 import numpy as onp
@@ -977,7 +977,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 4])
-def test_differentiability_zero_configuration(num_segments: int):
+def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     dof = int(model.num_active_strains.item())
     # initialize zero state
@@ -1030,6 +1030,67 @@ def test_differentiability_zero_configuration(num_segments: int):
     dU_dq = jacfwd(model.potential_energy)(q)
     dE_dq = jacfwd(model.total_energy, argnums=0)(q, qd)
     dE_dqd = jacfwd(model.total_energy, argnums=1)(q, qd)
+
+    assert not jnp.isnan(dT_dq).any(), "dT/dq contains NaN!"
+    assert not jnp.isnan(dT_dqd).any(), "dT/dqd contains NaN!"
+    assert not jnp.isnan(dU_G_dq).any(), "dU_G/dq contains NaN!"
+    assert not jnp.isnan(dU_dq).any(), "dU/dq contains NaN!"
+    assert not jnp.isnan(dE_dq).any(), "dE/dq contains NaN!"
+    assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
+
+def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> None:
+    model, _ = make_pcs(num_segments=2, total_length=PCS_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    # initialize zero state
+    q = jnp.zeros((dof,), dtype=jnp.float64)
+    qd = jnp.zeros((dof,), dtype=jnp.float64)
+    y = jnp.concatenate([q, qd])
+    # initialize zero actuation
+    u = jnp.zeros((model.num_actuators,), dtype=jnp.float64)
+    # initialize point for forward kinematics
+    s = model.L_cum[-1]
+
+    # test differentiability of kinematics at zero configuration
+    dg_dq = jacrev(model.forward_kinematics, argnums=0)(q, s)
+    dJ_bodyframe_dq = jacrev(model.jacobian_bodyframe, argnums=0)(q, s)
+    dJ_inertialframe_dq = jacrev(model.jacobian_inertialframe, argnums=0)(q, s)
+    _, dJd_bodyframe = jacrev(model.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    _, dJd_inertialframe = jacrev(model.jacobian_and_derivative_inertialframe, argnums=0)(q, qd, s)
+
+    assert not jnp.isnan(dg_dq).any(), "dg/dq contains NaN!"
+    assert not jnp.isnan(dJ_bodyframe_dq).any(), "dJ_bodyframe/dq contains NaN!"
+    assert not jnp.isnan(dJ_inertialframe_dq).any(), "dJ_inertialframe/dq contains NaN!"
+    assert not jnp.isnan(dJd_bodyframe).any(), "dJd_bodyframe/dq contains NaN!"
+    assert not jnp.isnan(dJd_inertialframe).any(), "dJd_inertialframe/dq contains NaN!"
+
+    # test differentiability of dynamics at zero configuration
+    dB_dq = jacrev(model.inertia_matrix)(q)
+    dC_dq = jacrev(model.coriolis_matrix, argnums=0)(q, qd)
+    dC_dqd = jacrev(model.coriolis_matrix, argnums=1)(q, qd)
+    dG_dq = jacrev(model.gravitational_force)(q)
+    dtau_el_dq = jacrev(model.elastic_force)(q)
+    dtau_u_dq = jacrev(model.actuation_force, argnums=0)(q, u)
+    dtau_u_du = jacrev(model.actuation_force, argnums=1)(q, u)
+    dy_dy = jacrev(model.forward_dynamics, argnums=1)(0.0, y, (u,))
+    (dy_du, ) = jacrev(model.forward_dynamics, argnums=2)(0.0, y, (u,))
+
+    assert not jnp.isnan(dB_dq).any(), "dB/dq contains NaN!"
+    assert not jnp.isnan(dC_dq).any(), "dC/dq contains NaN!"
+    assert not jnp.isnan(dC_dqd).any(), "dC/dqd contains NaN!"
+    assert not jnp.isnan(dG_dq).any(), "dG/dq contains NaN!"
+    assert not jnp.isnan(dtau_el_dq).any(), "dtau_el/dq contains NaN!"
+    assert not jnp.isnan(dtau_u_dq).any(), "dtau_u/dq contains NaN!"
+    assert not jnp.isnan(dtau_u_du).any(), "dtau_u/du contains NaN!"
+    assert not jnp.isnan(dy_dy).any(), "dy/dy contains NaN!"
+    assert not jnp.isnan(dy_du).any(), "dy/du contains NaN!"
+
+    # test differentiability of the energy functions at zero configuration
+    dT_dq = jacrev(model.kinetic_energy, argnums=0)(q, qd)
+    dT_dqd = jacrev(model.kinetic_energy, argnums=1)(q, qd)
+    dU_G_dq = jacrev(model.gravitational_energy)(q)
+    dU_dq = jacrev(model.potential_energy)(q)
+    dE_dq = jacrev(model.total_energy, argnums=0)(q, qd)
+    dE_dqd = jacrev(model.total_energy, argnums=1)(q, qd)
 
     assert not jnp.isnan(dT_dq).any(), "dT/dq contains NaN!"
     assert not jnp.isnan(dT_dqd).any(), "dT/dqd contains NaN!"
