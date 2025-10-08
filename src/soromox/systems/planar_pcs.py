@@ -518,22 +518,31 @@ class PlanarPCS(DynamicalSystem):
             th_prev = chi_prev[0]
             p_prev = chi_prev[1:]
 
+            # rotational/bending strain of the current segment
             kappa_i = xi[i, 0]
+            # linear strains of the current segment
             sigmas_i = xi[i, 1:]
 
             l_i = jnp.where(i == segment_idx, s_local, self.L[i])
 
+            # classify whether it is a small strain
+            small_strain = jnp.abs(kappa_i * l_i) < self.global_eps
+
+            # compute the orientation
             th = th_prev + kappa_i * l_i
 
-            int_cos_th = jnp.where(
-                jnp.abs(kappa_i) < self.global_eps,
-                l_i * jnp.cos(th_prev),
-                (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+            # compute the components of the rotation matrix
+            int_cos_th = lax.cond(
+                small_strain,
+                lambda _: l_i * jnp.cos(th_prev),
+                lambda _: (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+                operand=None,
             )
-            int_sin_th = jnp.where(
-                jnp.abs(kappa_i) < self.global_eps,
-                l_i * jnp.sin(th_prev),
-                -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+            int_sin_th = lax.cond(
+                small_strain,
+                lambda _: l_i * jnp.sin(th_prev),
+                lambda _: -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+                operand=None,
             )
 
             R = jnp.stack(
@@ -597,25 +606,32 @@ class PlanarPCS(DynamicalSystem):
 
         def integrate_segment(chi_prev: Array, i: Array) -> Tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
-            kappa_i = xi_i[0]
-            sigmas_i = xi_i[1:]
+            kappa_i = xi_i[0] # rotational/bending strain of the current segment
+            sigmas_i = xi_i[1:] # linear strains of the current segment
 
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
             th_prev = chi_prev[0]
             p_prev = chi_prev[1:]
 
+            # classify whether it is a small strain
+            small_strain = jnp.abs(kappa_i * L_i) < self.global_eps
+
+            # compute the orientation
             th = th_prev + kappa_i * L_i
 
-            int_cos_th = jnp.where(
-                jnp.abs(kappa_i) < self.global_eps,
-                L_i * jnp.cos(th_prev),
-                (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+            # compute the components of the rotation matrix
+            int_cos_th = lax.cond(
+                small_strain,
+                lambda _: L_i * jnp.cos(th_prev),
+                lambda _: (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+                operand=None,
             )
-            int_sin_th = jnp.where(
-                jnp.abs(kappa_i) < self.global_eps,
-                L_i * jnp.sin(th_prev),
-                -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+            int_sin_th = lax.cond(
+                small_strain,
+                lambda _: L_i * jnp.sin(th_prev),
+                lambda _: -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+                operand=None,
             )
 
             R = jnp.stack(
@@ -667,20 +683,27 @@ class PlanarPCS(DynamicalSystem):
             th_prev = chi_prev[0]
             p_prev = chi_prev[1:]
 
-            kappa_i = xi_i[0]
-            sigmas_i = xi_i[1:]
+            kappa_i = xi_i[0] # rotational/bending strain of the current segment
+            sigmas_i = xi_i[1:] # linear strains of the current segment
 
+            # classify whether it is a small strain
+            small_strain = jnp.abs(kappa_i * arc_len) < self.global_eps
+
+            # compute the orientation
             th = th_prev + kappa_i * arc_len
 
-            int_cos_th = jnp.where(
-                jnp.abs(kappa_i) < self.global_eps,
-                arc_len * jnp.cos(th_prev),
-                (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+            # compute the components of the rotation matrix
+            int_cos_th = lax.cond(
+                small_strain,
+                lambda _: arc_len * jnp.cos(th_prev),
+                lambda _: (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+                operand=None,
             )
-            int_sin_th = jnp.where(
-                jnp.abs(kappa_i) < self.global_eps,
-                arc_len * jnp.sin(th_prev),
-                -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+            int_sin_th = lax.cond(
+                small_strain,
+                lambda _: arc_len * jnp.sin(th_prev),
+                lambda _: -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+                operand=None,
             )
 
             R = jnp.stack(

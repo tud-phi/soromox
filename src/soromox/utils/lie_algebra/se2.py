@@ -14,6 +14,7 @@ __all__ = [
     "Tangent_derivative_gi_se2",
 ]
 
+import jax
 import jax.numpy as jnp
 from jax import Array, lax
 
