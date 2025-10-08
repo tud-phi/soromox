@@ -58,6 +58,62 @@ def test_log_se2_inverts_exp_se2_zero_angle():
     assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
 
 
+def test_log_se2_pure_translation():
+    translation = jnp.array([0.35, -0.27])
+    g = jnp.array(
+        [
+            [1.0, 0.0, translation[0]],
+            [0.0, 1.0, translation[1]],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+
+    recovered = log_SE2(g, eps=EPS)
+    expected = jnp.array([0.0, translation[0], translation[1]])
+
+    assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se2_pure_rotation():
+    theta = jnp.pi / 7.0
+    c = jnp.cos(theta)
+    s = jnp.sin(theta)
+    g = jnp.array(
+        [
+            [c, -s, 0.0],
+            [s, c, 0.0],
+            [0.0, 0.0, 1.0],
+        ]
+    )
+
+    recovered = log_SE2(g, eps=EPS)
+    expected = jnp.array([theta, 0.0, 0.0])
+
+    assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se2_handles_near_identity_transform():
+    vec = jnp.array([1e-10, 2e-4, -3e-4])
+    g = exp_SE2(vec)
+
+    recovered = log_SE2(g, eps=EPS)
+
+    assert not jnp.isnan(recovered).any()
+    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se2_round_trip_random_vectors():
+    key = jax.random.PRNGKey(123)
+
+    for _ in range(5):
+        key, subkey = jax.random.split(key)
+        vec = jax.random.uniform(subkey, shape=(3,), minval=-0.9, maxval=0.9)
+        g = exp_SE2(vec)
+        recovered = log_SE2(g, eps=EPS)
+
+        assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize(
     "vec",
     [

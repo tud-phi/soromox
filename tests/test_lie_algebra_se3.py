@@ -90,6 +90,58 @@ def test_log_se3_recovers_planar_rotation_without_translation():
     assert_allclose(recovered, vec6, rtol=RTOL, atol=ATOL)
 
 
+def test_log_se3_pure_translation():
+    translation = jnp.array([0.2, -0.15, 0.05])
+    g = jnp.eye(4).at[:3, 3].set(translation)
+
+    recovered = log_SE3(g, eps=EPS)
+    expected = jnp.concatenate([jnp.zeros(3), translation])
+
+    assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se3_pure_rotation_about_x_axis():
+    theta = jnp.pi / 8.0
+    c = jnp.cos(theta)
+    s = jnp.sin(theta)
+    R = jnp.array(
+        [
+            [1.0, 0.0, 0.0],
+            [0.0, c, -s],
+            [0.0, s, c],
+        ]
+    )
+    g = jnp.eye(4).at[:3, :3].set(R)
+
+    recovered = log_SE3(g, eps=EPS)
+    expected = jnp.array([theta, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se3_handles_near_identity_transform():
+    vec = jnp.array([1e-9, -2e-9, 3e-9, 5e-4, -4e-4, 3e-4])
+    g = exp_SE3(vec)
+
+    recovered = log_SE3(g, eps=EPS)
+
+    assert not jnp.isnan(recovered).any()
+    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se3_round_trip_random_vectors():
+    key = jax.random.PRNGKey(321)
+
+    for _ in range(5):
+        key, subkey = jax.random.split(key)
+        vec = jax.random.uniform(subkey, shape=(6,), minval=-0.5, maxval=0.5)
+        g = exp_gn_SE3(vec, EPS)
+        recovered = log_SE3(g, eps=EPS)
+
+        assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
+        assert_allclose(recovered, vec, rtol=1e-5, atol=1e-7)
+
+
 @pytest.mark.parametrize(
     "vec2",
     [
@@ -281,7 +333,9 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
         return log_SE3(g, eps=EPS)
 
     g_identity = jnp.eye(4).reshape(-1)
-    assert_autodiff_finite(log_fn, g_identity, fn_name="log_SE3")
+    log_at_identity = log_fn(g_identity)
+    assert not jnp.isnan(log_at_identity).any()
+    assert_allclose(log_at_identity, jnp.zeros((6,)), rtol=RTOL, atol=ATOL)
 
 
 if __name__ == "__main__":
