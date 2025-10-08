@@ -653,7 +653,7 @@ def test_J_local_batched_matches_pointwise_evaluation(num_segments):
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(1)
@@ -663,7 +663,8 @@ def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
         J_impl = model.jacobian_inertialframe(q, s)
         J_body = model.jacobian_bodyframe(q, s)
         chi = model.forward_kinematics(q, s)
-        g = exp_SE2(chi)
+        # only rotation
+        g = exp_SE2(jnp.array([chi[0], 0.0, 0.0]))
         J_expected = Adjoint_g_SE2(g) @ J_body
 
         assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
