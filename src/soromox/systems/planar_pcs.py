@@ -11,7 +11,7 @@ from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
 )
-from soromox.utils.integration import (   
+from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
 )
@@ -471,7 +471,9 @@ class PlanarPCS(DynamicalSystem):
         """
 
         # Classify the point along the robot to the corresponding segment
-        segment_idx = jnp.clip(jnp.sum(s > self.L_cum) - 1, 0, self.num_segments - 1).astype(jnp.int32)
+        segment_idx = jnp.clip(
+            jnp.sum(s > self.L_cum) - 1, 0, self.num_segments - 1
+        ).astype(jnp.int32)
 
         # Compute the point coordinate along the segment in the interval [0, l_segment]
         s_local = s - self.L_cum[segment_idx]
@@ -606,8 +608,8 @@ class PlanarPCS(DynamicalSystem):
 
         def integrate_segment(chi_prev: Array, i: Array) -> Tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
-            kappa_i = xi_i[0] # rotational/bending strain of the current segment
-            sigmas_i = xi_i[1:] # linear strains of the current segment
+            kappa_i = xi_i[0]  # rotational/bending strain of the current segment
+            sigmas_i = xi_i[1:]  # linear strains of the current segment
 
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
@@ -683,8 +685,8 @@ class PlanarPCS(DynamicalSystem):
             th_prev = chi_prev[0]
             p_prev = chi_prev[1:]
 
-            kappa_i = xi_i[0] # rotational/bending strain of the current segment
-            sigmas_i = xi_i[1:] # linear strains of the current segment
+            kappa_i = xi_i[0]  # rotational/bending strain of the current segment
+            sigmas_i = xi_i[1:]  # linear strains of the current segment
 
             # classify whether it is a small strain
             small_strain = jnp.abs(kappa_i * arc_len) < self.global_eps
@@ -724,7 +726,7 @@ class PlanarPCS(DynamicalSystem):
     @eqx.filter_jit
     def _compute_relative_segment_poses(self, chi_tips: Array) -> Array:
         """
-        Compute the relative pose differences of each segment tip w.r.t. the previous segment tip 
+        Compute the relative pose differences of each segment tip w.r.t. the previous segment tip
         in a vectorized fashion.
 
         Args:
@@ -738,35 +740,35 @@ class PlanarPCS(DynamicalSystem):
         """
         # Ensure chi_tips has the correct shape
         chi_tips = chi_tips.reshape(self.num_segments, 3)
-        
+
         # Base pose at the origin: [theta=self.th0, x=0, y=0]
         base_pose = jnp.array([self.th0, 0.0, 0.0])
-        
+
         # Create array of previous poses: base + all segment tips except the last
         prev_poses = jnp.concatenate([base_pose[None, :], chi_tips[:-1]], axis=0)
-        
+
         # Compute relative poses vectorized
         # For SE(2), the relative transformation between poses chi_prev and chi_curr is:
         # delta_chi = log(exp(chi_prev)^(-1) @ exp(chi_curr))
         # But for computational efficiency, we can compute this more directly:
-        
+
         # Extract angles and positions
         theta_prev = prev_poses[:, 0]  # (num_segments,)
-        p_prev = prev_poses[:, 1:]     # (num_segments, 2)
-        
-        theta_curr = chi_tips[:, 0]    # (num_segments,)
-        p_curr = chi_tips[:, 1:]       # (num_segments, 2)
-        
+        p_prev = prev_poses[:, 1:]  # (num_segments, 2)
+
+        theta_curr = chi_tips[:, 0]  # (num_segments,)
+        p_curr = chi_tips[:, 1:]  # (num_segments, 2)
+
         # Relative angle is simply the difference
         delta_theta = theta_curr - theta_prev  # (num_segments,)
-        
+
         # Relative position needs to be rotated to the previous frame
         cos_prev = jnp.cos(theta_prev)  # (num_segments,)
         sin_prev = jnp.sin(theta_prev)  # (num_segments,)
-        
+
         # Relative position in global frame
         delta_p_global = p_curr - p_prev  # (num_segments, 2)
-        
+
         # Transform relative position to the previous segment frame using rotation matrix transpose
         # R_prev^T @ delta_p_global for each segment
         delta_x = cos_prev * delta_p_global[:, 0] + sin_prev * delta_p_global[:, 1]
@@ -774,7 +776,7 @@ class PlanarPCS(DynamicalSystem):
 
         # Combine relative transformations
         chi_rel = jnp.column_stack([delta_theta, delta_x, delta_y])  # (num_segments, 3)
-        
+
         return chi_rel
 
     @eqx.filter_jit
@@ -807,7 +809,7 @@ class PlanarPCS(DynamicalSystem):
             th, px, py = chi_rel_i
 
             # compute the inverse kinematics for the virtual backbone
-            divisor = (jnp.cos(th) - 1)
+            divisor = jnp.cos(th) - 1
             xi = lax.select(
                 jnp.abs(th) < self.global_eps,
                 jnp.array([0.0, px / s_i, py / s_i]),
@@ -821,7 +823,7 @@ class PlanarPCS(DynamicalSystem):
                             -px - (py * jnp.sin(th)) / divisor,
                         ]
                     )
-                )
+                ),
             )
             return xi
 
@@ -837,7 +839,7 @@ class PlanarPCS(DynamicalSystem):
         q = jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
 
         return q
-    
+
     @eqx.filter_jit
     def _final_size_jacobian(self, J_full: Array) -> Array:
         """
@@ -872,7 +874,9 @@ class PlanarPCS(DynamicalSystem):
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
-        def integrate_segment(J_prev: Array, i: Array, xi_i: Array, arc_len: Array) -> Array:
+        def integrate_segment(
+            J_prev: Array, i: Array, xi_i: Array, arc_len: Array
+        ) -> Array:
             """
             Propagate the Jacobian one segment forward and overwrite the active slice.
 
@@ -1020,17 +1024,14 @@ class PlanarPCS(DynamicalSystem):
         segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
 
         J_tips = self._J_local_tips(q)  # (num_segments, 3, num_strains)
-        J_bases = jnp.concatenate(
-            [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
-        )
+        J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
 
         J_base_ps = J_bases[segment_indices]  # (N, 3, num_strains)
         xi_ps = xi[segment_indices]
 
         N = s_ps.shape[0]
-        J_base_ps = (
-            J_base_ps.reshape(N, 3, self.num_segments, 3)
-            .transpose(0, 2, 1, 3)
+        J_base_ps = J_base_ps.reshape(N, 3, self.num_segments, 3).transpose(
+            0, 2, 1, 3
         )  # (N, num_segments, 3, 3)
 
         def integrate_segment(
@@ -1142,7 +1143,9 @@ class PlanarPCS(DynamicalSystem):
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
             # Compute the tangent vector and its derivative
             T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se2(xi_i, xid_i, arc_len, eps=self.global_eps)
+            Td = lie.Tangent_derivative_gi_se2(
+                xi_i, xid_i, arc_len, eps=self.global_eps
+            )
 
             # Rotate the previous Jacobian into the current frame and add the local contribution
             J_rot = jnp.matmul(Ad_inv, J_prev)
@@ -1180,7 +1183,9 @@ class PlanarPCS(DynamicalSystem):
             """
             J_prev, Jd_prev, J_target, Jd_target, done = carry
 
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            def compute_branch(
+                _: None,
+            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
                 """
                 Integrate the current segment and cache the result if this corresponds to the query index.
 
@@ -1196,7 +1201,12 @@ class PlanarPCS(DynamicalSystem):
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
                 J_next, Jd_next = integrate_segment(
-                    J_prev, Jd_prev, i, xi_i, xid_i, arc_len,
+                    J_prev,
+                    Jd_prev,
+                    i,
+                    xi_i,
+                    xid_i,
+                    arc_len,
                 )
 
                 is_target = i == segment_idx
@@ -1212,7 +1222,9 @@ class PlanarPCS(DynamicalSystem):
                     done_next,
                 ), zero_output
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            def skip_branch(
+                _: None,
+            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
                 """
                 Reuse the previously cached tensors after the target segment has been handled.
 
@@ -1241,13 +1253,13 @@ class PlanarPCS(DynamicalSystem):
         )
 
         indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
-        ( _, _, J_local, Jd_local, _ ), _ = lax.scan(scan_body, carry_init, indices)
+        (_, _, J_local, Jd_local, _), _ = lax.scan(scan_body, carry_init, indices)
 
         J_local = self._final_size_jacobian(J_local)
         Jd_local = self._final_size_jacobian(Jd_local)
 
         return J_local, Jd_local
-    
+
     @eqx.filter_jit
     def _J_Jd_local_tips(self, q: Array, qd: Array) -> Tuple[Array, Array]:
         """
@@ -1347,13 +1359,9 @@ class PlanarPCS(DynamicalSystem):
         xid_ps = xid[segment_indices]
 
         N = s_ps.shape[0]
-        J_base_ps = (
-            J_base_ps.reshape(N, 3, self.num_segments, 3)
-            .transpose(0, 2, 1, 3)
-        )
-        Jd_base_ps = (
-            Jd_base_ps.reshape(N, 3, self.num_segments, 3)
-            .transpose(0, 2, 1, 3)
+        J_base_ps = J_base_ps.reshape(N, 3, self.num_segments, 3).transpose(0, 2, 1, 3)
+        Jd_base_ps = Jd_base_ps.reshape(N, 3, self.num_segments, 3).transpose(
+            0, 2, 1, 3
         )
 
         def integrate_segment(
@@ -1566,9 +1574,7 @@ class PlanarPCS(DynamicalSystem):
         )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
         J_ps = self._J_local_batched(q, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
 
         def B_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
@@ -1625,9 +1631,7 @@ class PlanarPCS(DynamicalSystem):
         )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
         J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
         Jd_ps = Jd_ps.reshape(
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
         )
@@ -1696,9 +1700,7 @@ class PlanarPCS(DynamicalSystem):
         g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 3, 3)
 
         J_ps = self._J_local_batched(q, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
 
         def G_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
@@ -1946,7 +1948,9 @@ class PlanarPCS(DynamicalSystem):
 
                 return -Ws_ij * rho_i * A_i * jnp.dot(p_j, self.g)
 
-            U_G_blocks_segment_i = vmap(U_G_ij)(jnp.arange(1, self.num_gauss_points - 1))
+            U_G_blocks_segment_i = vmap(U_G_ij)(
+                jnp.arange(1, self.num_gauss_points - 1)
+            )
 
             return U_G_blocks_segment_i
 
@@ -2085,9 +2089,7 @@ class PlanarPCS(DynamicalSystem):
         g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 3, 3)
 
         J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
         Jd_ps = Jd_ps.reshape(
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
         )

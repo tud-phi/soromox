@@ -291,7 +291,11 @@ def Adjoint_gi_se2(
         adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
         adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
 
-        term1 = (3 * sin_theta - s_i * theta_val * cos_theta) / (2 * theta_val) * adjoint_xi_i
+        term1 = (
+            (3 * sin_theta - s_i * theta_val * cos_theta)
+            / (2 * theta_val)
+            * adjoint_xi_i
+        )
         term2 = (
             (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
             / (2 * theta_val**2)
@@ -310,7 +314,12 @@ def Adjoint_gi_se2(
 
         return jnp.eye(3) + term1 + term2 + term3 + term4
 
-    Ad = lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
+    Ad = lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
 
     return Ad
 
@@ -409,9 +418,15 @@ def Tangent_gi_se2(
 
         return s_i * jnp.eye(3) + term1 + term2 + term3 + term4
 
-    Tangent = lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
+    Tangent = lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
 
     return Tangent
+
 
 def Tangent_derivative_gi_se2(
     xi_i: Array,
@@ -471,20 +486,32 @@ def Tangent_derivative_gi_se2(
         adjoint_dot_xi_i_cube = dot_powers[3]
         adjoint_dot_xi_i_quad = dot_powers[4]
 
-        coeff_theta_common = -8 + (8 - s_i**2 * theta_val**2) * cos_theta + 5 * s_i * theta_val * sin_theta
-        coeff_theta_alt = -8 * s_i * theta_val + (15 - s_i**2 * theta_val**2) * sin_theta - 7 * s_i * theta_val * cos_theta
+        coeff_theta_common = (
+            -8
+            + (8 - s_i**2 * theta_val**2) * cos_theta
+            + 5 * s_i * theta_val * sin_theta
+        )
+        coeff_theta_alt = (
+            -8 * s_i * theta_val
+            + (15 - s_i**2 * theta_val**2) * sin_theta
+            - 7 * s_i * theta_val * cos_theta
+        )
 
         coeff1_theta = thetad / (2 * theta_val**3) * coeff_theta_common
         coeff1 = (4 - 4 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**2)
 
         coeff2_theta = thetad / (2 * theta_val**4) * coeff_theta_alt
-        coeff2 = (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta) / (2 * theta_val**3)
+        coeff2 = (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta) / (
+            2 * theta_val**3
+        )
 
         coeff3_theta = thetad / (2 * theta_val**5) * coeff_theta_common
         coeff3 = (2 - 2 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**4)
 
         coeff4_theta = thetad / (2 * theta_val**6) * coeff_theta_alt
-        coeff4 = (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta) / (2 * theta_val**5)
+        coeff4 = (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta) / (
+            2 * theta_val**5
+        )
 
         term1 = coeff1_theta * adjoint_xi_i + coeff1 * adjoint_dot_xi_i
         term2 = coeff2_theta * adjoint_xi_i_square + coeff2 * adjoint_dot_xi_i_square
@@ -493,5 +520,10 @@ def Tangent_derivative_gi_se2(
 
         return term1 + term2 + term3 + term4
 
-    Td = lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
+    Td = lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
     return Td

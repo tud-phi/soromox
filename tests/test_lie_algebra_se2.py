@@ -276,6 +276,7 @@ def test_tangent_derivative_gi_se2_zero_theta_matches_truncated_series():
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
+
 def test_tangent_derivative_matches_autodiff(N: int = 10):
     key = jax.random.PRNGKey(0)
     for _i in range(N):
@@ -306,8 +307,12 @@ def test_se2_helpers_are_autodiff_finite_at_zero():
     def assert_autodiff_finite(fn, arg, fn_name=None):
         jac_rev = jax.jacrev(fn)(arg)
         jac_fwd = jax.jacfwd(fn)(arg)
-        assert jnp.isfinite(jac_rev).all(), "Jacobian (reverse) is not finite of fn {}".format(fn_name)
-        assert jnp.isfinite(jac_fwd).all(), "Jacobian (forward) is not finite of fn {}".format(fn_name)
+        assert jnp.isfinite(jac_rev).all(), (
+            "Jacobian (reverse) is not finite of fn {}".format(fn_name)
+        )
+        assert jnp.isfinite(jac_fwd).all(), (
+            "Jacobian (forward) is not finite of fn {}".format(fn_name)
+        )
 
     def tangent_fn(xi):
         return Tangent_gi_se2(xi, s, eps=EPS).reshape(-1)
@@ -334,6 +339,7 @@ def test_se2_helpers_are_autodiff_finite_at_zero():
 
     g_identity = jnp.eye(3).reshape(-1)
     assert_autodiff_finite(log_fn, g_identity, fn_name="log_SE2")
+
 
 if __name__ == "__main__":
     # run pytest with activated stdout

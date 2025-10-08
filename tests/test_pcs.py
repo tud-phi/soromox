@@ -41,7 +41,9 @@ def make_pcs(
         "E": 2e3 * jnp.ones((num_segments,)),
         "G": 1e3 * jnp.ones((num_segments,)),
     }
-    diag_vals = jnp.repeat(jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0)
+    diag_vals = jnp.repeat(
+        jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
+    )
     params["D"] = 1e-3 * jnp.diag((diag_vals * L[:, None]).flatten())
 
     if xi_ref is None:
@@ -281,7 +283,9 @@ def test_constant_strain_call():
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments: int) -> None:
+def test_forward_kinematics_tips_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
     model, _ = make_pcs(num_segments=num_segments)
     zero_cfg = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
     rng = jax.random.PRNGKey(321)
@@ -295,7 +299,9 @@ def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments: int)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+def test_forward_kinematics_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
     model, _ = make_pcs(num_segments=num_segments)
     zero_cfg = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
     rng = jax.random.PRNGKey(789)
@@ -324,6 +330,7 @@ def test_forward_inverse_kinematics_consistency(num_segments: int):
 
         assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
 
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inverse_kinematics_straight_configuration(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments)
@@ -339,7 +346,9 @@ def test_inverse_kinematics_straight_configuration(num_segments: int):
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_inverse_kinematics_with_deactivated_strains(num_segments: int):
-    selector_per_segment = jnp.array([False, False, True, True, False, False], dtype=bool)
+    selector_per_segment = jnp.array(
+        [False, False, True, True, False, False], dtype=bool
+    )
     strain_selector = jnp.tile(selector_per_segment, num_segments)
     model, _ = make_pcs(num_segments=num_segments, strain_selector=strain_selector)
 
@@ -820,7 +829,9 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 4])
-def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segments: int):
+def test_forward_mode_automatic_differentiability_at_zero_configuration(
+    num_segments: int,
+):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     dof = int(model.num_active_strains.item())
     # initialize zero state
@@ -836,8 +847,12 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     dg_dq = jacfwd(model.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacfwd(model.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacfwd(model.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe = jacfwd(model.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    _, dJd_inertialframe = jacfwd(model.jacobian_and_derivative_inertialframe, argnums=0)(q, qd, s)
+    _, dJd_bodyframe = jacfwd(model.jacobian_and_derivative_bodyframe, argnums=0)(
+        q, qd, s
+    )
+    _, dJd_inertialframe = jacfwd(
+        model.jacobian_and_derivative_inertialframe, argnums=0
+    )(q, qd, s)
 
     assert not jnp.isnan(dg_dq).any(), "dg/dq contains NaN!"
     assert not jnp.isnan(dJ_bodyframe_dq).any(), "dJ_bodyframe/dq contains NaN!"
@@ -854,7 +869,7 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     dtau_u_dq = jacfwd(model.actuation_force, argnums=0)(q, u)
     dtau_u_du = jacfwd(model.actuation_force, argnums=1)(q, u)
     dy_dy = jacfwd(model.forward_dynamics, argnums=1)(0.0, y, (u,))
-    (dy_du, ) = jacfwd(model.forward_dynamics, argnums=2)(0.0, y, (u,))
+    (dy_du,) = jacfwd(model.forward_dynamics, argnums=2)(0.0, y, (u,))
 
     assert not jnp.isnan(dB_dq).any(), "dB/dq contains NaN!"
     assert not jnp.isnan(dC_dq).any(), "dC/dq contains NaN!"
@@ -881,6 +896,7 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     assert not jnp.isnan(dE_dq).any(), "dE/dq contains NaN!"
     assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
 
+
 def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> None:
     model, _ = make_pcs(num_segments=2, total_length=PCS_TOTAL_LENGTH)
     dof = int(model.num_active_strains.item())
@@ -897,8 +913,12 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> Non
     dg_dq = jacrev(model.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacrev(model.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacrev(model.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe = jacrev(model.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    _, dJd_inertialframe = jacrev(model.jacobian_and_derivative_inertialframe, argnums=0)(q, qd, s)
+    _, dJd_bodyframe = jacrev(model.jacobian_and_derivative_bodyframe, argnums=0)(
+        q, qd, s
+    )
+    _, dJd_inertialframe = jacrev(
+        model.jacobian_and_derivative_inertialframe, argnums=0
+    )(q, qd, s)
 
     assert not jnp.isnan(dg_dq).any(), "dg/dq contains NaN!"
     assert not jnp.isnan(dJ_bodyframe_dq).any(), "dJ_bodyframe/dq contains NaN!"
@@ -915,7 +935,7 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> Non
     dtau_u_dq = jacrev(model.actuation_force, argnums=0)(q, u)
     dtau_u_du = jacrev(model.actuation_force, argnums=1)(q, u)
     dy_dy = jacrev(model.forward_dynamics, argnums=1)(0.0, y, (u,))
-    (dy_du, ) = jacrev(model.forward_dynamics, argnums=2)(0.0, y, (u,))
+    (dy_du,) = jacrev(model.forward_dynamics, argnums=2)(0.0, y, (u,))
 
     assert not jnp.isnan(dB_dq).any(), "dB/dq contains NaN!"
     assert not jnp.isnan(dC_dq).any(), "dC/dq contains NaN!"

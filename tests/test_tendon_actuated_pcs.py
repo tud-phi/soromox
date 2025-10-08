@@ -1,4 +1,5 @@
 import jax
+
 jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array
 from jax import numpy as jnp
@@ -15,7 +16,9 @@ def test_actuation_matrix_pcs():
     tendon actuated Piecewise Constant Strain class.
     """
 
-    def createRobot(segment_lengths: Array, tendon_params: Dict[str, Array]) -> TendonActuatedPCS:
+    def createRobot(
+        segment_lengths: Array, tendon_params: Dict[str, Array]
+    ) -> TendonActuatedPCS:
         """
         Creates an object of the class TendonActuatedPCS with the specified segments' length
         and tendon routing parameters.
@@ -58,7 +61,9 @@ def test_actuation_matrix_pcs():
 
         return robot
 
-    def reference_actuation_matrix(tendon_params: Dict[str, Array], l_tot: Array) -> Array:
+    def reference_actuation_matrix(
+        tendon_params: Dict[str, Array], l_tot: Array
+    ) -> Array:
         """
         Compute the actuation matrix of a soft robot of length l_tot w.r.t. one
         linear tendon at the straight configuration corresponding to vector state
@@ -92,7 +97,9 @@ def test_actuation_matrix_pcs():
 
         return A / jnp.sqrt(my**2 + mz**2 + 1)
 
-    def reference_actuation_basis(tendon_params: Dict[str, Array], q: Array, s: Array) -> Array:
+    def reference_actuation_basis(
+        tendon_params: Dict[str, Array], q: Array, s: Array
+    ) -> Array:
         """
         Computes the vector representing the actuation basis of the given tendon
         at configuration q (assuming the strain basis to be the identity) and at

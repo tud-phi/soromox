@@ -11,7 +11,7 @@ from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
 )
-from soromox.utils.integration import (   
+from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
 )
@@ -488,7 +488,9 @@ class PCS(DynamicalSystem):
         """
 
         # Classify the point along the robot to the corresponding segment
-        segment_idx = jnp.clip(jnp.sum(s > self.L_cum) - 1, 0, self.num_segments - 1).astype(jnp.int32)
+        segment_idx = jnp.clip(
+            jnp.sum(s > self.L_cum) - 1, 0, self.num_segments - 1
+        ).astype(jnp.int32)
 
         # Compute the point coordinate along the segment in the interval [0, l_segment]
         s_local = s - self.L_cum[segment_idx]
@@ -570,7 +572,7 @@ class PCS(DynamicalSystem):
         g_s = g_ls[segment_idx]
 
         return g_s
-    
+
     @eqx.filter_jit
     def forward_kinematics_tips(self, q: Array) -> Array:
         """
@@ -634,7 +636,9 @@ class PCS(DynamicalSystem):
         # compute the magnus expansion for each point
         magnus = s_local_ps.reshape(-1, 1) * xi[segment_indices]
         # compute the relative transform from the base of the segment to the point
-        g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(magnus)
+        g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(
+            magnus
+        )
         # get the base transform for each point
         g_base_points = g_bases[segment_indices]
 
@@ -731,7 +735,7 @@ class PCS(DynamicalSystem):
         q = jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
 
         return q
-    
+
     @eqx.filter_jit
     def _final_size_jacobian(self, J_full: Array) -> Array:
         """
@@ -817,7 +821,6 @@ class PCS(DynamicalSystem):
         J_local = self._final_size_jacobian(J_target)
 
         return J_local
-    
 
     @eqx.filter_jit
     def _J_local_tips(self, q: Array) -> Array:
@@ -855,7 +858,7 @@ class PCS(DynamicalSystem):
         J_local_tips = vmap(self._final_size_jacobian)(J_target_tips)
 
         return J_local_tips
-    
+
     @eqx.filter_jit
     def _J_local_batched(self, q: Array, s_ps: Array) -> Array:
         """
@@ -881,9 +884,7 @@ class PCS(DynamicalSystem):
         J_tips = self._J_local_tips(q)  # shape (num_segments, 6, num_strains)
 
         # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
-        J_bases = jnp.concatenate(
-            [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
-        )
+        J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
 
         J_base_ps = J_bases[segment_indices]
         # select the other variables for each point
@@ -891,7 +892,9 @@ class PCS(DynamicalSystem):
         idx_ps = segment_indices
 
         # reshape for easier indexing
-        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
+        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(
+            0, 2, 1, 3
+        )  # shape (N, 6, num_segments, 6)
 
         def integrate_segment(
             i: Array,
@@ -908,9 +911,7 @@ class PCS(DynamicalSystem):
             return J_next
 
         # vmap the segment integration over all points
-        J_local_ps = vmap(integrate_segment)(
-            idx_ps, xi_ps, s_local_ps, J_base_ps
-        )
+        J_local_ps = vmap(integrate_segment)(idx_ps, xi_ps, s_local_ps, J_base_ps)
 
         # reshape back to (N, 6, num_strains)
         J_local_ps = vmap(self._final_size_jacobian)(J_local_ps)
@@ -992,7 +993,9 @@ class PCS(DynamicalSystem):
         ) -> Tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
             T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(xi_i, xid_i, arc_len, eps=self.global_eps)
+            Td = lie.Tangent_derivative_gi_se3(
+                xi_i, xid_i, arc_len, eps=self.global_eps
+            )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -1015,14 +1018,21 @@ class PCS(DynamicalSystem):
         ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
             J_prev, Jd_prev, J_target, Jd_target, done = carry
 
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            def compute_branch(
+                _: None,
+            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
                 xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
                 xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
                 J_next, Jd_next = integrate_segment(
-                    J_prev, Jd_prev, i, xi_i, xid_i, arc_len,
+                    J_prev,
+                    Jd_prev,
+                    i,
+                    xi_i,
+                    xid_i,
+                    arc_len,
                 )
 
                 is_target = i == segment_idx
@@ -1038,7 +1048,9 @@ class PCS(DynamicalSystem):
                     done_next,
                 ), zero_slice
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            def skip_branch(
+                _: None,
+            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
                 return (J_prev, Jd_prev, J_target, Jd_target, done), zero_slice
 
             return lax.cond(done, skip_branch, compute_branch, operand=None)
@@ -1129,9 +1141,11 @@ class PCS(DynamicalSystem):
         Jd_local_tips = vmap(self._final_size_jacobian)(Jd_local_tips)
 
         return J_local_tips, Jd_local_tips
-    
+
     @eqx.filter_jit
-    def _J_Jd_local_batched(self, q: Array, qd: Array, s_ps: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> Tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a batch of points s_ps along the robot.
 
@@ -1155,15 +1169,13 @@ class PCS(DynamicalSystem):
         segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
 
         # compute the Jacobian at the tips
-        J_tips, Jd_tips = self._J_Jd_local_tips(q, qd)  # shape (num_segments, 6, num_strains)
+        J_tips, Jd_tips = self._J_Jd_local_tips(
+            q, qd
+        )  # shape (num_segments, 6, num_strains)
 
         # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
-        J_bases = jnp.concatenate(
-            [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
-        )
-        Jd_bases = jnp.concatenate(
-            [jnp.zeros_like(Jd_tips[:1]), Jd_tips[:-1]], axis=0
-        )
+        J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
+        Jd_bases = jnp.concatenate([jnp.zeros_like(Jd_tips[:1]), Jd_tips[:-1]], axis=0)
 
         J_base_ps = J_bases[segment_indices]
         Jd_base_ps = Jd_bases[segment_indices]
@@ -1172,8 +1184,12 @@ class PCS(DynamicalSystem):
         idx_ps = segment_indices
 
         # reshape for easier indexing
-        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
-        Jd_base_ps = Jd_base_ps.reshape(N, 6, self.num_segments, 6).transpose(0, 2, 1, 3)  # shape (N, 6, num_segments, 6)
+        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(
+            0, 2, 1, 3
+        )  # shape (N, 6, num_segments, 6)
+        Jd_base_ps = Jd_base_ps.reshape(N, 6, self.num_segments, 6).transpose(
+            0, 2, 1, 3
+        )  # shape (N, 6, num_segments, 6)
 
         def integrate_segment(
             i: Array,
@@ -1185,7 +1201,9 @@ class PCS(DynamicalSystem):
         ) -> Tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
             T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(xi_i, xid_i, s_local, eps=self.global_eps)
+            Td = lie.Tangent_derivative_gi_se3(
+                xi_i, xid_i, s_local, eps=self.global_eps
+            )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -1271,9 +1289,8 @@ class PCS(DynamicalSystem):
 
         # rotate both J and Jd to the inertial frame
         J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local_)
-        Jd_global_ = (
-            jnp.einsum("ij, jk->ik", Ad_g, Jd_local_)
-            + jnp.einsum("ij, jk->ik", Ad_g_dot, J_local_)
+        Jd_global_ = jnp.einsum("ij, jk->ik", Ad_g, Jd_local_) + jnp.einsum(
+            "ij, jk->ik", Ad_g_dot, J_local_
         )
 
         J_global = J_global_ @ self.B_xi
@@ -1398,13 +1415,19 @@ class PCS(DynamicalSystem):
             B_full (Array): Full inertia matrix of shape (num_strains, num_strains).
         """
         # compute the gauss quadrature points and weights for each segment
-        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+        Xs_scaled, Ws_scaled = vmap(
+            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(
             self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
-        
+        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+
         # compute the jacobian for each quadrature point
-        J_ps = self._J_local_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps = self._J_local_batched(
+            q, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(
+            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
+        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
         def B_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
@@ -1469,14 +1492,22 @@ class PCS(DynamicalSystem):
             C_full (Array): Full Coriolis matrix of shape (num_strains, num_strains).
         """
         # compute the gauss quadrature points and weights for each segment
-        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+        Xs_scaled, Ws_scaled = vmap(
+            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(
             self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
-        
+        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+
         # compute the jacobian and its time-derivative for each quadrature point
-        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
-        Jd_ps = Jd_ps.reshape(self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps, Jd_ps = self._J_Jd_local_batched(
+            q, qd, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(
+            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
+        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        Jd_ps = Jd_ps.reshape(
+            self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
+        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
         def C_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
@@ -1488,7 +1519,14 @@ class PCS(DynamicalSystem):
                 J_ij = J_ps[i, j]
                 Jd_ij = Jd_ps[i, j]
 
-                C_ij = Ws_ij * J_ij.T @ (M_i @ Jd_ij + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij)
+                C_ij = (
+                    Ws_ij
+                    * J_ij.T
+                    @ (
+                        M_i @ Jd_ij
+                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
+                    )
+                )
                 return C_ij
 
             # we can skip the first and last quadrature points since their weight is zero
@@ -1532,17 +1570,27 @@ class PCS(DynamicalSystem):
             G (Array): Full gravitational force of shape (num_strains,).
         """
         # compute the gauss quadrature points and weights for each segment
-        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+        Xs_scaled, Ws_scaled = vmap(
+            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(
             self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 4, 4)  # shape (num_segments, num_gauss_points, 4, 4)
-        
+        g_ps = self.forward_kinematics_batched(
+            q, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 4, 4)
+        g_ps = g_ps.reshape(
+            self.num_segments, self.num_gauss_points, 4, 4
+        )  # shape (num_segments, num_gauss_points, 4, 4)
+
         # compute the jacobian for each quadrature point
-        J_ps = self._J_local_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps = self._J_local_batched(
+            q, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(
+            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
+        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
         def G_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
@@ -1792,13 +1840,19 @@ class PCS(DynamicalSystem):
             U_G (float): Gravitational energy of the robot.
         """
         # compute the gauss quadrature points and weights for each segment
-        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+        Xs_scaled, Ws_scaled = vmap(
+            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(
             self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 4, 4)  # shape (num_segments, num_gauss_points, 4, 4)
+        g_ps = self.forward_kinematics_batched(
+            q, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 4, 4)
+        g_ps = g_ps.reshape(
+            self.num_segments, self.num_gauss_points, 4, 4
+        )  # shape (num_segments, num_gauss_points, 4, 4)
 
         def U_G_i(i: Array) -> Array:
             rho_i = self.rho[i]
@@ -1809,7 +1863,7 @@ class PCS(DynamicalSystem):
                 Ws_ij = Ws_scaled[i][j]
                 # select the j-th Cartesian pose
                 g_ij = g_ps[i, j]
-                
+
                 p_j = jnp.concatenate(
                     [jnp.zeros(3), g_ij[:3, 3]]
                 )  # Add zeros for the orientation angles
@@ -1817,7 +1871,9 @@ class PCS(DynamicalSystem):
                 return U_G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            U_G_blocks_segment_i = vmap(U_G_ij)(jnp.arange(1, self.num_gauss_points - 1))
+            U_G_blocks_segment_i = vmap(U_G_ij)(
+                jnp.arange(1, self.num_gauss_points - 1)
+            )
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # U_G_blocks_segment_i = jnp.stack(
@@ -1958,18 +2014,30 @@ class PCS(DynamicalSystem):
             tau_ext = jnp.zeros((q.shape[-1],))
 
         # compute the gauss quadrature points and weights for each segment
-        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+        Xs_scaled, Ws_scaled = vmap(
+            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(
             self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 4, 4)  # shape (num_segments, num_gauss_points, 4, 4)
-        
+        g_ps = self.forward_kinematics_batched(
+            q, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 4, 4)
+        g_ps = g_ps.reshape(
+            self.num_segments, self.num_gauss_points, 4, 4
+        )  # shape (num_segments, num_gauss_points, 4, 4)
+
         # compute the jacobian and its time-derivative for each quadrature point
-        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
-        Jd_ps = Jd_ps.reshape(self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:])  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps, Jd_ps = self._J_Jd_local_batched(
+            q, qd, Xs_scaled.flatten()
+        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
+        J_ps = J_ps.reshape(
+            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
+        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        Jd_ps = Jd_ps.reshape(
+            self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
+        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
         def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
             """
@@ -1996,7 +2064,7 @@ class PCS(DynamicalSystem):
                 # select the j-th jacobian and its time-derivative
                 J_ij = J_ps[i, j]
                 Jd_ij = Jd_ps[i, j]
-                
+
                 # compute the lie algebra expressions.
                 Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
 
@@ -2006,21 +2074,28 @@ class PCS(DynamicalSystem):
                 # compute the coriolis matrix integrand
                 C_ij = Ws_ij * (
                     J_ij.T
-                    @ (M_i @ Jd_ij + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij)
+                    @ (
+                        M_i @ Jd_ij
+                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
+                    )
                 )
 
                 # compute the gravitational force integrand
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 
-                return B_ij, C_ij, G_ij 
+                return B_ij, C_ij, G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_ij)(jnp.arange(1, self.num_gauss_points - 1))
+            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_ij)(
+                jnp.arange(1, self.num_gauss_points - 1)
+            )
 
             return B_blocks_i, C_blocks_i, G_blocks_i
 
         # compute the dynamical matrices for each segment
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(jnp.arange(self.num_segments))
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(
+            jnp.arange(self.num_segments)
+        )
 
         # sum over segments and Gauss points
         B_full = jnp.sum(B_blocks_tot, axis=(0, 1))

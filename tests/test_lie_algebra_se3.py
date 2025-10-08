@@ -316,8 +316,12 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
     def assert_autodiff_finite(fn, arg, fn_name=None):
         jac_rev = jax.jacrev(fn)(arg)
         jac_fwd = jax.jacfwd(fn)(arg)
-        assert jnp.isfinite(jac_rev).all(), "Jacobian (reverse) is not finite of fn {}".format(fn_name)
-        assert jnp.isfinite(jac_fwd).all(), "Jacobian (forward) is not finite of fn {}".format(fn_name)
+        assert jnp.isfinite(jac_rev).all(), (
+            "Jacobian (reverse) is not finite of fn {}".format(fn_name)
+        )
+        assert jnp.isfinite(jac_fwd).all(), (
+            "Jacobian (forward) is not finite of fn {}".format(fn_name)
+        )
 
     def tangent_fn(xi):
         return Tangent_gi_se3(xi, s, eps=EPS).reshape(-1)

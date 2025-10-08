@@ -19,7 +19,9 @@ TOTAL_LENGTH = 2e-1
 NUM_RANDOM_SAMPLES = 5
 
 
-def make_planar_model(num_segments: int, total_length: float = TOTAL_LENGTH) -> PlanarPCS:
+def make_planar_model(
+    num_segments: int, total_length: float = TOTAL_LENGTH
+) -> PlanarPCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
     params = {
@@ -89,9 +91,7 @@ def planar_to_spatial_index_pairs(num_segments: int) -> List[Tuple[int, int]]:
     return pairs
 
 
-def lift_planar_configuration(
-    planar: PlanarPCS, pcs: PCS, q_planar: Array
-) -> Array:
+def lift_planar_configuration(planar: PlanarPCS, pcs: PCS, q_planar: Array) -> Array:
     num_segments = int(planar.num_segments)
     xi_planar = planar.B_xi @ q_planar + planar.xi_ref
     xi_planar_segments = xi_planar.reshape(num_segments, 3)
@@ -110,20 +110,21 @@ def lift_planar_configuration(
 def lift_planar_vector(planar: PlanarPCS, pcs: PCS, vec_planar: Array) -> Array:
     dim_spatial = int(pcs.num_active_strains)
     vec_spatial = jnp.zeros((dim_spatial,))
-    for planar_idx, spatial_idx in planar_to_spatial_index_pairs(int(planar.num_segments)):
+    for planar_idx, spatial_idx in planar_to_spatial_index_pairs(
+        int(planar.num_segments)
+    ):
         vec_spatial = vec_spatial.at[spatial_idx].set(vec_planar[planar_idx])
     return vec_spatial
 
 
-def lift_planar_velocity(
-    planar: PlanarPCS, pcs: PCS, qd_planar: Array
-) -> Array:
+def lift_planar_velocity(planar: PlanarPCS, pcs: PCS, qd_planar: Array) -> Array:
     return lift_planar_vector(planar, pcs, qd_planar)
 
 
-
 def spatial_planar_indices(num_segments: int) -> jnp.ndarray:
-    return jnp.array([pcs_idx for _, pcs_idx in planar_to_spatial_index_pairs(num_segments)])
+    return jnp.array(
+        [pcs_idx for _, pcs_idx in planar_to_spatial_index_pairs(num_segments)]
+    )
 
 
 def se3_to_planar_pose(g: Array) -> Array:
@@ -260,8 +261,10 @@ def test_jacobian_derivatives_coherence(num_segments):
             Jb_spatial, Jbd_spatial = spatial_model.jacobian_and_derivative_bodyframe(
                 q_spatial, qd_spatial, s
             )
-            Ji_spatial, Jid_spatial = spatial_model.jacobian_and_derivative_inertialframe(
-                q_spatial, qd_spatial, s
+            Ji_spatial, Jid_spatial = (
+                spatial_model.jacobian_and_derivative_inertialframe(
+                    q_spatial, qd_spatial, s
+                )
             )
 
             assert_allclose(
@@ -400,7 +403,9 @@ def test_forward_dynamics_coherence(num_segments):
         y_spatial = jnp.concatenate([q_spatial, qd_spatial])
 
         yd_planar = planar_model.forward_dynamics(0.0, y_planar, (u_planar, tau_planar))
-        yd_spatial = spatial_model.forward_dynamics(0.0, y_spatial, (u_spatial, tau_spatial))
+        yd_spatial = spatial_model.forward_dynamics(
+            0.0, y_spatial, (u_spatial, tau_spatial)
+        )
 
         qd_planar_next = yd_planar[:dim_planar]
         qdd_planar = yd_planar[dim_planar:]
