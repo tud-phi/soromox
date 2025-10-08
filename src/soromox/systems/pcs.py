@@ -1792,25 +1792,33 @@ class PCS(DynamicalSystem):
         Returns:
             U_G (float): Gravitational energy of the robot.
         """
+        # compute the gauss quadrature points and weights for each segment
+        Xs_scaled, Ws_scaled = vmap(scale_gaussian_quadrature, in_axes=(None, None, 0, 0))(
+            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
+        ) # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
-        def U_G_i(i):
-            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
-                self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
-            )
+        # compute the forward kinematics for each quadrature point
+        g_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())  # shape (num_segments * num_gauss_points, 4, 4)
+        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 4, 4)  # shape (num_segments, num_gauss_points, 4, 4)
+
+        def U_G_i(i: Array) -> Array:
             rho_i = self.rho[i]
             A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
 
-            def U_G_j(j):
-                Xs_j = Xs_scaled[j]
-                Ws_j = Ws_scaled[j]
-                # TODO: implement batched computation of forward kinematics
+            def U_G_ij(j: Array) -> Array:
+                # select the j-th quadrature weight
+                Ws_ij = Ws_scaled[i][j]
+                # select the j-th Cartesian pose
+                g_ij = g_ps[i, j]
+                
                 p_j = jnp.concatenate(
-                    [jnp.zeros(3), self.forward_kinematics(q, Xs_j)[:3, 3]]
+                    [jnp.zeros(3), g_ij[:3, 3]]
                 )  # Add zeros for the orientation angles
-                return -Ws_j * rho_i * A_i * jnp.dot(p_j, self.g)
+                U_G_ij = -Ws_ij * rho_i * A_i * jnp.dot(p_j, self.g)
+                return U_G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            U_G_blocks_segment_i = vmap(U_G_j)(jnp.arange(1, self.num_gauss_points - 1))
+            U_G_blocks_segment_i = vmap(U_G_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # U_G_blocks_segment_i = jnp.stack(

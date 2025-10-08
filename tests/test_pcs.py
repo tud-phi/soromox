@@ -923,7 +923,7 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
         assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2])
+@pytest.mark.parametrize("num_segments", [1, 2, 3, 4])
 def test_gravity_matches_potential_gradient(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
     key = jax.random.PRNGKey(8)
@@ -931,12 +931,12 @@ def test_gravity_matches_potential_gradient(num_segments: int):
     for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
         q = random_q(robot, q_key, scale=0.05)
         G = robot.gravitational_force(q)
-        dU_dq = jax.grad(robot.gravitational_energy)(q)
+        dU_G_dq = jacfwd(robot.gravitational_energy)(q)
         print("q:\n", q)
         print("G:\n", G)
-        print("dU_dq:\n", dU_dq)
+        print("dU_G_dq:\n", dU_G_dq)
 
-        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
+        assert_allclose(G, dU_G_dq, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
