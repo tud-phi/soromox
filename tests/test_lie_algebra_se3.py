@@ -85,7 +85,7 @@ def test_log_se3_recovers_planar_rotation_without_translation():
     vec6 = _embed_se2_twist(vec2)
 
     g = exp_SE3(vec6)
-    recovered = log_SE3(g, eps=EPS)
+    recovered = log_SE3(g)
 
     assert_allclose(recovered, vec6, rtol=RTOL, atol=ATOL)
 
@@ -94,7 +94,7 @@ def test_log_se3_pure_translation():
     translation = jnp.array([0.2, -0.15, 0.05])
     g = jnp.eye(4).at[:3, 3].set(translation)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = log_SE3(g)
     expected = jnp.concatenate([jnp.zeros(3), translation])
 
     assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
@@ -113,7 +113,7 @@ def test_log_se3_pure_rotation_about_x_axis():
     )
     g = jnp.eye(4).at[:3, :3].set(R)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = log_SE3(g)
     expected = jnp.array([theta, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
@@ -123,9 +123,19 @@ def test_log_se3_handles_near_identity_transform():
     vec = jnp.array([1e-9, -2e-9, 3e-9, 5e-4, -4e-4, 3e-4])
     g = exp_SE3(vec)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = log_SE3(g)
 
-    assert not jnp.isnan(recovered).any()
+    assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
+    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
+
+
+def test_log_se3_handles_identity_transform():
+    vec = jnp.array([0.0, 0.0, 0.0, 0.2, 0.0, 0.0])
+    g = exp_SE3(vec)
+
+    recovered = log_SE3(g)
+
+    assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
     assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
 
 
@@ -136,7 +146,7 @@ def test_log_se3_round_trip_random_vectors():
         key, subkey = jax.random.split(key)
         vec = jax.random.uniform(subkey, shape=(6,), minval=-0.5, maxval=0.5)
         g = exp_gn_SE3(vec, EPS)
-        recovered = log_SE3(g, eps=EPS)
+        recovered = log_SE3(g)
 
         assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
         assert_allclose(recovered, vec, rtol=1e-5, atol=1e-7)
