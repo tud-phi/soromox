@@ -785,7 +785,7 @@ class PCS(DynamicalSystem):
             carry: Tuple[Array, Array, Array],
             i: Array,
         ) -> Tuple[Tuple[Array, Array, Array], Array]:
-            J_prev, J_target, done = carry
+            J_prev, J_local, done = carry
 
             def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
                 xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
@@ -795,13 +795,13 @@ class PCS(DynamicalSystem):
                 J_next = integrate_segment(J_prev, i, xi_i, arc_len)
 
                 is_target = i == segment_idx
-                J_target_next = jnp.where(is_target, J_next, J_target)
+                J_target_next = jnp.where(is_target, J_next, J_local)
                 done_next = jnp.logical_or(done, is_target)
 
                 return (J_next, J_target_next, done_next), zero_slice
 
             def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
-                return (J_prev, J_target, done), zero_slice
+                return (J_prev, J_local, done), zero_slice
 
             return lax.cond(done, skip_branch, compute_branch, operand=None)
 
@@ -838,7 +838,6 @@ class PCS(DynamicalSystem):
             J_prev: Array,
             i: Array,
         ) -> Tuple[Array, Array]:
-
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 

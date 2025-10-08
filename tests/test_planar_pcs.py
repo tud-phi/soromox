@@ -620,7 +620,7 @@ def test_J_local_tips_matches_pointwise_evaluation(num_segments):
             continue
 
         J_tip_batch = J_tips[idx]
-        J_tip_single = model._final_size_jacobian(model._J_local(q, s))
+        J_tip_single = model._J_local(q, s)
 
         assert_allclose(
             J_tip_batch,
@@ -649,7 +649,7 @@ def test_J_local_batched_matches_pointwise_evaluation(num_segments):
         J_batch = model._J_local_batched(q, s_points)
 
         for idx, s_val in enumerate(s_points):
-            J_single = model._final_size_jacobian(model._J_local(q, s_val))
+            J_single = model._J_local(q, s_val)
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
 
 
@@ -855,11 +855,8 @@ def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int):
         for idx, s_tip in enumerate(s_tips):
             J_local, Jd_local = model._J_Jd_local(q, qd, s_tip)
 
-            J_local_full = model._final_size_jacobian(J_local)
-            Jd_local_full = model._final_size_jacobian(Jd_local)
-
-            assert_allclose(J_local_full, J_local_tips[idx], rtol=RTOL, atol=ATOL)
-            assert_allclose(Jd_local_full, Jd_local_tips[idx], rtol=RTOL, atol=ATOL)
+            assert_allclose(J_local, J_local_tips[idx], rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_local, Jd_local_tips[idx], rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -881,11 +878,8 @@ def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int):
 
         for idx, s_val in enumerate(s_points):
             J_single, Jd_single = model._J_Jd_local(q, qd, s_val)
-            J_single_full = model._final_size_jacobian(J_single)
-            Jd_single_full = model._final_size_jacobian(Jd_single)
-
-            assert_allclose(J_batch[idx], J_single_full, rtol=RTOL, atol=ATOL)
-            assert_allclose(Jd_batch[idx], Jd_single_full, rtol=RTOL, atol=ATOL)
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
