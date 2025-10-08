@@ -251,16 +251,16 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
     xid_zero = jnp.zeros((6,))
     s = jnp.array(0.35)
 
-    def assert_autodiff_finite(fn, arg):
+    def assert_autodiff_finite(fn, arg, fn_name=None):
         jac_rev = jax.jacrev(fn)(arg)
         jac_fwd = jax.jacfwd(fn)(arg)
-        assert jnp.isfinite(jac_rev).all()
-        assert jnp.isfinite(jac_fwd).all()
+        assert jnp.isfinite(jac_rev).all(), "Jacobian (reverse) is not finite of fn {}".format(fn_name)
+        assert jnp.isfinite(jac_fwd).all(), "Jacobian (forward) is not finite of fn {}".format(fn_name)
 
     def tangent_fn(xi):
         return Tangent_gi_se3(xi, s, eps=EPS).reshape(-1)
 
-    assert_autodiff_finite(tangent_fn, xi_zero)
+    assert_autodiff_finite(tangent_fn, xi_zero, fn_name="Tangent_gi_se3")
 
     def tangent_dot_wrt_xi(xi):
         return Tangent_derivative_gi_se3(xi, xid_zero, s, eps=EPS).reshape(-1)
@@ -269,19 +269,19 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
         return Tangent_derivative_gi_se3(xi_zero, xid, s, eps=EPS).reshape(-1)
 
     for fn, arg in ((tangent_dot_wrt_xi, xi_zero), (tangent_dot_wrt_xid, xid_zero)):
-        assert_autodiff_finite(fn, arg)
+        assert_autodiff_finite(fn, arg, fn_name=fn.__name__)
 
     def exp_gn_fn(xi):
         return exp_gn_SE3(xi, eps=EPS).reshape(-1)
 
-    assert_autodiff_finite(exp_gn_fn, xi_zero)
+    assert_autodiff_finite(exp_gn_fn, xi_zero, fn_name="exp_gn_SE3")
 
     def log_fn(g_flat):
         g = g_flat.reshape((4, 4))
         return log_SE3(g, eps=EPS)
 
     g_identity = jnp.eye(4).reshape(-1)
-    assert_autodiff_finite(log_fn, g_identity)
+    assert_autodiff_finite(log_fn, g_identity, fn_name="log_SE3")
 
 
 if __name__ == "__main__":

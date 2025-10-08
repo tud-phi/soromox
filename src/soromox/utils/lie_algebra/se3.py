@@ -146,38 +146,66 @@ def log_SE3(g: Array, eps: float) -> Array:
 
     # Compute the rotation angle
     trace_R = jnp.trace(R)
-    cos_theta = (trace_R - 1) / 2
-    cos_theta = jnp.clip(cos_theta, -1.0, 1.0)  # For numerical stability
-    theta = jnp.arccos(cos_theta)
+    cos_theta = (trace_R - 1.0) * 0.5
+    cos_theta = jnp.clip(cos_theta, -1.0, 1.0)
+    eps_scalar = jnp.asarray(eps, dtype=R.dtype)
+    cos_threshold = jnp.cos(eps_scalar)
+    is_small_angle = cos_theta > cos_threshold
 
-    # Logarithm of R
+    theta = lax.cond(
+        is_small_angle,
+        lambda _: jnp.zeros((), dtype=R.dtype),
+        lambda cos_val: jnp.arccos(cos_val),
+        cos_theta,
+    )
+
+    skew_part = R - R.T
+
+    def _omega_hat_small(args):
+        skew, _ = args
+        return 0.5 * skew
+
+    def _omega_hat_general(args):
+        skew, angle = args
+        sin_theta = jnp.sin(angle)
+        factor = angle / (2.0 * sin_theta)
+        return factor * skew
+
     omega_hat = lax.cond(
-        jnp.abs(theta) < eps,
-        lambda _: jnp.zeros((3, 3)),
-        lambda _: (theta / (2 * jnp.sin(theta))) * (R - R.T),
-        operand=None,
+        is_small_angle,
+        _omega_hat_small,
+        _omega_hat_general,
+        (skew_part, theta),
     )
 
-    omega = jnp.array([omega_hat[2, 1], omega_hat[0, 2], omega_hat[1, 0]]).reshape(
-        (3, 1)
-    )
+    omega = jnp.array(
+        [omega_hat[2, 1], omega_hat[0, 2], omega_hat[1, 0]], dtype=R.dtype
+    ).reshape((3, 1))
 
     # Compute V inverse (Jacobian inverse)
     omega_tilde = omega_hat
 
-    def compute_V_inv(theta):
-        A = jnp.eye(3) - 0.5 * omega_tilde
-        B = (1 / (theta**2)) * (
-            1 - (theta * jnp.sin(theta)) / (2 * (1 - jnp.cos(theta)))
+    def _compute_V_inv_small(args):
+        omega_local, _ = args
+        omega_sq = omega_local @ omega_local
+        return jnp.eye(3, dtype=R.dtype) - 0.5 * omega_local + (1.0 / 12.0) * omega_sq
+
+    def _compute_V_inv_general(args):
+        omega_local, angle = args
+        sin_theta = jnp.sin(angle)
+        cos_theta_local = jnp.cos(angle)
+        omega_sq = omega_local @ omega_local
+        A = jnp.eye(3, dtype=R.dtype) - 0.5 * omega_local
+        B = (1.0 / (angle**2)) * (
+            1.0 - (angle * sin_theta) / (2.0 * (1.0 - cos_theta_local))
         )
-        V_inv = A + B * (omega_tilde @ omega_tilde)
-        return V_inv
+        return A + B * omega_sq
 
     V_inv = lax.cond(
-        jnp.abs(theta) < eps,
-        lambda _: jnp.eye(3),
-        lambda _: compute_V_inv(theta),
-        operand=None,
+        is_small_angle,
+        _compute_V_inv_small,
+        _compute_V_inv_general,
+        (omega_tilde, theta),
     )
 
     v = V_inv @ p
