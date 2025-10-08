@@ -13,6 +13,7 @@ __all__ = [
     "Tangent_gi_se3",
     "Tangent_derivative_gi_se3",
 ]
+import jax
 import jax.numpy as jnp
 from jax import Array, lax
 
@@ -146,20 +147,22 @@ def log_SE3(g: Array, eps: float) -> Array:
 
     # Compute the rotation angle
     trace_R = jnp.trace(R)
+    skew_part = R - R.T
+    skew_norm_sq = jnp.sum(jnp.square(skew_part))
     cos_theta = (trace_R - 1.0) * 0.5
     cos_theta = jnp.clip(cos_theta, -1.0, 1.0)
-    eps_scalar = jnp.asarray(eps, dtype=R.dtype)
-    cos_threshold = jnp.cos(eps_scalar)
-    is_small_angle = cos_theta > cos_threshold
+    sin_theta = jnp.sqrt(jnp.maximum(0.0, skew_norm_sq) * 0.125)
+    eps_scalar = 1e8 * jnp.asarray(eps, dtype=R.dtype)
+    is_small_angle = sin_theta <= jnp.sin(eps_scalar)
+    # jax.debug.print("sin(theta): {sinth}, sin(eps): {seps}", sinth=sin_theta, seps=jnp.sin(eps_scalar))
+    # jax.debug.print("is_small_angle: {b}", b=is_small_angle)
 
     theta = lax.cond(
         is_small_angle,
         lambda _: jnp.zeros((), dtype=R.dtype),
-        lambda cos_val: jnp.arccos(cos_val),
-        cos_theta,
+        lambda _: jnp.arctan2(sin_theta, cos_theta),
+        operand=None,
     )
-
-    skew_part = R - R.T
 
     def _omega_hat_small(args):
         skew, _ = args
