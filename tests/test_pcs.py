@@ -872,22 +872,6 @@ def test_Jd_inertialframe_matches_autograd_jvp(num_segments: int):
             )
 
 
-@pytest.mark.parametrize("num_segments", [1, 2])
-def test_gravity_matches_potential_gradient(num_segments: int):
-    robot, _ = make_pcs(num_segments=num_segments)
-    key = jax.random.PRNGKey(8)
-
-    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
-        q = random_q(robot, q_key, scale=0.05)
-        G = robot.gravitational_force(q)
-        dU_dq = jax.grad(robot.gravitational_energy)(q)
-        print("q:\n", q)
-        print("G:\n", G)
-        print("dU_dq:\n", dU_dq)
-
-        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
-
-
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
@@ -937,6 +921,22 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
         tau_cor_autograd = jac_T_q @ qd - grad_T_q
 
         assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_gravity_matches_potential_gradient(num_segments: int):
+    robot, _ = make_pcs(num_segments=num_segments)
+    key = jax.random.PRNGKey(8)
+
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(robot, q_key, scale=0.05)
+        G = robot.gravitational_force(q)
+        dU_dq = jax.grad(robot.gravitational_energy)(q)
+        print("q:\n", q)
+        print("G:\n", G)
+        print("dU_dq:\n", dU_dq)
+
+        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -1026,12 +1026,14 @@ def test_differentiability_zero_configuration(num_segments: int):
     # test differentiability of the energy functions at zero configuration
     dT_dq = jacfwd(model.kinetic_energy, argnums=0)(q, qd)
     dT_dqd = jacfwd(model.kinetic_energy, argnums=1)(q, qd)
-    dU_dq = jacfwd(model.gravitational_energy)(q)
+    dU_G_dq = jacfwd(model.gravitational_energy)(q)
+    dU_dq = jacfwd(model.potential_energy)(q)
     dE_dq = jacfwd(model.total_energy, argnums=0)(q, qd)
     dE_dqd = jacfwd(model.total_energy, argnums=1)(q, qd)
 
     assert not jnp.isnan(dT_dq).any(), "dT/dq contains NaN!"
     assert not jnp.isnan(dT_dqd).any(), "dT/dqd contains NaN!"
+    assert not jnp.isnan(dU_G_dq).any(), "dU_G/dq contains NaN!"
     assert not jnp.isnan(dU_dq).any(), "dU/dq contains NaN!"
     assert not jnp.isnan(dE_dq).any(), "dE/dq contains NaN!"
     assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
