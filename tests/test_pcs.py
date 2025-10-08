@@ -1107,5 +1107,4 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> Non
 
 if __name__ == "__main__":
     # run pytest with activated stdout
-    # pytest.main([__file__])
-    test_inverse_kinematics_straight_configuration(1)
+    pytest.main([__file__])
