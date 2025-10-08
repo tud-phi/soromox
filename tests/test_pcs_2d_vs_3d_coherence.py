@@ -107,14 +107,19 @@ def lift_planar_configuration(
     return xi_spatial - pcs.xi_ref
 
 
+def lift_planar_vector(planar: PlanarPCS, pcs: PCS, vec_planar: Array) -> Array:
+    dim_spatial = int(pcs.num_active_strains)
+    vec_spatial = jnp.zeros((dim_spatial,))
+    for planar_idx, spatial_idx in planar_to_spatial_index_pairs(int(planar.num_segments)):
+        vec_spatial = vec_spatial.at[spatial_idx].set(vec_planar[planar_idx])
+    return vec_spatial
+
+
 def lift_planar_velocity(
     planar: PlanarPCS, pcs: PCS, qd_planar: Array
 ) -> Array:
-    dim_spatial = int(pcs.num_active_strains)
-    qd_spatial = jnp.zeros((dim_spatial,))
-    for planar_idx, spatial_idx in planar_to_spatial_index_pairs(int(planar.num_segments)):
-        qd_spatial = qd_spatial.at[spatial_idx].set(qd_planar[planar_idx])
-    return qd_spatial
+    return lift_planar_vector(planar, pcs, qd_planar)
+
 
 
 def spatial_planar_indices(num_segments: int) -> jnp.ndarray:
@@ -168,6 +173,35 @@ def test_forward_kinematics_coherence(num_segments):
             g_spatial = spatial_model.forward_kinematics(q_spatial, s)
             chi_spatial = se3_to_planar_pose(g_spatial)
             assert_allclose(chi_planar, chi_spatial, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_inverse_kinematics_coherence(num_segments):
+    planar_model = make_planar_model(num_segments)
+    spatial_model = make_spatial_model(num_segments)
+
+    key = random.PRNGKey(5)
+    for _ in range(NUM_RANDOM_SAMPLES):
+        key, subkey = random.split(key)
+        q_planar = random_planar_state(planar_model, subkey)
+        q_spatial = lift_planar_configuration(planar_model, spatial_model, q_planar)
+
+        chi_tips = planar_tip_poses(planar_model, q_planar)
+        g_tips = spatial_tip_transforms(spatial_model, q_spatial)
+
+        q_planar_recovered = planar_model.inverse_kinematics(chi_tips)
+        q_spatial_recovered = spatial_model.inverse_kinematics(g_tips)
+
+        assert_allclose(q_planar_recovered, q_planar, rtol=RTOL, atol=ATOL)
+        assert_allclose(q_spatial_recovered, q_spatial, rtol=RTOL, atol=ATOL)
+
+        xi_spatial = spatial_model.B_xi @ q_spatial_recovered + spatial_model.xi_ref
+        xi_planar = xi_spatial.reshape(num_segments, 6)[:, [2, 3, 4]].reshape(-1)
+        xi_planar -= planar_model.xi_ref
+        q_planar_from_spatial = jnp.linalg.pinv(planar_model.B_xi) @ xi_planar
+
+        assert_allclose(q_planar_from_spatial, q_planar_recovered, rtol=RTOL, atol=ATOL)
+        assert_allclose(q_planar_from_spatial, q_planar, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -341,32 +375,43 @@ def test_energy_coherence(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_inverse_kinematics_coherence(num_segments):
+def test_forward_dynamics_coherence(num_segments):
     planar_model = make_planar_model(num_segments)
     spatial_model = make_spatial_model(num_segments)
 
-    key = random.PRNGKey(5)
+    indices = spatial_planar_indices(num_segments)
+    dim_planar = int(planar_model.num_active_strains)
+
+    key = random.PRNGKey(21)
     for _ in range(NUM_RANDOM_SAMPLES):
-        key, subkey = random.split(key)
-        q_planar = random_planar_state(planar_model, subkey)
+        key, key_q, key_qd, key_u, key_tau = random.split(key, 5)
+
+        q_planar = random_planar_state(planar_model, key_q)
+        qd_planar = random_planar_state(planar_model, key_qd)
+        u_planar = random_planar_state(planar_model, key_u)
+        tau_planar = random_planar_state(planar_model, key_tau)
+
         q_spatial = lift_planar_configuration(planar_model, spatial_model, q_planar)
+        qd_spatial = lift_planar_velocity(planar_model, spatial_model, qd_planar)
+        u_spatial = lift_planar_vector(planar_model, spatial_model, u_planar)
+        tau_spatial = lift_planar_vector(planar_model, spatial_model, tau_planar)
 
-        chi_tips = planar_tip_poses(planar_model, q_planar)
-        g_tips = spatial_tip_transforms(spatial_model, q_spatial)
+        y_planar = jnp.concatenate([q_planar, qd_planar])
+        y_spatial = jnp.concatenate([q_spatial, qd_spatial])
 
-        q_planar_recovered = planar_model.inverse_kinematics(chi_tips)
-        q_spatial_recovered = spatial_model.inverse_kinematics(g_tips)
+        yd_planar = planar_model.forward_dynamics(0.0, y_planar, (u_planar, tau_planar))
+        yd_spatial = spatial_model.forward_dynamics(0.0, y_spatial, (u_spatial, tau_spatial))
 
-        assert_allclose(q_planar_recovered, q_planar, rtol=RTOL, atol=ATOL)
-        assert_allclose(q_spatial_recovered, q_spatial, rtol=RTOL, atol=ATOL)
+        qd_planar_next = yd_planar[:dim_planar]
+        qdd_planar = yd_planar[dim_planar:]
 
-        xi_spatial = spatial_model.B_xi @ q_spatial_recovered + spatial_model.xi_ref
-        xi_planar = xi_spatial.reshape(num_segments, 6)[:, [2, 3, 4]].reshape(-1)
-        xi_planar -= planar_model.xi_ref
-        q_planar_from_spatial = jnp.linalg.pinv(planar_model.B_xi) @ xi_planar
+        dim_spatial = int(spatial_model.num_active_strains)
+        qd_spatial_next = yd_spatial[:dim_spatial]
+        qdd_spatial = yd_spatial[dim_spatial:]
 
-        assert_allclose(q_planar_from_spatial, q_planar_recovered, rtol=RTOL, atol=ATOL)
-        assert_allclose(q_planar_from_spatial, q_planar, rtol=RTOL, atol=ATOL)
+        assert_allclose(qd_spatial_next[indices], qd_planar_next, rtol=RTOL, atol=ATOL)
+        assert_allclose(qdd_spatial[indices], qdd_planar, rtol=RTOL, atol=ATOL)
+
 
 if __name__ == "__main__":
     # run pytest with activated stdout
