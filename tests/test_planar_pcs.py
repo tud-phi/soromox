@@ -14,7 +14,7 @@ jax.config.update("jax_enable_x64", True)  # double precision
 
 RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
-EPS = 1e-6
+EPS = float(jnp.finfo(jnp.float64).eps)
 
 PLANAR_TOTAL_LENGTH = 2e-1
 NUM_RANDOM_SAMPLES = 5

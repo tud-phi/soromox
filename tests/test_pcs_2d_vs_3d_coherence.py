@@ -14,7 +14,6 @@ jax.config.update("jax_enable_x64", True)
 
 RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
-EPS = 1e-6
 
 TOTAL_LENGTH = 2e-1
 NUM_RANDOM_SAMPLES = 5
