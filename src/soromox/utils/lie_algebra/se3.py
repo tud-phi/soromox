@@ -17,6 +17,36 @@ import jax.numpy as jnp
 from jax import Array, lax
 
 
+def _rotational_strain_magnitude(xi: Array, eps: float) -> Array:
+    """
+    Computes the magnitude of the rotational strain component of a 6D vector.
+
+    Args:
+        xi (Array): shape (6,) or (6, 1)
+            Screw coordinates [omega, v] in se(3).
+            The first three elements correspond to the angular component,
+            and the last three elements correspond to the linear component.
+
+    Returns:
+        theta: scalar
+            Magnitude of the rotational strain component.
+    """
+    k = xi[:3]
+
+    # not differentiable in reverse mode at k=0
+    # theta = jnp.linalg.norm(k)
+    
+    # differentiable in reverse mode at k=0
+    theta_sq = jnp.dot(k, k)
+    theta = lax.cond(
+        theta_sq <= eps**2,
+        lambda _: jnp.zeros((), dtype=xi.dtype),
+        lambda _: jnp.sqrt(theta_sq),
+        operand=None,
+    )
+    return theta
+
+
 def tilde_SE3(vec3: Array) -> Array:
     """
     Computes the tilde operator of SE(3) for a 3D vector.
@@ -168,7 +198,7 @@ def exp_gn_SE3(vec6: Array, eps: float) -> Array:
         g (Array): shape (4, 4)
             Homogeneous transform obtained from the Magnus expansion.
     """
-    theta = jnp.linalg.norm(vec6[:3])  # Compute the norm of the angular part
+    theta = _rotational_strain_magnitude(vec6, eps)
     vec6_hat = hat_SE3(vec6)  # Compute the hat
 
     costheta = jnp.cos(theta)
@@ -319,34 +349,40 @@ def Adjoint_gi_se3(
         Array: shape (6, 6)
             Adjoint matrix evaluated at ``s_i``.
     """
-    ang = xi_i[:3].reshape((3, 1))  # Angular as a (3,1) vector
-    theta = jnp.linalg.norm(ang)  # Compute the norm of the angular part
-    adjoint_xi_i = adjoint_se3(xi_i)  # Adjoint representation of the input vector
+    theta = _rotational_strain_magnitude(xi_i, eps)
+    adjoint_xi_i = adjoint_se3(xi_i)
 
-    cos = jnp.cos(s_i * theta)
-    sin = jnp.sin(s_i * theta)
+    def _series_branch() -> Array:
+        return jnp.eye(6) + s_i * adjoint_xi_i
 
-    Ad = lax.cond(
-        theta <= eps,
-        lambda _: jnp.eye(6) + s_i * adjoint_xi_i,  # Avoid division by zero
-        lambda _: (
-            jnp.eye(6)
-            + 1 / (2 * theta) * (3 * sin - s_i * theta * cos) * adjoint_xi_i
-            + 1
-            / (2 * jnp.power(theta, 2))
-            * (4 - 4 * cos - s_i * theta * sin)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 2)
-            + 1
-            / (2 * jnp.power(theta, 3))
-            * (sin - s_i * theta * cos)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 3)
-            + 1
-            / (2 * jnp.power(theta, 4))
-            * (2 - 2 * cos - s_i * theta * sin)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 4)
-        ),
-        operand=None,
-    )
+    def _general_branch(theta_val: Array) -> Array:
+        cos_theta = jnp.cos(s_i * theta_val)
+        sin_theta = jnp.sin(s_i * theta_val)
+
+        adjoint_xi_i_square = adjoint_xi_i @ adjoint_xi_i
+        adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
+        adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
+
+        term1 = (3 * sin_theta - s_i * theta_val * cos_theta) / (2 * theta_val) * adjoint_xi_i
+        term2 = (
+            (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**2)
+            * adjoint_xi_i_square
+        )
+        term3 = (
+            (sin_theta - s_i * theta_val * cos_theta)
+            / (2 * theta_val**3)
+            * adjoint_xi_i_cube
+        )
+        term4 = (
+            (2 - 2 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**4)
+            * adjoint_xi_i_quad
+        )
+
+        return jnp.eye(6) + term1 + term2 + term3 + term4
+
+    Ad = lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
 
     return Ad
 
@@ -406,37 +442,44 @@ def Tangent_gi_se3(
         T (Array): shape (6, 6)
             A 6x6 matrix representing the tangent transformation of the input screw vector at the specified position.
     """
-    ang = xi_i[:3].reshape((3, 1))  # Angular as a (3,1) vector
-    theta = jnp.linalg.norm(ang)  # Compute the norm of the angular part
-    adjoint_xi_i = adjoint_se3(xi_i)  # Adjoint representation of the input vector
+    theta = _rotational_strain_magnitude(xi_i, eps)
+    adjoint_xi_i = adjoint_se3(xi_i)
 
-    cos = jnp.cos(s_i * theta)
-    sin = jnp.sin(s_i * theta)
+    def _series_branch() -> Array:
+        return s_i * jnp.eye(6) + 0.5 * s_i**2 * adjoint_xi_i
 
-    T = lax.cond(
-        theta <= eps,
-        lambda _: s_i * jnp.eye(6) + s_i**2 / 2 * adjoint_xi_i,
-        lambda _: (
-            s_i * jnp.eye(6)
-            + 1
-            / (2 * jnp.power(theta, 2))
-            * (4 - 4 * cos - s_i * theta * sin)
+    def _general_branch(theta_val: Array) -> Array:
+        cos_theta = jnp.cos(s_i * theta_val)
+        sin_theta = jnp.sin(s_i * theta_val)
+
+        adjoint_xi_i_square = adjoint_xi_i @ adjoint_xi_i
+        adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
+        adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
+
+        term1 = (
+            (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**2)
             * adjoint_xi_i
-            + 1
-            / (2 * jnp.power(theta, 3))
-            * (4 * s_i * theta - 5 * sin + s_i * theta * cos)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 2)
-            + 1
-            / (2 * jnp.power(theta, 4))
-            * (2 - 2 * cos - s_i * theta * sin)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 3)
-            + 1
-            / (2 * jnp.power(theta, 5))
-            * (2 * s_i * theta - 3 * sin + s_i * theta * cos)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 4)
-        ),
-        operand=None,
-    )
+        )
+        term2 = (
+            (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta)
+            / (2 * theta_val**3)
+            * adjoint_xi_i_square
+        )
+        term3 = (
+            (2 - 2 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**4)
+            * adjoint_xi_i_cube
+        )
+        term4 = (
+            (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta)
+            / (2 * theta_val**5)
+            * adjoint_xi_i_quad
+        )
+
+        return s_i * jnp.eye(6) + term1 + term2 + term3 + term4
+
+    T = lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
 
     return T
 
@@ -462,41 +505,36 @@ def Tangent_derivative_gi_se3(
         Td (Array): shape (6, 6)
             A 6x6 matrix representing the tangent derivative transformation of the input screw vector at the specified position.
     """
-    # extract the angular parts of xi_i and xid_i
     k = xi_i[:3]
     kd = xid_i[:3]
 
-    # Compute the norm of the angular part
-    theta = jnp.linalg.norm(k)
-    # Compute the adjoint representation of the screw vector
+    theta = _rotational_strain_magnitude(xi_i, eps)
     adjoint_xi_i = adjoint_se3(xi_i)
-
-    # Compute the adjoint representation of the derivative screw vector
     adjoint_xid_i = adjoint_se3(xid_i)
 
-    cos_theta = jnp.cos(s_i * theta)
-    sin_theta = jnp.sin(s_i * theta)
+    def _adjoint_powers_with_derivatives(max_power: int):
+        current = jnp.eye(6)
+        dot_current = jnp.zeros_like(adjoint_xi_i)
+        powers = [current]
+        dot_powers = [dot_current]
 
-    def _tangent_dot_nonzero() -> Array:
-        def _adjoint_powers_with_derivatives(max_power: int):
-            # Recursively build A^k and d/dt(A^k) using P_k = P_{k-1} @ A.
-            current = jnp.eye(6)
-            dot_current = jnp.zeros_like(adjoint_xi_i)
-            powers = [current]
-            dot_powers = [dot_current]
+        for _ in range(max_power):
+            dot_next = dot_current @ adjoint_xi_i + current @ adjoint_xid_i
+            current = current @ adjoint_xi_i
+            powers.append(current)
+            dot_powers.append(dot_next)
+            dot_current = dot_next
 
-            for _ in range(max_power):
-                dot_next = dot_current @ adjoint_xi_i + current @ adjoint_xid_i
-                current = current @ adjoint_xi_i
-                powers.append(current)
-                dot_powers.append(dot_next)
-                dot_current = dot_next
+        return powers, dot_powers
 
-            return powers, dot_powers
+    def _series_branch() -> Array:
+        return 0.5 * s_i**2 * adjoint_xid_i
+
+    def _general_branch(theta_val: Array) -> Array:
+        cos_theta = jnp.cos(s_i * theta_val)
+        sin_theta = jnp.sin(s_i * theta_val)
 
         powers, dot_powers = _adjoint_powers_with_derivatives(4)
-
-        thetad = jnp.dot(kd, k) / theta
 
         adjoint_xi_i_square = powers[2]
         adjoint_xi_i_cube = powers[3]
@@ -506,20 +544,22 @@ def Tangent_derivative_gi_se3(
         adjoint_dot_xi_i_cube = dot_powers[3]
         adjoint_dot_xi_i_quad = dot_powers[4]
 
-        coeff_theta_common = -8 + (8 - s_i**2 * theta**2) * cos_theta + 5 * s_i * theta * sin_theta
-        coeff_theta_alt = -8 * s_i * theta + (15 - s_i**2 * theta**2) * sin_theta - 7 * s_i * theta * cos_theta
+        thetad = jnp.dot(kd, k) / theta_val
 
-        coeff1_theta = thetad / (2 * theta**3) * coeff_theta_common
-        coeff1 = (4 - 4 * cos_theta - s_i * theta * sin_theta) / (2 * theta**2)
+        coeff_theta_common = -8 + (8 - s_i**2 * theta_val**2) * cos_theta + 5 * s_i * theta_val * sin_theta
+        coeff_theta_alt = -8 * s_i * theta_val + (15 - s_i**2 * theta_val**2) * sin_theta - 7 * s_i * theta_val * cos_theta
 
-        coeff2_theta = thetad / (2 * theta**4) * coeff_theta_alt
-        coeff2 = (4 * s_i * theta - 5 * sin_theta + s_i * theta * cos_theta) / (2 * theta**3)
+        coeff1_theta = thetad / (2 * theta_val**3) * coeff_theta_common
+        coeff1 = (4 - 4 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**2)
 
-        coeff3_theta = thetad / (2 * theta**5) * coeff_theta_common
-        coeff3 = (2 - 2 * cos_theta - s_i * theta * sin_theta) / (2 * theta**4)
+        coeff2_theta = thetad / (2 * theta_val**4) * coeff_theta_alt
+        coeff2 = (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta) / (2 * theta_val**3)
 
-        coeff4_theta = thetad / (2 * theta**6) * coeff_theta_alt
-        coeff4 = (2 * s_i * theta - 3 * sin_theta + s_i * theta * cos_theta) / (2 * theta**5)
+        coeff3_theta = thetad / (2 * theta_val**5) * coeff_theta_common
+        coeff3 = (2 - 2 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**4)
+
+        coeff4_theta = thetad / (2 * theta_val**6) * coeff_theta_alt
+        coeff4 = (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta) / (2 * theta_val**5)
 
         term1 = coeff1_theta * adjoint_xi_i + coeff1 * adjoint_dot_xi_i
         term2 = coeff2_theta * adjoint_xi_i_square + coeff2 * adjoint_dot_xi_i_square
@@ -528,10 +568,5 @@ def Tangent_derivative_gi_se3(
 
         return term1 + term2 + term3 + term4
 
-    Td = lax.cond(
-        jnp.abs(theta) <= eps,
-        lambda _: s_i**2 / 2 * adjoint_xid_i,
-        lambda _: _tangent_dot_nonzero(),
-        operand=None,
-    )
+    Td = lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
     return Td
