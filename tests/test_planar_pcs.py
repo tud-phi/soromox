@@ -110,7 +110,7 @@ def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     return q
 
 
-def test_planar_cs_num():
+def test_planar_constant_strain_call():
     """
     Test the planar constant strain system with numerical integration and Jacobian for 1 segment.
     """
@@ -283,172 +283,43 @@ def test_planar_cs_num():
             print("[Valid test]\n")
 
 
-def test_individual_call():
-    """
-    Test the individual call of the PlanarPCS class.
-    """
-    params = {
-        "th0": jnp.array(0.0),  # initial orientation angle [rad]
-        "L": jnp.array([1e-1]),
-        "r": jnp.array([2e-2]),
-        "rho": 1000 * jnp.ones((1,)),
-        "g": jnp.array([0.0, -9.81]),
-        "E": 1e8 * jnp.ones((1,)),  # Elastic modulus [Pa]
-        "G": 1e7 * jnp.ones((1,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
-        (jnp.array([[1e0, 1e3, 1e3]]) * params["L"][:, None]).flatten()
-    )
-    strain_selector = jnp.ones((3,), dtype=bool)
-    strain_selector = strain_selector.at[2].set(
-        False
-    )  # disable axial strain for this test
-    xi_ref = jnp.array([0.0, 0.0, 1.0])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
 
-    robot = PlanarPCS(
-        num_segments=1,
-        params=params,
-        strain_selector=strain_selector,
-        xi_ref=xi_ref,
-    )
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(777)
+    random_cfg = random_q(model, rng, scale=0.05)
 
-    # Test individual calls
-    q = jnp.zeros((2,))
-    s = params["L"][0]
+    for q in (zero_cfg, random_cfg):
+        chi_expected = segment_tip_poses(model, q)
+        chi_tips = model.forward_kinematics_tips(q)
 
-    print("\nTest robot.forward_kinematics(q, s)-------------------------")
-    try:
-        chi = robot.forward_kinematics(q=q, s=s)
-        assert not jnp.isnan(chi).any(), "Forward kinematics output contains NaN!"
-        print("[Valid test] Forward kinematics successful.")
-    except Exception as e:
-        print(f"[Error] Forward kinematics failed: {e}")
-
-    print("\nTest robot.jacobian(q, s)-------------------------")
-    try:
-        J = robot.jacobian(q=q, s=s)
-        assert not jnp.isnan(J).any(), "Jacobian contains NaN!"
-        print("[Valid test] Jacobian computation successful.")
-    except Exception as e:
-        print(f"[Error] Jacobian computation failed: {e}")
-
-    print("\nTest robot.jacobian_and_derivative(q, qd, s)-------------------------")
-    try:
-        J, Jd = robot.jacobian_and_derivative(q=q, qd=jnp.zeros((2,)), s=s)
-        assert not jnp.isnan(J).any(), "Jacobian contains NaN!"
-        assert not jnp.isnan(Jd).any(), "Jacobian derivative contains NaN!"
-        print("[Valid test] Jacobian and derivative computation successful.")
-    except Exception as e:
-        print(f"[Error] Jacobian and derivative computation failed: {e}")
-
-    print("\nTest robot.jacobian_bodyframe(q, s)-------------------------")
-    try:
-        J_local = robot.jacobian_bodyframe(q=q, s=s)
-        assert not jnp.isnan(J_local).any(), "Local Jacobian contains NaN!"
-        print("[Valid test] Local Jacobian computation successful.")
-    except Exception as e:
-        print(f"[Error] Local Jacobian computation failed: {e}")
-
-    print("\nTest robot.jacobian_inertialframe(q, s)-------------------------")
-    try:
-        J_global = robot.jacobian_inertialframe(q=q, s=s)
-        assert not jnp.isnan(J_global).any(), "Global Jacobian contains NaN!"
-        print("[Valid test] Global Jacobian computation successful.")
-    except Exception as e:
-        print(f"[Error] Global Jacobian computation failed: {e}")
-
-    print(
-        "\nTest robot.jacobian_and_derivative_bodyframe(q, qd, s)-------------------------"
-    )
-    try:
-        J_local, Jd_local = robot.jacobian_and_derivative_bodyframe(
-            q=q, qd=jnp.zeros((2,)), s=s
-        )
-        assert not jnp.isnan(J_local).any(), "Local Jacobian contains NaN!"
-        assert not jnp.isnan(Jd_local).any(), "Local Jacobian derivative contains NaN!"
-        print("[Valid test] Local Jacobian and derivative computation successful.")
-    except Exception as e:
-        print(f"[Error] Local Jacobian and derivative computation failed: {e}")
-
-    print(
-        "\nTest robot.jacobian_and_derivative_inertialframe(q, qd, s)-------------------------"
-    )
-    try:
-        J_global, Jd_global = robot.jacobian_and_derivative_inertialframe(
-            q=q, qd=jnp.zeros((2,)), s=s
-        )
-        assert not jnp.isnan(J_global).any(), "Global Jacobian contains NaN!"
-        assert not jnp.isnan(Jd_global).any(), (
-            "Global Jacobian derivative contains NaN!"
-        )
-        print("[Valid test] Global Jacobian and derivative computation successful.")
-    except Exception as e:
-        print(f"[Error] Global Jacobian and derivative computation failed: {e}")
-
-    print("\nTest robot.inertia_matrix(q)-------------------------")
-    try:
-        B = robot.inertia_matrix(q=q)
-        assert not jnp.isnan(B).any(), "Inertia matrix contains NaN!"
-        print("[Valid test] Inertia matrix computation successful.")
-    except Exception as e:
-        print(f"[Error] Inertia matrix computation failed: {e}")
-
-    print("\nTest robot.coriolis_matrix(q, qd)-------------------------")
-    try:
-        C = robot.coriolis_matrix(q=q, qd=jnp.zeros((2,)))
-        assert not jnp.isnan(C).any(), "Coriolis matrix contains NaN!"
-        print("[Valid test] Coriolis matrix computation successful.")
-    except Exception as e:
-        print(f"[Error] Coriolis matrix computation failed: {e}")
-
-    print("\nTest robot.gravitational_force(q)-------------------------")
-    try:
-        G = robot.gravitational_force(q=q)
-        assert not jnp.isnan(G).any(), "Gravitational force contains NaN!"
-        print("[Valid test] Gravitational force computation successful.")
-    except Exception as e:
-        print(f"[Error] Gravitational force computation failed: {e}")
-
-    print("\nTest robot.stiffness_matrix()-------------------------")
-    try:
-        K = robot.stiffness_matrix()
-        assert not jnp.isnan(K).any(), "Stiffness matrix contains NaN!"
-        print("[Valid test] Stiffness matrix computation successful.")
-    except Exception as e:
-        print(f"[Error] Stiffness matrix computation failed: {e}")
-
-    print("\nTest robot.damping_matrix()-------------------------")
-    try:
-        D = robot.damping_matrix()
-        assert not jnp.isnan(D).any(), "Damping matrix contains NaN!"
-        print("[Valid test] Damping matrix computation successful.")
-    except Exception as e:
-        print(f"[Error] Damping matrix computation failed: {e}")
-
-    print("\nTest robot.actuation_force(q, u)-------------------------")
-    try:
-        u = jnp.zeros((2,))  # no external forces
-        alpha = robot.actuation_force(q=q, u=u)
-        assert not jnp.isnan(alpha).any(), "Actuation force contains NaN!"
-        print("[Valid test] Actuation force computation successful.")
-    except Exception as e:
-        print(f"[Error] Actuation force computation failed: {e}")
-
-    print("\nTest robot.forward_dynamics(t, y, u)-------------------------")
-    try:
-        t = 0.0
-        y = jnp.concatenate([q, jnp.zeros((2,))])  # initial state with zero velocity
-        u = jnp.zeros((2,))  # no external forces
-        yd = robot.forward_dynamics(t=t, y=y, actuation_args=(u,))
-        qdd, qdres = jnp.split(yd, 2)
-        assert not jnp.isnan(qdd).any(), "Forward dynamics output contains NaN!"
-        print("[Valid test] Forward dynamics computation successful.")
-    except Exception as e:
-        print(f"[Error] Forward dynamics computation failed: {e}")
+        assert_allclose(chi_tips, chi_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_inverse_kinematics_consistency(num_segments):
+def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(888)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_values = [0.0] + sample_arc_lengths(model)
+    s_ps = jnp.asarray(s_values, dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        chi_batched = model.forward_kinematics_batched(q, s_ps)
+        chi_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
+
+        assert_allclose(chi_batched, chi_expected, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_inverse_kinematics_consistency(num_segments):
     """
     Test that the inverse kinematics method correctly inverts forward kinematics.
     
@@ -497,90 +368,9 @@ def test_inverse_kinematics_consistency(num_segments):
             err_msg=f"Forward kinematics of recovered configuration failed for config {i} with {num_segments} segments"
         )
 
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_tips_coherence(num_segments):
-    model, _ = make_planar_pcs(num_segments=num_segments)
-    dof = int(model.num_active_strains.item())
-
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    rng = jax.random.PRNGKey(777)
-    random_cfg = random_q(model, rng, scale=0.05)
-
-    for q in (zero_cfg, random_cfg):
-        chi_expected = segment_tip_poses(model, q)
-        chi_tips = model.forward_kinematics_tips(q)
-
-        assert_allclose(chi_tips, chi_expected, rtol=RTOL, atol=ATOL)
-
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_batched_coherence(num_segments):
-    model, _ = make_planar_pcs(num_segments=num_segments)
-    dof = int(model.num_active_strains.item())
-
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    rng = jax.random.PRNGKey(888)
-    random_cfg = random_q(model, rng, scale=0.05)
-
-    s_values = [0.0] + sample_arc_lengths(model)
-    s_ps = jnp.asarray(s_values, dtype=jnp.float64)
-
-    for q in (zero_cfg, random_cfg):
-        chi_batched = model.forward_kinematics_batched(q, s_ps)
-        chi_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
-
-        assert_allclose(chi_batched, chi_expected, rtol=RTOL, atol=ATOL)
-
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_local_tips_matches_pointwise_evaluation(num_segments):
-    model, _ = make_planar_pcs(num_segments=num_segments)
-    q = random_q(model, jax.random.PRNGKey(5), scale=0.03)
-
-    J_tips = model._J_local_tips(q)
-    s_tips = model.L_cum[1:]
-
-    for idx, s in enumerate(s_tips):
-        if s < 1e-3:
-            continue
-
-        J_tip_batch = J_tips[idx]
-        J_tip_single = model._final_size_jacobian(model._J_local(q, s))
-
-        assert_allclose(
-            J_tip_batch,
-            J_tip_single,
-            rtol=RTOL,
-            atol=ATOL,
-            err_msg=(
-                f"num_segments={num_segments}, s={s}\n"
-                f"J_tip_batch:\n{J_tip_batch}\nJ_tip_single:\n{J_tip_single}"
-            ),
-        )
-
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_local_batched_matches_pointwise_evaluation(num_segments):
-    model, _ = make_planar_pcs(num_segments=num_segments)
-    dof = int(model.num_active_strains.item())
-
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    rng = jax.random.PRNGKey(321)
-    random_cfg = random_q(model, rng, scale=0.05)
-
-    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
-
-    for q in (zero_cfg, random_cfg):
-        J_batch = model._J_local_batched(q, s_points)
-
-        for idx, s_val in enumerate(s_points):
-            J_single = model._final_size_jacobian(model._J_local(q, s_val))
-            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
-
-
+    
 @pytest.mark.parametrize("num_segments", [2, 3])
-def test_inverse_kinematics_with_known_straight_configuration(num_segments):
+def test_inverse_kinematics_straight_configuration(num_segments):
     """
     Test inverse kinematics with a known straight configuration.
     
@@ -816,6 +606,52 @@ def test_inverse_kinematics_strain_selector_edge_cases():
     )
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_local_tips_matches_pointwise_evaluation(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    q = random_q(model, jax.random.PRNGKey(5), scale=0.03)
+
+    J_tips = model._J_local_tips(q)
+    s_tips = model.L_cum[1:]
+
+    for idx, s in enumerate(s_tips):
+        if s < 1e-3:
+            continue
+
+        J_tip_batch = J_tips[idx]
+        J_tip_single = model._final_size_jacobian(model._J_local(q, s))
+
+        assert_allclose(
+            J_tip_batch,
+            J_tip_single,
+            rtol=RTOL,
+            atol=ATOL,
+            err_msg=(
+                f"num_segments={num_segments}, s={s}\n"
+                f"J_tip_batch:\n{J_tip_batch}\nJ_tip_single:\n{J_tip_single}"
+            ),
+        )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_J_local_batched_matches_pointwise_evaluation(num_segments):
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(321)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        J_batch = model._J_local_batched(q, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single = model._final_size_jacobian(model._J_local(q, s_val))
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
 def test_jacobian_inertialframe_matches_autodiff(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
@@ -845,7 +681,7 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_inertial_velocity_consistency(num_segments):
+def test_inertial_velocity_matches_central_differences(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(4)
     key_q, key_qd = jax.random.split(key)
@@ -899,7 +735,7 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_Jd_bodyframe_matches_autograd_jvp(num_segments):
+def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
     key_q, key_qd = jax.random.split(key)
@@ -924,7 +760,7 @@ def test_Jd_bodyframe_matches_autograd_jvp(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_Jd_bodyframe_matches_central_differences(num_segments):
+def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
 
@@ -956,7 +792,7 @@ def test_Jd_bodyframe_matches_central_differences(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_Jd_inertialframe_matches_autograd_jvp(num_segments):
+def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH)
     key = jax.random.PRNGKey(3)
     key_q, key_qd = jax.random.split(key)
@@ -979,20 +815,6 @@ def test_Jd_inertialframe_matches_autograd_jvp(num_segments):
                 f"num_segments={num_segments}, s={s}\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jd_jvp)}"
             )
 
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_gravity_matches_potential_gradient(num_segments):
-    robot, params = make_planar_pcs(num_segments)
-
-    key = jax.random.PRNGKey(3)
-    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
-        q = random_q(robot, q_key, scale=0.05)
-
-        G = robot.gravitational_force(q)
-        dU_dq = jax.grad(robot.gravitational_energy)(q)
-
-        # With current convention, G equals ∂U/∂q
-        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments):
@@ -1066,6 +888,22 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
             rtol=RTOL,
             atol=ATOL,
         )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_gravity_matches_potential_gradient(num_segments):
+    robot, params = make_planar_pcs(num_segments)
+
+    key = jax.random.PRNGKey(3)
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(robot, q_key, scale=0.05)
+
+        G = robot.gravitational_force(q)
+        dU_dq = jax.grad(robot.gravitational_energy)(q)
+
+        # With current convention, G equals ∂U/∂q
+        assert_allclose(G, dU_dq, rtol=RTOL, atol=ATOL)
+
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_dynamics_matches_manual_computation(num_segments: int):
