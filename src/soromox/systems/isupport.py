@@ -66,10 +66,6 @@ class ISupport(PCS):
         https://advanced.onlinelibrary.wiley.com/doi/full/10.1002/aisy.202300899
 
     """
-
-    num_actuators: int = eqx.field(
-        static=True
-    )  # number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS)
     num_chambers_per_segment: int = eqx.field(
         static=True, default=3
     )  # number of pneumatic chambers per segment
