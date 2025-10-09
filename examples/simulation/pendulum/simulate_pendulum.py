@@ -33,7 +33,7 @@ save_every_n_steps = 100
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
-video_path = Path(__file__).parent / "videos" / f"pendulum_nl-{num_links}.mp4"
+video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(

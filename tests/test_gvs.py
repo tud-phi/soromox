@@ -94,7 +94,9 @@ def build_matched_gvs_pcs(num_segments: int = 1):
     return robot_gvs, robot_pcs
 
 
-def gvs_jacobian_inertialframe_from_body(robot_gvs: GVS, q: jnp.ndarray, s: jnp.ndarray) -> jnp.ndarray:
+def gvs_jacobian_inertialframe_from_body(
+    robot_gvs: GVS, q: jnp.ndarray, s: jnp.ndarray
+) -> jnp.ndarray:
     """Compute inertial-frame Jacobian for GVS from its body-frame Jacobian.
 
     This mirrors PCS.jacobian_inertialframe: J_global = Ad_{[R,0;0,1]} @ J_body.
@@ -120,27 +122,21 @@ def test_gvs_equals_pcs_constant_strain(num_segments: int):
 
     # forward kinematics comparisons at a few points along the rod
     L_total = float(jnp.sum(robot_gvs.V_L))
-    s_values = jnp.array([0.0, 0.33 * L_total, 0.75 * L_total,  L_total])
+    s_values = jnp.array([0.0, 0.33 * L_total, 0.75 * L_total, L_total])
     for s in onp.array(s_values):
         g_gvs = robot_gvs.forward_kinematics(q, s)
         g_pcs = robot_pcs.forward_kinematics(q, s)
-        assert_allclose(
-            g_gvs, g_pcs, rtol=Tolerance.rtol(), atol=Tolerance.atol()
-        )
+        assert_allclose(g_gvs, g_pcs, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
         # body-frame Jacobian
         Jb_gvs = robot_gvs.jacobian_bodyframe(q, s)
         Jb_pcs = robot_pcs.jacobian_bodyframe(q, s)
-        assert_allclose(
-            Jb_gvs, Jb_pcs, rtol=Tolerance.rtol(), atol=Tolerance.atol()
-        )
+        assert_allclose(Jb_gvs, Jb_pcs, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
         # inertial-frame Jacobian
         Ji_gvs = gvs_jacobian_inertialframe_from_body(robot_gvs, q, s)
         Ji_pcs = robot_pcs.jacobian_inertialframe(q, s)
-        assert_allclose(
-            Ji_gvs, Ji_pcs, rtol=Tolerance.rtol(), atol=Tolerance.atol()
-        )
+        assert_allclose(Ji_gvs, Ji_pcs, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     # dynamical matrices
     B_gvs = robot_gvs.inertia_matrix(q)

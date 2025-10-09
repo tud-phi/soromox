@@ -1,45 +1,60 @@
 from diffrax import Tsit5
-from functools import partial
 
-from IPython.display import HTML
 import jax
 from jax import Array
 import jax.numpy as jnp
-from matplotlib.animation import FuncAnimation
+
 import matplotlib.pyplot as plt
 from matplotlib.widgets import Slider
+from matplotlib.animation import FuncAnimation
+from IPython.display import HTML
+
 import numpy as onp
-from typing import Callable
+from typing import Callable, Dict
+from functools import partial
+
+from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pcs import PCS
+
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
+jnp.set_printoptions(precision=4, suppress=True)
 
 def draw_robot_curve(
-    robot  : PCS,
+    batched_forward_kinematics: Callable,
+    L_max: float,
     q: Array,
     num_points: int = 50,
 ):
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = jnp.sum(robot.L)
-    
     s_ps = jnp.linspace(0, L_max, num_points)
     g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
 
-    curve = onp.array(g_ps, dtype=onp.float64)
+    curve = jnp.array(g_ps, dtype=jnp.float64)
     return curve  # (N, 3)
 
 
-def animate_robot_matplotlib(
-    robot: PCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
+def draw_tendon_curves(
+    batched_forward_kinematics_tendons: Callable,
+    L_max: float,
+    q: Array,
+    num_points: int = 50,
+):
+    s_ps = jnp.linspace(0, L_max, num_points)
+    ps = batched_forward_kinematics_tendons(q, s_ps)
+
+    curves = jnp.array(ps, dtype=jnp.float64)
+    return curves  # (n_tendons, N, 3)
+
+
+def animate_robot_tendons_matplotlib(
+    robot,
+    t_list: jnp.ndarray,  # shape (T,)
+    q_list: jnp.ndarray,  # shape (T, DOF)
     num_points: int = 50,
     interval: int = 50,
     slider: bool = None,
@@ -53,34 +68,78 @@ def animate_robot_matplotlib(
             "Cannot use both animation and slider at the same time. Choose one."
         )
 
+    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
+    batched_forward_kinematics_tendons = jax.vmap(
+        robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
+    )
+    L_max = jnp.sum(robot.L)
+
     width = jnp.linalg.norm(robot.L) * 3
     height = width
+
+    # backbone linewidth
+    backbone_lw = 4  # float(jnp.max(robot.r) * 1.25e3)
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
     ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
 
+    # ---------------------------------------------------
+    # Precompute all trajectories
+    # ---------------------------------------------------
+    batched_robot_curve = jax.vmap(
+        lambda q: draw_robot_curve(batched_forward_kinematics, L_max, q, num_points)
+    )
+    batched_tendon_curve = jax.vmap(
+        lambda q: draw_tendon_curves(
+            batched_forward_kinematics_tendons, L_max, q, num_points
+        )
+    )
+
+    all_robot_curves = batched_robot_curve(q_list)  # (T, num_points, 3)
+    all_tendon_curves = batched_tendon_curve(q_list)  # (T, n_actuators, num_points, 3)
+
+    # ---------------------------------------------------
+    # Animation branch
+    # ---------------------------------------------------
     if animation:
-        (line,) = ax.plot([], [], [], lw=4, color="blue")
+        # initialize line objects once
+        (line_robot,) = ax.plot([], [], [], lw=backbone_lw, color="blue", alpha=0.45)
+        lines = [line_robot]
+        for _ in range(robot.num_actuators):
+            (ll,) = ax.plot([], [], [], lw=2, color="red")
+            lines.append(ll)
+
         ax.set_xlim(-width / 2, width / 2)
         ax.set_ylim(-width / 2, width / 2)
         ax.set_zlim(0, height)
+        ax.set_xlabel("X [m]")
+        ax.set_ylabel("Y [m]")
+        ax.set_zlabel("Z [m]")
         title_text = ax.set_title("t = 0.00 s")
 
         def init():
-            line.set_data([], [])
-            line.set_3d_properties([])
+            for l in lines:
+                l.set_data([], [])
+                l.set_3d_properties([])
             title_text.set_text("t = 0.00 s")
-            return line, title_text
+            return lines + [title_text]
 
         def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            curve = draw_robot_curve(robot, q, num_points)
-            line.set_data(curve[:, 0], curve[:, 1])
-            line.set_3d_properties(curve[:, 2])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
+            curve_r = all_robot_curves[frame_idx]  # (num_points, 3)
+            curves_t = all_tendon_curves[frame_idx]  # (n_actuators, num_points, 3)
+
+            # update robot backbone
+            lines[0].set_data(curve_r[:, 0], curve_r[:, 1])
+            lines[0].set_3d_properties(curve_r[:, 2])
+
+            # update tendons
+            for i in range(robot.num_actuators):
+                lines[i + 1].set_data(curves_t[i, :, 0], curves_t[i, :, 1])
+                lines[i + 1].set_3d_properties(curves_t[i, :, 2])
+
+            title_text.set_text(f"t = {t_list[frame_idx]:.2f} s")
+            return lines + [title_text]
 
         ani = FuncAnimation(
             fig,
@@ -93,14 +152,23 @@ def animate_robot_matplotlib(
 
         if show:
             plt.show()
-
         plt.close(fig)
         return HTML(ani.to_jshtml())
 
+    # ---------------------------------------------------
+    # Slider branch
+    # ---------------------------------------------------
     elif slider:
+        (line_robot,) = ax.plot([], [], [], lw=backbone_lw, color="blue", alpha=0.45)
+        lines = [line_robot]
+        for _ in range(robot.num_actuators):
+            (ll,) = ax.plot([], [], [], lw=2, color="red")
+            lines.append(ll)
 
         def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
+            curve_r = all_robot_curves[frame_idx]
+            curves_t = all_tendon_curves[frame_idx]
+
             ax.set_xlim(-width / 2, width / 2)
             ax.set_ylim(-width / 2, width / 2)
             ax.set_zlim(0, height)
@@ -108,13 +176,19 @@ def animate_robot_matplotlib(
             ax.set_ylabel("Y [m]")
             ax.set_zlabel("Z [m]")
             ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            q = q_list[frame_idx]
-            curve = draw_robot_curve(robot, q, num_points)
-            ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
+
+            # robot backbone
+            lines[0].set_data(curve_r[:, 0], curve_r[:, 1])
+            lines[0].set_3d_properties(curve_r[:, 2])
+
+            # tendons
+            for i in range(robot.num_actuators):
+                lines[i + 1].set_data(curves_t[i, :, 0], curves_t[i, :, 1])
+                lines[i + 1].set_3d_properties(curves_t[i, :, 2])
+
             fig.canvas.draw_idle()
 
-        # Create slider
-        slider = Slider(
+        slider_widget = Slider(
             ax=ax_slider,
             label="Frame",
             valmin=0,
@@ -122,17 +196,17 @@ def animate_robot_matplotlib(
             valinit=0,
             valstep=1,
         )
-        slider.on_changed(update_plot)
+        slider_widget.on_changed(update_plot)
 
-        update_plot(0)  # Initial plot
+        update_plot(0)  # Initial frame
 
         if show:
             plt.show()
-
         plt.close(fig)
+
         return HTML(
             "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
+        )
 
 
 if __name__ == "__main__":
@@ -141,11 +215,9 @@ if __name__ == "__main__":
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
-        "p0": jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
+        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # Initial position and orientation
+        "L": 1e-1 * jnp.ones((num_segments,)),  # default: 1e-1
+        "r": 2e-2 * jnp.ones((num_segments,)),  # default: 2e-2
         "rho": rho,
         "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
         "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
@@ -159,14 +231,38 @@ if __name__ == "__main__":
             * params["L"][:, None]
         ).flatten()
     )
+    tendon_routing_params = {
+        "ry": 2e-2
+        * jnp.array(
+            [1.0, -1.0]
+        ),  # y-coordinate of the pulling point of the tendons [m]
+        "rz": 2e-2
+        * jnp.array([0.0, 0.0]),  # z-coordinate of the pulling point of the tendons [m]
+        "my": jnp.array(
+            [0.0, 0.0]
+        ),  # slope coefficient in the x-y plane of the tendons [-]
+        "mz": jnp.array(
+            [0.0, 0.0]
+        ),  # slope coefficient in the x-z plane of the tendons [-]
+        "idx_seg_att": jnp.array(
+            [1, 0]
+        ),  # length of the tendons = x-coordinate of the attachment points [m]
+    }
+    # tendon_routing_params = {
+    #     'ry': jnp.array([0., -0.0139, 0.0139, -0.0139, 0., 0.0139]),
+    #     'rz': jnp.array([0.016, -0.008, -0.008, 0.008, -0.016, 0.008]),
+    #     'my': jnp.zeros(6),
+    #     'mz': jnp.zeros(6),
+    #     'idx_seg_att': jnp.array([0, 0, 0, 1, 1, 1]),
+    # }
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PCS(
+    robot = TendonActuatedPCS(
         num_segments=num_segments,
         params=params,
-        order_gauss=5,
+        tendon_routing_params=tendon_routing_params,
     )
 
     # =====================================================
@@ -178,12 +274,25 @@ if __name__ == "__main__":
         num_segments,
         axis=0,
     ).flatten()
+    #q0 = jnp.array([0.9143,-0.0292,0.6006,-0.7162,-0.1565,0.8315,0.5844,0.9190,0.3115,-0.9286,0.6983,0.8680])
+
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    u = jnp.zeros_like(q0)
+    u = jnp.array([-1.0, 0.0])
+    print("u =\n", u)
 
+    # Actuation matrix
+    A = robot.actuation_matrix(q0)
+    print("A =\n", A.shape)
+    print(A)
+
+    # Tendons' position
+    t_s = robot.forward_kinematics_tendons(q0, robot.L_cum[-1])
+    print("t_s =\n", t_s.shape)
+    print(t_s)
+    
     # Simulation time parameters
     t0 = 0.0
     t1 = 2.0
@@ -262,11 +371,12 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    animate_robot_matplotlib(
+    animate_robot_tendons_matplotlib(
         robot,
         t_list=ts,  # shape (T,)
         q_list=q_ts,  # shape (T, DOF)
         num_points=50,
         interval=100,  # ms
+        animation=False,
         slider=True,
-    )
+    )  # '''

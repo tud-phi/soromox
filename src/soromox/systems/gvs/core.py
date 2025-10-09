@@ -624,7 +624,7 @@ class GVS(DynamicalSystem):
             operand=geometric_operand,
         )
 
-        # Préparation des vecteurs composants
+        # Prepare the component vectors
         Ms_diag = jnp.stack([Ix_p, Iy_p, Iz_p, A_p, A_p, A_p], axis=1)  # Shape: (np, 6)
         Es_diag = jnp.stack(
             [G * Ix_p, E * Iy_p, E * Iz_p, E * A_p, G * A_p, G * A_p], axis=1
@@ -1925,7 +1925,7 @@ class GVS(DynamicalSystem):
 
                 return (g_next, Jd_next, eta_next), None
 
-            # Cas 1 : segment entièrement avant s → on consomme toutes les cellules
+            # Case 1: segment entirely before s → consume every cell
             def do_full_link() -> Tuple[Array, Array, Array]:
                 """Segment before target `s`: integrate all its cells (Jdot).
 
@@ -1937,7 +1937,7 @@ class GVS(DynamicalSystem):
                 )
                 return g_end, Jd_end, eta_end
 
-            # Cas 2 : segment contenant s → cellules complètes jusqu'à j-1 puis cellule partielle Hp
+            # Case 2: segment containing s → full cells up to j-1 then partial cell Hp
             def do_partial_link() -> Tuple[Array, Array, Array]:
                 """Segment containing `s`: consume up to j-1, then partial cell.
 
@@ -1947,7 +1947,7 @@ class GVS(DynamicalSystem):
                 x = s_local / length_i
                 j = jnp.clip(jnp.searchsorted(Xs_i, x) - 1, 0, self.max_nip - 2)
 
-                # consomme jusqu'à j-1 (masqué)
+                # consume up to j-1 (masked)
                 def full_cell_masked(carry: Array, idx: Array) -> Tuple[Tuple[Array, Array, Array], None]:
                     """Advance only for idx < j; keep state otherwise.
 
@@ -1970,13 +1970,13 @@ class GVS(DynamicalSystem):
                     full_cell_masked, (g_j, Jd_j, eta_j), jnp.arange(self.max_nip - 1)
                 )
 
-                # cellule partielle j de taille Hp
+                # partial cell j of size Hp
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 Xp = jnp.array(
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
-                )  # deux points de Gauss partiels
+                )  # two partial Gauss points
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
 
                 xi_Z1 = (Bp[0] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
@@ -2030,14 +2030,14 @@ class GVS(DynamicalSystem):
                 operand=None,
             )
 
-            # rééchelle pour l'état passé au segment suivant (comme dans les autres fonctions)
+            # rescale the state passed to the next segment (same as the other functions)
             g_pass = g_out.at[0:3, 3].multiply(length_i)
             Jd_pass = Jd_out.at[:, :, 3:6, :].multiply(length_i)
             eta_pass = eta_out.at[3:6].multiply(length_i)
 
             return (g_pass, Jd_pass, eta_pass), (g_pass, Jd_pass, eta_pass)
 
-        # Parcours de la chaîne, on fige l'état après le segment contenant s
+        # Traverse the chain; freeze the state after the segment containing s
         def step(carry: Array, i: Array) -> Tuple[Tuple[Array, Array, Array], None]:
             """Walk segments; freeze state after the segment containing `s`.
 
@@ -2122,9 +2122,10 @@ class GVS(DynamicalSystem):
                     J_j.T @ Ms_j @ J_j
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
+            # we can skip the first and last quadrature points since their weight is zero
             B_blocks_segment_i = vmap(B_eval_points)(
-                jnp.arange(self.max_nip)
-            )  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+                jnp.arange(1, self.max_nip - 1)
+            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
             # # For debugging purposes, we can use a list comprehension
             # B_blocks_segment_i = jnp.stack([B_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
@@ -2222,9 +2223,10 @@ class GVS(DynamicalSystem):
                     @ (Ms_j @ Jd_j + lie.coadjoint_se3(J_j @ qd_flat) @ Ms_j @ J_j)
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
+            # we can skip the first and last quadrature points since their weight is zero
             C_blocks_segment_i = vmap(C_eval_points)(
-                jnp.arange(self.max_nip)
-            )  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+                jnp.arange(1, self.max_nip - 1)
+            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
             # For debugging purposes, we can use a list comprehension
             # C_blocks_segment_i = jnp.stack([C_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
@@ -2318,9 +2320,10 @@ class GVS(DynamicalSystem):
                     Ws_j * J_j.T @ M_j @ Ad_g_j_inv @ self.g
                 )  # (num_segments * 2 * max_dof, 1)
 
+            # we can skip the first and last quadrature points since their weight is zero
             G_blocks_segment_i = vmap(G_eval_points)(
-                jnp.arange(self.max_nip)
-            )  # (max_nip, num_segments * 2 * max_dof, 1)
+                jnp.arange(1, self.max_nip - 1)
+            )  # (max_nip - 2, num_segments * 2 * max_dof, 1)
 
             # For debugging purposes, we can use a list comprehension
             # G_blocks_segment_i = jnp.stack([G_eval_points(i_eval) for i_eval in range(self.max_nip)])
@@ -2407,10 +2410,11 @@ class GVS(DynamicalSystem):
 
                 return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
 
+            # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
-                jnp.sum(vmap(K_eval_points)(jnp.arange(self.max_nip)), axis=0)
+                jnp.sum(vmap(K_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
                 * length_i**2
-            )  # (max_nip, max_dof, max_dof)
+            )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with K_joint_i and K_segment_i
             K_blocks_segment_i = jnp.stack([K_joint_i, K_link_i], axis=0)
@@ -2511,10 +2515,11 @@ class GVS(DynamicalSystem):
 
                 return Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)
 
+            # we can skip the first and last quadrature points since their weight is zero
             D_link_i = (
-                jnp.sum(vmap(D_eval_points)(jnp.arange(self.max_nip)), axis=0)
+                jnp.sum(vmap(D_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
                 * length_i**2
-            )  # (max_nip, max_dof, max_dof)
+            )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with D_joint_i and D_segment_i
             D_blocks_segment_i = jnp.stack([D_joint_i, D_link_i], axis=0)

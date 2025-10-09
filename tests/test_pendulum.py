@@ -233,7 +233,9 @@ def test_forward_dynamics_rest_with_zero_forces(N):
     robot = make_pendulum(N)
 
     # Zero gravity, no stiffness or damping
-    robot = robot.update_params({"g": jnp.array([0.0, 0.0]), "K": jnp.zeros((N, N)), "D": jnp.zeros((N, N))})
+    robot = robot.update_params(
+        {"g": jnp.array([0.0, 0.0]), "K": jnp.zeros((N, N)), "D": jnp.zeros((N, N))}
+    )
 
     q = jnp.zeros((N,))
     qd = jnp.zeros((N,))
@@ -243,7 +245,9 @@ def test_forward_dynamics_rest_with_zero_forces(N):
     qd_out, qdd_out = jnp.split(yd, 2)
 
     assert_allclose(qd_out, qd, rtol=Tolerance.rtol(), atol=Tolerance.atol())
-    assert_allclose(qdd_out, jnp.zeros_like(qd), rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(
+        qdd_out, jnp.zeros_like(qd), rtol=Tolerance.rtol(), atol=Tolerance.atol()
+    )
 
 
 if __name__ == "__main__":

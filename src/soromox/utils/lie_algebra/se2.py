@@ -1,6 +1,9 @@
 __all__ = [
+    "tilde_SE2",
     "hat_SE2",
     "exp_SE2",
+    "log_SE2",
+    "exp_gn_SE2",
     "adjoint_se2",
     "coadjoint_se2",
     "Adjoint_g_SE2",
@@ -8,8 +11,10 @@ __all__ = [
     "Adjoint_gi_se2",
     "Adjoint_gi_se2_inv",
     "Tangent_gi_se2",
+    "Tangent_derivative_gi_se2",
 ]
 
+import jax
 import jax.numpy as jnp
 from jax import Array, lax
 
@@ -17,18 +22,32 @@ from jax import Array, lax
 J = jnp.array([[0, -1], [1, 0]])
 
 
+def tilde_SE2(angle: Array) -> Array:
+    """Return the skew-symmetric matrix associated with a planar angle.
+
+    Args:
+        angle (Array): array-like broadcastable to a scalar representing the rotation angle.
+
+    Returns:
+        Array: shape (2, 2) skew-symmetric matrix encoding the cross-product in SE(2).
+    """
+
+    theta = jnp.asarray(angle).reshape(-1)[0]
+    return theta * J
+
+
 def hat_SE2(vec3: Array) -> Array:
     """
     Computes the hat operator for a 3D vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw.
-            The first element correspond to the angular component,
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] in se(2).
+            The first element corresponds to the angular component,
             and the last two elements correspond to the linear components.
 
     Returns:
-        Array: shape (3, 3)
+        hat: shape (3, 3)
             A 3x3 matrix representing the hat operator of the input screw vector.
     """
     vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
@@ -48,11 +67,10 @@ def exp_SE2(vec3: Array) -> Array:
     Computes the exponential map for a 3D vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the position.
-            [theta, x, y] where theta is the rotation angle and (x, y) is the translation vector.
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] where theta is the rotation angle and (vx, vy) is the translation vector.
     Returns:
-        Array: shape (3, 3)
+        g: shape (3, 3)
             A 3x3 matrix representing the exponential map of the input screw vector.
     """
     vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
@@ -69,30 +87,94 @@ def exp_SE2(vec3: Array) -> Array:
     return g
 
 
+def log_SE2(g: Array, eps: float) -> Array:
+    """Compute the logarithmic map from SE(2) to se(2).
+
+    Args:
+        g (Array): shape (3, 3) homogeneous transform in SE(2).
+        eps (float): small positive tolerance for angle regularisation.
+
+    Returns:
+        Array: shape (3,) twist coordinates corresponding to ``g``.
+    """
+
+    R = g[:2, :2]
+    p = g[:2, 2]
+
+    theta = jnp.arctan2(R[1, 0], R[0, 0])
+    theta = lax.cond(
+        jnp.abs(theta) < eps,
+        lambda _: jnp.zeros((), dtype=theta.dtype),
+        lambda _: theta,
+        operand=None,
+    )
+
+    return jnp.concatenate([jnp.array([theta]), p])
+
+
+def exp_gn_SE2(vec3: Array, eps: float) -> Array:
+    """Compute the exponential map using the Magnus expansion for SE(2).
+
+    Args:
+        vec3 (Array): shape (3,) screw coordinates.
+        eps (float): threshold for switching to the series expansion.
+
+    Returns:
+        Array: shape (3, 3) matrix exponential of ``vec3`` in SE(2).
+    """
+
+    vec3 = vec3.reshape(-1)
+    theta = jnp.abs(vec3[0])
+    vec3_hat = hat_SE2(vec3)
+
+    costheta = jnp.cos(theta)
+    sintheta = jnp.sin(theta)
+
+    def _series(_: None) -> Array:
+        return (
+            jnp.eye(3)
+            + vec3_hat
+            + 0.5 * jnp.linalg.matrix_power(vec3_hat, 2)
+            + (1.0 / 6.0) * jnp.linalg.matrix_power(vec3_hat, 3)
+        )
+
+    def _closed(_: None) -> Array:
+        theta_sq = theta**2
+        theta_cu = theta**3
+        return (
+            jnp.eye(3)
+            + vec3_hat
+            + ((1 - costheta) / theta_sq) * jnp.linalg.matrix_power(vec3_hat, 2)
+            + ((theta - sintheta) / theta_cu) * jnp.linalg.matrix_power(vec3_hat, 3)
+        )
+
+    return lax.cond(theta <= eps, _series, _closed, operand=None)
+
+
 def adjoint_se2(vec3: Array) -> Array:
     """
     Computes the adjoint representation of a vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3, 1)
-            A 3-dimensional vector representing the screw.
-            The first element correspond to the angular component,
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] in se(2).
+            The first element corresponds to the angular component,
             and the last two elements correspond to the linear component.
 
     Returns:
-        Array: shape (3, 3)
+        ad: shape (3, 3)
             A 3x3 matrix representing the adjoint transformation of the input screw vector.
     """
-    vec3 = vec3.reshape(-1)  # Ensure vec6 is a 1D array
+    vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
 
     ang = vec3[0]
-    lin = vec3[1:].reshape((2, 1))  # Linear as a (3,1) vector
+    lin = vec3[1:].reshape((2, 1))  # Linear as a (2,1) vector
 
-    adj = jnp.concatenate(
+    ad = jnp.concatenate(
         [jnp.zeros((1, 3)), jnp.concatenate([-J @ lin, ang * J], axis=1)]
     )
 
-    return adj
+    return ad
 
 
 def coadjoint_se2(vec3: Array) -> Array:
@@ -100,81 +182,81 @@ def coadjoint_se2(vec3: Array) -> Array:
     Computes the co-adjoint representation of a vector of se(2).
 
     Args:
-        vec3 (Array): array-like, shape (3, 1)
-            A 3-dimensional vector representing the screw.
-            The first element correspond to the angular component,
+        vec3 (Array): shape (3,) or (3, 1)
+            Screw coordinates [theta, vx, vy] in se(2).
+            The first element corresponds to the angular component,
             and the last two elements correspond to the linear component.
 
     Returns:
-        Array: shape (3, 3)
+        coad: shape (3, 3)
             A 3x3 matrix representing the co-adjoint transformation of the input screw vector.
     """
-    vec3 = vec3.reshape(-1)  # Ensure vec6 is a 1D array
+    vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
 
     ang = vec3[0]
-    lin = vec3[1:].reshape((2, 1))  # Linear as a (3,1) vector
+    lin = vec3[1:].reshape((2, 1))  # Linear as a (2,1) vector
 
-    coadj = jnp.concatenate(
+    coad = jnp.concatenate(
         [jnp.zeros((3, 1)), jnp.concatenate([lin.T @ J, ang * J], axis=0)], axis=1
     )
 
-    return coadj
+    return coad
 
 
 def Adjoint_g_SE2(mat3: Array) -> Array:
     """
-    Computes the adjoint representation of a 3x3 matrix.
+    Computes the adjoint representation of an SE(2) homogeneous transform.
 
     Args:
-        mat4 (Array): array-like, shape (4,4)
-            A 4x4 matrix representing the transformation.
+        mat3 (Array): shape (3, 3)
+            Homogeneous transform in SE(2).
 
     Returns:
-        Array: shape (3, 3)
-            A 3x3 matrix representing the Adjoint transformation of the input matrix.
+        Ad (Array): shape (3, 3)
+            Adjoint matrix associated with ``mat3``.
     """
     R = mat3[:2, :2]  # Extract the angular part (top-left 2x2 block)
     t = mat3[:2, 2].reshape((2, 1))  # Extract the linear part (top-right column)
 
-    Adjoint = jnp.concatenate(
+    Ad = jnp.concatenate(
         [
             jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-J @ t, R], axis=1),
         ]
     )
 
-    return Adjoint
+    return Ad
 
 
 def Adjoint_g_inv_SE2(mat3: Array) -> Array:
     """
-    Computes the adjoint representation of a 3x3 matrix.
+    Computes the inverse adjoint representation of an SE(2) homogeneous transform.
 
     Args:
-        mat4 (Array): array-like, shape (4,4)
-            A 4x4 matrix representing the transformation.
+        mat3 (Array): shape (3, 3)
+            Homogeneous transform in SE(2).
 
     Returns:
-        Array: shape (3, 3)
-            A 3x3 matrix representing the Adjoint transformation of the input matrix.
+        Ad_inv (Array): shape (3, 3)
+            Inverse of ``Adjoint_g_SE2(mat3)``.
     """
-    Adj = Adjoint_g_SE2(mat3)  # Adjoint representation of the input matrix
+    Ad = Adjoint_g_SE2(mat3)  # Adjoint representation of the input matrix
 
     # Extract R and -Jt from the Adjoint matrix
-    R = Adj[1:, 1:]
-    mJt = Adj[1:, 0].reshape(-1, 1)
+    R = Ad[1:, 1:]
+    mJt = Ad[1:, 0].reshape(-1, 1)
 
     # Compute the inverse using the Schur complement
     R_inv = jnp.transpose(R)  # Since R is a rotation matrix, R^-1=R^T
     # Construct the inverse Adjoint matrix
-    inverse_Adjoint = jnp.concatenate(
+    Ad_inv = jnp.concatenate(
         [
             jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-R_inv @ mJt, R_inv], axis=1),
         ]
     )
 
-    return inverse_Adjoint
+    return Ad_inv
 
 
 def Adjoint_gi_se2(
@@ -183,50 +265,63 @@ def Adjoint_gi_se2(
     eps: float,
 ) -> Array:
     """
-    Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed ine the current segment according to a strain vector xi_i.
+    Computes the adjoint at arclength ``s_i`` for a segment strained by ``xi_i``.
 
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in the current segment.
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the current segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
         Array: shape (3, 3)
-            A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
+            Adjoint matrix evaluated at ``s_i``.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
-    theta = jnp.linalg.norm(xi_i[0])  # Angular part
-    adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
+    theta = jnp.abs(xi_i[0])
+    adjoint_xi_i = adjoint_se2(xi_i)
 
-    cos = jnp.cos(s_i * theta)
-    sin = jnp.sin(s_i * theta)
+    def _series_branch() -> Array:
+        return jnp.eye(3) + s_i * adjoint_xi_i
 
-    Adjoint = lax.cond(
+    def _general_branch(theta_val: Array) -> Array:
+        cos_theta = jnp.cos(s_i * theta_val)
+        sin_theta = jnp.sin(s_i * theta_val)
+
+        adjoint_xi_i_square = adjoint_xi_i @ adjoint_xi_i
+        adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
+        adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
+
+        term1 = (
+            (3 * sin_theta - s_i * theta_val * cos_theta)
+            / (2 * theta_val)
+            * adjoint_xi_i
+        )
+        term2 = (
+            (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**2)
+            * adjoint_xi_i_square
+        )
+        term3 = (
+            (sin_theta - s_i * theta_val * cos_theta)
+            / (2 * theta_val**3)
+            * adjoint_xi_i_cube
+        )
+        term4 = (
+            (2 - 2 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**4)
+            * adjoint_xi_i_quad
+        )
+
+        return jnp.eye(3) + term1 + term2 + term3 + term4
+
+    Ad = lax.cond(
         theta <= eps,
-        lambda _: jnp.eye(3) + s_i * adjoint_xi_i,  # Avoid division by zero
-        lambda _: (
-            jnp.eye(3)
-            + 1 / (2 * theta) * (3 * sin - s_i * theta * cos) * adjoint_xi_i
-            + 1
-            / (2 * jnp.power(theta, 2))
-            * (4 - 4 * cos - s_i * theta * sin)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 2)
-            + 1
-            / (2 * jnp.power(theta, 3))
-            * (sin - s_i * theta * cos)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 3)
-            + 1
-            / (2 * jnp.power(theta, 4))
-            * (2 - 2 * cos - s_i * theta * sin)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 4)
-        ),
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
         operand=None,
     )
 
-    return Adjoint
+    return Ad
 
 
 def Adjoint_gi_se2_inv(
@@ -235,19 +330,17 @@ def Adjoint_gi_se2_inv(
     eps: float,
 ) -> Array:
     """
-    Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed ine the current segment according to a strain vector xi_i.
+    Computes the inverse adjoint at arclength ``s_i`` for a segment strained by ``xi_i``.
 
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in SE(2).
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
         Array: shape (3, 3)
-            A 3x3 matrix representing the adjoint transformation of the input screw vector at the specified position.
+            Inverse adjoint matrix evaluated at ``s_i``.
     """
     Adj = Adjoint_gi_se2(
         xi_i, s_i, eps=eps
@@ -260,14 +353,14 @@ def Adjoint_gi_se2_inv(
     # Compute the inverse using the Schur complement
     R_inv = jnp.transpose(R)  # Since R is a rotation matrix, R^-1=R^T
     # Construct the inverse Adjoint matrix
-    inverse_Adjoint = jnp.concatenate(
+    Ad_inv = jnp.concatenate(
         [
             jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-R_inv @ mJt, R_inv], axis=1),
         ]
     )
 
-    return inverse_Adjoint
+    return Ad_inv
 
 
 def Tangent_gi_se2(
@@ -276,50 +369,161 @@ def Tangent_gi_se2(
     eps: float,
 ) -> Array:
     """
-    Computes the tangent representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(2) deformed in the current segment according to a strain vector xi_i.
+    Computes the tangent operator accumulated over arclength ``s_i`` for strain ``xi_i``.
 
     Args:
-        xi_i (Array): array-like, shape (3,1)
-            A 3-dimensional vector representing the screw in SE(2).
-        s_i (Array):
-            The curvilinear coordinate along the rod, representing the position of a point in the n-th segment.
-        eps (float): small value to avoid division by zero
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
 
     Returns:
         Array: shape (3, 3)
-            A 3x3 matrix representing the tangent transformation of the input screw vector at the specified position.
+            Tangent matrix evaluated at ``s_i``.
     """
-    # We suppose here that theta is not zero thanks to a previous use of apply_eps
-    theta = jnp.linalg.norm(xi_i[0])  # Angular part
-    adjoint_xi_i = adjoint_se2(xi_i)  # Adjoint representation of the input vector
+    theta = jnp.abs(xi_i[0])
+    adjoint_xi_i = adjoint_se2(xi_i)
 
-    cos = jnp.cos(s_i * theta)
-    sin = jnp.sin(s_i * theta)
+    def _series_branch() -> Array:
+        return s_i * jnp.eye(3) + 0.5 * s_i**2 * adjoint_xi_i
+
+    def _general_branch(theta_val: Array) -> Array:
+        cos_theta = jnp.cos(s_i * theta_val)
+        sin_theta = jnp.sin(s_i * theta_val)
+
+        adjoint_xi_i_square = adjoint_xi_i @ adjoint_xi_i
+        adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
+        adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
+
+        term1 = (
+            (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**2)
+            * adjoint_xi_i
+        )
+        term2 = (
+            (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta)
+            / (2 * theta_val**3)
+            * adjoint_xi_i_square
+        )
+        term3 = (
+            (2 - 2 * cos_theta - s_i * theta_val * sin_theta)
+            / (2 * theta_val**4)
+            * adjoint_xi_i_cube
+        )
+        term4 = (
+            (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta)
+            / (2 * theta_val**5)
+            * adjoint_xi_i_quad
+        )
+
+        return s_i * jnp.eye(3) + term1 + term2 + term3 + term4
 
     Tangent = lax.cond(
         theta <= eps,
-        lambda _: s_i * jnp.eye(3) + s_i**2 / 2 * adjoint_xi_i,
-        lambda _: (
-            s_i * jnp.eye(3)
-            + 1
-            / (2 * jnp.power(theta, 2))
-            * (4 - 4 * cos - s_i * theta * sin)
-            * adjoint_xi_i
-            + 1
-            / (2 * jnp.power(theta, 3))
-            * (4 * s_i * theta - 5 * sin + s_i * theta * cos)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 2)
-            + 1
-            / (2 * jnp.power(theta, 4))
-            * (2 - 2 * cos - s_i * theta * sin)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 3)
-            + 1
-            / (2 * jnp.power(theta, 5))
-            * (2 * s_i * theta - 3 * sin + s_i * theta * cos)
-            * jnp.linalg.matrix_power(adjoint_xi_i, 4)
-        ),
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
         operand=None,
     )
 
     return Tangent
+
+
+def Tangent_derivative_gi_se2(
+    xi_i: Array,
+    xid_i: Array,
+    s_i: Array,
+    eps: float,
+) -> Array:
+    """
+    Computes the time derivative of the tangent operator at arclength ``s_i``.
+
+    Args:
+        xi_i (Array): shape (3,) or (3, 1)
+            Constant strain vector in the segment, [theta, vx, vy].
+        xid_i (Array): shape (3,) or (3, 1)
+            Time derivative of the strain vector.
+        s_i (Array): scalar arclength position along the segment.
+        eps (float): small value to avoid division by zero in the series expansion.
+
+    Returns:
+        Array: shape (3, 3)
+            Time derivative of the tangent matrix evaluated at ``s_i``.
+    """
+    theta = jnp.abs(xi_i[0])
+    thetad = xid_i[0]
+    adjoint_xi_i = adjoint_se2(xi_i)
+    adjoint_xid_i = adjoint_se2(xid_i)
+
+    def _adjoint_powers_with_derivatives(max_power: int):
+        current = jnp.eye(3)
+        dot_current = jnp.zeros_like(adjoint_xi_i)
+        powers = [current]
+        dot_powers = [dot_current]
+
+        for _ in range(max_power):
+            dot_next = dot_current @ adjoint_xi_i + current @ adjoint_xid_i
+            current = current @ adjoint_xi_i
+            powers.append(current)
+            dot_powers.append(dot_next)
+            dot_current = dot_next
+
+        return powers, dot_powers
+
+    def _series_branch() -> Array:
+        return 0.5 * s_i**2 * adjoint_xid_i
+
+    def _general_branch(theta_val: Array) -> Array:
+        cos_theta = jnp.cos(s_i * theta_val)
+        sin_theta = jnp.sin(s_i * theta_val)
+
+        powers, dot_powers = _adjoint_powers_with_derivatives(4)
+
+        adjoint_xi_i_square = powers[2]
+        adjoint_xi_i_cube = powers[3]
+        adjoint_xi_i_quad = powers[4]
+        adjoint_dot_xi_i = dot_powers[1]
+        adjoint_dot_xi_i_square = dot_powers[2]
+        adjoint_dot_xi_i_cube = dot_powers[3]
+        adjoint_dot_xi_i_quad = dot_powers[4]
+
+        coeff_theta_common = (
+            -8
+            + (8 - s_i**2 * theta_val**2) * cos_theta
+            + 5 * s_i * theta_val * sin_theta
+        )
+        coeff_theta_alt = (
+            -8 * s_i * theta_val
+            + (15 - s_i**2 * theta_val**2) * sin_theta
+            - 7 * s_i * theta_val * cos_theta
+        )
+
+        coeff1_theta = thetad / (2 * theta_val**3) * coeff_theta_common
+        coeff1 = (4 - 4 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**2)
+
+        coeff2_theta = thetad / (2 * theta_val**4) * coeff_theta_alt
+        coeff2 = (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta) / (
+            2 * theta_val**3
+        )
+
+        coeff3_theta = thetad / (2 * theta_val**5) * coeff_theta_common
+        coeff3 = (2 - 2 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**4)
+
+        coeff4_theta = thetad / (2 * theta_val**6) * coeff_theta_alt
+        coeff4 = (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta) / (
+            2 * theta_val**5
+        )
+
+        term1 = coeff1_theta * adjoint_xi_i + coeff1 * adjoint_dot_xi_i
+        term2 = coeff2_theta * adjoint_xi_i_square + coeff2 * adjoint_dot_xi_i_square
+        term3 = coeff3_theta * adjoint_xi_i_cube + coeff3 * adjoint_dot_xi_i_cube
+        term4 = coeff4_theta * adjoint_xi_i_quad + coeff4 * adjoint_dot_xi_i_quad
+
+        return term1 + term2 + term3 + term4
+
+    Td = lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
+    return Td

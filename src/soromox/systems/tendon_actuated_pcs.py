@@ -198,7 +198,7 @@ class TendonActuatedPCS(PCS):
             return B_xi_j
 
         B_xi_segments = vmap(B_xi_segment_j)(jnp.arange(self.num_segments))
-        
+
         return B_xi_segments
 
     def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):

@@ -103,12 +103,15 @@ classifiers = [  # Optional
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [ # Optional
+  "diffrax",
   "dill",
+  "equinox",
   "jax",
   "numpy",
+  "opencv-python",
   "quadax",
-  "equinox",
   "peppercorn",
+  "scipy",
   "sympy>=1.11"
 ]
 
@@ -143,12 +146,9 @@ docs = [
     "mkdocs-autorefs",
 ]
 examples = [
-    "diffrax",
     "ipython",
     "jaxopt",
     "matplotlib",
-    "opencv-python",
-    "scipy",
 ]
 test = [
     "codecov",
