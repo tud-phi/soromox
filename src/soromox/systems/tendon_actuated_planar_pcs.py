@@ -68,7 +68,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         params: Dict[str, Array],
         *args,
         segment_actuation_selector: Optional[Array] = None,
-        **kwargs
+        **kwargs,
     ):
         """
         Initialize the TendonActuatedPlanarPCS class
@@ -106,12 +106,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
             segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
         """
-        super().__init__(
-            num_segments,
-            params,
-            *args,
-            **kwargs
-        )
+        super().__init__(num_segments, params, *args, **kwargs)
 
         if segment_actuation_selector is None:
             segment_actuation_selector = jnp.ones(num_segments, dtype=bool)

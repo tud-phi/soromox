@@ -12,7 +12,7 @@ from .pcs import PCS
 class ISupport(PCS):
     """
     A kinematic and dynamic model for the (AM) I-Support robot based on the Piecewise Constant Strain shape parametrization.
-    
+
     Attributes:
     ----------
     num_segments : int
@@ -52,22 +52,27 @@ class ISupport(PCS):
     -----
     This implementation builds upon the findings of:
 
-    Arleo et al. (2021): Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021). 
-        I-support soft arm for assistance tasks: a new manufacturing approach based on 3D printing and characterization. 
+    Arleo et al. (2021): Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021).
+        I-support soft arm for assistance tasks: a new manufacturing approach based on 3D printing and characterization.
         Progress in Additive Manufacturing, 6(2), 243-256.
         https://link.springer.com/article/10.1007/s40964-020-00158-y
-    
-    Alessi et al. (2023): Alessi, C., Falotico, E., & Lucantonio, A. (2023). 
+
+    Alessi et al. (2023): Alessi, C., Falotico, E., & Lucantonio, A. (2023).
         Ablation study of a dynamic model for a 3d-printed pneumatic soft robotic arm. IEEE Access, 11, 37840-37853.
         https://ieeexplore.ieee.org/abstract/document/10098800
 
-    Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024). 
+    Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
         Pushing with soft robotic arms via deep reinforcement learning. Advanced Intelligent Systems, 6(8), 2300899.
         https://advanced.onlinelibrary.wiley.com/doi/full/10.1002/aisy.202300899
 
     """
-    num_actuators: int = eqx.field(static=True)  # number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS)
-    num_chambers_per_segment: int = eqx.field(static=True, default=3)  # number of pneumatic chambers per segment
+
+    num_actuators: int = eqx.field(
+        static=True
+    )  # number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS)
+    num_chambers_per_segment: int = eqx.field(
+        static=True, default=3
+    )  # number of pneumatic chambers per segment
     actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
@@ -141,7 +146,9 @@ class ISupport(PCS):
             int(jnp.sum(segment_actuation_selector)) * self.num_chambers_per_segment
         )  # each segment has three control inputs (u1, u2, u3)
 
-        actuation_basis = jnp.zeros((self.num_chambers_per_segment * self.num_segments, self.num_actuators))
+        actuation_basis = jnp.zeros(
+            (self.num_chambers_per_segment * self.num_segments, self.num_actuators)
+        )
         actuation_basis_cumsum = jnp.cumsum(segment_actuation_selector)
         for i in range(self.num_segments):
             j = int(actuation_basis_cumsum[i].item()) - 1
@@ -243,7 +250,9 @@ class ISupport(PCS):
             )
         self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)
 
-        varphi_chamber_off = params.get("varphi_chamber_off", jnp.zeros(self.num_segments))
+        varphi_chamber_off = params.get(
+            "varphi_chamber_off", jnp.zeros(self.num_segments)
+        )
         if not isinstance(varphi_chamber_off, (list, jnp.ndarray)):
             raise TypeError(
                 "The parameter 'varphi_chamber_off' must be a list or a jnp.ndarray."
@@ -254,9 +263,7 @@ class ISupport(PCS):
             )
         self.varphi_chamber_off = jnp.asarray(varphi_chamber_off, dtype=jnp.float64)
 
-    def update_params(
-        self, params: Dict[str, Array]
-    ) -> "ISupport":
+    def update_params(self, params: Dict[str, Array]) -> "ISupport":
         """
         Update the parameters of the ISupport class.
 
@@ -359,7 +366,7 @@ class ISupport(PCS):
             )
 
         return updated_self
-    
+
     @eqx.filter_jit
     def _local_actuator_polar_angles(self, i: Array) -> Array:
         """
@@ -371,9 +378,11 @@ class ISupport(PCS):
         Returns:
             varphi_chambers_i (Array): polar angles of the i-th pneumatic chamber as Array of shape (num_chambers_per_segment, )
         """
-        varphi_chambers_i = self.varphi_chamber_off[i] + jnp.linspace(0, 2 * jnp.pi, self.num_chambers_per_segment, endpoint=False)
+        varphi_chambers_i = self.varphi_chamber_off[i] + jnp.linspace(
+            0, 2 * jnp.pi, self.num_chambers_per_segment, endpoint=False
+        )
         return varphi_chambers_i
-    
+
     @eqx.filter_jit
     def _local_actuator_centroid(self, i: Array, varphi_angle: Array) -> Array:
         """
@@ -385,11 +394,13 @@ class ISupport(PCS):
         Returns:
             centroid_actuator (Array): position of the centroid of one pneumatic actuator in the local reference frame of the i-th segment as array of shape (3, )
         """
-        centroid_actuator = jnp.array([
-            0.0,  # the actuator centroid is on the cross-section
-            self.d_chamber[i] * jnp.sin(varphi_angle),  # up along local y-axis
-            self.d_chamber[i] * jnp.cos(varphi_angle),  # right along local z-axis
-        ])
+        centroid_actuator = jnp.array(
+            [
+                0.0,  # the actuator centroid is on the cross-section
+                self.d_chamber[i] * jnp.sin(varphi_angle),  # up along local y-axis
+                self.d_chamber[i] * jnp.cos(varphi_angle),  # right along local z-axis
+            ]
+        )
         return centroid_actuator
 
     @eqx.filter_jit
@@ -405,7 +416,9 @@ class ISupport(PCS):
         Returns:
             A_one_actuator_i (Array): local cross-sectional area of one actuator of the i-th segment
         """
-        A_one_actuator_i = jnp.pi * (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
+        A_one_actuator_i = jnp.pi * (
+            self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2
+        )
 
         return A_one_actuator_i
 
@@ -425,8 +438,10 @@ class ISupport(PCS):
         A_i = self.num_chambers_per_segment * A_one_actuator_i
 
         return A_i
-    
-    def _local_actuator_second_moment_of_area(self, i: Array, varphi_chamber: Array) -> Array:
+
+    def _local_actuator_second_moment_of_area(
+        self, i: Array, varphi_chamber: Array
+    ) -> Array:
         """
         Compute the local second moment of area of one actuator for the i-th segment.
         This should not be confused with the second moment of area of the pneumatic chambers that are located within the actuator and used to define the actuation matrix.
@@ -439,11 +454,19 @@ class ISupport(PCS):
             I_one_actuator_i (Array): local second moment of area of one actuator of the i-th segment as array of shape (3, )
         """
         # second moment of area of one pneumatic chamber around its own centroid
-        I0 = jnp.array([
-            jnp.pi * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4) / 2,  # twist strain
-            jnp.pi * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4) / 4,  # bending strain around local y-axis
-            jnp.pi * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4) / 4,  # bending strain around local z-axis
-        ])
+        I0 = jnp.array(
+            [
+                jnp.pi
+                * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)
+                / 2,  # twist strain
+                jnp.pi
+                * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)
+                / 4,  # bending strain around local y-axis
+                jnp.pi
+                * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)
+                / 4,  # bending strain around local z-axis
+            ]
+        )
 
         # position of centroid of actuator in local reference frame
         centroid_actuator = self._local_actuator_centroid(i, varphi_chamber)
@@ -451,7 +474,10 @@ class ISupport(PCS):
         A = self._local_actuator_cross_sectional_area(i)
 
         # apply the parallel axis theorem
-        I_one_actuator_i = I0 + A * (jnp.linalg.norm(centroid_actuator) ** 2 * jnp.ones((3, )) - centroid_actuator ** 2)
+        I_one_actuator_i = I0 + A * (
+            jnp.linalg.norm(centroid_actuator) ** 2 * jnp.ones((3,))
+            - centroid_actuator**2
+        )
 
         return I_one_actuator_i
 
@@ -470,7 +496,9 @@ class ISupport(PCS):
         # compute the polar angles of the actuators
         varphi_actuators_i = self._local_actuator_polar_angles(i)
         # compute the second moment of area of each actuator
-        I_actuators_i = vmap(lambda varphi: self._local_actuator_second_moment_of_area(i, varphi))(varphi_actuators_i)
+        I_actuators_i = vmap(
+            lambda varphi: self._local_actuator_second_moment_of_area(i, varphi)
+        )(varphi_actuators_i)
 
         # the second moment of area is assumed to be the sum across all actuators
         I_i = jnp.sum(I_actuators_i, axis=0)
@@ -500,22 +528,28 @@ class ISupport(PCS):
             A_one_chamber = jnp.pi * self.r_chamber_in[i] ** 2
 
             # force contribution of the chamber
-            force_contrib = jnp.array([A_one_chamber, 0.0, 0.0])  # force along local x-axis
+            force_contrib = jnp.array(
+                [A_one_chamber, 0.0, 0.0]
+            )  # force along local x-axis
 
             # compute the centroids of the chambers
             centroid_chamber = self._local_actuator_centroid(i, varphi)
 
             # compute the contribution of the chamber on the (rotational) backbone torque
-            torque_contrib = - jnp.cross(centroid_chamber, force_contrib)
+            torque_contrib = -jnp.cross(centroid_chamber, force_contrib)
 
-            A_single_chamber = jnp.concatenate([
-                torque_contrib,
-                jnp.array([
-                    A_one_chamber, # axial strain
-                    0.0,  # shear strain local y-dir
-                    0.0,  # shear strain local z-dir
-                ])
-            ])
+            A_single_chamber = jnp.concatenate(
+                [
+                    torque_contrib,
+                    jnp.array(
+                        [
+                            A_one_chamber,  # axial strain
+                            0.0,  # shear strain local y-dir
+                            0.0,  # shear strain local z-dir
+                        ]
+                    ),
+                ]
+            )
 
             return A_single_chamber
 
@@ -524,8 +558,12 @@ class ISupport(PCS):
             varphi_chambers = self._local_actuator_polar_angles(i)
 
             # build the actuation matrix
-            A_columns_i = vmap(lambda varphi: _actuation_matrix_one_chamber(i, varphi))(varphi_chambers)
-            A_segment_i = jnp.stack(A_columns_i, axis=-1)  # shape (6, num_chambers_per_segment)
+            A_columns_i = vmap(lambda varphi: _actuation_matrix_one_chamber(i, varphi))(
+                varphi_chambers
+            )
+            A_segment_i = jnp.stack(
+                A_columns_i, axis=-1
+            )  # shape (6, num_chambers_per_segment)
 
             return A_segment_i
 

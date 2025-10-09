@@ -15,7 +15,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
     This class implements the geometric and dynamic modeling of a 2D soft robot
     using the Cosserat rod theory and piecewise constant strain assumption.
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
-    
+
     Attributes:
     ----------
     num_segments : int
@@ -56,9 +56,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         Actuation basis matrix for mapping control inputs to segment strains.
     simplified_actuation_mapping : bool
         If True, uses a simplified actuation mapping (default is False).
-    chamber_cross_section_geometry : str 
-        The cross sectional geometry of the chambers.        
-    pneumatic_load_distribution_assumption : str 
+    chamber_cross_section_geometry : str
+        The cross sectional geometry of the chambers.
+    pneumatic_load_distribution_assumption : str
         Determines the assumption used to map the pneumatic forces into configuration space.
 
     Notes:
@@ -77,17 +77,24 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             - p2 = u2 (left chamber)
 
     """
+
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
-    r_chamber_out: Array  # outer radius of each segment's chamber, shape (num_segments,)
+    r_chamber_out: (
+        Array  # outer radius of each segment's chamber, shape (num_segments,)
+    )
     phi_chamber: Array  # sector angle of each segment's chamber, shape (num_segments,)
     d_chamber: Array  # radial distance of the center of the chambers from the centerline of the backbone, shape (num_segments,)
 
     actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
     # fields with default values
-    num_chambers_per_segment: int = eqx.field(static=True, default=2)  # number of pneumatic chambers per segment
+    num_chambers_per_segment: int = eqx.field(
+        static=True, default=2
+    )  # number of pneumatic chambers per segment
     chamber_cross_section_geometry: str = eqx.field(static=True, default="circular")
-    pneumatic_load_distribution_assumption: str = eqx.field(static=True, default="infitesimal")
+    pneumatic_load_distribution_assumption: str = eqx.field(
+        static=True, default="infitesimal"
+    )
 
     def __init__(
         self,
@@ -139,7 +146,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         self.actuation_basis = actuation_basis
 
         self.chamber_cross_section_geometry = chamber_cross_section_geometry
-        self.pneumatic_load_distribution_assumption = pneumatic_load_distribution_assumption
+        self.pneumatic_load_distribution_assumption = (
+            pneumatic_load_distribution_assumption
+        )
 
         self._set_params(params)
 
@@ -212,7 +221,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             )
         self.r_chamber_out = jnp.asarray(r_chamber_out, dtype=jnp.float64)
 
-        phi_chamber = params.get("phi_chamber", jnp.ones((self.num_segments, )))
+        phi_chamber = params.get("phi_chamber", jnp.ones((self.num_segments,)))
         if not isinstance(phi_chamber, (list, jnp.ndarray)):
             raise TypeError(
                 "The parameter 'phi_chamber' must be a list or a jnp.ndarray."
@@ -223,7 +232,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             )
         self.phi_chamber = jnp.asarray(phi_chamber, dtype=jnp.float64)
 
-        d_chamber = params.get("d_chamber", jnp.ones((self.num_segments, )))
+        d_chamber = params.get("d_chamber", jnp.ones((self.num_segments,)))
         if not isinstance(d_chamber, (list, jnp.ndarray)):
             raise TypeError(
                 "The parameter 'd_chamber' must be a list or a jnp.ndarray."
@@ -232,11 +241,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             raise ValueError(
                 f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
             )
-        self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)        
+        self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)
 
-    def update_params(
-        self, params: Dict[str, Array]
-    ) -> "PneumaticActuatedPlanarPCS":
+    def update_params(self, params: Dict[str, Array]) -> "PneumaticActuatedPlanarPCS":
         """
         Update the parameters of the PneumaticallyActuatedPlanarPCS.
 
@@ -353,7 +360,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         """
         match self.chamber_cross_section_geometry:
             case "circular":
-                A_one_chamber_i = jnp.pi * (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
+                A_one_chamber_i = jnp.pi * (
+                    self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2
+                )
             case "concentric":
                 A_one_chamber_i = (
                     self.phi_chamber[i]
@@ -361,7 +370,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
                     * (self.r_chamber_out[i] ** 2 - self.r_chamber_in[i] ** 2)
                 )
             case _:
-                raise NotImplementedError(f"The chamber cross section geometry {self.chamber_cross_section_geometry} has not been implemented yet.")
+                raise NotImplementedError(
+                    f"The chamber cross section geometry {self.chamber_cross_section_geometry} has not been implemented yet."
+                )
 
         return A_one_chamber_i
 
@@ -400,15 +411,29 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         match self.chamber_cross_section_geometry:
             case "circular":
                 I_one_chamber_i = (
-                    jnp.pi / 4 * (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)  # second moment of area of the annulus itself
-                    + self._local_chamber_cross_sectional_area(i) * self.d_chamber[i] ** 2  # parallel axis theorem
+                    jnp.pi
+                    / 4
+                    * (
+                        self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4
+                    )  # second moment of area of the annulus itself
+                    + self._local_chamber_cross_sectional_area(i)
+                    * self.d_chamber[i] ** 2  # parallel axis theorem
                 )
             case "concentric":
                 I_one_chamber_i = (
-                    (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4) * (self.phi_chamber[i] - 2 * jnp.sin(self.phi_chamber[i] / 2) * jnp.cos(self.phi_chamber[i] / 2)) / 8
+                    (self.r_chamber_out[i] ** 4 - self.r_chamber_in[i] ** 4)
+                    * (
+                        self.phi_chamber[i]
+                        - 2
+                        * jnp.sin(self.phi_chamber[i] / 2)
+                        * jnp.cos(self.phi_chamber[i] / 2)
+                    )
+                    / 8
                 )
             case _:
-                raise NotImplementedError(f"The chamber cross section geometry {self.chamber_cross_section_geometry} has not been implemented yet.")
+                raise NotImplementedError(
+                    f"The chamber cross section geometry {self.chamber_cross_section_geometry} has not been implemented yet."
+                )
 
         return I_one_chamber_i
 
@@ -520,7 +545,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
                     # sum the contributions of the distal and proximal ends
                     A_segment_i = A_segment_i_distal_end + A_segment_i_proximal_end
                 case _:
-                    raise NotImplementedError(f"The pneumatic load distribution assumption {self.pneumatic_load_distribution_assumption} is not (fully) implemented yet.")
+                    raise NotImplementedError(
+                        f"The pneumatic load distribution assumption {self.pneumatic_load_distribution_assumption} is not (fully) implemented yet."
+                    )
 
             return A_segment_i
 
