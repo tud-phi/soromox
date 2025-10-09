@@ -1560,7 +1560,7 @@ class PlanarHSA(DynamicalSystem):
         t0: Optional[float] = 0.0,
         t1: Optional[float] = 10.0,
         dt: Optional[float] = 1e-4,
-        save_every_n_steps: int = 1,
+        save_dt: int = 1,
         solver: Optional[AbstractSolver] = Tsit5(),
         stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
         max_steps: Optional[int] = None,
@@ -1591,7 +1591,7 @@ class PlanarHSA(DynamicalSystem):
                 Default is 10.0.
             dt (float, optionnal): Time step for the solver.
                 Default is 1e-4.
-            save_every_n_steps (int, optional): Determines how many time steps to skip
+            save_dt (int, optional): Determines how many time steps to skip
                 when saving the output. For example, if set to 1, every time step is saved;
                 if set to 10, every 10th time step is saved.
                 Default is 1 (save every step).
@@ -1613,9 +1613,9 @@ class PlanarHSA(DynamicalSystem):
 
         t = jnp.arange(t0, t1, dt)  # Time points for the solution
         
-        assert save_every_n_steps > 0, "save_every_n_steps must be a positive integer."
-        assert isinstance(save_every_n_steps, int), "save_every_n_steps must be an integer."
-        saveat = SaveAt(ts=t[::save_every_n_steps])  # Save at specified time points
+        assert save_dt > 0, "save_dt must be a positive integer."
+        assert isinstance(save_dt, int), "save_dt must be an integer."
+        saveat = SaveAt(ts=t[::save_dt])  # Save at specified time points
 
         # Prepare the actuation arguments
         actuation_args = (u0, control_fn)

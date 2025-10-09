@@ -30,6 +30,7 @@ class DynamicalSystem(eqx.Module):
         t1: Optional[float] = 10.0,
         dt: Optional[float] = 1e-4,
         saveat_ts: Optional[Array] = None,
+        save_dt: Optional[Union[float]] = 0.01,
         solver: Optional[AbstractSolver] = Tsit5(),
         stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
         max_steps: Optional[int] = None,
@@ -50,7 +51,9 @@ class DynamicalSystem(eqx.Module):
             dt (float, optional): Time step for the solver.
                 Default is 1e-4.
             saveat_ts (Array, optional): Array of time steps to be saved in the output.
-                Default is only t1.
+                If not provided, falls back to `save_dt`.
+            save_dt (float, optional): Time interval at which to save the solution.
+                If saveat_ts is provided, this is ignored. Default is 0.01 (i.e., save every 10 ms).
             solver (AbstractSolver, optional): Solver to use for the ODE integration.
                 Default is Tsit5() (Runge-Kutta 5(4) method).
             stepsize_controller (PIDController, optional): Stepsize controller for the solver.
@@ -69,7 +72,10 @@ class DynamicalSystem(eqx.Module):
         if tau_ext is None:
             tau_ext = jnp.zeros((q0.shape[-1],))
         if saveat_ts is None:
-            saveat_ts = jnp.array([t1])
+            assert save_dt is not None, "Either saveat_ts or save_dt must be provided."
+            assert save_dt > 0.0, "save_dt must be positive."
+            assert save_dt >= dt, "save_dt must be greater than or equal to the simulation dt."
+            saveat_ts = jnp.arange(t0, t1 + save_dt, save_dt)
 
         term = ODETerm(self.forward_dynamics)
         saveat = SaveAt(ts=saveat_ts)  # Save at specified time points

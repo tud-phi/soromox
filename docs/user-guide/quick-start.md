@@ -58,7 +58,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
         t0=t_span[0],
         t1=t_span[1],
         dt=dt,
-        save_every_n_steps=1,
+        save_dt=1,
     )
     ```
 

@@ -18,7 +18,7 @@ NUMERIC_FIELDS = {
     "jit_execution_time_s": float,
     "duration": float,
     "dt": float,
-    "save_every_n_steps": int,
+    "save_dt": int,
     "execution_repeats": int,
 }
 

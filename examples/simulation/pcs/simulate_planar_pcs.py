@@ -192,7 +192,7 @@ if __name__ == "__main__":
     t0 = 0.0
     t1 = 2.0
     dt = 1e-4
-    save_every_n_steps = 100
+    save_dt = 0.01
 
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
@@ -204,7 +204,7 @@ if __name__ == "__main__":
         t0=t0,
         t1=t1,
         dt=dt,
-        save_every_n_steps=save_every_n_steps,
+        save_dt=save_dt,
         solver=solver,
         max_steps=None,
     )

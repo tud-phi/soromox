@@ -50,7 +50,7 @@ class RuntimeConfig:
 
     duration: float
     dt: float
-    save_every_n_steps: int
+    save_dt: int
     execution_repeats: int
 
 
@@ -271,7 +271,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
         BenchmarkCase(
             name="resolve_upon_time",
             builder=lambda sys, ctx, runtime: (
-                lambda q0, qd0, u, tau, t0, t1, dt, save_n: sys.resolve_upon_time(
+                lambda q0, qd0, u, tau, t0, t1, dt, save_dt: sys.resolve_upon_time(
                     q0=q0,
                     qd0=qd0,
                     u=u,
@@ -279,7 +279,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     t0=t0,
                     t1=t1,
                     dt=dt,
-                    save_every_n_steps=save_n,
+                    save_dt=save_dt,
                 ),
                 (
                     ctx["q"],
@@ -289,7 +289,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     jnp.array(0.0),
                     jnp.array(runtime.duration),
                     jnp.array(runtime.dt),
-                    runtime.save_every_n_steps,
+                    runtime.save_dt,
                 ),
             ),
         ),
@@ -330,7 +330,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
         BenchmarkCase(
             name="resolve_upon_time",
             builder=lambda sys, ctx, runtime: (
-                lambda q0, qd0, u, tau, t0, t1, dt, save_n: sys.resolve_upon_time(
+                lambda q0, qd0, u, tau, t0, t1, dt, save_dt: sys.resolve_upon_time(
                     q0=q0,
                     qd0=qd0,
                     u=u,
@@ -338,7 +338,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     t0=t0,
                     t1=t1,
                     dt=dt,
-                    save_every_n_steps=save_n,
+                    save_dt=save_dt,
                 ),
                 (
                     ctx["q"],
@@ -348,7 +348,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     jnp.array(0.0),
                     jnp.array(runtime.duration),
                     jnp.array(runtime.dt),
-                    runtime.save_every_n_steps,
+                    runtime.save_dt,
                 ),
             ),
         ),
@@ -404,7 +404,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     t0=t0,
                     t1=t1,
                     dt=dt,
-                    save_every_n_steps=save_n,
+                    save_dt=save_n,
                 ),
                 (
                     ctx["q"],
@@ -414,7 +414,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     jnp.array(0.0),
                     jnp.array(runtime.duration),
                     jnp.array(runtime.dt),
-                    runtime.save_every_n_steps,
+                    runtime.save_dt,
                 ),
             ),
         ),
@@ -506,7 +506,7 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
         "jit_execution_time_s",
         "duration",
         "dt",
-        "save_every_n_steps",
+        "save_dt",
         "execution_repeats",
     ]
     with path.open("w", encoding="utf-8") as fp:
@@ -546,10 +546,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Integration step size for resolve_upon_time",
     )
     parser.add_argument(
-        "--save-every",
-        type=int,
-        default=25,
-        help="Store every N-th integration step when solving over time",
+        "--save-dt",
+        type=float,
+        default=0.01,
+        help="Save the system state every `save_dt` seconds during resolve_upon_time (must be >= dt)",
     )
     parser.add_argument(
         "--execution-repeats",
@@ -586,7 +586,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     runtime = RuntimeConfig(
         duration=args.duration,
         dt=args.dt,
-        save_every_n_steps=max(1, args.save_every),
+        save_dt=max(0.0, args.save_dt),
         execution_repeats=args.execution_repeats,
     )
 
@@ -631,7 +631,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "jit_execution_time_s": exec_time,
                         "duration": runtime.duration,
                         "dt": runtime.dt,
-                        "save_every_n_steps": runtime.save_every_n_steps,
+                        "save_dt": runtime.save_dt,
                         "execution_repeats": runtime.execution_repeats,
                     }
                 )

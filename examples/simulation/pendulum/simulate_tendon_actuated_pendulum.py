@@ -41,7 +41,7 @@ q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
 # set simulation parameters
 dt = 1e-4  # time step
 ts = jnp.arange(0.0, 5, dt)  # time steps
-save_every_n_steps = 100
+save_dt = 0.01
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
@@ -154,7 +154,7 @@ if __name__ == "__main__":
         t0=ts[0],
         t1=ts[-1],
         dt=dt,
-        save_every_n_steps=save_every_n_steps,
+        save_dt=save_dt,
     )
     video_ts = ts_out
     print("Final configuration:\n", qs[-1])
@@ -189,7 +189,7 @@ if __name__ == "__main__":
     video = cv2.VideoWriter(
         str(video_path),
         fourcc,
-        1 / (save_every_n_steps * dt),  # fps
+        1 / (save_dt * dt),  # fps
         (video_width, video_height),
     )
 
