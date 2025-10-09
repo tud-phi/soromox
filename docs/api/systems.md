@@ -13,18 +13,34 @@ SoRoMoX provides implementations for various robot systems, from classical rigid
 
 ## Available Systems
 
-### [Pendulum Systems](pendulum.md)
-Classical N-link pendulum implementations for benchmarking and comparison.
+### Pendulum Systems
+
+Multiple implementations of pendulum-based robot systems, from classical rigid-body chains to cable-driven mechanisms.
+
+#### [Classical Pendulum](pendulum/pendulum.md)
+
+Classical (optionally articulated) N-link pendulum implementation
 
 - Rigid-body dynamics
 - Revolute joints
 - Configurable number of links
-- Useful as baseline for soft robot comparisons
+- Optional: turn into an articulated soft robot by adding elastic and dissipative forces at the pendulum joints.
+
+#### [Tendon Actuated Pendulum](pendulum/tendon-actuated-pendulum.md)
+
+N-link pendulum systems with active and passive tendon actuation
+
+- Cable-driven actuation mechanisms
+- Active and passive tendon support
+- Spring-damper systems for compliance
+- Hybrid rigid-soft robot characteristics
 
 ### PCS (Piecewise Constant Strain) Systems
+
 Multiple implementations of continuum soft robots using piecewise constant strain modeling.
 
 #### [General PCS](pcs.md)
+
 Core PCS implementation providing the fundamental framework.
 
 - Base PCS mathematical framework
@@ -32,6 +48,7 @@ Core PCS implementation providing the fundamental framework.
 - General continuum robot modeling
 
 #### [Planar PCS](planar-pcs.md)
+
 Planar PCS continuum soft robots in 2D.
 
 - Cosserat rod theory based
@@ -39,15 +56,8 @@ Planar PCS continuum soft robots in 2D.
 - Numerical implementation with Gauss-Legendre integration
 - Suitable for real-time applications
 
-#### [Planar PCS Symbolic](planar-pcs-sym.md)  
-Symbolic implementation of planar PCS systems for improved performance.
+#### [Pneumatic Planar PCS](pneumatic-actuated-planar-pcs.md)
 
-- Pre-computed symbolic expressions
-- SymPy-derived equations implemented in JAX
-- Faster execution through elimination of runtime differentiation
-- Identical physics to numerical PCS implementation
-
-#### [Pneumatic Planar PCS](pneumatic-planar-pcs.md)
 Pneumatically actuated planar PCS robots.
 
 - Pressure-based actuation
@@ -55,7 +65,8 @@ Pneumatically actuated planar PCS robots.
 - Soft pneumatic robot applications
 - Real-time pressure control
 
-#### [Tendon Planar PCS](tendon-planar-pcs.md)
+#### [Tendon Planar PCS](tendon-actuated-planar-pcs.md)
+
 Tendon actuated planar PCS robots.
 
 - Cable-driven actuation
@@ -64,25 +75,10 @@ Tendon actuated planar PCS robots.
 - Cable-driven continuum robots
 
 ### [Planar HSA Systems](planar-hsa.md)
+
 Handed Shearing Auxetics (HSA) soft robots with unique mechanical properties.
 
 - Auxetic material properties
 - Specialized deformation patterns
 - Advanced control capabilities
 - Research-oriented implementation
-
-## System Factory Pattern
-
-All systems follow a consistent factory pattern for initialization:
-
-```python
-from soromox.systems import system_module
-
-# Initialize system with parameters
-ode_fn, forward_kinematics, jacobian_fn, auxiliary_fns = system_module.factory(
-    system_parameters,
-    configuration_options
-)
-```
-
-This pattern ensures consistent interfaces across all robot types while allowing for system-specific customizations.

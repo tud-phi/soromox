@@ -1,3 +1,4 @@
+__all__ = ["Tolerance"]
 from numpy import finfo, float64
 
 

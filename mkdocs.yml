@@ -76,24 +76,25 @@ nav:
   - API Reference:
     - Overview: api/systems.md
     - Systems:
-      - Pendulum: api/pendulum.md
+      - Pendulum Systems:
+        - Classical Pendulum: api/pendulum/pendulum.md
+        - Tendon Actuated Pendulum: api/pendulum/tendon-actuated-pendulum.md
       - PCS Systems:
         - General PCS: api/pcs.md
         - Planar PCS: api/planar-pcs.md
-        - Planar PCS Symbolic: api/planar-pcs-sym.md
-        - Pneumatic Planar PCS: api/pneumatic-planar-pcs.md
-        - Tendon Planar PCS: api/tendon-planar-pcs.md
+        - Pneumatic Actuated Planar PCS: api/pneumatic-actuated-planar-pcs.md
+        - Tendon Actuated Planar PCS: api/tendon-actuated-planar-pcs.md
       - Planar HSA: api/planar-hsa.md
+    - Actuation: api/actuation.md
     - Utilities:
       - Overview: api/utils.md
-      - Math Utils: api/math-utils.md
-      - Integration: api/integration.md
       - Parameters: api/parameters.md
       - Rendering: api/rendering.md
       - Symbolic Derivation: api/symbolic-derivation.md
   - Authors & Maintainers: authors.md
   - Development:
     - Contributing: development/contributing.md
+    - System Benchmarking: development/system-benchmarking.md
     - Changelog: development/changelog.md
 
 plugins:

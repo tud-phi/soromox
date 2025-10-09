@@ -8,22 +8,6 @@ SoRoMoX provides various utility modules that support the core robot system impl
 
 ## Available Utilities
 
-### [Math Utils](math-utils.md)
-Core mathematical operations and linear algebra utilities.
-
-- Matrix operations and manipulations
-- Specialized robotics mathematics
-- Linear algebra helper functions
-- Numerical computation utilities
-
-### [Integration](integration.md)
-Numerical integration methods for differential equations.
-
-- Gauss-Legendre quadrature
-- Integration schemes for robot dynamics
-- Numerical differentiation utilities
-- Solver interfaces
-
 ### [Parameters](parameters.md)
 Parameter handling and configuration management.
 
