@@ -1372,21 +1372,6 @@ class PCS(DynamicalSystem):
         return I_i
 
     @eqx.filter_jit
-    def _local_polar_moment_of_inertia(self, i: Array) -> Array:
-        """
-        Compute the local polar moment of inertia for the i-th segment.
-
-        Args:
-            i (Array): index of the segment
-
-        Returns:
-            J_i (Array): local polar moment of inertia of the i-th segment
-        """
-        # Polar moment of inertia for a circular cross-section
-        J_i = jnp.pi * self.r[i] ** 4 / 2
-        return J_i
-
-    @eqx.filter_jit
     def _local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
