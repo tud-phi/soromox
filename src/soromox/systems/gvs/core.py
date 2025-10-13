@@ -872,6 +872,7 @@ class GVS(DynamicalSystem):
                 g_j_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
+                ds = H * length_i
 
                 xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
                 xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
@@ -884,12 +885,9 @@ class GVS(DynamicalSystem):
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
-                    ad_xi_Z1_j @ xi_Z2_j
-                )
-
-                # magnus expansion
-                Magnus_j = Magnus_j * length_i
+                Magnus_j = (ds / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * ds * ds / 12
+                ) * (ad_xi_Z1_j @ xi_Z2_j)
 
                 # Exponential map to get the new transformation matrix
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
@@ -1025,18 +1023,16 @@ class GVS(DynamicalSystem):
                 g_prev = carry
 
                 H = Xs_i[j + 1] - Xs_i[j]
+                ds = H * length_i
 
                 xi_Z1_j = (B_Z1_i[j] @ q_i) + xi_ref_Z1_i[j]
                 xi_Z2_j = (B_Z2_i[j] @ q_i) + xi_ref_Z2_i[j]
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
-                    ad_xi_Z1_j @ xi_Z2_j
-                )
-
-                # magnus expansion
-                Magnus_j = Magnus_j * length_i
+                Magnus_j = (ds / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * ds * ds / 12
+                ) * (ad_xi_Z1_j @ xi_Z2_j)
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
 
                 return g_prev @ g_step, None
@@ -1084,6 +1080,7 @@ class GVS(DynamicalSystem):
                 # enter the (partial) cell j
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
+                ds = Hp * length_i
 
                 Xp = jnp.array(
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
@@ -1096,10 +1093,9 @@ class GVS(DynamicalSystem):
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                Magnus_p = (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * Hp**2 / 12
+                Magnus_p = (ds / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * ds * ds / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
-                Magnus_p = Magnus_p * length_i
 
                 g_p = lie.exp_gn_SE3(Magnus_p, self.global_eps)
 
@@ -1196,8 +1192,8 @@ class GVS(DynamicalSystem):
 
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # shape (6, 6)
 
-            g_j_scaled = g_tip @ g_joint_i
-            J_j_scaled = jnp.einsum(
+            g_j = g_tip @ g_joint_i
+            J_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_i_B_joint_i)
             )
 
@@ -1208,12 +1204,6 @@ class GVS(DynamicalSystem):
             length_i = self.V_L[i_segment]  # shape (1,)
             B_Z1_i = self.V_B_Z1[i_segment]  # shape (max_nip - 1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # shape (max_nip - 1, 6, max_dof)
-
-            # TODO: investigate and check if this needs to be removed
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)  # shape (4, 4)
-            J_j = J_j_scaled.at[:, :, 3:6, :].divide(
-                length_i
-            )  # shape (num_segments, 6, max_dof)
 
             q_i = q_gathered[i_segment, 1]
 
@@ -1234,6 +1224,8 @@ class GVS(DynamicalSystem):
                 g_prev, J_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
+                ds = H * length_i
+                ds_sq = ds * ds
 
                 xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
                 xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
@@ -1247,13 +1239,13 @@ class GVS(DynamicalSystem):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
-                    ad_xi_Z1_j @ xi_Z2_j
-                )
+                Magnus_j = (ds / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * ds_sq / 12
+                ) * (ad_xi_Z1_j @ xi_Z2_j)
 
-                B_Magnus_j = (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
-                    ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j
-                )
+                B_Magnus_j = (ds / 2) * (B_Z1_j + B_Z2_j) + (
+                    jnp.sqrt(3) * ds_sq / 12
+                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)  # shape (4, 4)
                 T_step = lie.Tangent_gi_se3(
@@ -1273,10 +1265,7 @@ class GVS(DynamicalSystem):
                     "ij,nmjk->nmik", Ad_g_step_inv, (J_prev + T_step_B_step)
                 )  # shape (num_segments, 6, max_dof)
 
-                # TODO: investigate and check if this needs to be removed
-                J_next_scaled = J_next.at[:, :, 3:6, :].multiply(length_i)
-
-                return (g_next, J_next), J_next_scaled
+                return (g_next, J_next), J_next
 
             indices_eval_points = jnp.arange(self.max_nip - 1)
 
@@ -1294,15 +1283,9 @@ class GVS(DynamicalSystem):
             # (g_tip_link, J_tip_link) = carry
             # J_link = jnp.array(J_link)  # shape (max_nip - 1, num_segments, 6, max_dof)
 
-            J_link = jnp.concatenate(
-                (jnp.expand_dims(J_j_scaled, axis=0), J_link), axis=0
-            )
+            J_link = jnp.concatenate((jnp.expand_dims(J_j, axis=0), J_link), axis=0)
 
-            # TODO: investigate and check if this needs to be removed
-            g_tip_link_scaled = g_tip_link.at[0:3, 3].multiply(length_i)
-            J_tip_link_scaled = J_tip_link.at[:, :, 3:6, :].multiply(length_i)
-
-            return (g_tip_link_scaled, J_tip_link_scaled), J_link
+            return (g_tip_link, J_tip_link), J_link
 
         indices_link = jnp.arange(0, self.num_segments)
 
@@ -1380,8 +1363,8 @@ class GVS(DynamicalSystem):
             # propagate Jacobian through this joint (left-trivialized, body-frame)
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # shape (6, 6)
 
-            g_j_scaled = g_tip @ g_joint_i
-            J_j_scaled = jnp.einsum(
+            g_j = g_tip @ g_joint_i
+            J_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_i_B_joint_i)
             )
 
@@ -1392,11 +1375,6 @@ class GVS(DynamicalSystem):
             length_i = self.V_L[i_segment]
             B_Z1_i = self.V_B_Z1[i_segment]  # (max_nip-1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # (max_nip-1, 6, max_dof)
-
-            # scale like in _jacobian_gauss (work in normalized coordinate, then rescale)
-            # TODO: investigate and check if this needs to be removed
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)
-            J_j = J_j_scaled.at[:, :, 3:6, :].divide(length_i)
 
             q_i = q_gathered[i_segment, 1]
 
@@ -1414,6 +1392,8 @@ class GVS(DynamicalSystem):
                 g_prev, J_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
+                ds = H * length_i
+                ds_sq = ds * ds
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
@@ -1424,13 +1404,13 @@ class GVS(DynamicalSystem):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
-                    ad_xi_Z1_j @ xi_Z2_j
-                )
+                Magnus_j = (ds / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * ds_sq / 12
+                ) * (ad_xi_Z1_j @ xi_Z2_j)
 
-                B_Magnus_j = (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
-                    ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j
-                )
+                B_Magnus_j = (ds / 2) * (B_Z1_j + B_Z2_j) + (
+                    jnp.sqrt(3) * ds_sq / 12
+                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
                 T_step = lie.Tangent_gi_se3(Magnus_j, 1, self.global_eps)
@@ -1499,6 +1479,8 @@ class GVS(DynamicalSystem):
                 # partial cell j with Hp
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
+                ds = Hp * length_i
+                ds_sq = ds * ds
 
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
@@ -1508,11 +1490,11 @@ class GVS(DynamicalSystem):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_p = (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * Hp * Hp / 12
+                Magnus_p = (ds / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * ds_sq / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
-                B_Magnus_p = (Hp / 2) * (Bp[0] + Bp[1]) + (
-                    jnp.sqrt(3) * Hp * Hp / 12
+                B_Magnus_p = (ds / 2) * (Bp[0] + Bp[1]) + (
+                    jnp.sqrt(3) * ds_sq / 12
                 ) * (ad_xi_Z1_j @ Bp[1] - ad_xi_Z2_j @ Bp[0])
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
@@ -1529,17 +1511,13 @@ class GVS(DynamicalSystem):
                 J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_in + T_block))
                 return g_out, J_out
 
-            g_out, J_out = lax.cond(
+            g_pass, J_pass = lax.cond(
                 i_segment < segment_idx,
                 lambda _: do_full_link(),
                 lambda _: do_partial_link(),
                 operand=None,
             )
 
-            # TODO: investigate and check if this needs to be removed
-            # rescale back like in _jacobian_gauss for the state we pass forward
-            g_pass = g_out.at[0:3, 3].multiply(length_i)
-            J_pass = J_out.at[:, :, 3:6, :].multiply(length_i)
             return (g_pass, J_pass), (g_pass, J_pass)
 
         # walk the chain, but freeze state after we pass the segment that contains s
