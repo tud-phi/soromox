@@ -92,7 +92,6 @@ class GVS(DynamicalSystem):
       rectangular, and elliptical shapes.
 
     """
-
     # Static attributes
     num_segments: int = eqx.field(static=True)  # Number of links in the robot
     max_dof: int = eqx.field(
@@ -116,6 +115,7 @@ class GVS(DynamicalSystem):
     Z2: float = eqx.field(static=True, default=0.5 + math.sqrt(3) / 6)
 
     B_select: Array  # Strain basis functions for the robot (6, max_dof)
+    normalize_rotational_configuration: bool = eqx.field(static=True, default=False)  # Whether to normalize the rotational strains
 
     global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
 
@@ -157,6 +157,7 @@ class GVS(DynamicalSystem):
         gravity_vector: List[float],
         max_dof: Optional[int] = None,
         max_nGauss: Optional[int] = None,
+        normalize_rotational_configuration: bool = False,
     ) -> None:
         """
         Initialize the GVS class.
@@ -206,6 +207,8 @@ class GVS(DynamicalSystem):
             Maximum number of DOFs for a link or joint. If None, computed as minimal from the inputs.
         max_nGauss : int, optional
             Maximum number of Gauss points across all segments. If None, computed as minimal from `n_gauss_list`.
+        normalize_rotational_configuration : bool, optional
+            Whether to normalize the rotational strains to be unitless, which can improve the numerical stability of the simulation. Defaults to False.
 
         Raises
         ------
@@ -404,6 +407,11 @@ class GVS(DynamicalSystem):
         # Strain selector ========================================================
         strain_selector_full = jnp.concatenate(V_strain_selector, axis=0)
         self.B_select = compute_strain_basis(strain_selector_full)
+        
+        # Normalize the rotational strains if requested
+        self.normalize_rotational_configuration = normalize_rotational_configuration
+        if self.normalize_rotational_configuration:
+            raise NotImplementedError("Normalization of rotational strains is not implemented yet.")
 
         # Degrees of freedom =========================================================
         self.dof_tot_system = int(
@@ -865,8 +873,8 @@ class GVS(DynamicalSystem):
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
+                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
+                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
@@ -880,7 +888,10 @@ class GVS(DynamicalSystem):
                     ad_xi_Z1_j @ xi_Z2_j
                 )
 
-                Magnus_j = Magnus_j.at[3:6].multiply(length_i)
+                # magnus expansion
+                Magnus_j = Magnus_j * length_i
+
+                # Exponential map to get the new transformation matrix
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
 
                 g_j = g_j_prev @ g_step
@@ -1015,8 +1026,8 @@ class GVS(DynamicalSystem):
 
                 H = Xs_i[j + 1] - Xs_i[j]
 
-                xi_Z1_j = (B_Z1_i[j] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
-                xi_Z2_j = (B_Z2_i[j] @ q_i) + xi_ref_Z2_i[j].at[:3].multiply(length_i)
+                xi_Z1_j = (B_Z1_i[j] @ q_i) + xi_ref_Z1_i[j]
+                xi_Z2_j = (B_Z2_i[j] @ q_i) + xi_ref_Z2_i[j]
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
@@ -1024,7 +1035,8 @@ class GVS(DynamicalSystem):
                     ad_xi_Z1_j @ xi_Z2_j
                 )
 
-                Magnus_j = Magnus_j.at[3:6].multiply(length_i)
+                # magnus expansion
+                Magnus_j = Magnus_j * length_i
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
 
                 return g_prev @ g_step, None
@@ -1079,19 +1091,15 @@ class GVS(DynamicalSystem):
 
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2, 6, max_dof)
 
-                xi_Z1_j = (Bp[0] @ q_i) + self.V_xi_ref_Z1[i_segment][j].at[
-                    :3
-                ].multiply(length_i)
-                xi_Z2_j = (Bp[1] @ q_i) + self.V_xi_ref_Z2[i_segment][j].at[
-                    :3
-                ].multiply(length_i)
+                xi_Z1_j = (Bp[0] @ q_i) + self.V_xi_ref_Z1[i_segment][j]
+                xi_Z2_j = (Bp[1] @ q_i) + self.V_xi_ref_Z2[i_segment][j]
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 Magnus_p = (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
                     jnp.sqrt(3) * Hp**2 / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
-                Magnus_p = Magnus_p.at[3:6].multiply(length_i)
+                Magnus_p = Magnus_p * length_i
 
                 g_p = lie.exp_gn_SE3(Magnus_p, self.global_eps)
 
@@ -1201,6 +1209,7 @@ class GVS(DynamicalSystem):
             B_Z1_i = self.V_B_Z1[i_segment]  # shape (max_nip - 1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # shape (max_nip - 1, 6, max_dof)
 
+            # TODO: investigate and check if this needs to be removed
             g_j = g_j_scaled.at[0:3, 3].divide(length_i)  # shape (4, 4)
             J_j = J_j_scaled.at[:, :, 3:6, :].divide(
                 length_i
@@ -1226,8 +1235,8 @@ class GVS(DynamicalSystem):
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
+                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
+                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
@@ -1264,6 +1273,7 @@ class GVS(DynamicalSystem):
                     "ij,nmjk->nmik", Ad_g_step_inv, (J_prev + T_step_B_step)
                 )  # shape (num_segments, 6, max_dof)
 
+                # TODO: investigate and check if this needs to be removed
                 J_next_scaled = J_next.at[:, :, 3:6, :].multiply(length_i)
 
                 return (g_next, J_next), J_next_scaled
@@ -1288,6 +1298,7 @@ class GVS(DynamicalSystem):
                 (jnp.expand_dims(J_j_scaled, axis=0), J_link), axis=0
             )
 
+            # TODO: investigate and check if this needs to be removed
             g_tip_link_scaled = g_tip_link.at[0:3, 3].multiply(length_i)
             J_tip_link_scaled = J_tip_link.at[:, :, 3:6, :].multiply(length_i)
 
@@ -1383,6 +1394,7 @@ class GVS(DynamicalSystem):
             B_Z2_i = self.V_B_Z2[i_segment]  # (max_nip-1, 6, max_dof)
 
             # scale like in _jacobian_gauss (work in normalized coordinate, then rescale)
+            # TODO: investigate and check if this needs to be removed
             g_j = g_j_scaled.at[0:3, 3].divide(length_i)
             J_j = J_j_scaled.at[:, :, 3:6, :].divide(length_i)
 
@@ -1406,12 +1418,8 @@ class GVS(DynamicalSystem):
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
 
-                xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval].at[:3].multiply(
-                    length_i
-                )
-                xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval].at[:3].multiply(
-                    length_i
-                )
+                xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval]
+                xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval]
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
@@ -1494,8 +1502,8 @@ class GVS(DynamicalSystem):
 
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
-                xi_Z1_j = (Bp[0] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
-                xi_Z2_j = (Bp[1] @ q_i) + xi_ref_Z2_i[j].at[:3].multiply(length_i)
+                xi_Z1_j = (Bp[0] @ q_i) + xi_ref_Z1_i[j]
+                xi_Z2_j = (Bp[1] @ q_i) + xi_ref_Z2_i[j]
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
@@ -1528,6 +1536,7 @@ class GVS(DynamicalSystem):
                 operand=None,
             )
 
+            # TODO: investigate and check if this needs to be removed
             # rescale back like in _jacobian_gauss for the state we pass forward
             g_pass = g_out.at[0:3, 3].multiply(length_i)
             J_pass = J_out.at[:, :, 3:6, :].multiply(length_i)
@@ -1642,6 +1651,7 @@ class GVS(DynamicalSystem):
             B_Z1_i = self.V_B_Z1[i_segment]  # shape (max_nip - 1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # shape (max_nip - 1, 6, max_dof)
 
+            # TODO: investigate and check if this needs to be removed
             g_j = g_j_scaled.at[0:3, 3].divide(length_i)
             Jd_j = Jd_j_scaled.at[:, :, 3:6, :].divide(length_i)
             eta_j = eta_j_scaled.at[3:6].divide(length_i)
@@ -1664,8 +1674,8 @@ class GVS(DynamicalSystem):
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
+                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
+                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
@@ -1719,6 +1729,7 @@ class GVS(DynamicalSystem):
                 )
                 _eta_j = Ad_g_step_inv @ (eta_j + T_B_Magnus_step @ qd_i)
 
+                # TODO: investigate and check if this needs to be removed
                 Jd_j_scaled = _Jd_j.at[:, :, 3:6, :].multiply(length_i)
 
                 return (_g_j, _Jd_j, _eta_j), Jd_j_scaled
@@ -1743,6 +1754,7 @@ class GVS(DynamicalSystem):
                 (jnp.expand_dims(Jd_j_scaled, axis=0), Jd_link), axis=0
             )
 
+            # TODO: investigate and check if this needs to be removed
             g_tip_link_scaled = g_tip_link.at[0:3, 3].multiply(length_i)
             Jd_tip_link_scaled = Jd_tip_link.at[:, :, 3:6, :].multiply(length_i)
             eta_tip_link_scaled = eta_tip_link.at[3:6].multiply(length_i)
@@ -1851,6 +1863,7 @@ class GVS(DynamicalSystem):
             B_Z1_i = self.V_B_Z1[i_segment]  # (max_nip-1,6,max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # (max_nip-1,6,max_dof)
 
+            # TODO: investigate and check if this needs to be removed
             g_j = g_j_scaled.at[0:3, 3].divide(length_i)
             Jd_j = Jd_j_scaled.at[:, :, 3:6, :].divide(length_i)
             eta_j = eta_j_scaled.at[3:6].divide(length_i)
@@ -1872,12 +1885,8 @@ class GVS(DynamicalSystem):
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_Z1 = (B_Z1_i[j_eval] @ q_i) + xi_ref_Z1_i[j_eval].at[:3].multiply(
-                    length_i
-                )
-                xi_Z2 = (B_Z2_i[j_eval] @ q_i) + xi_ref_Z2_i[j_eval].at[:3].multiply(
-                    length_i
-                )
+                xi_Z1 = (B_Z1_i[j_eval] @ q_i) + xi_ref_Z1_i[j_eval]
+                xi_Z2 = (B_Z2_i[j_eval] @ q_i) + xi_ref_Z2_i[j_eval]
                 xid_Z1 = B_Z1_i[j_eval] @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
@@ -1979,8 +1988,8 @@ class GVS(DynamicalSystem):
                 )  # two partial Gauss points
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
 
-                xi_Z1 = (Bp[0] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
-                xi_Z2 = (Bp[1] @ q_i) + xi_ref_Z2_i[j].at[:3].multiply(length_i)
+                xi_Z1 = (Bp[0] @ q_i) + xi_ref_Z1_i[j]
+                xi_Z2 = (Bp[1] @ q_i) + xi_ref_Z2_i[j]
                 xid_Z1 = Bp[0] @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
@@ -2030,6 +2039,7 @@ class GVS(DynamicalSystem):
                 operand=None,
             )
 
+            # TODO: investigate and check if this needs to be removed
             # rescale the state passed to the next segment (same as the other functions)
             g_pass = g_out.at[0:3, 3].multiply(length_i)
             Jd_pass = Jd_out.at[:, :, 3:6, :].multiply(length_i)
@@ -2405,7 +2415,7 @@ class GVS(DynamicalSystem):
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
 
                 Es_j_scaled = (
-                    Es_j.at[:3, :].divide(length_i**3).at[3:, :].divide(length_i)
+                    Es_j.divide(length_i)
                 )
 
                 return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
@@ -2510,7 +2520,7 @@ class GVS(DynamicalSystem):
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
 
                 Gs_j_scaled = (
-                    Gs_j.at[:3, :].divide(length_i**3).at[3:, :].divide(length_i)
+                    Gs_j.divide(length_i)
                 )
 
                 return Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)

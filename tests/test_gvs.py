@@ -20,7 +20,7 @@ ATOL = Tolerance.atol()
 NUM_RANDOM_SAMPLES = 5
 
 
-def build_matched_gvs_pcs(num_segments: int = 1):
+def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS, PCS]:
     """
     Build a GVS model with constant-strain basis (monomial order 0) and fixed joints
     and a PCS model with the same physical parameters, so their predictions match.
@@ -64,7 +64,7 @@ def build_matched_gvs_pcs(num_segments: int = 1):
         )
         for _ in range(num_segments)
     ]
-    n_gauss_list = [5 for _ in range(num_segments)]
+    n_gauss_list = [n_gauss for _ in range(num_segments)]
 
     # Gravity: pick physically consistent vectors as per note
     robot_gvs = GVS(
@@ -192,6 +192,7 @@ def gvs_jacobian_inertialframe_from_body(
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_gvs_pcs_coherence(num_segments: int) -> None:
+    print("\nTesting GVS-PCS coherence for", num_segments, "segments")
     robot_gvs, robot_pcs = build_matched_gvs_pcs(num_segments)
     n = int(robot_gvs.dof_tot_system)
 
@@ -224,17 +225,24 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
 
     for q, qd in config_velocity_cases:
         for s in s_loop:
-            g_gvs = robot_gvs.forward_kinematics(q, float(s))
-            g_pcs = robot_pcs.forward_kinematics(q, float(s))
-            assert_allclose(g_gvs, g_pcs, rtol=RTOL, atol=ATOL)
+            print("q =\n", q)
+            print("qd =\n", qd)
+            print("s =", s)
 
-            Jb_gvs = robot_gvs.jacobian_bodyframe(q, float(s))
-            Jb_pcs = robot_pcs.jacobian_bodyframe(q, float(s))
-            assert_allclose(Jb_gvs, Jb_pcs, rtol=RTOL, atol=ATOL)
+            # check the forward kinematics
+            g_gvs = robot_gvs.forward_kinematics(q, s)
+            g_pcs = robot_pcs.forward_kinematics(q, s)
+            assert_allclose(g_gvs, g_pcs, rtol=RTOL, atol=ATOL), "FK mismatch at s={}".format(s)
 
-            Ji_gvs = gvs_jacobian_inertialframe_from_body(robot_gvs, q, float(s))
-            Ji_pcs = robot_pcs.jacobian_inertialframe(q, float(s))
-            assert_allclose(Ji_gvs, Ji_pcs, rtol=RTOL, atol=ATOL)
+            # check the Jacobians in body and inertial frames
+            Jb_gvs = robot_gvs.jacobian_bodyframe(q, s)
+            Jb_pcs = robot_pcs.jacobian_bodyframe(q, s)
+            assert_allclose(Jb_gvs, Jb_pcs, rtol=RTOL, atol=ATOL), "Jb mismatch at s={}".format(s)
+
+            # check the Jacobians in inertial frames
+            Ji_gvs = gvs_jacobian_inertialframe_from_body(robot_gvs, q, s)
+            Ji_pcs = robot_pcs.jacobian_inertialframe(q, s)
+            assert_allclose(Ji_gvs, Ji_pcs, rtol=RTOL, atol=ATOL), "Ji mismatch at s={}".format(s)
 
         B_gvs = robot_gvs.inertia_matrix(q)
         B_pcs = robot_pcs.inertia_matrix(q)
