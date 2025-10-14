@@ -1354,7 +1354,7 @@ class GVS(DynamicalSystem):
             T_g_joint = lie.Tangent_gi_se3(xi_joint_i, 1, self.global_eps)  # (6,6)
 
             # contribution of this joint to its own block
-            T_g_joint_i_B_joint_i = (
+            T_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
                 .set(T_g_joint @ B_joint_i)
@@ -1365,7 +1365,7 @@ class GVS(DynamicalSystem):
 
             g_j = g_tip @ g_joint_i
             J_j = jnp.einsum(
-                "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_i_B_joint_i)
+                "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_B_joint_i)
             )
 
             # Link ========================
@@ -1416,7 +1416,7 @@ class GVS(DynamicalSystem):
                 T_step = lie.Tangent_gi_se3(Magnus_j, 1, self.global_eps)
 
                 # add contribution for this link block
-                T_step_B_step = (
+                T_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
                     .set(T_step @ B_Magnus_j)
@@ -1426,7 +1426,7 @@ class GVS(DynamicalSystem):
 
                 g_next = g_prev @ g_step
                 J_next = jnp.einsum(
-                    "ij,nmjk->nmik", Ad_step_inv, (J_prev + T_step_B_step)
+                    "ij,nmjk->nmik", Ad_step_inv, (J_prev + T_block)
                 )
 
                 return (g_next, J_next), None
@@ -1562,7 +1562,7 @@ class GVS(DynamicalSystem):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
         """
         # compute the Jacobian in the body frame
-        J_local = self._J_local(q, s)
+        J_local = self.jacobian_bodyframe(q, s)
 
         g_s = self.forward_kinematics(q, s)
         # construct g with zero translation for the Adjoint transformation
@@ -1571,8 +1571,7 @@ class GVS(DynamicalSystem):
         )
         Ad_g = lie.Adjoint_g_SE3(g_rot)
 
-        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local)
-        J_global = J_global_ @ self.B_xi
+        J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
 
         return J_global
 
@@ -1794,7 +1793,7 @@ class GVS(DynamicalSystem):
         return Jd
 
     @eqx.filter_jit
-    def jacobian_derivative_bodyframe(self, q: Array, qd: Array, s: Array) -> Array:
+    def jacobian_and_derivative_bodyframe(self, q: Array, qd: Array, s: Array) -> Array:
         """
         Compute the Jacobian derivative of the forward kinematics at a point s along the robot in the body frame.
         Args:
@@ -1803,6 +1802,7 @@ class GVS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
+            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
             Jd_local (Array): Jacobian derivative of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
         """
         q_gathered = self._min_size_gathered(q)
@@ -1811,19 +1811,19 @@ class GVS(DynamicalSystem):
         # Segment contenant s et abscisse locale
         segment_idx, s_local = self.classify_segment(s)
 
-        def body_segment_i(carry: Array, i_segment: Array) -> Tuple[Tuple[Array, Array, Array], Tuple[Array, Array, Array]]:
+        def body_segment_i(carry: Tuple[Array, Array, Array, Array], i_segment: Array) -> Tuple[Tuple[Array, Array, Array, Array], Tuple[Array, Array, Array, Array]]:
             """Propagate body-frame Jdot across a segment up to `s`.
 
             Args:
-                carry (Array): Tuple (g_tip, Jd_tip, eta_tip).
+                carry (Array): Tuple (g_tip, J_tip, Jd_tip, eta_tip).
                 i_segment (Array): Segment index.
 
             Returns:
-                Tuple[Tuple[Array, Array, Array], Tuple[Array, Array, Array]]:
-                    - (g_pass, Jd_pass, eta_pass): scaled tip state to pass forward.
-                    - (g_pass, Jd_pass, eta_pass): same as scan output.
+                Tuple[Tuple[Array, Array, Array, Array], Tuple[Array, Array, Array, Array]]:
+                    - (g_pass, J_pass, Jd_pass, eta_pass): scaled tip state to pass forward.
+                    - (g_pass, J_pass, Jd_pass, eta_pass): same as scan output.
             """
-            g_tip, Jd_tip, eta_tip = carry
+            g_tip, J_tip, Jd_tip, eta_tip = carry
 
             # Joint ============================
             B_joint_i = self.V_B_joint[i_segment]  # (6, max_dof)
@@ -1840,7 +1840,12 @@ class GVS(DynamicalSystem):
                 xi_joint_i, xid_joint_i, 1, self.global_eps
             )  # (6,6)
 
-            # contribution dans le bloc "joint" de ce segment
+            # contribution of this joint to its own block
+            T_g_joint_B_joint_i = (
+                jnp.zeros((self.num_segments, 2, 6, self.max_dof))
+                .at[i_segment, 0]
+                .set(T_g_joint @ B_joint_i)
+            )
             Td_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
@@ -1852,11 +1857,14 @@ class GVS(DynamicalSystem):
 
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # (6,6)
 
-            g_j_scaled = g_tip @ g_joint_i
-            Jd_j_scaled = jnp.einsum(
+            g_j = g_tip @ g_joint_i
+            J_j = jnp.einsum(
+                "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_B_joint_i)
+            )
+            Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
             )
-            eta_j_scaled = Ad_g_joint_inv @ (
+            eta_j = Ad_g_joint_inv @ (
                 eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
             )
 
@@ -1868,27 +1876,24 @@ class GVS(DynamicalSystem):
             B_Z1_i = self.V_B_Z1[i_segment]  # (max_nip-1,6,max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # (max_nip-1,6,max_dof)
 
-            # TODO: investigate and check if this needs to be removed
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)
-            Jd_j = Jd_j_scaled.at[:, :, 3:6, :].divide(length_i)
-            eta_j = eta_j_scaled.at[3:6].divide(length_i)
-
             q_i = q_gathered[i_segment, 1]
             qd_i = qd_gathered[i_segment, 1]
 
-            def full_cell(carry: Array, j_eval: Array) -> Tuple[Tuple[Array, Array, Array], None]:
+            def full_cell(carry: Tuple[Array, Array, Array, Array], j_eval: Array) -> Tuple[Tuple[Array, Array, Array, Array], None]:
                 """Consume a full cell; update g, Jdot and convective term.
 
                 Args:
-                    carry (Array): Tuple (g_prev, Jd_prev, eta_prev).
+                    carry (Array): Tuple (g_prev, J_prev, Jd_prev, eta_prev).
                     j_eval (Array): Cell index (int).
 
                 Returns:
-                    Tuple[Tuple[Array, Array, Array], None]: Updated carry and dummy output.
+                    Tuple[Tuple[Array, Array, Array, Array], None]: Updated carry and dummy output.
                 """
-                g_prev, Jd_prev, eta_prev = carry
+                g_prev, J_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
+                ds = H * length_i
+                ds_sq = ds * ds
 
                 xi_Z1 = (B_Z1_i[j_eval] @ q_i) + xi_ref_Z1_i[j_eval]
                 xi_Z2 = (B_Z2_i[j_eval] @ q_i) + xi_ref_Z2_i[j_eval]
@@ -1897,12 +1902,12 @@ class GVS(DynamicalSystem):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
 
-                Magnus_j = (H / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = (ds / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * ds_sq / 12) * (
                     ad_xi_Z1_j @ xi_Z2
                 )
 
-                B_Magnus_j = (H / 2) * (B_Z1_i[j_eval] + B_Z2_i[j_eval]) + (
-                    jnp.sqrt(3) * H**2 / 12
+                B_Magnus_j = (ds / 2) * (B_Z1_i[j_eval] + B_Z2_i[j_eval]) + (
+                    jnp.sqrt(3) * ds_sq / 12
                 ) * (ad_xi_Z1_j @ B_Z2_i[j_eval] - ad_xi_Z2_j @ B_Z1_i[j_eval])
 
                 Magnusd_j = B_Magnus_j @ qd_i
@@ -1919,7 +1924,13 @@ class GVS(DynamicalSystem):
                     Magnus_j, Magnusd_j, 1, self.global_eps
                 )
 
-                Td_block_link = (
+                # contribution of this link cell to its own block
+                T_block = (
+                    jnp.zeros((self.num_segments, 2, 6, self.max_dof))
+                    .at[i_segment, 1]
+                    .set(T_step @ B_Magnus_j)
+                )
+                Td_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
                     .set(
@@ -1932,61 +1943,65 @@ class GVS(DynamicalSystem):
                 Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_next = g_prev @ g_step
+                J_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_prev + T_block))
                 Jd_next = jnp.einsum(
-                    "ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block_link)
+                    "ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block)
                 )
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
 
-                return (g_next, Jd_next, eta_next), None
+                return (g_next, J_next, Jd_next, eta_next), None
 
             # Case 1: segment entirely before s → consume every cell
-            def do_full_link() -> Tuple[Array, Array, Array]:
+            def do_full_link() -> Tuple[Array, Array, Array, Array]:
                 """Segment before target `s`: integrate all its cells (Jdot).
 
                 Returns:
-                    Tuple[Array, Array, Array]: (g_end, Jd_end, eta_end).
+                    Tuple[Array, Array, Array, Array]: (g_end, J_end, Jd_end, eta_end).
                 """
-                (g_end, Jd_end, eta_end), _ = lax.scan(
-                    full_cell, (g_j, Jd_j, eta_j), jnp.arange(self.max_nip - 1)
+                (g_end, J_end, Jd_end, eta_end), _ = lax.scan(
+                    full_cell, (g_j, J_j, Jd_j, eta_j), jnp.arange(self.max_nip - 1)
                 )
-                return g_end, Jd_end, eta_end
+                return g_end, J_end, Jd_end, eta_end
 
             # Case 2: segment containing s → full cells up to j-1 then partial cell Hp
-            def do_partial_link() -> Tuple[Array, Array, Array]:
+            def do_partial_link() -> Tuple[Array, Array, Array, Array]:
                 """Segment containing `s`: consume up to j-1, then partial cell.
 
                 Returns:
-                    Tuple[Array, Array, Array]: (g_out, Jd_out, eta_out) at `s`.
+                    Tuple[Array, Array, Array, Array]: (g_out, J_out, Jd_out, eta_out) at `s`.
                 """
                 x = s_local / length_i
                 j = jnp.clip(jnp.searchsorted(Xs_i, x) - 1, 0, self.max_nip - 2)
 
                 # consume up to j-1 (masked)
-                def full_cell_masked(carry: Array, idx: Array) -> Tuple[Tuple[Array, Array, Array], None]:
+                def full_cell_masked(carry: Tuple[Array, Array, Array, Array], idx: Array) -> Tuple[Tuple[Array, Array, Array, Array], None]:
                     """Advance only for idx < j; keep state otherwise.
 
                     Args:
-                        carry (Array): Tuple (g_p, Jd_p, eta_p).
+                        carry (Array): Tuple (g_p, J_p, Jd_p, eta_p).
                         idx (Array): Cell index (int).
 
                     Returns:
-                        Tuple[Tuple[Array, Array, Array], None]: Updated or kept carry; dummy output.
+                        Tuple[Tuple[Array, Array, Array, Array], None]: Updated or kept carry; dummy output.
                     """
-                    (g_p, Jd_p, eta_p), _ = full_cell(carry, idx)
-                    g_keep, Jd_keep, eta_keep = carry
+                    (g_p, J_p, Jd_p, eta_p), _ = full_cell(carry, idx)
+                    g_keep, J_keep, Jd_keep, eta_keep = carry
                     return (
                         lax.select(idx < j, g_p, g_keep),
+                        lax.select(idx < j, J_p, J_keep),
                         lax.select(idx < j, Jd_p, Jd_keep),
                         lax.select(idx < j, eta_p, eta_keep),
                     ), None
 
-                (g_in, Jd_in, eta_in), _ = lax.scan(
-                    full_cell_masked, (g_j, Jd_j, eta_j), jnp.arange(self.max_nip - 1)
+                (g_in, J_in, Jd_in, eta_in), _ = lax.scan(
+                    full_cell_masked, (g_j, J_j, Jd_j, eta_j), jnp.arange(self.max_nip - 1)
                 )
 
                 # partial cell j of size Hp
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
+                ds = Hp * length_i
+                ds_sq = ds * ds
 
                 Xp = jnp.array(
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
@@ -2000,15 +2015,15 @@ class GVS(DynamicalSystem):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
 
-                Magnus_p = (Hp / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * Hp * Hp / 12) * (
+                Magnus_p = (ds / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * ds_sq / 12) * (
                     ad_xi_Z1_j @ xi_Z2
                 )
-                B_Magnus_p = (Hp / 2) * (Bp[0] + Bp[1]) + (
-                    jnp.sqrt(3) * Hp * Hp / 12
+                B_Magnus_p = (ds / 2) * (Bp[0] + Bp[1]) + (
+                    jnp.sqrt(3) * ds_sq / 12
                 ) * (ad_xi_Z1_j @ Bp[1] - ad_xi_Z2_j @ Bp[0])
                 Magnusd_p = B_Magnus_p @ qd_i
                 Magnusdd_dq_p = (
-                    ((jnp.sqrt(3) * Hp * Hp) / 6) * lie.adjoint_se3(xid_Z1) @ Bp[1]
+                    ((jnp.sqrt(3) * ds_sq) / 6) * lie.adjoint_se3(xid_Z1) @ Bp[1]
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
@@ -2017,7 +2032,12 @@ class GVS(DynamicalSystem):
                     Magnus_p, Magnusd_p, 1, self.global_eps
                 )
 
-                Td_block_link = (
+                T_block = (
+                    jnp.zeros((self.num_segments, 2, 6, self.max_dof))
+                    .at[i_segment, 1]
+                    .set(T_step @ B_Magnus_p)
+                )
+                Td_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
                     .set(
@@ -2030,59 +2050,62 @@ class GVS(DynamicalSystem):
                 Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_out = g_in @ g_step
+                J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_in + T_block))
                 Jd_out = jnp.einsum(
-                    "ij,nmjk->nmik", Ad_step_inv, (Jd_in + Td_block_link)
+                    "ij,nmjk->nmik", Ad_step_inv, (Jd_in + Td_block)
                 )
                 eta_out = Ad_step_inv @ (eta_in + T_step @ B_Magnus_p @ qd_i)
 
-                return g_out, Jd_out, eta_out
+                return g_out, J_out, Jd_out, eta_out
 
-            g_out, Jd_out, eta_out = lax.cond(
+            g_out, J_out, Jd_out, eta_out = lax.cond(
                 i_segment < segment_idx,
                 lambda _: do_full_link(),
                 lambda _: do_partial_link(),
                 operand=None,
             )
 
-            # TODO: investigate and check if this needs to be removed
-            # rescale the state passed to the next segment (same as the other functions)
-            g_pass = g_out.at[0:3, 3].multiply(length_i)
-            Jd_pass = Jd_out.at[:, :, 3:6, :].multiply(length_i)
-            eta_pass = eta_out.at[3:6].multiply(length_i)
-
-            return (g_pass, Jd_pass, eta_pass), (g_pass, Jd_pass, eta_pass)
+            return (g_out, J_out, Jd_out, eta_out), (g_out, J_out, Jd_out, eta_out)
 
         # Traverse the chain; freeze the state after the segment containing s
-        def step(carry: Array, i: Array) -> Tuple[Tuple[Array, Array, Array], None]:
+        def step(carry: Tuple[Array, Array, Array, Array], i: Array) -> Tuple[Tuple[Array, Array, Array, Array], None]:
             """Walk segments; freeze state after the segment containing `s`.
 
             Args:
-                carry (Array): Tuple (g_curr, Jd_curr, eta_curr).
+                carry (Array): Tuple (g_curr, J_curr, Jd_curr, eta_curr).
                 i (Array): Segment index (int).
 
             Returns:
-                Tuple[Tuple[Array, Array, Array], None]: Next carry and dummy output.
+                Tuple[Tuple[Array, Array, Array, Array], None]: Next carry and dummy output.
             """
-            (g_curr, Jd_curr, eta_curr), _ = body_segment_i(carry, i)
+            (g_curr, J_curr, Jd_curr, eta_curr), _ = body_segment_i(carry, i)
             g_next = jnp.where(i <= segment_idx, g_curr, carry[0])
-            Jd_next = jnp.where(i <= segment_idx, Jd_curr, carry[1])
-            eta_next = jnp.where(i <= segment_idx, eta_curr, carry[2])
-            return (g_next, Jd_next, eta_next), None
+            J_next = jnp.where(i <= segment_idx, J_curr, carry[1])
+            Jd_next = jnp.where(i <= segment_idx, Jd_curr, carry[2])
+            eta_next = jnp.where(i <= segment_idx, eta_curr, carry[3])
+            return (g_next, J_next, Jd_next, eta_next), None
 
         g0 = jnp.eye(4)
+        J0 = jnp.zeros((self.num_segments, 2, 6, self.max_dof))
         Jd0 = jnp.zeros((self.num_segments, 2, 6, self.max_dof))
         eta0 = jnp.zeros((6,))
-        (g_s, Jd_full, _), _ = lax.scan(
-            step, (g0, Jd0, eta0), jnp.arange(self.num_segments)
+        (g_s, J_full, Jd_full, eta_full), _ = lax.scan(
+            step, (g0, J0, Jd0, eta0), jnp.arange(self.num_segments)
         )
 
+        # reshape J and Jd
+        # (num_segments, 2, 6, max_dof) => (6, num_segments * 2 * max_dof)
+        J_flat = jnp.transpose(J_full, (2, 0, 1, 3)).reshape(
+            6, self.num_segments * 2 * self.max_dof
+        )
+        J_local = J_flat @ self.B_select  # (6, num_active_strains)
         # (num_segments, 2, 6, max_dof) => (6, num_segments * 2 * max_dof)
         Jd_flat = jnp.transpose(Jd_full, (2, 0, 1, 3)).reshape(
             6, self.num_segments * 2 * self.max_dof
         )
         Jd_local = Jd_flat @ self.B_select  # (6, num_active_strains)
 
-        return Jd_local
+        return J_local, Jd_local
     
     @eqx.filter_jit
     def jacobian_and_derivative_inertialframe(
@@ -2100,7 +2123,7 @@ class GVS(DynamicalSystem):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_configurations)
         """
-        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
+        J_local, Jd_local = self.jacobian_and_derivative_bodyframe(q, qd, s)
 
         # compute the Adjoint transformation matrix at point s
         g_s = self.forward_kinematics(q, s)
@@ -2109,9 +2132,8 @@ class GVS(DynamicalSystem):
         )
         Ad_g = lie.Adjoint_g_SE3(g_rot)
 
-        # compute the body twist eta
-        J_body = J_local_ @ self.B_xi
-        eta_body = J_body @ qd
+        # compute the body twist eta at point s
+        eta_body = J_local @ qd
 
         # compute the time-derivative of the Adjoint transformation matrix
         omega = eta_body[:3]
@@ -2119,13 +2141,10 @@ class GVS(DynamicalSystem):
         Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
 
         # rotate both J and Jd to the inertial frame
-        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local_)
-        Jd_global_ = jnp.einsum("ij, jk->ik", Ad_g, Jd_local_) + jnp.einsum(
-            "ij, jk->ik", Ad_g_dot, J_local_
+        J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
+        Jd_global = jnp.einsum("ij, jk->ik", Ad_g, Jd_local) + jnp.einsum(
+            "ij, jk->ik", Ad_g_dot, J_local
         )
-
-        J_global = J_global_ @ self.B_select
-        Jd_global = Jd_global_ @ self.B_select
 
         return J_global, Jd_global
 
@@ -2567,9 +2586,7 @@ class GVS(DynamicalSystem):
                 Gs_j = Gs_i[i_eval]  # (6, 6)
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
 
-                Gs_j_scaled = (
-                    Gs_j.divide(length_i)
-                )
+                Gs_j_scaled = Gs_j / length_i
 
                 return Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)
 
