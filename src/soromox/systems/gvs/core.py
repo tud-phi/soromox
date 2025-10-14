@@ -1548,6 +1548,33 @@ class GVS(DynamicalSystem):
         J_local = J_flat @ self.B_select  # -> (6, num_active_strains)
 
         return J_local
+    
+    @eqx.filter_jit
+    def jacobian_inertialframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the Jacobian of the forward kinematics at a point s along the robot in the inertial frame.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_configurations,).
+            s (Array): point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
+        """
+        # compute the Jacobian in the body frame
+        J_local = self._J_local(q, s)
+
+        g_s = self.forward_kinematics(q, s)
+        # construct g with zero translation for the Adjoint transformation
+        g_rot = jnp.block(
+            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
+        )
+        Ad_g = lie.Adjoint_g_SE3(g_rot)
+
+        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local)
+        J_global = J_global_ @ self.B_xi
+
+        return J_global
 
     @eqx.filter_jit
     def _jacobian_derivative_gauss(
@@ -2056,6 +2083,51 @@ class GVS(DynamicalSystem):
         Jd_local = Jd_flat @ self.B_select  # (6, num_active_strains)
 
         return Jd_local
+    
+    @eqx.filter_jit
+    def jacobian_and_derivative_inertialframe(
+        self, q: Array, qd: Array, s: Array
+    ) -> Tuple[Array, Array]:
+        """
+        Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_configurations,).
+            qd (Array): time-derivative of the generalized coordinates of shape (num_active_configurations,).
+            s (Array): point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
+            Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_configurations)
+        """
+        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
+
+        # compute the Adjoint transformation matrix at point s
+        g_s = self.forward_kinematics(q, s)
+        g_rot = jnp.block(
+            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
+        )
+        Ad_g = lie.Adjoint_g_SE3(g_rot)
+
+        # compute the body twist eta
+        J_body = J_local_ @ self.B_xi
+        eta_body = J_body @ qd
+
+        # compute the time-derivative of the Adjoint transformation matrix
+        omega = eta_body[:3]
+        eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
+        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+
+        # rotate both J and Jd to the inertial frame
+        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local_)
+        Jd_global_ = jnp.einsum("ij, jk->ik", Ad_g, Jd_local_) + jnp.einsum(
+            "ij, jk->ik", Ad_g_dot, J_local_
+        )
+
+        J_global = J_global_ @ self.B_select
+        Jd_global = Jd_global_ @ self.B_select
+
+        return J_global, Jd_global
 
     # ===========================================
     # Dynamical matrices computation
