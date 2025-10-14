@@ -2380,12 +2380,16 @@ class GVS(DynamicalSystem):
         Returns:
             G_full (Array): Full gravitational force vector, shape (num_segments * 2 * max_dof, 1)
         """
-        V_J = self._jacobian_gauss(
-            q_gathered
-        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
+
+        # Get forward kinematics at all quadrature points
         V_g = self._forward_kinematics_gauss(
             q_gathered
         )  # (num_segments, max_nip, 4, 4)
+
+        # Get Jacobian at all quadrature points
+        V_J = self._jacobian_gauss(
+            q_gathered
+        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
 
         def G_i(i: Array) -> Array:
             """Assemble gravitational force contributions for one segment.
@@ -2400,7 +2404,7 @@ class GVS(DynamicalSystem):
             Ws_i = self.V_Ws[i]  # (max_nip, 1, )
             g_i = V_g[i]  # (max_nip, 4, 4)
             J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
-            M_i = self.V_Ms[i]  # (max_nip, 6, 6)
+            Ms_i = self.V_Ms[i]  # (max_nip, 6, 6)
 
             def G_ij(j: Array) -> Array:
                 """Gravitational block at a single quadrature point.
@@ -2415,7 +2419,7 @@ class GVS(DynamicalSystem):
                 g_ij = g_i[j]  # (4, 4)
                 Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)  # (6, 6)
                 J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
-                M_ij = M_i[j]  # (6, 6)
+                M_ij = Ms_i[j]  # (6, 6)
 
                 G_ij = Ws_ij * J_ij.T @ M_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
                 return G_ij
@@ -2711,9 +2715,9 @@ class GVS(DynamicalSystem):
                     U_G_ij (Array): Gravitational potential energy contribution.
                 """
                 Ws_ij = Ws_i[j]
-                M_ij = Ms_i[j]
+                Ms_ij = Ms_i[j]
                 g_ij = g_seg[j]
-                mass_density = jnp.trace(M_ij[3:, 3:]) / 3.0
+                mass_density = jnp.trace(Ms_ij[3:, 3:]) / 3.0
                 position = g_ij[:3, 3]
                 p6 = jnp.concatenate(
                     [jnp.zeros(3, dtype=position.dtype), position]
@@ -2821,12 +2825,112 @@ class GVS(DynamicalSystem):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        # evaluate the dynamical matrices
-        B = self.inertia_matrix(q)
-        C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_force(q)
-        D = self.damping_matrix()
-        tau_el = self.elastic_force(q)
+        q_gathered = self._min_size_gathered(q)
+        qd_gathered = self._min_size_gathered(qd)
+
+        # flatten qd_gathered for use in Jacobian derivative
+        qd_flat = qd_gathered.reshape(-1)
+
+        # compute the forward kinematics at all quadrature points
+        V_g = self._forward_kinematics_gauss(
+            q_gathered
+        )  # (num_segments, max_nip, 4, 4)
+
+        # compute the jacobian and its derivative at all quadrature points
+        V_J, V_Jd = self._jacobian_derivative_gauss(
+            q_gathered, self._min_size_gathered(qd)
+        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
+
+        def dynamical_terms_i(i: Array) -> Tuple[Array, Array, Array]:
+            """
+            Compute the integrand for the dynamical matrices at the i-th segment.
+            Args:
+                i (Array): index of the segment
+            Returns:
+                B_blocks_i (Array): The inertia matrix integrand blocks.
+                C_blocks_i (Array): The Coriolis matrix integrand blocks.
+                G_blocks_i (Array): The gravitational force integrand blocks.
+            """
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
+
+            g_i = V_g[i]  # (max_nip, 4, 4)
+            J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
+            Jd_i = V_Jd[i]  # (max_nip, 6, num_segments * 2 * max_dof)
+            Ms_i = self.V_Ms[i]  # (max_nip, 6, 6)
+
+            def dynamical_terms_ij(j: Array) -> Tuple[Array, Array, Array]:
+                """
+                Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
+                Args:
+                    j (Array): index of the quadrature point
+                Returns:
+                    B_ij (Array): The inertia matrix integrand.
+                    C_ij (Array): The Coriolis matrix integrand.
+                    G_ij (Array): The gravitational force integrand.
+                """
+                Ws_ij = Ws_i[j]
+                Ms_ij = Ms_i[j]  # (6, 6)
+
+                # Extract the forward kinematics at the quadrature point
+                g_ij = g_i[j]  # (4, 4)
+
+                # Extract the Jacobian and its derivative at the quadrature point
+                J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
+                Jd_ij = Jd_i[i][j]  # (6, num_segments * 2 * max_dof)
+
+                # Adjoint inverse of g at the quadrature point
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)  # (6, 6)
+
+                # Inertia matrix integrand
+                B_ij = Ws_ij * (
+                    J_ij.T @ Ms_ij @ J_ij
+                )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+
+                # Coriolis matrix integrand
+                C_ij = Ws_ij * (
+                    J_ij.T
+                    @ (Ms_ij @ Jd_ij + lie.coadjoint_se3(J_ij @ qd_flat) @ Ms_ij @ J_ij)
+                )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+
+                G_ij = Ws_ij * J_ij.T @ Ms_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
+
+                return B_ij, C_ij, G_ij
+
+            # we can skip the first and last quadrature points since their weight is zero
+            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_terms_ij)(
+                jnp.arange(1, self.max_nip - 1)
+            ) 
+
+            # scale by the segment length
+            B_blocks_i = B_blocks_i * length_i
+            C_blocks_i = C_blocks_i * length_i
+            G_blocks_i = G_blocks_i * length_i
+
+            return B_blocks_i, C_blocks_i, G_blocks_i
+
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(
+            dynamical_terms_i
+        )(
+            jnp.arange(self.num_segments)
+        ) 
+
+        # sum over segments and quadrature points
+        B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
+        C_full = jnp.sum(C_blocks_tot, axis=(0, 1))
+        G_full = jnp.sum(G_blocks_tot, axis=(0, 1))
+
+        # apply `B_select` to get the reduced matrices and vectors
+        B = self.B_select.T @ B_full @ self.B_select
+        C = self.B_select.T @ C_full @ self.B_select
+        G = self.B_select.T @ G_full
+        K = self.K_full @ self.B_select
+        D = self.D_full @ self.B_select
+
+        # evaluate the elastic force
+        tau_el = K @ q
+
+        # evaluate the actuation force
         tau_u = self.actuation_force(q, u)
 
         B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
