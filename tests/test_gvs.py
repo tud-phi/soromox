@@ -202,14 +202,17 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
     linear_cfg = jnp.linspace(0.01, 0.01 * n, n, dtype=jnp.float64)
     linear_vel = jnp.linspace(-0.02, -0.02 * n, n, dtype=jnp.float64)
 
-    random_cfg = random_q(robot_gvs, jax.random.PRNGKey(1234), scale=0.04)
-    random_vel = random_q(robot_gvs, jax.random.PRNGKey(5678), scale=0.07)
-
     config_velocity_cases = (
         (zero_cfg, zero_vel),
         (linear_cfg, linear_vel),
-        (random_cfg, random_vel),
     )
+
+    for i in range(NUM_RANDOM_SAMPLES):
+        key = jax.random.PRNGKey(100 + i)
+        key_q, key_qd = jax.random.split(key)
+        q_random = random_q(robot_gvs, key_q, scale=0.05)
+        qd_random = random_q(robot_gvs, key_qd, scale=0.1)
+        config_velocity_cases += ((q_random, qd_random),)
 
     L_total = float(jnp.sum(robot_gvs.V_L))
     s_candidates = jnp.concatenate(
