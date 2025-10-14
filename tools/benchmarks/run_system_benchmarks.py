@@ -3,8 +3,8 @@
 
 This script measures both the ahead-of-time JIT compilation cost and the steady-state
 execution time (after compilation) for selected systems and core methods. It supports
-benchmarking the Pendulum, PlanarPCS, and PCS implementations over a sweep of link or
-segment counts, and can optionally visualise the results.
+benchmarking the Pendulum, PlanarPCS, PCS, and GVS implementations over a sweep of link
+or segment counts, and can optionally visualise the results.
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ except ImportError as exc:  # pragma: no cover - this is a runtime guard
 
 import matplotlib.pyplot as plt
 
+from soromox.systems.gvs import GVS, BasisAttributes, JointAttributes, LinkAttributes
 from soromox.systems.pcs import PCS
 from soromox.systems.planar_pcs import PlanarPCS
 from soromox.systems.pendulum import Pendulum
@@ -236,6 +237,71 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
     return ctx
 
 
+def _gvs_factory(num_segments: int) -> GVS:
+    if num_segments < 1:
+        raise ValueError("num_segments must be positive for GVS benchmarks")
+
+    lengths = jnp.linspace(0.1, 0.16, num_segments)
+    radii = jnp.linspace(0.015, 0.022, num_segments)
+    densities = jnp.full((num_segments,), 1020.0)
+    youngs = jnp.full((num_segments,), 6.5e5)
+    poisson = jnp.full((num_segments,), 0.45)
+    damping = jnp.full((num_segments,), 3.5)
+
+    links: List[LinkAttributes] = []
+    for idx in range(num_segments):
+        links.append(
+            LinkAttributes(
+                section="Circular",
+                E=float(youngs[idx]),
+                nu=float(poisson[idx]),
+                rho=float(densities[idx]),
+                eta=float(damping[idx]),
+                L=float(lengths[idx]),
+                r_i=float(radii[idx]),
+                r_f=float(radii[idx]),
+            )
+        )
+
+    joints = [JointAttributes(jointtype="Fixed") for _ in range(num_segments)]
+    bases = [
+        BasisAttributes(
+            basistype="Monomial",
+            Bdof=[1, 1, 1, 1, 1, 1],
+            Bodr=[0, 0, 0, 0, 0, 0],
+            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for _ in range(num_segments)
+    ]
+    n_gauss_list = [5 for _ in range(num_segments)]
+
+    return GVS(
+        links_list=links,
+        joints_list=joints,
+        basis_list=bases,
+        n_gauss_list=n_gauss_list,
+        gravity_vector=[0.0, 0.0, -9.81],
+    )
+
+
+def _gvs_context(system: GVS) -> MutableMapping[str, Array]:
+    dof = int(system.dof_tot_system)
+    q = jnp.linspace(-0.12, 0.12, dof)
+    qd = jnp.linspace(0.2, -0.2, dof)
+    s_tip = jnp.sum(system.V_L)
+
+    ctx: MutableMapping[str, Array] = {
+        "q": q,
+        "qd": qd,
+        "y": jnp.concatenate([q, qd]),
+        "t": jnp.array(0.0),
+        "u": jnp.zeros((system.num_actuators,)),
+        "tau_ext": jnp.zeros((dof,)),
+        "s_tip": s_tip,
+    }
+    return ctx
+
+
 def _build_system_registry() -> Mapping[str, SystemBenchmark]:
 
     pendulum_cases = (
@@ -420,6 +486,83 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
         ),
     )
 
+    gvs_cases = (
+        BenchmarkCase(
+            name="forward_kinematics",
+            builder=lambda sys, ctx, _: (sys.forward_kinematics, (ctx["q"], ctx["s_tip"])),
+        ),
+        BenchmarkCase(
+            name="jacobian_bodyframe",
+            builder=lambda sys, ctx, _: (sys.jacobian_bodyframe, (ctx["q"], ctx["s_tip"])),
+        ),
+        BenchmarkCase(
+            name="jacobian_inertialframe",
+            builder=lambda sys, ctx, _: (sys.jacobian_inertialframe, (ctx["q"], ctx["s_tip"])),
+        ),
+        BenchmarkCase(
+            name="jacobian_and_derivative_bodyframe",
+            builder=lambda sys, ctx, _: (
+                sys.jacobian_and_derivative_bodyframe,
+                (ctx["q"], ctx["qd"], ctx["s_tip"]),
+            ),
+        ),
+        BenchmarkCase(
+            name="jacobian_and_derivative_inertialframe",
+            builder=lambda sys, ctx, _: (
+                sys.jacobian_and_derivative_inertialframe,
+                (ctx["q"], ctx["qd"], ctx["s_tip"]),
+            ),
+        ),
+        BenchmarkCase(
+            name="inertia_matrix",
+            builder=lambda sys, ctx, _: (sys.inertia_matrix, (ctx["q"],)),
+        ),
+        BenchmarkCase(
+            name="coriolis_matrix",
+            builder=lambda sys, ctx, _: (sys.coriolis_matrix, (ctx["q"], ctx["qd"])),
+        ),
+        BenchmarkCase(
+            name="gravitational_force",
+            builder=lambda sys, ctx, _: (sys.gravitational_force, (ctx["q"],)),
+        ),
+        BenchmarkCase(
+            name="forward_dynamics",
+            builder=lambda sys, ctx, _: (
+                lambda t, y, args: sys.forward_dynamics(t, y, args),
+                (ctx["t"], ctx["y"], (ctx["u"], ctx["tau_ext"])),
+            ),
+        ),
+        BenchmarkCase(
+            name="total_energy",
+            builder=lambda sys, ctx, _: (sys.total_energy, (ctx["q"], ctx["qd"])),
+        ),
+        BenchmarkCase(
+            name="resolve_upon_time",
+            builder=lambda sys, ctx, runtime: (
+                lambda q0, qd0, u, tau, t0, t1, dt, save_dt: sys.resolve_upon_time(
+                    q0=q0,
+                    qd0=qd0,
+                    u=u,
+                    tau_ext=tau,
+                    t0=t0,
+                    t1=t1,
+                    dt=dt,
+                    save_dt=save_dt,
+                ),
+                (
+                    ctx["q"],
+                    ctx["qd"],
+                    ctx["u"],
+                    ctx["tau_ext"],
+                    jnp.array(0.0),
+                    jnp.array(runtime.duration),
+                    jnp.array(runtime.dt),
+                    runtime.save_dt,
+                ),
+            ),
+        ),
+    )
+
     return {
         "pendulum": SystemBenchmark(
             factory=_pendulum_factory,
@@ -438,6 +581,12 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             size_label="num_segments",
             build_context=_pcs_context,
             cases=pcs_cases,
+        ),
+        "gvs": SystemBenchmark(
+            factory=_gvs_factory,
+            size_label="num_segments",
+            build_context=_gvs_context,
+            cases=gvs_cases,
         ),
     }
 
