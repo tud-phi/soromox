@@ -2187,50 +2187,51 @@ class GVS(DynamicalSystem):
         )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
 
         # Define function for each quadrature point
-        def B_segment_i(i_segment: Array) -> Array:
+        def B_i(i: Array) -> Array:
             """Assemble inertia contributions for one segment by quadrature.
 
             Args:
-                i_segment (Array): Segment index (int).
+                i (Array): Segment index (int).
 
             Returns:
-                Array: Blocks over quadrature points, shape
+                B_blocks_i (Array): Blocks over quadrature points, shape
                     (max_nip, num_segments*2*max_dof, num_segments*2*max_dof).
             """
-            length_i = self.V_L[i_segment]
-            Ws_i = self.V_Ws[i_segment]  # (max_nip, 1, )
-            J_i = V_J[i_segment]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Ms_i = self.V_Ms[i_segment]  # (max_nip, 6, 6)
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
+            J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
+            Ms_i = self.V_Ms[i]  # (max_nip, 6, 6)
 
-            def B_eval_points(i_eval: Array) -> Array:
+            def B_ij(j: Array) -> Array:
                 """Inertia block at a single quadrature point.
 
                 Args:
-                    i_eval (Array): Quadrature point index (int).
+                    j (Array): Quadrature point index (int).
 
                 Returns:
-                    Array: Block of shape (num_segments*2*max_dof, num_segments*2*max_dof).
+                    B_ij (Array): Block of shape (num_segments*2*max_dof, num_segments*2*max_dof).
                 """
-                Ws_j = Ws_i[i_eval]
-                J_j = J_i[i_eval]  # (6, num_segments * 2 * max_dof)
-                Ms_j = Ms_i[i_eval]  # (6, 6)
+                Ws_ij = Ws_i[j]
+                J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
+                Ms_ij = Ms_i[j]  # (6, 6)
 
-                return Ws_j * (
-                    J_j.T @ Ms_j @ J_j
+                B_ij = Ws_ij * (
+                    J_ij.T @ Ms_ij @ J_ij
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+                return B_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_segment_i = vmap(B_eval_points)(
+            B_blocks_i = vmap(B_ij)(
                 jnp.arange(1, self.max_nip - 1)
-            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+            ) * length_i  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
             # # For debugging purposes, we can use a list comprehension
             # B_blocks_segment_i = jnp.stack([B_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
-            return B_blocks_segment_i * length_i
+            return B_blocks_i
 
         B_blocks_tot = vmap(
-            B_segment_i
+            B_i
         )(
             jnp.arange(self.num_segments)
         )  # (num_segments, max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
@@ -2238,6 +2239,7 @@ class GVS(DynamicalSystem):
         # # For debugging purposes, we can use a list comprehension
         # B_blocks_tot = jnp.stack([B_segment_i(i_segment) for i_segment in range(self.num_segments)])  # (num_segments, max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
+        # Sum over all segments and quadrature points
         B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
 
         return B_full
@@ -2285,53 +2287,54 @@ class GVS(DynamicalSystem):
         qd_flat = qd_gathered.reshape(-1)
 
         # Define function for each quadrature point
-        def C_segment_i(i_segment: Array) -> Array:
+        def C_i(i: Array) -> Array:
             """Assemble Coriolis contributions for one segment by quadrature.
 
             Args:
-                i_segment (Array): Segment index (int).
+                i (Array): Segment index (int).
 
             Returns:
-                Array: Blocks over quadrature points, shape
+                C_blocks_i (Array): Blocks over quadrature points, shape
                     (max_nip, num_segments*2*max_dof, num_segments*2*max_dof).
             """
-            length_i = self.V_L[i_segment]
-            Ws_i = self.V_Ws[i_segment]  # (max_nip, 1, )
-            J_i = V_J[i_segment]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Jd_i = V_Jd[i_segment]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Ms_i = self.V_Ms[i_segment]  # (max_nip, 6, 6)
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
+            J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
+            Jd_i = V_Jd[i]  # (max_nip, 6, num_segments * 2 * max_dof)
+            Ms_i = self.V_Ms[i]  # (max_nip, 6, 6)
 
-            def C_eval_points(i_eval: Array) -> Array:
+            def C_ij(j: Array) -> Array:
                 """Coriolis block at a single quadrature point.
 
                 Args:
-                    i_eval (Array): Quadrature point index (int).
+                    j (Array): Quadrature point index (int).
 
                 Returns:
-                    Array: Block of shape (num_segments*2*max_dof, num_segments*2*max_dof).
+                    C_ij (Array): Block of shape (num_segments*2*max_dof, num_segments*2*max_dof).
                 """
-                Ws_j = Ws_i[i_eval]
-                J_j = J_i[i_eval]  # (6, num_segments * 2 * max_dof)
-                Jd_j = Jd_i[i_eval]  # (6, num_segments * 2 * max_dof)
-                Ms_j = Ms_i[i_eval]  # (6, 6)
+                Ws_ij = Ws_i[j]
+                J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
+                Jd_ij = Jd_i[j]  # (6, num_segments * 2 * max_dof)
+                Ms_ij = Ms_i[j]  # (6, 6)
 
-                return Ws_j * (
-                    J_j.T
-                    @ (Ms_j @ Jd_j + lie.coadjoint_se3(J_j @ qd_flat) @ Ms_j @ J_j)
+                C_ij = Ws_ij * (
+                    J_ij.T
+                    @ (Ms_ij @ Jd_ij + lie.coadjoint_se3(J_ij @ qd_flat) @ Ms_ij @ J_ij)
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+                return C_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            C_blocks_segment_i = vmap(C_eval_points)(
+            C_blocks_i = vmap(C_ij)(
                 jnp.arange(1, self.max_nip - 1)
-            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
+            ) * length_i  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
             # For debugging purposes, we can use a list comprehension
             # C_blocks_segment_i = jnp.stack([C_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
-            return C_blocks_segment_i * length_i
+            return C_blocks_i
 
         C_blocks_tot = vmap(
-            C_segment_i
+            C_i
         )(
             jnp.arange(self.num_segments)
         )  # (num_segments, max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
@@ -2339,6 +2342,7 @@ class GVS(DynamicalSystem):
         # For debugging purposes, we can use a list comprehension
         # C_blocks_tot = jnp.stack([C_segment_i(i_segment) for i_segment in range(self.num_segments)])  # (num_segments, max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
+        # Sum over all segments and quadrature points
         C = jnp.sum(C_blocks_tot, axis=(0, 1))
 
         return C
@@ -2383,51 +2387,50 @@ class GVS(DynamicalSystem):
             q_gathered
         )  # (num_segments, max_nip, 4, 4)
 
-        def G_segment_i(i_segment: Array) -> Array:
+        def G_i(i: Array) -> Array:
             """Assemble gravitational force contributions for one segment.
 
             Args:
-                i_segment (Array): Segment index (int).
+                i (Array): Segment index (int).
 
             Returns:
-                Array: Blocks over quadrature points, shape (max_nip, num_segments*2*max_dof, 1).
+                G_blocks_i (Array): Blocks over quadrature points, shape (max_nip, num_segments*2*max_dof, 1).
             """
-            length_i = self.V_L[i_segment]
-            Ws_i = self.V_Ws[i_segment]  # (max_nip, 1, )
-            g_i = V_g[i_segment]  # (max_nip, 4, 4)
-            J_i = V_J[i_segment]  # (max_nip, 6, num_segments * 2 * max_dof)
-            M_i = self.V_Ms[i_segment]  # (max_nip, 6, 6)
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
+            g_i = V_g[i]  # (max_nip, 4, 4)
+            J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
+            M_i = self.V_Ms[i]  # (max_nip, 6, 6)
 
-            def G_eval_points(i_eval: Array) -> Array:
+            def G_ij(j: Array) -> Array:
                 """Gravitational block at a single quadrature point.
 
                 Args:
-                    i_eval (Array): Quadrature point index (int).
+                    j (Array): Quadrature point index (int).
 
                 Returns:
-                    Array: Block of shape (num_segments*2*max_dof, 1).
+                    G_ij (Array): Block of shape (num_segments*2*max_dof, 1).
                 """
-                Ws_j = Ws_i[i_eval]  # ()
-                g_j = g_i[i_eval]  # (4, 4)
-                Ad_g_j_inv = lie.Adjoint_g_inv_SE3(g_j)  # (6, 6)
-                J_j = J_i[i_eval]  # (6, num_segments * 2 * max_dof)
-                M_j = M_i[i_eval]  # (6, 6)
+                Ws_ij = Ws_i[j]  # ()
+                g_ij = g_i[j]  # (4, 4)
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)  # (6, 6)
+                J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
+                M_ij = M_i[j]  # (6, 6)
 
-                return (
-                    Ws_j * J_j.T @ M_j @ Ad_g_j_inv @ self.g
-                )  # (num_segments * 2 * max_dof, 1)
+                G_ij = Ws_ij * J_ij.T @ M_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
+                return G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            G_blocks_segment_i = vmap(G_eval_points)(
+            G_blocks_i = vmap(G_ij)(
                 jnp.arange(1, self.max_nip - 1)
-            )  # (max_nip - 2, num_segments * 2 * max_dof, 1)
+            ) * length_i  # (max_nip - 2, num_segments * 2 * max_dof, 1)
 
             # For debugging purposes, we can use a list comprehension
             # G_blocks_segment_i = jnp.stack([G_eval_points(i_eval) for i_eval in range(self.max_nip)])
 
-            return G_blocks_segment_i * length_i
+            return G_blocks_i
 
-        G_blocks_tot = vmap(G_segment_i)(
+        G_blocks_tot = vmap(G_i)(
             jnp.arange(self.num_segments)
         )  # (num_segments, max_nip, num_segments * 2 * max_dof, 1)
 
@@ -2468,14 +2471,14 @@ class GVS(DynamicalSystem):
             K_full (Array): Full stiffness matrix, shape (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
         """
 
-        def K_segment_i(i_segment: Array) -> Array:
+        def K_i(i: Array) -> Array:
             """Assemble stiffness contributions for one segment by quadrature.
 
             Args:
-                i_segment (Array): Segment index (int).
+                i (Array): Segment index (int).
 
             Returns:
-                Array: Two blocks (joint/link) of shape (2, max_dof, max_dof).
+                K_blocks_i (Array): Two blocks (joint/link) of shape (2, max_dof, max_dof).
             """
             # Joint ==============================
             K_joint_i = jnp.zeros(
@@ -2483,39 +2486,40 @@ class GVS(DynamicalSystem):
             )  # self.V_K_joint[i_segment]  # (max_dof, max_dof) TODO
 
             # Link ===============================
-            length_i = self.V_L[i_segment]
-            Ws_i = self.V_Ws[i_segment]  # (max_nip, 1, )
-            Es_i = self.V_Es[i_segment]  # (max_nip, 6, 6)
-            B_Xs_i = self.V_B_Xs[i_segment]  # (max_nip, 6, max_dof)
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
+            Es_i = self.V_Es[i]  # (max_nip, 6, 6)
+            B_Xs_i = self.V_B_Xs[i]  # (max_nip, 6, max_dof)
 
-            def K_eval_points(i_eval: Array) -> Array:
-                """Stiffness block at a single quadrature point.
+            def K_ij(j: Array) -> Array:
+                """
+                Stiffness block at a single quadrature point.
 
                 Args:
-                    i_eval (Array): Quadrature point index (int).
+                    j (Array): Quadrature point index (int).
 
                 Returns:
-                    Array: Block of shape (max_dof, max_dof).
+                    K_ij (Array): Block of shape (max_dof, max_dof).
                 """
-                Ws_j = Ws_i[i_eval]
-                Es_j = Es_i[i_eval]  # (6, 6)
-                B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
+                Ws_ij = Ws_i[j]
+                Es_ij = Es_i[j]  # (6, 6)
+                B_Xs_ij = B_Xs_i[j]  # (6, max_dof)
 
-                Es_j_scaled = Es_j / length_i
+                Es_j_scaled = Es_ij / length_i
 
-                return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
+                K_ij = Ws_ij * (B_Xs_ij.T @ Es_j_scaled @ B_Xs_ij)
+                return K_ij
 
             # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
-                jnp.sum(vmap(K_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
-                * length_i**2
+                jnp.sum(vmap(K_ij)(jnp.arange(1, self.max_nip - 1)), axis=0) * length_i**2
             )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with K_joint_i and K_segment_i
-            K_blocks_segment_i = jnp.stack([K_joint_i, K_link_i], axis=0)
-            return K_blocks_segment_i
+            K_blocks_i = jnp.stack([K_joint_i, K_link_i], axis=0)
+            return K_blocks_i
 
-        K_blocks_tot = vmap(K_segment_i)(
+        K_blocks_tot = vmap(K_i)(
             jnp.arange(self.num_segments)
         )  # (num_segments, 2, max_dof, max_dof)
 
@@ -2572,66 +2576,66 @@ class GVS(DynamicalSystem):
             D_full (Array): Full damping matrix, shape (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
         """
 
-        def D_segment_i(i_segment: Array) -> Array:
+        def D_i(i: Array) -> Array:
             """Assemble damping contributions for one segment by quadrature.
 
             Args:
-                i_segment (Array): Segment index (int).
+                i (Array): Segment index (int).
 
             Returns:
-                Array: Two blocks (joint/link) of shape (2, max_dof, max_dof).
+                D_blocks_i (Array): Two blocks (joint/link) of shape (2, max_dof, max_dof).
             """
-            # Joint ============================== TODO
+            # Joint ==============================
             D_joint_i = jnp.zeros(
                 (self.max_dof, self.max_dof)
             )  # Initialize joint stiffness matrix
 
             # Link ===============================
-            length_i = self.V_L[i_segment]
-            Ws_i = self.V_Ws[i_segment]  # (max_nip, 1, )
-            Gs_i = self.V_Gs[i_segment]  # (max_nip, 6, 6)
-            B_Xs_i = self.V_B_Xs[i_segment]  # (max_nip, 6, max_dof)
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
+            Gs_i = self.V_Gs[i]  # (max_nip, 6, 6)
+            B_Xs_i = self.V_B_Xs[i]  # (max_nip, 6, max_dof)
 
-            def D_eval_points(i_eval: Array) -> Array:
+            def D_ij(j: Array) -> Array:
                 """Damping block at a single quadrature point.
 
                 Args:
-                    i_eval (Array): Quadrature point index (int).
+                    j (Array): Quadrature point index (int).
 
                 Returns:
-                    Array: Block of shape (max_dof, max_dof).
+                    D_ij (Array): Block of shape (max_dof, max_dof).
                 """
-                Ws_j = Ws_i[i_eval]
-                Gs_j = Gs_i[i_eval]  # (6, 6)
-                B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
+                Ws_j = Ws_i[j]
+                Gs_j = Gs_i[j]  # (6, 6)
+                B_Xs_j = B_Xs_i[j]  # (6, max_dof)
 
                 Gs_j_scaled = Gs_j / length_i
 
-                return Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)
+                G_ij = Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)
+                return G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
             D_link_i = (
-                jnp.sum(vmap(D_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
-                * length_i**2
+                jnp.sum(vmap(D_ij)(jnp.arange(1, self.max_nip - 1)), axis=0) * length_i**2
             )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with D_joint_i and D_segment_i
-            D_blocks_segment_i = jnp.stack([D_joint_i, D_link_i], axis=0)
-            return D_blocks_segment_i
+            D_blocks_i = jnp.stack([D_joint_i, D_link_i], axis=0)
+            return D_blocks_i
 
-        D_blocks_tot = vmap(D_segment_i)(
+        D_blocks_tot = vmap(D_i)(
             jnp.arange(self.num_segments)
         )  # (num_segments, 2, max_dof, max_dof)
 
-        # Supposons que D_blocks est de forme (num_segments, 2, max_dof, max_dof)
+        # Assume that D_blocks is of the form (num_segments, 2, max_dof, max_dof)
         D_blocks_flat = D_blocks_tot.reshape(
             -1, self.max_dof, self.max_dof
         )  # (num_segments * 2, max_dof, max_dof)
 
-        # Convertir en liste de matrices
+        # Convert to list of matrices
         D_blocks_list = [D_blocks_flat[i] for i in range(D_blocks_flat.shape[0])]
 
-        # Construire la matrice diagonale par blocs
+        # Building the diagonal matrix in blocks
         D_full = jax.scipy.linalg.block_diag(*D_blocks_list)
 
         return D_full
@@ -2683,27 +2687,47 @@ class GVS(DynamicalSystem):
         q_gathered = self._min_size_gathered(q)
         g_list = self._forward_kinematics_gauss(q_gathered)
 
-        def segment_energy(i_segment: Array) -> Array:
-            length_i = self.V_L[i_segment]
-            Ws_i = self.V_Ws[i_segment]
-            Ms_i = self.V_Ms[i_segment]
-            g_seg = g_list[i_segment]
+        def U_G_i(i: Array) -> Array:
+            """
+            Compute the gravitational potential energy contribution for a single segment.
+            Args:
+                i (Array): Segment index.
 
-            def point_energy(j_eval: Array) -> Array:
-                Ws_j = Ws_i[j_eval]
-                M_j = Ms_i[j_eval]
-                g_j = g_seg[j_eval]
-                mass_density = jnp.trace(M_j[3:, 3:]) / 3.0
-                position = g_j[:3, 3]
+            Returns:
+                U_G_i (Array): Gravitational potential energy contribution.
+            """
+            length_i = self.V_L[i]
+            Ws_i = self.V_Ws[i]
+            Ms_i = self.V_Ms[i]
+            g_seg = g_list[i]
+
+            def U_G_ij(j: Array) -> Array:
+                """
+                Compute the gravitational potential energy contribution at a single quadrature point.
+                Args:
+                    j (Array): Quadrature point index.
+
+                Returns:
+                    U_G_ij (Array): Gravitational potential energy contribution.
+                """
+                Ws_ij = Ws_i[j]
+                M_ij = Ms_i[j]
+                g_ij = g_seg[j]
+                mass_density = jnp.trace(M_ij[3:, 3:]) / 3.0
+                position = g_ij[:3, 3]
                 p6 = jnp.concatenate(
                     [jnp.zeros(3, dtype=position.dtype), position]
                 )
-                return length_i * Ws_j * mass_density * jnp.dot(self.g, p6)
+                U_G_ij = length_i * Ws_ij * mass_density * jnp.dot(self.g, p6)
+                return U_G_ij
 
-            idx = jnp.arange(1, self.max_nip - 1)
-            return jnp.sum(vmap(point_energy)(idx))
+            # we can skip the first and last quadrature points since their weight is zero
+            U_G_i = jnp.sum(vmap(U_G_ij)(jnp.arange(1, self.max_nip - 1)))
+            return U_G_i
 
-        return jnp.sum(vmap(segment_energy)(jnp.arange(self.num_segments)))
+        # Total gravitational potential energy
+        U_G = jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
+        return U_G
 
     @eqx.filter_jit
     def potential_energy(self, q: Array) -> Array:

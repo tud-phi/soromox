@@ -2094,10 +2094,10 @@ class PlanarPCS(DynamicalSystem):
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
         )
 
-        def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
+        def dynamical_terms_i(i: Array) -> Tuple[Array, Array, Array]:
             M_i = self._local_mass_matrix(i)
 
-            def dynamical_matrices_ij(j: Array) -> Tuple[Array, Array, Array]:
+            def dynamical_terms_ij(j: Array) -> Tuple[Array, Array, Array]:
                 Ws_ij = Ws_scaled[i][j]
                 g_ij = g_ps[i, j]
                 J_ij = J_ps[i, j]
@@ -2117,9 +2117,9 @@ class PlanarPCS(DynamicalSystem):
 
                 return B_ij, C_ij, G_ij
 
-            return vmap(dynamical_matrices_ij)(jnp.arange(1, self.num_gauss_points - 1))
+            return vmap(dynamical_terms_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
             jnp.arange(self.num_segments)
         )
 

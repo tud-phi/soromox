@@ -2027,7 +2027,7 @@ class PCS(DynamicalSystem):
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
         )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
-        def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
+        def dynamical_terms_i(i: Array) -> Tuple[Array, Array, Array]:
             """
             Compute the integrand for the dynamical matrices at the i-th segment.
             Args:
@@ -2037,7 +2037,7 @@ class PCS(DynamicalSystem):
             """
             M_i = self._local_mass_matrix(i)
 
-            def dynamical_matrices_ij(j: Array) -> Tuple[Array, Array, Array]:
+            def dynamical_terms_ij(j: Array) -> Tuple[Array, Array, Array]:
                 """
                 Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
                 Args:
@@ -2074,14 +2074,14 @@ class PCS(DynamicalSystem):
                 return B_ij, C_ij, G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_ij)(
+            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_terms_ij)(
                 jnp.arange(1, self.num_gauss_points - 1)
             )
 
             return B_blocks_i, C_blocks_i, G_blocks_i
 
         # compute the dynamical matrices for each segment
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
             jnp.arange(self.num_segments)
         )
 
