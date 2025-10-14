@@ -283,6 +283,10 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
         C_gvs = robot_gvs.coriolis_matrix(q, qd)
         C_pcs = robot_pcs.coriolis_matrix(q, qd)
         assert_allclose(C_gvs, C_pcs, rtol=RTOL, atol=ATOL)
+        # coriolis forces
+        tau_cor_gvs = C_gvs @ qd
+        tau_cor_pcs = C_pcs @ qd
+        assert_allclose(tau_cor_gvs, tau_cor_pcs, rtol=RTOL, atol=ATOL)
 
         K_gvs = robot_gvs.stiffness_matrix()
         K_pcs = robot_pcs.stiffness_matrix()
