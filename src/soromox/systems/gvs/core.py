@@ -2421,7 +2421,7 @@ class GVS(DynamicalSystem):
                 J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
                 M_ij = Ms_i[j]  # (6, 6)
 
-                G_ij = Ws_ij * J_ij.T @ M_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
+                G_ij = - Ws_ij * J_ij.T @ M_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
                 return G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
@@ -2722,7 +2722,7 @@ class GVS(DynamicalSystem):
                 p6 = jnp.concatenate(
                     [jnp.zeros(3, dtype=position.dtype), position]
                 )
-                U_G_ij = length_i * Ws_ij * mass_density * jnp.dot(self.g, p6)
+                U_G_ij = -length_i * Ws_ij * mass_density * jnp.dot(self.g, p6)
                 return U_G_ij
 
             # we can skip the first and last quadrature points since their weight is zero
@@ -2896,7 +2896,7 @@ class GVS(DynamicalSystem):
                     @ (Ms_ij @ Jd_ij + lie.coadjoint_se3(J_ij @ qd_flat) @ Ms_ij @ J_ij)
                 )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
 
-                G_ij = Ws_ij * J_ij.T @ Ms_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
+                G_ij = -Ws_ij * J_ij.T @ Ms_ij @ Ad_g_inv_ij @ self.g  # (num_segments * 2 * max_dof, 1)
 
                 return B_ij, C_ij, G_ij
 

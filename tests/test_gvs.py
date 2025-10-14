@@ -67,12 +67,15 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
     n_gauss_list = [n_gauss for _ in range(num_segments)]
 
     # Gravity: pick physically consistent vectors as per note
+    g = jnp.array([0.0, 0.0, -9.81])
+
+    # initialize the GVS model
     robot_gvs = GVS(
         links_list=links,
         joints_list=joints,
         basis_list=bases,
         n_gauss_list=n_gauss_list,
-        gravity_vector=[0.0, 0.0, 9.81],
+        gravity_vector=g,
     )
 
     # PCS definition with identical geometry and material params
@@ -81,7 +84,7 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
         "L": Ls,
         "r": rs,
         "rho": rhos,
-        "g": jnp.array([0.0, 0.0, -9.81]),  # sign chosen to match GVS convention
+        "g": g,
         "E": E,
         "G": Gpcs,
     }
