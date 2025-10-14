@@ -78,6 +78,10 @@ class GVS(DynamicalSystem):
         Index of the strain basis type used for each segment.
     V_Bdof_params, V_Bodr_params : Array
         Parameters controlling the strain basis DOFs and orders.
+    K_full : Array
+        Precomputed full stiffness matrix for the robot.
+    D_full : Array
+        Precomputed full damping matrix for the robot.
 
     Notes
     -----
@@ -147,6 +151,10 @@ class GVS(DynamicalSystem):
     V_basistype_idx: Array  # Index of the basis type for each segment (num_segments,)
     V_Bdof_params: Array  # Parameters for the basis DOFs (num_segments, max_dof)
     V_Bodr_params: Array  # Parameters for the basis orientation (num_segments, max_dof)
+
+    # Precomputed full stiffness and damping matrices
+    K_full: Array  # Full stiffness matrix (dof_tot_max, dof_tot_max)
+    D_full: Array  # Full damping matrix (dof_tot_max, dof_tot_max)
 
     def __init__(
         self,
@@ -430,6 +438,9 @@ class GVS(DynamicalSystem):
         # Number of actuators
         self.num_actuators = self.dof_tot_system
 
+        # precompute the stiffness and damping matrices
+        self.precompute()
+
 
     def _build_segment_i(
         self,
@@ -691,6 +702,15 @@ class GVS(DynamicalSystem):
             xi_ref_Z2=xi_ref_Z2_full,
             K_joint=K_joint_full,
         )
+    
+    def precompute(self) -> None:
+        """
+        Precompute any necessary matrices or values for the simulation.
+
+        This method can be expanded to include additional precomputations as needed.
+        """
+        self.K_full = self._stiffness_full_matrix()
+        self.D_full = self._damping_full_matrix()
 
     # Gathering functions =========================================================
     @eqx.filter_jit
@@ -2520,7 +2540,8 @@ class GVS(DynamicalSystem):
         Returns:
             K (Array): Stiffness matrix, shape (dof_tot, dof_tot)
         """
-        K_full = self._stiffness_full_matrix()
+        # K_full = self._stiffness_full_matrix()
+        K_full = self.K_full  # Use precomputed stiffness matrix
 
         K = self.B_select.T @ K_full @ self.B_select
 
@@ -2623,7 +2644,8 @@ class GVS(DynamicalSystem):
         Returns:
             D (Array): Damping matrix, shape (dof_tot, dof_tot)
         """
-        D_full = self._damping_full_matrix()
+        # D_full = self._damping_full_matrix()
+        D_full = self.D_full  # Use precomputed damping matrix
 
         D = self.B_select.T @ D_full @ self.B_select
 
