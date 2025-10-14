@@ -234,15 +234,42 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
             g_pcs = robot_pcs.forward_kinematics(q, s)
             assert_allclose(g_gvs, g_pcs, rtol=RTOL, atol=ATOL), "FK mismatch at s={}".format(s)
 
-            # check the Jacobians in body and inertial frames
+            # check the Jacobians in body frames
             Jb_gvs = robot_gvs.jacobian_bodyframe(q, s)
             Jb_pcs = robot_pcs.jacobian_bodyframe(q, s)
-            assert_allclose(Jb_gvs, Jb_pcs, rtol=RTOL, atol=ATOL), "Jb mismatch at s={}".format(s)
+            assert_allclose(Jb_gvs, Jb_pcs, rtol=RTOL, atol=ATOL), "Jacobian bodyframe mismatch at s={}".format(s)
 
             # check the Jacobians in inertial frames
-            Ji_gvs = gvs_jacobian_inertialframe_from_body(robot_gvs, q, s)
+            Ji_gvs = robot_gvs.jacobian_inertialframe(q, s)
             Ji_pcs = robot_pcs.jacobian_inertialframe(q, s)
-            assert_allclose(Ji_gvs, Ji_pcs, rtol=RTOL, atol=ATOL), "Ji mismatch at s={}".format(s)
+            assert_allclose(Ji_gvs, Ji_pcs, rtol=RTOL, atol=ATOL), "Jacobian inertialframe mismatch at s={}".format(s)
+
+            # check the Jacobian derivatives in body frames
+            _, Jdb_gvs = robot_gvs.jacobian_derivative_bodyframe(q, qd, s)
+            _, Jdb_pcs = robot_pcs.jacobian_derivative_bodyframe(q, qd, s)
+            assert_allclose(Jdb_gvs, Jdb_pcs, rtol=RTOL, atol=ATOL), "Jacobian derivative bodyframe mismatch at s={}".format(s)
+
+            # check the Jacobian derivatives in inertial frames
+            _, Jdi_gvs = robot_gvs.jacobian_derivative_inertialframe(q, qd, s)
+            _, Jdi_pcs = robot_pcs.jacobian_derivative_inertialframe(q, qd, s)
+            assert_allclose(Jdi_gvs, Jdi_pcs, rtol=RTOL, atol=ATOL), "Jacobian derivative inertialframe mismatch at s={}".format(s)
+
+        g_joints_gvs = robot_gvs.forward_kinematics_joints(q)
+        print("g_joints_gvs.shape =", g_joints_gvs.shape)
+        g_tips_pcs = robot_pcs.forward_kinematics_tips(q)
+        print("g_tips_pcs.shape =", g_tips_pcs.shape)
+        assert_allclose(g_joints_gvs[1:], g_tips_pcs[:-1], rtol=RTOL, atol=ATOL)
+        
+        J_joints_gvs = robot_gvs.jacobian_bodyframe_joints(q)
+        print("J_joints_gvs.shape =", J_joints_gvs.shape)
+        J_tips_pcs = robot_pcs._J_local_tips(q)
+        print("J_tips_pcs.shape =", J_tips_pcs.shape)
+        assert_allclose(J_joints_gvs[1:], J_tips_pcs[:-1], rtol=RTOL, atol=ATOL)
+
+        J_joints_gvs, Jd_joints_gvs = robot_gvs.jacobian_derivative_joints(q, qd)
+        J_tips_pcs, Jd_tips_pcs = robot_pcs._J_Jd_local_tips(q, qd)
+        assert_allclose(J_joints_gvs, J_tips_pcs, rtol=RTOL, atol=ATOL)
+        assert_allclose(Jd_joints_gvs, Jd_tips_pcs, rtol=RTOL, atol=ATOL)
 
         B_gvs = robot_gvs.inertia_matrix(q)
         B_pcs = robot_pcs.inertia_matrix(q)
