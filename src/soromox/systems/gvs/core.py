@@ -2804,7 +2804,7 @@ class GVS(DynamicalSystem):
             actuation_args (Tuple, optional): Additional arguments for the actuation mapping function.
                 Default is None.
         Returns:
-            yd: Time derivative of the state vector.
+            yd (Array): Time derivative of the state vector.
         """
         # Split the state vector into configuration and velocity
         q, qd = jnp.split(y, 2)
