@@ -2837,8 +2837,11 @@ class GVS(DynamicalSystem):
         )  # (num_segments, max_nip, 4, 4)
 
         # compute the jacobian and its derivative at all quadrature points
-        V_J, V_Jd = self._jacobian_derivative_gauss(
-            q_gathered, self._min_size_gathered(qd)
+        V_J = self._jacobian_gauss(
+            q_gathered
+        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
+        V_Jd = self._jacobian_derivative_gauss(
+            q_gathered, qd_gathered
         )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
 
         def dynamical_terms_i(i: Array) -> Tuple[Array, Array, Array]:
@@ -2877,7 +2880,7 @@ class GVS(DynamicalSystem):
 
                 # Extract the Jacobian and its derivative at the quadrature point
                 J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
-                Jd_ij = Jd_i[i][j]  # (6, num_segments * 2 * max_dof)
+                Jd_ij = Jd_i[j]  # (6, num_segments * 2 * max_dof)
 
                 # Adjoint inverse of g at the quadrature point
                 Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)  # (6, 6)
@@ -2924,8 +2927,8 @@ class GVS(DynamicalSystem):
         B = self.B_select.T @ B_full @ self.B_select
         C = self.B_select.T @ C_full @ self.B_select
         G = self.B_select.T @ G_full
-        K = self.K_full @ self.B_select
-        D = self.D_full @ self.B_select
+        K = self.B_select.T @ self.K_full @ self.B_select
+        D = self.B_select.T @ self.D_full @ self.B_select
 
         # evaluate the elastic force
         tau_el = K @ q
