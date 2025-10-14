@@ -2392,9 +2392,7 @@ class GVS(DynamicalSystem):
                 Es_j = Es_i[i_eval]  # (6, 6)
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
 
-                Es_j_scaled = (
-                    Es_j.divide(length_i)
-                )
+                Es_j_scaled = Es_j / length_i
 
                 return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
 
@@ -2543,6 +2541,83 @@ class GVS(DynamicalSystem):
         D = self.B_select.T @ D_full @ self.B_select
 
         return D
+
+    def kinetic_energy(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the kinetic energy of the robot.
+        """
+        B = self.inertia_matrix(q)
+        return 0.5 * qd.T @ B @ qd
+
+    @eqx.filter_jit
+    def elastic_energy(self, q: Array) -> Array:
+        """
+        Compute the elastic energy stored in the robot.
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+        Returns:
+            U_el (Array): Elastic potential energy.
+        """
+        q_full = self.B_select @ q
+        K_full = self._stiffness_full_matrix()
+        return 0.5 * q_full.T @ K_full @ q_full
+
+    @eqx.filter_jit
+    def gravitational_energy(self, q: Array) -> Array:
+        """
+        Compute the gravitational potential energy of the robot.
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+        Returns:
+            U_g (Array): Gravitational potential energy.
+        """
+        q_gathered = self._min_size_gathered(q)
+        g_list = self._forward_kinematics_gauss(q_gathered)
+
+        def segment_energy(i_segment: Array) -> Array:
+            length_i = self.V_L[i_segment]
+            Ws_i = self.V_Ws[i_segment]
+            Ms_i = self.V_Ms[i_segment]
+            g_seg = g_list[i_segment]
+
+            def point_energy(j_eval: Array) -> Array:
+                Ws_j = Ws_i[j_eval]
+                M_j = Ms_i[j_eval]
+                g_j = g_seg[j_eval]
+                mass_density = jnp.trace(M_j[3:, 3:]) / 3.0
+                position = g_j[:3, 3]
+                p6 = jnp.concatenate(
+                    [jnp.zeros(3, dtype=position.dtype), position]
+                )
+                return length_i * Ws_j * mass_density * jnp.dot(self.g, p6)
+
+            idx = jnp.arange(1, self.max_nip - 1)
+            return jnp.sum(vmap(point_energy)(idx))
+
+        return jnp.sum(vmap(segment_energy)(jnp.arange(self.num_segments)))
+
+    @eqx.filter_jit
+    def potential_energy(self, q: Array) -> Array:
+        """
+        Compute the total potential energy (elastic + gravitational).
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+        Returns:
+            U (Array): Total potential energy (elastic + gravitational).
+        """
+        return self.elastic_energy(q) + self.gravitational_energy(q)
+
+    @eqx.filter_jit
+    def total_energy(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the total mechanical energy of the robot.
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+            qd (Array): generalized velocities of shape (dof_tot,).
+        Returns:
+            E (Array): Total mechanical energy (kinetic + potential).
+        """
+        return self.kinetic_energy(q, qd) + self.potential_energy(q)
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
