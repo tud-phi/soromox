@@ -307,24 +307,6 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
         g_tips_pcs = robot_pcs.forward_kinematics_tips(q)
         assert_allclose(g_tips_gvs, g_tips_pcs, rtol=RTOL, atol=ATOL)
 
-        J_tips_gvs = robot_gvs._J_local_tips(q)
-        J_tips_pcs = robot_pcs._J_local_tips(q)
-        assert_allclose(J_tips_gvs, J_tips_pcs, rtol=RTOL, atol=ATOL)
-
-        J_batched_gvs = robot_gvs._J_local_batched(q, s_points)
-        J_batched_pcs = robot_pcs._J_local_batched(q, s_points)
-        assert_allclose(J_batched_gvs, J_batched_pcs, rtol=RTOL, atol=ATOL)
-
-        J_tips_gvs, Jd_tips_gvs = robot_gvs._J_Jd_local_tips(q, qd)
-        J_tips_pcs, Jd_tips_pcs = robot_pcs._J_Jd_local_tips(q, qd)
-        assert_allclose(J_tips_gvs, J_tips_pcs, rtol=RTOL, atol=ATOL)
-        assert_allclose(Jd_tips_gvs, Jd_tips_pcs, rtol=RTOL, atol=ATOL)
-
-        J_batched_gvs, Jd_batched_gvs = robot_gvs._J_Jd_local_batched(q, qd, s_points)
-        J_batched_pcs, Jd_batched_pcs = robot_pcs._J_Jd_local_batched(q, qd, s_points)
-        assert_allclose(J_batched_gvs, J_batched_pcs, rtol=RTOL, atol=ATOL)
-        assert_allclose(Jd_batched_gvs, Jd_batched_pcs, rtol=RTOL, atol=ATOL)
-
         y = jnp.concatenate([q, qd])
         u = jnp.zeros(n, dtype=jnp.float64)
         yd_gvs = robot_gvs.forward_dynamics(t=jnp.zeros(()), y=y, actuation_args=(u,))

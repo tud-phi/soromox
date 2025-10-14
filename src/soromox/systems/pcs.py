@@ -1283,6 +1283,7 @@ class PCS(DynamicalSystem):
         J_body = J_local_ @ self.B_xi
         eta_body = J_body @ qd
 
+        # compute the time-derivative of the Adjoint transformation matrix
         omega = eta_body[:3]
         eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
         Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
