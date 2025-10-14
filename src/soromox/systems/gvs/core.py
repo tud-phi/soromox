@@ -1913,9 +1913,7 @@ class GVS(DynamicalSystem):
                 Magnusd_j = B_Magnus_j @ qd_i
 
                 Magnusdd_dq = (
-                    ((jnp.sqrt(3) * H**2) / 6)
-                    * lie.adjoint_se3(xid_Z1)
-                    @ B_Z2_i[j_eval]
+                    ((jnp.sqrt(3) * ds_sq) / 6) * lie.adjoint_se3(xid_Z1) @ B_Z2_i[j_eval]
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
