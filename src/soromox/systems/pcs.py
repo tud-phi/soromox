@@ -959,6 +959,33 @@ class PCS(DynamicalSystem):
         J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
 
         return J_global
+    
+    @eqx.filter_jit
+    def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute the Jacobian of the forward kinematics at a batch of points s_ps along the robot in the inertial frame.
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+        Returns:
+            J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
+        """
+        # compute the Jacobian in the body frame
+        J_local_ps = self.jacobian_bodyframe_batched(q, s_ps)  # shape (N, 6, num_active_strains)
+
+        g_ps = self.forward_kinematics_batched(q, s_ps)  # shape (N, 4, 4)
+        # construct g with zero translation for the Adjoint transformation
+        g_rot_ps = jnp.block(
+            [
+                [g_ps[:, :3, :3], jnp.zeros((g_ps.shape[0], 3, 1))],
+                [jnp.zeros((g_ps.shape[0], 1, 3)), jnp.ones((g_ps.shape[0], 1, 1))],
+            ]
+        )  # shape (N, 4, 4)
+        Ad_g_ps = vmap(lie.Adjoint_g_SE3)(g_rot_ps)  # shape (N, 6, 6)
+
+        J_global_ps = jnp.einsum("nij, njk->nik", Ad_g_ps, J_local_ps)  # shape (N, 6, num_active_strains)
+
+        return J_global_ps
 
     @eqx.filter_jit
     def _J_Jd_local_tips(self, q: Array, qd: Array) -> Tuple[Array, Array]:
@@ -1295,6 +1322,51 @@ class PCS(DynamicalSystem):
         )
 
         return J_global, Jd_global
+    
+    def jacobian_and_derivative_inertialframe_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> Tuple[Array, Array]:
+        """
+        Compute the Jacobian and its time-derivative for the forward kinematics at a batch of points s_ps along the robot in the inertial frame.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+
+        Returns:
+            J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
+            Jd_global_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_active_strains)
+        """
+        J_local_ps, Jd_local_ps = self.jacobian_and_derivative_bodyframe_batched(q, qd, s_ps)  # shape (N, 6, num_active_strains)
+
+        g_ps = self.forward_kinematics_batched(q, s_ps)  # shape (N, 4, 4)
+        # construct g with zero translation for the Adjoint transformation
+        g_rot_ps = jnp.block(
+            [
+                [g_ps[:, :3, :3], jnp.zeros((g_ps.shape[0], 3, 1))],
+                [jnp.zeros((g_ps.shape[0], 1, 3)), jnp.ones((g_ps.shape[0], 1, 1))],
+            ]
+        )  # shape (N, 4, 4)
+        Ad_g_ps = vmap(lie.Adjoint_g_SE3)(g_rot_ps)  # shape (N, 6, 6)
+
+        # compute the body twist eta for all points
+        eta_body_ps = jnp.einsum("ijk, k->ij", J_local_ps, qd)  # shape (N, 6)
+
+        # compute the time-derivative of the Adjoint transformation matrix for all points
+        omega_ps = eta_body_ps[:, :3]
+        eta_rot_ps = jnp.concatenate(
+            [omega_ps, jnp.zeros((omega_ps.shape[0], 3), dtype=omega_ps.dtype)],
+            axis=1,
+        )  # shape (N, 6)
+        Ad_g_dot_ps = jnp.einsum("nij, njk->nik", Ad_g_ps, vmap(lie.adjoint_se3)(eta_rot_ps))  # shape (N, 6, 6)
+
+        # rotate both J and Jd to the inertial frame
+        J_global_ps = jnp.einsum("nij, njk->nik", Ad_g_ps, J_local_ps)  # shape (N, 6, num_active_strains)
+        Jd_global_ps = jnp.einsum("nij, njk->nik", Ad_g_ps, Jd_local_ps) + jnp.einsum(
+            "nij, njk->nik", Ad_g_dot_ps, J_local_ps
+        )  # shape (N, 6, num_active_strains)
+        return J_global_ps, Jd_global_ps
 
     @eqx.filter_jit
     def jacobian(self, q: Array, s: Array) -> Array:

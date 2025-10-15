@@ -594,6 +594,24 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments: int):
                 f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_fd:\n{J_fd}"
             )
 
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(7890)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        J_batch = model.jacobian_inertialframe_batched(q, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single = model.jacobian_inertialframe(q, s_val)
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments: int):
@@ -723,6 +741,27 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments: in
                 f"num_segments={num_segments}, s={s}\nJd_impl:\n{onp.array(Jd_impl)}\nJd_jvp:\n{onp.array(Jd_jvp)}"
             )
 
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(7890)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(9876), scale=0.1)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_batch, Jd_batch = model.jacobian_and_derivative_inertialframe_batched(q, qd, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single, Jd_single = model.jacobian_and_derivative_inertialframe(q, qd, s_val)
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments: int):
