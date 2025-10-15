@@ -1874,19 +1874,29 @@ class GVS(DynamicalSystem):
                     + Td_g_joint @ B_joint_i
                 )
             )
-
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # (6,6)
+            print("Ad_g_joint_inv", Ad_g_joint_inv.shape)
 
+            # forward kinematics of joint
             g_j = g_tip @ g_joint_i
+            # bodyframe Jacobian of joint
             J_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_B_joint_i)
-            )
-            Jd_j = jnp.einsum(
-                "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
-            )
+            )  # (num_segments, 2, 6, 6)
+            print("J_j", J_j.shape)
+            
+            # compute the bodyframe velocity
             eta_j = Ad_g_joint_inv @ (
                 eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
-            )
+            )  # (6,)
+            print("eta_j", eta_j.shape)
+
+            # compute the bodyframe Jacobian derivative
+            Ad_g_joint_inv_dot = -lie.adjoint_se3(eta_j) @ Ad_g_joint_inv
+            print("Ad_g_joint_inv_dot", Ad_g_joint_inv_dot.shape)
+            Jd_j = jnp.einsum(
+                "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
+            ) + jnp.einsum("ij,nmjk->nmik", Ad_g_joint_inv_dot, T_g_joint_B_joint_i)
 
             # Link ========================
             Xs_i = self.V_Xs[i_segment]  # (max_nip,)
@@ -1909,6 +1919,7 @@ class GVS(DynamicalSystem):
                 Returns:
                     Tuple[Tuple[Array, Array, Array, Array], None]: Updated carry and dummy output.
                 """
+                jax.debug.print("do full cell")
                 g_prev, J_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
@@ -1967,10 +1978,18 @@ class GVS(DynamicalSystem):
                 )
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
 
+                # compute the bodyframe Jacobian derivative
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_next) @ Ad_step_inv
+                print("Ad_step_inv_dot", Ad_step_inv_dot.shape)
+                Jd_next = jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block)
+                ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv_dot, T_block)
+
                 return (g_next, J_next, Jd_next, eta_next), None
 
             # Case 1: segment entirely before s → consume every cell
             def do_full_link() -> Tuple[Array, Array, Array, Array]:
+                jax.debug.print("do full link")
                 """Segment before target `s`: integrate all its cells (Jdot).
 
                 Returns:
@@ -1988,6 +2007,7 @@ class GVS(DynamicalSystem):
                 Returns:
                     Tuple[Array, Array, Array, Array]: (g_out, J_out, Jd_out, eta_out) at `s`.
                 """
+                jax.debug.print("do partial link")
                 x = s_local / length_i
                 j = jnp.clip(jnp.searchsorted(Xs_i, x) - 1, 0, self.max_nip - 2)
 
@@ -2069,10 +2089,14 @@ class GVS(DynamicalSystem):
 
                 g_out = g_in @ g_step
                 J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_in + T_block))
+                eta_out = Ad_step_inv @ (eta_in + T_step @ B_Magnus_p @ qd_i)
+                jax.debug.print("eta_out = \n{e}", e=eta_out)
+
+                # compute the bodyframe Jacobian derivative
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_out) @ Ad_step_inv
                 Jd_out = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_in + Td_block)
-                )
-                eta_out = Ad_step_inv @ (eta_in + T_step @ B_Magnus_p @ qd_i)
+                ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv_dot, T_block)
 
                 return g_out, J_out, Jd_out, eta_out
 
