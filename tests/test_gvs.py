@@ -539,7 +539,7 @@ def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments: int) -> None:
+def test_jacobian_and_derivative_bodyframe_matches_autograd_jvp(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(3)
     key_q, key_qd = jax.random.split(key)
@@ -558,8 +558,15 @@ def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments: int) -
                 return robot.jacobian_bodyframe(q_, float(s))
 
             _, Jd_jvp = jvp(J_body, (q,), (qd,))
-            Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
+            _, Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
 
+            # product of Jd with qd
+            Jd_jvp_product = Jd_jvp @ qd
+            Jd_impl_product = Jd_impl @ qd
+
+            # assert that the product of Jd with qd matches
+            assert_allclose(Jd_impl_product, Jd_jvp_product, rtol=1e-6, atol=1e-7)
+            # assert the full Jacobian derivatives match
             assert_allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7)
 
 
