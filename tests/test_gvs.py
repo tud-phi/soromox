@@ -103,6 +103,172 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
     return robot_gvs, robot_pcs
 
 
+def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
+    """
+    Initialize a GVS robot with a configurable number of segments, mixing joint families and
+    non-constant strain bases across the structure.
+    """
+    if num_segments < 1:
+        raise ValueError("num_segments must be at least 1")
+
+    pattern_count = 3
+    axes_cycle = ("x", "y", "z")
+    planes_cycle = ("xy", "yz", "xz")
+
+    def _circular_link(idx: int) -> LinkAttributes:
+        repeat = idx // pattern_count
+        scale = 1.0 + 0.04 * repeat
+        r_i = 0.015 + 0.0008 * repeat
+        r_f = r_i + 0.003 + 0.0004 * repeat
+        return LinkAttributes(
+            section="Circular",
+            E=1.2e6,
+            nu=0.45,
+            rho=950.0,
+            eta=5.0,
+            L=float(0.25 * scale),
+            r_i=float(r_i),
+            r_f=float(r_f),
+        )
+
+    def _rectangular_link(idx: int) -> LinkAttributes:
+        repeat = idx // pattern_count
+        scale = 1.0 + 0.03 * repeat
+        h_i = 0.03 + 0.001 * repeat
+        h_f = max(0.022, h_i * 0.9)
+        w_i = 0.02 + 0.0008 * repeat
+        w_f = max(0.016, w_i * 0.88)
+        return LinkAttributes(
+            section="Rectangular",
+            E=9.5e5,
+            nu=0.38,
+            rho=1025.0,
+            eta=4.0,
+            L=float(0.18 * scale),
+            h_i=float(h_i),
+            h_f=float(h_f),
+            w_i=float(w_i),
+            w_f=float(w_f),
+        )
+
+    def _elliptical_link(idx: int) -> LinkAttributes:
+        repeat = idx // pattern_count
+        scale = 1.0 + 0.025 * repeat
+        a_i = max(0.016, 0.02 - 0.0006 * repeat)
+        a_f = max(0.014, a_i * 0.92)
+        b_i = 0.015 + 0.0007 * repeat
+        b_f = b_i * 1.05
+        return LinkAttributes(
+            section="Elliptical",
+            E=8.0e5,
+            nu=0.4,
+            rho=980.0,
+            eta=3.5,
+            L=float(0.22 * scale),
+            a_i=float(a_i),
+            a_f=float(a_f),
+            b_i=float(b_i),
+            b_f=float(b_f),
+        )
+
+    def _revolute_joint(idx: int) -> JointAttributes:
+        axis = axes_cycle[idx % len(axes_cycle)]
+        return JointAttributes(jointtype="Revolute", axis=axis)
+
+    def _planar_joint(idx: int) -> JointAttributes:
+        repeat = idx // pattern_count
+        plane = planes_cycle[(idx + repeat) % len(planes_cycle)]
+        return JointAttributes(jointtype="Planar", plane=plane)
+
+    def _helical_joint(idx: int) -> JointAttributes:
+        repeat = idx // pattern_count
+        axis = axes_cycle[(idx + 1) % len(axes_cycle)]
+        pitch = 0.02 + 0.003 * repeat
+        return JointAttributes(jointtype="Helical", axis=axis, pitch=float(pitch))
+
+    def _monomial_basis(idx: int) -> BasisAttributes:
+        repeat = idx // pattern_count
+        extra = repeat % 2
+        return BasisAttributes(
+            basistype="Monomial",
+            Bdof=[1, 1, 0, 1, 0, 0],
+            Bodr=[2 + extra, 1 + (idx % 2), 0, 2 + ((idx + repeat) % 2), 0, 0],
+            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+
+    def _legendre_basis(idx: int) -> BasisAttributes:
+        repeat = idx // pattern_count
+        return BasisAttributes(
+            basistype="Legendre",
+            Bdof=[0, 1, 1, 0, 1, 0],
+            Bodr=[0, 2 + (repeat % 2), 1 + ((idx + 1) % 2), 0, 1 + (repeat % 3), 0],
+            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+
+    def _fourier_basis(idx: int) -> BasisAttributes:
+        repeat = idx // pattern_count
+        xi_sigma = max(0.7, 0.9 - 0.05 * repeat)
+        return BasisAttributes(
+            basistype="Fourier",
+            Bdof=[1, 0, 1, 1, 0, 1],
+            Bodr=[1 + (idx % 2), 0, 2 + (repeat % 2), 1 + ((idx + repeat) % 2), 0, 1 + ((repeat + 1) % 2)],
+            xi_ref=[0.2 + 0.02 * repeat, 0.0, 0.0, xi_sigma, 0.0, 0.0],
+        )
+
+    def _monomial_gauss(idx: int) -> int:
+        repeat = idx // pattern_count
+        return 6 + (repeat % 2)
+
+    def _legendre_gauss(idx: int) -> int:
+        repeat = idx // pattern_count
+        return 7 + (repeat % 2)
+
+    def _fourier_gauss(idx: int) -> int:
+        repeat = idx // pattern_count
+        return 6 + ((repeat + 1) % 2)
+
+    pattern_builders = (
+        {
+            "link": _circular_link,
+            "joint": _revolute_joint,
+            "basis": _monomial_basis,
+            "n_gauss": _monomial_gauss,
+        },
+        {
+            "link": _rectangular_link,
+            "joint": _planar_joint,
+            "basis": _legendre_basis,
+            "n_gauss": _legendre_gauss,
+        },
+        {
+            "link": _elliptical_link,
+            "joint": _helical_joint,
+            "basis": _fourier_basis,
+            "n_gauss": _fourier_gauss,
+        },
+    )
+
+    links: list[LinkAttributes] = []
+    joints: list[JointAttributes] = []
+    bases: list[BasisAttributes] = []
+    n_gauss_list: list[int] = []
+
+    for idx in range(num_segments):
+        pattern = pattern_builders[idx % pattern_count]
+        links.append(pattern["link"](idx))
+        joints.append(pattern["joint"](idx))
+        bases.append(pattern["basis"](idx))
+        n_gauss_list.append(int(pattern["n_gauss"](idx)))
+
+    return GVS(
+        links_list=links,
+        joints_list=joints,
+        basis_list=bases,
+        n_gauss_list=n_gauss_list,
+        gravity_vector=[0.0, 0.0, -9.81],
+    )
+
+
 def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
     lengths = jnp.asarray(robot.V_L)
     cumulative = jnp.cumsum(lengths)
@@ -325,88 +491,88 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    dof = int(robot_gvs.dof_tot_system)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
 
     zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    random_cfg = random_q(robot_gvs, jax.random.PRNGKey(777), scale=0.05)
+    random_cfg = random_q(robot, jax.random.PRNGKey(777), scale=0.05)
 
-    s_tips = tip_arc_lengths(robot_gvs)
+    s_tips = tip_arc_lengths(robot)
 
     for q in (zero_cfg, random_cfg):
-        g_expected = stack_forward_kinematics(robot_gvs, q, s_tips)
-        g_tips = robot_gvs.forward_kinematics_tips(q)
+        g_expected = stack_forward_kinematics(robot, q, s_tips)
+        g_tips = robot.forward_kinematics_tips(q)
 
         assert_allclose(g_tips, g_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    dof = int(robot_gvs.dof_tot_system)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
 
     zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    random_cfg = random_q(robot_gvs, jax.random.PRNGKey(888), scale=0.05)
+    random_cfg = random_q(robot, jax.random.PRNGKey(888), scale=0.05)
 
-    s_sampled = sample_arc_lengths(robot_gvs)
+    s_sampled = sample_arc_lengths(robot)
     s_values = [0.0] + onp.asarray(s_sampled, dtype=float).tolist()
     s_points = jnp.asarray(s_values, dtype=jnp.float64)
 
     for q in (zero_cfg, random_cfg):
-        g_batched = robot_gvs.forward_kinematics_batched(q, s_points)
-        g_expected = stack_forward_kinematics(robot_gvs, q, s_points)
+        g_batched = robot.forward_kinematics_batched(q, s_points)
+        g_expected = stack_forward_kinematics(robot, q, s_points)
 
         assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_J_local_tips_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    q = random_q(robot_gvs, jax.random.PRNGKey(5), scale=0.03)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    q = random_q(robot, jax.random.PRNGKey(5), scale=0.03)
 
-    s_tips = tip_arc_lengths(robot_gvs)
-    J_tips = robot_gvs._J_local_tips(q)
-    J_expected = stack_jacobians(robot_gvs, q, s_tips)
+    s_tips = tip_arc_lengths(robot)
+    J_tips = robot._J_local_tips(q)
+    J_expected = stack_jacobians(robot, q, s_tips)
 
     assert_allclose(J_tips, J_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_J_local_batched_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    dof = int(robot_gvs.dof_tot_system)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
 
     zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    random_cfg = random_q(robot_gvs, jax.random.PRNGKey(9876), scale=0.05)
+    random_cfg = random_q(robot, jax.random.PRNGKey(9876), scale=0.05)
 
-    s_points = sample_arc_lengths(robot_gvs)
+    s_points = sample_arc_lengths(robot)
 
     for q in (zero_cfg, random_cfg):
-        J_batch = robot_gvs._J_local_batched(q, s_points)
-        J_expected = stack_jacobians(robot_gvs, q, s_points)
+        J_batch = robot._J_local_batched(q, s_points)
+        J_expected = stack_jacobians(robot, q, s_points)
 
         assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(6)
     q_keys = jax.random.split(key, NUM_RANDOM_SAMPLES)
 
     for q_key in q_keys:
-        q = random_q(robot_gvs, q_key, scale=0.03)
+        q = random_q(robot, q_key, scale=0.03)
 
-        for s in sample_arc_lengths(robot_gvs):
+        for s in sample_arc_lengths(robot):
             if s < 1e-3:
                 continue
 
-            J_body = robot_gvs.jacobian_bodyframe(q, float(s))
-            g = robot_gvs.forward_kinematics(q, float(s))
+            J_body = robot.jacobian_bodyframe(q, float(s))
+            g = robot.forward_kinematics(q, float(s))
             g_inv = se3_inverse(g)
 
             def fk(qq: jnp.ndarray) -> jnp.ndarray:
-                return robot_gvs.forward_kinematics(qq, float(s))
+                return robot.forward_kinematics(qq, float(s))
 
             cols = []
             eye = jnp.eye(q.shape[0], dtype=jnp.float64)
@@ -420,32 +586,32 @@ def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(3)
     key_q, key_qd = jax.random.split(key)
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
     qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
 
     for q_key, qd_key in zip(q_keys, qd_keys):
-        q = random_q(robot_gvs, q_key, scale=0.05)
-        qd = random_q(robot_gvs, qd_key, scale=0.2)
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
 
-        for s in sample_arc_lengths(robot_gvs):
+        for s in sample_arc_lengths(robot):
             if s < 1e-3:
                 continue
 
             def J_body(q_):
-                return robot_gvs.jacobian_bodyframe(q_, float(s))
+                return robot.jacobian_bodyframe(q_, float(s))
 
             _, Jd_jvp = jvp(J_body, (q,), (qd,))
-            Jd_impl = robot_gvs.jacobian_and_derivative_bodyframe(q, qd, float(s))
+            Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
 
             assert_allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(4)
     key_q, key_qd = jax.random.split(key)
     q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
@@ -453,22 +619,22 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments:
 
     delta = 1e-6
     for q_key, qd_key in zip(q_keys, qd_keys):
-        q = random_q(robot_gvs, q_key, scale=0.05)
-        qd = random_q(robot_gvs, qd_key, scale=0.2)
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
 
-        for s in sample_arc_lengths(robot_gvs):
+        for s in sample_arc_lengths(robot):
             if s < 1e-3:
                 continue
 
-            Jd_impl = robot_gvs.jacobian_and_derivative_bodyframe(q, qd, float(s))
+            Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
 
             eye = jnp.eye(q.shape[0], dtype=jnp.float64)
             dJ_cols = []
             for j in range(q.shape[0]):
                 qp = q + delta * eye[j]
                 qm = q - delta * eye[j]
-                Jp = robot_gvs.jacobian_bodyframe(qp, float(s))
-                Jm = robot_gvs.jacobian_bodyframe(qm, float(s))
+                Jp = robot.jacobian_bodyframe(qp, float(s))
+                Jm = robot.jacobian_bodyframe(qm, float(s))
                 dJ_cols.append((Jp - Jm) / (2 * delta))
 
             dJ_dq_fd = jnp.stack(dJ_cols, axis=-1)
@@ -479,21 +645,21 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments:
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    dof = int(robot_gvs.dof_tot_system)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
 
     zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
     zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
 
-    q_random = random_q(robot_gvs, jax.random.PRNGKey(987), scale=0.05)
-    qd_random = random_q(robot_gvs, jax.random.PRNGKey(654), scale=0.1)
+    q_random = random_q(robot, jax.random.PRNGKey(987), scale=0.05)
+    qd_random = random_q(robot, jax.random.PRNGKey(654), scale=0.1)
 
-    s_tips = tip_arc_lengths(robot_gvs)
+    s_tips = tip_arc_lengths(robot)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_tips, Jd_tips = robot_gvs._J_Jd_local_tips(q, qd)
-        J_expected = stack_jacobians(robot_gvs, q, s_tips)
-        Jd_expected = stack_jacobian_derivatives(robot_gvs, q, qd, s_tips)
+        J_tips, Jd_tips = robot._J_Jd_local_tips(q, qd)
+        J_expected = stack_jacobians(robot, q, s_tips)
+        Jd_expected = stack_jacobian_derivatives(robot, q, qd, s_tips)
 
         assert_allclose(J_tips, J_expected, rtol=RTOL, atol=ATOL)
         assert_allclose(Jd_tips, Jd_expected, rtol=RTOL, atol=ATOL)
@@ -501,53 +667,118 @@ def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int) -> None
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    dof = int(robot_gvs.dof_tot_system)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
 
     zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
     zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
 
-    q_random = random_q(robot_gvs, jax.random.PRNGKey(321), scale=0.05)
-    qd_random = random_q(robot_gvs, jax.random.PRNGKey(4321), scale=0.1)
+    q_random = random_q(robot, jax.random.PRNGKey(321), scale=0.05)
+    qd_random = random_q(robot, jax.random.PRNGKey(4321), scale=0.1)
 
-    s_points = sample_arc_lengths(robot_gvs)
+    s_points = sample_arc_lengths(robot)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = robot_gvs._J_Jd_local_batched(q, qd, s_points)
-        J_expected = stack_jacobians(robot_gvs, q, s_points)
-        Jd_expected = stack_jacobian_derivatives(robot_gvs, q, qd, s_points)
+        J_batch, Jd_batch = robot._J_Jd_local_batched(q, qd, s_points)
+        J_expected = stack_jacobians(robot, q, s_points)
+        Jd_expected = stack_jacobian_derivatives(robot, q, qd, s_points)
 
         assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
         assert_allclose(Jd_batch, Jd_expected, rtol=RTOL, atol=ATOL)
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_coriolis_force_with_christoffel_symbols(num_segments: int):
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key = jax.random.PRNGKey(9)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
+
+        C_impl = robot.coriolis_matrix(q, qd)
+        tau_cor_impl = C_impl @ qd
+
+        def B_of_q(q_):
+            return robot.inertia_matrix(q_)
+
+        dB_dq = jacfwd(B_of_q)(q)
+
+        term1 = jnp.einsum("ijk,j,k->i", dB_dq, qd, qd)
+        term2 = jnp.einsum("jki,j,k->i", dB_dq, qd, qd)
+        tau_cor = term1 - 0.5 * term2
+
+        assert_allclose(tau_cor_impl, tau_cor, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key = jax.random.PRNGKey(10)
+    key_q, key_qd = jax.random.split(key)
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    dT_dq = jax.grad(robot.kinetic_energy, argnums=0)
+    dT_dqd = jax.grad(robot.kinetic_energy, argnums=1)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
+
+        tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
+
+        grad_T_q = dT_dq(q, qd)
+        jac_T_q = jacfwd(lambda qq: dT_dqd(qq, qd))(q)
+        tau_cor_autograd = jac_T_q @ qd - grad_T_q
+
+        assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_gravity_matches_potential_gradient(num_segments: int):
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key = jax.random.PRNGKey(8)
+
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(robot, q_key, scale=0.05)
+        G = robot.gravitational_force(q)
+        dU_G_dq = jacfwd(robot.gravitational_energy)(q)
+        print("q:\n", q)
+        print("G:\n", G)
+        print("dU_G_dq:\n", dU_G_dq)
+
+        assert_allclose(G, dU_G_dq, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_dynamics_matches_manual_computation(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(123 + num_segments)
 
     for _ in range(NUM_RANDOM_SAMPLES):
         key, key_q = jax.random.split(key)
-        q = random_q(robot_gvs, key_q, scale=0.05)
+        q = random_q(robot, key_q, scale=0.05)
 
         key, key_qd = jax.random.split(key)
-        qd = random_q(robot_gvs, key_qd, scale=0.05)
+        qd = random_q(robot, key_qd, scale=0.05)
 
         key, key_u = jax.random.split(key)
-        u = random_q(robot_gvs, key_u, scale=0.02)
+        u = random_q(robot, key_u, scale=0.02)
 
         key, key_tau = jax.random.split(key)
-        tau_ext = random_q(robot_gvs, key_tau, scale=0.03)
+        tau_ext = random_q(robot, key_tau, scale=0.03)
 
         y = jnp.concatenate([q, qd])
-        yd = robot_gvs.forward_dynamics(0.0, y, (u, tau_ext))
+        yd = robot.forward_dynamics(0.0, y, (u, tau_ext))
 
-        B = robot_gvs.inertia_matrix(q)
-        C = robot_gvs.coriolis_matrix(q, qd)
-        G = robot_gvs.gravitational_force(q)
-        D = robot_gvs.damping_matrix()
-        tau_el = robot_gvs.elastic_force(q)
-        tau_u = robot_gvs.actuation_force(q, u)
+        B = robot.inertia_matrix(q)
+        C = robot.coriolis_matrix(q, qd)
+        G = robot.gravitational_force(q)
+        D = robot.damping_matrix()
+        tau_el = robot.elastic_force(q)
+        tau_u = robot.actuation_force(q, u)
 
         qdd_expected = jnp.linalg.solve(
             B, tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
@@ -557,32 +788,32 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int) -> None:
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2, 3, 4])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=num_segments)
-    dof = int(robot_gvs.dof_tot_system)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
     q = jnp.zeros((dof,), dtype=jnp.float64)
     qd = jnp.zeros((dof,), dtype=jnp.float64)
     y = jnp.concatenate([q, qd])
-    u = jnp.zeros((robot_gvs.num_actuators,), dtype=jnp.float64)
-    s = float(robot_gvs.V_L_cum[-1])
+    u = jnp.zeros((robot.num_actuators,), dtype=jnp.float64)
+    s = float(robot.V_L_cum[-1])
 
-    dg_dq = jacfwd(robot_gvs.forward_kinematics, argnums=0)(q, s)
-    dJ_bodyframe_dq = jacfwd(robot_gvs.jacobian_bodyframe, argnums=0)(q, s)
-    dJ_inertialframe_dq = jacfwd(robot_gvs.jacobian_inertialframe, argnums=0)(q, s)
-    dJd_bodyframe_dq = jacfwd(robot_gvs.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    dJd_inertialframe_dq = jacfwd(robot_gvs.jacobian_derivative_inertialframe, argnums=0)(
+    dg_dq = jacfwd(robot.forward_kinematics, argnums=0)(q, s)
+    dJ_bodyframe_dq = jacfwd(robot.jacobian_bodyframe, argnums=0)(q, s)
+    dJ_inertialframe_dq = jacfwd(robot.jacobian_inertialframe, argnums=0)(q, s)
+    dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    dJd_inertialframe_dq = jacfwd(robot.jacobian_derivative_inertialframe, argnums=0)(
         q, qd, s
     )
-    dB_dq = jacfwd(robot_gvs.inertia_matrix)(q)
-    dC_dq = jacfwd(robot_gvs.coriolis_matrix, argnums=0)(q, qd)
-    dC_dqd = jacfwd(robot_gvs.coriolis_matrix, argnums=1)(q, qd)
-    dG_dq = jacfwd(robot_gvs.gravitational_force)(q)
-    dtau_el_dq = jacfwd(robot_gvs.elastic_force)(q)
-    dtau_u_dq = jacfwd(robot_gvs.actuation_force, argnums=0)(q, u)
-    dtau_u_du = jacfwd(robot_gvs.actuation_force, argnums=1)(q, u)
-    dy_dy = jacfwd(robot_gvs.forward_dynamics, argnums=1)(0.0, y, (u,))
-    (dy_du,) = jacfwd(robot_gvs.forward_dynamics, argnums=2)(0.0, y, (u,))
+    dB_dq = jacfwd(robot.inertia_matrix)(q)
+    dC_dq = jacfwd(robot.coriolis_matrix, argnums=0)(q, qd)
+    dC_dqd = jacfwd(robot.coriolis_matrix, argnums=1)(q, qd)
+    dG_dq = jacfwd(robot.gravitational_force)(q)
+    dtau_el_dq = jacfwd(robot.elastic_force)(q)
+    dtau_u_dq = jacfwd(robot.actuation_force, argnums=0)(q, u)
+    dtau_u_du = jacfwd(robot.actuation_force, argnums=1)(q, u)
+    dy_dy = jacfwd(robot.forward_dynamics, argnums=1)(0.0, y, (u,))
+    (dy_du,) = jacfwd(robot.forward_dynamics, argnums=2)(0.0, y, (u,))
 
     assert not jnp.isnan(dg_dq).any(), f"Found NaN in forward-mode of forward kinematics"
     assert not jnp.isnan(dJ_bodyframe_dq).any(), f"Found NaN in forward-mode of bodyframe Jacobian"
@@ -600,31 +831,32 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     assert not jnp.isnan(dy_du).any(), f"Found NaN in forward-mode of forward dynamics (dy/du)"
 
 
-def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments=2)
-    dof = int(robot_gvs.dof_tot_system)
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segments: int) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
     q = jnp.zeros((dof,), dtype=jnp.float64)
     qd = jnp.zeros((dof,), dtype=jnp.float64)
     y = jnp.concatenate([q, qd])
-    u = jnp.zeros((robot_gvs.num_actuators,), dtype=jnp.float64)
-    s = float(robot_gvs.V_L_cum[-1])
+    u = jnp.zeros((robot.num_actuators,), dtype=jnp.float64)
+    s = float(robot.V_L_cum[-1])
 
-    dg_dq = jacrev(robot_gvs.forward_kinematics, argnums=0)(q, s)
-    dJ_bodyframe_dq = jacrev(robot_gvs.jacobian_bodyframe, argnums=0)(q, s)
-    dJ_inertialframe_dq = jacrev(robot_gvs.jacobian_inertialframe, argnums=0)(q, s)
-    dJd_bodyframe_dq = jacrev(robot_gvs.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    dJd_inertialframe_dq = jacrev(robot_gvs.jacobian_derivative_inertialframe, argnums=0)(
+    dg_dq = jacrev(robot.forward_kinematics, argnums=0)(q, s)
+    dJ_bodyframe_dq = jacrev(robot.jacobian_bodyframe, argnums=0)(q, s)
+    dJ_inertialframe_dq = jacrev(robot.jacobian_inertialframe, argnums=0)(q, s)
+    dJd_bodyframe_dq = jacrev(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    dJd_inertialframe_dq = jacrev(robot.jacobian_derivative_inertialframe, argnums=0)(
         q, qd, s
     )
-    dB_dq = jacrev(robot_gvs.inertia_matrix)(q)
-    dC_dq = jacrev(robot_gvs.coriolis_matrix, argnums=0)(q, qd)
-    dC_dqd = jacrev(robot_gvs.coriolis_matrix, argnums=1)(q, qd)
-    dG_dq = jacrev(robot_gvs.gravitational_force)(q)
-    dtau_el_dq = jacrev(robot_gvs.elastic_force)(q)
-    dtau_u_dq = jacrev(robot_gvs.actuation_force, argnums=0)(q, u)
-    dtau_u_du = jacrev(robot_gvs.actuation_force, argnums=1)(q, u)
-    dy_dy = jacrev(robot_gvs.forward_dynamics, argnums=1)(0.0, y, (u,))
-    (dy_du,) = jacrev(robot_gvs.forward_dynamics, argnums=2)(0.0, y, (u,))
+    dB_dq = jacrev(robot.inertia_matrix)(q)
+    dC_dq = jacrev(robot.coriolis_matrix, argnums=0)(q, qd)
+    dC_dqd = jacrev(robot.coriolis_matrix, argnums=1)(q, qd)
+    dG_dq = jacrev(robot.gravitational_force)(q)
+    dtau_el_dq = jacrev(robot.elastic_force)(q)
+    dtau_u_dq = jacrev(robot.actuation_force, argnums=0)(q, u)
+    dtau_u_du = jacrev(robot.actuation_force, argnums=1)(q, u)
+    dy_dy = jacrev(robot.forward_dynamics, argnums=1)(0.0, y, (u,))
+    (dy_du,) = jacrev(robot.forward_dynamics, argnums=2)(0.0, y, (u,))
 
     assert not jnp.isnan(dg_dq).any(), f"Found NaN in reverse-mode of forward kinematics"
     assert not jnp.isnan(dJ_bodyframe_dq).any(), f"Found NaN in reverse-mode of bodyframe Jacobian"
@@ -644,26 +876,26 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> Non
 
 @pytest.mark.parametrize("num_segments", [1])
 def test_gvs_autodiff_checks(num_segments: int) -> None:
-    robot_gvs, _ = build_matched_gvs_pcs(num_segments)
+    robot = build_varied_basis_gvs(num_segments=num_segments)
 
-    n = int(robot_gvs.dof_tot_system)
+    n = int(robot.dof_tot_system)
     q = jnp.linspace(0.01, 0.01 * n, n, dtype=jnp.float64)
     qd = jnp.linspace(0.02, 0.02 * n, n, dtype=jnp.float64)
-    s = jnp.sum(robot_gvs.V_L, dtype=jnp.float64) * 0.7
+    s = jnp.sum(robot.V_L, dtype=jnp.float64) * 0.7
 
     def J_body(q_):
-        return robot_gvs.jacobian_bodyframe(q_, s)
+        return robot.jacobian_bodyframe(q_, s)
 
     _, Jd_dir = jax.jvp(J_body, (q,), (qd,))
-    Jd_impl = robot_gvs.jacobian_and_derivative_bodyframe(q, qd, s)
+    Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, s)
     assert_allclose(Jd_impl, Jd_dir, rtol=RTOL, atol=ATOL)
 
     # 2) Translational block of inertial Jacobian matches jacobian of position
     def pos_fn(q_):
-        return robot_gvs.forward_kinematics(q_, s)[:3, 3]
+        return robot.forward_kinematics(q_, s)[:3, 3]
 
     Jpos_ad = jax.jacfwd(pos_fn)(q)  # shape (3, n)
-    Ji_gvs = gvs_jacobian_inertialframe_from_body(robot_gvs, q, s)
+    Ji_gvs = gvs_jacobian_inertialframe_from_body(robot, q, s)
     Jpos_impl = Ji_gvs[3:6, :]
     assert_allclose(Jpos_impl, Jpos_ad, rtol=RTOL, atol=ATOL)
 

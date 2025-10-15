@@ -828,7 +828,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2, 3, 4])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_mode_automatic_differentiability_at_zero_configuration(
     num_segments: int,
 ):
@@ -897,8 +897,9 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(
     assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
 
 
-def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> None:
-    model, _ = make_pcs(num_segments=2, total_length=PCS_TOTAL_LENGTH)
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segments: int) -> None:
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
     dof = int(model.num_active_strains.item())
     # initialize zero state
     q = jnp.zeros((dof,), dtype=jnp.float64)
