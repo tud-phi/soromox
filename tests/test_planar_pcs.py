@@ -296,7 +296,7 @@ def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments):
 
     for q in (zero_cfg, random_cfg):
         chi_expected = segment_tip_poses(model, q)
-        chi_tips = model.forward_kinematics_tips(q)
+        chi_tips = model._forward_kinematics_tips(q)
 
         assert_allclose(chi_tips, chi_expected, rtol=RTOL, atol=ATOL)
 
@@ -656,8 +656,8 @@ def test_J_local_tips_matches_pointwise_evaluation(num_segments):
         if s < 1e-3:
             continue
 
-        J_tip_batch = J_tips[idx]
-        J_tip_single = model._J_local(q, s)
+        J_tip_batch = J_tips[idx] @ model.B_xi
+        J_tip_single = model.jacobian_bodyframe(q, s)
 
         assert_allclose(
             J_tip_batch,
@@ -672,7 +672,9 @@ def test_J_local_tips_matches_pointwise_evaluation(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_local_batched_matches_pointwise_evaluation(num_segments):
+def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(
+    num_segments,
+) -> None:
     model, _ = make_planar_pcs(num_segments=num_segments)
     dof = int(model.num_active_strains.item())
 
@@ -683,10 +685,10 @@ def test_J_local_batched_matches_pointwise_evaluation(num_segments):
     s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
 
     for q in (zero_cfg, random_cfg):
-        J_batch = model._J_local_batched(q, s_points)
+        J_batch = model.jacobian_bodyframe_batched(q, s_points)
 
         for idx, s_val in enumerate(s_points):
-            J_single = model._J_local(q, s_val)
+            J_single = model.jacobian_bodyframe(q, s_val)
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
 
 
@@ -800,6 +802,27 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments):
             )
 
 
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    rng = jax.random.PRNGKey(7890)
+    random_cfg = random_q(model, rng, scale=0.05)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q in (zero_cfg, random_cfg):
+        J_batch = model.jacobian_inertialframe_batched(q, s_points)
+
+        for idx, s_val in enumerate(s_points):
+            J_single = model.jacobian_inertialframe(q, s_val)
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
 def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments):
     model, _ = make_planar_pcs(
@@ -889,6 +912,35 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
             )
 
 
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    dof = int(model.num_active_strains.item())
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    rng = jax.random.PRNGKey(7890)
+    q_random = random_q(model, rng, scale=0.05)
+    qd_random = random_q(model, jax.random.PRNGKey(9876), scale=0.1)
+
+    s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_batch, Jd_batch = model.jacobian_and_derivative_inertialframe_batched(
+            q, qd, s_points
+        )
+
+        for idx, s_val in enumerate(s_points):
+            J_single, Jd_single = model.jacobian_and_derivative_inertialframe(
+                q, qd, s_val
+            )
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int):
     model, _ = make_planar_pcs(num_segments=num_segments)
@@ -907,10 +959,20 @@ def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int):
         J_local_tips, Jd_local_tips = model._J_Jd_local_tips(q, qd)
 
         for idx, s_tip in enumerate(s_tips):
-            J_local, Jd_local = model._J_Jd_local(q, qd, s_tip)
+            J_local, Jd_local = model.jacobian_and_derivative_bodyframe(q, qd, s_tip)
 
-            assert_allclose(J_local, J_local_tips[idx], rtol=RTOL, atol=ATOL)
-            assert_allclose(Jd_local, Jd_local_tips[idx], rtol=RTOL, atol=ATOL)
+            assert_allclose(
+                J_local,
+                J_local_tips[idx] @ model.B_xi,
+                rtol=RTOL,
+                atol=ATOL,
+            )
+            assert_allclose(
+                Jd_local,
+                Jd_local_tips[idx] @ model.B_xi,
+                rtol=RTOL,
+                atol=ATOL,
+            )
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -928,10 +990,14 @@ def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int):
     s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = model._J_Jd_local_batched(q, qd, s_points)
+        J_batch, Jd_batch = model.jacobian_and_derivative_bodyframe_batched(
+            q, qd, s_points
+        )
 
         for idx, s_val in enumerate(s_points):
-            J_single, Jd_single = model._J_Jd_local(q, qd, s_val)
+            J_single, Jd_single = model.jacobian_and_derivative_bodyframe(
+                q, qd, s_val
+            )
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
             assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
