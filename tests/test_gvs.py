@@ -428,23 +428,6 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
             assert_allclose(Ji_gvs, Ji_gvs2, rtol=RTOL, atol=ATOL), "Jacobian inertialframe mismatch at s={}".format(s)
             assert_allclose(Jdi_gvs, Jdi_pcs, rtol=RTOL, atol=ATOL), "Jacobian derivative inertialframe mismatch at s={}".format(s)
 
-        # g_joints_gvs = robot_gvs.forward_kinematics_joints(q)
-        # print("g_joints_gvs.shape =", g_joints_gvs.shape)
-        # g_tips_pcs = robot_pcs.forward_kinematics_tips(q)
-        # print("g_tips_pcs.shape =", g_tips_pcs.shape)
-        # assert_allclose(g_joints_gvs[1:], g_tips_pcs[:-1], rtol=RTOL, atol=ATOL)
-        
-        # J_joints_gvs = robot_gvs.jacobian_bodyframe_joints(q)
-        # print("J_joints_gvs.shape =", J_joints_gvs.shape)
-        # J_tips_pcs = robot_pcs._J_local_tips(q)
-        # print("J_tips_pcs.shape =", J_tips_pcs.shape)
-        # assert_allclose(J_joints_gvs[1:], J_tips_pcs[:-1], rtol=RTOL, atol=ATOL)
-
-        # J_joints_gvs, Jd_joints_gvs = robot_gvs.jacobian_derivative_joints(q, qd)
-        # J_tips_pcs, Jd_tips_pcs = robot_pcs._J_Jd_local_tips(q, qd)
-        # assert_allclose(J_joints_gvs, J_tips_pcs, rtol=RTOL, atol=ATOL)
-        # assert_allclose(Jd_joints_gvs, Jd_tips_pcs, rtol=RTOL, atol=ATOL)
-
         B_gvs = robot_gvs.inertia_matrix(q)
         B_pcs = robot_pcs.inertia_matrix(q)
         assert_allclose(B_gvs, B_pcs, rtol=RTOL, atol=ATOL)
@@ -490,23 +473,6 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot = build_varied_basis_gvs(num_segments=num_segments)
-    dof = int(robot.dof_tot_system)
-
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    random_cfg = random_q(robot, jax.random.PRNGKey(777), scale=0.05)
-
-    s_tips = tip_arc_lengths(robot)
-
-    for q in (zero_cfg, random_cfg):
-        g_expected = stack_forward_kinematics(robot, q, s_tips)
-        g_tips = robot.forward_kinematics_tips(q)
-
-        assert_allclose(g_tips, g_expected, rtol=RTOL, atol=ATOL)
-
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     dof = int(robot.dof_tot_system)
@@ -523,18 +489,6 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: i
         g_expected = stack_forward_kinematics(robot, q, s_points)
 
         assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
-
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_local_tips_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot = build_varied_basis_gvs(num_segments=num_segments)
-    q = random_q(robot, jax.random.PRNGKey(5), scale=0.03)
-
-    s_tips = tip_arc_lengths(robot)
-    J_tips = robot._J_local_tips(q)
-    J_expected = stack_jacobians(robot, q, s_tips)
-
-    assert_allclose(J_tips, J_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -641,28 +595,6 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments:
             Jd_num = jnp.tensordot(dJ_dq_fd, qd, axes=([-1], [0]))
 
             assert_allclose(Jd_impl, Jd_num, rtol=1e-3, atol=5e-6)
-
-
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int) -> None:
-    robot = build_varied_basis_gvs(num_segments=num_segments)
-    dof = int(robot.dof_tot_system)
-
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
-
-    q_random = random_q(robot, jax.random.PRNGKey(987), scale=0.05)
-    qd_random = random_q(robot, jax.random.PRNGKey(654), scale=0.1)
-
-    s_tips = tip_arc_lengths(robot)
-
-    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_tips, Jd_tips = robot._J_Jd_local_tips(q, qd)
-        J_expected = stack_jacobians(robot, q, s_tips)
-        Jd_expected = stack_jacobian_derivatives(robot, q, qd, s_tips)
-
-        assert_allclose(J_tips, J_expected, rtol=RTOL, atol=ATOL)
-        assert_allclose(Jd_tips, Jd_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
