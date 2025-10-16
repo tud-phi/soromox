@@ -523,6 +523,40 @@ def test_J_local_batched_matches_pointwise_evaluation(num_segments: int) -> None
         assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    total_length = float(robot.V_L_cum[-1])
+
+    q_keys = jax.random.split(jax.random.PRNGKey(4242), NUM_RANDOM_SAMPLES)
+    s_keys = jax.random.split(jax.random.PRNGKey(1313), NUM_RANDOM_SAMPLES)
+
+    num_points = max(3 * robot.num_segments, 3)
+
+    for q_key, s_key in zip(q_keys, s_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        random_points = jax.random.uniform(
+            s_key,
+            shape=(num_points,),
+            minval=0.0,
+            maxval=total_length,
+            dtype=jnp.float64,
+        )
+        s_points = jnp.sort(
+            jnp.concatenate(
+                (
+                    jnp.array([0.0, total_length], dtype=jnp.float64),
+                    random_points,
+                )
+            )
+        )
+
+        J_batch = robot.jacobian_bodyframe_batched(q, s_points)
+        J_expected = stack_jacobians(robot, q, s_points)
+
+        assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)

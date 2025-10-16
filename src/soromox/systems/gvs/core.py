@@ -1169,9 +1169,9 @@ class GVS(DynamicalSystem):
         s_flat = jnp.asarray(s_ps).reshape(-1)
 
         def fk_single(s_val: Array) -> Array:
-            segment_idx, s_local = self.classify_segment(s_val)
+            i, s_local = self.classify_segment(s_val)
 
-            length_i = self.V_L[segment_idx]
+            length_i = self.V_L[i]
             length_safe = jnp.where(
                 jnp.abs(length_i) < self.global_eps, 1.0, length_i
             )
@@ -1181,11 +1181,11 @@ class GVS(DynamicalSystem):
                 jnp.clip(s_local / length_safe, 0.0, 1.0),
             )
 
-            Xs_i = self.V_Xs[segment_idx]
-            g_nodes = g_gauss[segment_idx]
-            q_link = q_gathered[segment_idx, 1]
-            xi_ref_Z1_i = self.V_xi_ref_Z1[segment_idx]
-            xi_ref_Z2_i = self.V_xi_ref_Z2[segment_idx]
+            Xs_i = self.V_Xs[i]
+            g_nodes = g_gauss[i]
+            q_link = q_gathered[i, 1]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[i]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[i]
 
             cell_idx = jnp.clip(
                 jnp.searchsorted(Xs_i, x_norm, side="right") - 1,
@@ -1207,7 +1207,7 @@ class GVS(DynamicalSystem):
                 Xp = jnp.array(
                     [x_base + self.Z1 * Hp_signed, x_base + self.Z2 * Hp_signed]
                 )
-                Bp = self._eval_B_segment(segment_idx, Xp)
+                Bp = self._eval_B_segment(i, Xp)
                 xi_Z1 = Bp[0] @ q_link + xi_ref_Z1_i[cell_idx]
                 xi_Z2 = Bp[1] @ q_link + xi_ref_Z2_i[cell_idx]
                 ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
@@ -1648,7 +1648,116 @@ class GVS(DynamicalSystem):
         J_local = J_flat @ self.B_select  # -> (6, num_active_strains)
 
         return J_local
-    
+
+    @eqx.filter_jit
+    def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute the body-frame Jacobian at multiple arclength locations.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): points along the backbone in [0, L], shape (N,).
+
+        Returns:
+            Array: Jacobians with shape (N, 6, num_active_strains).
+        """
+        q_gathered = self._min_size_gathered(q)
+        J_gauss_full = self._jacobian_gauss(q_gathered)
+
+        s_flat = jnp.asarray(s_ps).reshape(-1)
+        tot_dof = self.num_segments * 2 * self.max_dof
+
+        def flatten_to_blocks(J_flat: Array) -> Array:
+            return jnp.transpose(
+                J_flat.reshape(6, self.num_segments, 2, self.max_dof), (1, 2, 0, 3)
+            )
+
+        def blocks_to_flat(J_blocks: Array) -> Array:
+            return jnp.transpose(J_blocks, (2, 0, 1, 3)).reshape(6, tot_dof)
+
+        def body_single(s_val: Array) -> Array:
+            i, s_local = self.classify_segment(s_val)
+
+            length_i = self.V_L[i]
+            length_safe = jnp.where(
+                jnp.abs(length_i) < self.global_eps, 1.0, length_i
+            )
+            x_norm = jnp.where(
+                jnp.abs(length_i) < self.global_eps,
+                0.0,
+                jnp.clip(s_local / length_safe, 0.0, 1.0),
+            )
+
+            Xs_i = self.V_Xs[i]
+            J_nodes = J_gauss_full[i]
+            q_link = q_gathered[i, 1]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[i]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[i]
+
+            cell_idx = jnp.clip(
+                jnp.searchsorted(Xs_i, x_norm, side="right") - 1,
+                0,
+                self.max_nip - 2,
+            )
+
+            distances = jnp.abs(Xs_i - x_norm)
+            closest_idx = jnp.argmin(distances)
+            base_idx = jnp.minimum(closest_idx, cell_idx)
+
+            J_base_flat = J_nodes[base_idx]
+            J_blocks_base = flatten_to_blocks(J_base_flat)
+            x_base = Xs_i[base_idx]
+
+            Hp = x_norm - x_base
+            ds = Hp * length_i
+
+            def integrate_partial(_) -> Array:
+                Xp = jnp.array(
+                    [x_base + self.Z1 * Hp, x_base + self.Z2 * Hp], dtype=x_norm.dtype
+                )
+                Bp = self._eval_B_segment(i, Xp)
+
+                xi_Z1 = Bp[0] @ q_link + xi_ref_Z1_i[cell_idx]
+                xi_Z2 = Bp[1] @ q_link + xi_ref_Z2_i[cell_idx]
+
+                ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
+                ad_xi_Z2 = lie.adjoint_se3(xi_Z2)
+
+                ds_sq = ds * ds
+                Magnus = (ds / 2.0) * (xi_Z1 + xi_Z2) + (
+                    jnp.sqrt(3.0) * ds_sq / 12.0
+                ) * (ad_xi_Z1 @ xi_Z2)
+                B_Magnus = (ds / 2.0) * (Bp[0] + Bp[1]) + (
+                    jnp.sqrt(3.0) * ds_sq / 12.0
+                ) * (ad_xi_Z1 @ Bp[1] - ad_xi_Z2 @ Bp[0])
+
+                g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
+                T_step = lie.Tangent_gi_se3(Magnus, 1, self.global_eps)
+
+                T_block = jnp.zeros_like(J_blocks_base).at[i, 1].set(
+                    T_step @ B_Magnus
+                )
+
+                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+                return jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv, (J_blocks_base + T_block)
+                )
+
+            J_blocks = lax.cond(
+                jnp.logical_or(
+                    jnp.abs(Hp) <= self.global_eps,
+                    jnp.abs(length_i) < self.global_eps,
+                ),
+                lambda _: J_blocks_base,
+                integrate_partial,
+                operand=None,
+            )
+
+            J_flat = blocks_to_flat(J_blocks)
+            return J_flat @ self.B_select
+
+        return vmap(body_single)(s_flat)
+
     @eqx.filter_jit
     def jacobian_inertialframe(self, q: Array, s: Array) -> Array:
         """
