@@ -1153,6 +1153,86 @@ class GVS(DynamicalSystem):
         return g_s
 
     @eqx.filter_jit
+    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute the forward kinematics of the robot at a batch of points along the backbone.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): points along the robot arclength in the interval [0, L], shape (N,).
+
+        Returns:
+            Array: shape (N, 4, 4) with the homogeneous transforms evaluated at each ``s``.
+        """
+        q_gathered = self._min_size_gathered(q)
+        g_gauss = self._forward_kinematics_gauss(q_gathered)
+        s_flat = jnp.asarray(s_ps).reshape(-1)
+
+        def fk_single(s_val: Array) -> Array:
+            segment_idx, s_local = self.classify_segment(s_val)
+
+            length_i = self.V_L[segment_idx]
+            length_safe = jnp.where(
+                jnp.abs(length_i) < self.global_eps, 1.0, length_i
+            )
+            x_norm = jnp.where(
+                jnp.abs(length_i) < self.global_eps,
+                0.0,
+                jnp.clip(s_local / length_safe, 0.0, 1.0),
+            )
+
+            Xs_i = self.V_Xs[segment_idx]
+            g_nodes = g_gauss[segment_idx]
+            q_link = q_gathered[segment_idx, 1]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[segment_idx]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[segment_idx]
+
+            cell_idx = jnp.clip(
+                jnp.searchsorted(Xs_i, x_norm, side="right") - 1,
+                0,
+                self.max_nip - 2,
+            )
+
+            distances = jnp.abs(Xs_i - x_norm)
+            closest_idx = jnp.argmin(distances)
+            base_idx = jnp.minimum(closest_idx, cell_idx)
+
+            g_base = g_nodes[base_idx]
+            x_base = Xs_i[base_idx]
+
+            Hp_signed = x_norm - x_base
+            ds = Hp_signed * length_i
+
+            def compute_partial_cell(_) -> Array:
+                Xp = jnp.array(
+                    [x_base + self.Z1 * Hp_signed, x_base + self.Z2 * Hp_signed]
+                )
+                Bp = self._eval_B_segment(segment_idx, Xp)
+                xi_Z1 = Bp[0] @ q_link + xi_ref_Z1_i[cell_idx]
+                xi_Z2 = Bp[1] @ q_link + xi_ref_Z2_i[cell_idx]
+                ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
+                Magnus = (ds / 2.0) * (xi_Z1 + xi_Z2) + (
+                    jnp.sqrt(3.0) * ds * ds / 12.0
+                ) * (ad_xi_Z1 @ xi_Z2)
+                return lie.exp_gn_SE3(Magnus, self.global_eps)
+
+            g_partial = lax.cond(
+                jnp.logical_or(
+                    jnp.abs(Hp_signed) <= self.global_eps,
+                    jnp.abs(length_i) < self.global_eps,
+                ),
+                lambda _: jnp.eye(4, dtype=g_base.dtype),
+                compute_partial_cell,
+                operand=None,
+            )
+
+            return g_base @ g_partial
+
+        g_ps = vmap(fk_single)(s_flat)
+
+        return g_ps
+
+    @eqx.filter_jit
     def _jacobian_gauss(self, q_gathered: Array) -> Array:
         """
         Compute the Jacobian matrices at all significant points of the robot.

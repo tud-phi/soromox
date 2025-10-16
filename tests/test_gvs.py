@@ -509,16 +509,31 @@ def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments: int)
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
-    dof = int(robot.dof_tot_system)
+    total_length = float(robot.V_L_cum[-1])
 
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    random_cfg = random_q(robot, jax.random.PRNGKey(888), scale=0.05)
+    q_keys = jax.random.split(jax.random.PRNGKey(888), NUM_RANDOM_SAMPLES)
+    s_keys = jax.random.split(jax.random.PRNGKey(777), NUM_RANDOM_SAMPLES)
 
-    s_sampled = sample_arc_lengths(robot)
-    s_values = [0.0] + onp.asarray(s_sampled, dtype=float).tolist()
-    s_points = jnp.asarray(s_values, dtype=jnp.float64)
+    num_points = max(3 * robot.num_segments, 3)
 
-    for q in (zero_cfg, random_cfg):
+    for q_key, s_key in zip(q_keys, s_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        random_points = jax.random.uniform(
+            s_key,
+            shape=(num_points,),
+            minval=0.0,
+            maxval=total_length,
+            dtype=jnp.float64,
+        )
+        s_points = jnp.sort(
+            jnp.concatenate(
+                (
+                    jnp.array([0.0, total_length], dtype=jnp.float64),
+                    random_points,
+                )
+            )
+        )
+
         g_batched = robot.forward_kinematics_batched(q, s_points)
         g_expected = stack_forward_kinematics(robot, q, s_points)
 
