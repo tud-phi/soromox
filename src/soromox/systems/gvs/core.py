@@ -32,10 +32,10 @@ import soromox.utils.lie_algebra as lie
 
 class GVS(DynamicalSystem):
     """
-    Generalized Variable Strain (GVS) model for 3D soft continuum robots.
+    Geometric Variable Strain (GVS) model for 3D soft continuum robots.
 
     This class implements the geometric and dynamic modeling of a 3D soft robot
-    using the Cosserat rod theory with generalized variable strain parametrizations.
+    using the Cosserat rod theory with geometric variable strain parametrizations.
     It supports computation of forward kinematics, Jacobians, and dynamic matrices
     for robots with arbitrary combinations of link cross-sections, joint types, and
     strain basis functions.

@@ -74,6 +74,17 @@ Tendon actuated planar PCS robots.
 - Precise manipulation capabilities
 - Cable-driven continuum robots
 
+### GVS (Geometric Variable Strain) Systems
+
+High-fidelity continuum soft robots with spatially varying strain bases and 3D kinematics.
+
+#### [General GVS](gvs.md)
+
+- Arbitrary strain basis functions per segment (monomial, Fourier, Gaussian, Legendre, …)
+- Mixed joint/link parametrizations with reference strain offsets
+- Magnus-expanded integration at Gauss quadrature points
+- Full kinematics, Jacobians, and dynamics with JAX differentiation
+
 ### [Planar HSA Systems](planar-hsa.md)
 
 Handed Shearing Auxetics (HSA) soft robots with unique mechanical properties.

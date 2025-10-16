@@ -84,6 +84,8 @@ nav:
         - Planar PCS: api/planar-pcs.md
         - Pneumatic Actuated Planar PCS: api/pneumatic-actuated-planar-pcs.md
         - Tendon Actuated Planar PCS: api/tendon-actuated-planar-pcs.md
+      - GVS Systems:
+        - General GVS: api/gvs.md
       - Planar HSA: api/planar-hsa.md
     - Actuation: api/actuation.md
     - Utilities:

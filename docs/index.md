@@ -67,6 +67,9 @@ We focus on planar settings and have implemented the following soft robot archit
 !!! tip "🌊 **Planar Piecewise Constant Strain (PCS)**"
     Advanced continuum soft robot with constant strain segments for precise modeling
 
+!!! tip "🌐 **Geometric Variable Strain (GVS)**"
+    3D continuum robot model with spatially varying strain bases and mixed joint types
+
 !!! info "🔗 **Planar Handed Shearing Auxetics (HSA)**"
     Novel soft robot with auxetic properties for unique deformation characteristics
 
