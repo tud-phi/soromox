@@ -28,6 +28,7 @@ def factory_fn(
         params: dictionary with robot parameters
         strain_selector: boolean array to select the strains to be activated
         verbose: flag to print additional information
+    
     Returns:
         phi2chi_static_model_fn: function that maps motor angles to the end-effector pose
         jac_phi2chi_static_model_fn: function that computes the Jacobian between the actuation space and the task-space
@@ -63,6 +64,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
+        
         Returns:
             q: planar HSA configuration consisting of (k_be, sigma_sh, sigma_ax)
             aux: dictionary with auxiliary data
@@ -101,6 +103,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
+        
         Returns:
             chi: end-effector pose
             aux: dictionary with auxiliary data

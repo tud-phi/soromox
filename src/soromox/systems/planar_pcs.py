@@ -790,6 +790,7 @@ class PlanarPCS(DynamicalSystem):
         Args:
             chi_tips (Array): the tip poses of shape (num_segments, 3)
                 where each row is [theta, x, y] for the corresponding segment tip.
+        
         Returns:
             q (Array): the generalized coordinates of shape (num_active_strains,)
         """
@@ -803,6 +804,7 @@ class PlanarPCS(DynamicalSystem):
             Args:
                 chi_rel_i (Array): relative tip pose of shape (3,) : [delta_theta, delta_x, delta_y]
                 s_i (Array): arc-length position of the tip along the segment.
+            
             Returns:
                 xi_i (Array): strain parameters of shape (3,) : [kappa_z, sigma_x, sigma_y]
             """
@@ -1479,6 +1481,7 @@ class PlanarPCS(DynamicalSystem):
 
         Args:
             i (Array): index of the segment
+        
         Returns:
             M_i (Array): local mass matrix of shape (3, 3) for the i-th segment
         """
@@ -1992,6 +1995,7 @@ class PlanarPCS(DynamicalSystem):
                 Shape is (2 * num_strains,).
             actuation_args (Tuple, optional): Additional arguments for the actuation mapping function.
                 Default is None.
+        
         Returns:
             yd (Array): Time derivative of the state vector.
         """

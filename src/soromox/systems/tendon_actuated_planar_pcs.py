@@ -242,6 +242,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
             Args:
                 segment_idx: index of the segment
                 d_sm: distance of the tendons from the segment's backbone (shape: (num_segment_tendons,))
+            
             Returns:
                 A_sm: actuation matrix of shape (n_xi, num_segment_tendons)
             """
@@ -251,6 +252,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                 Compute the actuation matrix for a single actuator/tendon with respect to the soft robot's strains.
                 Args:
                     d: distance of the tendon from the centerline
+                
                 Returns:
                     A_d: actuation matrix of shape (n_xi, ) where n_xi is the number of strains
                 """
@@ -266,6 +268,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                         i: index of the segment
                         L_i: length of the segment
                         xi_i: strains for the segment
+                    
                     Returns:
                         A_d_segment: actuation matrix for the segment of shape (3, 3)
                     """

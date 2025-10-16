@@ -537,6 +537,7 @@ class PCS(DynamicalSystem):
             Args:
                 g_base_i (Array): transformation matrix of the base of the segment, shape (4, 4).
                 i (Array): index of the segment.
+            
             Returns:
                 g_i (Array): transformation matrix of the point s_local if i == segment_idx, otherwise the tip of the segment, shape (4, 4).
                 g_i (Array): transformation matrix of the point s_local if i == segment_idx, otherwise the tip of the segment, shape (4, 4).
@@ -672,6 +673,7 @@ class PCS(DynamicalSystem):
             Args:
                 g_prev_i (Array): previous segment tip transform of shape (4, 4).
                 g_curr_i (Array): current segment tip transform of shape (4, 4).
+            
             Returns:
                 g_rel (Array): relative transform of shape (4, 4).
             """
@@ -716,6 +718,7 @@ class PCS(DynamicalSystem):
             Args:
                 g_rel_i (Array): relative transform of shape (4, 4).
                 length_i (Array): length of the segment.
+            
             Returns:
                 xi (Array): strain twist of shape (6,).
             """
@@ -925,6 +928,7 @@ class PCS(DynamicalSystem):
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+        
         Returns:
             J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
         """
@@ -967,6 +971,7 @@ class PCS(DynamicalSystem):
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+        
         Returns:
             J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
         """
@@ -1417,6 +1422,7 @@ class PCS(DynamicalSystem):
 
         Args:
             i (Array): index of the segment as array of shape ()
+        
         Returns:
             M_i (Array): local mass matrix of shape (6, 6) for the i-th segment
         """
@@ -2017,6 +2023,7 @@ class PCS(DynamicalSystem):
                 Shape is (2 * num_strains,).
             actuation_args (Tuple, optional): Additional arguments for the actuation mapping function.
                 Default is None.
+        
         Returns:
             yd (Array): Time derivative of the state vector.
         """
@@ -2070,6 +2077,7 @@ class PCS(DynamicalSystem):
             Compute the integrand for the dynamical matrices at the i-th segment.
             Args:
                 i (Array): index of the segment
+            
             Returns:
                 Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
             """
@@ -2080,6 +2088,7 @@ class PCS(DynamicalSystem):
                 Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
                 Args:
                     j (Array): index of the quadrature point
+                
                 Returns:
                     Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
                 """

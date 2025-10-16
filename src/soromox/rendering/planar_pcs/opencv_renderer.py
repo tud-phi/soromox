@@ -28,6 +28,7 @@ def render_planar_pcs(
         origin_uv: The (u, v) pixel coordinates of the robot base. If None, set to the center of the image.
         backbone_thickness: The thickness of the rendered lines in pixels. If None, set it according to the robot diameter.
         num_points: The number of points used for discretizing the backbone curve.
+    
     Returns:
         img: A numpy array of shape (width, height, 3) containing the rendered image.
     """

@@ -807,6 +807,7 @@ class PlanarHSA(DynamicalSystem):
         Map the generalized coordinates to the strains in the virtual backbone
         Args:
             q: generalized coordinates of shape (num_dofs, )
+        
         Returns:
             xi: strains of the virtual backbone of shape (num_dofs, )
         """
@@ -824,6 +825,7 @@ class PlanarHSA(DynamicalSystem):
         Map the generalized coordinates to the strains in the physical rods
         Args:
             vxi: strains of the virtual backbone of shape (num_dofs, )
+        
         Returns:
             pxi: strains in the physical rods of shape (num_segments, num_rods_per_segment, 3)
         """
@@ -845,6 +847,7 @@ class PlanarHSA(DynamicalSystem):
         Map the strains in the physical rods to the strains of the virtual backbone
         Args:
             pxi: strains in the physical rods of shape (num_segments, num_rods_per_segment, 3)
+        
         Returns:
             vxi: strains of the virtual backbone of shape (num_dofs, )
         """
@@ -918,6 +921,7 @@ class PlanarHSA(DynamicalSystem):
         Args:
             q: generalized coordinates of shape (num_dofs, )
             s: point coordinate along the rod in the interval [0, L].
+        
         Returns:
             chi: pose of the backbone point in Cartesian-space with shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -961,6 +965,7 @@ class PlanarHSA(DynamicalSystem):
             q: generalized coordinates of shape (num_dofs, )
             s: point coordinate along the rod in the interval [0, L].
             rod_idx: index of the rod. If there are two rods per segment, then rod_idx can be 0 or 1.
+        
         Returns:
             chir: pose of the rod centerline point in Cartesian-space with shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -998,6 +1003,7 @@ class PlanarHSA(DynamicalSystem):
         Args:
             q: generalized coordinates of shape (num_dofs, )
             segment_idx: index of the segment
+        
         Returns:
             chip: pose of the CoG of the platform in Cartesian-space with shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -1026,6 +1032,7 @@ class PlanarHSA(DynamicalSystem):
         Evaluate the forward kinematics of the end-effector
         Args:
             q: generalized coordinates of shape (num_dofs, )
+        
         Returns:
             chiee: pose of the end-effector in Cartesian-space of shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -1052,6 +1059,7 @@ class PlanarHSA(DynamicalSystem):
         Evaluate the Jacobian of the end-effector
         Args:
             q: generalized coordinates of shape (num_dofs, )
+        
         Returns:
             Jee: the Jacobian of the end-effector pose with respect to the generalized coordinates.
                 Jee is an array of shape (3, num_dofs).
@@ -1075,6 +1083,7 @@ class PlanarHSA(DynamicalSystem):
             params: Dictionary of robot parameters
             chiee: pose of the end-effector in Cartesian-space of shape (3, )
             eps: small number to avoid singularities (e.g., division by zero)
+        
         Returns:
             q: generalized coordinates of shape (num_dofs, )
         """

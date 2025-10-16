@@ -274,6 +274,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
                     Sector angle of each segment's pneumatic chamber [rad]
                 - "d_chamber" : Array of num_segments floats
                     Radial distance of the center of the chambers from the centerline of the backbone [m]
+        
         Returns:
             updated_self (PneumaticallyActuatedPlanarPCS):
                 A new instance of PneumaticallyActuatedPlanarPCS with updated parameters.

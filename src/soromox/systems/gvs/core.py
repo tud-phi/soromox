@@ -721,6 +721,7 @@ class GVS(DynamicalSystem):
         Args:
             vec_min_size_flat (Array): shape (dof_tot, 1) or (dof_tot,) JAX array
                 Joint coordinates or joint velocities.
+        
         Returns:
             vec_gathered (Array): shape (num_segments, 2, max_dof) JAX array
                 Padded joint coordinates.
@@ -781,6 +782,7 @@ class GVS(DynamicalSystem):
 
         Args:
             vec_max_size (Array): configuration vector of shape (num_segments * 2 * max_dof, )
+        
         Returns:
             vec_gathered (Array): gathered configuration vector of shape (num_segments, 2, max_dof)
         """
@@ -2913,6 +2915,7 @@ class GVS(DynamicalSystem):
         Compute the elastic energy stored in the robot.
         Args:
             q (Array): generalized coordinates of shape (dof_tot,).
+        
         Returns:
             U_el (Array): Elastic potential energy.
         """
@@ -2926,6 +2929,7 @@ class GVS(DynamicalSystem):
         Compute the gravitational potential energy of the robot.
         Args:
             q (Array): generalized coordinates of shape (dof_tot,).
+        
         Returns:
             U_g (Array): Gravitational potential energy.
         """
@@ -2980,6 +2984,7 @@ class GVS(DynamicalSystem):
         Compute the total potential energy (elastic + gravitational).
         Args:
             q (Array): generalized coordinates of shape (dof_tot,).
+        
         Returns:
             U (Array): Total potential energy (elastic + gravitational).
         """
@@ -2992,6 +2997,7 @@ class GVS(DynamicalSystem):
         Args:
             q (Array): generalized coordinates of shape (dof_tot,).
             qd (Array): generalized velocities of shape (dof_tot,).
+        
         Returns:
             E (Array): Total mechanical energy (kinetic + potential).
         """
@@ -3044,6 +3050,7 @@ class GVS(DynamicalSystem):
                 Shape is (2 * num_strains,).
             actuation_args (Tuple, optional): Additional arguments for the actuation mapping function.
                 Default is None.
+        
         Returns:
             yd (Array): Time derivative of the state vector.
         """
@@ -3090,6 +3097,7 @@ class GVS(DynamicalSystem):
             Compute the integrand for the dynamical matrices at the i-th segment.
             Args:
                 i (Array): index of the segment
+            
             Returns:
                 B_blocks_i (Array): The inertia matrix integrand blocks.
                 C_blocks_i (Array): The Coriolis matrix integrand blocks.
@@ -3108,6 +3116,7 @@ class GVS(DynamicalSystem):
                 Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
                 Args:
                     j (Array): index of the quadrature point
+                
                 Returns:
                     B_ij (Array): The inertia matrix integrand.
                     C_ij (Array): The Coriolis matrix integrand.

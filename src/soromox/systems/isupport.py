@@ -290,6 +290,7 @@ class ISupport(PCS):
                     Radial distance of the center of the chambers from the centerline of the backbone [m]
                 - "varphi_chamber_off" : Array of num_segments floats
                     Angular offset of the first actuator from the local z-axis [rad]
+        
         Returns:
             updated_self (PneumaticallyActuatedPlanarPCS):
                 A new instance of PneumaticallyActuatedPlanarPCS with updated parameters.
@@ -387,6 +388,7 @@ class ISupport(PCS):
         Args:
             i (Array): index of the segment as array of shape ()
             varphi_angle (Array): polar angle of the actuator center from the local z-axis as Array of shape ()
+        
         Returns:
             centroid_actuator (Array): position of the centroid of one pneumatic actuator in the local reference frame of the i-th segment as array of shape (3, )
         """
@@ -446,6 +448,7 @@ class ISupport(PCS):
         Args:
             i (Array): index of the segment as array of shape ()
             varphi_chamber (Array): polar angle of the chamber center from the local z-axis as Array of shape ()
+        
         Returns:
             I_one_actuator_i (Array): local second moment of area of one actuator of the i-th segment as array of shape (3, )
         """
