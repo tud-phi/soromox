@@ -764,6 +764,27 @@ def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluat
             assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
+    robot, _ = make_pcs(num_segments=num_segments)
+    key = jax.random.PRNGKey(2)
+    q_keys = jax.random.split(key, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key + 1, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
+
+        B_impl = robot.inertia_matrix(q)
+
+        def T_of_qd(qd_):
+            return robot.kinetic_energy(q, qd_)
+
+        dT_dqdsq = jacfwd(jax.grad(T_of_qd))(qd)
+        B_expected = dT_dqdsq
+
+        assert_allclose(B_impl, B_expected, rtol=RTOL, atol=ATOL)
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
     key = jax.random.PRNGKey(9)
