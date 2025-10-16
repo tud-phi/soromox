@@ -881,8 +881,12 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     dg_dq = jacfwd(robot.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacfwd(robot.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacfwd(robot.jacobian_inertialframe, argnums=0)(q, s)
-    dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    dJd_inertialframe_dq = jacfwd(robot.jacobian_derivative_inertialframe, argnums=0)(
+    _, dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    _, dJd_bodyframe_dqd = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=1)(q, qd, s)
+    _, dJd_inertialframe_dq = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=0)(
+        q, qd, s
+    )
+    _, dJd_inertialframe_dqd = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=1)(
         q, qd, s
     )
     dB_dq = jacfwd(robot.inertia_matrix)(q)
@@ -899,7 +903,9 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     assert not jnp.isnan(dJ_bodyframe_dq).any(), f"Found NaN in forward-mode of bodyframe Jacobian"
     assert not jnp.isnan(dJ_inertialframe_dq).any(), f"Found NaN in forward-mode of inertialframe Jacobian"
     assert not jnp.isnan(dJd_bodyframe_dq).any(), f"Found NaN in forward-mode of bodyframe Jacobian derivative"
-    assert not jnp.isnan(dJd_inertialframe_dq).any(), f"Found NaN in forward-mode of inertialframe Jacobian derivative"
+    assert not jnp.isnan(dJd_bodyframe_dqd).any(), f"Found NaN in forward-mode of bodyframe Jacobian derivative w.r.t. qd"
+    assert not jnp.isnan(dJd_inertialframe_dq).any(), f"Found NaN in forward-mode of inertialframe Jacobian derivative w.r.t. q"
+    assert not jnp.isnan(dJd_inertialframe_dqd).any(), f"Found NaN in forward-mode of inertialframe Jacobian derivative w.r.t. qd"
     assert not jnp.isnan(dB_dq).any(), f"Found NaN in forward-mode of inertia matrix"
     assert not jnp.isnan(dC_dq).any(), f"Found NaN in forward-mode of coriolis matrix (dC/dq)"
     assert not jnp.isnan(dC_dqd).any(), f"Found NaN in forward-mode of coriolis matrix (dC/dqd)"
@@ -909,6 +915,21 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     assert not jnp.isnan(dtau_u_du).any(), f"Found NaN in forward-mode of actuation force (dTau/du)"
     assert not jnp.isnan(dy_dy).any(), f"Found NaN in forward-mode of forward dynamics (dy/dy)"
     assert not jnp.isnan(dy_du).any(), f"Found NaN in forward-mode of forward dynamics (dy/du)"
+
+    # test differentiability of the energy functions at zero configuration
+    dT_dq = jacfwd(robot.kinetic_energy, argnums=0)(q, qd)
+    dT_dqd = jacfwd(robot.kinetic_energy, argnums=1)(q, qd)
+    dU_G_dq = jacfwd(robot.gravitational_energy)(q)
+    dU_dq = jacfwd(robot.potential_energy)(q)
+    dE_dq = jacfwd(robot.total_energy, argnums=0)(q, qd)
+    dE_dqd = jacfwd(robot.total_energy, argnums=1)(q, qd)
+
+    assert not jnp.isnan(dT_dq).any(), "dT/dq contains NaN!"
+    assert not jnp.isnan(dT_dqd).any(), "dT/dqd contains NaN!"
+    assert not jnp.isnan(dU_G_dq).any(), "dU_G/dq contains NaN!"
+    assert not jnp.isnan(dU_dq).any(), "dU/dq contains NaN!"
+    assert not jnp.isnan(dE_dq).any(), "dE/dq contains NaN!"
+    assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -924,8 +945,12 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segm
     dg_dq = jacrev(robot.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacrev(robot.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacrev(robot.jacobian_inertialframe, argnums=0)(q, s)
-    dJd_bodyframe_dq = jacrev(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    dJd_inertialframe_dq = jacrev(robot.jacobian_derivative_inertialframe, argnums=0)(
+    _, dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
+    _, dJd_bodyframe_dqd = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=1)(q, qd, s)
+    _, dJd_inertialframe_dq = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=0)(
+        q, qd, s
+    )
+    _, dJd_inertialframe_dqd = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=1)(
         q, qd, s
     )
     dB_dq = jacrev(robot.inertia_matrix)(q)
@@ -942,7 +967,9 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segm
     assert not jnp.isnan(dJ_bodyframe_dq).any(), f"Found NaN in reverse-mode of bodyframe Jacobian"
     assert not jnp.isnan(dJ_inertialframe_dq).any(), f"Found NaN in reverse-mode of inertialframe Jacobian"
     assert not jnp.isnan(dJd_bodyframe_dq).any(), f"Found NaN in reverse-mode of bodyframe Jacobian derivative"
+    assert not jnp.isnan(dJd_bodyframe_dqd).any(), f"Found NaN in reverse-mode of bodyframe Jacobian derivative w.r.t. qd"
     assert not jnp.isnan(dJd_inertialframe_dq).any(), f"Found NaN in reverse-mode of inertialframe Jacobian derivative"
+    assert not jnp.isnan(dJd_inertialframe_dqd).any(), f"Found NaN in reverse-mode of inertialframe Jacobian derivative w.r.t. qd"
     assert not jnp.isnan(dB_dq).any(), f"Found NaN in reverse-mode of inertia matrix"
     assert not jnp.isnan(dC_dq).any(), f"Found NaN in reverse-mode of coriolis matrix (dC/dq)"
     assert not jnp.isnan(dC_dqd).any(), f"Found NaN in reverse-mode of coriolis matrix (dC/dqd)"
@@ -952,6 +979,21 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segm
     assert not jnp.isnan(dtau_u_du).any(), f"Found NaN in reverse-mode of actuation force (dTau/du)"
     assert not jnp.isnan(dy_dy).any(), f"Found NaN in reverse-mode of forward dynamics (dy/dy)"
     assert not jnp.isnan(dy_du).any(), f"Found NaN in reverse-mode of forward dynamics (dy/du)"
+
+    # test differentiability of the energy functions at zero configuration
+    dT_dq = jacrev(robot.kinetic_energy, argnums=0)(q, qd)
+    dT_dqd = jacrev(robot.kinetic_energy, argnums=1)(q, qd)
+    dU_G_dq = jacrev(robot.gravitational_energy)(q)
+    dU_dq = jacrev(robot.potential_energy)(q)
+    dE_dq = jacrev(robot.total_energy, argnums=0)(q, qd)
+    dE_dqd = jacrev(robot.total_energy, argnums=1)(q, qd)
+
+    assert not jnp.isnan(dT_dq).any(), "dT/dq contains NaN!"
+    assert not jnp.isnan(dT_dqd).any(), "dT/dqd contains NaN!"
+    assert not jnp.isnan(dU_G_dq).any(), "dU_G/dq contains NaN!"
+    assert not jnp.isnan(dU_dq).any(), "dU/dq contains NaN!"
+    assert not jnp.isnan(dE_dq).any(), "dE/dq contains NaN!"
+    assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
 
 
 @pytest.mark.parametrize("num_segments", [1])

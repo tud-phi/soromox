@@ -1368,41 +1368,10 @@ class PCS(DynamicalSystem):
         )  # shape (N, 6, num_active_strains)
         return J_global_ps, Jd_global_ps
 
-    @eqx.filter_jit
-    def jacobian(self, q: Array, s: Array) -> Array:
-        """
-        Compute the Jacobian of the forward kinematics at a point s along the robot in the inertial frame.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            s (Array): point coordinate along the robot in the interval [0, L].
-
-        Returns:
-            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
-        """
-        J_global = self.jacobian_inertialframe(q, s)
-
-        return J_global
-
-    @eqx.filter_jit
-    def jacobian_and_derivative(
-        self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
-        """
-        Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-            s (Array): point coordinate along the robot in the interval [0, L].
-
-        Returns:
-            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
-            Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_strains)
-        """
-        J_global, Jd_global = self.jacobian_and_derivative_inertialframe(q, qd, s)
-
-        return J_global, Jd_global
+    jacobian = jacobian_inertialframe
+    jacobian_batched = jacobian_inertialframe_batched
+    jacobian_and_derivative = jacobian_and_derivative_inertialframe
+    jacobian_and_derivative_batched = jacobian_and_derivative_inertialframe_batched
 
     # ==========================================
     # Useful functions for the system
