@@ -1785,6 +1785,34 @@ class GVS(DynamicalSystem):
         return J_global
 
     @eqx.filter_jit
+    def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute the inertial-frame Jacobian at multiple arclength locations.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            s_ps (Array): points along the backbone in [0, L], shape (N,).
+
+        Returns:
+            Array: Jacobians with shape (N, 6, num_active_strains).
+        """
+        J_body = self.jacobian_bodyframe_batched(q, s_ps)  # (N, 6, num_active_strains)
+        g_ps = self.forward_kinematics_batched(q, s_ps)  # (N, 4, 4)
+
+        def rotate_pair(g_i: Array, J_i: Array) -> Array:
+            R = g_i[:3, :3]
+            g_rot = jnp.block(
+                [
+                    [R, jnp.zeros((3, 1), dtype=R.dtype)],
+                    [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
+                ]
+            )
+            Ad = lie.Adjoint_g_SE3(g_rot)
+            return Ad @ J_i
+
+        return vmap(rotate_pair)(g_ps, J_body)
+
+    @eqx.filter_jit
     def _jacobian_derivative_gauss(
         self, q_gathered: Array, qd_gathered: Array
     ) -> Array:

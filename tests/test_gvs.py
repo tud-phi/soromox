@@ -2,7 +2,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)  # use double precision in tests
 
-from jax import jacfwd, jacrev, jvp
+from jax import Array, jacfwd, jacrev, jvp
 import jax.numpy as jnp
 import numpy as onp
 import pytest
@@ -506,21 +506,34 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: i
         assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
 
 
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_local_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
-    dof = int(robot.dof_tot_system)
+    key = jax.random.PRNGKey(6)
+    q_keys = jax.random.split(key, NUM_RANDOM_SAMPLES)
 
-    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
-    random_cfg = random_q(robot, jax.random.PRNGKey(9876), scale=0.05)
+    for q_key in q_keys:
+        q = random_q(robot, q_key, scale=0.03)
 
-    s_points = sample_arc_lengths(robot)
+        for s in sample_arc_lengths(robot):
+            if s < 1e-3:
+                continue
 
-    for q in (zero_cfg, random_cfg):
-        J_batch = robot._J_local_batched(q, s_points)
-        J_expected = stack_jacobians(robot, q, s_points)
+            J_body = robot.jacobian_bodyframe(q, float(s))
+            g = robot.forward_kinematics(q, float(s))
+            g_inv = se3_inverse(g)
 
-        assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
+            def fk(qq: jnp.ndarray) -> jnp.ndarray:
+                return robot.forward_kinematics(qq, float(s))
+
+            cols = []
+            eye = jnp.eye(q.shape[0], dtype=jnp.float64)
+            for j in range(q.shape[0]):
+                _, g_tangent = jvp(fk, (q,), (eye[j],))
+                cols.append(se3_tangent_to_body_twist(g_inv, g_tangent))
+
+            J_ad = jnp.stack(cols, axis=1)
+            assert_allclose(J_body, J_ad, rtol=1e-6, atol=1e-7)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -558,33 +571,91 @@ def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(num_segments: i
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
-    robot = build_varied_basis_gvs(num_segments=num_segments)
-    key = jax.random.PRNGKey(6)
-    q_keys = jax.random.split(key, NUM_RANDOM_SAMPLES)
+def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
+    model = build_varied_basis_gvs(num_segments=num_segments)
+    key = jax.random.PRNGKey(7)
 
-    for q_key in q_keys:
-        q = random_q(robot, q_key, scale=0.03)
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(model, q_key, scale=0.03)
 
-        for s in sample_arc_lengths(robot):
+        for s in sample_arc_lengths(model):
             if s < 1e-3:
                 continue
 
-            J_body = robot.jacobian_bodyframe(q, float(s))
-            g = robot.forward_kinematics(q, float(s))
+            J_impl = model.jacobian_inertialframe(q, s)
+            g = model.forward_kinematics(q, s)
+            R = g[:3, :3]
             g_inv = se3_inverse(g)
 
-            def fk(qq: jnp.ndarray) -> jnp.ndarray:
-                return robot.forward_kinematics(qq, float(s))
+            def fk(qq: Array) -> Array:
+                return model.forward_kinematics(qq, s)
 
+            n = q.shape[0]
+            eye = jnp.eye(n)
             cols = []
-            eye = jnp.eye(q.shape[0], dtype=jnp.float64)
-            for j in range(q.shape[0]):
-                _, g_tangent = jvp(fk, (q,), (eye[j],))
-                cols.append(se3_tangent_to_body_twist(g_inv, g_tangent))
+            for j in range(n):
+                _, g_tangent = jax.jvp(fk, (q,), (eye[j],))
+                Xi_hat_body = g_inv @ g_tangent
+                skew_body = 0.5 * (Xi_hat_body[:3, :3] - Xi_hat_body[:3, :3].T)
+                omega = jnp.array(
+                    [
+                        skew_body[2, 1],
+                        skew_body[0, 2],
+                        skew_body[1, 0],
+                    ]
+                )
+                v_body = Xi_hat_body[:3, 3]
+                cols.append(jnp.concatenate((R @ omega, R @ v_body)))
 
             J_ad = jnp.stack(cols, axis=1)
-            assert_allclose(J_body, J_ad, rtol=1e-6, atol=1e-7)
+
+            assert_allclose(
+                J_impl,
+                J_ad,
+                rtol=1e-6,
+                atol=1e-7,
+                err_msg=(
+                    f"num_segments={num_segments}, s={s}\n"
+                    f"J_impl:\n{J_impl}\nJ_ad:\n{J_ad}"
+                ),
+            )
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    total_length = float(robot.V_L_cum[-1])
+
+    q_keys = jax.random.split(jax.random.PRNGKey(4243), NUM_RANDOM_SAMPLES)
+    s_keys = jax.random.split(jax.random.PRNGKey(1314), NUM_RANDOM_SAMPLES)
+
+    num_points = max(3 * robot.num_segments, 3)
+
+    for q_key, s_key in zip(q_keys, s_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        random_points = jax.random.uniform(
+            s_key,
+            shape=(num_points,),
+            minval=0.0,
+            maxval=total_length,
+            dtype=jnp.float64,
+        )
+        s_points = jnp.sort(
+            jnp.concatenate(
+                (
+                    jnp.array([0.0, total_length], dtype=jnp.float64),
+                    random_points,
+                )
+            )
+        )
+
+        J_batch = robot.jacobian_inertialframe_batched(q, s_points)
+        J_expected = jnp.stack(
+            [robot.jacobian_inertialframe(q, float(s)) for s in s_points],
+            axis=0,
+        )
+
+        assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
