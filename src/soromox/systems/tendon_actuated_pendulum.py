@@ -106,6 +106,10 @@ class TendonActuatedPendulum(Pendulum):
         Transformation matrix from actuation to configuration coordinates, such that q = h_q(y) (identity if omitted).
     h_q_inv: Array (shape (N, N))
         Transformation matrix from configuration to actuation coordinates, such that y = h_q_inv(q) (identity if omitted).
+
+    References:
+    ----------
+    - [Tendon-driven actuation of an articulated link system] Murray, Richard M., Zexiang Li, and S. Shankar Sastry. A mathematical introduction to robotic manipulation. CRC press, 2017. (Chapter 6)
     """
 
     R_at: Array

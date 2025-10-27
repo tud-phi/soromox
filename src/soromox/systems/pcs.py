@@ -66,6 +66,10 @@ class PCS(DynamicalSystem):
                 - sigma_y corresponds to shear along the y-axis,
                 - sigma_z corresponds to shear along the z-axis.
 
+    References:
+    ----------
+    - Renda, Federico, Frédéric Boyer, Jorge Dias, and Lakmal Seneviratne. "Discrete cosserat approach for multisection soft manipulator dynamics." IEEE Transactions on Robotics 34, no. 6 (2018): 1518-1533.
+
     """
 
     # Robot parameters

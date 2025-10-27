@@ -14,7 +14,7 @@ from soromox.utils.integration import scale_gaussian_quadrature
 
 class TendonActuatedPCS(PCS):
     """
-    Piecewise Constant Strain (PCS) model for 3D soft continuum robots.
+    Piecewise Constant Strain (PCS) model for 3D soft continuum robots with tendon actuation.
 
     This class implements the geometric and dynamic modeling of a 3D soft robot
     using the Cosserat rod theory and piecewise constant strain assumption.
@@ -72,6 +72,11 @@ class TendonActuatedPCS(PCS):
                 - sigma_y corresponds to shear along the y-axis,
                 - sigma_z corresponds to shear along the z-axis.
 
+    References:
+    ----------
+    - [PCS model] Renda, Federico, Frédéric Boyer, Jorge Dias, and Lakmal Seneviratne. "Discrete cosserat approach for multisection soft manipulator dynamics." IEEE Transactions on Robotics 34, no. 6 (2018): 1518-1533.
+    - [Actuation matrix for tendon-actuated soft robots] Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 5(3), 4006-4013.
+    - [Tendon lengths] Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024). Input decoupling of lagrangian systems via coordinate transformation: General characterization and its application to soft robotics. IEEE transactions on robotics, 40, 2098-2110.
     """
 
     tendon_routing_params: Dict[str, Array]
@@ -373,6 +378,8 @@ class TendonActuatedPCS(PCS):
     def actuation_matrix(self, q: Array) -> Array:
         """
         Compute the actuation matrix of the robot.
+        This implementation is based on the formulation presented in:
+        Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 5(3), 4006-4013.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).

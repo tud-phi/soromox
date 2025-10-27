@@ -49,19 +49,17 @@ class ISupport(PCS):
         Angular offset of the first actuator from the local segment frame [rad].
 
     References:
-    -----
-    This implementation builds upon the findings of:
-
-    Arleo et al. (2021): Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021).
+    ----------
+    - Arleo et al. (2021): Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021).
         I-support soft arm for assistance tasks: a new manufacturing approach based on 3D printing and characterization.
         Progress in Additive Manufacturing, 6(2), 243-256.
         https://link.springer.com/article/10.1007/s40964-020-00158-y
 
-    Alessi et al. (2023): Alessi, C., Falotico, E., & Lucantonio, A. (2023).
+    - Alessi et al. (2023): Alessi, C., Falotico, E., & Lucantonio, A. (2023).
         Ablation study of a dynamic model for a 3d-printed pneumatic soft robotic arm. IEEE Access, 11, 37840-37853.
         https://ieeexplore.ieee.org/abstract/document/10098800
 
-    Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
+    - Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
         Pushing with soft robotic arms via deep reinforcement learning. Advanced Intelligent Systems, 6(8), 2300899.
         https://advanced.onlinelibrary.wiley.com/doi/full/10.1002/aisy.202300899
 
