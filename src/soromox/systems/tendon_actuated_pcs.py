@@ -3,7 +3,7 @@ import equinox as eqx
 import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import soromox.utils.lie_algebra as lie
 import soromox.actuation.tendon_actuation as act
@@ -39,8 +39,10 @@ class TendonActuatedPCS(PCS):
         Total number of strain components (6 * num_segments).
     B_xi : Array
         Basis matrix for projecting active strains (num_active_strains, num_active_strains).
-    B_xi_segments : Array
-        Basis matrix for projecting active strains, by segments (num_segments, num_active_strains, num_active_strains).
+    B_xi_segments : List[Array]
+        Segment-wise strain bases. Each entry has shape (6, num_active_strains_segment_i).
+    B_xi_segments_dense : Array
+        Dense stack of the segment-wise strain bases with shape (num_segments, 6, num_active_strains).
     xi_ref : Array
         Reference strain (reference configuration) of the robot.
     num_gauss_points : int
@@ -75,7 +77,6 @@ class TendonActuatedPCS(PCS):
     """
 
     tendon_routing_params: Dict[str, Array]
-    B_xi_segments: Array
     d_s: Callable
     dd_s_ds: Callable
 
@@ -165,41 +166,8 @@ class TendonActuatedPCS(PCS):
                 "d_s": act.linear_routing,
                 "dd_s_ds": act.linear_routing_derivative,
             }
-        self.B_xi_segments = self._B_xi_segments()
         self._set_tendon_routing_basis(tendon_routing_basis)
         self._set_tendon_routing_params(tendon_routing_params)
-
-    def _B_xi_segments(self):
-        """
-        Compute the strains basis by segments. While the full strains basis B_xi
-        is a block diagonal matrix composed by the 6x6 strain basis of each segment,
-        this function extracts each diagonal block and returns it as a matrix of shape
-        (num_segments, num_active_strains, num_active_strains). This is used for the
-        computation of the actuation matrix.
-
-        Returns:
-            B_xi_segments (Array): strain basis of each segments (num_segments, num_active_strains, num_active_strains)
-        """
-
-        def B_xi_segment_j(j: Array):
-            """
-            Compute the strains basis of segment j.
-
-            Args:
-                i (Array): index of the segment
-
-            Returns:
-                B_xi_j (Array): strain basis of segment j (num_active_strains, num_active_strains)
-            """
-            idx = 6 * j
-            B_xi_j = jnp.zeros_like(self.B_xi, dtype=self.B_xi.dtype)
-            B_block = lax.dynamic_slice(self.B_xi, (idx, idx), (6, 6))
-            B_xi_j = lax.dynamic_update_slice(B_xi_j, B_block, (idx, idx))
-            return B_xi_j
-
-        B_xi_segments = vmap(B_xi_segment_j)(jnp.arange(self.num_segments))
-
-        return B_xi_segments
 
     def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
         """
@@ -323,7 +291,7 @@ class TendonActuatedPCS(PCS):
             s (Array): abscissa points (num_gauss_points,)
 
         Returns:
-            Phi_a_s (Array): actuation basis at s of shape (num_active_strains, num_actuators)
+            Phi_a_s (Array): actuation basis at s of shape (6 * num_segments, num_actuators)
         """
 
         def Phi_a_kj(single_tendon_routing_params: Dict[str, Array], j: Array):
@@ -389,7 +357,7 @@ class TendonActuatedPCS(PCS):
                 i (Array): index of the segment ()
 
             Returns:
-                A_i (Array): stack of actuation matrices of shape (num_gauss_points, num_active_strains, num_actuators).
+                A_i (Array): stack of actuation matrices of shape (num_gauss_points, 6 * num_segments, num_actuators).
             """
 
             def A_point_j(j: Array):
@@ -400,24 +368,22 @@ class TendonActuatedPCS(PCS):
                     j (Array): index of the gaussian point ()
 
                 Returns:
-                    A_j (Array): local actuation matrix of shape (num_active_strains, num_actuators).
+                    A_j (Array): local actuation matrix of shape (6 * num_segments, num_actuators).
                 """
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
                 Phi_a_j = self._local_actuation_basis(q, Xs_j)
-                A_j = B_xi_i.T @ Phi_a_j  # A_s = B_xi.T @ Phi_a
+                A_j = Phi_a_j  # A_s = B_xi.T @ Phi_a
                 return Ws_j * A_j
 
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
-            # Retrieve strain basis of the current segment
-            B_xi_i = self.B_xi_segments[i]  # (num_active_strains, num_active_strains)
 
             # Vectorize the actuation matrix computation for all gaussian points
             A_i = vmap(A_point_j)(
                 jnp.arange(self.num_gauss_points)
-            )  # (num_gauss_points, num_active_strains, num_actuators)
+            )  # (num_gauss_points, 6 * num_segments, num_actuators)
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_point_j(j) for j in range(self.num_gauss_points)], axis=0)
@@ -428,13 +394,16 @@ class TendonActuatedPCS(PCS):
         # Vectorize the actuation matrix computation for all segments
         A_blocks = vmap(A_segment_i)(
             jnp.arange(self.num_segments)
-        )  # (num_segments, num_gauss_points, num_active_strains, num_actuators)
+        )  # (num_segments, num_gauss_points, 6 * num_segments, num_actuators)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_segment_i(i) for i in range(self.num_segments)], axis=0)
         # print('A_blocks_tot =\n', A_blocks_tot.shape)
 
         A = jnp.sum(A_blocks, axis=(0, 1))  # Sum over segments and Gauss points
+
+        # Project into the active strains space
+        A = self.B_xi.T @ A  # (num_active_strains, num_actuators)
 
         return A
 
