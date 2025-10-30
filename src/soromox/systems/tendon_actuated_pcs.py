@@ -290,22 +290,22 @@ class TendonActuatedPCS(PCS):
             Phi_a_s (Array): actuation basis at s of shape (6 * num_segments, num_actuators)
         """
 
-        def Phi_a_kj(single_tendon_routing_params: Dict[str, Array], j: Array):
+        def Phi_a_ki(single_tendon_routing_params: Dict[str, Array], i: Array):
             """
-            Compute the actuation basis of one tendon at the segment j of the robot.
+            Compute the actuation basis of one tendon at the segment i of the robot.
 
             Args:
                 single_tendon_routing_params (Dict[str, Array]): parameters of one tendon (6,)
-                j (Array): index of the segment ()
+                i (Array): index of the segment ()
 
             Returns:
-                Phi_a_kj (Array): actuation basis of one tendon at one segment of shape (6,)
+                Phi_a_ki (Array): actuation basis of one tendon at the i-th segment of shape (6,)
             """
             attachment_segment_idx = single_tendon_routing_params["idx_seg_att"]  # ()
-            cond = attachment_segment_idx >= j  # ()
+            cond = attachment_segment_idx >= i  # ()
 
             xi_j = jnp.reshape(xi, (6, self.num_segments), order="F")[
-                :, j
+                :, i
             ]  # strains of segment j (6,)
             d_s = jnp.append(self.d_s(single_tendon_routing_params, s), 1.0)  # (4,)
             dd_s = jnp.append(
@@ -322,7 +322,7 @@ class TendonActuatedPCS(PCS):
 
         # Vectorize first over each tendon and then over each segment
         Phi_a_s = vmap(
-            vmap(Phi_a_kj, in_axes=(0, None), out_axes=1), in_axes=(None, 0), out_axes=0
+            vmap(Phi_a_ki, in_axes=(0, None), out_axes=1), in_axes=(None, 0), out_axes=0
         )(
             self.tendon_routing_params, jnp.arange(self.num_segments)
         )  # (num_segments, 6, num_actuators)
