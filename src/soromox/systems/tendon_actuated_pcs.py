@@ -39,10 +39,6 @@ class TendonActuatedPCS(PCS):
         Total number of strain components (6 * num_segments).
     B_xi : Array
         Basis matrix for projecting active strains (num_active_strains, num_active_strains).
-    B_xi_segments : List[Array]
-        Segment-wise strain bases. Each entry has shape (6, num_active_strains_segment_i).
-    B_xi_segments_dense : Array
-        Dense stack of the segment-wise strain bases with shape (num_segments, 6, num_active_strains).
     xi_ref : Array
         Reference strain (reference configuration) of the robot.
     num_gauss_points : int
