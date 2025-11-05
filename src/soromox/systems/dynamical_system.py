@@ -84,7 +84,7 @@ class DynamicalSystem(eqx.Module):
             terms=term,
             solver=solver,
             t0=t0,
-            t1=t1,
+            t1=t1 + dt,
             dt0=dt,
             y0=y0,
             args=(u, tau_ext),

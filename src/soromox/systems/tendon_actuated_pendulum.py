@@ -301,6 +301,20 @@ class TendonActuatedPendulum(Pendulum):
     # Internal helpers (geometry & Jacobians, pure JAX)
     # -------------------------------------------------
     @eqx.filter_jit
+    def active_tendon_length(self, q: Array) -> Array:
+        """
+        Compute the length of the active tendons.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            l_a (Array): length of the active tendons, shape (Na,) [m]
+        """
+        l_a = self.R_at @ q
+        return l_a
+    
+    @eqx.filter_jit
     def passive_tendon_length(self, q: Array) -> Array:
         """
         Compute the length of the passive tendons.
@@ -478,7 +492,7 @@ class TendonActuatedPendulum(Pendulum):
             q (Array): configuration coordinates, shape (N,)
 
         Returns:
-            J_h_q_inv (Array): jacobian, shape (N,)
+            J_h_q_inv (Array): jacobian, shape (N, N)
         """
         J_h_q_inv = self.h_q_inv
         return J_h_q_inv
@@ -491,7 +505,7 @@ class TendonActuatedPendulum(Pendulum):
             y (Array): actuation coordinates, shape (N,)
 
         Returns:
-            J_h_q (Array): jacobian, shape (N,)
+            J_h_q (Array): jacobian, shape (N, N)
         """
         J_h_q = self.h_q
         return J_h_q
@@ -519,7 +533,7 @@ class TendonActuatedPendulum(Pendulum):
         """
         # Jacobians
         J = self.conf2act_jacobian(q)
-        # Even J_inv = self.conf2act_jacobian(y=h_q_inv(q)) in this case becuase it is linear, it is in general not true.
+        # Even J_inv = self.conf2act_jacobian(y=h_q_inv(q)) in this case because h_q is linear, it is in general not true.
         # Below is reported the right computation in the general case (when (J_h_q)^{-1} != J_(h_q)^{-1})
         J_inv = jnp.linalg.inv(J)
 
@@ -531,7 +545,7 @@ class TendonActuatedPendulum(Pendulum):
         C = self.coriolis_matrix(q, qd)
 
         # Actuation space dynamics
-        M_y = jnp.linalg.inv(J_inv.T @ M @ J_inv)
+        M_y = J_inv.T @ M @ J_inv
         eta_y = M_y @ (J @ M_inv @ C) @ J_inv
         JhM_pinv = J_inv
 
