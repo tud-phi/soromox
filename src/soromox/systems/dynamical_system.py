@@ -44,13 +44,13 @@ class DynamicalSystem(eqx.Module):
             u (Array, optional): Actuation/control input.
                 Default is None (no actuation).
             tau_ext (Array, optional): External forces/torques applied to the system.
-            t0 (float, optional): Initial time.
+            t0 (float, optional): Initial time of the simuation, included.
                 Default is 0.0.
-            t1 (float, optional): Final time.
+            t1 (float, optional): Final time of the simulation, included.
                 Default is 10.0.
             dt (float, optional): Time step for the solver.
                 Default is 1e-4.
-            saveat_ts (Array, optional): Array of time steps to be saved in the output.
+            saveat_ts (Array, optional): Array of time steps to be saved in the output. Must be within t0 and t1.
                 If not provided, falls back to `save_dt`.
             save_dt (float, optional): Time interval at which to save the solution.
                 If saveat_ts is provided, this is ignored. Default is 0.01 (i.e., save every 10 ms).
@@ -84,7 +84,7 @@ class DynamicalSystem(eqx.Module):
             terms=term,
             solver=solver,
             t0=t0,
-            t1=t1 + dt,
+            t1=t1 + dt, 
             dt0=dt,
             y0=y0,
             args=(u, tau_ext),

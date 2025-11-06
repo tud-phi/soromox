@@ -99,7 +99,7 @@ class TendonActuatedPendulum(Pendulum):
     D_pt: Array (shape (Np, Np))
         Optional damping matrix of the passive tendons (zeros if omitted).
     l_pt0: Array (shape (Np,))
-        Optional vector of the initial length of the passive tendons (zeros if omitted).
+        Optional vector of the initial displacement of the passive tendons (zeros if omitted).
     tau_pt0: Array (shape (Np,))
         Vector of the elastic force due to the pre-stretch of the passive tendons (zeros if l_pt0 is omitted).
     h_q: Array (shape (N, N))
@@ -166,7 +166,7 @@ class TendonActuatedPendulum(Pendulum):
         d_pt = jnp.asarray(tendon_params.get("d_pt", jnp.zeros(Np)))
         self.D_pt = jnp.diag(d_pt)
 
-        # Initial length of the passive tendons
+        # Initial displacement of the passive tendons
         self.l_pt0 = jnp.asarray(tendon_params.get("l_pt0", jnp.zeros(Np)))
 
         # Elastic force due to pre-stretch of the passive tendons
@@ -301,32 +301,74 @@ class TendonActuatedPendulum(Pendulum):
     # Internal helpers (geometry & Jacobians, pure JAX)
     # -------------------------------------------------
     @eqx.filter_jit
-    def active_tendon_length(self, q: Array) -> Array:
+    def active_tendon_displacement(self, q: Array) -> Array:
         """
-        Compute the length of the active tendons.
+        Compute the displacement of the active tendons with respect to the initial position.
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            l_a (Array): length of the active tendons, shape (Na,) [m]
+            l_a (Array): displacement of the active tendons, shape (Na,) [m]
         """
         l_a = self.R_at @ q
         return l_a
     
     @eqx.filter_jit
-    def passive_tendon_length(self, q: Array) -> Array:
+    def active_tendon_length(self, q: Array) -> Array:
         """
-        Compute the length of the passive tendons.
+        Compute an approximation of the total length of the active tendons, considering
+        that the tendon length at the initial position is equal to the cumulative length
+        of the links until the attachment point, when the actuation matrix is user-defined.
+        When the actuation matrix is not specified by the user, the tendon length is
+        set to the default value of zero.
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            l_p (Array): length of the passive tendons, shape (Np,) [m]
+            l_tot_a (Array): length of the active tendons, shape (Na,) [m]
+        """
+        cond = jnp.logical_not(jnp.array_equal(self.R_at, jnp.eye(self.num_links)))
+        mask = jnp.abs(self.R_at) > 0.0
+        l0_a = jnp.sum(self.L * mask * cond, axis=1)
+        l_tot_a = self.active_tendon_displacement(q) + l0_a
+        return l_tot_a
+    
+    @eqx.filter_jit
+    def passive_tendon_displacement(self, q: Array) -> Array:
+        """
+        Compute the displacement of the passive tendons.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            l_p (Array): displacement of the passive tendons, shape (Np,) [m]
         """
         l_p = self.R_pt @ q + self.l_pt0
         return l_p
+    
+    @eqx.filter_jit
+    def passive_tendon_length(self, q: Array) -> Array:
+        """
+        Compute an approximation of the total length of the passive tendons, considering
+        that the tendon length at the initial position is equal to the cumulative length
+        of the links until the attachment point, when the actuation matrix is user-defined.
+        When the actuation matrix is not specified by the user, the tendon length is
+        set to the default value of zero.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            l_tot_p (Array): length of the passive tendons, shape (Np,) [m]
+        """
+        cond = jnp.logical_not(jnp.array_equal(self.R_pt, jnp.eye(self.num_links)))
+        mask = jnp.abs(self.R_pt) > 0.0
+        l0_p = jnp.sum(self.L * mask * cond, axis=1)
+        l_tot_p = self.passive_tendon_displacement(q) + l0_p
+        return l_tot_p
 
     # -------------------------------
     # Standardized dynamics interface
