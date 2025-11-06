@@ -45,8 +45,10 @@ class DynamicalSystem(eqx.Module):
                 Default is None (no actuation).
             tau_ext (Array, optional): External forces/torques applied to the system.
             t0 (float, optional): Initial time of the simuation, included.
-                Default is 0.0.
+                It represents the first time step resolved by the solver. Default is 0.0.
             t1 (float, optional): Final time of the simulation, included.
+                It represents the last time step resolved by the solver, so that the solution of the system at
+                time t1 is included in the output (we include t1 by adding dt to the interval in diffeqsolve).
                 Default is 10.0.
             dt (float, optional): Time step for the solver.
                 Default is 1e-4.

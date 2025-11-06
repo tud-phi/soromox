@@ -109,7 +109,6 @@ def draw_robot(
         chi = onp.vstack([jnp.zeros(3), chi_ls])
         for i in range(Na):
             cable_pts = []
-            nonzero_N = 0
             for j in range(N):
                 cv2.circle(
                     img,
@@ -120,7 +119,6 @@ def draw_robot(
                 )
                 idx = max(0, j - 1)
                 if A_at[j, i] != 0:
-                    nonzero_N += 1
                     cable_pt = chi[j, 1:] + A_at[j, i] * onp.array(
                         [onp.cos(angles[idx]), onp.sin(angles[idx])]
                     )
