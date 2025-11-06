@@ -174,8 +174,8 @@ class TendonActuatedPendulum(Pendulum):
         self.l_pt0 = jnp.asarray(tendon_params.get("l_pt0", jnp.zeros(Np)))
 
         # Rest configuration of the active and passive tendons
-        self.q_ref_at = jnp.asarray(tendon_params.get("q_ref_at", jnp.zeros(self.num_actuators)))
-        self.q_ref_pt = jnp.asarray(tendon_params.get("q_ref_pt", jnp.zeros(Np)))
+        self.q_ref_at = jnp.asarray(tendon_params.get("q_ref_at", self.q_ref_k))
+        self.q_ref_pt = jnp.asarray(tendon_params.get("q_ref_pt", self.q_ref_k))
 
         # Elastic force due to pre-stretch of the passive tendons
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
@@ -225,6 +225,10 @@ class TendonActuatedPendulum(Pendulum):
         ), (
             "'R_pt' and 'k_pt' are mutually dependent. If one of them is specified, the other must be specified too."
         )
+
+        assert (
+            self.q_ref_at.shape[0] == N and self.q_ref_pt.shape[0] == N
+        ), "q_ref_at and q_ref_pt must have length equal to the number of links."
 
     def _check_routing_feasibility(self, A: Array) -> bool:
         """
