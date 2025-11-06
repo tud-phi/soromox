@@ -110,10 +110,10 @@ class TendonActuatedPendulum(Pendulum):
 
     R_at: Array
     A_at: Array
-    q_rest_at: Array
+    q_ref_at: Array
     R_pt: Array
     A_pt: Array
-    q_rest_pt: Array
+    q_ref_pt: Array
     K_pt: Array
     D_pt: Array
     l_pt0: Array
@@ -145,8 +145,8 @@ class TendonActuatedPendulum(Pendulum):
                 - "k_pt": stiffnesses of the springs attached to the passive tendons (Np,) (optional)
                 - "d_pt": damping coefficients of the dampers attached to the passive tendons (Np,) (optional)
                 - "l_pt0": initial length of the passive tendons (Np,) (optional)
-                - "q_rest_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
-                - "q_rest_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
+                - "q_ref_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
+                - "q_ref_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
         """
         super().__init__(params)
 
@@ -174,8 +174,8 @@ class TendonActuatedPendulum(Pendulum):
         self.l_pt0 = jnp.asarray(tendon_params.get("l_pt0", jnp.zeros(Np)))
 
         # Rest configuration of the active and passive tendons
-        self.q_rest_at = jnp.asarray(tendon_params.get("q_rest_at", jnp.zeros(self.num_actuators)))
-        self.q_rest_pt = jnp.asarray(tendon_params.get("q_rest_pt", jnp.zeros(Np)))
+        self.q_ref_at = jnp.asarray(tendon_params.get("q_ref_at", jnp.zeros(self.num_actuators)))
+        self.q_ref_pt = jnp.asarray(tendon_params.get("q_ref_pt", jnp.zeros(Np)))
 
         # Elastic force due to pre-stretch of the passive tendons
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
@@ -276,8 +276,8 @@ class TendonActuatedPendulum(Pendulum):
                 - "k_pt": stiffnesses of the springs attached to the passive tendons (Np,) (optional)
                 - "d_pt": damping coefficients of the dampers attached to the passive tendons (Np,) (optional)
                 - "l_pt0": initial length of the passive tendons (Np,) (optional)
-                - "q_rest_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
-                - "q_rest_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
+                - "q_ref_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
+                - "q_ref_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
 
         Returns:
             TendonActuatedPendulum: new instance with updated parameters.
@@ -305,10 +305,10 @@ class TendonActuatedPendulum(Pendulum):
             tau_pt0 = updated.A_pt @ updated.K_pt @ updated.l_pt0
             updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
             updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
-        if "q_rest_at" in tendon_params:
-            updated = eqx.tree_at(lambda x: x.q_rest_at, updated, tendon_params["q_rest_at"])
-        if "q_rest_pt" in tendon_params:
-            updated = eqx.tree_at(lambda x: x.q_rest_pt, updated, tendon_params["q_rest_pt"])
+        if "q_ref_at" in tendon_params:
+            updated = eqx.tree_at(lambda x: x.q_ref_at, updated, tendon_params["q_ref_at"])
+        if "q_ref_pt" in tendon_params:
+            updated = eqx.tree_at(lambda x: x.q_ref_pt, updated, tendon_params["q_ref_pt"])
         return updated
 
     # -------------------------------------------------
@@ -325,7 +325,7 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             l_a (Array): displacement of the active tendons, shape (Na,) [m]
         """
-        l_a = self.R_at @ (q - self.q_rest_at)
+        l_a = self.R_at @ (q - self.q_ref_at)
         return l_a
     
     @eqx.filter_jit
@@ -360,7 +360,7 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             l_p (Array): displacement of the passive tendons, shape (Np,) [m]
         """
-        l_p = self.R_pt @ (q - self.q_rest_pt) + self.l_pt0
+        l_p = self.R_pt @ (q - self.q_ref_pt) + self.l_pt0
         return l_p
     
     @eqx.filter_jit
