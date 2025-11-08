@@ -69,6 +69,8 @@ class Pendulum(DynamicalSystem):
         Planar gravity vector [g_x, g_y].
     K, D : Array (shape (N, N))
         Optional joint stiffness and damping matrices (zeros if omitted).
+    q_ref_k :  Array (shape (N,))
+        Optional rest configuration of the torsional springs (defualt is the zero configuration)
     """
 
     # Static field
@@ -84,6 +86,7 @@ class Pendulum(DynamicalSystem):
     # Optional linear elasticity/damping to make it an articulated soft robot.
     K: Array
     D: Array
+    q_ref_k: Array
 
     def __init__(
         self,
@@ -100,6 +103,7 @@ class Pendulum(DynamicalSystem):
                 - "g": Planar gravity vector (2,)
                 - "K": stiffness matrix (N,N) (optional)
                 - "D": damping matrix (N,N) (optional)
+                - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
         """
         # Basic parameter extraction
         m = jnp.asarray(params["m"])  # (n,)
@@ -127,6 +131,7 @@ class Pendulum(DynamicalSystem):
 
         self.K = jnp.asarray(params.get("K", jnp.zeros((n_q, n_q))))
         self.D = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
+        self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
 
     def update_params(self, params: Dict[str, Array]) -> "Pendulum":
         """
@@ -144,6 +149,7 @@ class Pendulum(DynamicalSystem):
                 - "g": Planar gravity vector, shape (2,) [m/s²]
                 - "K": Joint stiffness matrix, shape (N,N) [N⋅m/rad] (optional)
                 - "D": Joint damping matrix, shape (N,N) [N⋅m⋅s/rad] (optional)
+                - "q_ref_k": rest configuration of the torsional springs defined in K (N,) [rad] (optional)
 
         Returns:
             Pendulum: New instance with updated parameters.
@@ -163,6 +169,8 @@ class Pendulum(DynamicalSystem):
             updated = eqx.tree_at(lambda x: x.K, updated, jnp.asarray(params["K"]))
         if "D" in params:
             updated = eqx.tree_at(lambda x: x.D, updated, jnp.asarray(params["D"]))
+        if "q_ref_k" in params:
+            updated = eqx.tree_at(lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"]))
         return updated
 
     # -------------------------------------------------
@@ -598,7 +606,7 @@ class Pendulum(DynamicalSystem):
         Returns:
             tau_el (Array): Elastic force vector τ_el = K @ q, shape (N,) [N⋅m]
         """
-        tau_el = self.K @ q
+        tau_el = self.K @ (q - self.q_ref_k)
         return tau_el
 
     @eqx.filter_jit
@@ -751,7 +759,7 @@ class Pendulum(DynamicalSystem):
         Returns:
             U_K (Array): Elastic potential energy [J] (scalar)
         """
-        U_K = 0.5 * q.T @ self.stiffness_matrix() @ q
+        U_K = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
         return U_K
 
     @eqx.filter_jit

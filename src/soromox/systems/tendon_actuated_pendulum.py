@@ -89,19 +89,19 @@ class TendonActuatedPendulum(Pendulum):
         at each joint that route the cable (identity if omitted). If a tendon is attached at the i-th joint
         with i < N, then the entries for that tendon at index > i must be equal to 0.
     R_pt: Array (shape (Np, N))
-        Optional routing matrix of the passive tendons (zeros if omitted).
+        Optional routing matrix of the passive tendons (zers if omitted).
     A_at: Array (shape (N, Na))
         Optional actuation matrix of the active tendons (identity if omitted).
     A_pt: Array (shape (N, Np))
-        Optional actuation matrix of the passive tendons (zeros if omitted).
+        Optional actuation matrix of the passive tendons (zero if omitted).
     K_pt: Array (shape (Np, Np))
-        Optional stiffness matrix of the passive tendons (zeros if omitted).
+        Optional stiffness matrix of the passive tendons (zero if omitted).
     D_pt: Array (shape (Np, Np))
-        Optional damping matrix of the passive tendons (zeros if omitted).
+        Optional damping matrix of the passive tendons (zero if omitted).
     l_pt0: Array (shape (Np,))
-        Optional vector of the initial length of the passive tendons (zeros if omitted).
+        Optional vector of the initial displacement of the passive tendons (zero if omitted).
     tau_pt0: Array (shape (Np,))
-        Vector of the elastic force due to the pre-stretch of the passive tendons (zeros if l_pt0 is omitted).
+        Vector of the elastic force due to the pre-stretch of the passive tendons (zero if l_pt0 is omitted).
     h_q: Array (shape (N, N))
         Transformation matrix from actuation to configuration coordinates, such that q = h_q(y) (identity if omitted).
     h_q_inv: Array (shape (N, N))
@@ -110,8 +110,10 @@ class TendonActuatedPendulum(Pendulum):
 
     R_at: Array
     A_at: Array
+    q_ref_at: Array
     R_pt: Array
     A_pt: Array
+    q_ref_pt: Array
     K_pt: Array
     D_pt: Array
     l_pt0: Array
@@ -143,6 +145,8 @@ class TendonActuatedPendulum(Pendulum):
                 - "k_pt": stiffnesses of the springs attached to the passive tendons (Np,) (optional)
                 - "d_pt": damping coefficients of the dampers attached to the passive tendons (Np,) (optional)
                 - "l_pt0": initial length of the passive tendons (Np,) (optional)
+                - "q_ref_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
+                - "q_ref_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
         """
         super().__init__(params)
 
@@ -166,8 +170,12 @@ class TendonActuatedPendulum(Pendulum):
         d_pt = jnp.asarray(tendon_params.get("d_pt", jnp.zeros(Np)))
         self.D_pt = jnp.diag(d_pt)
 
-        # Initial length of the passive tendons
+        # Initial displacement of the passive tendons
         self.l_pt0 = jnp.asarray(tendon_params.get("l_pt0", jnp.zeros(Np)))
+
+        # Rest configuration of the active and passive tendons
+        self.q_ref_at = jnp.asarray(tendon_params.get("q_ref_at", self.q_ref_k))
+        self.q_ref_pt = jnp.asarray(tendon_params.get("q_ref_pt", self.q_ref_k))
 
         # Elastic force due to pre-stretch of the passive tendons
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
@@ -217,6 +225,10 @@ class TendonActuatedPendulum(Pendulum):
         ), (
             "'R_pt' and 'k_pt' are mutually dependent. If one of them is specified, the other must be specified too."
         )
+
+        assert (
+            self.q_ref_at.shape[0] == N and self.q_ref_pt.shape[0] == N
+        ), "q_ref_at and q_ref_pt must have length equal to the number of links."
 
     def _check_routing_feasibility(self, A: Array) -> bool:
         """
@@ -268,6 +280,8 @@ class TendonActuatedPendulum(Pendulum):
                 - "k_pt": stiffnesses of the springs attached to the passive tendons (Np,) (optional)
                 - "d_pt": damping coefficients of the dampers attached to the passive tendons (Np,) (optional)
                 - "l_pt0": initial length of the passive tendons (Np,) (optional)
+                - "q_ref_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
+                - "q_ref_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
 
         Returns:
             TendonActuatedPendulum: new instance with updated parameters.
@@ -295,24 +309,84 @@ class TendonActuatedPendulum(Pendulum):
             tau_pt0 = updated.A_pt @ updated.K_pt @ updated.l_pt0
             updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
             updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
+        if "q_ref_at" in tendon_params:
+            updated = eqx.tree_at(lambda x: x.q_ref_at, updated, tendon_params["q_ref_at"])
+        if "q_ref_pt" in tendon_params:
+            updated = eqx.tree_at(lambda x: x.q_ref_pt, updated, tendon_params["q_ref_pt"])
         return updated
 
     # -------------------------------------------------
     # Internal helpers (geometry & Jacobians, pure JAX)
     # -------------------------------------------------
     @eqx.filter_jit
-    def passive_tendon_length(self, q: Array) -> Array:
+    def active_tendon_displacement(self, q: Array) -> Array:
         """
-        Compute the length of the passive tendons.
+        Compute the displacement of the active tendons with respect to the initial position.
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            l_p (Array): length of the passive tendons, shape (Np,) [m]
+            l_a (Array): displacement of the active tendons, shape (Na,) [m]
         """
-        l_p = self.R_pt @ q + self.l_pt0
+        l_a = self.R_at @ (q - self.q_ref_at)
+        return l_a
+    
+    @eqx.filter_jit
+    def active_tendon_length(self, q: Array) -> Array:
+        """
+        Compute an approximation of the total length of the active tendons, considering
+        that the tendon length at the initial position is equal to the cumulative length
+        of the links until the attachment point, when the actuation matrix is user-defined.
+        When the actuation matrix is not specified by the user, the tendon length is
+        set to the default value of zero.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            l_tot_a (Array): length of the active tendons, shape (Na,) [m]
+        """
+        cond = jnp.logical_not(jnp.array_equal(self.R_at, jnp.eye(self.num_links)))
+        mask = jnp.abs(self.R_at) > 0.0
+        l0_a = jnp.sum(self.L * mask * cond, axis=1)
+        l_tot_a = self.active_tendon_displacement(q) + l0_a
+        return l_tot_a
+    
+    @eqx.filter_jit
+    def passive_tendon_displacement(self, q: Array) -> Array:
+        """
+        Compute the displacement of the passive tendons.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            l_p (Array): displacement of the passive tendons, shape (Np,) [m]
+        """
+        l_p = self.R_pt @ (q - self.q_ref_pt) + self.l_pt0
         return l_p
+    
+    @eqx.filter_jit
+    def passive_tendon_length(self, q: Array) -> Array:
+        """
+        Compute an approximation of the total length of the passive tendons, considering
+        that the tendon length at the initial position is equal to the cumulative length
+        of the links until the attachment point, when the actuation matrix is user-defined.
+        When the actuation matrix is not specified by the user, the tendon length is
+        set to the default value of zero.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
+
+        Returns:
+            l_tot_p (Array): length of the passive tendons, shape (Np,) [m]
+        """
+        cond = jnp.logical_not(jnp.array_equal(self.R_pt, jnp.zeros((self.num_links, self.num_links))))
+        mask = jnp.abs(self.R_pt) > 0.0
+        l0_p = jnp.sum(self.L * mask * cond, axis=1)
+        l_tot_p = self.passive_tendon_displacement(q) + l0_p
+        return l_tot_p
 
     # -------------------------------
     # Standardized dynamics interface
@@ -478,7 +552,7 @@ class TendonActuatedPendulum(Pendulum):
             q (Array): configuration coordinates, shape (N,)
 
         Returns:
-            J_h_q_inv (Array): jacobian, shape (N,)
+            J_h_q_inv (Array): jacobian, shape (N, N)
         """
         J_h_q_inv = self.h_q_inv
         return J_h_q_inv
@@ -491,7 +565,7 @@ class TendonActuatedPendulum(Pendulum):
             y (Array): actuation coordinates, shape (N,)
 
         Returns:
-            J_h_q (Array): jacobian, shape (N,)
+            J_h_q (Array): jacobian, shape (N, N)
         """
         J_h_q = self.h_q
         return J_h_q
@@ -519,7 +593,7 @@ class TendonActuatedPendulum(Pendulum):
         """
         # Jacobians
         J = self.conf2act_jacobian(q)
-        # Even J_inv = self.conf2act_jacobian(y=h_q_inv(q)) in this case becuase it is linear, it is in general not true.
+        # Even J_inv = self.conf2act_jacobian(y=h_q_inv(q)) in this case because h_q is linear, it is in general not true.
         # Below is reported the right computation in the general case (when (J_h_q)^{-1} != J_(h_q)^{-1})
         J_inv = jnp.linalg.inv(J)
 
@@ -531,7 +605,7 @@ class TendonActuatedPendulum(Pendulum):
         C = self.coriolis_matrix(q, qd)
 
         # Actuation space dynamics
-        M_y = jnp.linalg.inv(J_inv.T @ M @ J_inv)
+        M_y = J_inv.T @ M @ J_inv
         eta_y = M_y @ (J @ M_inv @ C) @ J_inv
         JhM_pinv = J_inv
 
