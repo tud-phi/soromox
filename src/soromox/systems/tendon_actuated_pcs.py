@@ -38,7 +38,7 @@ class TendonActuatedPCS(PCS):
     num_strains : int
         Total number of strain components (6 * num_segments).
     B_xi : Array
-        Basis matrix for projecting active strains (num_active_strains, num_active_strains).
+        Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
     xi_ref : Array
         Reference strain (reference configuration) of the robot.
     num_gauss_points : int
@@ -213,7 +213,8 @@ class TendonActuatedPCS(PCS):
         true.
 
         Args:
-            tendon_routing_params (Dict[str, Array]): parameters of the tendons (6,)
+            tendon_routing_params : Dict[str, Array]
+                Dictionary of arrays of length n_actuators representing the tendon parameters.
 
         Returns:
             flag (bool): True if any of the tendons is out of the body
@@ -409,7 +410,8 @@ class TendonActuatedPCS(PCS):
             position of tendon (i.e., its attachement point).
 
             Args:
-                single_tendon_routing_params (Dict[str, Array]): parameters of one tendon (6,)
+                tendon_routing_params : Dict[str, Array]
+                    Dictionary of arrays of length n_actuators representing the tendon parameter for tendon k.
                 q (Array): generalized coordinates of shape (num_active_strains,)
                 s (Array): point coordinate along the robot ()
 

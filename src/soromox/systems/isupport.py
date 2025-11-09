@@ -31,7 +31,7 @@ class ISupport(PCS):
     num_strains : int
         Total number of strain components (6 * num_segments).
     B_xi : Array
-        Basis matrix for projecting active strains.
+        Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
     xi_ref : Array
         Reference strain (reference configuration) of the robot.
     num_gauss_points : int
