@@ -277,6 +277,36 @@ class TendonActuatedPCS(PCS):
         )
 
         return updated_self
+    
+    @eqx.filter_jit
+    def _local_actuation_basis(self, i: Array, xi_i: Array, s: Array, tendon_routing_params_k: Dict[str, Array]) -> Array:
+        """
+        Compute the actuation matrix contribution of one tendon k at s contained in segment i.
+
+        Args:
+            xi_i (Array): strain at segment i (6,)
+            tendon_routing_params_k (Dict[str, Array]): parameters of the tendon k
+            s (Array): abscissa points (num_gauss_points,)
+        
+        Returns:
+            Phi_a_k (Array): local actuation matrix contribution of one tendon of shape (6,).
+        """
+        attachment_segment_idx = tendon_routing_params_k["idx_seg_att"]  # ()
+        cond = attachment_segment_idx >= i  # ()
+
+        # extract tendon routing evolution in the cross-sectional plane
+        d_s = jnp.append(self.d_s(tendon_routing_params_k, s), 1.0)  # (4,)
+        dd_s = jnp.append(
+            self.dd_s_ds(tendon_routing_params_k, s), 1.0
+        )  # (4,)
+
+        term = (dd_s + lie.hat_SE3(xi_i) @ d_s)[:-1]  # (3,)
+        norm = jnp.linalg.norm(term)  # ()
+        t = term / norm  # (3,)
+
+        Phi_a_k = cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
+
+        return Phi_a_k
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
@@ -318,36 +348,9 @@ class TendonActuatedPCS(PCS):
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
 
-                def A_tendon_k(k: Array, tendon_routing_params_k):
-                    """
-                    Compute the actuation matrix contribution of one tendon k at the gaussian point j and segment i.
-
-                    Args:
-                        k (Array): index of the tendon ()
-                        tendon_routing_params_k (Dict[str, Array]): parameters of the tendon k
-                    Returns:
-                        Phi_a_k (Array): local actuation matrix contribution of one tendon of shape (6,).
-                    """
-                    attachment_segment_idx = tendon_routing_params_k["idx_seg_att"]  # ()
-                    cond = attachment_segment_idx >= i  # ()
-
-                    # extract tendon routing evolution in the cross-sectional plane
-                    d_s = jnp.append(self.d_s(tendon_routing_params_k, Xs_j), 1.0)  # (4,)
-                    dd_s = jnp.append(
-                        self.dd_s_ds(tendon_routing_params_k, Xs_j), 1.0
-                    )  # (4,)
-
-                    term = (dd_s + lie.hat_SE3(xi_i) @ d_s)[:-1]  # (3,)
-                    norm = jnp.linalg.norm(term)  # ()
-                    t = term / norm  # (3,)
-
-                    Phi_a_k = cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
-
-                    return Phi_a_k
-
                 # Vectorize the actuation basis computation for all tendons
-                Phi_a_j = vmap(A_tendon_k, in_axes=(0, 0), out_axes=(-1))(
-                    jnp.arange(self.num_actuators), self.tendon_routing_params
+                Phi_a_j = vmap(self._local_actuation_basis, in_axes=(None, None, None, 0), out_axes=(-1))(
+                    i, xi_i, Xs_j, self.tendon_routing_params
                 )  # (6, num_actuators)
 
                 A_j = Phi_a_j

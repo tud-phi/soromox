@@ -231,7 +231,9 @@ def test_actuation_matrix_pcs():
     ]
 
     for q, s in test_cases:
-        target_actuation_basis = robot._local_actuation_basis(q, s).squeeze()
+        xi = robot.strain(q).reshape((robot.num_segments, 6))
+        tendon_params_0 = jax.tree.map(lambda x: x[0], tendon_params)
+        target_actuation_basis = robot._local_actuation_basis(0, xi[0], s, tendon_params_0).squeeze()
         expected_actuation_basis = reference_actuation_basis(tendon_params, q, s)
         assert not jnp.isnan(target_actuation_basis).any(), (
             "Actuation basis contains NaN!"
