@@ -278,62 +278,6 @@ class TendonActuatedPCS(PCS):
         return updated_self
 
     @eqx.filter_jit
-    def _local_actuation_basis(self, q: Array, s: Array) -> Array:
-        """
-        Compute the local actuation basis at current abscissa s.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,)
-            s (Array): abscissa points (num_gauss_points,)
-
-        Returns:
-            Phi_a_s (Array): actuation basis at s of shape (6 * num_segments, num_actuators)
-        """
-
-        def Phi_a_ki(single_tendon_routing_params: Dict[str, Array], i: Array):
-            """
-            Compute the actuation basis of one tendon at the segment i of the robot.
-
-            Args:
-                single_tendon_routing_params (Dict[str, Array]): parameters of one tendon (6,)
-                i (Array): index of the segment ()
-
-            Returns:
-                Phi_a_ki (Array): actuation basis of one tendon at the i-th segment of shape (6,)
-            """
-            attachment_segment_idx = single_tendon_routing_params["idx_seg_att"]  # ()
-            cond = attachment_segment_idx >= i  # ()
-
-            xi_j = jnp.reshape(xi, (6, self.num_segments), order="F")[
-                :, i
-            ]  # strains of segment j (6,)
-            d_s = jnp.append(self.d_s(single_tendon_routing_params, s), 1.0)  # (4,)
-            dd_s = jnp.append(
-                self.dd_s_ds(single_tendon_routing_params, s), 1.0
-            )  # (4,)
-
-            term = (dd_s + lie.hat_SE3(xi_j) @ d_s)[:-1]  # (3,)
-            norm = jnp.linalg.norm(term)  # ()
-            t = term / norm  # (3,)
-
-            return cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
-
-        xi = self.strain(q)  # strains (6 * num_segments,)
-
-        # Vectorize first over each tendon and then over each segment
-        Phi_a_s = vmap(
-            vmap(Phi_a_ki, in_axes=(0, None), out_axes=1), in_axes=(None, 0), out_axes=0
-        )(
-            self.tendon_routing_params, jnp.arange(self.num_segments)
-        )  # (num_segments, 6, num_actuators)
-
-        Phi_a_s = Phi_a_s.reshape(
-            (6 * self.num_segments, self.num_actuators)
-        )  # (6 * num_segments, num_actuators)
-
-        return Phi_a_s
-
-    @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
         """
         Compute the actuation matrix of the robot.
@@ -344,6 +288,8 @@ class TendonActuatedPCS(PCS):
         Returns:
             A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
         """
+        # extract strains
+        xi = self.strain(q).reshape((self.num_segments, 6))
 
         def A_segment_i(i: Array):
             """
@@ -353,8 +299,9 @@ class TendonActuatedPCS(PCS):
                 i (Array): index of the segment ()
 
             Returns:
-                A_i (Array): stack of actuation matrices of shape (num_gauss_points, 6 * num_segments, num_actuators).
+                A_i (Array): stack of actuation matrices of shape (num_gauss_points, 6, num_actuators).
             """
+            xi_i = xi[i]
 
             def A_point_j(j: Array):
                 """
@@ -364,12 +311,46 @@ class TendonActuatedPCS(PCS):
                     j (Array): index of the gaussian point ()
 
                 Returns:
-                    A_j (Array): local actuation matrix of shape (6 * num_segments, num_actuators).
+                    A_j (Array): local actuation matrix of shape (6, num_actuators).
                 """
+                # extract gaussian point and weight
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
-                Phi_a_j = self._local_actuation_basis(q, Xs_j)
-                A_j = Phi_a_j  # A_s = B_xi.T @ Phi_a
+
+                def A_tendon_k(k: Array, tendon_routing_params_k):
+                    """
+                    Compute the actuation matrix contribution of one tendon k at the gaussian point j and segment i.
+
+                    Args:
+                        k (Array): index of the tendon ()
+                        tendon_routing_params_k (Dict[str, Array]): parameters of the tendon k
+                    Returns:
+                        Phi_a_k (Array): local actuation matrix contribution of one tendon of shape (6,).
+                    """
+                    attachment_segment_idx = tendon_routing_params_k["idx_seg_att"]  # ()
+                    cond = attachment_segment_idx >= i  # ()
+
+                    # extract tendon routing evolution in the cross-sectional plane
+                    d_s = jnp.append(self.d_s(tendon_routing_params_k, Xs_j), 1.0)  # (4,)
+                    dd_s = jnp.append(
+                        self.dd_s_ds(tendon_routing_params_k, Xs_j), 1.0
+                    )  # (4,)
+
+                    term = (dd_s + lie.hat_SE3(xi_i) @ d_s)[:-1]  # (3,)
+                    norm = jnp.linalg.norm(term)  # ()
+                    t = term / norm  # (3,)
+
+                    Phi_a_k = cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
+
+                    return Phi_a_k
+
+                # Vectorize the actuation basis computation for all tendons
+                Phi_a_j = vmap(A_tendon_k, in_axes=(0, 0), out_axes=(-1))(
+                    jnp.arange(self.num_actuators), self.tendon_routing_params
+                )  # (6, num_actuators)
+
+                A_j = Phi_a_j
+
                 return Ws_j * A_j
 
             Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
@@ -379,7 +360,7 @@ class TendonActuatedPCS(PCS):
             # Vectorize the actuation matrix computation for all gaussian points
             A_i = vmap(A_point_j)(
                 jnp.arange(self.num_gauss_points)
-            )  # (num_gauss_points, 6 * num_segments, num_actuators)
+            )  # (num_gauss_points, 6, num_actuators)
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_point_j(j) for j in range(self.num_gauss_points)], axis=0)
@@ -390,13 +371,16 @@ class TendonActuatedPCS(PCS):
         # Vectorize the actuation matrix computation for all segments
         A_blocks = vmap(A_segment_i)(
             jnp.arange(self.num_segments)
-        )  # (num_segments, num_gauss_points, 6 * num_segments, num_actuators)
+        )  # (num_segments, num_gauss_points, 6, num_actuators)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_segment_i(i) for i in range(self.num_segments)], axis=0)
         # print('A_blocks_tot =\n', A_blocks_tot.shape)
 
-        A = jnp.sum(A_blocks, axis=(0, 1))  # Sum over segments and Gauss points
+        A = jnp.sum(A_blocks, axis=(1, ))  # Sum the Gauss points
+
+        # reshape A to (6 * num_segments, num_actuators)
+        A = A.reshape((-1, self.num_actuators))
 
         # Project into the active strains space
         A = self.B_xi.T @ A  # (num_active_strains, num_actuators)
