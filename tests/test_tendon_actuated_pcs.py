@@ -4,10 +4,133 @@ jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
-from typing import Dict, Tuple
+from typing import Dict
 
 from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 from soromox.utils.tolerance import Tolerance
+
+XI_REF = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64)
+
+
+def _create_robot(
+    segment_lengths: Array,
+    tendon_params: Dict[str, Array],
+    strain_selector=None,
+) -> TendonActuatedPCS:
+    """
+    Helper that builds a TendonActuatedPCS instance with consistent material parameters.
+    """
+    num_segments = segment_lengths.shape[0]
+    rho = 1070 * jnp.ones(
+        (num_segments,)
+    )  # Volumetric density of Dragon Skin 20 [kg/m^3]
+    params = {
+        "p0": jnp.zeros(6),  # Initial position and orientation
+        "r": 1.0 * jnp.ones((num_segments,)),  # default: 2e-2
+        "rho": rho,
+        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
+        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        "L": segment_lengths,
+    }
+
+    params["D"] = 1e-3 * jnp.diag(
+        (
+            jnp.repeat(
+                jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
+            )
+            * params["L"][:, None]
+        ).flatten()
+    )
+
+    robot_kwargs = dict(
+        num_segments=num_segments,
+        params=params,
+        order_gauss=5,
+        tendon_routing_params=tendon_params,
+    )
+    if strain_selector is not None:
+        robot_kwargs["strain_selector"] = strain_selector
+
+    return TendonActuatedPCS(**robot_kwargs)
+
+
+def reference_actuation_matrix(
+    tendon_params: Dict[str, Array], l_tot: Array
+) -> Array:
+    """
+    Compute the actuation matrix of a soft robot of length l_tot w.r.t. one
+    linear tendon at the straight configuration corresponding to vector state
+    q0 = zeros(6*num_segments), considered as reference.
+    This configuration represents the rest (stress-free) shape of the robot
+    and it is easily tractable analitically.
+
+    Args:
+        tendon_params (Dict[str, Array]): routing parameters of the given tendon
+        l_tot (Array): total length of the robot
+
+    Returns:
+        A (Array): actuation matrix at straight configuration
+    """
+    ry, rz, my, mz = (
+        tendon_params["ry"][0],
+        tendon_params["rz"][0],
+        tendon_params["my"][0],
+        tendon_params["mz"][0],
+    )
+    A = jnp.array(
+        [
+            l_tot * (-my * rz + mz * ry),
+            l_tot**2 * mz / 2 + l_tot * rz,
+            -(l_tot**2) * my / 2 - l_tot * ry,
+            l_tot,
+            l_tot * my,
+            l_tot * mz,
+        ]
+    )
+
+    return A / jnp.sqrt(my**2 + mz**2 + 1)
+
+
+def reference_actuation_basis(
+    tendon_params: Dict[str, Array], q: Array, s: Array
+) -> Array:
+    """
+    Computes the vector representing the actuation basis of the given tendon
+    at configuration q (assuming the strain basis to be the identity) and at
+    abscissa point s for a single CS segment.
+
+    Args:
+        tendon_params (Dict[str, Array]): routing parameters of the given tendon
+        q (Array): strains of the robot made by one single segment (6,)
+        s (Array): abscissa point ()
+
+    Returns:
+        Phi_a (Array): actuation basis of the tendon at q, s (6,)
+    """
+    xi = jnp.eye(q.shape[0]) @ q + XI_REF
+    ry, rz, my, mz = (
+        tendon_params["ry"][0],
+        tendon_params["rz"][0],
+        tendon_params["my"][0],
+        tendon_params["mz"][0],
+    )
+    xi_1, xi_2, xi_3, xi_4, xi_5, xi_6 = xi[0], xi[1], xi[2], xi[3], xi[4], xi[5]
+    Phi_a = jnp.array(
+        [
+            (my * s + ry) * (mz + xi_1 * (my * s + ry) + xi_6)
+            + (-mz * s - rz) * (my - xi_1 * (mz * s + rz) + xi_5),
+            (mz * s + rz) * (xi_2 * (mz * s + rz) - xi_3 * (my * s + ry) + xi_4),
+            (-my * s - ry) * (xi_2 * (mz * s + rz) - xi_3 * (my * s + ry) + xi_4),
+            xi_2 * (mz * s + rz) - xi_3 * (my * s + ry) + xi_4,
+            my - xi_1 * (mz * s + rz) + xi_5,
+            mz + xi_1 * (my * s + ry) + xi_6,
+        ]
+    )
+    norm = jnp.linalg.norm(Phi_a[3:])
+    Phi_a = Phi_a / norm
+
+    return Phi_a
 
 
 def test_actuation_matrix_pcs():
@@ -15,127 +138,6 @@ def test_actuation_matrix_pcs():
     Test the methods responsible for the computation of the actuation matrix of the
     tendon actuated Piecewise Constant Strain class.
     """
-
-    def createRobot(
-        segment_lengths: Array, tendon_params: Dict[str, Array]
-    ) -> TendonActuatedPCS:
-        """
-        Creates an object of the class TendonActuatedPCS with the specified segments' length
-        and tendon routing parameters.
-
-        Args:
-            segment_lengths (Array): lengths of the segments of the robot (num_segments, )
-            tendon_params (Dict[str, Array]): routing parameters of the given tendon
-
-        Returns:
-            robot (TendonActuatedPCS): object representing the soft robot
-        """
-        num_segments = segment_lengths.shape[0]
-        rho = 1070 * jnp.ones(
-            (num_segments,)
-        )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-        params = {
-            "p0": jnp.zeros(6),  # Initial position and orientation
-            "r": 1.0 * jnp.ones((num_segments,)),  # default: 2e-2
-            "rho": rho,
-            "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-            "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-            "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        }
-        params["L"] = segment_lengths
-        params["D"] = 1e-3 * jnp.diag(
-            (
-                jnp.repeat(
-                    jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
-                )
-                * params["L"][:, None]
-            ).flatten()
-        )
-
-        robot = TendonActuatedPCS(
-            num_segments=num_segments,
-            params=params,
-            order_gauss=5,
-            tendon_routing_params=tendon_params,
-        )
-
-        return robot
-
-    def reference_actuation_matrix(
-        tendon_params: Dict[str, Array], l_tot: Array
-    ) -> Array:
-        """
-        Compute the actuation matrix of a soft robot of length l_tot w.r.t. one
-        linear tendon at the straight configuration corresponding to vector state
-        q0 = zeros(6*num_segments), considered as reference.
-        This configuration represents the rest (stress-free) shape of the robot
-        and it is easily tractable analitically.
-
-        Args:
-            tendon_params (Dict[str, Array]): routing parameters of the given tendon
-            l_tot (Array): total length of the robot
-
-        Returns:
-            A (Array): actuation matrix at straight configuration
-        """
-        ry, rz, my, mz = (
-            tendon_params["ry"][0],
-            tendon_params["rz"][0],
-            tendon_params["my"][0],
-            tendon_params["mz"][0],
-        )
-        A = jnp.array(
-            [
-                l_tot * (-my * rz + mz * ry),
-                l_tot**2 * mz / 2 + l_tot * rz,
-                -(l_tot**2) * my / 2 - l_tot * ry,
-                l_tot,
-                l_tot * my,
-                l_tot * mz,
-            ]
-        )
-
-        return A / jnp.sqrt(my**2 + mz**2 + 1)
-
-    def reference_actuation_basis(
-        tendon_params: Dict[str, Array], q: Array, s: Array
-    ) -> Array:
-        """
-        Computes the vector representing the actuation basis of the given tendon
-        at configuration q (assuming the strain basis to be the identity) and at
-        abscissa point s for a single CS segment.
-
-        Args:
-            tendon_params (Dict[str, Array]): routing parameters of the given tendon
-            q (Array): strains of the robot made by one single segment (6,)
-            s (Array): abscissa point ()
-
-        Returns:
-            Phi_a (Array): actuation basis of the tendon at q, s (6,)
-        """
-        xi = jnp.eye(q.shape[0]) @ q + xi_ref
-        ry, rz, my, mz = (
-            tendon_params["ry"][0],
-            tendon_params["rz"][0],
-            tendon_params["my"][0],
-            tendon_params["mz"][0],
-        )
-        xi_1, xi_2, xi_3, xi_4, xi_5, xi_6 = xi[0], xi[1], xi[2], xi[3], xi[4], xi[5]
-        Phi_a = jnp.array(
-            [
-                (my * s + ry) * (mz + xi_1 * (my * s + ry) + xi_6)
-                + (-mz * s - rz) * (my - xi_1 * (mz * s + rz) + xi_5),
-                (mz * s + rz) * (xi_2 * (mz * s + rz) - xi_3 * (my * s + ry) + xi_4),
-                (-my * s - ry) * (xi_2 * (mz * s + rz) - xi_3 * (my * s + ry) + xi_4),
-                xi_2 * (mz * s + rz) - xi_3 * (my * s + ry) + xi_4,
-                my - xi_1 * (mz * s + rz) + xi_5,
-                mz + xi_1 * (my * s + ry) + xi_6,
-            ]
-        )
-        norm = jnp.linalg.norm(Phi_a[3:])
-        Phi_a = Phi_a / norm
-
-        return Phi_a
 
     # ========================================
     # Test of the functions
@@ -178,7 +180,7 @@ def test_actuation_matrix_pcs():
     ]
 
     for segment_lengths, tendon_params in test_cases:
-        robot = createRobot(segment_lengths, tendon_params)
+        robot = _create_robot(segment_lengths, tendon_params)
         num_segments = segment_lengths.shape[0]
         q0 = jnp.zeros(6 * num_segments)
         target_actuation_matrix = robot.actuation_matrix(q0).reshape(
@@ -208,12 +210,11 @@ def test_actuation_matrix_pcs():
         "mz": jnp.array([-0.05]),
         "idx_seg_att": jnp.array([0]),
     }
-    robot = createRobot(jnp.array([0.5]), tendon_params)
-    xi_ref = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+    robot = _create_robot(jnp.array([0.5]), tendon_params)
 
     test_cases = [
         (
-            jnp.zeros_like(xi_ref),
+            jnp.zeros_like(XI_REF),
             robot.L_cum[-1] * 0.25,
         ),
         (
@@ -221,7 +222,7 @@ def test_actuation_matrix_pcs():
             robot.L_cum[-1] * 0.25,
         ),
         (
-            jnp.zeros_like(xi_ref),
+            jnp.zeros_like(XI_REF),
             robot.L_cum[-1] * 0.7,
         ),
         (
@@ -245,6 +246,62 @@ def test_actuation_matrix_pcs():
             atol=Tolerance.atol(),
         )
         print("[Valid test]\n")
+
+
+def test_actuation_matrix_with_inactive_strains():
+    """
+    Ensure the actuation matrix projection works when some strains are deactivated.
+    """
+
+    segment_lengths = jnp.array([0.4, 0.6])
+    tendon_params = {
+        "ry": jnp.array([0.12]),
+        "rz": jnp.array([0.02]),
+        "my": jnp.array([0.02]),
+        "mz": jnp.array([-0.03]),
+        "idx_seg_att": jnp.array([1]),
+    }
+    strain_selector = jnp.array(
+        [
+            True,
+            False,
+            True,
+            False,
+            False,
+            False,
+            False,
+            True,
+            False,
+            True,
+            False,
+            False,
+        ],
+        dtype=bool,
+    )
+
+    robot_full = _create_robot(segment_lengths, tendon_params)
+    robot_reduced = _create_robot(
+        segment_lengths, tendon_params, strain_selector=strain_selector
+    )
+
+    num_full = int(robot_full.num_active_strains.item())
+    num_active = int(robot_reduced.num_active_strains.item())
+    assert num_active < num_full  # sanity check: some strains removed
+
+    active_idx = jnp.nonzero(strain_selector, size=num_active, fill_value=0)[0]
+    q_reduced = jnp.arange(num_active, dtype=jnp.float64) * 0.05
+    q_full = jnp.zeros((num_full,), dtype=jnp.float64).at[active_idx].set(q_reduced)
+
+    A_full = robot_full.actuation_matrix(q_full)
+    A_reduced = robot_reduced.actuation_matrix(q_reduced)
+    expected = A_full[active_idx, :]
+
+    assert_allclose(
+        A_reduced,
+        expected,
+        rtol=Tolerance.rtol(),
+        atol=Tolerance.atol(),
+    )
 
 
 if __name__ == "__main__":
