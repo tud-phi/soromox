@@ -1,4 +1,5 @@
 import jax
+import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array
@@ -53,6 +54,31 @@ def _create_robot(
         robot_kwargs["strain_selector"] = strain_selector
 
     return TendonActuatedPCS(**robot_kwargs)
+
+
+def _stacked_tendon_params(num_segments: int, num_tendons: int) -> Dict[str, Array]:
+    """
+    Build a set of tendon routing parameters covering multiple attachments and slopes.
+    """
+    if num_tendons < 1:
+        raise ValueError("num_tendons must be at least 1.")
+    idx = jnp.arange(num_tendons, dtype=jnp.int32)
+    attachment = jnp.minimum(idx % num_segments, num_segments - 1)
+    base = idx.astype(jnp.float64) + 1.0
+    alternating = jnp.where(idx % 2 == 0, 1.0, -1.0)
+
+    ry = 0.02 * base * alternating
+    rz = -0.015 * (base + 0.5)
+    my = 0.01 * (jnp.mod(idx, 3).astype(jnp.float64) - 1.0)
+    mz = 0.012 * (jnp.mod(idx + 1, 3).astype(jnp.float64) - 1.0)
+
+    return {
+        "ry": ry,
+        "rz": rz,
+        "my": my,
+        "mz": mz,
+        "idx_seg_att": attachment,
+    }
 
 
 def reference_actuation_matrix(
@@ -304,6 +330,40 @@ def test_actuation_matrix_with_inactive_strains():
     )
 
 
+def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
+    """
+    Ensure the tendon_length Jacobian equals the transpose of the actuation matrix
+    across different robot sizes and random configurations.
+    """
+
+    segment_options = [1, 2, 3]
+    tendon_options = [1, 2, 4]
+    key = jax.random.PRNGKey(42)
+
+    for num_segments in segment_options:
+        segment_lengths = jnp.linspace(
+            0.2, 0.2 + 0.05 * (num_segments - 1), num_segments, dtype=jnp.float64
+        )
+        for num_tendons in tendon_options:
+            tendon_params = _stacked_tendon_params(num_segments, num_tendons)
+            robot = _create_robot(segment_lengths, tendon_params)
+            for _ in range(10):
+                key, subkey = jax.random.split(key)
+                q = 0.05 * jax.random.normal(
+                    subkey, (robot.num_active_strains,), dtype=jnp.float64
+                )
+                lengths = robot.tendon_length(q)
+                assert lengths.shape == (robot.num_actuators,)
+                jac = jax.jacrev(robot.tendon_length)(q)
+                A = robot.actuation_matrix(q)
+                assert_allclose(
+                    jac,
+                    A.T,
+                    rtol=Tolerance.rtol(),
+                    atol=Tolerance.atol(),
+                )
+
+
 if __name__ == "__main__":
-    print("Running tests for tendon actuated Piecewise Constant Strain...")
-    test_actuation_matrix_pcs()
+    # run pytest with activated stdout
+    pytest.main([__file__])

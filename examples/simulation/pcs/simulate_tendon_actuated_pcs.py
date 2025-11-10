@@ -274,7 +274,8 @@ if __name__ == "__main__":
         num_segments,
         axis=0,
     ).flatten()
-    #q0 = jnp.array([0.9143,-0.0292,0.6006,-0.7162,-0.1565,0.8315,0.5844,0.9190,0.3115,-0.9286,0.6983,0.8680])
+    # q0 = jnp.array([0.9143,-0.0292,0.6006,-0.7162,-0.1565,0.8315,0.5844,0.9190,0.3115,-0.9286,0.6983,0.8680])
+    # q0 = jnp.zeros_like(q0)
 
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
@@ -287,6 +288,11 @@ if __name__ == "__main__":
     A = robot.actuation_matrix(q0)
     print("A =\n", A.shape)
     print(A)
+
+    # tendon lengths
+    l = robot.tendon_length(q0)
+    print("l =\n", l.shape)
+    print(l)
 
     # Tendons' position
     t_s = robot.forward_kinematics_tendons(q0, robot.L_cum[-1])
