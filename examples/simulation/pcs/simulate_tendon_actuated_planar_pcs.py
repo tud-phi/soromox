@@ -372,6 +372,5 @@ if __name__ == "__main__":
         width=w,
         height=h,
         speed_up=1.0,
-        skip_step=save_dt,
         rgb_to_bgr=False,
     )
