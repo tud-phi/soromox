@@ -109,8 +109,7 @@ class TendonActuatedPendulum(Pendulum):
 
     References:
     ----------
-    This implementation builds upon the findings of:
-    - Murray, R. M., Li, Z., & Sastry, S. S. (2017). A mathematical introduction to robotic manipulation. CRC press.
+    - [Tendon-driven actuation of an articulated link system] Murray, Richard M., Zexiang Li, and S. Shankar Sastry. A mathematical introduction to robotic manipulation. CRC press, 2017. (Chapter 6)
     """
 
     R_at: Array

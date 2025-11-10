@@ -63,6 +63,10 @@ class PlanarPCS(DynamicalSystem):
                 - sigma_x corresponds to axial strain along the x-axis,
                 - sigma_y corresponds to shear along the y-axis.
 
+    References:
+    ----------
+    - Renda, Federico, Frédéric Boyer, Jorge Dias, and Lakmal Seneviratne. "Discrete cosserat approach for multisection soft manipulator dynamics." IEEE Transactions on Robotics 34, no. 6 (2018): 1518-1533.
+
     """
 
     # Robot parameters

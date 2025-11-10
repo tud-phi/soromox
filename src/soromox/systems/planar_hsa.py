@@ -139,6 +139,10 @@ class PlanarHSA(DynamicalSystem):
       rod mapping for accurate modeling of HSA mechanics.
     - Hysteresis modeling is optional and uses the Bouc-Wen model
       when consider_hysteresis=True.
+
+    References:
+    ----------
+    - Stölzle, M., Rus, D., & Della Santina, C. (2023, November). An experimental study of model-based control for planar handed shearing auxetics robots. In International Symposium on Experimental Robotics (pp. 153-167). Cham: Springer Nature Switzerland.
     """
     # static settings
     num_segments: int = eqx.field(static=True)

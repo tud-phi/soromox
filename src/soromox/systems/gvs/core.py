@@ -91,6 +91,11 @@ class GVS(DynamicalSystem):
     - Link cross-section geometry can vary along the length and supports circular,
       rectangular, and elliptical shapes.
 
+    References:
+    ----------
+    - Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 5(3), 4006-4013.
+    - Boyer, F., Lebastard, V., Candelier, F., & Renda, F. (2020). Dynamics of continuum and soft robots: A strain parameterization based approach. IEEE Transactions on Robotics, 37(3), 847-863.
+    - Mathew, A. T., Feliu-Talegon, D., Alkayas, A. Y., Boyer, F., & Renda, F. (2025). Reduced order modeling of hybrid soft-rigid robots using global, local, and state-dependent strain parameterization. The International Journal of Robotics Research, 44(1), 129-154.
     """
 
     # Static attributes
