@@ -330,38 +330,36 @@ def test_actuation_matrix_with_inactive_strains():
     )
 
 
-def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
-    """
-    Ensure the tendon_length Jacobian equals the transpose of the actuation matrix
-    across different robot sizes and random configurations.
-    """
+@pytest.mark.parametrize("num_tendons", [1, 2, 4])
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_tendon_length_gradient_matches_actuation_matrix_random_configs(
+    num_segments: int, num_tendons: int
+):
+    """Ensure tendon_length Jacobian equals actuation matrix transpose."""
 
-    segment_options = [1, 2, 3]
-    tendon_options = [1, 2, 4]
-    key = jax.random.PRNGKey(42)
+    segment_lengths = jnp.linspace(
+        0.2, 0.2 + 0.05 * (num_segments - 1), num_segments, dtype=jnp.float64
+    )
+    tendon_params = _stacked_tendon_params(num_segments, num_tendons)
+    robot = _create_robot(segment_lengths, tendon_params)
 
-    for num_segments in segment_options:
-        segment_lengths = jnp.linspace(
-            0.2, 0.2 + 0.05 * (num_segments - 1), num_segments, dtype=jnp.float64
+    key = jax.random.PRNGKey(42 + num_segments * 10 + num_tendons)
+
+    for _ in range(10):
+        key, subkey = jax.random.split(key)
+        q = 0.05 * jax.random.normal(
+            subkey, (robot.num_active_strains,), dtype=jnp.float64
         )
-        for num_tendons in tendon_options:
-            tendon_params = _stacked_tendon_params(num_segments, num_tendons)
-            robot = _create_robot(segment_lengths, tendon_params)
-            for _ in range(10):
-                key, subkey = jax.random.split(key)
-                q = 0.05 * jax.random.normal(
-                    subkey, (robot.num_active_strains,), dtype=jnp.float64
-                )
-                lengths = robot.tendon_length(q)
-                assert lengths.shape == (robot.num_actuators,)
-                jac = jax.jacrev(robot.tendon_length)(q)
-                A = robot.actuation_matrix(q)
-                assert_allclose(
-                    jac,
-                    A.T,
-                    rtol=Tolerance.rtol(),
-                    atol=Tolerance.atol(),
-                )
+        lengths = robot.tendon_length(q)
+        assert lengths.shape == (robot.num_actuators,)
+        jac = jax.jacrev(robot.tendon_length)(q)
+        A = robot.actuation_matrix(q)
+        assert_allclose(
+            jac,
+            A.T,
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
 
 
 if __name__ == "__main__":
