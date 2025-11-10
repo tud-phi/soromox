@@ -151,7 +151,7 @@ def animate_robot_matplotlib(
 
 
 if __name__ == "__main__":
-    num_segments = 3  # number of segments in the robot
+    num_segments = 2  # number of segments in the robot
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
@@ -160,7 +160,7 @@ if __name__ == "__main__":
         "L": 1e-1 * jnp.ones((num_segments,)),
         "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
-        "g": 1 * jnp.array([0.0, 9.81]),  # gravitational acceleration [m/s^2] UP!
+        "g": 0 * jnp.array([0.0, 9.81]),  # gravitational acceleration [m/s^2] UP!
         "E": 5e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
         "d": 2e-2
@@ -209,7 +209,7 @@ if __name__ == "__main__":
     # ).flatten()
     # q0 = jnp.zeros_like(q0)
     # randomly sample initial configuration
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(4)
     q0 = jax.random.normal(key, shape=int(robot.num_active_strains)) * jnp.repeat(
         jnp.array([5.0 * jnp.pi, 0.1, 0.05])[None, :], num_segments, axis=0
     ).flatten()
@@ -227,17 +227,34 @@ if __name__ == "__main__":
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    # u = (
-    #     jnp.array([1.0, 0.0])[None].repeat(num_segments, axis=0).flatten()
-    # )  # tendon tensions
     # u = jnp.zeros((robot.num_actuators,))  # no actuation
+    # u = (
+    #     jnp.array([0.0, -0.3])[None].repeat(num_segments, axis=0).flatten()
+    # )  # tendon tensions
     # randomly sample actuation
-    u = jax.random.uniform(
-        key,
-        shape=(robot.num_actuators,),
-        minval=0.0,
-        maxval=2e0,
+    # u = jax.random.uniform(
+    #     key,
+    #     shape=(robot.num_actuators,),
+    #     minval=-0.5,
+    #     maxval=0.0,
+    # )
+    # alternating tendon tensions
+    base_tension = jnp.array(-0.3, dtype=q0.dtype)
+    segment_ids = jnp.arange(num_segments)
+    segment_tensions = base_tension / (segment_ids.astype(q0.dtype) + 1.0)
+    even_segments = (segment_ids % 2) == 0
+    tendon_pattern = jnp.zeros((num_segments, 2), dtype=q0.dtype)
+    tendon_pattern = tendon_pattern.at[:, 0].set(
+        jnp.where(even_segments, segment_tensions, 0.0)
     )
+    tendon_pattern = tendon_pattern.at[:, 1].set(
+        jnp.where(~even_segments, segment_tensions, 0.0)
+    )
+    u = jnp.take(
+        tendon_pattern,
+        robot.segment_indices_to_actuate,
+        axis=0,
+    ).reshape(-1)
     print("u =\n", u)
 
     # call the actuation mapping function
@@ -266,6 +283,7 @@ if __name__ == "__main__":
         solver=solver,
         max_steps=None,
     )
+    print("Final configuration q(t1) =\n", q_ts[-1])
 
     # =====================================================
     # End-effector position upon time
