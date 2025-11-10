@@ -391,6 +391,8 @@ class TendonActuatedPendulum(Pendulum):
         l0_p = jnp.sum(self.L * mask * cond, axis=1)
         l_tot_p = self.passive_tendon_displacement(q) + l0_p
         return l_tot_p
+    
+    tendon_length = active_tendon_length  # Alias for compatibility
 
     # -------------------------------
     # Standardized dynamics interface
