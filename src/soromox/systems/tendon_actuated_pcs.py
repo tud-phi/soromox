@@ -298,7 +298,7 @@ class TendonActuatedPCS(PCS):
             Phi_a_k (Array): local actuation matrix contribution of one tendon of shape (6,).
         """
         attachment_segment_idx = tendon_routing_params_k["idx_seg_att"]  # ()
-        cond = attachment_segment_idx >= i  # ()
+        is_tendon_active = attachment_segment_idx >= i  # ()
 
         # extract tendon routing evolution in the cross-sectional plane
         d_s = jnp.append(self.d_s(tendon_routing_params_k, s), 1.0)  # (4,)
@@ -310,7 +310,7 @@ class TendonActuatedPCS(PCS):
         norm = jnp.linalg.norm(term)  # ()
         t = term / norm  # (3,)
 
-        Phi_a_k = cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
+        Phi_a_k = is_tendon_active * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
 
         return Phi_a_k
 
@@ -415,46 +415,47 @@ class TendonActuatedPCS(PCS):
         # extract strains
         xi = self.strain(q).reshape((self.num_segments, 6))
 
-        def tendon_length_delta_segment_i(i: Array):
+        def tendon_length_density_segment_i(i: Array):
             """
-            Compute the actuation matrix at the gaussian points of segment i of the robot.
+            Compute the tendon length density at all Gauss points of segment i.
 
             Args:
-                i (Array): index of the segment ()
+                i (Array): segment index.
 
             Returns:
-                dl_ds_i (Array): tendon length density at gaussian points of shape (num_gauss_points, num_actuators) at segment i.
+                dl_ds_i (Array): tendon length density values at Gauss points,
+                    shape (num_gauss_points, num_actuators).
             """
             xi_i = xi[i]
 
-            def tendon_length_delta_point_j(j: Array):
+            def tendon_length_density_point_j(j: Array):
                 """
-                Compute the actuation matrix at the abscissa point corresponding to the gaussian point j.
+                Evaluate the tendon length density at the Gauss point j inside segment i.
 
                 Args:
-                    j (Array): index of the gaussian point ()
+                    j (Array): Gauss point index.
 
                 Returns:
-                    dl_ds_j (Array): local tendon length density of shape (num_actuators, ) at gaussian point j.
+                    dl_ds_j (Array): local tendon length density of shape (num_actuators,)
+                        at Gauss point j.
                 """
                 # extract gaussian point and weight
                 Xs_j = Xs_scaled[j]
                 Ws_j = Ws_scaled[j]
 
-                def tendon_length_delta_tendon_k(tendon_routing_params_k: Dict[str, Array]) -> Array:
+                def tendon_length_density_tendon_k(
+                    tendon_routing_params_k: Dict[str, Array]
+                ) -> Array:
                     """
-                    Compute the actuation matrix contribution of one tendon k at s contained in segment i.
+                    Compute the tendon length density contribution of one tendon at the
+                    current Gauss point.
 
                     Args:
-                        tendon_routing_params_k (Dict[str, Array]): parameters of the tendon k
+                        tendon_routing_params_k (Dict[str, Array]): parameters of the tendon.
                     
                     Returns:
-                        dl_ds_k (Array): local tendon length density contribution of one tendon of shape ().
+                        dl_ds_k (Array): scalar tendon length density contribution.
                     """
-                    # evaluate condition if the tendon is routed through segment i
-                    attachment_segment_idx = tendon_routing_params_k["idx_seg_att"]  # ()
-                    cond = attachment_segment_idx >= i  # ()
-
                     # extract tendon routing evolution in the cross-sectional plane
                     dd_s = jnp.append(
                         self.dd_s_ds(tendon_routing_params_k, Xs_j), 1.0
@@ -468,13 +469,10 @@ class TendonActuatedPCS(PCS):
                     # compute tendon length density contribution
                     dl_ds_k = jnp.dot(Phi_a_k.T, xi_i + jnp.concat([jnp.zeros((3,)), dd_s[:3]], axis=-1))  # ()
 
-                    # apply condition
-                    dl_ds_k = cond * dl_ds_k  # ()
-
                     return dl_ds_k
 
-                # Vectorize the actuation basis computation for all tendons
-                dl_ds_j = vmap(tendon_length_delta_tendon_k)(
+                # Vectorize the tendon length density computation for all tendons
+                dl_ds_j = vmap(tendon_length_density_tendon_k)(
                     self.tendon_routing_params
                 )  # (num_actuators,)
 
@@ -484,15 +482,15 @@ class TendonActuatedPCS(PCS):
                 self.Xs, self.Ws, self.L_cum[i], self.L_cum[i + 1]
             )
 
-            # Vectorize the actuation matrix computation for all gaussian points
-            dl_ds_i = vmap(tendon_length_delta_point_j)(
+            # Vectorize the tendon length density evaluation for all Gauss points
+            dl_ds_i = vmap(tendon_length_density_point_j)(
                 jnp.arange(self.num_gauss_points)
             )  # (num_gauss_points, num_actuators)
 
             return dl_ds_i
 
-        # Vectorize the actuation matrix computation for all segments
-        dl_ds_blocks = vmap(tendon_length_delta_segment_i)(
+        # Vectorize the tendon length density evaluation for all segments
+        dl_ds_blocks = vmap(tendon_length_density_segment_i)(
             jnp.arange(self.num_segments)
         )  # (num_segments, num_gauss_points, num_actuators)
 
