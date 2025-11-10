@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+
 """Benchmark the core dynamics routines for Soromox soft robot systems.
 
 This script measures both the ahead-of-time JIT compilation cost and the steady-state
@@ -11,18 +12,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, MutableMapping, Sequence, Tuple
 
-# Ensure `src` is on the import path when running from the repository root.
-ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "src"
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 try:
     import jax
@@ -36,9 +33,12 @@ except ImportError as exc:  # pragma: no cover - this is a runtime guard
 
 import matplotlib.pyplot as plt
 
-from soromox.systems.pcs import PCS
-from soromox.systems.planar_pcs import PlanarPCS
-from soromox.systems.pendulum import Pendulum
+from tools.benchmarks._benchmark_common import (
+    add_integration_args,
+    add_system_selection_args,
+    block_until_ready,
+    get_system_registry,
+)
 
 Array = jax.Array
 Tree = Any
@@ -73,17 +73,6 @@ class SystemBenchmark:
     cases: Sequence[BenchmarkCase]
 
 
-def _block_until_ready(tree: Tree) -> None:
-    """Synchronise on any pending JAX work in the PyTree."""
-
-    def _block(x: Any) -> Any:
-        if hasattr(x, "block_until_ready"):
-            x.block_until_ready()
-        return x
-
-    jax.tree_util.tree_map(_block, tree)
-
-
 def _measure_jitted_call(
     fn: Callable[..., Tree],
     args: Tuple[Any, ...],
@@ -100,14 +89,14 @@ def _measure_jitted_call(
 
     start = time.perf_counter()
     first = fn(*args)
-    _block_until_ready(first)
+    block_until_ready(first)
     first_time = time.perf_counter() - start
 
     exec_times: List[float] = []
     for _ in range(repeats):
         loop_start = time.perf_counter()
         out = fn(*args)
-        _block_until_ready(out)
+        block_until_ready(out)
         exec_times.append(time.perf_counter() - loop_start)
 
     exec_time = sum(exec_times) / len(exec_times)
@@ -115,129 +104,8 @@ def _measure_jitted_call(
     return compile_time, exec_time
 
 
-def _pendulum_factory(num_links: int) -> Pendulum:
-    lengths = jnp.linspace(0.15, 0.25, num_links)
-    masses = jnp.linspace(0.8, 1.2, num_links)
-    inertias = (1.0 / 12.0) * masses * lengths**2
-    lc = lengths * 0.5
-
-    params = {
-        "m": masses,
-        "I": inertias,
-        "L": lengths,
-        "Lc": lc,
-        "g": jnp.array([0.0, -9.81]),
-        "K": 5.0 * jnp.eye(num_links),
-        "D": 0.1 * jnp.eye(num_links),
-    }
-    return Pendulum(params)
-
-
-def _pendulum_context(system: Pendulum) -> MutableMapping[str, Array]:
-    n = system.num_links
-    q = jnp.linspace(-0.15, 0.15, n)
-    qd = jnp.linspace(0.2, -0.2, n)
-    y = jnp.concatenate([q, qd])
-    ctx: MutableMapping[str, Array] = {
-        "q": q,
-        "qd": qd,
-        "y": y,
-        "t": jnp.array(0.0),
-        "u": jnp.zeros((system.num_actuators,)),
-        "tau_ext": jnp.zeros((n,)),
-    }
-    return ctx
-
-
-def _planar_pcs_factory(num_segments: int) -> PlanarPCS:
-    lengths = jnp.full((num_segments,), 0.12)
-    radii = jnp.full((num_segments,), 0.015)
-    rho = 1070.0 * jnp.ones((num_segments,))
-    params: Dict[str, Array] = {
-        "th0": jnp.array(jnp.pi / 2),
-        "L": lengths,
-        "r": radii,
-        "rho": rho,
-        "g": jnp.array([0.0, 9.81]),
-        "E": 4.0e5 * jnp.ones((num_segments,)),
-        "G": 1.5e5 * jnp.ones((num_segments,)),
-    }
-    diag_entries = (
-        jnp.repeat(jnp.array([[1.0, 200.0, 200.0]]), num_segments, axis=0)
-        * lengths[:, None]
-    ).reshape(-1)
-    params["D"] = 5.0e-4 * jnp.diag(diag_entries)
-    return PlanarPCS(num_segments=num_segments, params=params)
-
-
-def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
-    dof = system.num_actuators
-    q = jnp.linspace(-0.2, 0.2, dof)
-    qd = jnp.linspace(0.25, -0.25, dof)
-    s_vals = system.L_cum[1:]
-    def _forward_kinematics_at_s(s):
-        return system.forward_kinematics(q, s)
-    chi_tips = jax.vmap(_forward_kinematics_at_s)(s_vals)
-    ctx: MutableMapping[str, Array] = {
-        "q": q,
-        "qd": qd,
-        "y": jnp.concatenate([q, qd]),
-        "t": jnp.array(0.0),
-        "u": jnp.zeros((system.num_actuators,)),
-        "tau_ext": jnp.zeros((dof,)),
-        "s_tip": jnp.sum(system.L),
-        "chi_tips": chi_tips,
-    }
-    return ctx
-
-
-def _pcs_factory(num_segments: int) -> PCS:
-    lengths = jnp.full((num_segments,), 0.1)
-    radii = jnp.full((num_segments,), 0.02)
-    rho = 1050.0 * jnp.ones((num_segments,))
-    params: Dict[str, Array] = {
-        "p0": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        "L": lengths,
-        "r": radii,
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "E": 6.0e5 * jnp.ones((num_segments,)),
-        "G": 2.5e5 * jnp.ones((num_segments,)),
-    }
-    diag_entries = (
-        jnp.repeat(jnp.array([[1.0, 1.0, 1.0, 300.0, 300.0, 300.0]]), num_segments, axis=0)
-        * lengths[:, None]
-    ).reshape(-1)
-    params["D"] = 5.0e-4 * jnp.diag(diag_entries)
-    return PCS(num_segments=num_segments, params=params)
-
-
-def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
-    dof = system.num_actuators
-    q = jnp.linspace(-0.15, 0.15, dof)
-    qd = jnp.linspace(0.18, -0.18, dof)
-    s_vals = system.L_cum[1:]
-    g_tips = jax.vmap(lambda s: system.forward_kinematics(q, s))(s_vals)
-    midpoints = system.L_cum[:-1] + 0.5 * system.L
-    s_points = jnp.concatenate(
-        [jnp.array([0.0], dtype=q.dtype), midpoints, system.L_cum[1:]]
-    )
-    ctx: MutableMapping[str, Array] = {
-        "q": q,
-        "qd": qd,
-        "y": jnp.concatenate([q, qd]),
-        "t": jnp.array(0.0),
-        "u": jnp.zeros((system.num_actuators,)),
-        "tau_ext": jnp.zeros((dof,)),
-        "s_tip": jnp.sum(system.L),
-        "g_tips": g_tips,
-        "s_points": s_points,
-    }
-    return ctx
-
-
 def _build_system_registry() -> Mapping[str, SystemBenchmark]:
-
+    shared = get_system_registry()
     pendulum_cases = (
         BenchmarkCase(
             name="forward_kinematics",
@@ -422,21 +290,21 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
 
     return {
         "pendulum": SystemBenchmark(
-            factory=_pendulum_factory,
-            size_label="num_links",
-            build_context=_pendulum_context,
+            factory=shared["pendulum"].factory,
+            size_label=shared["pendulum"].size_label,
+            build_context=shared["pendulum"].build_context,
             cases=pendulum_cases,
         ),
         "planar_pcs": SystemBenchmark(
-            factory=_planar_pcs_factory,
-            size_label="num_segments",
-            build_context=_planar_pcs_context,
+            factory=shared["planar_pcs"].factory,
+            size_label=shared["planar_pcs"].size_label,
+            build_context=shared["planar_pcs"].build_context,
             cases=planar_cases,
         ),
         "pcs": SystemBenchmark(
-            factory=_pcs_factory,
-            size_label="num_segments",
-            build_context=_pcs_context,
+            factory=shared["pcs"].factory,
+            size_label=shared["pcs"].size_label,
+            build_context=shared["pcs"].build_context,
             cases=pcs_cases,
         ),
     }
@@ -519,38 +387,8 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     registry = _build_system_registry()
     parser = argparse.ArgumentParser(description="Benchmark Soromox system implementations")
-    parser.add_argument(
-        "--systems",
-        nargs="*",
-        default=list(registry.keys()),
-        choices=list(registry.keys()),
-        help="Systems to benchmark (default: all)",
-    )
-    parser.add_argument(
-        "--segment-counts",
-        nargs="*",
-        type=int,
-        default=[1, 2, 4, 8],
-        help="Sequence of link/segment counts to benchmark",
-    )
-    parser.add_argument(
-        "--duration",
-        type=float,
-        default=1.0,
-        help="Simulation duration (seconds) used for resolve_upon_time",
-    )
-    parser.add_argument(
-        "--dt",
-        type=float,
-        default=1e-4,
-        help="Integration step size for resolve_upon_time",
-    )
-    parser.add_argument(
-        "--save-dt",
-        type=float,
-        default=0.01,
-        help="Save the system state every `save_dt` seconds during resolve_upon_time (must be >= dt)",
-    )
+    add_system_selection_args(parser, registry, default_segment_counts=[1, 2, 4, 8])
+    add_integration_args(parser)
     parser.add_argument(
         "--execution-repeats",
         type=int,
