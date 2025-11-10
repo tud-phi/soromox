@@ -70,6 +70,16 @@ class TendonActuatedPCS(PCS):
                 - sigma_y corresponds to shear along the y-axis,
                 - sigma_z corresponds to shear along the z-axis.
 
+    References:
+    ----------
+    This implementation builds upon the findings of:
+    - Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach 
+        for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 
+        5(3), 4006-4013.
+    - Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024). Input decoupling of lagrangian systems
+        via coordinate transformation: General characterization and its application to soft robotics. 
+        IEEE transactions on robotics, 40, 2098-2110.    
+
     """
 
     tendon_routing_params: Dict[str, Array]

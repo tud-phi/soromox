@@ -106,6 +106,11 @@ class TendonActuatedPendulum(Pendulum):
         Transformation matrix from actuation to configuration coordinates, such that q = h_q(y) (identity if omitted).
     h_q_inv: Array (shape (N, N))
         Transformation matrix from configuration to actuation coordinates, such that y = h_q_inv(q) (identity if omitted).
+
+    References:
+    ----------
+    This implementation builds upon the findings of:
+    - Murray, R. M., Li, Z., & Sastry, S. S. (2017). A mathematical introduction to robotic manipulation. CRC press.
     """
 
     R_at: Array
