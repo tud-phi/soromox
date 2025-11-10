@@ -246,18 +246,14 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                 A_sm: actuation matrix of shape (n_xi, num_segment_tendons)
             """
 
-            def compute_A_d(d: Array) -> Array:
+            def compute_A_d(d_k: Array) -> Array:
                 """
                 Compute the actuation matrix for a single actuator/tendon with respect to the soft robot's strains.
                 Args:
-                    d: distance of the tendon from the centerline
+                    d_k: distance of the k-th tendon from the centerline as array of shape ()
                 Returns:
                     A_d: actuation matrix of shape (n_xi, ) where n_xi is the number of strains
                 """
-                kappa_0 = xi[0]  # bending strain
-                axial_0 = xi[1]  # axial strain
-                shear_0 = xi[2]  # shear strain
-                square_root_term = jnp.sqrt(shear_0**2 + (axial_0 + d * kappa_0) ** 2)
 
                 def compute_A_d_wrt_xi_i(i: Array, L_i: Array, xi_i: Array) -> Array:
                     """
@@ -273,14 +269,18 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                     axial_i = xi_i[1]  # axial strain
                     shear_i = xi_i[2]  # shear strain
 
-                    A_d_wrt_xi_i = -jnp.array(
+                    square_root_term = jnp.sqrt(
+                        shear_i**2 + (axial_i + d_k * kappa_i) ** 2
+                    )
+
+                    A_d_wrt_xi_i = jnp.array(
                         [
                             L_i
-                            * d
-                            * (d * kappa_i + axial_i)
+                            * d_k
+                            * (d_k * kappa_i + axial_i)
                             / square_root_term,  # actuation on the bending
                             L_i
-                            * (d * kappa_i + axial_i)
+                            * (d_k * kappa_i + axial_i)
                             / square_root_term,  # actuation on the axial strain
                             L_i
                             * shear_i
@@ -320,4 +320,43 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         # reshape the actuation matrix to have shape (n_xi, n_act)
         A = jnp.concatenate(A, axis=1)  # concatenate along the second axis
 
+        # project onto the active strain basis to match the generalized coordinates
+        A = self.B_xi.T @ A
+
         return A
+
+    @eqx.filter_jit
+    def tendon_length(self, q: Array) -> Array:
+        """
+        Compute the cumulative tendon length for each actuator.
+
+        Each tendon is assumed to be routed along the backbone and attached at the distal
+        end of the corresponding actuated segment. The tendon length is obtained by
+        integrating the local stretch along every traversed segment, which depends on
+        shear and axial strains and on the tendon offset d.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            l (Array): tendon lengths of shape (num_actuators,).
+        """
+
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        kappa = xi[:, 0:1]
+        axial = xi[:, 1:2]
+        shear = xi[:, 2:3]  # ensure 2D for broadcasting
+
+        d = self.d
+        if d.ndim == 1:
+            d = d[:, None]
+
+        local_extension = axial + d * kappa
+        segment_lengths = self.L[:, None] * jnp.sqrt(
+            shear**2 + local_extension**2
+        )
+
+        cumulative_lengths = jnp.cumsum(segment_lengths, axis=0)
+        tendon_lengths = cumulative_lengths[self.segment_indices_to_actuate]
+
+        return tendon_lengths.reshape(-1)
