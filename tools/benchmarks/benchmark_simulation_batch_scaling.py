@@ -14,11 +14,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as onp
-
-try:
-    import seaborn as sns  # type: ignore
-except ImportError:  # pragma: no cover - optional dependency
-    sns = None
+import seaborn as sns
 
 import jax
 import jax.numpy as jnp

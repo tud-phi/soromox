@@ -129,11 +129,13 @@ dev = [
     "check-manifest",
     "codecov",
     "coverage",
+    "matplotlib",
     "pre-commit",
     "pytest",
     "pytest-cov",
     "pytest-html",
     "ruff",
+    "seaborn",
     "tox",
 ]
 docs = [
@@ -149,6 +151,7 @@ examples = [
     "ipython",
     "jaxopt",
     "matplotlib",
+    "seaborn",
 ]
 test = [
     "codecov",
