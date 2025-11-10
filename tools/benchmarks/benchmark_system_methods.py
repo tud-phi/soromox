@@ -405,10 +405,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=Path,
         help="Optional path to store benchmark results as CSV",
     )
+    default_plot = Path("benchmarks/system_methods_results.pdf")
     parser.add_argument(
         "--plot",
         type=Path,
-        help="Optional path to save a Matplotlib figure summarising the benchmarks",
+        default=default_plot,
+        help=(
+            "Path to save a Matplotlib summary figure (default: %(default)s). "
+            "Use --show-plot as well if you want an interactive window."
+        ),
     )
     parser.add_argument(
         "--show-plot",

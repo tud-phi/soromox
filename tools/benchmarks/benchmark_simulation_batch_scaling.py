@@ -272,10 +272,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=Path,
         help="Optional path to store the result table as a NumPy NPZ archive",
     )
+    default_plot = Path("benchmarks/batch_scaling_results.pdf")
     parser.add_argument(
         "--plot",
         type=Path,
-        help="Optional path to save the scaling plot",
+        default=default_plot,
+        help="Path to save the scaling plot (default: %(default)s)",
     )
     parser.add_argument(
         "--show-plot",
