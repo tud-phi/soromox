@@ -7,10 +7,19 @@ import argparse
 import csv
 import json
 from pathlib import Path
+import shutil
 from typing import Any, Dict, List, Mapping, Sequence
 
 import matplotlib.pyplot as plt
 
+if shutil.which("latex"):
+    plt.rcParams.update(
+        {
+            "text.usetex": True,
+            "font.family": "serif",
+            "font.serif": ["Computer Modern Romand"],
+        }
+    )
 
 NUMERIC_FIELDS = {
     "size_value": int,

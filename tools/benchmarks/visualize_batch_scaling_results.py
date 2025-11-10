@@ -7,10 +7,20 @@ import argparse
 import csv
 import sys
 from pathlib import Path
+import shutil
 from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+if shutil.which("latex"):
+    plt.rcParams.update(
+        {
+            "text.usetex": True,
+            "font.family": "serif",
+            "font.serif": ["Computer Modern Romand"],
+        }
+    )
 
 
 def _coerce(value: str) -> Any:
@@ -80,6 +90,8 @@ def _plot(
         ax_total = axes[1, col]
         subset = [row for row in rows if row["system"] == system]
         size_label = subset[0]["size_label"]
+        if size_label == "num_segments":
+            size_label = r"Number of Segments $N$"
         segment_values = sorted({row["segment_count"] for row in subset})
         for seg in segment_values:
             seg_rows = sorted(
@@ -95,7 +107,7 @@ def _plot(
 
         ax_per_env.set_title(f"{system} – per-env speed")
         ax_total.set_title(f"{system} – total throughput")
-        ax_total.set_xlabel("number of environments (parallel simulations)")
+        ax_total.set_xlabel(r"Number of environments $n_\mathrm{envs}$ (parallel simulations)")
         for axis in (ax_per_env, ax_total):
             axis.grid(True, linestyle=":", linewidth=0.6)
             if log_x:
@@ -104,14 +116,76 @@ def _plot(
                 axis.set_yscale("log")
         ax_per_env.legend()
 
-    axes[0, 0].set_ylabel("simulated time / wall time (per env)")
-    axes[1, 0].set_ylabel("total simulated time / wall time")
+    axes[0, 0].set_ylabel(r"Simulated time / wall time (per env)")
+    axes[1, 0].set_ylabel(r"Total simulated time / wall time ($r_\mathrm{s/w}$)")
     fig.tight_layout()
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(output, dpi=200)
         print(f"[+] Saved figure to {output}")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def _plot_total_throughput(
+    rows: List[Mapping[str, Any]],
+    output: Path | None,
+    show: bool,
+    log_x: bool,
+    log_y: bool,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    if not rows:
+        print("[!] No results available for plotting.")
+        return
+
+    systems = sorted({row["system"] for row in rows})
+    if sns is not None:
+        sns.set_theme(style="whitegrid")
+
+    fig, axes = plt.subplots(
+        1,
+        len(systems),
+        figsize=(6 * len(systems), 4),
+        squeeze=False,
+        sharex="col",
+    )
+
+    for col, system in enumerate(systems):
+        ax = axes[0, col]
+        subset = [row for row in rows if row["system"] == system]
+        size_label = subset[0]["size_label"]
+        if size_label == "num_segments":
+            size_label = r"$N$"
+        segment_values = sorted({row["segment_count"] for row in subset})
+        for seg in segment_values:
+            seg_rows = sorted(
+                (row for row in subset if row["segment_count"] == seg),
+                key=lambda r: r["batch_size"],
+            )
+            x = [row["batch_size"] for row in seg_rows]
+            y_total = [row.get("total_speed_ratio") for row in seg_rows]
+            label = f"{size_label}={seg}"
+            ax.plot(x, y_total, marker="o", label=label)
+
+        ax.set_xlabel(r"Number of environments $n_\mathrm{envs}$")
+        ax.grid(True, linestyle=":", linewidth=0.6)
+        if log_x:
+            ax.set_xscale("log")
+        if log_y:
+            ax.set_yscale("log")
+        ax.legend()
+
+    axes[0, 0].set_ylabel(r"Total simulated time / wall time ($r_\mathrm{s/w}$)")
+    fig.tight_layout()
+
+    if output is not None:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output, dpi=200)
+        print(f"[+] Saved total-throughput figure to {output}")
     if show:
         plt.show()
     plt.close(fig)
@@ -167,7 +241,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     rows = _load_rows(args.csv)
     rows = _filter_rows(rows, args.systems, args.segment_counts)
+    throughput_output: Path | None = None
+    if args.output is not None:
+        throughput_output = args.output.with_name(
+            f"{args.output.stem}_total_throughput{args.output.suffix}"
+        )
     _plot(rows, args.output, args.show, args.log_x, args.log_y)
+    if throughput_output is not None:
+        _plot_total_throughput(rows, throughput_output, args.show, args.log_x, args.log_y)
     if not args.output and not args.show:
         print("[!] Neither --output nor --show was supplied; nothing was rendered.")
     return 0
