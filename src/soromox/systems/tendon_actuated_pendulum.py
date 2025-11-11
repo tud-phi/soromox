@@ -306,7 +306,7 @@ class TendonActuatedPendulum(Pendulum):
             updated = eqx.tree_at(lambda x: x.D_pt, updated, jnp.diag(d_pt))
         if "l_pt0" in tendon_params:
             l_pt0 = jnp.asarray(tendon_params["l_pt0"])
-            tau_pt0 = updated.A_pt @ updated.K_pt @ updated.l_pt0
+            tau_pt0 = updated.A_pt @ updated.K_pt @ l_pt0
             updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
             updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
         if "q_ref_at" in tendon_params:
