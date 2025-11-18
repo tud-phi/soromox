@@ -46,16 +46,22 @@ class TendonActuatedPCS(PCS):
         Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
     Xs, Ws : Array
         Gauss-Legendre quadrature nodes and weights for numerical integration.
-    tendon_routing_params : Dict[str, Array]
+    active_tendon_routing_params : Dict[str, Array]
         Dictionary of arrays of length n_actuators representing the tendon parameters.
-    d_s : Callable
-        Function that returns the vector [d_x, d_y, d_z] of the tendon
+    active_d_s : Callable
+        Function that returns the vector [d_x, d_y, d_z] of the active tendon
         position w.r.t. the central backbone within the cross-sectional plane at a given
         abscissa point s. The three entries represent the coordinate of the tendon
         position with respect to the local cross-sectional frame at s. For this reason,
         d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
-    dd_s_ds : Callable
-        Function that returns the vector of the derivative over s of d_s.
+    active_dd_s_ds : Callable
+        Function that returns the vector of the derivative over s of active_d_s.
+    passive_tendon_routing_params : Dict[str, Array]
+        Dictionary of arrays of length n_p representing the passive tendon parameters.
+    passive_d_s : Callable
+        As active_d_s for the passive tendons.
+    passive_dd_s_ds : Callable
+        As active_dd_s_ds for the passive tendons.
 
     Notes:
     -----
@@ -77,17 +83,23 @@ class TendonActuatedPCS(PCS):
     - [Tendon lengths] Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024). Input decoupling of lagrangian systems via coordinate transformation: General characterization and its application to soft robotics. IEEE transactions on robotics, 40, 2098-2110.
     """
 
-    tendon_routing_params: Dict[str, Array]
-    d_s: Callable
-    dd_s_ds: Callable
+    active_tendon_routing_params: Dict[str, Array]
+    active_d_s: Callable
+    active_dd_s_ds: Callable
+    passive_tendon_routing_params: Dict[str, Array]
+    passive_d_s: Callable
+    passive_dd_s_ds: Callable
+    n_p: int
 
     def __init__(
         self,
         num_segments: int,
         params: Dict[str, Array],
         *args,
-        tendon_routing_basis: Optional[Dict[str, Callable]] = None,
-        tendon_routing_params: Dict[str, Array],
+        active_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
+        active_tendon_routing_params: Dict[str, Array],
+        passive_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
+        passive_tendon_routing_params: Dict[str, Array],
         **kwargs,
     ):
         """
@@ -130,8 +142,8 @@ class TendonActuatedPCS(PCS):
             xi_ref (Optional[Array], optional):
                 Reference strain of shape (6 * num_segments,).
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-            tendon_routing_basis (Optional[Dict[str, Callable]]):
-                Dictionary with the tendon routing functions. If None, a linear routing is used.
+            active_tendon_routing_basis (Optional[Dict[str, Callable]]):
+                Dictionary with the active tendon routing functions. If None, a linear routing is used.
                 Expected keys and signatures:
                 - "d_s": Callable[[Dict[str, Array], Array], Array]
                     Returns the 3D vector [d_x, d_y, d_z] giving the tendon position
@@ -139,8 +151,8 @@ class TendonActuatedPCS(PCS):
                     d_x = 0 as the offset lies in the cross-sectional plane.
                 - "dd_s_ds": Callable[[Dict[str, Array], Array], Array]
                     Returns the derivative over s of d_s.
-            tendon_routing_params (Dict[str, Array]):
-                Dictionary describing the tendon routing parameters for each actuator (length n_actuators).
+            active_tendon_routing_params (Dict[str, Array]):
+                Dictionary describing the active tendon routing parameters for each actuator (length n_actuators).
                 When using the default linear routing, the following keys are expected:
                 - "ry": Array (n_actuators,)
                     y-intercept of the tendon line at the base [m].
@@ -153,6 +165,10 @@ class TendonActuatedPCS(PCS):
                 - "idx_seg_att": Array (n_actuators,)
                     Attachment segment index for each tendon (0-based, inclusive). The tendon contributes
                     along the backbone up to and including this segment’s distal end.
+            passive_tendon_routing_basis (Optional[Dict[str, Callable]]):
+                Same as active_tendon_routing_basis for the passive tendons.
+            passive_tendon_routing_params (Dict[str, Array]):
+                Same as active_tendon_routing_params for the passive tendons.
         """
         super().__init__(
             num_segments,
@@ -161,19 +177,28 @@ class TendonActuatedPCS(PCS):
             **kwargs,
         )
 
-        # Set default tendon routing basis to linear routing if not provided
-        if tendon_routing_basis is None:
-            tendon_routing_basis = {
+        # Set default active tendon routing basis to linear routing if not provided
+        if active_tendon_routing_basis is None:
+            active_tendon_routing_basis = {
                 "d_s": act.linear_routing,
                 "dd_s_ds": act.linear_routing_derivative,
             }
-        self._set_tendon_routing_basis(tendon_routing_basis)
-        self._set_tendon_routing_params(tendon_routing_params)
+        self.active_d_s, self.active_dd_s_ds = self._set_tendon_routing_basis(active_tendon_routing_basis)
+        self.active_tendon_routing_params = self._set_active_tendon_routing_params(active_tendon_routing_params, self.active_d_s)
 
-    def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
+        # Set default passive tendon routing basis to linear routing if not provided
+        if passive_tendon_routing_basis is None:
+            passive_tendon_routing_basis = {
+                "d_s": act.linear_routing,
+                "dd_s_ds": act.linear_routing_derivative,
+            }
+        self.passive_d_s, self.passive_dd_s_ds = self._set_tendon_routing_basis(passive_tendon_routing_basis)
+        self.passive_tendon_routing_params = self._set_passive_tendon_routing_params(passive_tendon_routing_params, self.passive_d_s)
+
+    def _set_active_tendon_routing_params(self, tendon_routing_params: Dict[str, Array], d_s: Callable):
         """
         This internal function stores as attributes of the class the parameters of
-        the tendon routings specified by the user.
+        the active tendon routings specified by the user.
 
         Args:
             tendon_routing_params (Dict[str, Array]): parameters of the tendons
@@ -186,17 +211,45 @@ class TendonActuatedPCS(PCS):
         for key, val in tendon_routing_params.items():
             if len(val) != self.num_actuators:
                 raise ValueError(
-                    f"The arrays in 'tendon_routing_params' must have the same length. Mismatch found in {key}."
+                    f"The arrays in 'active_tendon_routing_params' must have the same length. Mismatch found in {key}."
                 )
         for idx in tendon_routing_params["idx_seg_att"]:
             if idx >= self.num_segments:
                 raise ValueError(
-                    f'The indexes of the segments of attachment (tendon_routing_params["idx_seg_att"]) must be strictly '
+                    f'The indexes of the segments of attachment (active_tendon_routing_params["idx_seg_att"]) must be strictly '
                     + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
                 )
-        if self._check_tendon_routing_in_body(tendon_routing_params):
-            raise UserWarning(f"Tendon(s) exit the robot body.")
-        self.tendon_routing_params = tendon_routing_params
+        if self._check_tendon_routing_in_body(tendon_routing_params, d_s):
+            raise UserWarning(f"Active tendon(s) exit the robot body.")
+        return tendon_routing_params
+
+    def _set_passive_tendon_routing_params(self, tendon_routing_params: Dict[str, Array], d_s: Callable):
+        """
+        This internal function stores as attributes of the class the parameters of
+        the passive tendon routings specified by the user.
+
+        Args:
+            tendon_routing_params (Dict[str, Array]): parameters of the tendons
+        """
+        if not isinstance(tendon_routing_params, (dict)):
+            raise TypeError(
+                "The parameter 'tendon_routing_params' must be a dictionary of jax.Array."
+            )
+        self.n_p = len(list(tendon_routing_params.values())[0])
+        for key, val in tendon_routing_params.items():
+            if len(val) != self.n_p:
+                raise ValueError(
+                    f"The arrays in 'passive_tendon_routing_params' must have the same length. Mismatch found in {key}."
+                )
+        for idx in tendon_routing_params["idx_seg_att"]:
+            if idx >= self.num_segments:
+                raise ValueError(
+                    f'The indexes of the segments of attachment (passive_tendon_routing_params["idx_seg_att"]) must be strictly '
+                    + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
+                )
+        if self._check_tendon_routing_in_body(tendon_routing_params, d_s):
+            raise UserWarning(f"Passive tendon(s) exit the robot body.")
+        return tendon_routing_params
 
     def _set_tendon_routing_basis(self, tendon_routing_basis: Dict[str, Callable]):
         """
@@ -206,10 +259,9 @@ class TendonActuatedPCS(PCS):
         Args:
             tendon_routing_basis (Dict[str, Callable]): basis functions of the tendons
         """
-        self.d_s = tendon_routing_basis["d_s"]
-        self.dd_s_ds = tendon_routing_basis["dd_s_ds"]
+        return tendon_routing_basis["d_s"], tendon_routing_basis["dd_s_ds"]
 
-    def _check_tendon_routing_in_body(self, tendon_routing_params):
+    def _check_tendon_routing_in_body(self, tendon_routing_params, d_s):
         """
         Checks whether the tendons are correctly inside the robot body. This function
         computes the distance between the centerline of the cross-section and the tendons
@@ -241,7 +293,7 @@ class TendonActuatedPCS(PCS):
 
         s = jnp.linspace(0.0, self.L_cum[-1], 75)
         t = vmap(
-            vmap(self.d_s, in_axes=(None, 0), out_axes=0), in_axes=(0, None), out_axes=0
+            vmap(d_s, in_axes=(None, 0), out_axes=0), in_axes=(0, None), out_axes=0
         )(tendon_routing_params, s)  # (num_tendons, N, 3)
         d = t[:, :, 1:]  # (num_tendons, N, 2)
         r_tendons = jnp.linalg.norm(d, axis=2)  # (num_tendons, N)
@@ -255,11 +307,11 @@ class TendonActuatedPCS(PCS):
 
         return flag
 
-    def update_tendon_routing_params(
+    def update_active_tendon_routing_params(
         self, tendon_routing_params: Dict[str, Array]
     ) -> "TendonActuatedPCS":
         """
-        This function updates the parameters of the tendon routings of the object.
+        This function updates the parameters of the active tendons of the object.
 
         Args:
             tendon_routing_params (Dict[str, Array]): parameters of the tendons
@@ -275,7 +327,7 @@ class TendonActuatedPCS(PCS):
 
         # update all fields
         updated_self = eqx.tree_at(
-            lambda x: x.tendon_routing_params, updated_self, tendon_routing_params
+            lambda x: x.active_tendon_routing_params, updated_self, tendon_routing_params
         )
         updated_self = eqx.tree_at(
             lambda x: x.num_actuators, updated_self, num_actuators
@@ -283,8 +335,37 @@ class TendonActuatedPCS(PCS):
 
         return updated_self
     
+    def update_passive_tendon_routing_params(
+        self, tendon_routing_params: Dict[str, Array]
+    ) -> "TendonActuatedPCS":
+        """
+        This function updates the parameters of the passive tendons of the object.
+
+        Args:
+            tendon_routing_params (Dict[str, Array]): parameters of the tendons
+
+        Returns:
+            updated self (TendonActuatedPCS): self object with updated parameters
+        """
+        updated_self = self
+
+        # Recompute derived parameters
+        tendon_routing_params = dict(tendon_routing_params)
+        n_p = len(list(tendon_routing_params.values())[0])
+
+        # update all fields
+        updated_self = eqx.tree_at(
+            lambda x: x.passive_tendon_routing_params, updated_self, tendon_routing_params
+        )
+        updated_self = eqx.tree_at(
+            lambda x: x.n_p, updated_self, n_p
+        )
+
+        return updated_self
+    
     @eqx.filter_jit
-    def _local_actuation_basis(self, i: Array, xi_i: Array, s: Array, tendon_routing_params_k: Dict[str, Array]) -> Array:
+    def _local_actuation_basis(self, i: Array, xi_i: Array, s: Array, tendon_routing_params_k: Dict[str, Array],
+                               d_s_fn: Callable, dd_s_ds_fn: Callable) -> Array:
         """
         Compute the actuation matrix contribution of one tendon k at s contained in segment i.
 
@@ -301,9 +382,9 @@ class TendonActuatedPCS(PCS):
         is_tendon_active = attachment_segment_idx >= i  # ()
 
         # extract tendon routing evolution in the cross-sectional plane
-        d_s = jnp.append(self.d_s(tendon_routing_params_k, s), 1.0)  # (4,)
+        d_s = jnp.append(d_s_fn(tendon_routing_params_k, s), 1.0)  # (4,)
         dd_s = jnp.append(
-            self.dd_s_ds(tendon_routing_params_k, s), 1.0
+            dd_s_ds_fn(tendon_routing_params_k, s), 1.0
         )  # (4,)
 
         term = (dd_s + lie.hat_SE3(xi_i) @ d_s)[:-1]  # (3,)
@@ -313,9 +394,17 @@ class TendonActuatedPCS(PCS):
         Phi_a_k = is_tendon_active * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])  # (6,)
 
         return Phi_a_k
+    
+    @eqx.filter_jit
+    def actuation_matrix(self, q: Array):
+        return self._actuation_matrix(q, self.active_tendon_routing_params, self.active_d_s, self.active_dd_s_ds)
+    
+    @eqx.filter_jit
+    def coupling_matrix(self, q: Array):
+        return self._actuation_matrix(q, self.passive_tendon_routing_params, self.passive_d_s, self.passive_dd_s_ds)
 
     @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
+    def _actuation_matrix(self, q: Array, tendon_routing_params: Dict[str, Array], d_s: Callable, dd_s_ds: Callable) -> Array:
         """
         Compute the actuation matrix of the robot.
         This implementation is based on the formulation presented in:
@@ -357,8 +446,8 @@ class TendonActuatedPCS(PCS):
                 Ws_j = Ws_scaled[j]
 
                 # Vectorize the actuation basis computation for all tendons
-                Phi_a_j = vmap(self._local_actuation_basis, in_axes=(None, None, None, 0), out_axes=(-1))(
-                    i, xi_i, Xs_j, self.tendon_routing_params
+                Phi_a_j = vmap(self._local_actuation_basis, in_axes=(None, None, None, 0, None, None), out_axes=(-1))(
+                    i, xi_i, Xs_j, tendon_routing_params, d_s, dd_s_ds
                 )  # (6, num_actuators)
 
                 A_j = Phi_a_j
@@ -400,7 +489,15 @@ class TendonActuatedPCS(PCS):
         return A
     
     @eqx.filter_jit
-    def tendon_length(self, q: Array) -> Array:
+    def active_tendon_length(self, q: Array) -> Array:
+        return self._tendon_length(q, self.active_tendon_routing_params, self.active_d_s, self.active_dd_s_ds)
+    
+    @eqx.filter_jit
+    def passive_tendon_length(self, q: Array) -> Array:
+        return self._tendon_length(q, self.passive_tendon_routing_params, self.passive_d_s, self.passive_dd_s_ds)
+
+    @eqx.filter_jit
+    def _tendon_length(self, q: Array, tendon_routing_params: Dict[str, Array], d_s: Callable, dd_s_ds: Callable) -> Array:
         """
         Compute the length of all tendons of the robot.
         This implementation is based on the formulation presented in:
@@ -458,12 +555,12 @@ class TendonActuatedPCS(PCS):
                     """
                     # extract tendon routing evolution in the cross-sectional plane
                     dd_s = jnp.append(
-                        self.dd_s_ds(tendon_routing_params_k, Xs_j), 1.0
+                        dd_s_ds(tendon_routing_params_k, Xs_j), 1.0
                     )  # (4,)
 
                     # compute local actuation basis
                     Phi_a_k = self._local_actuation_basis(
-                        i, xi_i, Xs_j, tendon_routing_params_k
+                        i, xi_i, Xs_j, tendon_routing_params_k, d_s, dd_s_ds
                     )  # (6,)
 
                     # compute tendon length density contribution
@@ -473,7 +570,7 @@ class TendonActuatedPCS(PCS):
 
                 # Vectorize the tendon length density computation for all tendons
                 dl_ds_j = vmap(tendon_length_density_tendon_k)(
-                    self.tendon_routing_params
+                    tendon_routing_params
                 )  # (num_actuators,)
 
                 return Ws_j * dl_ds_j
@@ -499,7 +596,15 @@ class TendonActuatedPCS(PCS):
         return l
 
     @eqx.filter_jit
-    def forward_kinematics_tendons(self, q: Array, s: Array) -> Array:
+    def forward_kinematics_active_tendons(self, q: Array, s: Array) -> Array:
+        return self._forward_kinematics_tendons(q, s, self.active_tendon_routing_params, self.active_d_s)
+    
+    @eqx.filter_jit
+    def forward_kinematics_passive_tendons(self, q: Array, s: Array) -> Array:
+        return self._forward_kinematics_tendons(q, s, self.passive_tendon_routing_params, self.passive_d_s)
+
+    @eqx.filter_jit
+    def _forward_kinematics_tendons(self, q: Array, s: Array, tendon_routing_params: Dict[str, Array], d_s: Callable) -> Array:
         """
         Compute the forward kinematics of the tendon actuators at a point s along the robot.
 
@@ -533,7 +638,7 @@ class TendonActuatedPCS(PCS):
 
             g_s = self.forward_kinematics(q, s_val)  # (4,4)
             t_k_s = g_s @ jnp.append(
-                self.d_s(single_tendon_routing_params, s_val), 1.0
+                d_s(single_tendon_routing_params, s_val), 1.0
             )  # (4,)
             t_k_s = t_k_s[:-1]  # (3,)
 
@@ -541,7 +646,7 @@ class TendonActuatedPCS(PCS):
 
         # Vectorize the forward kinematics computation for all tendons
         t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, None, None))(
-            self.tendon_routing_params, q, s
+            tendon_routing_params, q, s
         )  # (n_actuators, 3)
 
         return t_s
