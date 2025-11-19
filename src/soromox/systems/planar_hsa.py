@@ -1369,9 +1369,12 @@ class PlanarHSA(DynamicalSystem):
         return D_full
 
     @eqx.filter_jit
-    def damping_matrix(self) -> Array:
+    def damping_matrix(self, q: Array) -> Array:
         """
         Compute the damping matrix of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_dofs,).
 
         Returns:
             D (Array): Damping matrix of shape (num_dofs, num_dofs).
@@ -1530,7 +1533,7 @@ class PlanarHSA(DynamicalSystem):
             C = self.coriolis_matrix(q, qd)
             G = self.gravitational_force(q)
             tau_el = self.elastic_force(q, z)
-            D = self.damping_matrix()
+            D = self.damping_matrix(q)
             alpha = self.actuation_force(q, phi)
 
         else:
@@ -1538,7 +1541,7 @@ class PlanarHSA(DynamicalSystem):
             C = self.coriolis_matrix(q, qd)
             G = self.gravitational_force(q)
             tau_el = self.elastic_force(q, z)
-            D = self.damping_matrix()
+            D = self.damping_matrix(q)
 
             phi = jnp.zeros((self.num_segments * self.num_rods_per_segment,))
 

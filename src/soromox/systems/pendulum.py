@@ -610,9 +610,12 @@ class Pendulum(DynamicalSystem):
         return tau_el
 
     @eqx.filter_jit
-    def damping_matrix(self) -> Array:
+    def damping_matrix(self, q: Array) -> Array:
         """
         Return the linear viscous damping matrix.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
             Array: Damping matrix, shape (N, N) [N⋅m⋅s/rad]
@@ -693,7 +696,7 @@ class Pendulum(DynamicalSystem):
         B = self.inertia_matrix(q)
         C = self.coriolis_matrix(q, qd)
         G = self.gravitational_force(q)
-        D = self.damping_matrix()
+        D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
         rhs = tau_u + tau_ext - C @ qd - G - tau_el - D @ qd

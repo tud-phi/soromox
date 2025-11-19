@@ -248,28 +248,28 @@ if __name__ == "__main__":
             [1, 0]
         ),  # length of the tendons = x-coordinate of the attachment points [m]
     }
-    # passive_tendon_routing_params = {
-    #     "ry": 2e-2
-    #     * jnp.array(
-    #         [0.0]
-    #     ),  # y-coordinate of the pulling point of the tendons [m]
-    #     "rz": 2e-2
-    #     * jnp.array([1.0]),  # z-coordinate of the pulling point of the tendons [m]
-    #     "my": jnp.array(
-    #         [0.0]
-    #     ),  # slope coefficient in the x-y plane of the tendons [-]
-    #     "mz": jnp.array(
-    #         [0.0]
-    #     ),  # slope coefficient in the x-z plane of the tendons [-]
-    #     "idx_seg_att": jnp.array(
-    #         [1]
-    #     ),  # length of the tendons = x-coordinate of the attachment points [m]
-    # }
-    # passive_tendon_params = {
-    #     "k_pt": jnp.array([0.6]),
-    #     "d_pt": jnp.array([0.1]),
-    #     "l_pt0": jnp.array([-0.3]),
-    # }
+    passive_tendon_routing_params = {
+        "ry": 2e-2
+        * jnp.array(
+            [0.0]
+        ),  # y-coordinate of the pulling point of the tendons [m]
+        "rz": 2e-2
+        * jnp.array([1.0]),  # z-coordinate of the pulling point of the tendons [m]
+        "my": jnp.array(
+            [0.0]
+        ),  # slope coefficient in the x-y plane of the tendons [-]
+        "mz": jnp.array(
+            [0.0]
+        ),  # slope coefficient in the x-z plane of the tendons [-]
+        "idx_seg_att": jnp.array(
+            [1]
+        ),  # length of the tendons = x-coordinate of the attachment points [m]
+    }
+    passive_tendon_params = {
+        "k_pt": jnp.array([0.6]),
+        "d_pt": jnp.array([0.1]),
+        "l_pt0": jnp.array([-0.3]),
+    }
 
     # ======================================================
     # Robot initialization
@@ -278,8 +278,8 @@ if __name__ == "__main__":
         num_segments=num_segments,
         params=params,
         active_tendon_routing_params=active_tendon_routing_params,
-        # passive_tendon_routing_params=passive_tendon_routing_params,
-        # passive_tendon_params=passive_tendon_params
+        passive_tendon_routing_params=passive_tendon_routing_params,
+        passive_tendon_params=passive_tendon_params
     )
 
     # =====================================================

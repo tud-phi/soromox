@@ -558,6 +558,8 @@ class TendonActuatedPCS(PCS):
     def passive_tendon_length(self, q: Array) -> Array:
         return self._tendon_length(q, self.passive_tendon_routing_params, self.passive_d_s, self.passive_dd_s_ds)
 
+    tendon_length = active_tendon_length  # Alias for compatibility
+
     @eqx.filter_jit
     def _tendon_length(self, q: Array, tendon_routing_params: Dict[str, Array], d_s: Callable, dd_s_ds: Callable) -> Array:
         """
@@ -714,26 +716,7 @@ class TendonActuatedPCS(PCS):
         return t_s
 
     # ===========================================
-    # Dynamical matrices computation
-
-    @eqx.filter_jit
-    def elastic_force_passive_tendons(self, q: Array) -> Array:
-        """
-        Compute the elastic forces of the robot due to the springs attached
-        to the passive tendons.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            tau_el_pt (Array): Elastic force of shape (num_active_strains,).
-        """
-        A_pt = self.coupling_matrix(q)
-        l_pt = self.passive_tendon_length(q)
-        tau_el_pt = A_pt @ self.K_pt @ (l_pt - self.l_pt0)
-
-        return tau_el_pt
-    
+    # Dynamical matrices computation    
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
         """
@@ -743,35 +726,40 @@ class TendonActuatedPCS(PCS):
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            tau_el (Array): Elastic force of shape (num_active_strains,).
+            tau_el_tot (Array): Total eElastic force of shape (num_active_strains,).
         """
         # Stiffness of the body
-        K = self.stiffness_matrix()
+        tau_el = super().elastic_force(q)
 
         # Stiffness of the springs attached to the passive tendons
         A_pt = self.coupling_matrix(q)
         l_pt = self.passive_tendon_length(q)
+        tau_el_pt = A_pt @ self.K_pt @ (l_pt - self.l_pt0)
 
-        tau_el = K @ q + A_pt @ self.K_pt @ (l_pt - self.l_pt0)
-        return tau_el
+        tau_el_tot = tau_el + tau_el_pt
+        return tau_el_tot
     
     @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:
         """
         Compute the damping matrix of the robot.
 
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
         Returns:
-            D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
+            D_tot (Array): Total damping matrix of shape (num_active_strains, num_active_strains).
         """
         # Damping of the body
-        D_body = self._damping_full_matrix()
+        D = super().damping_matrix(q)
 
         # Stiffness of the springs attached to the passive tendons
         A_pt = self.coupling_matrix(q)
+        D_pt_full = A_pt @ self.D_pt @ A_pt.T
+        D_pt = self.B_xi.T @ D_pt_full @ self.B_xi
 
-        D_full = D_body + A_pt @ self.D_pt @ A_pt.T
-        D = self.B_xi.T @ D_full @ self.B_xi
-        return D
+        D_tot = D + D_pt
+        return D_tot
     
     @eqx.filter_jit
     def elastic_energy(self, q: Array) -> Array:
@@ -782,11 +770,14 @@ class TendonActuatedPCS(PCS):
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            U_K (float): Elastic energy of the robot.
+            U_K_tot (float): Total elastic energy of the robot.
         """
-        K_full = self._stiffness_full_matrix()
+        # Elastic energy of the body
+        U_K = super().elastic_energy(q)
         
+        # Elastic energy of the passive tendons
         l_pt = self.passive_tendon_length(q)
+        U_K_pt = 0.5 * (l_pt - self.l_pt0).T @ self.K_pt @ (l_pt - self.l_pt0)
 
-        U_K = 0.5 * (self.B_xi @ q).T @ K_full @ (self.B_xi @ q) + 0.5 * (l_pt - self.l_pt0).T @ self.K_pt @ (l_pt - self.l_pt0)
-        return U_K
+        U_K_tot = U_K + U_K_pt
+        return U_K_tot

@@ -425,9 +425,12 @@ class TendonActuatedPendulum(Pendulum):
         return tau_el_tot
 
     @eqx.filter_jit
-    def damping_matrix(self) -> Array:
+    def damping_matrix(self, q: Array) -> Array:
         """
         Return the linear viscous damping matrix inlcuding the damping of the passive tendons.
+
+        Args:
+            q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
             D_tot (Array): Total damping matrix, shape (N, N) [N⋅m⋅s/rad]
