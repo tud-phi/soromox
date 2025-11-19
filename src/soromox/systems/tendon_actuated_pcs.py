@@ -20,6 +20,13 @@ class TendonActuatedPCS(PCS):
     using the Cosserat rod theory and piecewise constant strain assumption.
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
 
+    In addition, it supports the implementation of (optional) passive tendons to be routed 
+    within the robot, with one end internally attached to the end of a segment (as for the 
+    active tendons) and with the other end externally attached to a spring-damper unit.
+    This serves as additional degrees of freedom of the physical design, which can be 
+    optimized to shift some of the control effort from digital to mechanical (see reference
+    below [Physical control]).
+
     Attributes:
     ----------
     num_segments : int
@@ -89,6 +96,8 @@ class TendonActuatedPCS(PCS):
     - [PCS model] Renda, Federico, Frédéric Boyer, Jorge Dias, and Lakmal Seneviratne. "Discrete cosserat approach for multisection soft manipulator dynamics." IEEE Transactions on Robotics 34, no. 6 (2018): 1518-1533.
     - [Actuation matrix for tendon-actuated soft robots] Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 5(3), 4006-4013.
     - [Tendon lengths] Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024). Input decoupling of lagrangian systems via coordinate transformation: General characterization and its application to soft robotics. IEEE transactions on robotics, 40, 2098-2110.
+    - [Physical control] Milana, E., Santina, C. D., Gorissen, B., & Rothemund, P. (2025). Physical control: A new avenue to achieve intelligence in soft robotics. Science Robotics, 10(102), eadw7660.
+
     """
 
     n_p: int
@@ -459,8 +468,8 @@ class TendonActuatedPCS(PCS):
         return self._actuation_matrix(q, self.active_tendon_routing_params, self.active_d_s, self.active_dd_s_ds)
     
     @eqx.filter_jit
-    def coupling_matrix(self, q: Array):
-        return self._actuation_matrix(q, self.passive_tendon_routing_params, self.passive_d_s, self.passive_dd_s_ds)
+    def jacobian_passive_tendon(self, q: Array):
+        return self._actuation_matrix(q, self.passive_tendon_routing_params, self.passive_d_s, self.passive_dd_s_ds).T
 
     @eqx.filter_jit
     def _actuation_matrix(self, q: Array, tendon_routing_params: Dict[str, Array], d_s: Callable, dd_s_ds: Callable) -> Array:
@@ -732,7 +741,7 @@ class TendonActuatedPCS(PCS):
         tau_el = super().elastic_force(q)
 
         # Stiffness of the springs attached to the passive tendons
-        A_pt = self.coupling_matrix(q)
+        A_pt = self.jacobian_passive_tendon(q).T
         l_pt = self.passive_tendon_length(q)
         tau_el_pt = A_pt @ self.K_pt @ (l_pt - self.l_pt0)
 
@@ -754,7 +763,7 @@ class TendonActuatedPCS(PCS):
         D = super().damping_matrix(q)
 
         # Stiffness of the springs attached to the passive tendons
-        A_pt = self.coupling_matrix(q)
+        A_pt = self.jacobian_passive_tendon(q).T
         D_pt_full = A_pt @ self.D_pt @ A_pt.T
         D_pt = self.B_xi.T @ D_pt_full @ self.B_xi
 
