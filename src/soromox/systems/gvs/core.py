@@ -2548,9 +2548,12 @@ class GVS(DynamicalSystem):
         return D_full
 
     @eqx.filter_jit
-    def damping_matrix(self) -> Array:
+    def damping_matrix(self, q: Array) -> Array:
         """
         Compute the damping matrix of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
 
         Returns:
             D (Array): Damping matrix, shape (dof_tot, dof_tot)
@@ -2634,7 +2637,7 @@ class GVS(DynamicalSystem):
         B = self.inertia_matrix(q)
         C = self.coriolis_matrix(q, qd)
         G = self.gravitational_force(q)
-        D = self.damping_matrix()
+        D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 

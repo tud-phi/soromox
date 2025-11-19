@@ -13,6 +13,8 @@ import numpy as onp
 from typing import Callable, Dict
 from functools import partial
 
+import time
+
 from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -306,7 +308,7 @@ if __name__ == "__main__":
     print(A)
 
     # Coupling matrix of the passive tendons
-    P = robot.coupling_matrix(q0)
+    P = robot.jacobian_passive_tendon(q0).T
     print("P =\n", P.shape)
     print(P)
 
@@ -339,6 +341,7 @@ if __name__ == "__main__":
     # Solver
     solver = Tsit5()  # Runge-Kutta 5(4) method
 
+    initial_time = time.time()
     ts, q_ts, qd_ts = robot.resolve_upon_time(
         q0=q0,
         qd0=qd0,
@@ -350,6 +353,8 @@ if __name__ == "__main__":
         solver=solver,
         max_steps=None,
     )
+    end_time = time.time()
+    print(f"Total simulation time = {round(end_time - initial_time, ndigits=3)} s  |  t0 = {t0}, t1 = {t1}, dt0 = {dt}")
 
     # =====================================================
     # End-effector position upon time
