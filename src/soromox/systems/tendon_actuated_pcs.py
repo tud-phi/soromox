@@ -26,6 +26,8 @@ class TendonActuatedPCS(PCS):
         Number of segments (constant strain sections) along the robot.
     num_actuators : int
         Number of actuators (control inputs) for the robot.
+    n_p : int
+        Number of passive tendons in the robot.
     g0 : Array
         Initial pose of the robot base as an SE(3) transformation matrix.
     g : Array
@@ -62,6 +64,12 @@ class TendonActuatedPCS(PCS):
         As active_d_s for the passive tendons.
     passive_dd_s_ds : Callable
         As active_dd_s_ds for the passive tendons.
+    K_pt: Array
+        Stiffness matrix of the passive tendons (n_p, n_p).
+    D_pt: Array
+        Damping matrix of the passive tendons (n_p, n_p).
+    l_pt0: Array
+        Vector of the initial displacement of the passive tendons (n_p,).
 
     Notes:
     -----
@@ -83,13 +91,16 @@ class TendonActuatedPCS(PCS):
     - [Tendon lengths] Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024). Input decoupling of lagrangian systems via coordinate transformation: General characterization and its application to soft robotics. IEEE transactions on robotics, 40, 2098-2110.
     """
 
+    n_p: int
     active_tendon_routing_params: Dict[str, Array]
     active_d_s: Callable
     active_dd_s_ds: Callable
     passive_tendon_routing_params: Dict[str, Array]
     passive_d_s: Callable
     passive_dd_s_ds: Callable
-    n_p: int
+    K_pt: Array
+    D_pt: Array
+    l_pt0: Array
 
     def __init__(
         self,
@@ -100,6 +111,7 @@ class TendonActuatedPCS(PCS):
         active_tendon_routing_params: Dict[str, Array],
         passive_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
         passive_tendon_routing_params: Dict[str, Array],
+        passive_tendon_params: Dict[str, Array],
         **kwargs,
     ):
         """
@@ -169,6 +181,15 @@ class TendonActuatedPCS(PCS):
                 Same as active_tendon_routing_basis for the passive tendons.
             passive_tendon_routing_params (Dict[str, Array]):
                 Same as active_tendon_routing_params for the passive tendons.
+            passive_tendon_params (Dict[str, Array]):
+                Dictionary containing the parameters of the spring-damper attached to each passive tendon:
+                - "k_pt": List/Array of n_p floats
+                    Stiffness coefficients of the springs attached to the passive tendons (n_p,) [N / m]
+                - "d_pt": List/Array of n_p floats
+                    Damping coefficients of the dampers attached to the passive tendons (n_p,) [N s / m]
+                - "l_pt0": List/Array of n_p floats
+                    Initial displacement of the passive tendons (pull is negative) (n_p,) [m]
+                    
         """
         super().__init__(
             num_segments,
@@ -194,6 +215,30 @@ class TendonActuatedPCS(PCS):
             }
         self.passive_d_s, self.passive_dd_s_ds = self._set_tendon_routing_basis(passive_tendon_routing_basis)
         self.passive_tendon_routing_params = self._set_passive_tendon_routing_params(passive_tendon_routing_params, self.passive_d_s)
+
+        # Set physical parameters of the passive tendons
+        self._set_passive_tendon_params(passive_tendon_params)
+
+    def _set_passive_tendon_params(self, passive_tendon_params: Dict[str, Array]):
+        """
+        This internal function stores as attributes of the class the physical
+        parameters of the passive tendons specified by the user.
+
+        Args:
+            passive_tendon_params (Dict[str, Array]): parameters of the tendons
+        """
+        if not isinstance(passive_tendon_params, (dict)):
+            raise TypeError(
+                "The parameter 'tendon_routing_params' must be a dictionary of jax.Array."
+            )
+        for key, val in passive_tendon_params.items():
+            if len(val) != self.n_p:
+                raise ValueError(
+                    f"The arrays in 'passive_tendon_params' must have the same length. Mismatch found in {key}."
+                )
+        self.K_pt = jnp.diag(jnp.array(passive_tendon_params["k_pt"]))
+        self.D_pt = jnp.diag(jnp.array(passive_tendon_params["d_pt"]))
+        self.l_pt0 = jnp.array(passive_tendon_params["l_pt0"])
 
     def _set_active_tendon_routing_params(self, tendon_routing_params: Dict[str, Array], d_s: Callable):
         """
@@ -650,3 +695,81 @@ class TendonActuatedPCS(PCS):
         )  # (n_actuators, 3)
 
         return t_s
+
+    # ===========================================
+    # Dynamical matrices computation
+
+    @eqx.filter_jit
+    def elastic_force_passive_tendons(self, q: Array) -> Array:
+        """
+        Compute the elastic forces of the robot due to the springs attached
+        to the passive tendons.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            tau_el_pt (Array): Elastic force of shape (num_active_strains,).
+        """
+        A_pt = self.coupling_matrix(q)
+        l_pt = self.passive_tendon_length(q)
+        tau_el_pt = A_pt @ self.K_pt @ (l_pt - self.l_pt0)
+
+        return tau_el_pt
+    
+    @eqx.filter_jit
+    def elastic_force(self, q: Array) -> Array:
+        """
+        Compute the elastic forces of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            tau_el (Array): Elastic force of shape (num_active_strains,).
+        """
+        # Stiffness of the body
+        K = self.stiffness_matrix()
+
+        # Stiffness of the springs attached to the passive tendons
+        A_pt = self.coupling_matrix(q)
+        l_pt = self.passive_tendon_length(q)
+
+        tau_el = K @ q + A_pt @ self.K_pt @ (l_pt - self.l_pt0)
+        return tau_el
+    
+    @eqx.filter_jit
+    def damping_matrix(self, q: Array) -> Array:
+        """
+        Compute the damping matrix of the robot.
+
+        Returns:
+            D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
+        """
+        # Damping of the body
+        D_body = self._damping_full_matrix()
+
+        # Stiffness of the springs attached to the passive tendons
+        A_pt = self.coupling_matrix(q)
+
+        D_full = D_body + A_pt @ self.D_pt @ A_pt.T
+        D = self.B_xi.T @ D_full @ self.B_xi
+        return D
+    
+    @eqx.filter_jit
+    def elastic_energy(self, q: Array) -> Array:
+        """
+        Compute the elastic energy of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            U_K (float): Elastic energy of the robot.
+        """
+        K_full = self._stiffness_full_matrix()
+        
+        l_pt = self.passive_tendon_length(q)
+
+        U_K = 0.5 * (self.B_xi @ q).T @ K_full @ (self.B_xi @ q) + 0.5 * (l_pt - self.l_pt0).T @ self.K_pt @ (l_pt - self.l_pt0)
+        return U_K

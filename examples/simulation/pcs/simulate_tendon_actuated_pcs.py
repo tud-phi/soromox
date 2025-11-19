@@ -265,6 +265,11 @@ if __name__ == "__main__":
             [1]
         ),  # length of the tendons = x-coordinate of the attachment points [m]
     }
+    passive_tendon_params = {
+        "k_pt": jnp.array([0.0]),
+        "d_pt": jnp.array([0.0]),
+        "l_pt0": jnp.array([0.0]),
+    }
 
     # ======================================================
     # Robot initialization
@@ -274,6 +279,7 @@ if __name__ == "__main__":
         params=params,
         active_tendon_routing_params=active_tendon_routing_params,
         passive_tendon_routing_params=passive_tendon_routing_params,
+        passive_tendon_params=passive_tendon_params
     )
 
     # =====================================================
@@ -298,6 +304,10 @@ if __name__ == "__main__":
     A = robot.actuation_matrix(q0)
     print("A =\n", A.shape)
     print(A)
+
+    P = robot.coupling_matrix(q0)
+    print("P =\n", P.shape)
+    print(P)
 
     # Active tendon lengths
     la = robot.active_tendon_length(q0)
