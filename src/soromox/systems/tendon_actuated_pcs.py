@@ -110,8 +110,8 @@ class TendonActuatedPCS(PCS):
         active_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
         active_tendon_routing_params: Dict[str, Array],
         passive_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
-        passive_tendon_routing_params: Dict[str, Array],
-        passive_tendon_params: Dict[str, Array],
+        passive_tendon_routing_params: Optional[Dict[str, Array]] = None,
+        passive_tendon_params: Optional[Dict[str, Array]] = None,
         **kwargs,
     ):
         """
@@ -213,10 +213,24 @@ class TendonActuatedPCS(PCS):
                 "d_s": act.linear_routing,
                 "dd_s_ds": act.linear_routing_derivative,
             }
+        if passive_tendon_routing_params is None:
+            passive_tendon_routing_params = {
+                "ry": jnp.array([]),
+                "rz": jnp.array([]),
+                "my": jnp.array([]),
+                "mz": jnp.array([]),
+                "idx_seg_att": jnp.array([], dtype=jnp.int32),
+            }
         self.passive_d_s, self.passive_dd_s_ds = self._set_tendon_routing_basis(passive_tendon_routing_basis)
         self.passive_tendon_routing_params = self._set_passive_tendon_routing_params(passive_tendon_routing_params, self.passive_d_s)
 
         # Set physical parameters of the passive tendons
+        if passive_tendon_params is None:
+            passive_tendon_params = {
+                "k_pt": jnp.array([]),
+                "d_pt": jnp.array([]),
+                "l_pt0": jnp.array([]),
+            }
         self._set_passive_tendon_params(passive_tendon_params)
 
     def _set_passive_tendon_params(self, passive_tendon_params: Dict[str, Array]):
@@ -459,10 +473,13 @@ class TendonActuatedPCS(PCS):
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
+            A (Array): Actuation matrix of shape (num_active_strains, nt).
         """
         # extract strains
         xi = self.strain(q).reshape((self.num_segments, 6))
+
+        # number of tendons
+        nt = len(list(tendon_routing_params.values())[0])
 
         def A_segment_i(i: Array):
             """
@@ -472,7 +489,7 @@ class TendonActuatedPCS(PCS):
                 i (Array): index of the segment ()
 
             Returns:
-                A_i (Array): stack of actuation matrices of shape (num_gauss_points, 6, num_actuators).
+                A_i (Array): stack of actuation matrices of shape (num_gauss_points, 6, nt).
             """
             xi_i = xi[i]
 
@@ -484,7 +501,7 @@ class TendonActuatedPCS(PCS):
                     j (Array): index of the gaussian point ()
 
                 Returns:
-                    A_j (Array): local actuation matrix of shape (6, num_actuators).
+                    A_j (Array): local actuation matrix of shape (6, nt).
                 """
                 # extract gaussian point and weight
                 Xs_j = Xs_scaled[j]
@@ -493,7 +510,7 @@ class TendonActuatedPCS(PCS):
                 # Vectorize the actuation basis computation for all tendons
                 Phi_a_j = vmap(self._local_actuation_basis, in_axes=(None, None, None, 0, None, None), out_axes=(-1))(
                     i, xi_i, Xs_j, tendon_routing_params, d_s, dd_s_ds
-                )  # (6, num_actuators)
+                )  # (6, nt)
 
                 A_j = Phi_a_j
 
@@ -506,7 +523,7 @@ class TendonActuatedPCS(PCS):
             # Vectorize the actuation matrix computation for all gaussian points
             A_i = vmap(A_point_j)(
                 jnp.arange(self.num_gauss_points)
-            )  # (num_gauss_points, 6, num_actuators)
+            )  # (num_gauss_points, 6, nt)
 
             # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
             # A_blocks_i = jnp.stack([A_point_j(j) for j in range(self.num_gauss_points)], axis=0)
@@ -517,7 +534,7 @@ class TendonActuatedPCS(PCS):
         # Vectorize the actuation matrix computation for all segments
         A_blocks = vmap(A_segment_i)(
             jnp.arange(self.num_segments)
-        )  # (num_segments, num_gauss_points, 6, num_actuators)
+        )  # (num_segments, num_gauss_points, 6, nt)
 
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_segment_i(i) for i in range(self.num_segments)], axis=0)
@@ -525,11 +542,11 @@ class TendonActuatedPCS(PCS):
 
         A = jnp.sum(A_blocks, axis=(1, ))  # Sum the Gauss points
 
-        # reshape A to (6 * num_segments, num_actuators)
-        A = A.reshape((-1, self.num_actuators))
+        # reshape A to (6 * num_segments, nt)
+        A = A.reshape((6 * self.num_segments, nt))
 
         # Project into the active strains space
-        A = self.B_xi.T @ A  # (num_active_strains, num_actuators)
+        A = self.B_xi.T @ A  # (num_active_strains, nt)
 
         return A
     
