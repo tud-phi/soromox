@@ -189,7 +189,7 @@ def test_constant_strain_call():
     C = robot.coriolis_matrix(q, qd)
     G = robot.gravitational_force(q)
     K = robot.stiffness_matrix()
-    D = robot.damping_matrix()
+    D = robot.damping_matrix(q)
     alpha = robot.actuation_force(q, u)
 
     assert not jnp.isnan(B).any(), "B matrix contains NaN!"
@@ -216,7 +216,7 @@ def test_constant_strain_call():
     C = robot.coriolis_matrix(q, qd)
     G = robot.gravitational_force(q)
     K = robot.stiffness_matrix()
-    D = robot.damping_matrix()
+    D = robot.damping_matrix(q)
     alpha = robot.actuation_force(q, u)
     assert not jnp.isnan(B).any(), "B matrix contains NaN!"
     assert not jnp.isnan(C).any(), "C matrix contains NaN!"
@@ -817,7 +817,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         B = model.inertia_matrix(q)
         C = model.coriolis_matrix(q, qd)
         G = model.gravitational_force(q)
-        D = model.damping_matrix()
+        D = model.damping_matrix(q)
         tau_el = model.elastic_force(q)
         tau_u = model.actuation_force(q, u)
 
@@ -1028,9 +1028,9 @@ def test_strain_basis_consistency_dynamics_and_forces(num_segments: int):
     assert_allclose(K_small, K_small_expected, rtol=RTOL, atol=ATOL)
 
     # Damping
-    D_full_full = full.damping_matrix()
+    D_full_full = full.damping_matrix(q_full)
     D_small_expected = B.T @ D_full_full @ B
-    D_small = reduced.damping_matrix()
+    D_small = reduced.damping_matrix(q_small)
     assert D_full_full.shape == (n_full_strains, n_full_strains)
     assert D_small.shape == (n_small_act, n_small_act)
     assert_allclose(D_small, D_small_expected, rtol=RTOL, atol=ATOL)

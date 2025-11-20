@@ -107,7 +107,7 @@ B = robot.inertia_matrix(q)                   # Inertia matrix
 C = robot.coriolis_matrix(q, qd)              # Coriolis matrix
 G = robot.gravitational_force(q)             # Gravity vector
 K_total = robot.stiffness_matrix()           # Total stiffness matrix
-D_total = robot.damping_matrix()             # Total damping matrix
+D_total = robot.damping_matrix(q)            # Total damping matrix
 
 # Actuation
 A_at = robot.actuation_matrix(q)             # Active tendon actuation matrix
