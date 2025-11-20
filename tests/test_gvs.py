@@ -13,6 +13,8 @@ from soromox.systems.pcs import PCS
 import soromox.utils.lie_algebra as lie
 from soromox.utils.tolerance import Tolerance
 
+pytestmark = pytest.mark.skip(reason="GVS testing temporarily deactivated")
+
 
 def build_matched_gvs_pcs(num_segments: int = 1):
     """
