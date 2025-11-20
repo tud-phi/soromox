@@ -5,7 +5,7 @@ jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
-from typing import Dict
+from typing import Dict, Optional
 
 from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 from soromox.utils.tolerance import Tolerance
@@ -17,6 +17,8 @@ def _create_robot(
     segment_lengths: Array,
     tendon_params: Dict[str, Array],
     strain_selector=None,
+    passive_tendon_routing_params: Optional[Dict[str, Array]] = None,
+    passive_tendon_params: Optional[Dict[str, Array]] = None,
 ) -> TendonActuatedPCS:
     """
     Helper that builds a TendonActuatedPCS instance with consistent material parameters.
@@ -52,6 +54,10 @@ def _create_robot(
     )
     if strain_selector is not None:
         robot_kwargs["strain_selector"] = strain_selector
+    if passive_tendon_routing_params is not None:
+        robot_kwargs["passive_tendon_routing_params"] = passive_tendon_routing_params
+    if passive_tendon_params is not None:
+        robot_kwargs["passive_tendon_params"] = passive_tendon_params
 
     return TendonActuatedPCS(**robot_kwargs)
 
@@ -482,6 +488,113 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs(
             rtol=Tolerance.rtol(),
             atol=Tolerance.atol(),
         )
+
+
+@pytest.mark.parametrize("num_passive_tendons", [1, 3])
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_passive_tendon_length_gradient_matches_jacobian(
+    num_segments: int, num_passive_tendons: int
+):
+    """Ensure passive_tendon_length Jacobian equals jacobian_passive_tendon."""
+
+    segment_lengths = jnp.linspace(
+        0.25, 0.25 + 0.05 * (num_segments - 1), num_segments, dtype=jnp.float64
+    )
+    active_params = _stacked_tendon_params(
+        num_segments, max(1, num_passive_tendons)
+    )
+    passive_routing_params = _stacked_tendon_params(num_segments, num_passive_tendons)
+    passive_tendon_params = {
+        "k_pt": jnp.linspace(
+            70.0,
+            70.0 + 10.0 * (num_passive_tendons - 1),
+            num_passive_tendons,
+            dtype=jnp.float64,
+        ),
+        "d_pt": jnp.linspace(
+            0.6,
+            0.6 + 0.2 * (num_passive_tendons - 1),
+            num_passive_tendons,
+            dtype=jnp.float64,
+        ),
+        "l_pt0": -0.004 * jnp.arange(num_passive_tendons, dtype=jnp.float64),
+    }
+    robot = _create_robot(
+        segment_lengths,
+        active_params,
+        passive_tendon_routing_params=passive_routing_params,
+        passive_tendon_params=passive_tendon_params,
+    )
+
+    key = jax.random.PRNGKey(11 + num_segments * 7 + num_passive_tendons)
+    for _ in range(5):
+        key, subkey = jax.random.split(key)
+        q = 0.04 * jax.random.normal(
+            subkey, (robot.num_active_strains,), dtype=jnp.float64
+        )
+        lengths = robot.passive_tendon_length(q)
+        assert lengths.shape == (num_passive_tendons,)
+        jac = jax.jacrev(robot.passive_tendon_length)(q)
+        J_pt = robot.jacobian_passive_tendon(q)
+        assert_allclose(
+            jac,
+            J_pt,
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+
+
+def test_passive_tendons_contribute_to_elastic_terms():
+    """Verify passive tendons add stiffness, damping, and energy contributions."""
+
+    segment_lengths = jnp.array([0.45, 0.55], dtype=jnp.float64)
+    active_params = _stacked_tendon_params(2, 2)
+    passive_routing_params = _stacked_tendon_params(2, 2)
+    passive_tendon_params = {
+        "k_pt": jnp.array([60.0, 85.0], dtype=jnp.float64),
+        "d_pt": jnp.array([0.7, 1.1], dtype=jnp.float64),
+        "l_pt0": jnp.array([-0.012, 0.008], dtype=jnp.float64),
+    }
+    robot_base = _create_robot(segment_lengths, active_params)
+    robot_passive = _create_robot(
+        segment_lengths,
+        active_params,
+        passive_tendon_routing_params=passive_routing_params,
+        passive_tendon_params=passive_tendon_params,
+    )
+
+    q = jnp.linspace(
+        -0.03, 0.04, int(robot_passive.num_active_strains), dtype=jnp.float64
+    )
+
+    J_pt = robot_passive.jacobian_passive_tendon(q)
+    l_pt = robot_passive.passive_tendon_length(q)
+
+    tau_passive = J_pt.T @ robot_passive.K_pt @ (l_pt - robot_passive.l_pt0)
+    assert_allclose(
+        robot_passive.elastic_force(q),
+        robot_base.elastic_force(q) + tau_passive,
+        rtol=Tolerance.rtol(),
+        atol=Tolerance.atol(),
+    )
+
+    D_passive = J_pt.T @ robot_passive.D_pt @ J_pt
+    assert_allclose(
+        robot_passive.damping_matrix(q),
+        robot_base.damping_matrix(q) + D_passive,
+        rtol=Tolerance.rtol(),
+        atol=Tolerance.atol(),
+    )
+
+    energy_passive = 0.5 * (l_pt - robot_passive.l_pt0).T @ robot_passive.K_pt @ (
+        l_pt - robot_passive.l_pt0
+    )
+    assert_allclose(
+        robot_passive.elastic_energy(q),
+        robot_base.elastic_energy(q) + energy_passive,
+        rtol=Tolerance.rtol(),
+        atol=Tolerance.atol(),
+    )
 
 
 if __name__ == "__main__":
