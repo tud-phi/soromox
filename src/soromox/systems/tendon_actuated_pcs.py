@@ -102,11 +102,11 @@ class TendonActuatedPCS(PCS):
 
     n_p: int
     active_tendon_routing_params: Dict[str, Array]
-    active_d_s: Callable
-    active_dd_s_ds: Callable
+    active_d_s: Callable = eqx.field(static=True)
+    active_dd_s_ds: Callable = eqx.field(static=True)
     passive_tendon_routing_params: Dict[str, Array]
-    passive_d_s: Callable
-    passive_dd_s_ds: Callable
+    passive_d_s: Callable = eqx.field(static=True)
+    passive_dd_s_ds: Callable = eqx.field(static=True)
     K_pt: Array
     D_pt: Array
     l_pt0: Array
@@ -741,9 +741,9 @@ class TendonActuatedPCS(PCS):
         tau_el = super().elastic_force(q)
 
         # Stiffness of the springs attached to the passive tendons
-        A_pt = self.jacobian_passive_tendon(q).T
+        J_pt = self.jacobian_passive_tendon(q)
         l_pt = self.passive_tendon_length(q)
-        tau_el_pt = A_pt @ self.K_pt @ (l_pt - self.l_pt0)
+        tau_el_pt = J_pt.T @ self.K_pt @ (l_pt - self.l_pt0)
 
         tau_el_tot = tau_el + tau_el_pt
         return tau_el_tot
@@ -763,8 +763,8 @@ class TendonActuatedPCS(PCS):
         D = super().damping_matrix(q)
 
         # Stiffness of the springs attached to the passive tendons
-        A_pt = self.jacobian_passive_tendon(q).T
-        D_pt_full = A_pt @ self.D_pt @ A_pt.T
+        J_pt = self.jacobian_passive_tendon(q)
+        D_pt_full = J_pt.T @ self.D_pt @ J_pt
         D_pt = self.B_xi.T @ D_pt_full @ self.B_xi
 
         D_tot = D + D_pt
