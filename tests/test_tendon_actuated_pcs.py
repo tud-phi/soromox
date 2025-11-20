@@ -48,7 +48,7 @@ def _create_robot(
         num_segments=num_segments,
         params=params,
         order_gauss=5,
-        tendon_routing_params=tendon_params,
+        active_tendon_routing_params=tendon_params,
     )
     if strain_selector is not None:
         robot_kwargs["strain_selector"] = strain_selector
@@ -260,7 +260,14 @@ def test_actuation_matrix_pcs():
     for q, s in test_cases:
         xi = robot.strain(q).reshape((robot.num_segments, 6))
         tendon_params_0 = jax.tree.map(lambda x: x[0], tendon_params)
-        target_actuation_basis = robot._local_actuation_basis(0, xi[0], s, tendon_params_0).squeeze()
+        target_actuation_basis = robot._local_actuation_basis(
+            0, 
+            xi[0], 
+            s,
+            tendon_routing_params_k=tendon_params_0,
+            d_s_fn=robot.active_d_s,
+            dd_s_ds_fn=robot.active_dd_s_ds,
+        ).squeeze()
         expected_actuation_basis = reference_actuation_basis(tendon_params, q, s)
         assert not jnp.isnan(target_actuation_basis).any(), (
             "Actuation basis contains NaN!"
