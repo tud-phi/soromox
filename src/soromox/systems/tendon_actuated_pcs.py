@@ -385,49 +385,79 @@ class TendonActuatedPCS(PCS):
             tendon_routing_params (Dict[str, Array]): parameters of the tendons
 
         Returns:
-            updated self (TendonActuatedPCS): self object with updated parameters
+            updated_self (TendonActuatedPCS): self object with updated parameters
         """
         updated_self = self
+        updated_params = self.active_tendon_routing_params.copy()
 
-        # Recompute derived parameters
-        tendon_routing_params = dict(tendon_routing_params)
-        num_actuators = len(list(tendon_routing_params.values())[0])
+        for key, val in tendon_routing_params.items():
+            if key not in updated_params:
+                raise KeyError(
+                    f"Attempted to update unknown active tendon routing parameter '{key}'. "
+                    f"Valid keys are: {list(updated_params.keys())}"
+                )
+            updated_params[key] = val
 
-        # update all fields
         updated_self = eqx.tree_at(
-            lambda x: x.active_tendon_routing_params, updated_self, tendon_routing_params
-        )
-        updated_self = eqx.tree_at(
-            lambda x: x.num_actuators, updated_self, num_actuators
+            lambda x: x.active_tendon_routing_params, updated_self, updated_params
         )
 
         return updated_self
-    
+
     def update_passive_tendon_routing_params(
         self, tendon_routing_params: Dict[str, Array]
     ) -> "TendonActuatedPCS":
         """
-        This function updates the parameters of the passive tendons of the object.
+        This function updates the parameters of the active tendons of the object.
 
         Args:
             tendon_routing_params (Dict[str, Array]): parameters of the tendons
 
         Returns:
-            updated self (TendonActuatedPCS): self object with updated parameters
+            updated_self (TendonActuatedPCS): self object with updated parameters
+        """
+        updated_self = self
+        updated_params = self.passive_tendon_routing_params.copy()
+
+        for key, val in tendon_routing_params.items():
+            if key not in updated_params:
+                raise KeyError(
+                    f"Attempted to update unknown passive tendon routing parameter '{key}'. "
+                    f"Valid keys are: {list(updated_params.keys())}"
+                )
+            updated_params[key] = val
+
+        updated_self = eqx.tree_at(
+            lambda x: x.passive_tendon_routing_params, updated_self, updated_params
+        )
+
+        return updated_self
+    
+    def update_passive_tendon_params(
+        self, tendon_params: Dict[str, Array]
+    ) -> "TendonActuatedPCS":
+        """
+        This function updates the physical parameters of the passive tendons of the object.
+
+        Args:
+            tendon_params (Dict[str, Array]): parameters of the tendons
+
+        Returns:
+            updated_self (TendonActuatedPCS): self object with updated parameters
         """
         updated_self = self
 
-        # Recompute derived parameters
-        tendon_routing_params = dict(tendon_routing_params)
-        n_p = len(list(tendon_routing_params.values())[0])
-
-        # update all fields
-        updated_self = eqx.tree_at(
-            lambda x: x.passive_tendon_routing_params, updated_self, tendon_routing_params
-        )
-        updated_self = eqx.tree_at(
-            lambda x: x.n_p, updated_self, n_p
-        )
+        if "k_pt" in tendon_params:
+            k_pt = jnp.asarray(tendon_params["k_pt"])
+            updated_self = eqx.tree_at(lambda x: x.K_pt, updated_self, jnp.diag(k_pt))
+            
+        if "d_pt" in tendon_params:
+            d_pt = jnp.asarray(tendon_params["d_pt"])
+            updated_self = eqx.tree_at(lambda x: x.D_pt, updated_self, jnp.diag(d_pt))
+            
+        if "l_pt0" in tendon_params:
+            l_pt0 = jnp.asarray(tendon_params["l_pt0"])
+            updated_self = eqx.tree_at(lambda x: x.l_pt0, updated_self, l_pt0)
 
         return updated_self
     
