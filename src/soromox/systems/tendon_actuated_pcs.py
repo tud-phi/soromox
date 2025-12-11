@@ -117,7 +117,7 @@ class TendonActuatedPCS(PCS):
         params: Dict[str, Array],
         *args,
         active_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
-        active_tendon_routing_params: Dict[str, Array],
+        active_tendon_routing_params: Optional[Dict[str, Array]] = None,
         passive_tendon_routing_basis: Optional[Dict[str, Callable]] = None,
         passive_tendon_routing_params: Optional[Dict[str, Array]] = None,
         passive_tendon_params: Optional[Dict[str, Array]] = None,
@@ -172,7 +172,7 @@ class TendonActuatedPCS(PCS):
                     d_x = 0 as the offset lies in the cross-sectional plane.
                 - "dd_s_ds": Callable[[Dict[str, Array], Array], Array]
                     Returns the derivative over s of d_s.
-            active_tendon_routing_params (Dict[str, Array]):
+            active_tendon_routing_params (optional[Dict[str, Array]]):
                 Dictionary describing the active tendon routing parameters for each actuator (length n_actuators).
                 When using the default linear routing, the following keys are expected:
                 - "ry": Array (n_actuators,)
@@ -188,9 +188,9 @@ class TendonActuatedPCS(PCS):
                     along the backbone up to and including this segment’s distal end.
             passive_tendon_routing_basis (Optional[Dict[str, Callable]]):
                 Same as active_tendon_routing_basis for the passive tendons.
-            passive_tendon_routing_params (Dict[str, Array]):
+            passive_tendon_routing_params (Optional[Dict[str, Array]]):
                 Same as active_tendon_routing_params for the passive tendons.
-            passive_tendon_params (Dict[str, Array]):
+            passive_tendon_params (optional[Dict[str, Array]]):
                 Dictionary containing the parameters of the spring-damper attached to each passive tendon:
                 - "k_pt": List/Array of n_p floats
                     Stiffness coefficients of the springs attached to the passive tendons (n_p,) [N / m]
@@ -212,6 +212,14 @@ class TendonActuatedPCS(PCS):
             active_tendon_routing_basis = {
                 "d_s": act.linear_routing,
                 "dd_s_ds": act.linear_routing_derivative,
+            }
+        if active_tendon_routing_params is None:
+            active_tendon_routing_params = {
+                "ry": jnp.array([]),
+                "rz": jnp.array([]),
+                "my": jnp.array([]),
+                "mz": jnp.array([]),
+                "idx_seg_att": jnp.array([], dtype=jnp.int32),
             }
         self.active_d_s, self.active_dd_s_ds = self._set_tendon_routing_basis(
             active_tendon_routing_basis
