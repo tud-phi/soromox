@@ -172,7 +172,7 @@ class TendonActuatedPCS(PCS):
                     d_x = 0 as the offset lies in the cross-sectional plane.
                 - "dd_s_ds": Callable[[Dict[str, Array], Array], Array]
                     Returns the derivative over s of d_s.
-            active_tendon_routing_params (optional[Dict[str, Array]]):
+            active_tendon_routing_params (Optional[Dict[str, Array]]):
                 Dictionary describing the active tendon routing parameters for each actuator (length n_actuators).
                 When using the default linear routing, the following keys are expected:
                 - "ry": Array (n_actuators,)
