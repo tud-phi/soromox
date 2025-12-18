@@ -294,200 +294,199 @@ print("body lengths per segment:", robot.V_L)
 # print("total length:", total_length)
 print("s_end:", s_end)
 print("g(s_end) SE(3):\n", g_end)
-print("Jacobian at end (6 x dof):\n", J_end)
-print("Inertia matrix:", M)
-print("Stiffness matrix:", K)
-print("Gravitational force:", F)
-print("Damping matrix:", D)
-print("Actuation matrix:", B )
-print("Coriolis matrix:", C)
+# print("Jacobian at end (6 x dof):\n", J_end)
+# print("Inertia matrix:", M)
+# print("Stiffness matrix:", K)
+# print("Gravitational force:", F)
+# print("Damping matrix:", D)
+# print("Actuation matrix:", B )
+# print("Coriolis matrix:", C)
 # print("Actuation matrix shape:", B.shape)
 # print("Input u:", u)
 # print("Input u shape:", u.shape)
 # print("Actuation force (tau):", tau)
 # print("Actuation force shape:", tau.shape)
 
-#  # # =====================================================
-# # y = jnp.concatenate([q0, q0dot])
-# tau_ext = 0 * jnp.ones((dof,))
-# # ydot = robot.forward_dynamics(0.0, y, actuation_args=(u, tau_ext))
-# # print("ydot (q0dot, q0ddot):", ydot)
+# y = jnp.concatenate([q0, q0dot])
+tau_ext = 0 * jnp.ones((dof,))
+# ydot = robot.forward_dynamics(0.0, y, actuation_args=(u, tau_ext))
+# print("ydot (q0dot, q0ddot):", ydot)
 
-# l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
-# print("tendon lengths (m):", jax.device_get(l_tendons))
-
-
-# # =====================================================
-# # Static equilibrium (solve statics) and plot its shape
-# # =====================================================
-# # Solve for static equilibrium q* given current actuation u
-# res_stat = solve_equilibrium(robot, u, q0)
-# q_stat = res_stat.value  # equilibrium generalized coordinates
-# print("q* =", q_stat)
-
-# # Draw static equilibrium curve
-# curve_stat = draw_robot_curve(robot, q_stat)
-
-# # Also draw initial (q0) for comparison
-# curve_init = draw_robot_curve(robot, q0)
-
-# fig = plt.figure(figsize=(8, 6))
-# ax = fig.add_subplot(111, projection="3d")
-# ax.plot(
-#     curve_init[:, 0],
-#     curve_init[:, 1],
-#     curve_init[:, 2],
-#     lw=2,
-#     color="gray",
-#     linestyle="--",
-#     label="Initial (q0)",
-# )
-# ax.plot(
-#     curve_stat[:, 0],
-#     curve_stat[:, 1],
-#     curve_stat[:, 2],
-#     lw=4,
-#     color="red",
-#     label="Static equilibrium (q*)",
-# )
-# ax.set_xlabel("X [m]")
-# ax.set_ylabel("Y [m]")
-# ax.set_zlabel("Z [m]")
-# ax.set_title("Static equilibrium shape")
-# ax.legend()
-# ax.axis("equal")
-# plt.show()
+l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
+print("tendon lengths (m):", jax.device_get(l_tendons))
 
 
-# # =====================================================
-# # Simulation upon time
-# # =====================================================
+# =====================================================
+# Static equilibrium (solve statics) and plot its shape
+# =====================================================
+# Solve for static equilibrium q* given current actuation u
+res_stat = solve_equilibrium(robot, u, q0)
+q_stat = res_stat.value  # equilibrium generalized coordinates
+print("q* =", q_stat)
 
-# # Plot the initial configuration
-# curve = draw_robot_curve(robot, q0)
-# fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": "3d"})
-# ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-# ax.set_xlabel("X [m]")
-# ax.set_ylabel("Y [m]")
-# ax.set_zlabel("Z [m]")
-# ax.set_title("Initial configuration")
-# ax.axis("equal")
-# plt.show()
+# Draw static equilibrium curve
+curve_stat = draw_robot_curve(robot, q_stat)
 
-# # Simulation time parameters
-# t0 = 0.0
-# t1 = 2.0
-# solver_dt = 1e-4
-# skip_step = 100  # how many time steps to skip in between video frames
-# save_dt = solver_dt * skip_step
+# Also draw initial (q0) for comparison
+curve_init = draw_robot_curve(robot, q0)
 
-
-# initial_state = SystemState(t=t0, y=jnp.concatenate([q0, q0dot]))
-# trajectory = robot.rollout_to(
-#     initial_state=initial_state,
-#     u=u,
-#     t1=t1,
-#     solver_dt=solver_dt,
-#     save_dt=save_dt,
-#     max_steps=None,
-# )
-# ts = trajectory.t
-# q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
-# print(f"Simulation completed with {len(ts)} time steps.")
-
-# # =====================================================
-# # End-effector position upon time
-# # =====================================================
-# forward_kinematics_end_effector = jax.jit(
-#     partial(
-#         robot.forward_kinematics,
-#         s=jnp.sum(robot.V_L),  # end-effector position
-#     )
-# )
-# g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
+fig = plt.figure(figsize=(8, 6))
+ax = fig.add_subplot(111, projection="3d")
+ax.plot(
+    curve_init[:, 0],
+    curve_init[:, 1],
+    curve_init[:, 2],
+    lw=2,
+    color="gray",
+    linestyle="--",
+    label="Initial (q0)",
+)
+ax.plot(
+    curve_stat[:, 0],
+    curve_stat[:, 1],
+    curve_stat[:, 2],
+    lw=4,
+    color="red",
+    label="Static equilibrium (q*)",
+)
+ax.set_xlabel("X [m]")
+ax.set_ylabel("Y [m]")
+ax.set_zlabel("Z [m]")
+ax.set_title("Static equilibrium shape")
+ax.legend()
+ax.axis("equal")
+plt.show()
 
 
-# ### MARKERS POSITIONS UPON TIME ###
-# forward_kinematics_marker_1 = jax.jit(
-#     partial(
-#         robot.forward_kinematics,
-#         s=0.1291,
-#     )
-# )
-# g_marker_1_ts = jax.vmap(forward_kinematics_marker_1)(q_ts)
-# p_marker_1_ts = g_marker_1_ts[:, :3, 3] + g_marker_1_ts[:, :3, :3] @ jnp.array(
-#     [0.0, 0.0, 0.025]
-# )
+# =====================================================
+# Simulation upon time
+# =====================================================
+
+# Plot the initial configuration
+curve = draw_robot_curve(robot, q0)
+fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": "3d"})
+ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
+ax.set_xlabel("X [m]")
+ax.set_ylabel("Y [m]")
+ax.set_zlabel("Z [m]")
+ax.set_title("Initial configuration")
+ax.axis("equal")
+plt.show()
+
+# Simulation time parameters
+t0 = 0.0
+t1 = 2.0
+solver_dt = 1e-4
+skip_step = 100  # how many time steps to skip in between video frames
+save_dt = solver_dt * skip_step
 
 
-# forward_kinematics_marker_2 = jax.jit(
-#     partial(
-#         robot.forward_kinematics,
-#         s=0.2195,
-#     )
-# )
-# g_marker_2_ts = jax.vmap(forward_kinematics_marker_2)(q_ts)
-# p_marker_2_ts = g_marker_2_ts[:, :3, 3] + g_marker_2_ts[:, :3, :3] @ jnp.array(
-#     [0.0, 0.0, -0.021]
-# )
+initial_state = SystemState(t=t0, y=jnp.concatenate([q0, q0dot]))
+trajectory = robot.rollout_to(
+    initial_state=initial_state,
+    u=u,
+    t1=t1,
+    solver_dt=solver_dt,
+    save_dt=save_dt,
+    max_steps=None,
+)
+ts = trajectory.t
+q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
+print(f"Simulation completed with {len(ts)} time steps.")
+
+# =====================================================
+# End-effector position upon time
+# =====================================================
+forward_kinematics_end_effector = jax.jit(
+    partial(
+        robot.forward_kinematics,
+        s=jnp.sum(robot.V_L),  # end-effector position
+    )
+)
+g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
 
-# forward_kinematics_marker_3 = jax.jit(
-#     partial(
-#         robot.forward_kinematics,
-#         s=0.2800,
-#     )
-# )
-# g_marker_3_ts = jax.vmap(forward_kinematics_marker_3)(q_ts)
-# p_marker_3_ts = g_marker_3_ts[:, :3, 3] + g_marker_3_ts[:, :3, :3] @ jnp.array(
-#     [0.0, 0.0, 0.02]
-# )
+### MARKERS POSITIONS UPON TIME ###
+forward_kinematics_marker_1 = jax.jit(
+    partial(
+        robot.forward_kinematics,
+        s=0.1291,
+    )
+)
+g_marker_1_ts = jax.vmap(forward_kinematics_marker_1)(q_ts)
+p_marker_1_ts = g_marker_1_ts[:, :3, 3] + g_marker_1_ts[:, :3, :3] @ jnp.array(
+    [0.0, 0.0, 0.025]
+)
 
 
-# forward_kinematics_marker_4 = jax.jit(
-#     partial(
-#         robot.forward_kinematics,
-#         s=jnp.sum(robot.V_L),
-#     )
-# )
-# g_marker_4_ts = jax.vmap(forward_kinematics_marker_4)(q_ts)
-# p_marker_4_ts = g_marker_4_ts[:, :3, 3] + g_marker_4_ts[:, :3, :3] @ jnp.array(
-#     [0.008, 0.0, 0.0]
-# )
+forward_kinematics_marker_2 = jax.jit(
+    partial(
+        robot.forward_kinematics,
+        s=0.2195,
+    )
+)
+g_marker_2_ts = jax.vmap(forward_kinematics_marker_2)(q_ts)
+p_marker_2_ts = g_marker_2_ts[:, :3, 3] + g_marker_2_ts[:, :3, :3] @ jnp.array(
+    [0.0, 0.0, -0.021]
+)
 
 
-# plt.figure()
-# plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
-# plt.plot(ts, g_ee_ts[:, 1, 3], label="End-effector y [m]")
-# plt.plot(ts, g_ee_ts[:, 2, 3], label="End-effector z [m]")
-# plt.xlabel("Time [s]")
-# plt.ylabel("End-effector position [m]")
-# plt.legend()
-# plt.grid(True)
-# plt.box(True)
-# plt.tight_layout()
-# plt.show()
+forward_kinematics_marker_3 = jax.jit(
+    partial(
+        robot.forward_kinematics,
+        s=0.2800,
+    )
+)
+g_marker_3_ts = jax.vmap(forward_kinematics_marker_3)(q_ts)
+p_marker_3_ts = g_marker_3_ts[:, :3, 3] + g_marker_3_ts[:, :3, :3] @ jnp.array(
+    [0.0, 0.0, 0.02]
+)
 
-# fig = plt.figure()
-# ax = fig.add_subplot(111, projection="3d")
-# p = ax.scatter(
-#     g_ee_ts[:, 0, 3], g_ee_ts[:, 1, 3], g_ee_ts[:, 2, 3], c=ts, cmap="viridis"
-# )
-# ax.axis("equal")
-# ax.set_xlabel("X [m]")
-# ax.set_ylabel("Y [m]")
-# ax.set_zlabel("Z [m]")
-# ax.set_title("End-effector trajectory (3D)")
-# fig.colorbar(p, ax=ax, label="Time [s]")
-# plt.show()
 
-# # =====================================================
-# # Plot the robot configuration upon time
-# # =====================================================
-# animate_robot_matplotlib(
-#     robot,
-#     t_list=ts,  # shape (T,)
-#     q_list=q_ts,  # shape (T, DOF)
-#     interval=100,  # ms
-#     slider=True,
-# )
+forward_kinematics_marker_4 = jax.jit(
+    partial(
+        robot.forward_kinematics,
+        s=jnp.sum(robot.V_L),
+    )
+)
+g_marker_4_ts = jax.vmap(forward_kinematics_marker_4)(q_ts)
+p_marker_4_ts = g_marker_4_ts[:, :3, 3] + g_marker_4_ts[:, :3, :3] @ jnp.array(
+    [0.008, 0.0, 0.0]
+)
+
+
+plt.figure()
+plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
+plt.plot(ts, g_ee_ts[:, 1, 3], label="End-effector y [m]")
+plt.plot(ts, g_ee_ts[:, 2, 3], label="End-effector z [m]")
+plt.xlabel("Time [s]")
+plt.ylabel("End-effector position [m]")
+plt.legend()
+plt.grid(True)
+plt.box(True)
+plt.tight_layout()
+plt.show()
+
+fig = plt.figure()
+ax = fig.add_subplot(111, projection="3d")
+p = ax.scatter(
+    g_ee_ts[:, 0, 3], g_ee_ts[:, 1, 3], g_ee_ts[:, 2, 3], c=ts, cmap="viridis"
+)
+ax.axis("equal")
+ax.set_xlabel("X [m]")
+ax.set_ylabel("Y [m]")
+ax.set_zlabel("Z [m]")
+ax.set_title("End-effector trajectory (3D)")
+fig.colorbar(p, ax=ax, label="Time [s]")
+plt.show()
+
+# =====================================================
+# Plot the robot configuration upon time
+# =====================================================
+animate_robot_matplotlib(
+    robot,
+    t_list=ts,  # shape (T,)
+    q_list=q_ts,  # shape (T, DOF)
+    interval=100,  # ms
+    slider=True,
+)
