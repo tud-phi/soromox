@@ -91,6 +91,7 @@ class GVS(DynamicalSystem):
         Parameters controlling the strain basis DOFs and orders.
     g0 : Array
         Initial pose of the robot base as an SE(3) transformation matrix.
+
     Notes
     -----
     - The GVS model generalizes PCS by allowing the strain distribution in each segment
@@ -161,6 +162,7 @@ class GVS(DynamicalSystem):
     g: Array  # Gravity vector (6,)
     p0: Array
     g0: Array
+    scale_strain: bool  # If True, apply length scaling to angular strain contributions
 
     # Addition to compute forward kinematics at s
     V_basistype_idx: Array  # Index of the basis type for each segment (num_segments,)
@@ -177,6 +179,7 @@ class GVS(DynamicalSystem):
         max_dof: Optional[int] = None,
         max_nGauss: Optional[int] = None,
         p0: Optional[Array] = None,
+        scale_strain: Optional[bool] = True,
     ) -> None:
         """
         Initialize the GVS class.
@@ -229,6 +232,8 @@ class GVS(DynamicalSystem):
         p0: (optional) List/Array of shape (6,)
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
+        scale_strain : bool, optional
+            If True, apply length scaling to strain contributions in the stiffness matrix. Defaults to True.
         Raises
         ------
         ValueError
@@ -272,6 +277,8 @@ class GVS(DynamicalSystem):
             )
         self.max_nGauss = max_nGauss
         self.max_nip = max_nGauss + 2  # +2 for the boundary points
+
+        self.scale_strain = scale_strain
 
         dofs_joint = [Joint.DICT_JOINT_TYPE_DOF[j.jointtype] for j in joints_list]
         dofs_link = [
@@ -907,6 +914,10 @@ class GVS(DynamicalSystem):
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
 
+                if not self.scale_strain:
+                    B_Z1_j = B_Z1_j.at[:3, :].multiply(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].multiply(length_i)
+
                 xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
 
@@ -1272,6 +1283,10 @@ class GVS(DynamicalSystem):
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
 
+                if not self.scale_strain:
+                    B_Z1_j = B_Z1_j.at[:3, :].multiply(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].multiply(length_i)
+
                 xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
 
@@ -1451,6 +1466,10 @@ class GVS(DynamicalSystem):
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
 
+                if not self.scale_strain:
+                    B_Z1_j = B_Z1_j.at[:3, :].multiply(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].multiply(length_i)
+                    
                 xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
                 xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
 
@@ -1717,6 +1736,10 @@ class GVS(DynamicalSystem):
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
+
+                if not self.scale_strain:
+                    B_Z1_j = B_Z1_j.at[:3, :].multiply(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].multiply(length_i)
 
                 xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
@@ -2460,13 +2483,17 @@ class GVS(DynamicalSystem):
                 Ws_j = Ws_i[i_eval]
                 Es_j = Es_i[i_eval]  # (6, 6)
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
+                
+
+                if not self.scale_strain:
+                    B_Xs_j = B_Xs_j.at[:3, :].multiply(length_i)
 
                 Es_j_scaled = (
                     Es_j.at[:3, :].divide(length_i**3).at[3:, :].divide(length_i)
                 )
-
+    
                 return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
-
+            
             # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
                 jnp.sum(vmap(K_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
@@ -2565,6 +2592,10 @@ class GVS(DynamicalSystem):
                 Ws_j = Ws_i[i_eval]
                 Gs_j = Gs_i[i_eval]  # (6, 6)
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
+
+                
+                if not self.scale_strain:
+                    B_Xs_j = B_Xs_j.at[:3, :].multiply(length_i)
 
                 Gs_j_scaled = (
                     Gs_j.at[:3, :].divide(length_i**3).at[3:, :].divide(length_i)

@@ -281,8 +281,9 @@ class TendonActuatedGVS(GVS):
         BXs_masked = BXs * mask  # (6, max_dof), zeros beyond dof_link
 
         B_xi_i = lax.dynamic_update_slice(B_xi_i, BXs_masked, (0, start_col_link))
-        B_xi_i = B_xi_i.at[:3, :].multiply(1.0 / self.V_L[i])
-
+        if self.scale_strain:
+            B_xi_i = B_xi_i.at[:3, :].multiply(1.0 / self.V_L[i])
+  
         # xi_ref = self.V_xi_ref_Xs[i,j]
         xi_ref = self.V_xi_ref_Xs[i, 0]
         xi_i = B_xi_i @ q + xi_ref
@@ -367,7 +368,9 @@ class TendonActuatedGVS(GVS):
                 B_xi_i = lax.dynamic_update_slice(
                     B_xi_i, BXs_masked, (0, start_col_link)
                 )
-                B_xi_i = B_xi_i.at[:3, :].multiply(1.0 / self.V_L[i])
+
+                if self.scale_strain:
+                    B_xi_i = B_xi_i.at[:3, :].multiply(1.0 / self.V_L[i])
 
                 # print ('B_xi_i =\n', B_xi_i)
                 # print ('Phi_a_j =\n', Phi_a_j)
@@ -536,8 +539,9 @@ class TendonActuatedGVS(GVS):
                     B_xi_i = lax.dynamic_update_slice(
                         B_xi_i, BXs_masked, (0, start_col_link)
                     )
-                    B_xi_i = B_xi_i.at[:3, :].multiply(1.0 / self.V_L[i])
-
+                    if self.scale_strain:
+                        B_xi_i = B_xi_i.at[:3, :].multiply(1.0 / self.V_L[i])
+                        
                     # xi_ref = self.V_xi_ref_Xs[i,j]
                     xi_ref = self.V_xi_ref_Xs[i, 0]
                     xi_i = B_xi_i @ q + xi_ref
