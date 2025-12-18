@@ -18,205 +18,6 @@ from soromox.systems.gvs.attributes import (
 )
 from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
 
-
-def test_tendon_actatuated_gvs_vs_pcs():
-    """
-    Compares the results of the tendon actuated GVS class with the tendon actuated
-    Piecewise Constant Strain class.
-    """
-
-    # ========================================
-    # Test of the functions
-    # ========================================
-
-    # test actuation matrix GVS vs PCS
-    print("\nTesting actuation matrix GVS vs PCS... ------------------------")
-
-    test_cases = [
-        (
-            # the tendon only affects the bending in z
-            jnp.array([0.2]),
-            {
-                "ry": jnp.array([0.005]),
-                "rz": jnp.array([0.0]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
-        ),
-        (
-            # the tendon only affects the bending in y
-            jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([0.002]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([1]),
-            },
-        ),
-        (
-            # only first segment affected
-            jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([-0.002]),
-                "rz": jnp.array([-0.002]),
-                "my": jnp.array([0.001]),
-                "mz": jnp.array([-0.001]),
-                "idx_seg_att": jnp.array([0]),
-            },
-        ),
-    ]
-
-    for segment_lengths, tendon_params in test_cases:
-        if segment_lengths.shape[0] == 1:
-            link1 = LinkAttributes(
-                section="Circular",
-                E=3e5,
-                nu=0.45,
-                rho=1300.0,
-                eta=1e4,
-                L=segment_lengths[0],
-                r_i=0.015,
-                r_f=0.015,
-            )
-            joint1 = JointAttributes(jointtype="Fixed")
-            basis1 = BasisAttributes(
-                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
-            )
-
-            n_gauss_list = [10]
-            gravity_vector = [0.0, 0.0, -9.81]
-
-            robotGVS = TendonActuatedGVS(
-                links_list=[link1],
-                joints_list=[joint1],
-                basis_list=[basis1],
-                n_gauss_list=n_gauss_list,
-                gravity_vector=gravity_vector,
-                tendon_routing_params=tendon_params,
-                scale_strain=False,
-            )
-
-        else:  # segment_lengths.shape[0] == 2
-            link1 = LinkAttributes(
-                section="Circular",
-                E=3e5,
-                nu=0.45,
-                rho=1300.0,
-                eta=1e4,
-                L=segment_lengths[0],
-                r_i=0.015,
-                r_f=0.015,
-            )
-            link2 = LinkAttributes(
-                section="Circular",
-                E=3e5,
-                nu=0.45,
-                rho=1300.0,
-                eta=1e4,
-                L=segment_lengths[1],
-                r_i=0.015,
-                r_f=0.015,
-            )
-            joint1 = JointAttributes(jointtype="Fixed")
-            joint2 = JointAttributes(jointtype="Fixed")
-
-            basis1 = BasisAttributes(
-                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
-            )
-            basis2 = BasisAttributes(
-                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
-            )
-
-            n_gauss_list = [10, 10]
-            gravity_vector = [0.0, 0.0, -9.81]
-
-            robotGVS = TendonActuatedGVS(
-                links_list=[link1, link2],
-                joints_list=[joint1, joint2],
-                basis_list=[basis1, basis2],
-                n_gauss_list=n_gauss_list,
-                gravity_vector=gravity_vector,
-                tendon_routing_params=tendon_params,
-                scale_strain=False,
-            )
-
-        num_segments = int(segment_lengths.shape[0])
-        E_val = 3e5
-        nu = 0.45
-        G_val = E_val / (2.0 * (1.0 + nu))
-        params_pcs = {
-            "p0": jnp.zeros((6,)),
-            "L": jnp.asarray(segment_lengths),
-            "r": jnp.full((num_segments,), 0.015),
-            "rho": 1300.0 * jnp.ones((num_segments,)),
-            "g": jnp.array([0.0, 0.0, 9.81]),
-            "E": E_val * jnp.ones((num_segments,)),
-            "G": G_val * jnp.ones((num_segments,)),
-        }
-
-        # params_pcs["D"] = 1e4 * jnp.diag(
-        #    (jnp.repeat(jnp.array([[jnp.pi/2*(0.015 ** 4), 3*jnp.pi/4*(0.015 ** 4), 3*jnp.pi/4*(0.015 ** 4), 3*jnp.pi*(0.015 ** 2),jnp.pi*(0.015 ** 2),jnp.pi*(0.015 ** 2)]]), num_segments, axis=0) * params_pcs["L"][:, None]).flatten()
-        # )
-        params_pcs["D"] = 1e4 * jnp.diag(
-            (
-                jnp.repeat(
-                    jnp.array(
-                        [
-                            [
-                                jnp.pi / 2 * (0.015**4),
-                                3 * jnp.pi / 4 * (0.015**4),
-                                3 * jnp.pi / 4 * (0.015**4),
-                                3 * jnp.pi * (0.015**2),
-                                jnp.pi * (0.015**2),
-                                jnp.pi * (0.015**2),
-                            ]
-                        ]
-                    ),
-                    num_segments,
-                    axis=0,
-                )
-                * params_pcs["L"][:, None]
-            ).flatten()
-        )
-        per_segment = jnp.array([1, 1, 1, 1, 0, 0], dtype=bool)
-        strain_selector = jnp.tile(per_segment, num_segments)
-
-        robotPCS = TendonActuatedPCS(
-            num_segments=num_segments,
-            params=params_pcs,
-            active_tendon_routing_params=tendon_params,
-            strain_selector=strain_selector,
-        )
-
-        dof = sum(robotGVS.V_dof.reshape(-1))
-        q0 = jnp.zeros((dof,))
-        A_GVS = robotGVS.actuation_matrix(q0)
-        A_PCS = robotPCS.actuation_matrix(q0)
-
-        print("GVS Actuation matrix A:\n", A_GVS)
-
-        if segment_lengths.shape[0] == 1:
-            print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
-            print("No contributions along the y axis.")
-        elif tendon_params["idx_seg_att"][0] == 1:
-            print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
-
-            print("Mixed contributions along y and z axes.")
-        else:
-            print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
-            print("No contributions from the second segment.")
-        assert not jnp.isnan(A_GVS).any(), "Actuation matrix contains NaN!"
-        assert_allclose(
-            A_GVS,
-            A_PCS,
-            rtol=Tolerance.rtol(),
-            atol=Tolerance.atol(),
-        )
-        print("[Valid test]\n")
-
-
 def test_actuation_matrix_gvs():
     """
     Test the methods responsible for the computation of the actuation matrix of the
@@ -641,6 +442,202 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
         print("[Valid test]\n")
 
 
+def test_tendon_actatuated_gvs_vs_pcs():
+    """
+    Compares the results of the tendon actuated GVS class with the tendon actuated
+    Piecewise Constant Strain class.
+    """
+
+    # ========================================
+    # Test of the functions
+    # ========================================
+
+    # test actuation matrix GVS vs PCS
+    print("\nTesting actuation matrix GVS vs PCS... ------------------------")
+
+    test_cases = [
+        (
+            # the tendon only affects the bending in z
+            jnp.array([0.2]),
+            {
+                "ry": jnp.array([0.005]),
+                "rz": jnp.array([0.0]),
+                "my": jnp.array([0.0]),
+                "mz": jnp.array([0.0]),
+                "idx_seg_att": jnp.array([0]),
+            },
+        ),
+        (
+            # the tendon only affects the bending in y
+            jnp.array([0.2, 0.05]),
+            {
+                "ry": jnp.array([0.002]),
+                "rz": jnp.array([0.002]),
+                "my": jnp.array([0.0]),
+                "mz": jnp.array([0.0]),
+                "idx_seg_att": jnp.array([1]),
+            },
+        ),
+        (
+            # only first segment affected
+            jnp.array([0.2, 0.05]),
+            {
+                "ry": jnp.array([-0.002]),
+                "rz": jnp.array([-0.002]),
+                "my": jnp.array([0.001]),
+                "mz": jnp.array([-0.001]),
+                "idx_seg_att": jnp.array([0]),
+            },
+        ),
+    ]
+
+    for segment_lengths, tendon_params in test_cases:
+        if segment_lengths.shape[0] == 1:
+            link1 = LinkAttributes(
+                section="Circular",
+                E=3e5,
+                nu=0.45,
+                rho=1300.0,
+                eta=1e4,
+                L=segment_lengths[0],
+                r_i=0.015,
+                r_f=0.015,
+            )
+            joint1 = JointAttributes(jointtype="Fixed")
+            basis1 = BasisAttributes(
+                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
+            )
+
+            n_gauss_list = [10]
+            gravity_vector = [0.0, 0.0, -9.81]
+
+            robotGVS = TendonActuatedGVS(
+                links_list=[link1],
+                joints_list=[joint1],
+                basis_list=[basis1],
+                n_gauss_list=n_gauss_list,
+                gravity_vector=gravity_vector,
+                tendon_routing_params=tendon_params,
+                scale_strain=False,
+            )
+
+        else:  # segment_lengths.shape[0] == 2
+            link1 = LinkAttributes(
+                section="Circular",
+                E=3e5,
+                nu=0.45,
+                rho=1300.0,
+                eta=1e4,
+                L=segment_lengths[0],
+                r_i=0.015,
+                r_f=0.015,
+            )
+            link2 = LinkAttributes(
+                section="Circular",
+                E=3e5,
+                nu=0.45,
+                rho=1300.0,
+                eta=1e4,
+                L=segment_lengths[1],
+                r_i=0.015,
+                r_f=0.015,
+            )
+            joint1 = JointAttributes(jointtype="Fixed")
+            joint2 = JointAttributes(jointtype="Fixed")
+
+            basis1 = BasisAttributes(
+                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
+            )
+            basis2 = BasisAttributes(
+                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
+            )
+
+            n_gauss_list = [10, 10]
+            gravity_vector = [0.0, 0.0, -9.81]
+
+            robotGVS = TendonActuatedGVS(
+                links_list=[link1, link2],
+                joints_list=[joint1, joint2],
+                basis_list=[basis1, basis2],
+                n_gauss_list=n_gauss_list,
+                gravity_vector=gravity_vector,
+                tendon_routing_params=tendon_params,
+                scale_strain=False,
+            )
+
+        num_segments = int(segment_lengths.shape[0])
+        E_val = 3e5
+        nu = 0.45
+        G_val = E_val / (2.0 * (1.0 + nu))
+        params_pcs = {
+            "p0": jnp.zeros((6,)),
+            "L": jnp.asarray(segment_lengths),
+            "r": jnp.full((num_segments,), 0.015),
+            "rho": 1300.0 * jnp.ones((num_segments,)),
+            "g": jnp.array([0.0, 0.0, 9.81]),
+            "E": E_val * jnp.ones((num_segments,)),
+            "G": G_val * jnp.ones((num_segments,)),
+        }
+
+        # params_pcs["D"] = 1e4 * jnp.diag(
+        #    (jnp.repeat(jnp.array([[jnp.pi/2*(0.015 ** 4), 3*jnp.pi/4*(0.015 ** 4), 3*jnp.pi/4*(0.015 ** 4), 3*jnp.pi*(0.015 ** 2),jnp.pi*(0.015 ** 2),jnp.pi*(0.015 ** 2)]]), num_segments, axis=0) * params_pcs["L"][:, None]).flatten()
+        # )
+        params_pcs["D"] = 1e4 * jnp.diag(
+            (
+                jnp.repeat(
+                    jnp.array(
+                        [
+                            [
+                                jnp.pi / 2 * (0.015**4),
+                                3 * jnp.pi / 4 * (0.015**4),
+                                3 * jnp.pi / 4 * (0.015**4),
+                                3 * jnp.pi * (0.015**2),
+                                jnp.pi * (0.015**2),
+                                jnp.pi * (0.015**2),
+                            ]
+                        ]
+                    ),
+                    num_segments,
+                    axis=0,
+                )
+                * params_pcs["L"][:, None]
+            ).flatten()
+        )
+        per_segment = jnp.array([1, 1, 1, 1, 0, 0], dtype=bool)
+        strain_selector = jnp.tile(per_segment, num_segments)
+
+        robotPCS = TendonActuatedPCS(
+            num_segments=num_segments,
+            params=params_pcs,
+            active_tendon_routing_params=tendon_params,
+            strain_selector=strain_selector,
+        )
+
+        dof = sum(robotGVS.V_dof.reshape(-1))
+        q0 = jnp.zeros((dof,))
+        A_GVS = robotGVS.actuation_matrix(q0)
+        A_PCS = robotPCS.actuation_matrix(q0)
+
+        print("GVS Actuation matrix A:\n", A_GVS)
+
+        if segment_lengths.shape[0] == 1:
+            print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
+            print("No contributions along the y axis.")
+        elif tendon_params["idx_seg_att"][0] == 1:
+            print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
+
+            print("Mixed contributions along y and z axes.")
+        else:
+            print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
+            print("No contributions from the second segment.")
+        assert not jnp.isnan(A_GVS).any(), "Actuation matrix contains NaN!"
+        assert_allclose(
+            A_GVS,
+            A_PCS,
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        print("[Valid test]\n")
 
 
 if __name__ == "__main__":
