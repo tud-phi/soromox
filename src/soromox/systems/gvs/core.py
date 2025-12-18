@@ -233,7 +233,7 @@ class GVS(DynamicalSystem):
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
         scale_strain : bool, optional
-            If True, apply length scaling to strain contributions in the stiffness matrix. Defaults to True.
+            If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
         Raises
         ------
         ValueError
