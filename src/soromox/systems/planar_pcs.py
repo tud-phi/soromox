@@ -81,9 +81,6 @@ class PlanarPCS(DynamicalSystem):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
-    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
-
     num_segments: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True)  #
     num_strains: int = eqx.field(static=True)  # Number of strains (3 * num_segments)
@@ -896,7 +893,7 @@ class PlanarPCS(DynamicalSystem):
             # Map the previous Jacobian into the current segment frame using the inverse adjoint.
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
             # Integrate the local tangent contribution for this segment length.
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             # Rotate the previous Jacobian into the current frame.
             J_rot = jnp.matmul(Ad_inv, J_prev)
             # Overwrite the slice associated with the active segment.
@@ -997,7 +994,7 @@ class PlanarPCS(DynamicalSystem):
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, L_i, eps=self.global_eps)
-            T = lie.Tangent_gi_se2(xi_i, L_i, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, L_i, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -1045,7 +1042,7 @@ class PlanarPCS(DynamicalSystem):
             J_base: Array,
         ) -> Array:
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -1146,9 +1143,9 @@ class PlanarPCS(DynamicalSystem):
             # Inverse adjoint transformation and tangent integration for the current segment
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
             # Compute the tangent vector and its derivative
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se2(
-                xi_i, xid_i, arc_len, eps=self.global_eps
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
             # Rotate the previous Jacobian into the current frame and add the local contribution
@@ -1286,11 +1283,11 @@ class PlanarPCS(DynamicalSystem):
             lambda xi_i, L_i: lie.Adjoint_gi_se2_inv(xi_i, L_i, eps=self.global_eps)
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se2(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: lie.Tangent_gi_se2(xi_i, L_i, eps=self.tangent_eps)
         )(xi, self.L)
         Td_tips = vmap(
             lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se2(
-                xi_i, xid_i, L_i, eps=self.global_eps
+                xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
 
@@ -1377,9 +1374,9 @@ class PlanarPCS(DynamicalSystem):
             Jd_base: Array,
         ) -> Tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se2(
-                xi_i, xid_i, arc_len, eps=self.global_eps
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)

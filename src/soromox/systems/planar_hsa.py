@@ -201,9 +201,6 @@ class PlanarHSA(DynamicalSystem):
     # parameters for lambdify
     params_for_lambdify: List[Array]
 
-    # epsilon for numerical stability
-    global_eps: float
-
     def __init__(
         self,
         sym_exp_filepath: Union[str, Path],

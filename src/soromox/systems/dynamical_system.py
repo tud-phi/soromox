@@ -4,7 +4,7 @@ import equinox as eqx
 import jax
 from jax import Array, jit, lax, vmap
 from jax import numpy as jnp
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, ClassVar, Optional, Tuple
 
 # Diffrax (for time integration helpers)
 from diffrax import (
@@ -22,6 +22,14 @@ from soromox.systems.system_state import SystemState
 
 class DynamicalSystem(eqx.Module):
     num_actuators: int = eqx.field(static=True)  # Number of actuators
+
+    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
+    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
+
+    @property
+    def tangent_eps(self) -> Array:
+        """Epsilon value for Lie algebra tangent computations."""
+        return jnp.sqrt(self.global_eps)
 
     @staticmethod
     def _compute_save_times(
