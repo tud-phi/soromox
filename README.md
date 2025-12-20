@@ -85,14 +85,23 @@ pip install -e .
 uv pip install -e .
 ```
 
-If you want to run the examples, you will also need to install the additional dependencies:
+### Optional Dependencies (extras)
+
+The extras in `pyproject.toml` bundle optional tooling:
+
+- `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
+- `docs`: MkDocs stack for building the documentation site.
+- `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
+- `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
+- `test`: minimal test stack (pytest, coverage, tox, html report).
+- `all`: installs everything above.
+
+Install with pip or uv, e.g.:
 
 ```bash
-# Using pip
-pip install -e ".[examples]"
-
-# Using uv
-uv pip install -e ".[examples]"
+pip install -e ".[dev,docs,examples]"
+# or
+uv pip install -e ".[rendering]"
 ```
 
 ### Using uv for Project Management
@@ -257,4 +266,3 @@ When you use the `release-*` commands, the following happens automatically:
 6. The package is published to PyPI
 
 For more detailed information, see `VERSION_BUMP_README.md`.
-
