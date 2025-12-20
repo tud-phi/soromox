@@ -9,132 +9,13 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.widgets import Slider
 import numpy as np
 
-from soromox.rendering import MatplotlibRenderer
+from soromox.rendering import MatplotlibRenderer, Open3DRenderer
 from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 from soromox.systems.system_state import SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
 jnp.set_printoptions(precision=4, suppress=True)
-
-
-def animate_robot_tendons_matplotlib(
-    robot: TendonActuatedPCS,
-    t_list: jnp.ndarray,
-    q_list: jnp.ndarray,
-    num_points: int = 50,
-    interval: int = 50,
-    mode: str = "slider",
-    show: bool = True,
-):
-    """Animate robot with tendon visualization.
-
-    This is a specialized animation function that shows both the backbone
-    and the active tendons. For backbone-only visualization, use MatplotlibRenderer.
-    """
-    if mode not in ("slider", "animation"):
-        raise ValueError("mode must be 'slider' or 'animation'")
-
-    # Set up FK functions
-    batched_fk_backbone = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    batched_fk_tendons = jax.vmap(
-        robot.forward_kinematics_active_tendons, in_axes=(None, 0), out_axes=1
-    )
-    L_max = float(jnp.sum(robot.L))
-    s_ps = jnp.linspace(0, L_max, num_points)
-
-    width = L_max * 3
-    backbone_lw = 4
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])
-
-    # Precompute all trajectories
-    def compute_curves(q):
-        backbone = batched_fk_backbone(q, s_ps)[:, :3, 3]
-        tendons = batched_fk_tendons(q, s_ps)
-        return backbone, tendons
-
-    all_curves = jax.vmap(compute_curves)(q_list)
-    all_robot_curves = np.array(all_curves[0])  # (T, num_points, 3)
-    all_tendon_curves = np.array(all_curves[1])  # (T, n_actuators, num_points, 3)
-
-    # Initialize line objects
-    (line_robot,) = ax.plot([], [], [], lw=backbone_lw, color="blue", alpha=0.45)
-    lines = [line_robot]
-    for _ in range(robot.num_actuators):
-        (ll,) = ax.plot([], [], [], lw=2, color="red")
-        lines.append(ll)
-
-    ax.set_xlim(-width / 2, width / 2)
-    ax.set_ylim(-width / 2, width / 2)
-    ax.set_zlim(0, width)
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_zlabel("Z [m]")
-
-    if mode == "animation":
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            for line in lines:
-                line.set_data([], [])
-                line.set_3d_properties([])
-            title_text.set_text("t = 0.00 s")
-            return lines + [title_text]
-
-        def update(frame_idx):
-            curve_r = all_robot_curves[frame_idx]
-            curves_t = all_tendon_curves[frame_idx]
-
-            lines[0].set_data(curve_r[:, 0], curve_r[:, 1])
-            lines[0].set_3d_properties(curve_r[:, 2])
-
-            for i in range(robot.num_actuators):
-                lines[i + 1].set_data(curves_t[i, :, 0], curves_t[i, :, 1])
-                lines[i + 1].set_3d_properties(curves_t[i, :, 2])
-
-            title_text.set_text(f"t = {t_list[frame_idx]:.2f} s")
-            return lines + [title_text]
-
-        ani = FuncAnimation(
-            fig, update, frames=len(q_list), init_func=init, blit=False, interval=interval
-        )
-
-        if show:
-            plt.show()
-        plt.close(fig)
-        return ani
-
-    else:  # slider mode
-        def update_plot(frame_idx):
-            frame_idx = int(frame_idx)
-            curve_r = all_robot_curves[frame_idx]
-            curves_t = all_tendon_curves[frame_idx]
-
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-
-            lines[0].set_data(curve_r[:, 0], curve_r[:, 1])
-            lines[0].set_3d_properties(curve_r[:, 2])
-
-            for i in range(robot.num_actuators):
-                lines[i + 1].set_data(curves_t[i, :, 0], curves_t[i, :, 1])
-                lines[i + 1].set_3d_properties(curves_t[i, :, 2])
-
-            fig.canvas.draw_idle()
-
-        slider_widget = Slider(
-            ax=ax_slider, label="Frame", valmin=0, valmax=len(t_list) - 1, valinit=0, valstep=1
-        )
-        slider_widget.on_changed(update_plot)
-        update_plot(0)
-
-        if show:
-            plt.show()
-        plt.close(fig)
-        return None
-
 
 if __name__ == "__main__":
     num_segments = 2
@@ -338,14 +219,26 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.show()
 
-    # =====================================================
-    # Plot the robot configuration upon time
-    # =====================================================
-    animate_robot_tendons_matplotlib(
+    # animate using the MatplotlibRenderer
+    matplotlib_renderer = MatplotlibRenderer(
         robot,
-        t_list=ts,
-        q_list=q_ts,
-        num_points=50,
-        interval=100,
-        mode="slider",
+        num_points=60,
+        line_width=2.5,
+        tendon_color=(0.9, 0.1, 0.1),
+        tendon_line_width=2.0,
     )
+    # q_ts is (T, DOF); animate in slider mode for quick inspection
+    matplotlib_renderer.animate(
+        ts=ts, q_ts=q_ts, mode="slider", show=True, render_tendons=True
+    )
+
+    # render using the Open3DRenderer
+    renderer = Open3DRenderer(
+        robot,
+        body_alpha=0.7,
+        # num_points=300,
+        backbone_style="tube",
+        # tube_resolution=100,
+        viewer_backend="gui",
+    )
+    renderer.render_sequence(ts=ts, q_ts=q_ts, fps=25)

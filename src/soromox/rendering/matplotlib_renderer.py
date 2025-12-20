@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
+import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -36,6 +37,11 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         background_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         line_color: str = "blue",
         line_width: float = 4.0,
+        grid_spacing: Tuple[float, float] = (0.3, 0.3),
+        base_offsets: Optional[Array] = None,
+        robot_colors: Optional[Union[str, List]] = None,
+        tendon_color: Tuple[float, float, float] = (0.9, 0.1, 0.1),
+        tendon_line_width: float = 2.0,
     ):
         """Initialize Matplotlib renderer.
 
@@ -47,10 +53,26 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             background_color: RGB background color (0-1 range)
             line_color: Color for backbone line
             line_width: Width of backbone line
+            grid_spacing: (x, y) spacing for batched layouts
+            base_offsets: Optional explicit base offsets for batched layouts
+            robot_colors: Optional color configuration for batched layouts
+            tendon_color: Color for tendon polylines (if available)
+            tendon_line_width: Line width for tendon polylines
         """
         super().__init__(robot, width, height, num_points, background_color)
         self.line_color = line_color
         self.line_width = line_width
+        self.grid_spacing = grid_spacing
+        self._base_offsets = base_offsets
+        self._robot_colors_config = robot_colors
+        self.tendon_color = tendon_color
+        self.tendon_line_width = tendon_line_width
+
+        self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
+        if self._has_tendons:
+            self._batched_fk_tendons = jax.vmap(
+                robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
+            )
 
         # Auto-detect 3D vs 2D from FK output
         self._is_3d = self._detect_dimensionality()
@@ -107,44 +129,125 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             # SE(2): extract x, y from [theta, x, y] poses
             return poses[:, 1:3]
 
-    def render_frame(self, q: Array) -> np.ndarray:
-        """Render single configuration to RGB image array.
+    def compute_tendon_curves(self, q: Array) -> Optional[Array]:
+        """Compute tendon paths if robot supports tendons."""
+        if not self._has_tendons:
+            return None
+        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        return self._batched_fk_tendons(q, s_ps)
+
+    def compute_tendon_curves_batched(
+        self, q_batch: Array, base_offsets: Array
+    ) -> Optional[Array]:
+        """Compute tendon paths for multiple robots with base offsets."""
+        if not self._has_tendons:
+            return None
+        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        tendon_curves = jax.vmap(lambda q: self._batched_fk_tendons(q, s_ps))(q_batch)
+        # tendon_curves shape: (N, n_tendon, P, dim)
+        offsets = base_offsets
+        if offsets.shape[1] + 1 == tendon_curves.shape[-1]:
+            pad = jnp.zeros((offsets.shape[0], 1), dtype=offsets.dtype)
+            offsets = jnp.concatenate([offsets, pad], axis=1)
+        return tendon_curves + offsets[:, None, None, :]
+
+    def render_frame(
+        self,
+        q: Array,
+        show_tendons: bool = True,
+    ) -> np.ndarray:
+        """Render configuration(s) to RGB image array.
 
         Args:
-            q: Robot configuration array
+            q: Robot configuration array. Shape (DOF,) for single robot or (N, DOF)
+                for batched rendering.
 
         Returns:
             RGB image as numpy array of shape (height, width, 3), dtype uint8
         """
-        curve = np.array(self.compute_backbone_curve(q))
-        width_m = self.L_max * 3
+        q_arr = jnp.asarray(q)
+        batched = q_arr.ndim == 2
+
+        if not batched and q_arr.ndim != 1:
+            raise ValueError(
+                f"q must have shape (DOF,) or (N, DOF); got shape {q_arr.shape}"
+            )
+
+        spacing = self.grid_spacing
+        colors_cfg = self._robot_colors_config
+
+        if batched:
+            num_robots = int(q_arr.shape[0])
+            base_offsets_arr = (
+                self._compute_grid_offsets(num_robots, spacing)
+                if self._base_offsets is None
+                else jnp.asarray(self._base_offsets)
+            )
+
+            curves = self.compute_backbone_curves_batched(q_arr, base_offsets_arr)
+            colors = self._get_robot_colors(num_robots, colors_cfg)
+            max_extent = float(np.max(np.abs(curves))) if curves.size else 0.0
+            width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
+        else:
+            curves = self.compute_backbone_curve(q_arr)[None, ...]
+            colors = [self.line_color]
+            width_m = self.L_max * 3
+
+        curves_np = np.array(curves)
+        tendon_curves_np = None
+        if show_tendons and self._has_tendons:
+            if batched:
+                tendon_curves_np = np.array(
+                    self.compute_tendon_curves_batched(q_arr, base_offsets_arr)
+                )
+            else:
+                tendon_curves_np = np.array(self.compute_tendon_curves(q_arr))[None, ...]
 
         fig = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         fig.patch.set_facecolor(self.background_color)
 
         if self.is_3d:
             ax = fig.add_subplot(111, projection="3d")
-            ax.plot(
-                curve[:, 0],
-                curve[:, 1],
-                curve[:, 2],
-                lw=self.line_width,
-                color=self.line_color,
-            )
-            ax.set_xlim(-width_m / 2, width_m / 2)
-            ax.set_ylim(-width_m / 2, width_m / 2)
-            ax.set_zlim(0, width_m)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
         else:
             ax = fig.add_subplot(111)
-            ax.plot(curve[:, 0], curve[:, 1], lw=self.line_width, color=self.line_color)
-            ax.set_xlim(-width_m / 2, width_m / 2)
-            ax.set_ylim(0, width_m)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_aspect("equal")
+
+        self._setup_axes(ax, width_m, center_origin=batched)
+
+        for idx, (curve, color) in enumerate(zip(curves_np, colors)):
+            if self.is_3d:
+                ax.plot(
+                    curve[:, 0],
+                    curve[:, 1],
+                    curve[:, 2],
+                    lw=self.line_width,
+                    color=color,
+                )
+            else:
+                ax.plot(
+                    curve[:, 0],
+                    curve[:, 1],
+                    lw=self.line_width,
+                    color=color,
+                )
+
+            if tendon_curves_np is not None:
+                tc = tendon_curves_np[idx]
+                for k in range(tc.shape[0]):
+                    if self.is_3d:
+                        ax.plot(
+                            tc[k, :, 0],
+                            tc[k, :, 1],
+                            tc[k, :, 2],
+                            lw=self.tendon_line_width,
+                            color=self.tendon_color,
+                        )
+                    else:
+                        ax.plot(
+                            tc[k, :, 0],
+                            tc[k, :, 1],
+                            lw=self.tendon_line_width,
+                            color=self.tendon_color,
+                        )
 
         ax.set_facecolor(self.background_color)
         plt.tight_layout()
@@ -164,12 +267,13 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         interval: int = 50,
         mode: str = "slider",
         show: bool = True,
+        render_tendons: bool = True,
     ):
         """Interactive matplotlib animation with slider or auto-play.
 
         Args:
             ts: Time stamps array of shape (T,)
-            q_ts: Configurations array of shape (T, DOF)
+            q_ts: Configurations array of shape (T, DOF) or (N, T, DOF)
             interval: Frame interval in ms (for animation mode)
             mode: "slider" for manual scrubbing, "animation" for auto-play
             show: Whether to call plt.show()
@@ -180,55 +284,232 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         if mode not in ("slider", "animation"):
             raise ValueError("mode must be 'slider' or 'animation'")
 
-        ts = np.array(ts)
-        q_ts = np.array(q_ts)
-        width_m = self.L_max * 3
+        ts_arr = jnp.asarray(ts).reshape((-1,))
+        q_ts_arr = jnp.asarray(q_ts)
+
+        if q_ts_arr.ndim == 3:
+            return self._animate_batched(
+                ts_arr,
+                q_ts_arr,
+                interval=interval,
+                mode=mode,
+                show=show,
+                render_tendons=render_tendons,
+            )
+        if q_ts_arr.ndim == 2:
+            return self._animate_single(
+                ts_arr,
+                q_ts_arr,
+                interval=interval,
+                mode=mode,
+                show=show,
+                render_tendons=render_tendons,
+            )
+
+        raise ValueError(
+            f"q_ts must have shape (T, DOF) or (N, T, DOF); got shape {q_ts_arr.shape}"
+        )
+
+    def _animate_single(
+        self,
+        ts: Array,
+        q_ts: Array,
+        interval: int,
+        mode: str,
+        show: bool,
+        render_tendons: bool,
+    ):
+        """Animate a single robot (legacy behavior)."""
+        ts_np = np.asarray(ts)
+        # Precompute backbone curves once for single robot
+        curves = np.array(
+            jax.vmap(self.compute_backbone_curve)(q_ts), dtype=np.float64
+        )  # (T, P, dim)
+        all_curves = curves[None, ...]  # (1, T, P, dim)
+        tendon_curves = None
+        if render_tendons and self._has_tendons:
+            tendon_curves = np.array(
+                jax.vmap(self.compute_tendon_curves)(q_ts), dtype=np.float64
+            )[None, ...]  # (1, T, n_tendon, P, dim)
+
+        return self._animate_backbone_curves(
+            ts_np,
+            all_curves,
+            colors=[self.line_color],
+            interval=interval,
+            mode=mode,
+            show=show,
+            center_origin=False,
+            tendon_curves=tendon_curves,
+        )
+
+    def _animate_batched(
+        self,
+        ts: Array,
+        q_ts: Array,
+        interval: int,
+        mode: str,
+        show: bool,
+        render_tendons: bool,
+    ):
+        """Animate multiple robots arranged in a grid layout."""
+        ts = jnp.asarray(ts).reshape((-1,))
+        q_ts = jnp.asarray(q_ts)
+
+        if q_ts.ndim == 2:
+            q_ts = q_ts[None, ...]
+        if q_ts.ndim != 3:
+            raise ValueError(
+                f"Batched animation expects q_ts with ndim 2 or 3, got {q_ts.ndim}"
+            )
+
+        num_robots, num_steps, _ = q_ts.shape
+        if ts.shape[0] != num_steps:
+            raise ValueError(
+                f"ts length ({ts.shape[0]}) must match q_ts time dimension ({num_steps})"
+            )
+
+        spacing = self.grid_spacing
+        colors_cfg = self._robot_colors_config
+        base_offsets_arr = (
+            self._compute_grid_offsets(int(num_robots), spacing)
+            if self._base_offsets is None
+            else jnp.asarray(self._base_offsets)
+        )
+
+        # Precompute all backbone curves with offsets applied
+        def curves_for_timestep(q_batch: Array) -> Array:
+            return self.compute_backbone_curves_batched(q_batch, base_offsets_arr)
+
+        q_ts_time_first = q_ts.transpose(1, 0, 2)  # (T, N, DOF)
+        all_curves_time_first = jax.vmap(curves_for_timestep)(q_ts_time_first)
+        all_curves = np.asarray(all_curves_time_first.transpose(1, 0, 2, 3))
+
+        # Axis sizing based on geometry spread
+        max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
+        width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
+
+        colors = self._get_robot_colors(int(num_robots), colors_cfg)
+
+        tendon_curves = None
+        if render_tendons and self._has_tendons:
+            tendons = np.array(
+                jax.vmap(
+                    lambda q_batch: self.compute_tendon_curves_batched(
+                        q_batch, base_offsets_arr
+                    )
+                )(q_ts_time_first)
+            )  # (T, N, n_t, P, dim)
+            tendon_curves = tendons.transpose(1, 0, 2, 3, 4)  # (N, T, n_t, P, dim)
+
+        return self._animate_backbone_curves(
+            ts=np.asarray(ts),
+            all_curves=all_curves,
+            colors=colors,
+            interval=interval,
+            mode=mode,
+            show=show,
+            center_origin=True,
+            tendon_curves=tendon_curves,
+        )
+
+    def _animate_backbone_curves(
+        self,
+        ts: np.ndarray,
+        all_curves: np.ndarray,
+        colors: List,
+        interval: int,
+        mode: str,
+        show: bool,
+        center_origin: bool,
+        tendon_curves: Optional[np.ndarray] = None,
+    ):
+        """Shared Matplotlib animation for one or more robots."""
+        num_robots, num_steps, _, _ = all_curves.shape
+
+        max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
+        width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
 
         fig = plt.figure(figsize=(self.width / 100, self.height / 100))
+        fig.patch.set_facecolor(self.background_color)
 
         if self.is_3d:
             ax = fig.add_subplot(111, projection="3d")
         else:
             ax = fig.add_subplot(111)
 
-        ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])
+        self._setup_axes(ax, width_m, center_origin=center_origin)
+        title_text = ax.set_title("t = 0.00 s")
+
+        if self.is_3d:
+            lines = [
+                ax.plot([], [], [], lw=self.line_width, color=color)[0]
+                for color in colors
+            ]
+        else:
+            lines = [
+                ax.plot([], [], lw=self.line_width, color=color)[0] for color in colors
+            ]
+
+        tendon_lines: List[List] = []
+        if tendon_curves is not None:
+            for idx in range(num_robots):
+                robot_lines = []
+                n_tend = tendon_curves.shape[2]
+                for _ in range(n_tend):
+                    if self.is_3d:
+                        (tl,) = ax.plot(
+                            [], [], [], lw=self.tendon_line_width, color=self.tendon_color
+                        )
+                    else:
+                        (tl,) = ax.plot(
+                            [], [], lw=self.tendon_line_width, color=self.tendon_color
+                        )
+                    robot_lines.append(tl)
+                tendon_lines.append(robot_lines)
+
+        def _update_lines(frame_idx: int):
+            curves_frame = all_curves[:, frame_idx]  # (N, P, dim)
+            for idx, line in enumerate(lines):
+                curve = curves_frame[idx]
+                line.set_data(curve[:, 0], curve[:, 1])
+                if self.is_3d:
+                    line.set_3d_properties(curve[:, 2])
+            if tendon_curves is not None:
+                for idx, tc in enumerate(tendon_curves):
+                    tend_frame = tc[frame_idx]
+                    for k, tl in enumerate(tendon_lines[idx]):
+                        tl.set_data(tend_frame[k, :, 0], tend_frame[k, :, 1])
+                        if self.is_3d:
+                            tl.set_3d_properties(tend_frame[k, :, 2])
 
         if mode == "animation":
-            if self.is_3d:
-                (line,) = ax.plot([], [], [], lw=self.line_width, color=self.line_color)
-            else:
-                (line,) = ax.plot([], [], lw=self.line_width, color=self.line_color)
-
-            self._setup_axes(ax, width_m)
-            title_text = ax.set_title("t = 0.00 s")
 
             def init():
-                if self.is_3d:
+                for line in lines:
                     line.set_data([], [])
-                    line.set_3d_properties([])
-                else:
-                    line.set_data([], [])
+                    if self.is_3d:
+                        line.set_3d_properties([])
                 title_text.set_text("t = 0.00 s")
-                return line, title_text
+                for robot_lines in tendon_lines:
+                    for tl in robot_lines:
+                        tl.set_data([], [])
+                        if self.is_3d:
+                            tl.set_3d_properties([])
+                flat_tendon = [tl for sub in tendon_lines for tl in sub]
+                return lines + flat_tendon + [title_text]
 
             def update(frame_idx):
-                q = q_ts[frame_idx]
-                t = ts[frame_idx]
-                curve = np.array(self.compute_backbone_curve(q))
-
-                if self.is_3d:
-                    line.set_data(curve[:, 0], curve[:, 1])
-                    line.set_3d_properties(curve[:, 2])
-                else:
-                    line.set_data(curve[:, 0], curve[:, 1])
-
-                title_text.set_text(f"t = {t:.2f} s")
-                return line, title_text
+                frame_idx_int = int(frame_idx)
+                _update_lines(frame_idx_int)
+                title_text.set_text(f"t = {float(ts[frame_idx_int]):.2f} s")
+                flat_tendon = [tl for sub in tendon_lines for tl in sub]
+                return lines + flat_tendon + [title_text]
 
             ani = FuncAnimation(
                 fig,
                 update,
-                frames=len(q_ts),
+                frames=num_steps,
                 init_func=init,
                 blit=False,
                 interval=interval,
@@ -239,7 +520,6 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
 
             plt.close(fig)
 
-            # Return HTML for Jupyter
             try:
                 from IPython.display import HTML
 
@@ -247,51 +527,33 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             except ImportError:
                 return None
 
-        else:  # slider mode
+        # Slider mode
+        ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])
 
-            def update_plot(frame_idx):
-                frame_idx = int(frame_idx)
-                ax.cla()
-                self._setup_axes(ax, width_m)
-                ax.set_title(f"t = {ts[frame_idx]:.2f} s")
+        def update_plot(frame_idx):
+            frame_idx = int(frame_idx)
+            _update_lines(frame_idx)
+            title_text.set_text(f"t = {float(ts[frame_idx]):.2f} s")
+            fig.canvas.draw_idle()
 
-                q = q_ts[frame_idx]
-                curve = np.array(self.compute_backbone_curve(q))
+        slider = Slider(
+            ax=ax_slider,
+            label="Frame",
+            valmin=0,
+            valmax=num_steps - 1,
+            valinit=0,
+            valstep=1,
+        )
+        slider.on_changed(update_plot)
+        update_plot(0)
 
-                if self.is_3d:
-                    ax.plot(
-                        curve[:, 0],
-                        curve[:, 1],
-                        curve[:, 2],
-                        lw=self.line_width,
-                        color=self.line_color,
-                    )
-                else:
-                    ax.plot(
-                        curve[:, 0], curve[:, 1], lw=self.line_width, color=self.line_color
-                    )
+        if show:
+            plt.show()
 
-                fig.canvas.draw_idle()
+        plt.close(fig)
+        return None
 
-            slider = Slider(
-                ax=ax_slider,
-                label="Frame",
-                valmin=0,
-                valmax=len(ts) - 1,
-                valinit=0,
-                valstep=1,
-            )
-            slider.on_changed(update_plot)
-
-            update_plot(0)
-
-            if show:
-                plt.show()
-
-            plt.close(fig)
-            return None
-
-    def _setup_axes(self, ax, width_m: float) -> None:
+    def _setup_axes(self, ax, width_m: float, center_origin: bool = False) -> None:
         """Set up axis limits and labels.
 
         Args:
@@ -307,7 +569,25 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             ax.set_zlabel("Z [m]")
         else:
             ax.set_xlim(-width_m / 2, width_m / 2)
-            ax.set_ylim(0, width_m)
+            if center_origin:
+                ax.set_ylim(-width_m / 2, width_m / 2)
+            else:
+                ax.set_ylim(0, width_m)
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_aspect("equal")
+
+    def _get_robot_colors(
+        self, num_robots: int, robot_colors: Optional[Union[str, List]]
+    ) -> List:
+        """Resolve colors for each robot in a batch."""
+        if robot_colors is None or robot_colors == "same":
+            return [self.line_color] * num_robots
+        if isinstance(robot_colors, str):
+            import matplotlib.cm as cm
+
+            cmap = cm.get_cmap(robot_colors)
+            return [
+                tuple(cmap(i / max(1, num_robots - 1))[:3]) for i in range(num_robots)
+            ]
+        return [robot_colors[i % len(robot_colors)] for i in range(num_robots)]

@@ -157,3 +157,96 @@ class BaseContinuumSoftRobotRenderer(ABC):
         plt.axis("off")
         plt.tight_layout()
         plt.show()
+
+    # =========================================================================
+    # Multi-robot (batched) rendering helpers
+    # =========================================================================
+
+    def _compute_grid_offsets(
+        self, num_robots: int, grid_spacing: Tuple[float, float]
+    ) -> Array:
+        """Compute grid layout offsets for N robots.
+
+        Robots are arranged in a grid pattern centered around the origin.
+        Grid dimensions are computed automatically: cols = ceil(sqrt(N)).
+
+        Args:
+            num_robots: Number of robots to arrange
+            grid_spacing: (x, y) spacing between robot bases in meters
+
+        Returns:
+            Array of shape (N, 2) for 2D or (N, 3) for 3D with z=0
+        """
+        cols = int(np.ceil(np.sqrt(num_robots)))
+        rows = int(np.ceil(num_robots / cols))
+        offsets = []
+        for i in range(num_robots):
+            row, col = divmod(i, cols)
+            # Center the grid around origin
+            x = (col - (cols - 1) / 2) * grid_spacing[0]
+            y = (row - (rows - 1) / 2) * grid_spacing[1]
+            if self.is_3d:
+                offsets.append([x, y, 0.0])
+            else:
+                offsets.append([x, y])
+        return jnp.array(offsets)
+
+    def compute_backbone_curves_batched(
+        self, q_batch: Array, base_offsets: Array
+    ) -> Array:
+        """Compute backbone curves for multiple robots with base offsets.
+
+        Uses forward_kinematics_batched if available (optimized), otherwise
+        falls back to jax.vmap over compute_backbone_curve.
+
+        Args:
+            q_batch: Configurations of shape (N, DOF) - batch-first
+            base_offsets: Base position offsets of shape (N, 2) or (N, 3)
+
+        Returns:
+            Array of shape (N, num_points, dim) - batch-first
+        """
+        q_batch = jnp.asarray(q_batch)
+        base_offsets = jnp.asarray(base_offsets)
+
+        if q_batch.ndim != 2:
+            raise ValueError(
+                f"q_batch must have shape (N, DOF), got {q_batch.shape} with ndim={q_batch.ndim}"
+            )
+        if base_offsets.ndim != 2:
+            raise ValueError(
+                f"base_offsets must have shape (N, dim), got {base_offsets.shape}"
+            )
+        if base_offsets.shape[0] != q_batch.shape[0]:
+            raise ValueError(
+                f"base_offsets first dimension ({base_offsets.shape[0]}) must "
+                f"match batch size ({q_batch.shape[0]})"
+            )
+
+        # Use forward_kinematics_batched if available (optimized for some robots)
+        if hasattr(self.robot, "forward_kinematics_batched"):
+            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            # vmap over robot configurations only
+            batched_fk = jax.vmap(
+                lambda q: self.robot.forward_kinematics_batched(q, s_ps)
+            )
+            poses = batched_fk(q_batch)  # (N, num_points, pose_dim)
+            curves = jax.vmap(self._extract_positions)(poses)
+        else:
+            # Fallback to vmap over compute_backbone_curve
+            curves = jax.vmap(self.compute_backbone_curve)(q_batch)
+
+        # Match base offset dimensionality to curve dimensionality (2D vs 3D)
+        if base_offsets.shape[1] == curves.shape[-1]:
+            offsets = base_offsets
+        elif base_offsets.shape[1] + 1 == curves.shape[-1]:
+            pad = jnp.zeros((base_offsets.shape[0], 1), dtype=curves.dtype)
+            offsets = jnp.concatenate([base_offsets, pad], axis=1)
+        else:
+            raise ValueError(
+                f"base_offsets must have shape (N, {curves.shape[-1]}) or "
+                f"(N, {curves.shape[-1] - 1}), got {base_offsets.shape}"
+            )
+
+        # Add base offsets: (N, num_points, dim) + (N, 1, dim)
+        return curves + offsets[:, None, :]
