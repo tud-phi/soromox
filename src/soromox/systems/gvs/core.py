@@ -175,6 +175,7 @@ class GVS(DynamicalSystem):
         max_dof: Optional[int] = None,
         max_nGauss: Optional[int] = None,
         p0: Optional[Array] = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the GVS class.
@@ -227,6 +228,10 @@ class GVS(DynamicalSystem):
         p0: (optional) List/Array of shape (6,)
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
+        eps (float, optional):
+            Global epsilon for numerical computations.
+            If None, defaults to machine epsilon for float64.
+                
         Raises
         ------
         ValueError
@@ -243,6 +248,8 @@ class GVS(DynamicalSystem):
         - Internal arrays are padded to `max_dof` and `max_nip` to allow vectorized
         batched computations across all segments.
         """
+        super().__init__(**kwargs)
+
         warnings.warn(
             "GVS is not fully validated yet and might not match the behavior of PlanarPCS and PCS."
         )

@@ -102,6 +102,7 @@ class PCS(DynamicalSystem):
         order_gauss: int = 5,
         strain_selector: Optional[Array] = None,
         xi_ref: Optional[Array] = None,
+        **kwargs
     ):
         """
         Initialize the PCS class.
@@ -143,8 +144,12 @@ class PCS(DynamicalSystem):
             xi_ref (Optional[Array], optional):
                 Reference strain of shape (6 * num_segments,).
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-
+            eps (float, optional):
+                Global epsilon for numerical computations.
+                If None, defaults to machine epsilon for float64.
         """
+        super().__init__(**kwargs)
+
         # Number of segments
         if not isinstance(num_segments, int):
             raise TypeError(
