@@ -453,11 +453,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         base_plate_color: Tuple[float, float, float] = (0.0, 0.0, 0.0),
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 5e-2 * 1.3,
+        grid_spacing: Tuple[float, float] = (0.5, 0.5),
         base_offsets: Optional[Array] = None,
         tendon_color: Tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
-        grid_spacing: Tuple[float, float] = (0.5, 0.5),
         viewer_backend: str = "legacy",
     ):
         """Initialize Open3D renderer.
@@ -471,22 +471,22 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             seg_colors: Optional colors for each segment. Defaults to a colormap
                 ("coolwarm"). Accepts a Matplotlib colormap name or an array of shape
                 (N, 3) or (N, 4) with optional alpha channel.
-            backbone_style: "spheres" (default) or "tube" (swept cylinder segments)
-            tube_resolution: Radial resolution for tube segments
-            sphere_resolution: Resolution for backbone spheres
-            tendon_color: RGB color for tendon lines
-            tendon_line_width: Width of tendon lines
-            camera_margin_ratio: Margin ratio for camera bounding box
-            grid_spacing: (x, y) spacing between robot bases for batched rendering
-            base_plate_color: RGB color for the base plate geometry
-            base_plate_radius_scale: Multiplier applied to the maximum segment radius to size the base plate
-            base_plate_thickness: Absolute thickness of the base plate geometry
-            base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             robot_colors: Color configuration when rendering multiple robots. Can be:
                 - None: Use per-segment colors for all robots
                 - "same": All robots use the first resolved segment color
                 - Colormap name (e.g., "viridis", "plasma"): Distinct colors per robot
                 - Array of RGB or RGBA colors of shape (N, 3/4); cycled if fewer than N
+            backbone_style: "spheres" (default) or "tube" (swept cylinder segments)
+            tube_resolution: Radial resolution for tube segments
+            sphere_resolution: Resolution for backbone spheres
+            base_plate_color: RGB color for the base plate geometry
+            base_plate_radius_scale: Multiplier applied to the maximum segment radius to size the base plate
+            base_plate_thickness: Absolute thickness of the base plate geometry
+            grid_spacing: (x, y) spacing between robot bases for batched rendering
+            base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
+            tendon_color: RGB color for tendon lines
+            tendon_line_width: Width of tendon lines
+            camera_margin_ratio: Margin ratio for camera bounding box
             viewer_backend: "legacy" (default), "gui" (force SceneWidget), or "auto"
         """
         if not OPEN3D_AVAILABLE:
@@ -498,16 +498,16 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
         self.seg_colors = seg_colors
         self._seg_colors_config = seg_colors
+        self._robot_colors_config = robot_colors
         self.sphere_resolution = sphere_resolution
+        self.grid_spacing = grid_spacing
+        self._base_offsets = base_offsets
         self.tendon_color = tendon_color
         self.tendon_line_width = tendon_line_width
         self.camera_margin_ratio = camera_margin_ratio
-        self.grid_spacing = grid_spacing
         self.base_plate_color = tuple(base_plate_color)
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
-        self._base_offsets = base_offsets
-        self._robot_colors_config = robot_colors
         self.backbone_style = backbone_style
         self.tube_resolution = int(tube_resolution)
         vb = viewer_backend.lower()
@@ -1040,14 +1040,14 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         record_path: Optional[str] = None,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
+        base_offsets: Optional[Array] = None,
+        robot_colors: Optional[Union[str, Array, np.ndarray]] = None,
         static_spheres_positions: Optional[Array] = None,
         static_spheres_radii: Optional[Array] = None,
         static_spheres_colors: Optional[Array] = None,
         dynamic_spheres_positions: Optional[Array] = None,
         dynamic_spheres_radii: Optional[Array] = None,
         dynamics_spheres_colors: Optional[Array] = None,
-        base_offsets: Optional[Array] = None,
-        robot_colors: Optional[Union[str, Array, np.ndarray]] = None,
         window_name: str = "Robot Animation (Open3D)",
     ) -> None:
         """Interactive or headless rendering of a trajectory (single or batched)."""
