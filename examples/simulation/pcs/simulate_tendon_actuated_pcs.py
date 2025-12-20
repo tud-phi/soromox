@@ -1,139 +1,96 @@
 from diffrax import Tsit5
-
-import jax
-from jax import Array
-import jax.numpy as jnp
-
-import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
-from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
-
-import numpy as onp
-from typing import Callable, Dict
 from functools import partial
-
 import time
 
+import jax
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from matplotlib.widgets import Slider
+import numpy as np
+
+from soromox.rendering import MatplotlibRenderer
 from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
 from soromox.systems.system_state import SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
-
-jnp.set_printoptions(
-    threshold=jnp.inf,
-    linewidth=jnp.inf,
-    formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
-)
 jnp.set_printoptions(precision=4, suppress=True)
 
 
-def draw_robot_curve(
-    robot: TendonActuatedPCS, L_max: float, q: Array, num_points: int = 50
-):
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = robot.forward_kinematics_batched(q, s_ps)[:, :3, 3]
-
-    curve = jnp.array(g_ps, dtype=jnp.float64)
-    return curve  # (N, 3)
-
-
-def draw_tendon_curves(
-    batched_forward_kinematics_tendons: Callable,
-    L_max: float,
-    q: Array,
-    num_points: int = 50,
-):
-    s_ps = jnp.linspace(0, L_max, num_points)
-    ps = batched_forward_kinematics_tendons(q, s_ps)
-
-    curves = jnp.array(ps, dtype=jnp.float64)
-    return curves  # (n_tendons, N, 3)
-
-
 def animate_robot_tendons_matplotlib(
-    robot,
-    t_list: jnp.ndarray,  # shape (T,)
-    q_list: jnp.ndarray,  # shape (T, DOF)
+    robot: TendonActuatedPCS,
+    t_list: jnp.ndarray,
+    q_list: jnp.ndarray,
     num_points: int = 50,
     interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
+    mode: str = "slider",
     show: bool = True,
 ):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
+    """Animate robot with tendon visualization.
 
-    batched_forward_kinematics_tendons = jax.vmap(
+    This is a specialized animation function that shows both the backbone
+    and the active tendons. For backbone-only visualization, use MatplotlibRenderer.
+    """
+    if mode not in ("slider", "animation"):
+        raise ValueError("mode must be 'slider' or 'animation'")
+
+    # Set up FK functions
+    batched_fk_backbone = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
+    batched_fk_tendons = jax.vmap(
         robot.forward_kinematics_active_tendons, in_axes=(None, 0), out_axes=1
     )
-    L_max = jnp.sum(robot.L)
+    L_max = float(jnp.sum(robot.L))
+    s_ps = jnp.linspace(0, L_max, num_points)
 
-    width = jnp.linalg.norm(robot.L) * 3
-    height = width
-
-    # backbone linewidth
-    backbone_lw = 4  # float(jnp.max(robot.r) * 1.25e3)
+    width = L_max * 3
+    backbone_lw = 4
 
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
+    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])
 
-    # ---------------------------------------------------
     # Precompute all trajectories
-    # ---------------------------------------------------
-    batched_robot_curve = jax.vmap(
-        lambda q: draw_robot_curve(robot, L_max, q, num_points)
-    )
-    batched_tendon_curve = jax.vmap(
-        lambda q: draw_tendon_curves(
-            batched_forward_kinematics_tendons, L_max, q, num_points
-        )
-    )
+    def compute_curves(q):
+        backbone = batched_fk_backbone(q, s_ps)[:, :3, 3]
+        tendons = batched_fk_tendons(q, s_ps)
+        return backbone, tendons
 
-    all_robot_curves = batched_robot_curve(q_list)  # (T, num_points, 3)
-    all_tendon_curves = batched_tendon_curve(q_list)  # (T, n_actuators, num_points, 3)
+    all_curves = jax.vmap(compute_curves)(q_list)
+    all_robot_curves = np.array(all_curves[0])  # (T, num_points, 3)
+    all_tendon_curves = np.array(all_curves[1])  # (T, n_actuators, num_points, 3)
 
-    # ---------------------------------------------------
-    # Animation branch
-    # ---------------------------------------------------
-    if animation:
-        # initialize line objects once
-        (line_robot,) = ax.plot([], [], [], lw=backbone_lw, color="blue", alpha=0.45)
-        lines = [line_robot]
-        for _ in range(robot.num_actuators):
-            (ll,) = ax.plot([], [], [], lw=2, color="red")
-            lines.append(ll)
+    # Initialize line objects
+    (line_robot,) = ax.plot([], [], [], lw=backbone_lw, color="blue", alpha=0.45)
+    lines = [line_robot]
+    for _ in range(robot.num_actuators):
+        (ll,) = ax.plot([], [], [], lw=2, color="red")
+        lines.append(ll)
 
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(-width / 2, width / 2)
-        ax.set_zlim(0, height)
-        ax.set_xlabel("X [m]")
-        ax.set_ylabel("Y [m]")
-        ax.set_zlabel("Z [m]")
+    ax.set_xlim(-width / 2, width / 2)
+    ax.set_ylim(-width / 2, width / 2)
+    ax.set_zlim(0, width)
+    ax.set_xlabel("X [m]")
+    ax.set_ylabel("Y [m]")
+    ax.set_zlabel("Z [m]")
+
+    if mode == "animation":
         title_text = ax.set_title("t = 0.00 s")
 
         def init():
-            for l in lines:
-                l.set_data([], [])
-                l.set_3d_properties([])
+            for line in lines:
+                line.set_data([], [])
+                line.set_3d_properties([])
             title_text.set_text("t = 0.00 s")
             return lines + [title_text]
 
         def update(frame_idx):
-            curve_r = all_robot_curves[frame_idx]  # (num_points, 3)
-            curves_t = all_tendon_curves[frame_idx]  # (n_actuators, num_points, 3)
+            curve_r = all_robot_curves[frame_idx]
+            curves_t = all_tendon_curves[frame_idx]
 
-            # update robot backbone
             lines[0].set_data(curve_r[:, 0], curve_r[:, 1])
             lines[0].set_3d_properties(curve_r[:, 2])
 
-            # update tendons
             for i in range(robot.num_actuators):
                 lines[i + 1].set_data(curves_t[i, :, 0], curves_t[i, :, 1])
                 lines[i + 1].set_3d_properties(curves_t[i, :, 2])
@@ -142,46 +99,25 @@ def animate_robot_tendons_matplotlib(
             return lines + [title_text]
 
         ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
+            fig, update, frames=len(q_list), init_func=init, blit=False, interval=interval
         )
 
         if show:
             plt.show()
         plt.close(fig)
-        return HTML(ani.to_jshtml())
+        return ani
 
-    # ---------------------------------------------------
-    # Slider branch
-    # ---------------------------------------------------
-    elif slider:
-        (line_robot,) = ax.plot([], [], [], lw=backbone_lw, color="blue", alpha=0.45)
-        lines = [line_robot]
-        for _ in range(robot.num_actuators):
-            (ll,) = ax.plot([], [], [], lw=2, color="red")
-            lines.append(ll)
-
+    else:  # slider mode
         def update_plot(frame_idx):
+            frame_idx = int(frame_idx)
             curve_r = all_robot_curves[frame_idx]
             curves_t = all_tendon_curves[frame_idx]
 
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(-width / 2, width / 2)
-            ax.set_zlim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
             ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
 
-            # robot backbone
             lines[0].set_data(curve_r[:, 0], curve_r[:, 1])
             lines[0].set_3d_properties(curve_r[:, 2])
 
-            # tendons
             for i in range(robot.num_actuators):
                 lines[i + 1].set_data(curves_t[i, :, 0], curves_t[i, :, 1])
                 lines[i + 1].set_3d_properties(curves_t[i, :, 2])
@@ -189,24 +125,15 @@ def animate_robot_tendons_matplotlib(
             fig.canvas.draw_idle()
 
         slider_widget = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
+            ax=ax_slider, label="Frame", valmin=0, valmax=len(t_list) - 1, valinit=0, valstep=1
         )
         slider_widget.on_changed(update_plot)
-
-        update_plot(0)  # Initial frame
+        update_plot(0)
 
         if show:
             plt.show()
         plt.close(fig)
-
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )
+        return None
 
 
 if __name__ == "__main__":
@@ -416,10 +343,9 @@ if __name__ == "__main__":
     # =====================================================
     animate_robot_tendons_matplotlib(
         robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
+        t_list=ts,
+        q_list=q_ts,
         num_points=50,
-        interval=100,  # ms
-        animation=False,
-        slider=True,
-    )  # '''
+        interval=100,
+        mode="slider",
+    )

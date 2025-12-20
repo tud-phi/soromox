@@ -61,22 +61,51 @@ The model of the kinematics and dynamics of the planar HSA robot are part of the
 
 ## Installation
 
-The plugin can be installed from PyPI:
+The package can be installed from PyPI using pip:
 
 ```bash
 pip install soromox
 ```
 
-or locally from the source code:
+or using [uv](https://docs.astral.sh/uv/) (recommended for faster installation):
 
 ```bash
-pip install -e .
+uv pip install soromox
 ```
 
-If you want to run the examples, you will also need to install the following dependencies:
+### Development Installation
+
+For local development from the source code:
 
 ```bash
+# Using pip
+pip install -e .
+
+# Using uv
+uv pip install -e .
+```
+
+If you want to run the examples, you will also need to install the additional dependencies:
+
+```bash
+# Using pip
 pip install -e ".[examples]"
+
+# Using uv
+uv pip install -e ".[examples]"
+```
+
+### Using uv for Project Management
+
+You can also use `uv` to manage the project with a virtual environment:
+
+```bash
+# Create a virtual environment and install the package
+uv venv
+uv pip install -e ".[dev,examples]"
+
+# Or use uv sync for reproducible installs (creates uv.lock)
+uv sync --extra dev --extra examples
 ```
 
 ## Usage

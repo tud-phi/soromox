@@ -108,6 +108,7 @@ dependencies = [ # Optional
   "dill",
   "equinox",
   "jax",
+  "matplotlib",
   "numpy",
   "opencv-python",
   "quadax",
@@ -152,7 +153,7 @@ docs = [
 examples = [
     "ipython",
     "jaxopt",
-    "matplotlib",
+    "open3d",
     "seaborn",
 ]
 test = [

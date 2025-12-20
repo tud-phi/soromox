@@ -12,10 +12,7 @@ from soromox.systems.gvs.attributes import (
 # from soromox.systems.gvs.core import GVS
 from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
 from functools import partial
-from IPython.display import HTML
-from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
 import optimistix as optx
 import equinox as eqx
 import optax
