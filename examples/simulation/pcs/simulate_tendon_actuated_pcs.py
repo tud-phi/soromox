@@ -241,4 +241,4 @@ if __name__ == "__main__":
         # tube_resolution=100,
         viewer_backend="legacy",
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts)
+    renderer.render_sequence(ts=ts, q_ts=q_ts, output_path="video.mp4")

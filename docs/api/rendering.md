@@ -50,6 +50,11 @@ BaseContinuumSoftRobotRenderer (abstract base)
     # Animated playback with keyboard controls
     renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True)
 
+    # Save directly to a video (requires ffmpeg on PATH)
+    renderer.render_sequence(ts, q_ts, playback_speed=1.0, output_path="trajectory.mp4")
+
+    # Note: GUI video capture uses Open3D's SceneWidget; install open3d>=0.18.
+
     # Headless capture
     img = renderer.render_frame(q)
     ```

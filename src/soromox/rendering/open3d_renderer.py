@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import copy
 import os
+import subprocess
 import time
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -236,6 +237,66 @@ def _expand_colors(
     if len(palette) == 0:
         palette = [(0.1, 0.45, 1.0)]
     return [palette[i % len(palette)] for i in range(S)]
+
+
+class _FFmpegVideoWriter:
+    """Minimal ffmpeg pipe for RGB frames."""
+
+    def __init__(self, path: str, width: int, height: int, fps: float):
+        self.path = path
+        self._stderr_log: Optional[str] = None
+        self.proc = subprocess.Popen(
+            [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "rawvideo",
+                "-vcodec",
+                "rawvideo",
+                "-pix_fmt",
+                "rgb24",
+                "-s",
+                f"{width}x{height}",
+                "-r",
+                f"{fps}",
+                "-i",
+                "-",
+                "-an",
+                "-vcodec",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                path,
+            ],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+
+    def write(self, frame: np.ndarray) -> None:
+        if self.proc is None or self.proc.stdin is None:
+            return
+        self.proc.stdin.write(frame.tobytes())
+
+    def close(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            if self.proc.stdin:
+                self.proc.stdin.close()
+            if self.proc.stderr:
+                try:
+                    err = self.proc.stderr.read()
+                    if err:
+                        self._stderr_log = err.decode("utf-8", errors="ignore")
+                except Exception:
+                    pass
+        finally:
+            self.proc.wait()
+
+    @property
+    def stderr_log(self) -> Optional[str]:
+        return self._stderr_log
 
 
 def _mesh_center(mesh: "o3d.geometry.TriangleMesh") -> np.ndarray:
@@ -782,136 +843,6 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 ls = _make_polyline_lineset(tendon_curves[i], color=self.tendon_color)
                 vis.add_geometry(ls)
 
-    def _render_backbone_batch(
-        self,
-        all_curves: np.ndarray,
-        ts: np.ndarray,
-        color_overrides: Optional[List[Optional[Tuple[float, float, float]]]],
-        record_dir: Optional[str],
-        record_every_n: int,
-        record_prefix: str,
-        loop: bool,
-        playback_speed: float,
-        window_name: str,
-        extra_init=None,
-        extra_update=None,
-    ) -> None:
-        """Shared rendering routine for a batch of backbone curves.
-
-        all_curves: (N, T, P, 3) array of backbone points.
-        color_overrides: list of per-robot colors (or None to use segment colors).
-        extra_init/extra_update: optional hooks for additional geometry (tendons, etc.).
-        """
-        N, T, P, _ = all_curves.shape
-
-        if record_dir is not None:
-            os.makedirs(record_dir, exist_ok=True)
-            print(f"[Open3D] Recording frames to: {record_dir}")
-
-        vis, ctrl = self._create_visualizer(window_name)
-
-        starts, ends, r_seg, S = self._compute_segment_splits(P)
-        seg_cols = _expand_colors(self.seg_colors, S)
-
-        # Create geometry for each robot
-        all_robot_spheres: List[List[List]] = []
-        all_base_plates: List = []
-        for robot_idx in range(N):
-            curve0 = all_curves[robot_idx, 0]
-            color_override = None
-            if color_overrides is not None and len(color_overrides) > robot_idx:
-                color_override = color_overrides[robot_idx]
-
-            base_mesh, robot_spheres = self._build_robot_geometry(
-                vis,
-                curve0,
-                starts,
-                ends,
-                r_seg,
-                seg_cols,
-                color_override=color_override,
-            )
-            all_base_plates.append(base_mesh)
-            all_robot_spheres.append(robot_spheres)
-
-        extra_state = extra_init(vis) if extra_init else None
-
-        initial_cam = ctrl.convert_to_pinhole_camera_parameters()
-        saved_cam_holder = [copy.deepcopy(initial_cam)]
-
-        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
-        state = {
-            "idx": 0,
-            "playing": True,
-            "last_tick": time.time(),
-            "dt_seq": dt_seq,
-        }
-
-        def _clamp(i: int) -> int:
-            return max(0, min(T - 1, i))
-
-        def _save_frame(i: int, force: bool = False) -> None:
-            if record_dir is None:
-                if force:
-                    vis.capture_screen_image(f"frame_{i:05d}.png", do_render=True)
-                return
-            if force or (i % record_every_n) == 0:
-                fname = os.path.join(record_dir, f"{record_prefix}{i:05d}.png")
-                vis.capture_screen_image(fname, do_render=True)
-
-        def update_frame(i: int) -> None:
-            i = _clamp(i)
-            state["idx"] = i
-
-            for robot_idx in range(N):
-                curve = all_curves[robot_idx, i]
-                base_mesh = all_base_plates[robot_idx]
-                robot_spheres = all_robot_spheres[robot_idx]
-                self._update_robot_geometry(
-                    vis, curve, base_mesh, robot_spheres, starts, ends
-                )
-
-            if extra_update is not None:
-                extra_update(vis, i, extra_state)
-
-            vis.poll_events()
-            vis.update_renderer()
-            _save_frame(i)
-
-        self._register_key_callbacks(
-            vis=vis,
-            ctrl=ctrl,
-            state=state,
-            update_frame=update_frame,
-            save_frame_fn=_save_frame,
-            initial_cam=initial_cam,
-            saved_cam_holder=saved_cam_holder,
-            print_prefix="[Open3D]",
-        )
-
-        update_frame(0)
-
-        print(
-            f"{window_name}: Space=Play/Pause  ←/→=Step  H=Home  "
-            "S=Snapshot  R=ResetCam  C=CaptureCam  L=LoadCam  V=PrintCam  Q/Esc=Quit"
-        )
-
-        while vis.poll_events():
-            now = time.time()
-            dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
-            if state["playing"] and (now - state["last_tick"] >= dt_now):
-                nxt = state["idx"] + 1
-                if nxt >= T:
-                    if loop:
-                        nxt = 0
-                    else:
-                        state["playing"] = False
-                        nxt = T - 1
-                update_frame(nxt)
-                state["last_tick"] = now
-            vis.update_renderer()
-            time.sleep(0.001)
-
     def render_sequence(  # type: ignore[override]
         self,
         ts: Array,
@@ -1020,12 +951,6 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             n_act = all_tendon_curves.shape[1]
 
         color_overrides = [None]  # Use per-segment colors for single robot
-        if self.viewer_backend == "gui" and output_path is not None:
-            raise NotImplementedError(
-                "Recording to disk is not supported with viewer_backend='gui'. "
-                "Use viewer_backend='legacy' for recording."
-            )
-
         tendon_curves_gui = (
             all_tendon_curves[None, ...] if all_tendon_curves is not None else None
         )
@@ -1108,6 +1033,25 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 extra_update=extra_update,
             )
 
+        if self.viewer_backend == "gui":
+            return self._render_backbone_batch_gui(
+                all_curves=all_robot_curves[None, ...],  # (1, T, P, 3)
+                ts=ts,
+                color_overrides=color_overrides,
+                loop=loop,
+                playback_speed=playback_speed,
+                window_name="Robot Animation (Open3D)",
+                record_path=record_dir,
+                record_prefix=record_prefix,
+                record_every_n=record_every_n,
+                tendon_curves=tendon_curves_gui,
+                target_point=target_point,
+                target_radius=target_radius,
+                target_color=target_color,
+                obstacles=obstacles,
+                moving_spheres=moving_spheres,
+            )
+
         if output_path is None:
             return self._render_backbone_batch_gui(
                 all_curves=all_robot_curves[None, ...],  # (1, T, P, 3)
@@ -1116,6 +1060,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 loop=loop,
                 playback_speed=playback_speed,
                 window_name="Robot Animation (Open3D)",
+                record_path=None,
+                record_prefix=record_prefix,
+                record_every_n=record_every_n,
                 tendon_curves=tendon_curves_gui,
                 target_point=target_point,
                 target_radius=target_radius,
@@ -1149,6 +1096,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         loop: bool,
         playback_speed: float,
         window_name: str,
+        record_path: Optional[str],
+        record_prefix: str = "frame_",
+        record_every_n: int = 1,
         tendon_curves: Optional[np.ndarray] = None,
         target_point: Optional[Tuple[float, float, float]] = None,
         target_radius: float = 0.01,
@@ -1183,6 +1133,41 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             if key not in material_cache:
                 material_cache[key] = self._make_mesh_material(key)
             return material_cache[key]
+
+        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
+        frame_dir: Optional[str] = None
+        video_writer: Optional[_FFmpegVideoWriter] = None
+        video_path: Optional[str] = None
+        if record_path is not None:
+            ext = os.path.splitext(record_path)[1].lower()
+            if ext in {".mp4", ".mov", ".avi", ".mkv"}:
+                video_path = record_path
+                fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
+                try:
+                    video_writer = _FFmpegVideoWriter(
+                        video_path, int(self.width), int(self.height), fps_est
+                    )
+                    print(
+                        f"[Open3D] GUI: writing video to {video_path} (fps≈{fps_est:.2f})"
+                    )
+                except FileNotFoundError:
+                    frame_dir = os.path.splitext(video_path)[0]
+                    os.makedirs(frame_dir, exist_ok=True)
+                    print(
+                        "[Open3D] ffmpeg not found; falling back to frame directory "
+                        f"{frame_dir}"
+                    )
+                except Exception as exc:
+                    frame_dir = os.path.splitext(video_path)[0]
+                    os.makedirs(frame_dir, exist_ok=True)
+                    print(
+                        f"[Open3D] ffmpeg failed to start ({exc}); "
+                        f"falling back to frame directory {frame_dir}"
+                    )
+            else:
+                frame_dir = record_path
+                os.makedirs(frame_dir, exist_ok=True)
+                print(f"[Open3D] GUI: recording frames to {frame_dir}")
 
         def populate_scene(scene: rendering.Open3DScene, frame_idx: int):
             scene.clear_geometry()
@@ -1316,7 +1301,6 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     "upgrade Open3D."
                 ) from exc_lookat
 
-        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
         state = {
             "idx": 0,
             "playing": True,
@@ -1324,10 +1308,62 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             "dt_seq": dt_seq,
         }
 
+        def _record_frame(i: int, force: bool = False) -> None:
+            nonlocal frame_dir, video_writer, video_path
+            if video_writer is not None:
+                if not (force or (i % record_every_n) == 0):
+                    return
+                try:
+                    img = scene_widget.scene.render_to_image()
+                    frame = np.asarray(img)
+                    if frame.ndim == 3 and frame.shape[2] == 4:
+                        frame = frame[:, :, :3]
+                    if frame.dtype != np.uint8:
+                        frame = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
+                    video_writer.write(frame)
+                    return
+                except BrokenPipeError:
+                    if frame_dir is None:
+                        frame_dir = os.path.splitext(video_path or "frames")[0]
+                        os.makedirs(frame_dir, exist_ok=True)
+                        print(
+                            "[Open3D] GUI: ffmpeg stream failed (broken pipe); "
+                            f"falling back to frame directory {frame_dir}"
+                        )
+                    if video_writer.stderr_log:
+                        print(f"[Open3D] ffmpeg stderr: {video_writer.stderr_log}")
+                    video_writer = None
+                except Exception as exc:
+                    if frame_dir is None:
+                        frame_dir = os.path.splitext(video_path or "frames")[0]
+                        os.makedirs(frame_dir, exist_ok=True)
+                        print(
+                            f"[Open3D] GUI: ffmpeg stream failed ({exc}); "
+                            f"falling back to frame directory {frame_dir}"
+                        )
+                    if video_writer.stderr_log:
+                        print(f"[Open3D] ffmpeg stderr: {video_writer.stderr_log}")
+                    video_writer = None
+            if frame_dir is None:
+                return
+            if force or (i % record_every_n) == 0:
+                img = scene_widget.scene.render_to_image()
+                frame_np = np.asarray(img)
+                if frame_np.ndim == 3 and frame_np.shape[2] == 4:
+                    frame_np = frame_np[:, :, :3]
+                if frame_np.dtype != np.uint8:
+                    frame_np = np.clip(frame_np * 255.0, 0.0, 255.0).astype(np.uint8)
+                img_to_save = o3d.geometry.Image(frame_np)
+                fname = os.path.join(frame_dir, f"{record_prefix}{i:05d}.png")
+                o3d.io.write_image(fname, img_to_save)
+
         def update_frame(i: int):
             i = max(0, min(T - 1, i))
             state["idx"] = i
             populate_scene(scene_widget.scene, i)
+            _record_frame(i)
+
+        _record_frame(0, force=True)
 
         def on_key(event):
             if event.type == gui.KeyEvent.DOWN:
@@ -1361,7 +1397,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             print(
                 f"{window_name} (new backend): Space=Play/Pause  ←/→=Step  Q=close window"
             )
-            app.run()
+            try:
+                app.run()
+            finally:
+                if video_writer is not None:
+                    video_writer.close()
             return
 
         # Older GUI builds: emulate ticking manually via run_one_tick if available.
@@ -1399,6 +1439,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     state["last_tick"] = now
                 app.run_one_tick()
                 time.sleep(0.01)
+            if video_writer is not None:
+                video_writer.close()
             return
 
         raise RuntimeError(
@@ -1429,14 +1471,45 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         """
         N, T, P, _ = all_curves.shape
 
-        if record_dir is not None:
-            os.makedirs(record_dir, exist_ok=True)
-            print(f"[Open3D] Recording frames to: {record_dir}")
-
         vis, ctrl = self._create_visualizer(window_name)
 
         starts, ends, r_seg, S = self._compute_segment_splits(P)
         seg_cols = _expand_colors(self.seg_colors, S)
+
+        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
+        frame_dir: Optional[str] = None
+        video_writer: Optional[_FFmpegVideoWriter] = None
+        video_path: Optional[str] = None
+        if record_dir is not None:
+            ext = os.path.splitext(record_dir)[1].lower()
+            if ext in {".mp4", ".mov", ".avi", ".mkv"}:
+                video_path = record_dir
+                fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
+                try:
+                    video_writer = _FFmpegVideoWriter(
+                        video_path, int(self.width), int(self.height), fps_est
+                    )
+                    print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")
+                except FileNotFoundError:
+                    fallback_dir = os.path.splitext(video_path)[0]
+                    frame_dir = fallback_dir
+                    os.makedirs(frame_dir, exist_ok=True)
+                    print(
+                        "[Open3D] ffmpeg not found; falling back to frame directory "
+                        f"{frame_dir}"
+                    )
+                except Exception as exc:
+                    fallback_dir = os.path.splitext(video_path)[0]
+                    frame_dir = fallback_dir
+                    os.makedirs(frame_dir, exist_ok=True)
+                    print(
+                        f"[Open3D] ffmpeg failed to start ({exc}); "
+                        f"falling back to frame directory {frame_dir}"
+                    )
+            else:
+                frame_dir = record_dir
+                os.makedirs(frame_dir, exist_ok=True)
+                print(f"[Open3D] Recording frames to: {frame_dir}")
 
         # Create geometry for each robot
         all_robot_spheres: List[List[List]] = []
@@ -1464,7 +1537,6 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         initial_cam = ctrl.convert_to_pinhole_camera_parameters()
         saved_cam_holder = [copy.deepcopy(initial_cam)]
 
-        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
         state = {
             "idx": 0,
             "playing": True,
@@ -1475,13 +1547,44 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         def _clamp(i: int) -> int:
             return max(0, min(T - 1, i))
 
+        def _fallback_to_frames(reason: str):
+            nonlocal video_writer, frame_dir
+            if video_writer is not None:
+                try:
+                    video_writer.close()
+                    if video_writer.stderr_log:
+                        print(f"[Open3D] ffmpeg stderr: {video_writer.stderr_log}")
+                except Exception:
+                    pass
+            video_writer = None
+            if frame_dir is None:
+                fallback_dir = os.path.splitext(video_path or "frames")[0]
+                frame_dir = fallback_dir
+                os.makedirs(frame_dir, exist_ok=True)
+                print(
+                    f"[Open3D] ffmpeg stream failed ({reason}); "
+                    f"falling back to frame directory {frame_dir}"
+                )
+
         def _save_frame(i: int, force: bool = False) -> None:
-            if record_dir is None:
+            if video_writer is not None:
+                try:
+                    img = np.asarray(
+                        vis.capture_screen_float_buffer(do_render=True), dtype=np.float32
+                    )
+                    frame = np.clip(img * 255.0, 0.0, 255.0).astype(np.uint8)
+                    video_writer.write(frame)
+                    return
+                except BrokenPipeError:
+                    _fallback_to_frames("broken pipe")
+                except Exception as exc:
+                    _fallback_to_frames(str(exc))
+            if frame_dir is None:
                 if force:
                     vis.capture_screen_image(f"frame_{i:05d}.png", do_render=True)
                 return
             if force or (i % record_every_n) == 0:
-                fname = os.path.join(record_dir, f"{record_prefix}{i:05d}.png")
+                fname = os.path.join(frame_dir, f"{record_prefix}{i:05d}.png")
                 vis.capture_screen_image(fname, do_render=True)
 
         def update_frame(i: int) -> None:
@@ -1536,6 +1639,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 state["last_tick"] = now
             vis.update_renderer()
             time.sleep(0.001)
+        if video_writer is not None:
+            video_writer.close()
 
 
     def _create_visualizer(self, window_name: str):
@@ -1697,12 +1802,6 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             all_tendon_curves = all_tendon_curves + offsets_np[:, None, None, None, :]
             n_act = all_tendon_curves.shape[2]
 
-        if self.viewer_backend == "gui" and output_path is not None:
-            raise NotImplementedError(
-                "Recording to disk is not supported with viewer_backend='gui'. "
-                "Use viewer_backend='legacy' for recording."
-            )
-
         def extra_init(vis):
             tendon_ls: List[List] = []
             if all_tendon_curves is not None and n_act > 0:
@@ -1745,6 +1844,25 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 extra_update=extra_update,
             )
 
+        if self.viewer_backend == "gui":
+            return self._render_backbone_batch_gui(
+                all_curves=all_curves,
+                ts=np.asarray(ts),
+                color_overrides=list(robot_colors),
+                loop=loop,
+                playback_speed=playback_speed,
+                window_name=f"Robot Animation ({N} robots)",
+                record_path=record_dir,
+                record_prefix=record_prefix,
+                record_every_n=record_every_n,
+                tendon_curves=all_tendon_curves,
+                target_point=target_point,
+                target_radius=target_radius,
+                target_color=target_color,
+                obstacles=obstacles,
+                moving_spheres=moving_spheres,
+            )
+
         if output_path is None:
             return self._render_backbone_batch_gui(
                 all_curves=all_curves,
@@ -1753,6 +1871,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 loop=loop,
                 playback_speed=playback_speed,
                 window_name=f"Robot Animation ({N} robots)",
+                record_path=None,
+                record_prefix=record_prefix,
+                record_every_n=record_every_n,
                 tendon_curves=all_tendon_curves,
                 target_point=target_point,
                 target_radius=target_radius,

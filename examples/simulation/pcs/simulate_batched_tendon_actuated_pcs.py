@@ -123,8 +123,6 @@ def main():
         robot,
         grid_spacing=grid_spacing,
         robot_colors="viridis",
-        sphere_resolution=16,
-        body_alpha=0.35,
     )
     renderer.render_sequence(ts=ts, q_ts=q_ts_batched)
 
