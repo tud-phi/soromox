@@ -843,6 +843,94 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 ls = _make_polyline_lineset(tendon_curves[i], color=self.tendon_color)
                 vis.add_geometry(ls)
 
+    @staticmethod
+    def _normalize_color_array(
+        colors: Optional[Array], count: int, default_color: Tuple[float, float, float]
+    ) -> np.ndarray:
+        """Validate and normalize color arrays to shape (count, 3)."""
+        if colors is None:
+            return np.tile(np.asarray(default_color, dtype=np.float64), (count, 1))
+        colors_np = np.asarray(colors, dtype=np.float64)
+        if colors_np.ndim != 2 or colors_np.shape[0] != count:
+            raise ValueError(
+                f"Color array must have shape ({count}, 3) or ({count}, 4); "
+                f"got {colors_np.shape}"
+            )
+        if colors_np.shape[1] not in (3, 4):
+            raise ValueError(
+                f"Color array must have 3 or 4 channels; got {colors_np.shape[1]}"
+            )
+        if colors_np.shape[1] == 4:
+            colors_np = colors_np[:, :3]
+        return colors_np
+
+    def _prepare_static_spheres(
+        self,
+        static_spheres_positions: Optional[Array],
+        static_spheres_radii: Optional[Array],
+        static_spheres_colors: Optional[Array],
+        default_color: Tuple[float, float, float] = (0.8, 0.2, 0.2),
+    ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """Validate static sphere inputs and return (centers, radii, colors)."""
+        if static_spheres_positions is None:
+            return None
+
+        centers = np.asarray(static_spheres_positions, dtype=np.float64)
+        if centers.ndim != 2 or centers.shape[1] != 3:
+            raise ValueError(
+                f"static_spheres_positions must have shape (N, 3); got shape {centers.shape}"
+            )
+        N = centers.shape[0]
+
+        if static_spheres_radii is None:
+            raise ValueError(
+                "static_spheres_radii is required when static_spheres_positions is set"
+            )
+        radii = np.asarray(static_spheres_radii, dtype=np.float64).reshape(-1)
+        if radii.shape[0] != N:
+            raise ValueError(
+                f"static_spheres_radii must have length {N}; got length {radii.shape[0]}"
+            )
+
+        colors = self._normalize_color_array(static_spheres_colors, N, default_color)
+        return centers, radii, colors
+
+    def _prepare_dynamic_spheres(
+        self,
+        dynamic_spheres_positions: Optional[Array],
+        dynamic_spheres_radii: Optional[Array],
+        dynamics_spheres_colors: Optional[Array],
+        expected_T: Optional[int],
+        default_color: Tuple[float, float, float] = (0.2, 0.2, 0.8),
+    ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
+        """Validate dynamic sphere inputs and return (trajectories, radii, colors)."""
+        if dynamic_spheres_positions is None:
+            return None
+
+        centers = np.asarray(dynamic_spheres_positions, dtype=np.float64)
+        if centers.ndim != 3 or centers.shape[2] != 3:
+            raise ValueError(
+                f"dynamic_spheres_positions must have shape (N, T, 3); got shape {centers.shape}"
+            )
+        N, T_dyn, _ = centers.shape
+        if expected_T is not None and T_dyn != expected_T:
+            raise ValueError(
+                f"dynamic_spheres_positions time dimension ({T_dyn}) must match trajectory length ({expected_T})"
+            )
+
+        if dynamic_spheres_radii is None:
+            raise ValueError(
+                "dynamic_spheres_radii is required when dynamic_spheres_positions is set"
+            )
+        radii = np.asarray(dynamic_spheres_radii, dtype=np.float64).reshape(-1)
+        if radii.shape[0] != N:
+            raise ValueError(
+                f"dynamic_spheres_radii must have length {N}; got length {radii.shape[0]}"
+            )
+
+        colors = self._normalize_color_array(dynamics_spheres_colors, N, default_color)
+        return centers, radii, colors
+
     def render_sequence(  # type: ignore[override]
         self,
         ts: Array,
@@ -852,17 +940,18 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         loop: bool = False,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
-        target_point: Optional[Tuple[float, float, float]] = None,
-        target_radius: float = 0.01,
-        target_color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
-        obstacles: Optional[
-            List[Tuple[Tuple[float, float, float], float, Tuple[float, float, float]]]
-        ] = None,
-        moving_spheres: Optional[
-            List[Tuple[np.ndarray, float, Tuple[float, float, float]]]
-        ] = None,
+        static_spheres_positions: Optional[Array] = None,
+        static_spheres_radii: Optional[Array] = None,
+        static_spheres_colors: Optional[Array] = None,
+        dynamic_spheres_positions: Optional[Array] = None,
+        dynamic_spheres_radii: Optional[Array] = None,
+        dynamics_spheres_colors: Optional[Array] = None,
     ) -> None:
-        """Dispatch to single-robot or batched rendering based on q_ts shape."""
+        """Dispatch to single-robot or batched rendering based on q_ts shape.
+
+        Static spheres use (N, 3) centers; dynamic spheres use (N, T, 3) centers with
+        per-sphere radii and RGB/RGBA colors.
+        """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
                 "Open3D is not installed. Install with: pip install open3d"
@@ -879,11 +968,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 loop=loop,
                 record_every_n=record_every_n,
                 record_prefix=record_prefix,
-                target_point=target_point,
-                target_radius=target_radius,
-                target_color=target_color,
-                obstacles=obstacles,
-                moving_spheres=moving_spheres,
+                static_spheres_positions=static_spheres_positions,
+                static_spheres_radii=static_spheres_radii,
+                static_spheres_colors=static_spheres_colors,
+                dynamic_spheres_positions=dynamic_spheres_positions,
+                dynamic_spheres_radii=dynamic_spheres_radii,
+                dynamics_spheres_colors=dynamics_spheres_colors,
             )
 
         if q_ts_arr.ndim != 2:
@@ -899,11 +989,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             loop=loop,
             record_every_n=record_every_n,
             record_prefix=record_prefix,
-            target_point=target_point,
-            target_radius=target_radius,
-            target_color=target_color,
-            obstacles=obstacles,
-            moving_spheres=moving_spheres,
+            static_spheres_positions=static_spheres_positions,
+            static_spheres_radii=static_spheres_radii,
+            static_spheres_colors=static_spheres_colors,
+            dynamic_spheres_positions=dynamic_spheres_positions,
+            dynamic_spheres_radii=dynamic_spheres_radii,
+            dynamics_spheres_colors=dynamics_spheres_colors,
         )
 
     def _render_sequence_single(
@@ -915,15 +1006,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         loop: bool = False,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
-        target_point: Optional[Tuple[float, float, float]] = None,
-        target_radius: float = 0.01,
-        target_color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
-        obstacles: Optional[
-            List[Tuple[Tuple[float, float, float], float, Tuple[float, float, float]]]
-        ] = None,
-        moving_spheres: Optional[
-            List[Tuple[np.ndarray, float, Tuple[float, float, float]]]
-        ] = None,
+        static_spheres_positions: Optional[Array] = None,
+        static_spheres_radii: Optional[Array] = None,
+        static_spheres_colors: Optional[Array] = None,
+        dynamic_spheres_positions: Optional[Array] = None,
+        dynamic_spheres_radii: Optional[Array] = None,
+        dynamics_spheres_colors: Optional[Array] = None,
     ) -> None:
         """Native Open3D animated playback with keyboard controls."""
         record_dir = output_path  # Use output_path as record directory
@@ -955,29 +1043,40 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             all_tendon_curves[None, ...] if all_tendon_curves is not None else None
         )
 
-        def extra_init(vis):
-            # Target point
-            if target_point is not None:
-                tgt = np.array(target_point, dtype=np.float64).reshape(3)
-                target_mesh = _make_target_sphere(tgt, target_radius, target_color)
-                vis.add_geometry(target_mesh)
+        static_spheres_data = self._prepare_static_spheres(
+            static_spheres_positions=static_spheres_positions,
+            static_spheres_radii=static_spheres_radii,
+            static_spheres_colors=static_spheres_colors,
+        )
+        dynamic_spheres_data = self._prepare_dynamic_spheres(
+            dynamic_spheres_positions=dynamic_spheres_positions,
+            dynamic_spheres_radii=dynamic_spheres_radii,
+            dynamics_spheres_colors=dynamics_spheres_colors,
+            expected_T=T,
+        )
 
-            # Static obstacles
-            if obstacles:
-                for ctr, rad, col in obstacles:
-                    ctr_np = np.array(ctr, dtype=np.float64).reshape(3)
-                    mesh = _make_obstacle_sphere(ctr_np, float(rad), col)
+        def extra_init(vis):
+            if static_spheres_data is not None:
+                centers, radii, colors = static_spheres_data
+                for ctr, rad, col in zip(centers, radii, colors):
+                    mesh = _make_sphere(
+                        ctr,
+                        float(rad),
+                        tuple(col),
+                        self.sphere_resolution,
+                    )
                     vis.add_geometry(mesh)
 
             dynamic_sphere_meshes = []
             dynamic_sphere_trajs = []
-            if moving_spheres:
-                for centers_T3, rad, col in moving_spheres:
+            if dynamic_spheres_data is not None:
+                dyn_centers, dyn_radii, dyn_colors = dynamic_spheres_data
+                for centers_T3, rad, col in zip(dyn_centers, dyn_radii, dyn_colors):
                     centers_np = np.asarray(centers_T3, dtype=np.float64)
                     mesh0 = _make_sphere(
                         centers_np[0],
                         float(rad),
-                        col,
+                        tuple(col),
                         max(12, self.sphere_resolution // 2),
                     )
                     dynamic_sphere_meshes.append(mesh0)
@@ -995,8 +1094,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
             return {
                 "tendon_ls": tendon_ls,
-                "moving_meshes": dynamic_sphere_meshes,
-                "moving_trajs": dynamic_sphere_trajs,
+                "dynamic_meshes": dynamic_sphere_meshes,
+                "dynamic_trajs": dynamic_sphere_trajs,
             }
 
         def extra_update(vis, frame_idx: int, extra_state):
@@ -1010,9 +1109,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     tendon_ls[k].points = o3d.utility.Vector3dVector(t_pts)
                     vis.update_geometry(tendon_ls[k])
 
-            # Update moving spheres
+            # Update dynamic spheres
             for mesh, traj in zip(
-                extra_state["moving_meshes"], extra_state["moving_trajs"]
+                extra_state["dynamic_meshes"], extra_state["dynamic_trajs"]
             ):
                 j_idx = min(frame_idx, traj.shape[0] - 1)
                 delta = traj[j_idx] - _mesh_center(mesh)
@@ -1045,11 +1144,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 record_prefix=record_prefix,
                 record_every_n=record_every_n,
                 tendon_curves=tendon_curves_gui,
-                target_point=target_point,
-                target_radius=target_radius,
-                target_color=target_color,
-                obstacles=obstacles,
-                moving_spheres=moving_spheres,
+                static_spheres_data=static_spheres_data,
+                dynamic_spheres_data=dynamic_spheres_data,
             )
 
         if output_path is None:
@@ -1064,11 +1160,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 record_prefix=record_prefix,
                 record_every_n=record_every_n,
                 tendon_curves=tendon_curves_gui,
-                target_point=target_point,
-                target_radius=target_radius,
-                target_color=target_color,
-                obstacles=obstacles,
-                moving_spheres=moving_spheres,
+                static_spheres_data=static_spheres_data,
+                dynamic_spheres_data=dynamic_spheres_data,
             )
 
         return self._render_backbone_batch(
@@ -1100,17 +1193,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         record_prefix: str = "frame_",
         record_every_n: int = 1,
         tendon_curves: Optional[np.ndarray] = None,
-        target_point: Optional[Tuple[float, float, float]] = None,
-        target_radius: float = 0.01,
-        target_color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
-        obstacles: Optional[
-            List[Tuple[Tuple[float, float, float], float, Tuple[float, float, float]]]
-        ] = None,
-        moving_spheres: Optional[
-            List[Tuple[np.ndarray, float, Tuple[float, float, float]]]
-        ] = None,
+        static_spheres_data: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
+        dynamic_spheres_data: Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]] = None,
     ) -> None:
-        """Interactive playback using Open3D's new rendering GUI backend."""
+        """Interactive playback using Open3D's new rendering GUI backend.
+
+        Static and dynamic spheres should be preprocessed via _prepare_* helpers.
+        """
         try:
             import open3d.visualization.gui as gui
             import open3d.visualization.rendering as rendering
@@ -1221,9 +1310,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                                 apply_color=False,
                                 apply_translation=True,
                             )
-                            scene.add_geometry(
-                                f"sphere_{robot_idx}_{s}_{p}", sp, mat_for(raw_color)
-                            )
+                        scene.add_geometry(
+                            f"sphere_{robot_idx}_{s}_{p}", sp, mat_for(raw_color)
+                        )
 
                 # Tendons
                 if tendon_curves is not None:
@@ -1239,29 +1328,36 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                             f"tendon_{robot_idx}_{k}", ls, mat_line
                         )
 
-            # Static extras
-            if target_point is not None:
-                tgt_mesh = _make_target_sphere(target_point, target_radius, target_color)
-                scene.add_geometry("target", tgt_mesh, mat_for(target_color))
-
-            if obstacles:
-                for obs_idx, (ctr, rad, col) in enumerate(obstacles):
-                    mesh = _make_obstacle_sphere(np.asarray(ctr), float(rad), col)
-                    scene.add_geometry(f"obstacle_{obs_idx}", mesh, mat_for(col))
-
-            if moving_spheres:
-                for mv_idx, (traj, rad, col) in enumerate(moving_spheres):
-                    centers = np.asarray(traj, dtype=np.float64)
-                    j_idx = min(frame_idx, centers.shape[0] - 1)
+            if static_spheres_data is not None:
+                centers, radii, colors = static_spheres_data
+                for idx, (ctr, rad, col) in enumerate(zip(centers, radii, colors)):
+                    rgb = tuple(np.asarray(col, dtype=np.float64).reshape(-1)[:3])
                     mesh = _make_sphere(
-                        centers[j_idx],
+                        ctr,
                         float(rad),
-                        col,
+                        rgb,
+                        self.sphere_resolution,
+                        apply_color=False,
+                        apply_translation=True,
+                    )
+                    scene.add_geometry(f"static_{idx}", mesh, mat_for(rgb))
+
+            if dynamic_spheres_data is not None:
+                centers_dyn, radii_dyn, colors_dyn = dynamic_spheres_data
+                for dyn_idx, (traj, rad, col) in enumerate(
+                    zip(centers_dyn, radii_dyn, colors_dyn)
+                ):
+                    j_idx = min(frame_idx, traj.shape[0] - 1)
+                    rgb = tuple(np.asarray(col, dtype=np.float64).reshape(-1)[:3])
+                    mesh = _make_sphere(
+                        traj[j_idx],
+                        float(rad),
+                        rgb,
                         max(12, self.sphere_resolution // 2),
                         apply_color=False,
                         apply_translation=True,
                     )
-                    scene.add_geometry(f"moving_{mv_idx}", mesh, mat_for(col))
+                    scene.add_geometry(f"dynamic_{dyn_idx}", mesh, mat_for(rgb))
 
         app = gui.Application.instance
         # Older Open3D versions lack is_running; use a guard flag instead.
@@ -1719,15 +1815,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         loop: bool = False,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
-        target_point: Optional[Tuple[float, float, float]] = None,
-        target_radius: float = 0.01,
-        target_color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
-        obstacles: Optional[
-            List[Tuple[Tuple[float, float, float], float, Tuple[float, float, float]]]
-        ] = None,
-        moving_spheres: Optional[
-            List[Tuple[np.ndarray, float, Tuple[float, float, float]]]
-        ] = None,
+        static_spheres_positions: Optional[Array] = None,
+        static_spheres_radii: Optional[Array] = None,
+        static_spheres_colors: Optional[Array] = None,
+        dynamic_spheres_positions: Optional[Array] = None,
+        dynamic_spheres_radii: Optional[Array] = None,
+        dynamics_spheres_colors: Optional[Array] = None,
     ) -> None:
         """Render multiple robots in parallel using Open3D."""
         record_dir = output_path
@@ -1750,6 +1843,18 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 f"ts length ({ts.shape[0]}) must match q_ts time dimension ({T})"
             )
         print(f"[Open3D] Rendering {N} robots, {T} timesteps")
+
+        static_spheres_data = self._prepare_static_spheres(
+            static_spheres_positions=static_spheres_positions,
+            static_spheres_radii=static_spheres_radii,
+            static_spheres_colors=static_spheres_colors,
+        )
+        dynamic_spheres_data = self._prepare_dynamic_spheres(
+            dynamic_spheres_positions=dynamic_spheres_positions,
+            dynamic_spheres_radii=dynamic_spheres_radii,
+            dynamics_spheres_colors=dynamics_spheres_colors,
+            expected_T=T,
+        )
 
         # Compute grid offsets if not provided
         base_offsets = self._base_offsets
@@ -1814,7 +1919,38 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                         robot_ls.append(ls)
                         vis.add_geometry(ls)
                     tendon_ls.append(robot_ls)
-            return {"tendon_ls": tendon_ls}
+            if static_spheres_data is not None:
+                centers, radii, colors = static_spheres_data
+                for ctr, rad, col in zip(centers, radii, colors):
+                    mesh = _make_sphere(
+                        ctr,
+                        float(rad),
+                        tuple(col),
+                        self.sphere_resolution,
+                    )
+                    vis.add_geometry(mesh)
+
+            dynamic_meshes = []
+            dynamic_trajs = []
+            if dynamic_spheres_data is not None:
+                dyn_centers, dyn_radii, dyn_colors = dynamic_spheres_data
+                for centers_T3, rad, col in zip(dyn_centers, dyn_radii, dyn_colors):
+                    centers_np = np.asarray(centers_T3, dtype=np.float64)
+                    mesh0 = _make_sphere(
+                        centers_np[0],
+                        float(rad),
+                        tuple(col),
+                        max(12, self.sphere_resolution // 2),
+                    )
+                    dynamic_meshes.append(mesh0)
+                    dynamic_trajs.append(centers_np)
+                    vis.add_geometry(mesh0)
+
+            return {
+                "tendon_ls": tendon_ls,
+                "dynamic_meshes": dynamic_meshes,
+                "dynamic_trajs": dynamic_trajs,
+            }
 
         def extra_update(vis, frame_idx: int, extra_state):
             tendon_ls = extra_state.get("tendon_ls", [])
@@ -1828,6 +1964,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                         )
                         ls.points = o3d.utility.Vector3dVector(t_pts)
                         vis.update_geometry(ls)
+            for mesh, traj in zip(
+                extra_state.get("dynamic_meshes", []), extra_state.get("dynamic_trajs", [])
+            ):
+                j_idx = min(frame_idx, traj.shape[0] - 1)
+                delta = traj[j_idx] - _mesh_center(mesh)
+                mesh.translate(delta, relative=True)
+                vis.update_geometry(mesh)
 
         if self.viewer_backend == "legacy":
             return self._render_backbone_batch(
@@ -1856,11 +1999,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 record_prefix=record_prefix,
                 record_every_n=record_every_n,
                 tendon_curves=all_tendon_curves,
-                target_point=target_point,
-                target_radius=target_radius,
-                target_color=target_color,
-                obstacles=obstacles,
-                moving_spheres=moving_spheres,
+                static_spheres_data=static_spheres_data,
+                dynamic_spheres_data=dynamic_spheres_data,
             )
 
         if output_path is None:
@@ -1875,11 +2015,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 record_prefix=record_prefix,
                 record_every_n=record_every_n,
                 tendon_curves=all_tendon_curves,
-                target_point=target_point,
-                target_radius=target_radius,
-                target_color=target_color,
-                obstacles=obstacles,
-                moving_spheres=moving_spheres,
+                static_spheres_data=static_spheres_data,
+                dynamic_spheres_data=dynamic_spheres_data,
             )
 
         return self._render_backbone_batch(
