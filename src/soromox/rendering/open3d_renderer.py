@@ -1471,6 +1471,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         window_name: str,
     ) -> None:
         """Interactive GUI viewer using SceneWidget."""
+        raise NotImplementedError("Open3D GUI backend doesn't work well yet.")
         try:
             import open3d.visualization.gui as gui
             import open3d.visualization.rendering as rendering
@@ -1481,11 +1482,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             ) from exc
 
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
-        video_writer, frame_dir, video_path = self._init_recorder(
-            record_cfg.path, dt_seq
-        )
+        # Recorder is initialized after we confirm capture support
+        video_writer: Optional[_FFmpegVideoWriter] = None
+        frame_dir: Optional[str] = None
+        video_path: Optional[str] = None
         material_cache: Dict[Tuple[float, float, float], rendering.MaterialRecord] = {}
         missing_render_to_image_warned = False
+        recording_enabled = {"ok": True}
 
         app = gui.Application.instance
         global _GUI_APP_INITIALIZED
@@ -1502,9 +1505,23 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         )
         window.add_child(scene_widget)
 
+        # Check capture support; disable recording pre-emptively if unsupported
+        _supports_capture = hasattr(scene_widget.scene, "render_to_image") or hasattr(
+            getattr(scene_widget.scene, "scene", None), "render_to_image"
+        )
+        if record_cfg.path and not _supports_capture:
+            print(
+                "[Open3D] GUI: capture not supported on this build; "
+                "record_path will be ignored."
+            )
+        else:
+            video_writer, frame_dir, video_path = self._init_recorder(
+                record_cfg.path, dt_seq
+            )
+
         def _grab_frame():
             """Best-effort frame capture across Open3D builds."""
-            nonlocal missing_render_to_image_warned
+            nonlocal missing_render_to_image_warned, recording_enabled, video_writer, frame_dir
             # Newer builds: method on Open3DScene
             if hasattr(scene_widget.scene, "render_to_image"):
                 try:
@@ -1524,6 +1541,15 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     "recording disabled."
                 )
                 missing_render_to_image_warned = True
+            if recording_enabled["ok"]:
+                if video_writer is not None:
+                    try:
+                        video_writer.close()
+                    except Exception:
+                        pass
+                    video_writer = None
+                frame_dir = None
+                recording_enabled["ok"] = False
             return None
 
         def populate(idx: int) -> None:
@@ -1544,9 +1570,82 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             eye = center + np.array([0, 0, extent * 2])
             scene_widget.scene.camera.look_at(center, eye, [0, 1, 0])
 
+        # Cache initial camera for reset/load
+        cam = scene_widget.scene.camera
+        bbox_init = scene_widget.scene.bounding_box
+        center_init = bbox_init.get_center()
+        extent_init = bbox_init.get_max_extent()
+        eye_init = center_init + np.array([0, 0, extent_init * 2])
+        up_init = np.array([0, 1, 0])
+
+        def _capture_cam():
+            """Capture current camera parameters in a version-tolerant way."""
+            try:
+                eye = np.asarray(cam.get_position())
+                look_at = np.asarray(cam.get_look_at())
+                up = np.asarray(cam.get_up_vector())
+            except Exception:
+                eye, look_at, up = eye_init, center_init, up_init
+            fov = getattr(cam, "get_field_of_view", lambda: None)()
+            aspect = getattr(cam, "get_aspect_ratio", lambda: None)()
+            near = getattr(cam, "get_near", lambda: None)()
+            far = getattr(cam, "get_far", lambda: None)()
+            fov_type = getattr(cam, "get_field_of_view_type", lambda: None)()
+            print(
+                "[Open3D][gui] Capture cam:",
+                f"eye={eye}, look_at={look_at}, up={up}, fov={fov}, aspect={aspect}, near={near}, far={far}, fov_type={fov_type}",
+            )
+            return {
+                "eye": eye,
+                "look_at": look_at,
+                "up": up,
+                "fov": fov,
+                "aspect": aspect,
+                "near": near,
+                "far": far,
+                "fov_type": fov_type,
+            }
+
+        camera_state = {
+            "initial": {
+                "eye": eye_init,
+                "look_at": center_init,
+                "up": up_init,
+                "fov": getattr(cam, "get_field_of_view", lambda: None)(),
+                "aspect": getattr(cam, "get_aspect_ratio", lambda: None)(),
+                "near": getattr(cam, "get_near", lambda: None)(),
+                "far": getattr(cam, "get_far", lambda: None)(),
+                "fov_type": getattr(cam, "get_field_of_view_type", lambda: None)(),
+            },
+            "saved": _capture_cam(),
+        }
+
+        def _apply_projection(saved):
+            """Apply saved projection if compatible; otherwise skip quietly."""
+            fov = saved.get("fov", None)
+            aspect = saved.get("aspect", None)
+            near = saved.get("near", None)
+            far = saved.get("far", None)
+            fov_type = saved.get("fov_type", None)
+            if fov is None or near is None or far is None:
+                return
+            aspect_eff = aspect if aspect not in (None, 0) else float(self.width) / float(
+                max(1, self.height)
+            )
+            try:
+                cam.set_projection(
+                    float(fov),
+                    float(aspect_eff),
+                    float(near),
+                    float(far),
+                    fov_type if fov_type is not None else cam.FovType.Vertical,
+                )
+            except Exception as exc:
+                print(f"[Open3D][gui] Projection apply failed: {exc}")
+
         state = {
             "idx": 0,
-            "playing": True,
+            "playing": True,  # match legacy default: start playing
             "last_tick": time.time(),
             "dt_seq": dt_seq,
         }
@@ -1618,28 +1717,137 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         _HANDLED = _ECR.HANDLED if _ECR else True
         _IGNORED = _ECR.IGNORED if _ECR else False
         _KEYTYPE_DOWN = getattr(gui.KeyEvent, "DOWN", None)
+        _KEYTYPE_UP = getattr(gui.KeyEvent, "UP", None)
+        _TYPE_ENUM = getattr(gui.KeyEvent, "Type", None)
+        _KEY_DOWN_ENUM = getattr(_TYPE_ENUM, "DOWN", None) if _TYPE_ENUM else None
+        _KEY_UP_ENUM = getattr(_TYPE_ENUM, "UP", None) if _TYPE_ENUM else None
+        _debug_count = {"n": 0}
 
         def _handle_key(event):
-            # Normalize event type across Open3D versions
-            is_down = (
-                event.type == _KEYTYPE_DOWN
-                if _KEYTYPE_DOWN is not None
-                else getattr(event, "type", None) == getattr(gui.KeyEvent, "Type", None)
-            )
-            if is_down:
-                key = event.key
-                space = getattr(gui.KeyName, "SPACE", None)
-                left = getattr(gui.KeyName, "LEFT", None)
-                right = getattr(gui.KeyName, "RIGHT", None)
-                if key == space or key == ord(" "):
-                    state["playing"] = not state["playing"]
-                    return _HANDLED
-                if key == left:
-                    update_frame(state["idx"] - 1)
-                    return _HANDLED
-                if key == right:
-                    update_frame(state["idx"] + 1)
-                    return _HANDLED
+            evt_type = getattr(event, "type", None)
+            key = getattr(event, "key", None)
+            if _debug_count["n"] < 5:
+                print(f"[Open3D][gui] key event: type={evt_type} key={key}")
+                _debug_count["n"] += 1
+
+            # Only act on key-down (ignore repeats/up to avoid double toggles)
+            is_down = False
+            if _KEYTYPE_DOWN is not None and evt_type == _KEYTYPE_DOWN:
+                is_down = True
+            if _KEY_DOWN_ENUM is not None and evt_type == _KEY_DOWN_ENUM:
+                is_down = True
+            if isinstance(evt_type, int):
+                # Many builds use 0 for DOWN, 2 for UP; treat only 0 as down
+                is_down = evt_type == 0
+            if not is_down:
+                return _IGNORED
+
+            # Key mapping aligned with legacy viewer
+            space = getattr(gui.KeyName, "SPACE", None)
+            left = getattr(gui.KeyName, "LEFT", None)
+            right = getattr(gui.KeyName, "RIGHT", None)
+            home = getattr(gui.KeyName, "HOME", None)
+            esc = getattr(gui.KeyName, "ESCAPE", None)
+            reset_cam = getattr(gui.KeyName, "R", ord("R"))
+            capture_cam = getattr(gui.KeyName, "C", ord("C"))
+            load_cam = getattr(gui.KeyName, "L", ord("L"))
+            print_cam = getattr(gui.KeyName, "V", ord("V"))
+            snapshot_key = getattr(gui.KeyName, "S", ord("S"))
+
+            # Build tolerant lookup sets (fallback to GLFW key codes where possible)
+            left_keys = {left, 263, 260}  # LEFT, GLFW_LEFT
+            right_keys = {right, 262, 261}  # RIGHT, GLFW_RIGHT
+            home_keys = {home, ord("h"), ord("H")}
+            quit_keys = {esc, ord("q"), ord("Q")}
+            reset_keys = {reset_cam, ord("r"), ord("R")}
+            capture_keys = {capture_cam, ord("c"), ord("C")}
+            load_keys = {load_cam, ord("l"), ord("L")}
+            print_keys = {print_cam, ord("v"), ord("V")}
+            snapshot_keys = {snapshot_key, ord("s"), ord("S")}
+
+            if key == space or key == ord(" "):
+                state["playing"] = not state["playing"]
+                state["last_tick"] = time.time()
+                # print(f"[Open3D][gui] Playing={state['playing']}")
+                return _HANDLED
+            if key in left_keys:
+                update_frame(state["idx"] - 1)
+                return _HANDLED
+            if key in right_keys:
+                update_frame(state["idx"] + 1)
+                return _HANDLED
+            if key in home_keys:
+                update_frame(0)
+                return _HANDLED
+            if key in snapshot_keys:
+                _record_frame(state["idx"], force=True)
+                print(f"[Open3D][gui] Snapshot at frame {state['idx']}")
+                return _HANDLED
+            if key in quit_keys:
+                state["playing"] = False
+                app.post_to_main_thread(window, window.close) if hasattr(app, "post_to_main_thread") else window.close()
+                return _HANDLED
+            if key in reset_keys:
+                try:
+                    _apply_projection(camera_state["initial"])
+                    cam.look_at(
+                        camera_state["initial"]["look_at"],
+                        camera_state["initial"]["eye"],
+                        camera_state["initial"]["up"],
+                    )
+                    if hasattr(scene_widget, "force_redraw"):
+                        scene_widget.force_redraw()
+                    else:
+                        scene_widget.scene.force_redraw()
+                    try:
+                        pos = cam.get_position()
+                        la = cam.get_look_at()
+                        up_vec = cam.get_up_vector()
+                        print(f"[Open3D][gui] Camera reset. pos={pos}, look_at={la}, up={up_vec}")
+                    except Exception:
+                        print("[Open3D][gui] Camera reset (camera query unavailable).")
+                except Exception as exc:
+                    print(f"[Open3D][gui] Camera reset failed: {exc}")
+                return _HANDLED
+            if key in capture_keys:
+                camera_state["saved"] = _capture_cam()
+                print("[Open3D][gui] Camera captured.")
+                return _HANDLED
+            if key in load_keys:
+                try:
+                    saved = camera_state["saved"]
+                    _apply_projection(saved)
+                    cam.look_at(saved["look_at"], saved["eye"], saved["up"])
+                    if hasattr(scene_widget, "force_redraw"):
+                        scene_widget.force_redraw()
+                    else:
+                        scene_widget.scene.force_redraw()
+                    try:
+                        pos = cam.get_position()
+                        la = cam.get_look_at()
+                        up_vec = cam.get_up_vector()
+                        print(f"[Open3D][gui] Camera loaded. pos={pos}, look_at={la}, up={up_vec}")
+                    except Exception:
+                        print("[Open3D][gui] Camera loaded (camera query unavailable).")
+                except Exception as exc:
+                    print(f"[Open3D][gui] Load failed: {exc}")
+                return _HANDLED
+            if key in print_keys:
+                try:
+                    print("[Open3D][gui] Camera matrices:")
+                    if hasattr(cam, "get_view_matrix"):
+                        print("View:\n", cam.get_view_matrix())
+                    if hasattr(cam, "get_projection_matrix"):
+                        print("Proj:\n", cam.get_projection_matrix())
+                    try:
+                        print("Eye:", cam.get_position())
+                        print("Look-at:", cam.get_look_at())
+                        print("Up:", cam.get_up_vector())
+                    except Exception:
+                        pass
+                except Exception as exc:
+                    print(f"[Open3D][gui] Print failed: {exc}")
+                return _HANDLED
             return _IGNORED
 
         # Attach to both window and scene_widget to handle focus differences
@@ -1663,7 +1871,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         if hasattr(app, "set_on_tick"):
             app.set_on_tick(on_tick)
             print(
-                f"{window_name} (gui): Space=Play/Pause  ←/→=Step  Q=close window"
+                f"{window_name} (gui): Space=Play/Pause  ←/→=Step  H=Home  S=Snapshot  R/C/L/V camera controls  Q=close window"
             )
             try:
                 app.run()
@@ -1675,7 +1883,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         # Fallback: manual ticking
         if hasattr(app, "run_one_tick"):
             print(
-                f"{window_name} (gui, manual loop): Space=Play/Pause  ←/→=Step  Q=close window"
+                f"{window_name} (gui, manual loop): Space=Play/Pause  ←/→=Step  H=Home  S=Snapshot  R/C/L/V camera controls  Q=close window"
             )
 
             def on_close():
