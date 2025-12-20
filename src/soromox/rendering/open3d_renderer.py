@@ -1193,11 +1193,32 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         for s in range(len(spheres_groups)):
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
             seg_spheres = spheres_groups[s]
-            for i_local, p in enumerate(range(c0, min(c1, c0 + len(seg_spheres)))):
-                mesh = seg_spheres[i_local]
-                delta = curve[p] - _mesh_center(mesh)
-                mesh.translate(delta, relative=True)
-                vis.update_geometry(mesh)
+            if self.backbone_style == "tube" and c1 - c0 >= 1:
+                # Cylinders need full re-orientation + centering, not just translation
+                for i_local, p in enumerate(range(c0, min(c1 - 1, c0 + len(seg_spheres)))):
+                    mesh = seg_spheres[i_local]
+                    # Preserve existing color while regenerating geometry
+                    color_arr = np.asarray(mesh.vertex_colors)
+                    base_color = color_arr[0] if color_arr.size >= 3 else np.array([1.0, 1.0, 1.0])
+                    updated = _make_cylinder_between(
+                        curve[p],
+                        curve[p + 1],
+                        radius=float(layout.radii[min(s, len(layout.radii) - 1)]),
+                        color=tuple(np.asarray(base_color).reshape(-1)[:3]),
+                        resolution=self.tube_resolution,
+                    )
+                    mesh.vertices = updated.vertices
+                    mesh.triangles = updated.triangles
+                    mesh.vertex_normals = updated.vertex_normals
+                    mesh.triangle_normals = updated.triangle_normals
+                    mesh.vertex_colors = updated.vertex_colors
+                    vis.update_geometry(mesh)
+            else:
+                for i_local, p in enumerate(range(c0, min(c1, c0 + len(seg_spheres)))):
+                    mesh = seg_spheres[i_local]
+                    delta = curve[p] - _mesh_center(mesh)
+                    mesh.translate(delta, relative=True)
+                    vis.update_geometry(mesh)
 
     def _build_legacy_scene(
         self, vis, scene_data: SceneData, frame_idx: int = 0
