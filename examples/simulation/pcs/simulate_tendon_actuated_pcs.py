@@ -235,10 +235,10 @@ if __name__ == "__main__":
     # render using the Open3DRenderer
     renderer = Open3DRenderer(
         robot,
-        body_alpha=0.7,
+        # body_alpha=0.7,
         # num_points=300,
-        backbone_style="tube",
+        backbone_style="spheres",
         # tube_resolution=100,
-        viewer_backend="gui",
+        viewer_backend="legacy",
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts, fps=25)
+    renderer.render_sequence(ts=ts, q_ts=q_ts)

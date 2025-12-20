@@ -48,7 +48,7 @@ BaseContinuumSoftRobotRenderer (abstract base)
     renderer.show(q)
 
     # Animated playback with keyboard controls
-    renderer.render_sequence(ts, q_ts, fps=30, loop=True)
+    renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True)
 
     # Headless capture
     img = renderer.render_frame(q)

@@ -107,7 +107,7 @@ class BaseRobotRenderer(ABC):
         self,
         t_list: jnp.ndarray,
         q_list: jnp.ndarray,
-        fps: int = 25,
+        playback_speed: float = 1.0,
         output_path: Optional[str] = None,
     ) -> None:
         """Render animated sequence (interactive or to file)."""
@@ -252,7 +252,7 @@ class Open3DRenderer(BaseRobotRenderer):
         self,
         t_list: jnp.ndarray,
         q_list: jnp.ndarray,
-        fps: int = 25,
+        playback_speed: float = 1.0,
         loop: bool = False,
         record_dir: Optional[str] = None,
         ...

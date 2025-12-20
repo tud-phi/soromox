@@ -147,4 +147,4 @@ if __name__ == "__main__":
     renderer = MatplotlibRenderer(robot, num_points=50)
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
     renderer = Open3DRenderer(robot, num_points=50)
-    renderer.render_sequence(ts, q_ts, fps=30)
+    renderer.render_sequence(ts, q_ts)

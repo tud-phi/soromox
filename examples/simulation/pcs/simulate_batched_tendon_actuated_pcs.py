@@ -126,7 +126,7 @@ def main():
         sphere_resolution=16,
         body_alpha=0.35,
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts_batched, fps=25)
+    renderer.render_sequence(ts=ts, q_ts=q_ts_batched)
 
 
 if __name__ == "__main__":

@@ -257,7 +257,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
     Example:
         >>> renderer = Open3DRenderer(robot)
         >>> renderer.show(q)  # Single interactive frame
-        >>> renderer.render_sequence(ts, q_ts, fps=30)  # Animated playback
+        >>> renderer.render_sequence(ts, q_ts, playback_speed=1.0)  # Animated playback
         >>> img = renderer.render_frame(q)  # Headless capture
     """
 
@@ -399,6 +399,25 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         col = np.asarray(color, dtype=np.float64)
         blended = self.body_alpha * col + (1.0 - self.body_alpha) * bg
         return tuple(np.clip(blended, 0.0, 1.0).tolist())
+
+    def _frame_intervals_from_ts(
+        self, ts: Array, playback_speed: float
+    ) -> np.ndarray:
+        """Compute per-frame wall-clock intervals from timestamps, scaled by playback speed."""
+        speed = float(playback_speed)
+        if speed <= 0.0:
+            raise ValueError("playback_speed must be positive")
+        t_arr = np.asarray(ts, dtype=np.float64).reshape(-1)
+        if t_arr.size < 2:
+            base = np.array([1.0], dtype=np.float64)
+        else:
+            diffs = np.diff(t_arr)
+            if not np.all(np.isfinite(diffs)):
+                diffs = np.ones_like(diffs)
+            diffs = np.where(diffs > 0.0, diffs, 1.0)
+            base = diffs
+        dt = base / speed
+        return np.concatenate([dt, dt[-1:]])  # pad so indexing at last frame is safe
 
     # -------------------------------------------------------------------------
     # Public rendering API
@@ -772,7 +791,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         record_every_n: int,
         record_prefix: str,
         loop: bool,
-        fps: int,
+        playback_speed: float,
         window_name: str,
         extra_init=None,
         extra_update=None,
@@ -820,7 +839,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         initial_cam = ctrl.convert_to_pinhole_camera_parameters()
         saved_cam_holder = [copy.deepcopy(initial_cam)]
 
-        state = {"idx": 0, "playing": True, "last_tick": time.time(), "dt": 1.0 / fps}
+        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
+        state = {
+            "idx": 0,
+            "playing": True,
+            "last_tick": time.time(),
+            "dt_seq": dt_seq,
+        }
 
         def _clamp(i: int) -> int:
             return max(0, min(T - 1, i))
@@ -873,7 +898,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
         while vis.poll_events():
             now = time.time()
-            if state["playing"] and (now - state["last_tick"] >= state["dt"]):
+            dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
+            if state["playing"] and (now - state["last_tick"] >= dt_now):
                 nxt = state["idx"] + 1
                 if nxt >= T:
                     if loop:
@@ -890,7 +916,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self,
         ts: Array,
         q_ts: Array,
-        fps: int = 25,
+        playback_speed: float = 1.0,
         output_path: Optional[str] = None,
         loop: bool = False,
         record_every_n: int = 1,
@@ -917,7 +943,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             return self._render_sequence_batched(
                 ts=ts,
                 q_ts=q_ts_arr,
-                fps=fps,
+                playback_speed=playback_speed,
                 output_path=output_path,
                 loop=loop,
                 record_every_n=record_every_n,
@@ -937,7 +963,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         return self._render_sequence_single(
             ts=ts,
             q_ts=q_ts_arr,
-            fps=fps,
+            playback_speed=playback_speed,
             output_path=output_path,
             loop=loop,
             record_every_n=record_every_n,
@@ -953,7 +979,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self,
         ts: Array,
         q_ts: Array,
-        fps: int = 25,
+        playback_speed: float = 1.0,
         output_path: Optional[str] = None,
         loop: bool = False,
         record_every_n: int = 1,
@@ -1076,7 +1102,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 record_every_n=record_every_n,
                 record_prefix=record_prefix,
                 loop=loop,
-                fps=fps,
+                playback_speed=playback_speed,
                 window_name="Robot Animation (Open3D)",
                 extra_init=extra_init,
                 extra_update=extra_update,
@@ -1088,7 +1114,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 ts=ts,
                 color_overrides=color_overrides,
                 loop=loop,
-                fps=fps,
+                playback_speed=playback_speed,
                 window_name="Robot Animation (Open3D)",
                 tendon_curves=tendon_curves_gui,
                 target_point=target_point,
@@ -1106,7 +1132,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             record_every_n=record_every_n,
             record_prefix=record_prefix,
             loop=loop,
-            fps=fps,
+            playback_speed=playback_speed,
             window_name="Robot Animation (Open3D)",
             extra_init=extra_init,
             extra_update=extra_update,
@@ -1121,7 +1147,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         ts: np.ndarray,
         color_overrides: Optional[List[Optional[Tuple[float, float, float]]]],
         loop: bool,
-        fps: int,
+        playback_speed: float,
         window_name: str,
         tendon_curves: Optional[np.ndarray] = None,
         target_point: Optional[Tuple[float, float, float]] = None,
@@ -1290,7 +1316,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     "upgrade Open3D."
                 ) from exc_lookat
 
-        state = {"idx": 0, "playing": True, "last_tick": time.time(), "dt": 1.0 / fps}
+        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
+        state = {
+            "idx": 0,
+            "playing": True,
+            "last_tick": time.time(),
+            "dt_seq": dt_seq,
+        }
 
         def update_frame(i: int):
             i = max(0, min(T - 1, i))
@@ -1314,7 +1346,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
         def on_tick(dt: float) -> bool:
             now = time.time()
-            if state["playing"] and (now - state["last_tick"] >= state["dt"]):
+            dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
+            if state["playing"] and (now - state["last_tick"] >= dt_now):
                 nxt = state["idx"] + 1
                 if nxt >= T:
                     nxt = 0 if loop else T - 1
@@ -1356,7 +1389,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
             while _window_visible():
                 now = time.time()
-                if state["playing"] and (now - state["last_tick"] >= state["dt"]):
+                dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
+                if state["playing"] and (now - state["last_tick"] >= dt_now):
                     nxt = state["idx"] + 1
                     if nxt >= T:
                         nxt = 0 if loop else T - 1
@@ -1382,7 +1416,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         record_every_n: int,
         record_prefix: str,
         loop: bool,
-        fps: int,
+        playback_speed: float,
         window_name: str,
         extra_init=None,
         extra_update=None,
@@ -1430,7 +1464,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         initial_cam = ctrl.convert_to_pinhole_camera_parameters()
         saved_cam_holder = [copy.deepcopy(initial_cam)]
 
-        state = {"idx": 0, "playing": True, "last_tick": time.time(), "dt": 1.0 / fps}
+        dt_seq = self._frame_intervals_from_ts(ts, playback_speed)
+        state = {
+            "idx": 0,
+            "playing": True,
+            "last_tick": time.time(),
+            "dt_seq": dt_seq,
+        }
 
         def _clamp(i: int) -> int:
             return max(0, min(T - 1, i))
@@ -1483,7 +1523,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
         while vis.poll_events():
             now = time.time()
-            if state["playing"] and (now - state["last_tick"] >= state["dt"]):
+            dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
+            if state["playing"] and (now - state["last_tick"] >= dt_now):
                 nxt = state["idx"] + 1
                 if nxt >= T:
                     if loop:
@@ -1568,7 +1609,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self,
         ts: Array,
         q_ts: Array,
-        fps: int = 25,
+        playback_speed: float = 1.0,
         output_path: Optional[str] = None,
         loop: bool = False,
         record_every_n: int = 1,
@@ -1698,7 +1739,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 record_every_n=record_every_n,
                 record_prefix=record_prefix,
                 loop=loop,
-                fps=fps,
+                playback_speed=playback_speed,
                 window_name=f"Robot Animation ({N} robots)",
                 extra_init=extra_init,
                 extra_update=extra_update,
@@ -1710,7 +1751,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 ts=np.asarray(ts),
                 color_overrides=list(robot_colors),
                 loop=loop,
-                fps=fps,
+                playback_speed=playback_speed,
                 window_name=f"Robot Animation ({N} robots)",
                 tendon_curves=all_tendon_curves,
                 target_point=target_point,
@@ -1728,7 +1769,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             record_every_n=record_every_n,
             record_prefix=record_prefix,
             loop=loop,
-            fps=fps,
+            playback_speed=playback_speed,
             window_name=f"Robot Animation ({N} robots)",
             extra_init=extra_init,
             extra_update=extra_update,
