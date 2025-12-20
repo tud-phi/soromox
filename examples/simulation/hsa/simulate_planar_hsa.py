@@ -11,7 +11,7 @@ from soromox.parameters.hsa_params import (
 )
 from soromox.systems.planar_hsa import PlanarHSA
 from soromox.systems.system_state import SystemState
-from soromox.rendering.planar_hsa.opencv_renderer import draw_robot, animate_robot
+from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
 
 
 jnp.set_printoptions(
@@ -57,6 +57,7 @@ if __name__ == "__main__":
     print(
         f"Planar HSA with {num_segments} segments and {num_rods_per_segment} rods per segment initialized."
     )
+    renderer = OpenCVPlanarHSARenderer(robot, width=700, height=700)
 
     # =====================================================
     # Simulation upon time
@@ -76,11 +77,7 @@ if __name__ == "__main__":
 
     # Displaying the image
     window_name = f"Planar HSA with {num_segments} segments"
-    img = draw_robot(
-        robot,
-        q=q0,
-        show=False,
-    )
+    img = renderer.render_frame(q0)
 
     win = "Planar HSA"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
@@ -108,17 +105,13 @@ if __name__ == "__main__":
     q_ts, qd_ts, _ = jnp.split(trajectory.y, [robot.num_dofs, 2 * robot.num_dofs], axis=1)
 
     # create video
-    video_width, video_height = 700, 700  # img height and width
     video_path = Path("videos") / "planar_hsa.mp4"
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    animate_robot(
-        robot,
-        video_path,
-        video_ts=ts,
+    renderer.render_sequence(
+        ts=ts,
         q_ts=q_ts,
-        video_width=video_width,
-        video_height=video_height,
+        record_path=str(video_path),
     )
     print(f"Video saved at {video_path}")
 

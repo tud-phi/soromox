@@ -13,11 +13,11 @@ import jax.numpy as jnp
 from jax import Array
 import numpy as np
 
-from soromox.rendering.base import BaseContinuumSoftRobotRenderer
+from soromox.rendering.opencv_base import BaseOpenCVRenderer
 from soromox.systems.planar_pcs import PlanarPCS
 
 
-class OpenCVPlanarPCSRenderer(BaseContinuumSoftRobotRenderer):
+class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
     """OpenCV visualization for Planar PCS robots.
 
     Renders the backbone with per-segment thickness based on robot radius.
@@ -152,27 +152,3 @@ class OpenCVPlanarPCSRenderer(BaseContinuumSoftRobotRenderer):
         key = cv2.waitKey(0) & 0xFF
         if key in (27, ord("q")):
             cv2.destroyWindow(win)
-
-
-# Backward compatibility alias
-def render_planar_pcs(
-    robot: PlanarPCS,
-    q: Array,
-    width: int,
-    height: int,
-    origin_uv: Optional[Tuple] = None,
-    length_scale: float = 2.0,
-    backbone_thickness: Optional[int] = None,
-    num_points: int = 50,
-) -> np.ndarray:
-    """Legacy function - use OpenCVPlanarPCSRenderer instead."""
-    renderer = OpenCVPlanarPCSRenderer(
-        robot,
-        width,
-        height,
-        num_points=num_points,
-        backbone_thickness=backbone_thickness,
-        length_scale=length_scale,
-        origin_uv=origin_uv,
-    )
-    return renderer.render_frame(q)

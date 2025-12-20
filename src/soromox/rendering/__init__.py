@@ -21,10 +21,6 @@ except ImportError:
 from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
 from soromox.rendering.planar_pcs.opencv_renderer import OpenCVPlanarPCSRenderer
 
-# Legacy function aliases (backward compatibility)
-from soromox.rendering.planar_hsa.opencv_renderer import draw_robot, animate_robot
-from soromox.rendering.planar_pcs.opencv_renderer import render_planar_pcs
-
 __all__ = [
     # Base class
     "BaseContinuumSoftRobotRenderer",
@@ -34,8 +30,4 @@ __all__ = [
     # Specialized renderers
     "OpenCVPlanarHSARenderer",
     "OpenCVPlanarPCSRenderer",
-    # Legacy aliases
-    "draw_robot",
-    "animate_robot",
-    "render_planar_pcs",
 ]

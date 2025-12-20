@@ -9,8 +9,6 @@ import numpy as onp
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.rendering.animation import animate_cv2
-from soromox.rendering.planar_pcs.opencv_renderer import render_planar_pcs
 from soromox.systems.tendon_actuated_planar_pcs import TendonActuatedPlanarPCS
 from soromox.systems.system_state import SystemState
 
@@ -57,16 +55,6 @@ if __name__ == "__main__":
         params=params,
         strain_selector=strain_selector,
         segment_actuation_selector=segment_actuation_selector,
-    )
-
-    w, h = 400, 400  # image height and width
-    rendering_fn = partial(
-        render_planar_pcs,
-        robot,
-        width=w,
-        height=h,
-        length_scale=2.0,
-        num_points=100,
     )
 
     # =====================================================
@@ -246,14 +234,3 @@ if __name__ == "__main__":
     # =====================================================
     renderer = MatplotlibRenderer(robot, num_points=50)
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
-
-    animate_cv2(
-        rendering_fn=rendering_fn,
-        t_ts=onp.array(ts),
-        q_ts=onp.array(q_ts),
-        filepath=videos_dir / "tendon_actuated_planar_pcs_cv2.mp4",
-        width=w,
-        height=h,
-        speed_up=1.0,
-        rgb_to_bgr=False,
-    )

@@ -6,8 +6,6 @@ for virtual backbone, rods, and platforms.
 
 from __future__ import annotations
 
-from os import PathLike
-from pathlib import Path
 from typing import Tuple
 
 import cv2
@@ -15,11 +13,11 @@ import jax.numpy as jnp
 from jax import Array, jit, vmap
 import numpy as np
 
-from soromox.rendering.base import BaseContinuumSoftRobotRenderer
+from soromox.rendering.opencv_base import BaseOpenCVRenderer
 from soromox.systems.planar_hsa import PlanarHSA
 
 
-class OpenCVPlanarHSARenderer(BaseContinuumSoftRobotRenderer):
+class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
     """OpenCV visualization for Planar HSA robots.
 
     Renders the virtual backbone, rods, and platforms with custom colors.
@@ -262,78 +260,3 @@ class OpenCVPlanarHSARenderer(BaseContinuumSoftRobotRenderer):
         key = cv2.waitKey(0) & 0xFF
         if key in (27, ord("q")):
             cv2.destroyWindow(win)
-
-    def render_sequence(
-        self,
-        t_list: Array,
-        q_list: Array,
-        playback_speed: float = 1.0,
-        record_path: str = None,
-    ) -> None:
-        """Render animated sequence to video file.
-
-        Args:
-            t_list: Time stamps (T,)
-            q_list: Configurations (T, DOF)
-            playback_speed: Playback speed multiplier (>1 = faster)
-            record_path: Path to save video file
-        """
-        if record_path is None:
-            raise ValueError("record_path is required for render_sequence")
-
-        record_path = Path(record_path)
-        record_path.parent.mkdir(parents=True, exist_ok=True)
-
-        t_list = np.array(t_list)
-        q_list = np.array(q_list)
-
-        # Compute fps from timestamps
-        video_dt = np.mean(np.diff(t_list))
-        actual_fps = float(playback_speed) * (1.0 / video_dt)
-
-        print(f"Rendering video with dt={video_dt:.4f} and {len(t_list)} frames")
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video = cv2.VideoWriter(
-            str(record_path),
-            fourcc,
-            actual_fps,
-            (self.width, self.height),
-        )
-
-        for time_idx in range(len(t_list)):
-            img = self.render_frame(q_list[time_idx])
-            video.write(img)
-
-        video.release()
-        print(f"Video saved to: {record_path}")
-
-
-# Backward compatibility aliases
-def draw_robot(
-    robot: PlanarHSA,
-    q: Array,
-    width: int = 700,
-    height: int = 700,
-    num_points: int = 50,
-    show: bool = False,
-) -> np.ndarray:
-    """Legacy function - use OpenCVPlanarHSARenderer instead."""
-    renderer = OpenCVPlanarHSARenderer(robot, width, height, num_points)
-    img = renderer.render_frame(q)
-    if show:
-        renderer.show(q)
-    return img
-
-
-def animate_robot(
-    robot: PlanarHSA,
-    filepath: PathLike,
-    video_ts: Array,
-    q_ts: Array,
-    video_width: int = 700,
-    video_height: int = 700,
-) -> None:
-    """Legacy function - use OpenCVPlanarHSARenderer instead."""
-    renderer = OpenCVPlanarHSARenderer(robot, video_width, video_height)
-    renderer.render_sequence(video_ts, q_ts, record_path=str(filepath))
