@@ -260,6 +260,15 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
 
         return img
 
+    def show(self, q: Array, *, render_tendons: bool = True) -> None:  # type: ignore[override]
+        """Display a single frame interactively (supports batched inputs)."""
+        img = self.render_frame(q, show_tendons=render_tendons)
+        plt.figure(figsize=(self.width / 100, self.height / 100))
+        plt.imshow(img)
+        plt.axis("off")
+        plt.tight_layout()
+        plt.show()
+
     def animate(
         self,
         ts: Array,
@@ -268,6 +277,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         mode: str = "slider",
         show: bool = True,
         render_tendons: bool = True,
+        record_path: Optional[str] = None,
+        playback_speed: float = 1.0,
     ):
         """Interactive matplotlib animation with slider or auto-play.
 
@@ -277,12 +288,18 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             interval: Frame interval in ms (for animation mode)
             mode: "slider" for manual scrubbing, "animation" for auto-play
             show: Whether to call plt.show()
+            record_path: Optional path to save animation (mp4/gif depending on writer)
+            playback_speed: Multiplier for playback speed (>1 = faster)
 
         Returns:
             HTML object for Jupyter display (animation mode only)
         """
         if mode not in ("slider", "animation"):
             raise ValueError("mode must be 'slider' or 'animation'")
+        if record_path is not None and mode != "animation":
+            raise ValueError("record_path is only supported in animation mode")
+        if playback_speed <= 0:
+            raise ValueError("playback_speed must be positive")
 
         ts_arr = jnp.asarray(ts).reshape((-1,))
         q_ts_arr = jnp.asarray(q_ts)
@@ -295,6 +312,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
                 mode=mode,
                 show=show,
                 render_tendons=render_tendons,
+                record_path=record_path,
+                playback_speed=playback_speed,
             )
         if q_ts_arr.ndim == 2:
             return self._animate_single(
@@ -304,6 +323,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
                 mode=mode,
                 show=show,
                 render_tendons=render_tendons,
+                record_path=record_path,
+                playback_speed=playback_speed,
             )
 
         raise ValueError(
@@ -318,6 +339,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         mode: str,
         show: bool,
         render_tendons: bool,
+        record_path: Optional[str],
+        playback_speed: float,
     ):
         """Animate a single robot (legacy behavior)."""
         ts_np = np.asarray(ts)
@@ -341,6 +364,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             show=show,
             center_origin=False,
             tendon_curves=tendon_curves,
+            record_path=record_path,
+            playback_speed=playback_speed,
         )
 
     def _animate_batched(
@@ -351,6 +376,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         mode: str,
         show: bool,
         render_tendons: bool,
+        record_path: Optional[str],
+        playback_speed: float,
     ):
         """Animate multiple robots arranged in a grid layout."""
         ts = jnp.asarray(ts).reshape((-1,))
@@ -411,6 +438,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             show=show,
             center_origin=True,
             tendon_curves=tendon_curves,
+            record_path=record_path,
+            playback_speed=playback_speed,
         )
 
     def _animate_backbone_curves(
@@ -423,6 +452,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         show: bool,
         center_origin: bool,
         tendon_curves: Optional[np.ndarray] = None,
+        record_path: Optional[str] = None,
+        playback_speed: float = 1.0,
     ):
         """Shared Matplotlib animation for one or more robots."""
         num_robots, num_steps, _, _ = all_curves.shape
@@ -506,14 +537,23 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
                 flat_tendon = [tl for sub in tendon_lines for tl in sub]
                 return lines + flat_tendon + [title_text]
 
+            actual_interval = max(1, int(round(interval / playback_speed)))
             ani = FuncAnimation(
                 fig,
                 update,
                 frames=num_steps,
                 init_func=init,
                 blit=False,
-                interval=interval,
+                interval=actual_interval,
             )
+
+            if record_path is not None:
+                fps_eff = 1000.0 / max(1.0, float(actual_interval))
+                try:
+                    ani.save(record_path, writer="ffmpeg", fps=fps_eff)
+                    print(f"[Matplotlib] Animation saved to {record_path} (fps={fps_eff})")
+                except Exception as exc:
+                    print(f"[Matplotlib] Failed to save animation to {record_path}: {exc}")
 
             if show:
                 plt.show()
@@ -552,6 +592,32 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
 
         plt.close(fig)
         return None
+
+    def render_sequence(
+        self,
+        ts: Array,
+        q_ts: Array,
+        *,
+        interval: int = 50,
+        render_tendons: bool = True,
+        record_path: Optional[str] = None,
+        playback_speed: float = 1.0,
+        show: bool = False,
+    ) -> None:
+        """Render an animated sequence (optionally saving to disk).
+
+        This reuses the animation code path with mode='animation'.
+        """
+        self.animate(
+            ts=ts,
+            q_ts=q_ts,
+            interval=interval,
+            mode="animation",
+            show=show,
+            render_tendons=render_tendons,
+            record_path=record_path,
+            playback_speed=playback_speed,
+        )
 
     def _setup_axes(self, ax, width_m: float, center_origin: bool = False) -> None:
         """Set up axis limits and labels.

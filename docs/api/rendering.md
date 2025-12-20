@@ -41,22 +41,31 @@ BaseContinuumSoftRobotRenderer (abstract base)
     ```python
     from soromox.rendering import Open3DRenderer
 
-    # Create renderer
-    renderer = Open3DRenderer(robot, num_points=80)
+    # Create renderer (defaults to legacy viewer backend)
+    renderer = Open3DRenderer(robot, num_points=80, viewer_backend="legacy")
 
-    # Single interactive frame
-    renderer.show(q)
+    # Single interactive frame (supports base offsets / spheres if provided)
+    renderer.show(q, backend="legacy")
 
     # Animated playback with keyboard controls
-    renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True)
+    renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True, backend="legacy")
 
-    # Save directly to a video (requires ffmpeg on PATH)
-    renderer.render_sequence(ts, q_ts, playback_speed=1.0, output_path="trajectory.mp4")
+    # Save directly to a video or frame directory (requires ffmpeg for video)
+    renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        record_path="trajectory.mp4",  # or a directory for PNG frames
+        backend="gui",  # optional: use GUI SceneWidget if installed
+    )
 
-    # Note: GUI video capture uses Open3D's SceneWidget; install open3d>=0.18.
-
-    # Headless capture
-    img = renderer.render_frame(q)
+    # Headless capture (returns uint8 image array)
+    img = renderer.render_frame(
+        q,
+        static_spheres_positions=targets_xyz,  # optional features
+        static_spheres_radii=targets_r,
+        robot_colors="plasma",
+    )
     ```
 
 === "OpenCV (specialized)"
@@ -71,7 +80,7 @@ BaseContinuumSoftRobotRenderer (abstract base)
     img = renderer.render_frame(q)
 
     # Create video
-    renderer.render_sequence(ts, q_ts, output_path="video.mp4")
+    renderer.render_sequence(ts, q_ts, record_path="video.mp4")
     ```
 
 ### Keyboard Controls (Open3D)

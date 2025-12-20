@@ -267,35 +267,35 @@ class OpenCVPlanarHSARenderer(BaseContinuumSoftRobotRenderer):
         self,
         t_list: Array,
         q_list: Array,
-        fps: int = 25,
-        output_path: str = None,
+        playback_speed: float = 1.0,
+        record_path: str = None,
     ) -> None:
         """Render animated sequence to video file.
 
         Args:
             t_list: Time stamps (T,)
             q_list: Configurations (T, DOF)
-            fps: Frames per second (computed from t_list if not provided)
-            output_path: Path to save video file
+            playback_speed: Playback speed multiplier (>1 = faster)
+            record_path: Path to save video file
         """
-        if output_path is None:
-            raise ValueError("output_path is required for render_sequence")
+        if record_path is None:
+            raise ValueError("record_path is required for render_sequence")
 
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path = Path(record_path)
+        record_path.parent.mkdir(parents=True, exist_ok=True)
 
         t_list = np.array(t_list)
         q_list = np.array(q_list)
 
         # Compute fps from timestamps
         video_dt = np.mean(np.diff(t_list))
-        actual_fps = 1 / video_dt if fps is None else fps
+        actual_fps = float(playback_speed) * (1.0 / video_dt)
 
         print(f"Rendering video with dt={video_dt:.4f} and {len(t_list)} frames")
 
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         video = cv2.VideoWriter(
-            str(output_path),
+            str(record_path),
             fourcc,
             actual_fps,
             (self.width, self.height),
@@ -306,7 +306,7 @@ class OpenCVPlanarHSARenderer(BaseContinuumSoftRobotRenderer):
             video.write(img)
 
         video.release()
-        print(f"Video saved to: {output_path}")
+        print(f"Video saved to: {record_path}")
 
 
 # Backward compatibility aliases
@@ -336,4 +336,4 @@ def animate_robot(
 ) -> None:
     """Legacy function - use OpenCVPlanarHSARenderer instead."""
     renderer = OpenCVPlanarHSARenderer(robot, video_width, video_height)
-    renderer.render_sequence(video_ts, q_ts, output_path=str(filepath))
+    renderer.render_sequence(video_ts, q_ts, record_path=str(filepath))

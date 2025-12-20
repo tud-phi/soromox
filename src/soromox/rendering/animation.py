@@ -154,7 +154,7 @@ def animate_cv2(
         # Try to create video using ffmpeg if available
         try:
             import subprocess
-            output_path = str(img_dir.parent / f"{img_dir.name}.mp4")
+            record_path = str(img_dir.parent / f"{img_dir.name}.mp4")
             cmd = [
                 "ffmpeg", "-y",  # overwrite output
                 "-framerate", str(fps),
@@ -162,16 +162,16 @@ def animate_cv2(
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
                 "-crf", "18",
-                output_path
+                record_path
             ]
             
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
-                print(f"Successfully created video using ffmpeg: {output_path}")
+                print(f"Successfully created video using ffmpeg: {record_path}")
                 # Clean up image sequence
                 import shutil
                 shutil.rmtree(img_dir)
-                filepath_str = output_path
+                filepath_str = record_path
             else:
                 print(f"ffmpeg failed: {result.stderr}")
         except (ImportError, FileNotFoundError, subprocess.SubprocessError) as e:

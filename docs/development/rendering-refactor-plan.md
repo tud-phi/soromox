@@ -108,7 +108,7 @@ class BaseRobotRenderer(ABC):
         t_list: jnp.ndarray,
         q_list: jnp.ndarray,
         playback_speed: float = 1.0,
-        output_path: Optional[str] = None,
+        record_path: Optional[str] = None,
     ) -> None:
         """Render animated sequence (interactive or to file)."""
         # Default implementation using render_frame + animation.animate_cv2
@@ -118,7 +118,7 @@ class BaseRobotRenderer(ABC):
             rendering_fn=self.render_frame,
             t_ts=np.array(t_list),
             q_ts=np.array(q_list),
-            filepath=output_path,
+            filepath=record_path,
             width=self.width,
             height=self.height,
         )

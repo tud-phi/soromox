@@ -108,12 +108,14 @@ class BaseContinuumSoftRobotRenderer(ABC):
         """
         pass
 
+    @abstractmethod
     def render_sequence(
         self,
         ts: Array,
         q_ts: Array,
-        fps: int = 25,
-        output_path: Optional[str] = None,
+        playback_speed: float = 1.0,
+        record_path: Optional[str] = None,
+        **kwargs,
     ) -> None:
         """Render animated sequence to video file.
 
@@ -123,24 +125,13 @@ class BaseContinuumSoftRobotRenderer(ABC):
         Args:
             ts: Time stamps array of shape (T,)
             q_ts: Configurations array of shape (T, DOF)
-            fps: Frames per second for output video
-            output_path: Path to save video file (required for default impl)
+            playback_speed: Speed up factor for the video (playback)
+            record_path: Path to save video file (required for default impl)
         """
-        from soromox.rendering.animation import animate_cv2
+        pass
 
-        if output_path is None:
-            raise ValueError("output_path is required for render_sequence")
-
-        animate_cv2(
-            rendering_fn=self.render_frame,
-            t_ts=np.array(ts),
-            q_ts=np.array(q_ts),
-            filepath=output_path,
-            width=self.width,
-            height=self.height,
-        )
-
-    def show(self, q: Array) -> None:
+    @abstractmethod
+    def show(self, q: Array, **kwargs) -> None:
         """Display single frame interactively (blocking).
 
         Default implementation uses matplotlib. Subclasses can override
@@ -149,14 +140,7 @@ class BaseContinuumSoftRobotRenderer(ABC):
         Args:
             q: Robot configuration array
         """
-        import matplotlib.pyplot as plt
-
-        img = self.render_frame(q)
-        plt.figure(figsize=(self.width / 100, self.height / 100))
-        plt.imshow(img)
-        plt.axis("off")
-        plt.tight_layout()
-        plt.show()
+        pass
 
     # =========================================================================
     # Multi-robot (batched) rendering helpers

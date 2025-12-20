@@ -235,10 +235,10 @@ if __name__ == "__main__":
     # render using the Open3DRenderer
     renderer = Open3DRenderer(
         robot,
-        # body_alpha=0.7,
         # num_points=300,
+        # body_alpha=0.7,
         backbone_style="spheres",
         # tube_resolution=100,
-        viewer_backend="legacy",
+        viewer_backend="legacy",  # 'legacy' or 'gui' for Open3D
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts, output_path="video.mp4")
+    renderer.render_sequence(ts=ts, q_ts=q_ts, record_path="video.mp4")

@@ -115,7 +115,7 @@ def main():
     )
     # q_ts_batched is (N, T, DOF); animate in slider mode for quick inspection
     matplotlib_renderer.animate(
-        ts=ts, q_ts=q_ts_batched, mode="slider", show=True, render_tendons=True
+        ts=ts, q_ts=q_ts_batched, mode="slider", show=True
     )
 
     # render using the Open3DRenderer
