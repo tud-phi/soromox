@@ -524,7 +524,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
     @property
     def is_3d(self) -> bool:
-        """Always True for Open3D renderer."""
+        """Whether this renderer operates in 3D space.
+
+        Returns:
+            is_3d (bool): Always True for the Open3D renderer.
+        """
         return True
 
     def _extract_positions(self, poses: Array) -> Array:
@@ -532,13 +536,15 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         return poses[:, :3, 3]
 
     def compute_tendon_curves(self, q: Array) -> Optional[Array]:
-        """Compute tendon paths if robot supports tendons.
+        """Compute tendon paths if the robot exposes tendon kinematics.
 
         Args:
-            q: Robot configuration
+            q: Robot configuration of shape (DOF,) for a single robot.
 
         Returns:
-            Array of shape (n_tendons, num_points, 3) or None
+            curves (Optional[Array]): An array of shape (n_tendons, num_points, 3) with
+            tendon curves expressed in world coordinates, or None if tendons are
+            not supported by the robot.
         """
         if not self._has_tendons:
             return None
@@ -958,11 +964,21 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         dynamic_spheres_radii: Optional[Array] = None,
         dynamics_spheres_colors: Optional[Array] = None,
     ) -> np.ndarray:
-        """Render single configuration headlessly, return RGB array.
+        """Render a single configuration headlessly and return an RGB array.
 
-        Supports the same geometry options as render_sequence (base offsets, robot
-        colors, static/dynamic spheres). Multiple robots can be passed via q shape
-        (N, DOF) together with base_offsets.
+        Args:
+            q: Robot configuration of shape (DOF,) or batched (N, DOF).
+            base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
+            robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            static_spheres_positions: Optional static sphere centers, shape (M, 3).
+            static_spheres_radii: Optional static sphere radii, length M.
+            static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
+            dynamic_spheres_positions: Optional dynamic sphere trajectories, shape (K, T, 3).
+            dynamic_spheres_radii: Optional dynamic sphere radii, length K.
+            dynamics_spheres_colors: Optional dynamic sphere colors, shape (K, 3/4).
+
+        Returns:
+            img (np.ndarray): Rendered RGB image of shape (height, width, 3), dtype uint8.
         """
         scene_data = self._prepare_scene_data(
             ts=np.array([0.0], dtype=np.float64),
@@ -1009,7 +1025,23 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         dynamic_spheres_radii: Optional[Array] = None,
         dynamics_spheres_colors: Optional[Array] = None,
     ) -> None:
-        """Display a single frame interactively with full geometry options."""
+        """Display a single frame interactively with full geometry options.
+
+        Args:
+            q: Robot configuration of shape (DOF,) or batched (N, DOF).
+            backend: Viewer backend override ("legacy", "gui", or "auto").
+            base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
+            robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            static_spheres_positions: Optional static sphere centers, shape (M, 3).
+            static_spheres_radii: Optional static sphere radii, length M.
+            static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
+            dynamic_spheres_positions: Optional dynamic sphere trajectories, shape (K, T, 3).
+            dynamic_spheres_radii: Optional dynamic sphere radii, length K.
+            dynamics_spheres_colors: Optional dynamic sphere colors, shape (K, 3/4).
+
+        Returns:
+            None
+        """
         ts = np.array([0.0], dtype=np.float64)
         q_ts = np.asarray(q)
         self.render_sequence(
@@ -1050,7 +1082,30 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         dynamics_spheres_colors: Optional[Array] = None,
         window_name: str = "Robot Animation (Open3D)",
     ) -> None:
-        """Interactive or headless rendering of a trajectory (single or batched)."""
+        """Render an animated trajectory interactively or headlessly.
+
+        Args:
+            ts: Time stamps of shape (T,).
+            q_ts: Configurations of shape (T, DOF) or batched (N, T, DOF).
+            backend: Viewer backend override ("legacy", "gui", or "auto").
+            playback_speed: Playback speed multiplier (>0).
+            loop: Whether to loop the animation when it reaches the end.
+            record_path: Optional path to save frames or video (extension determines mode).
+            record_every_n: Save every n-th frame when recording images.
+            record_prefix: Filename prefix for recorded frames.
+            base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
+            robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            static_spheres_positions: Optional static sphere centers, shape (M, 3).
+            static_spheres_radii: Optional static sphere radii, length M.
+            static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
+            dynamic_spheres_positions: Optional dynamic sphere trajectories, shape (K, T, 3).
+            dynamic_spheres_radii: Optional dynamic sphere radii, length K.
+            dynamics_spheres_colors: Optional dynamic sphere colors, shape (K, 3/4).
+            window_name: Title for the viewer window.
+
+        Returns:
+            None
+        """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
                 "Open3D is not installed. Install with: pip install open3d"
