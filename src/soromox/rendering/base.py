@@ -54,9 +54,6 @@ class BaseContinuumSoftRobotRenderer(ABC):
         self.num_points = num_points
         self.background_color = background_color
 
-        # Cache forward kinematics (batched over arc-length)
-        self._batched_fk = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-
         # Handle different length attribute names (L for PCS, V_L for GVS)
         if hasattr(robot, "L"):
             self.L_max = float(jnp.sum(robot.L))
@@ -81,8 +78,16 @@ class BaseContinuumSoftRobotRenderer(ABC):
             Array of shape (num_points, 3) for 3D or (num_points, 2) for 2D
         """
         s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        poses = self._batched_fk(q, s_ps)
-        return self._extract_positions(poses)
+        if hasattr(self.robot, "forward_kinematics_batched"):
+            poses = self.robot.forward_kinematics_batched(q, s_ps)
+        else:
+            # Fallback to vmap over single-point FK
+            poses = jax.vmap(lambda s: self.robot.forward_kinematics(q, s))(s_ps)
+
+        # extract positions
+        curve = self._extract_positions(poses)  # (num_points, dim)
+
+        return curve
 
     @abstractmethod
     def _extract_positions(self, poses: Array) -> Array:
@@ -206,19 +211,9 @@ class BaseContinuumSoftRobotRenderer(ABC):
                 f"base_offsets first dimension ({base_offsets.shape[0]}) must "
                 f"match batch size ({q_batch.shape[0]})"
             )
-
-        # Use forward_kinematics_batched if available (optimized for some robots)
-        if hasattr(self.robot, "forward_kinematics_batched"):
-            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-            # vmap over robot configurations only
-            batched_fk = jax.vmap(
-                lambda q: self.robot.forward_kinematics_batched(q, s_ps)
-            )
-            poses = batched_fk(q_batch)  # (N, num_points, pose_dim)
-            curves = jax.vmap(self._extract_positions)(poses)
-        else:
-            # Fallback to vmap over compute_backbone_curve
-            curves = jax.vmap(self.compute_backbone_curve)(q_batch)
+        
+        # vmap over the configurations
+        curves = jax.vmap(self.compute_backbone_curve)(q_batch)  # (N, num_points, dim)
 
         # Match base offset dimensionality to curve dimensionality (2D vs 3D)
         if base_offsets.shape[1] == curves.shape[-1]:
