@@ -280,6 +280,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
         grid_spacing: Tuple[float, float] = (0.5, 0.5),
+        base_plate_color: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        base_plate_radius_scale: float = 2.0,
+        base_plate_thickness: float = 5e-2 * 1.3,
         base_offsets: Optional[Array] = None,
         robot_colors: Optional[
             Union[str, Tuple[Tuple[float, float, float], ...], List[Tuple[float, float, float]]]
@@ -303,6 +306,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             tendon_line_width: Width of tendon lines
             camera_margin_ratio: Margin ratio for camera bounding box
             grid_spacing: (x, y) spacing between robot bases for batched rendering
+            base_plate_color: RGB color for the base plate geometry
+            base_plate_radius_scale: Multiplier applied to the maximum segment radius to size the base plate
+            base_plate_thickness: Absolute thickness of the base plate geometry
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             robot_colors: Color configuration when rendering multiple robots. Can be:
                 - None or "same": All robots use first segment color
@@ -323,6 +329,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self.tendon_line_width = tendon_line_width
         self.camera_margin_ratio = camera_margin_ratio
         self.grid_spacing = grid_spacing
+        self.base_plate_color = tuple(base_plate_color)
+        self.base_plate_radius_scale = float(base_plate_radius_scale)
+        self.base_plate_thickness = float(base_plate_thickness)
         self._base_offsets = base_offsets
         self._robot_colors_config = robot_colors
         self.body_alpha = float(np.clip(body_alpha, 0.0, 1.0))
@@ -453,11 +462,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             return material_cache[key]
 
         # Base plate
-        base_color = (0.0, 0.0, 0.0)
+        base_color = self.base_plate_color
         base_mesh = _make_base_plate(
             curve[0],
-            radius=float(2.0 * r_seg.max()),
-            thickness=float(5e-2 * 1.3),
+            radius=float(self.base_plate_radius_scale * r_seg.max()),
+            thickness=self.base_plate_thickness,
             color=base_color,
             apply_color=False,
         )
@@ -534,11 +543,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         color_override: Optional[Tuple[float, float, float]] = None,
     ):
         """Add base and backbone meshes for one robot; return handles."""
-        base_color = self._blend_with_background((0.0, 0.0, 0.0))
+        base_color = self._blend_with_background(self.base_plate_color)
         base_mesh = _make_base_plate(
             curve0[0],
-            radius=float(2.0 * r_seg.max()),
-            thickness=float(5e-2 * 1.3),
+            radius=float(self.base_plate_radius_scale * r_seg.max()),
+            thickness=self.base_plate_thickness,
             color=base_color,
         )
         vis.add_geometry(base_mesh)
@@ -716,11 +725,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         seg_cols = _expand_colors(self.seg_colors, S)
 
         # Base plate
+        base_color = self._blend_with_background(self.base_plate_color)
         base_mesh = _make_base_plate(
             curve[0],
-            radius=float(2.0 * r_seg.max()),
-            thickness=float(5e-2 * 1.3),
-            color=(0.0, 0.0, 0.0),
+            radius=float(self.base_plate_radius_scale * r_seg.max()),
+            thickness=self.base_plate_thickness,
+            color=base_color,
         )
         vis.add_geometry(base_mesh)
 
@@ -1158,11 +1168,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     color_override = color_overrides[robot_idx]
 
                 # Base
-                base_color = (0.0, 0.0, 0.0)
+                base_color = self.base_plate_color
                 base_mesh = _make_base_plate(
                     curve[0],
-                    radius=float(2.0 * r_seg.max()),
-                    thickness=float(5e-2 * 1.3),
+                    radius=float(self.base_plate_radius_scale * r_seg.max()),
+                    thickness=self.base_plate_thickness,
                     color=base_color,
                     apply_color=False,
                     apply_translation=True,
@@ -1526,11 +1536,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         color_override: Optional[Tuple[float, float, float]] = None,
     ):
         """Add base and backbone spheres for one robot; return handles."""
+        base_color = self._blend_with_background(self.base_plate_color)
         base_mesh = _make_base_plate(
             curve0[0],
-            radius=float(2.0 * r_seg.max()),
-            thickness=float(5e-2 * 1.3),
-            color=(0.0, 0.0, 0.0),
+            radius=float(self.base_plate_radius_scale * r_seg.max()),
+            thickness=self.base_plate_thickness,
+            color=base_color,
         )
         vis.add_geometry(base_mesh)
 
