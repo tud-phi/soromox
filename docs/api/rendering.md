@@ -24,16 +24,16 @@ BaseContinuumSoftRobotRenderer (abstract base)
     from soromox.rendering import MatplotlibRenderer
 
     # Create renderer
-    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer = MatplotlibRenderer(robot, num_points=50, robot_colors="plasma")
 
     # Single frame
-    renderer.show(q)
+    renderer.show(q, robot_colors="plasma")
 
     # Interactive animation with slider
-    renderer.animate(ts, q_ts, mode="slider")
+    renderer.animate(ts, q_ts, mode="slider", robot_colors="plasma")
 
     # Auto-playing animation
-    renderer.animate(ts, q_ts, mode="animation", interval=50)
+    renderer.animate(ts, q_ts, mode="animation", interval=50, robot_colors="plasma")
     ```
 
 === "Open3D (3D robots)"
@@ -42,7 +42,13 @@ BaseContinuumSoftRobotRenderer (abstract base)
     from soromox.rendering import Open3DRenderer
 
     # Create renderer (defaults to legacy viewer backend)
-    renderer = Open3DRenderer(robot, num_points=80, viewer_backend="legacy")
+    renderer = Open3DRenderer(
+        robot,
+        num_points=80,
+        viewer_backend="legacy",
+        seg_colors="coolwarm",    # colormap or (N,3)/(N,4) array with optional alpha
+        robot_colors="viridis",   # colormap or (N,3)/(N,4) array for batched robots
+    )
 
     # Single interactive frame (supports base offsets / spheres if provided)
     renderer.show(q, backend="legacy")
@@ -82,6 +88,11 @@ BaseContinuumSoftRobotRenderer (abstract base)
     # Create video
     renderer.render_sequence(ts, q_ts, record_path="video.mp4")
     ```
+
+### Colors
+
+- `seg_colors` (Open3D): optional colormap name or array of shape (N,3)/(N,4); defaults to the `coolwarm` colormap.
+- `robot_colors` (Matplotlib/Open3D): optional colormap name or array of shape (N,3)/(N,4) cycled across robots; `"same"` uses the first segment color. Alpha is honored where supported.
 
 ### Keyboard Controls (Open3D)
 
