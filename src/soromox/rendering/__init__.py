@@ -9,11 +9,11 @@ This module provides various backends for visualizing robots:
 """
 
 from soromox.rendering.base import BaseContinuumSoftRobotRenderer
-from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
+from soromox.rendering.continuum_soft_robot import MatplotlibRenderer
 
 # Open3D renderer is optional (requires open3d package)
 try:
-    from soromox.rendering.open3d_renderer import Open3DRenderer
+    from soromox.rendering.continuum_soft_robot import Open3DRenderer
 except ImportError:
     Open3DRenderer = None
 

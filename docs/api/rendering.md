@@ -121,7 +121,7 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
 
 ## Matplotlib Renderer
 
-::: soromox.rendering.matplotlib_renderer.MatplotlibRenderer
+::: soromox.rendering.continuum_soft_robot.matplotlib_renderer.MatplotlibRenderer
     options:
       show_root_heading: true
       show_source: false
@@ -130,7 +130,7 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
 
 ## Open3D Renderer
 
-::: soromox.rendering.open3d_renderer.Open3DRenderer
+::: soromox.rendering.continuum_soft_robot.open3d_renderer.Open3DRenderer
     options:
       show_root_heading: true
       show_source: false

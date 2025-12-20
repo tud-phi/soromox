@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
+from soromox.rendering.planar_pcs import OpenCVPlanarPCSRenderer
 from soromox.systems.planar_pcs import PlanarPCS
 from soromox.systems.system_state import SystemState
 
@@ -179,3 +180,15 @@ if __name__ == "__main__":
     # =====================================================
     renderer = MatplotlibRenderer(robot, num_points=50)
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
+
+    # =====================================================
+    # OpenCV-based rendering example (Planar PCS)
+    # =====================================================
+    opencv_renderer = OpenCVPlanarPCSRenderer(robot, num_points=50, width=700, height=700)
+    frame_bgr = opencv_renderer.render_frame(q_ts[0])
+    # Display the frame using matplotlib (convert BGR -> RGB for plt)
+    plt.figure()
+    plt.imshow(frame_bgr[..., ::-1])
+    plt.axis("off")
+    plt.tight_layout()
+    plt.show()

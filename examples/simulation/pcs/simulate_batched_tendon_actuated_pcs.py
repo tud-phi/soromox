@@ -124,7 +124,7 @@ def main():
         grid_spacing=grid_spacing,
         robot_colors="viridis",
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts_batched)
+    renderer.render_sequence(ts=ts, q_ts=q_ts_batched, record_path="videos/batched_tendon_actuated_pcs.mp4")
 
 
 if __name__ == "__main__":
