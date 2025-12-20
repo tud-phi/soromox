@@ -37,9 +37,9 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         background_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
         line_color: str = "blue",
         line_width: float = 4.0,
+        robot_colors: Optional[Union[str, List]] = None,
         grid_spacing: Tuple[float, float] = (0.3, 0.3),
         base_offsets: Optional[Array] = None,
-        robot_colors: Optional[Union[str, List]] = None,
         tendon_color: Tuple[float, float, float] = (0.9, 0.1, 0.1),
         tendon_line_width: float = 2.0,
     ):
@@ -53,9 +53,10 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             background_color: RGB background color (0-1 range)
             line_color: Color for backbone line
             line_width: Width of backbone line
+            robot_colors: Optional color configuration for batched layouts
+                (None/"same", colormap name, or explicit list cycled across robots)
             grid_spacing: (x, y) spacing for batched layouts
             base_offsets: Optional explicit base offsets for batched layouts
-            robot_colors: Optional color configuration for batched layouts
             tendon_color: Color for tendon polylines (if available)
             tendon_line_width: Line width for tendon polylines
         """
@@ -154,16 +155,25 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
     def render_frame(
         self,
         q: Array,
+        *,
+        base_offsets: Optional[Array] = None,
+        robot_colors: Optional[Union[str, List]] = None,
         show_tendons: bool = True,
     ) -> np.ndarray:
-        """Render configuration(s) to RGB image array.
+        """Render configuration(s) to an RGB image array.
 
         Args:
-            q: Robot configuration array. Shape (DOF,) for single robot or (N, DOF)
+            q: Robot configuration array. Shape (DOF,) for a single robot or (N, DOF)
                 for batched rendering.
+            base_offsets: Optional explicit base offsets of shape (N, 2) or (N, 3) for
+                batched layouts. When provided for a single robot, accepts (dim,) or
+                (1, dim).
+            robot_colors: Optional color configuration for batched layouts
+                (None/"same", colormap name, or explicit list cycled across robots).
+            show_tendons: Whether to render tendons if available.
 
         Returns:
-            RGB image as numpy array of shape (height, width, 3), dtype uint8
+            img (np.ndarray): RGB image of shape (height, width, 3), dtype uint8.
         """
         q_arr = jnp.asarray(q)
         batched = q_arr.ndim == 2
@@ -174,14 +184,14 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             )
 
         spacing = self.grid_spacing
-        colors_cfg = self._robot_colors_config
+        colors_cfg = self._robot_colors_config if robot_colors is None else robot_colors
 
         if batched:
             num_robots = int(q_arr.shape[0])
             base_offsets_arr = (
                 self._compute_grid_offsets(num_robots, spacing)
-                if self._base_offsets is None
-                else jnp.asarray(self._base_offsets)
+                if (base_offsets is None and self._base_offsets is None)
+                else jnp.asarray(base_offsets if base_offsets is not None else self._base_offsets)
             )
 
             curves = self.compute_backbone_curves_batched(q_arr, base_offsets_arr)
@@ -190,7 +200,22 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
         else:
             curves = self.compute_backbone_curve(q_arr)[None, ...]
-            colors = [self.line_color]
+            if base_offsets is not None:
+                offs = np.asarray(base_offsets, dtype=np.float64)
+                if offs.ndim == 1:
+                    offs = offs.reshape(1, -1)
+                if offs.shape[0] != 1:
+                    raise ValueError(
+                        f"base_offsets must have shape (dim,) or (1, dim) for single robot; got {offs.shape}"
+                    )
+                if offs.shape[1] + 1 == curves.shape[-1]:
+                    offs = np.concatenate([offs, np.zeros((offs.shape[0], 1))], axis=1)
+                if offs.shape[1] != curves.shape[-1]:
+                    raise ValueError(
+                        f"base_offsets second dimension ({offs.shape[1]}) must match curve dimension ({curves.shape[-1]})"
+                    )
+                curves = curves + offs[0]
+            colors = self._get_robot_colors(1, colors_cfg)
             width_m = self.L_max * 3
 
         curves_np = np.array(curves)
@@ -202,6 +227,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
                 )
             else:
                 tendon_curves_np = np.array(self.compute_tendon_curves(q_arr))[None, ...]
+                if base_offsets is not None:
+                    tendon_curves_np = tendon_curves_np + offs[0]
 
         fig = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         fig.patch.set_facecolor(self.background_color)
@@ -260,9 +287,33 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
 
         return img
 
-    def show(self, q: Array, *, render_tendons: bool = True) -> None:  # type: ignore[override]
-        """Display a single frame interactively (supports batched inputs)."""
-        img = self.render_frame(q, show_tendons=render_tendons)
+    def show(
+        self,
+        q: Array,
+        *,
+        base_offsets: Optional[Array] = None,
+        robot_colors: Optional[Union[str, List]] = None,
+        render_tendons: bool = True,
+    ) -> None:  # type: ignore[override]
+        """Display a single frame interactively (supports batched inputs).
+
+        Args:
+            q: Robot configuration array. Shape (DOF,) or (N, DOF).
+            base_offsets: Optional explicit base offsets for batched layouts
+                (N, 2/3) or (1, dim) for single robot.
+            robot_colors: Optional color configuration for batched layouts
+                (None/"same", colormap name, or explicit list cycled across robots).
+            render_tendons: Whether to render tendons if available.
+
+        Returns:
+            None
+        """
+        img = self.render_frame(
+            q,
+            base_offsets=base_offsets,
+            robot_colors=robot_colors,
+            show_tendons=render_tendons,
+        )
         plt.figure(figsize=(self.width / 100, self.height / 100))
         plt.imshow(img)
         plt.axis("off")
@@ -276,9 +327,11 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         interval: int = 50,
         mode: str = "slider",
         show: bool = True,
-        render_tendons: bool = True,
-        record_path: Optional[str] = None,
         playback_speed: float = 1.0,
+        record_path: Optional[str] = None,
+        base_offsets: Optional[Array] = None,
+        robot_colors: Optional[Union[str, List]] = None,
+        render_tendons: bool = True,
     ):
         """Interactive matplotlib animation with slider or auto-play.
 
@@ -288,8 +341,12 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             interval: Frame interval in ms (for animation mode)
             mode: "slider" for manual scrubbing, "animation" for auto-play
             show: Whether to call plt.show()
-            record_path: Optional path to save animation (mp4/gif depending on writer)
             playback_speed: Multiplier for playback speed (>1 = faster)
+            record_path: Optional path to save animation (mp4/gif depending on writer)
+            base_offsets: Optional explicit base offsets for batched layouts
+            robot_colors: Optional color configuration for batched layouts
+                (None/"same", colormap name, or explicit list cycled across robots).
+            render_tendons: Whether to render tendons if available
 
         Returns:
             HTML object for Jupyter display (animation mode only)
@@ -311,6 +368,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
                 interval=interval,
                 mode=mode,
                 show=show,
+                base_offsets=base_offsets,
+                robot_colors=robot_colors,
                 render_tendons=render_tendons,
                 record_path=record_path,
                 playback_speed=playback_speed,
@@ -322,6 +381,8 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
                 interval=interval,
                 mode=mode,
                 show=show,
+                base_offsets=base_offsets,
+                robot_colors=robot_colors,
                 render_tendons=render_tendons,
                 record_path=record_path,
                 playback_speed=playback_speed,
@@ -338,27 +399,65 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         interval: int,
         mode: str,
         show: bool,
+        base_offsets: Optional[Array],
+        robot_colors: Optional[Union[str, List]],
         render_tendons: bool,
         record_path: Optional[str],
         playback_speed: float,
     ):
-        """Animate a single robot (legacy behavior)."""
+        """Animate a single robot (legacy behavior).
+
+        Args:
+            ts: Time stamps array of shape (T,).
+            q_ts: Configurations array of shape (T, DOF).
+            interval: Frame interval in ms (for animation mode).
+            mode: "slider" or "animation".
+            show: Whether to display the plot.
+            base_offsets: Optional base offset of shape (dim,) or (1, dim) applied to the robot.
+            robot_colors: Optional color configuration for the robot.
+            render_tendons: Whether to render tendons if available.
+            record_path: Optional path to save animation (mp4/gif depending on writer).
+            playback_speed: Playback speed multiplier (>0).
+
+        Returns:
+            FuncAnimation or None depending on mode.
+        """
         ts_np = np.asarray(ts)
         # Precompute backbone curves once for single robot
         curves = np.array(
             jax.vmap(self.compute_backbone_curve)(q_ts), dtype=np.float64
         )  # (T, P, dim)
+        if base_offsets is not None:
+            offs = np.asarray(base_offsets, dtype=np.float64)
+            if offs.ndim == 1:
+                offs = offs.reshape(1, -1)
+            if offs.shape[0] not in (1,):
+                raise ValueError(
+                    f"base_offsets must have shape (dim,) or (1, dim) for single robot; got {offs.shape}"
+                )
+            if offs.shape[1] + 1 == curves.shape[-1]:
+                offs = np.concatenate([offs, np.zeros((offs.shape[0], 1))], axis=1)
+            if offs.shape[1] != curves.shape[-1]:
+                raise ValueError(
+                    f"base_offsets second dimension ({offs.shape[1]}) must match curve dimension ({curves.shape[-1]})"
+                )
+            curves = curves + offs[0]
         all_curves = curves[None, ...]  # (1, T, P, dim)
         tendon_curves = None
         if render_tendons and self._has_tendons:
             tendon_curves = np.array(
                 jax.vmap(self.compute_tendon_curves)(q_ts), dtype=np.float64
             )[None, ...]  # (1, T, n_tendon, P, dim)
+            if base_offsets is not None:
+                tendon_curves = tendon_curves + offs[0]
+
+        colors_cfg = self._robot_colors_config if robot_colors is None else robot_colors
+        colors = self._get_robot_colors(1, colors_cfg)
 
         return self._animate_backbone_curves(
             ts_np,
             all_curves,
-            colors=[self.line_color],
+            colors=colors,
             interval=interval,
             mode=mode,
             show=show,
@@ -375,11 +474,29 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
         interval: int,
         mode: str,
         show: bool,
+        base_offsets: Optional[Array],
+        robot_colors: Optional[Union[str, List]],
         render_tendons: bool,
         record_path: Optional[str],
         playback_speed: float,
     ):
-        """Animate multiple robots arranged in a grid layout."""
+        """Animate multiple robots arranged in a grid layout.
+
+        Args:
+            ts: Time stamps array of shape (T,).
+            q_ts: Configurations array of shape (N, T, DOF) or (T, DOF) promoted to batch.
+            interval: Frame interval in ms (for animation mode).
+            mode: "slider" or "animation".
+            show: Whether to display the plot.
+            base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
+            robot_colors: Optional color configuration for batched layouts.
+            render_tendons: Whether to render tendons if available.
+            record_path: Optional path to save animation (mp4/gif depending on writer).
+            playback_speed: Playback speed multiplier (>0).
+
+        Returns:
+            FuncAnimation or None depending on mode.
+        """
         ts = jnp.asarray(ts).reshape((-1,))
         q_ts = jnp.asarray(q_ts)
 
@@ -397,11 +514,11 @@ class MatplotlibRenderer(BaseContinuumSoftRobotRenderer):
             )
 
         spacing = self.grid_spacing
-        colors_cfg = self._robot_colors_config
+        colors_cfg = self._robot_colors_config if robot_colors is None else robot_colors
         base_offsets_arr = (
             self._compute_grid_offsets(int(num_robots), spacing)
-            if self._base_offsets is None
-            else jnp.asarray(self._base_offsets)
+            if (base_offsets is None and self._base_offsets is None)
+            else jnp.asarray(base_offsets if base_offsets is not None else self._base_offsets)
         )
 
         # Precompute all backbone curves with offsets applied

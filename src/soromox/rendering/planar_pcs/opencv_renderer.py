@@ -76,10 +76,10 @@ class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
         """Render single configuration to BGR image array.
 
         Args:
-            q: Robot configuration array
+            q: Robot configuration array of shape (DOF,) for a single robot.
 
         Returns:
-            BGR image as numpy array of shape (height, width, 3), dtype uint8
+            img (np.ndarray): BGR image of shape (height, width, 3), dtype uint8.
         """
         robot = self.robot
         h, w = self.height, self.width
@@ -143,7 +143,10 @@ class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
         """Display single frame in OpenCV window.
 
         Args:
-            q: Robot configuration
+            q: Robot configuration array of shape (DOF,).
+
+        Returns:
+            None
         """
         img = self.render_frame(q)
         win = "Planar PCS"
