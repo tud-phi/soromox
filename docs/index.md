@@ -195,6 +195,26 @@ Get up and running in minutes:
     }
     ```
 
+    ### Model-Based Controllers Citation
+
+    If you found the implementation of the model-based controllers (e.g., PID, gravity cancellation, potential shaping regulators) useful, please consider also citing the following PhD thesis:
+
+    ```bibtex
+    @phdthesis{stolzle2025phdthesis,
+      title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
+      keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
+      author = "Maximilian St{\"o}lzle",
+      year = "2025",
+      month = "9",
+      day = "15",
+      language = "English",
+      type = "Dissertation (TU Delft)",
+      school = "Mechanical Engineering, Delft University of Technology",
+      doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
+      isbn = "978-94-6384-836-7",
+    }
+    ```
+
 ---
 
 ## 🤝 Contributing
