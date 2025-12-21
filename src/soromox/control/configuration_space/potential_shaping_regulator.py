@@ -1,4 +1,4 @@
-__all__ = ["PotentialShapingController"]
+__all__ = ["PotentialShapingRegulator"]
 
 from typing import Any, Optional, Tuple
 
@@ -12,15 +12,20 @@ from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.system_state import SystemState
 
 
-class PotentialShapingController(PIDController):
+class PotentialShapingRegulator(PIDController):
     """
-    Potential shaping controller for soft robots.
+    Potential shaping regulator for soft robots.
 
     This controller extends the PIDController by adding a model-based feedforward
     term that compensates for the gravitational and elastic forces at the desired
     configuration. This is known as "potential shaping" as it effectively reshapes
     the potential energy landscape of the system to have a minimum at the desired
     configuration.
+
+    Note:
+        This regulator is specialized for setpoint regulation or quasi-static
+        trajectories as it does not consider the dynamical (e.g., inertial, Coriolis, damping, etc.)
+        forces of the soft robot.
 
     The control law is:
         tau_model = G(q_des) + tau_el(q_des)
@@ -52,7 +57,7 @@ class PotentialShapingController(PIDController):
         pid_control: PIDControl,
     ):
         """
-        Initialize the potential shaping controller.
+        Initialize the potential shaping regulator.
 
         Args:
             robot: The dynamical system (robot) to be controlled.
