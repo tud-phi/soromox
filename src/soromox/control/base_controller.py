@@ -24,13 +24,8 @@ class BaseController(eqx.Module, ABC):
         reference_trajectory: The desired trajectory to track.
     """
 
-    def __init__(
-        self,
-        robot: DynamicalSystem,
-        reference_trajectory: ReferenceTrajectory,
-    ):
-        self.robot = robot
-        self.reference_trajectory = reference_trajectory
+    robot: DynamicalSystem
+    reference_trajectory: ReferenceTrajectory
 
     @abstractmethod
     def __call__(
