@@ -5,6 +5,7 @@ from typing import Any, Optional, Tuple
 import jax.numpy as jnp
 from jax import Array
 
+from soromox.control.actuation_matrix_utils import emit_actuation_warnings
 from soromox.control.configuration_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
 from soromox.control.reference_trajectory import ReferenceTrajectory
@@ -26,6 +27,12 @@ class PotentialCompensationRegulator(PIDController):
         This regulator is specialized for setpoint regulation or quasi-static
         trajectories as it does not consider the dynamical (e.g., inertial, Coriolis, damping, etc.)
         forces of the soft robot.
+
+    Warning:
+        For full theoretical guarantees, the actuation matrix should be
+        configuration-independent. If A(q) is configuration-dependent, consider
+        using the ComputedTorqueTracker (with full feedback linearization) or
+        actuation-space controllers.
 
     The control law is:
         tau_model = G(q_des) + tau_el(q_des)
@@ -80,8 +87,26 @@ class PotentialCompensationRegulator(PIDController):
                 Must provide x_des_fn (desired configuration) as a function of time.
             pid_control: A PIDControl instance containing the control gains
                 (Kp, Ki, Kd) and optional saturation function.
+
+        Raises:
+            ValueError: If the actuation matrix is singular (for full actuation)
+                or has insufficient rank (for overactuation).
         """
-        super().__init__(robot, reference_trajectory, pid_control)
+        # Skip parent's _check_pid_actuation by calling grandparent's __init__
+        self.robot = robot
+        self.reference_trajectory = reference_trajectory
+        self.pid_control = pid_control
+        self._check_actuation()
+
+    def _check_actuation(self) -> None:
+        """Check actuation matrix properties and emit appropriate warnings."""
+        emit_actuation_warnings(
+            controller_name="PotentialCompensationRegulator",
+            robot=self.robot,
+            is_regulator=True,
+            is_computed_torque=False,
+            stacklevel=4,
+        )
 
     def model_based_term(
         self, system_state: SystemState

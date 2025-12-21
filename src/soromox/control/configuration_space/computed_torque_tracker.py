@@ -1,10 +1,15 @@
 __all__ = ["ComputedTorqueTracker"]
 
+import warnings
 from typing import Any, Optional, Tuple
 
 import jax.numpy as jnp
 from jax import Array
 
+from soromox.control.actuation_matrix_utils import (
+    ActuationScenario,
+    analyze_actuation_matrix,
+)
 from soromox.control.closed_form_model_based_controller import (
     ClosedFormModelBasedController,
 )
@@ -34,7 +39,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
     The control law is:
         qdd_ref = qdd_des + PID(e, ed, integral_error)
         tau = M(q) @ qdd_ref + C(q, qd) @ qd + G(q) + tau_el(q) + D(q) @ qd
-        u = inv(A(q)) @ tau
+        u = inv(A(q)) @ tau  (or pinv for overactuated systems)
 
     where:
         - M(q) is the inertia (mass) matrix at the current configuration
@@ -47,7 +52,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         - ed = qd_des - qd is the velocity error
         - qdd_ref is the reference acceleration that includes PID feedback
         - A(q) is the state-dependent actuation matrix of the robot
-        - inv(A(q)) is the inverse of A(q)
+        - inv(A(q)) is the inverse of A(q) (or pseudo-inverse for overactuation)
 
     With perfect model knowledge, the closed-loop dynamics become:
         qdd = qdd_des + PID(e, ed, integral_error)
@@ -56,10 +61,15 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
     ensures asymptotic stability and desired transient response.
 
     Note:
-        This controller requires the system to be fully actuated, i.e., the
-        actuation matrix A(q) must be square and invertible. If the system is
-        underactuated or overactuated (non-square actuation matrix), an exception will be raised
-        during initialization.
+        This controller is the recommended choice for fully actuated systems with
+        configuration-dependent actuation matrices, as it achieves full feedback
+        linearization. Other configuration-space controllers may have reduced
+        theoretical guarantees when the actuation matrix depends on configuration.
+
+        The controller requires the actuation matrix to have sufficient rank:
+        - For full actuation: A must be square and invertible.
+        - For overactuation: A must have rank at least equal to the number of DOFs.
+        - Underactuation is not supported as the system cannot be fully linearized.
 
     Attributes:
         robot: The dynamical system (robot) to be controlled.
@@ -76,6 +86,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
     """
 
     pid_control: PIDControl
+    _actuation_scenario: ActuationScenario
 
     def __init__(
         self,
@@ -101,42 +112,68 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
                 dynamics computation.
 
         Raises:
-            ValueError: If the system is not fully actuated (i.e., the actuation
-                matrix is not square) or if the actuation matrix is singular.
+            ValueError: If the system is underactuated, if the actuation matrix
+                is singular (for full actuation), or if the rank is insufficient
+                (for overactuation).
         """
         self.robot = robot
         self.reference_trajectory = reference_trajectory
         self.pid_control = pid_control
-        self._check_full_actuation()
+        self._actuation_scenario = self._check_actuation()
 
-    def _check_full_actuation(self):
+    def _check_actuation(self) -> ActuationScenario:
         """
-        Check if the system is fully actuated with an invertible actuation matrix.
+        Check actuation matrix properties for computed torque control.
+
+        Returns:
+            The detected actuation scenario.
 
         Raises:
-            ValueError: If the actuation matrix is not square or is singular.
+            ValueError: If the system is underactuated, singular (for full actuation),
+                or has insufficient rank (for overactuation).
         """
-        # Check actuation matrix at zero configuration
-        num_dofs = self.robot.num_actuators
-        q_test = jnp.zeros((num_dofs,))
-        A = self.robot.actuation_matrix(q_test)
+        scenario, shape, rank = analyze_actuation_matrix(self.robot)
+        n_dof, n_actuators = shape
 
-        if A.shape[0] != A.shape[1]:
+        if scenario == ActuationScenario.UNDERACTUATION:
             raise ValueError(
-                f"ComputedTorqueTracker requires a fully actuated system, but the "
-                f"actuation matrix is not square (shape {A.shape}). The number of "
-                f"actuators ({A.shape[1]}) must equal the number of degrees of "
-                f"freedom ({A.shape[0]}) for computed torque control."
+                f"ComputedTorqueTracker requires at least as many actuators as DOFs, "
+                f"but the system is underactuated ({n_actuators} actuators < {n_dof} DOFs). "
+                f"Computed torque control cannot fully linearize underactuated systems. "
+                f"Consider using actuation-space controllers or regulators designed for "
+                f"underactuated systems. For deeper analysis, see: Borja (2022), "
+                f"Pustina (2022), Della Santina (2023), and Pustina (2025)."
             )
 
-        # Check if the actuation matrix is singular (rank deficient)
-        rank = jnp.linalg.matrix_rank(A)
-        if rank < A.shape[0]:
-            raise ValueError(
-                f"ComputedTorqueTracker requires an invertible actuation matrix, but "
-                f"the actuation matrix is singular (rank {rank} < {A.shape[0]}). "
-                f"The actuation matrix must be full rank for computed torque control."
+        if scenario == ActuationScenario.FULL_ACTUATION:
+            if rank < n_dof:
+                raise ValueError(
+                    f"ComputedTorqueTracker requires an invertible actuation matrix, but "
+                    f"the actuation matrix is singular (rank {rank} < {n_dof}). "
+                    f"The actuation matrix must be full rank (positive-definite) for "
+                    f"computed torque control."
+                )
+
+        if scenario == ActuationScenario.OVERACTUATION:
+            if rank < n_dof:
+                raise ValueError(
+                    f"ComputedTorqueTracker: The actuation matrix has rank {rank}, which is "
+                    f"less than the number of DOFs ({n_dof}). Even with overactuation "
+                    f"({n_actuators} actuators > {n_dof} DOFs), the actuation matrix "
+                    f"must have rank at least {n_dof} to control all DOFs."
+                )
+            warnings.warn(
+                f"ComputedTorqueTracker: The system is overactuated ({n_actuators} "
+                f"actuators > {n_dof} DOFs). Overactuation has been rarely investigated "
+                f"in literature. The pseudo-inverse will be used to compute actuator inputs, "
+                f"which minimizes the actuator effort while achieving the desired generalized "
+                f"forces. This should generally work well as the residual can be minimized "
+                f"to (almost) zero.",
+                UserWarning,
+                stacklevel=3,
             )
+
+        return scenario
 
     def model_based_term(
         self, system_state: SystemState
@@ -181,9 +218,11 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         # Get the actuation matrix at current configuration
         A = self.robot.actuation_matrix(q)
 
-        # Compute actuator input using inverse of actuation matrix
-        # (We already checked that A is square in __init__)
-        u_model = jnp.linalg.inv(A) @ tau_model
+        # Compute actuator input using inverse (or pseudo-inverse for overactuation)
+        if self._actuation_scenario == ActuationScenario.OVERACTUATION:
+            u_model = jnp.linalg.pinv(A) @ tau_model
+        else:
+            u_model = jnp.linalg.inv(A) @ tau_model
 
         return u_model, None
 
@@ -249,7 +288,10 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
 
         # Get the actuation matrix and compute actuator input
         A = self.robot.actuation_matrix(q)
-        u_feedback = jnp.linalg.inv(A) @ tau_fb
+        if self._actuation_scenario == ActuationScenario.OVERACTUATION:
+            u_feedback = jnp.linalg.pinv(A) @ tau_fb
+        else:
+            u_feedback = jnp.linalg.inv(A) @ tau_fb
 
         # Build control state derivative
         if control_state is not None:

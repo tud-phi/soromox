@@ -1,11 +1,11 @@
 __all__ = ["FeedforwardCompensationTracker"]
 
-import warnings
 from typing import Any, Optional, Tuple
 
 import jax.numpy as jnp
 from jax import Array
 
+from soromox.control.actuation_matrix_utils import emit_actuation_warnings
 from soromox.control.configuration_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
 from soromox.control.reference_trajectory import ReferenceTrajectory
@@ -46,9 +46,10 @@ class FeedforwardCompensationTracker(PIDController):
         desired trajectory rather than the actual state.
 
     Warning:
-        This controller requires the system to be fully actuated (square and
-        full-rank actuation matrix). A warning is printed if the system appears
-        to be underactuated.
+        For full theoretical guarantees, the actuation matrix should be
+        configuration-independent. If A(q) is configuration-dependent, consider
+        using the ComputedTorqueTracker (with full feedback linearization) or
+        actuation-space controllers.
 
     Attributes:
         robot: The dynamical system (robot) to be controlled.
@@ -85,41 +86,26 @@ class FeedforwardCompensationTracker(PIDController):
                 as functions of time.
             pid_control: A PIDControl instance containing the control gains
                 (Kp, Ki, Kd) and optional saturation function.
+
+        Raises:
+            ValueError: If the actuation matrix is singular (for full actuation)
+                or has insufficient rank (for overactuation).
         """
-        super().__init__(robot, reference_trajectory, pid_control)
+        # Skip parent's _check_pid_actuation by calling grandparent's __init__
+        self.robot = robot
+        self.reference_trajectory = reference_trajectory
+        self.pid_control = pid_control
         self._check_actuation()
 
-    def _check_actuation(self):
-        """Check if the system is not fully actuated and print a warning."""
-        # Check actuation matrix at zero configuration
-        num_dofs = self.robot.num_actuators  # Initial guess
-        try:
-            # Try to get the number of DOFs from the robot
-            q_test = jnp.zeros((num_dofs,))
-            A = self.robot.actuation_matrix(q_test)
-            if A.shape[0] != A.shape[1]:
-                warnings.warn(
-                    f"FeedforwardCompensationTracker: The actuation matrix is not square "
-                    f"(shape {A.shape}). The system appears to be underactuated. "
-                    f"The pseudo-inverse will be used, but this may lead to suboptimal "
-                    f"performance or instability.",
-                    UserWarning,
-                    stacklevel=3,
-                )
-            else:
-                # Check rank (approximately)
-                rank = jnp.linalg.matrix_rank(A)
-                if rank < A.shape[0]:
-                    warnings.warn(
-                        f"FeedforwardCompensationTracker: The actuation matrix appears to be "
-                        f"rank-deficient (rank {rank} < {A.shape[0]}). The system may be "
-                        f"underactuated. This may lead to suboptimal performance or instability.",
-                        UserWarning,
-                        stacklevel=3,
-                    )
-        except Exception:
-            # If we can't check, just continue silently
-            pass
+    def _check_actuation(self) -> None:
+        """Check actuation matrix properties and emit appropriate warnings."""
+        emit_actuation_warnings(
+            controller_name="FeedforwardCompensationTracker",
+            robot=self.robot,
+            is_regulator=False,
+            is_computed_torque=False,
+            stacklevel=4,
+        )
 
     def model_based_term(
         self, system_state: SystemState

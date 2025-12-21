@@ -1,10 +1,15 @@
 __all__ = ["PIDController"]
 
+import warnings
 from typing import Any, Optional, Tuple
 
 import jax.numpy as jnp
 from jax import Array
 
+from soromox.control.actuation_matrix_utils import (
+    ActuationScenario,
+    analyze_actuation_matrix,
+)
 from soromox.control.closed_form_model_based_controller import (
     ClosedFormModelBasedController,
 )
@@ -37,6 +42,12 @@ class PIDController(ClosedFormModelBasedController):
 
     where sat() is an optional saturation function for anti-windup.
 
+    Note:
+        This base PID controller uses u = A.T @ tau, which naturally handles
+        all actuation scenarios (full, over, and underactuation). However,
+        subclasses that use the actuation matrix inverse require additional
+        considerations for non-square actuation matrices.
+
     Attributes:
         robot: The dynamical system (robot) to be controlled.
         reference_trajectory: The desired trajectory to track.
@@ -66,6 +77,42 @@ class PIDController(ClosedFormModelBasedController):
         self.robot = robot
         self.reference_trajectory = reference_trajectory
         self.pid_control = pid_control
+        self._check_pid_actuation()
+
+    def _check_pid_actuation(self) -> None:
+        """
+        Check actuation matrix properties for the base PID controller.
+
+        The base PID controller uses u = A.T @ tau, which works with all
+        actuation scenarios, but we emit informational warnings for
+        non-standard cases.
+        """
+        try:
+            scenario, shape, rank = analyze_actuation_matrix(self.robot)
+            n_dof, n_actuators = shape
+
+            if scenario == ActuationScenario.FULL_ACTUATION:
+                if rank < n_dof:
+                    warnings.warn(
+                        f"PIDController: The actuation matrix is singular "
+                        f"(rank {rank} < {n_dof}). This may lead to reduced "
+                        f"controllability in some directions.",
+                        UserWarning,
+                        stacklevel=3,
+                    )
+            elif scenario == ActuationScenario.UNDERACTUATION:
+                warnings.warn(
+                    f"PIDController: The system is underactuated ({n_actuators} "
+                    f"actuators < {n_dof} DOFs). The base PID controller uses "
+                    f"u = A.T @ tau which provides feedback in actuator space, but "
+                    f"cannot fully control all DOFs. Consider using actuation-space "
+                    f"controllers for better underactuated control.",
+                    UserWarning,
+                    stacklevel=3,
+                )
+        except Exception:
+            # If we can't analyze, continue silently
+            pass
 
     def error_based_feedback_term(
         self, system_state: SystemState
