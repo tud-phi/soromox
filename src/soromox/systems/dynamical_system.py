@@ -1,5 +1,7 @@
 __all__ = ["DynamicalSystem"]
 import warnings
+from abc import abstractmethod
+
 import equinox as eqx
 import jax
 from jax import Array, jit, lax, vmap
@@ -22,6 +24,27 @@ from soromox.systems.system_state import SystemState
 
 class DynamicalSystem(eqx.Module):
     num_actuators: int = eqx.field(static=True)  # Number of actuators
+
+    @abstractmethod
+    def forward_dynamics(
+        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
+    ) -> Array:
+        """
+        Compute the forward dynamics of the system.
+
+        This method computes the state derivative yd = [qd, qdd] given the
+        current time, state, and actuation inputs.
+
+        Args:
+            t (Array): Current time.
+            y (Array): State vector containing configuration and velocity.
+            actuation_args (Optional[Tuple]): Tuple of actuation inputs, typically (u, tau_ext) where
+                u is the control input and tau_ext is the external force/torque.
+
+        Returns:
+            yd (Array): State derivative yd with the same shape as y.
+        """
+        ...
 
     @staticmethod
     def _compute_save_times(
