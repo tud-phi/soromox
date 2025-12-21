@@ -1,4 +1,4 @@
-__all__ = ["PotentialShapingRegulator"]
+__all__ = ["PotentialCompensationRegulator"]
 
 from typing import Any, Optional, Tuple
 
@@ -12,9 +12,9 @@ from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.system_state import SystemState
 
 
-class PotentialShapingRegulator(PIDController):
+class PotentialCompensationRegulator(PIDController):
     """
-    Potential shaping regulator for soft robots.
+    Potential compensation regulator for soft robots.
 
     This controller extends the PIDController by adding a model-based feedforward
     term that compensates for the gravitational and elastic forces at the desired
@@ -45,9 +45,22 @@ class PotentialShapingRegulator(PIDController):
         pid_control: The PIDControl instance containing the gains and saturation.
 
     References:
+        Kelly, R., & Salgado, R. (1994). PD control with computed feedforward of
+        robot manipulators: A design procedure. IEEE Transactions on Robotics
+        and Automation, 10(4), 566-571.
+
+        Borja, P., Della Santina, C., & Albu-Schäffer, A. (2022). Energy-shaping
+        control of soft continuum manipulators with in-plane disturbances.
+        The International Journal of Robotics Research, 41(1), 62-81.
+
         Della Santina, C., Duriez, C., & Rus, D. (2023). Model-based control of
         soft robots: A survey of the state of the art and open challenges.
         IEEE Control Systems Magazine, 43(3), 30-65.
+
+        Pustina, P., Della Santina, C., & De Luca, A. (2025). Feedback regulation
+        of elastically decoupled underactuated soft robots. IEEE Transactions
+        on Robotics.
+
     """
 
     def __init__(
@@ -57,7 +70,7 @@ class PotentialShapingRegulator(PIDController):
         pid_control: PIDControl,
     ):
         """
-        Initialize the potential shaping regulator.
+        Initialize the potential compensation regulator.
 
         Args:
             robot: The dynamical system (robot) to be controlled.
@@ -74,7 +87,7 @@ class PotentialShapingRegulator(PIDController):
         self, system_state: SystemState
     ) -> Tuple[Array, Optional[Any]]:
         """
-        Compute the model-based feedforward control term for potential shaping.
+        Compute the model-based feedforward control term for potential compensation.
 
         This method computes the control input required to compensate for the
         gravitational and elastic forces at the desired configuration. The
@@ -106,7 +119,7 @@ class PotentialShapingRegulator(PIDController):
         # Compute elastic force at desired configuration
         tau_elastic = self.robot.elastic_force(q_des)
 
-        # Total generalized torque for potential shaping
+        # Total generalized torque for potential compensation
         tau_model = tau_gravity + tau_elastic
 
         # Get the actuation matrix at current configuration

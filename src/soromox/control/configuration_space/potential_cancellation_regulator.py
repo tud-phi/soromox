@@ -20,6 +20,11 @@ class PotentialCancellationRegulator(PIDController):
     term that cancels the gravitational and elastic forces at the current
     configuration. This provides real-time cancellation of potential energy forces.
 
+    This regulator is closely related to PD+ regulators in rigid robotics, which
+    augment PD feedback with gravity compensation evaluated at the current
+    configuration. The PD+ approach was shown to be globally asymptotically stable
+    for rigid robot manipulators by Paden & Panja (1988) and Kelly & Carelli (1996).
+
     Note:
         This regulator is specialized for setpoint regulation or quasi-static
         trajectories as it does not consider the dynamical (e.g., inertial, Coriolis, damping, etc.)
@@ -43,6 +48,21 @@ class PotentialCancellationRegulator(PIDController):
         pid_control: The PIDControl instance containing the gains and saturation.
 
     References:
+        Paden, B., & Panja, R. (1988). Globally asymptotically stable 'PD+'
+        controller for robot manipulators. International Journal of Control,
+        47(6), 1697-1712.
+
+        Kelly, R., & Carelli, R. (1996). A class of nonlinear PD-type controllers
+        for robot manipulators. Journal of Robotic Systems, 13(12), 793-802.
+
+        Patterson, Z. J., Sologuren, E., Della Santina, C., & Rus, D. (2024).
+        Design and Control of Modular Soft-Rigid Hybrid Manipulators with
+        Self-Contact. IEEE Transactions on Robotics.
+
+        Pustina, P. (2024). Analysis and control of the underactuation in
+        continuum soft robots: a kinematic independent approach. PhD Thesis,
+        Sapienza University of Rome.
+
         Stölzle, M. (2025). Safe yet Precise Soft Robots: Incorporating Physics
         into Learned Models for Control. Dissertation, Delft University of Technology.
         https://doi.org/10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da
