@@ -23,6 +23,7 @@ from soromox.systems.system_state import SystemState
 
 
 class DynamicalSystem(eqx.Module):
+    num_dofs: int = eqx.field(static=True)  # Number of degrees of freedom (configuration variables)
     num_actuators: int = eqx.field(static=True)  # Number of actuators
 
     @abstractmethod

@@ -120,6 +120,7 @@ class Pendulum(DynamicalSystem):
         assert g.shape[0] == 2, "Gravity vector must be length 2"
 
         self.num_links = int(n_q)
+        self.num_dofs = self.num_links
         self.num_actuators = self.num_links
 
         # set parameters

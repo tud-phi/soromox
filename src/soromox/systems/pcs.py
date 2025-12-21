@@ -199,6 +199,7 @@ class PCS(DynamicalSystem):
         self.B_xi = compute_strain_basis(strain_selector)
 
         self.num_active_strains = jnp.sum(strain_selector)
+        self.num_dofs = int(self.num_active_strains.item())
 
         # Reference configuration strain
         if xi_ref is None:

@@ -433,6 +433,7 @@ class GVS(DynamicalSystem):
         self.dof_tot_system = int(
             jnp.sum(V_dof, axis=(0, 1), dtype=int)
         )  # Total DOFs for the robot
+        self.num_dofs = self.dof_tot_system
         self.dof_tot_max = int(
             jnp.array(self.num_segments * 2 * self.max_dof, dtype=int)
         )
