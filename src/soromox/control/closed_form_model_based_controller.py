@@ -1,9 +1,9 @@
 __all__ = ["ClosedFormModelBasedController"]
 
-from abc import abstractmethod
 from typing import Any, Optional, Tuple
 
 import jax
+import jax.numpy as jnp
 from jax import Array
 
 from soromox.control.base_controller import BaseController
@@ -12,17 +12,16 @@ from soromox.systems.system_state import SystemState
 
 class ClosedFormModelBasedController(BaseController):
     """
-    Abstract base class for model-based controllers in configuration space.
+    Base class for closed-form model-based controllers.
 
     This controller combines a model-based feedforward term with an error-based
-    feedback term. Subclasses must implement both terms, which are then summed
-    to produce the final control input.
+    feedback term. Subclasses can override either or both terms; unimplemented
+    terms default to zero.
 
     The control law is:
         u_control = model_based_term + error_based_feedback_term
     """
 
-    @abstractmethod
     def model_based_term(
         self, system_state: SystemState
     ) -> Tuple[Array, Optional[Any]]:
@@ -33,6 +32,9 @@ class ClosedFormModelBasedController(BaseController):
         the desired trajectory based on the system dynamics model (e.g.,
         inverse dynamics, gravity compensation).
 
+        The default implementation returns zero control input. Subclasses
+        can override this method to provide model-based feedforward control.
+
         Args:
             system_state: The current state of the system.
 
@@ -41,9 +43,8 @@ class ClosedFormModelBasedController(BaseController):
             control_state_dot (Optional[Any]): Time derivative of the internal
                 controller state contributed by this term, or None.
         """
-        ...
+        return jnp.zeros((self.robot.num_actuators,)), None
 
-    @abstractmethod
     def error_based_feedback_term(
         self, system_state: SystemState
     ) -> Tuple[Array, Optional[Any]]:
@@ -53,6 +54,9 @@ class ClosedFormModelBasedController(BaseController):
         This term typically computes a corrective control input based on
         the tracking error (e.g., PD control, PID control).
 
+        The default implementation returns zero control input. Subclasses
+        can override this method to provide error-based feedback control.
+
         Args:
             system_state: The current state of the system.
 
@@ -61,7 +65,7 @@ class ClosedFormModelBasedController(BaseController):
             control_state_dot (Optional[Any]): Time derivative of the internal
                 controller state contributed by this term, or None.
         """
-        ...
+        return jnp.zeros((self.robot.num_actuators,)), None
 
     def __call__(
         self, system_state: SystemState
