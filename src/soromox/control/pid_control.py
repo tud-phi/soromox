@@ -1,14 +1,59 @@
-__all__ = ["PIDControl"]
+__all__ = ["PIDControl", "PIDControllerState"]
 
+from dataclasses import dataclass
 from typing import Callable, Literal, Optional, Union
 
 import equinox as eqx
+import jax
 import jax.numpy as jnp
 from jax import Array
 
 
 # Supported saturation function names
 SaturationFnName = Literal["identity", "tanh"]
+
+
+@jax.tree_util.register_pytree_node_class
+@dataclass
+class PIDControllerState:
+    """
+    State container for the PID controller.
+
+    This dataclass holds all internal state variables that evolve over time
+    during closed-loop control. It is registered as a JAX pytree to enable
+    use with JAX transformations and ODE solvers.
+
+    Attributes:
+        integral_error: Accumulated integral of the (possibly saturated) error.
+            Shape: (num_dofs,)
+    """
+
+    integral_error: Array
+
+    def tree_flatten(self):
+        """Flatten the state for JAX pytree operations."""
+        children = (self.integral_error,)
+        aux_data = None
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        """Unflatten the state from JAX pytree operations."""
+        (integral_error,) = children
+        return cls(integral_error=integral_error)
+
+    @classmethod
+    def zero(cls, num_dofs: int) -> "PIDControllerState":
+        """
+        Create a zero-initialized controller state.
+
+        Args:
+            num_dofs: Number of degrees of freedom.
+
+        Returns:
+            PIDControllerState with zero integral error.
+        """
+        return cls(integral_error=jnp.zeros((num_dofs,)))
 
 
 class PIDControl(eqx.Module):
