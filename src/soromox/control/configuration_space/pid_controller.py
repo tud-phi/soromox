@@ -1,0 +1,128 @@
+__all__ = ["PIDController"]
+
+from typing import Any, Optional, Tuple
+
+import jax.numpy as jnp
+from jax import Array
+
+from soromox.control.closed_form_model_based_controller import (
+    ClosedFormModelBasedController,
+)
+from soromox.control.pid_control import PIDControl, PIDControllerState
+from soromox.control.reference_trajectory import ReferenceTrajectory
+from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.system_state import SystemState
+
+
+class PIDController(ClosedFormModelBasedController):
+    """
+    PID controller in configuration space for soft robots.
+
+    This controller implements PID control in the robot's configuration space,
+    computing control inputs based on tracking errors in generalized coordinates.
+
+    The control law is:
+        tau = Kp @ e + Ki @ integral_error + Kd @ ed
+        u = A(q).T @ tau
+
+    where:
+        - e = q_des - q is the configuration error
+        - ed = qd_des - qd is the velocity error
+        - A(q) is the state-dependent actuation matrix of the robot
+        - tau is the generalized force in configuration space
+        - u is the actuator input
+
+    The integral error is updated according to:
+        integral_error_dot = sat(e)
+
+    where sat() is an optional saturation function for anti-windup.
+
+    Attributes:
+        robot: The dynamical system (robot) to be controlled.
+        reference_trajectory: The desired trajectory to track.
+        pid_control: The PIDControl instance containing the gains and saturation.
+    """
+
+    pid_control: PIDControl
+
+    def __init__(
+        self,
+        robot: DynamicalSystem,
+        reference_trajectory: ReferenceTrajectory,
+        pid_control: PIDControl,
+    ):
+        """
+        Initialize the PID controller.
+
+        Args:
+            robot: The dynamical system (robot) to be controlled.
+                Must have an `actuation_matrix(q)` method.
+            reference_trajectory: The desired trajectory to track.
+                Must provide x_des_fn (desired configuration) and
+                xd_des_fn (desired velocity) as functions of time.
+            pid_control: A PIDControl instance containing the control gains
+                (Kp, Ki, Kd) and optional saturation function.
+        """
+        self.robot = robot
+        self.reference_trajectory = reference_trajectory
+        self.pid_control = pid_control
+
+    def error_based_feedback_term(
+        self, system_state: SystemState
+    ) -> Tuple[Array, Optional[PIDControllerState]]:
+        """
+        Compute the PID feedback control term.
+
+        This method computes the PID control action based on the tracking error
+        between the current state and the reference trajectory.
+
+        Args:
+            system_state: The current state of the system, containing:
+                - t: Current simulation time
+                - y: Robot state vector [q, qd] (configuration and velocity)
+                - control_state: PIDControllerState containing integral error,
+                    or None if not using integral control.
+
+        Returns:
+            u_feedback: The feedback control input, shape (num_actuators,).
+            control_state_dot: Time derivative of the PIDControllerState, or None
+                if no control state is being tracked.
+        """
+        t = system_state.t
+        y = system_state.y
+
+        # Split state into configuration and velocity
+        q, qd = jnp.split(y, 2)
+
+        # Get reference trajectory at current time
+        assert self.reference_trajectory.x_des_fn is not None
+        assert self.reference_trajectory.xd_des_fn is not None
+        q_des = self.reference_trajectory.x_des_fn(t)
+        qd_des = self.reference_trajectory.xd_des_fn(t)
+
+        # Compute tracking errors
+        e = q_des - q  # Configuration error
+        ed = qd_des - qd  # Velocity error
+
+        # Get integral error from control state (or zeros if not tracking)
+        control_state: Optional[PIDControllerState] = system_state.control_state
+        if control_state is None:
+            integral_error = jnp.zeros_like(q)
+        else:
+            integral_error = control_state.integral_error
+
+        # Compute PID output in configuration space
+        tau, integral_error_dot = self.pid_control(e, ed, integral_error)
+
+        # Get the actuation matrix and compute actuator input
+        A = self.robot.actuation_matrix(q)
+        u_feedback = A.T @ tau
+
+        # Build control state derivative
+        if control_state is not None:
+            control_state_dot = PIDControllerState(integral_error=integral_error_dot)
+        else:
+            control_state_dot = None
+
+        return u_feedback, control_state_dot
+
