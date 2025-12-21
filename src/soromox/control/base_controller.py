@@ -48,14 +48,15 @@ class BaseController(eqx.Module, ABC):
 
         Args:
             system_state: The current state of the system, containing:
-                - t: Current simulation time
-                - y: Robot state vector (configuration and velocity)
-                - u: Previous actuation input (optional)
-                - control_state: Internal controller state (optional)
+                - t (Array): Current simulation time
+                - y (Array): Robot state vector (typically, configuration and velocity)
+                - u (Optional[Array]): Previous actuation input (optional)
+                - control_state (Optional[Any]): Internal controller state (optional)
 
         Returns:
-            u (Array): The actuation input to apply, shape (num_actuators,).
-            control_state (Optional[Any]): Updated internal controller state as a PyTree,
-                or None if the controller is stateless.
+            u_control (Array): The control input to apply, shape (num_actuators,).
+            control_state_dot (Optional[Any]): Time derivative of the internal controller
+                state as a PyTree (e.g., integrator error for integral control), or None
+                if the controller is stateless.
         """
         ...
