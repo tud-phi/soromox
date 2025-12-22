@@ -214,18 +214,27 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         n_dof = self.robot.num_dofs
 
         # Get reference trajectory at current time
+        # IMPORTANT: The reference trajectory should provide FULL poses (all points,
+        # all dimensions), not task-selected pose components. Some components may be ignored
+        # by the controller based on task selection.
+        # - x_des_full: shape (n_points * n_pose_dim,) - full pose
+        # - xd_des_full: shape (n_points * n_velocity_dim,) - full velocity
         assert self.reference_trajectory.x_des_fn is not None
         assert self.reference_trajectory.xd_des_fn is not None
-        x_des = self.reference_trajectory.x_des_fn(t)
-        xd_des = self.reference_trajectory.xd_des_fn(t)
+        x_des_full = self.reference_trajectory.x_des_fn(t)
+        xd_des_full = self.reference_trajectory.xd_des_fn(t)
+
+        # Apply task selection to velocity trajectory
+        # (velocity space is where the Jacobian and dynamics operate)
+        xd_des = osd.B_task.T @ xd_des_full
 
         # Compute operational space quantities
         J, Jd = osd.jacobian_and_derivative(q, qd)
         J_bar = osd.dynamically_consistent_pseudoinverse(q)
 
-        # Current operational space position (from forward kinematics) and velocity
-        x = osd.operational_space_coordinates(q)
-        xd = J @ qd
+        # Current operational space FULL pose (for error computation) and task-selected velocity
+        x_full = osd.operational_space_poses(q)
+        xd = J @ qd  # Task-selected velocity
 
         # Null-space projector: N = I - J_bar @ J
         N = jnp.eye(n_dof) - J_bar @ J
@@ -284,7 +293,8 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # angular velocities live in the tangent space where subtraction is valid.
 
         # Position/orientation error in operational space (geometric error)
-        e_x = osd.compute_pose_error(x, x_des)
+        # Note: compute_task_pose_error takes FULL poses and returns task-selected error
+        e_x = osd.compute_task_pose_error(x_full, x_des_full)
         # Velocity error in operational space (tangent space, naive subtraction is OK)
         ed_x = xd_des - xd
 

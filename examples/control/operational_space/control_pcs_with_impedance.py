@@ -92,7 +92,9 @@ def main():
         task_selector=task_selector,
     )
 
-    print(f"Operational space dimension: {osd.n_operational_space}")
+    print(f"Operational space dimension (velocity): {osd.n_operational_space}")
+    print(f"Operational space dimension (pose): {osd.n_pose_operational_space}")
+    print(f"Full pose dimension: {osd.n_points * osd.n_pose_dim}")
 
     # =========================================================================
     # Reference Trajectory Definition (End-Effector Position)
@@ -100,15 +102,20 @@ def main():
     t0, t1 = 0.0, 10.0
     ts = jnp.linspace(t0, t1, 1000)
 
-    # Get the initial end-effector position for reference
+    # Get the initial FULL end-effector pose for reference
+    # IMPORTANT: The reference trajectory must provide FULL poses (all components),
+    # even though only some components (e.g., position) are part of the task.
+    # The controller will ignore components not in the task.
     q0 = jnp.zeros((num_dofs,))
-    x0 = osd.operational_space_coordinates(q0)
-    print(f"Initial end-effector position: {x0}")
+    x0_full = osd.operational_space_poses(q0)  # shape: (n_points * n_pose_dim,)
+    print(f"Initial end-effector pose (full): {x0_full}")
 
     # Define a trajectory that moves the end-effector in a simple pattern
     # Starting from the initial position and making small oscillations
+    # For 3D PCS with ROTATION_VECTOR: x0_full = [rot_x, rot_y, rot_z, p_x, p_y, p_z]
+    # We modify position components (indices 3, 4, 5) while keeping rotation constant
     def x_des_fn(t):
-        """Desired end-effector position as a function of time."""
+        """Desired FULL end-effector pose as a function of time."""
         # Start from rest position and move in y-z plane
         # The robot initially points along the x-axis (after the base rotation)
         period = 4.0
@@ -119,13 +126,24 @@ def main():
         # Ramp up the motion smoothly in the first second
         ramp = jnp.minimum(t / 1.0, 1.0)
 
-        x_des = x0.at[1].add(ramp * amplitude_y * jnp.sin(2 * jnp.pi * t / period))
-        x_des = x_des.at[2].add(ramp * amplitude_z * jnp.sin(4 * jnp.pi * t / period))
+        # x0_full is [rot_x, rot_y, rot_z, p_x, p_y, p_z] for 3D PCS
+        # Modify position components (indices 3, 4, 5)
+        x_des = x0_full.at[4].add(ramp * amplitude_y * jnp.sin(2 * jnp.pi * t / period))
+        x_des = x_des.at[5].add(ramp * amplitude_z * jnp.sin(4 * jnp.pi * t / period))
 
         return x_des
 
-    # Create reference trajectory
-    reference_trajectory = ReferenceTrajectory(ts=ts, x_des_fn=x_des_fn)
+    # Create reference trajectory with rotation representation for proper velocity derivation
+    # When rotation_representation is provided, ReferenceTrajectory automatically derives
+    # velocities correctly (handling the geometric relationship between orientation and
+    # angular velocity)
+    reference_trajectory = ReferenceTrajectory(
+        ts=ts,
+        x_des_fn=x_des_fn,
+        rotation_representation=osd.rotation_representation,
+        n_points=osd.n_points,
+        is_planar=osd.is_planar,
+    )
 
     # =========================================================================
     # Impedance Controller Setup
@@ -187,11 +205,17 @@ def main():
     assert trajectory.u is not None
     u_traj = trajectory.u
 
-    # Compute operational space coordinates along the trajectory
-    x_traj = jax.vmap(osd.operational_space_coordinates)(q_traj)
+    # Compute FULL operational space coordinates along the trajectory (for visualization)
+    x_traj_full = jax.vmap(osd.operational_space_poses)(q_traj)
 
-    # Compute desired trajectory at saved times
-    x_des_traj = jax.vmap(x_des_fn)(t_traj)
+    # Compute desired FULL trajectory at saved times
+    x_des_traj_full = jax.vmap(x_des_fn)(t_traj)
+
+    # Extract position components for plotting (indices 3, 4, 5 for 3D PCS)
+    # For 3D robots with ROTATION_VECTOR: full pose = [rot_x, rot_y, rot_z, p_x, p_y, p_z]
+    pos_indices = jnp.array([3, 4, 5])  # Position components
+    x_traj_pos = x_traj_full[:, pos_indices]
+    x_des_traj_pos = x_des_traj_full[:, pos_indices]
 
     print(f"Simulation completed. {len(t_traj)} time steps saved.")
 
@@ -206,18 +230,18 @@ def main():
     # Plot 1: End-effector position tracking
     ax1 = axes[0]
     axis_labels = ["x", "y", "z"]
-    for i in range(min(osd.n_operational_space, 3)):
+    for i in range(3):
         color = colors[i % len(colors)]
         ax1.plot(
             t_traj,
-            x_traj[:, i],
+            x_traj_pos[:, i],
             color=color,
             linewidth=2,
             label=f"$p_{{{axis_labels[i]}}}$",
         )
         ax1.plot(
             t_traj,
-            x_des_traj[:, i],
+            x_des_traj_pos[:, i],
             "--",
             color=color,
             linewidth=1.5,
@@ -231,8 +255,8 @@ def main():
 
     # Plot 2: Tracking error in operational space
     ax2 = axes[1]
-    tracking_error = x_des_traj - x_traj
-    for i in range(min(osd.n_operational_space, 3)):
+    tracking_error = x_des_traj_pos - x_traj_pos
+    for i in range(3):
         color = colors[i % len(colors)]
         ax2.plot(
             t_traj,
@@ -280,7 +304,9 @@ def main():
     ax2 = axes2[1]
     for i in range(num_dofs_to_plot):
         color = colors[i % len(colors)]
-        ax2.plot(t_traj, qd_traj[:, i], color=color, label=f"$\\dot{{q}}_{i}$", linewidth=2)
+        ax2.plot(
+            t_traj, qd_traj[:, i], color=color, label=f"$\\dot{{q}}_{i}$", linewidth=2
+        )
     ax2.set_xlabel("Time [s]")
     ax2.set_ylabel("Velocity")
     ax2.set_title("Configuration Space Velocities")
@@ -303,4 +329,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -496,11 +496,12 @@ class TestRotationRepresentation:
 
         assert op_space.n_pose_dim == 7  # 4 quaternion + 3 position
         assert op_space.n_orientation_dim == 4
-        assert op_space.n_operational_space == 7
+        assert op_space.n_operational_space == 6  # Velocity space is always 6 for 3D
+        assert op_space.n_pose_operational_space == 7  # Pose space with quaternion
 
         q = jnp.zeros(pcs_robot.num_dofs)
         x = op_space.operational_space_coordinates(q)
-        assert x.shape == (7,)
+        assert x.shape == (7,)  # Returns pose-space coordinates
 
         # Check that quaternion part is unit quaternion
         quat = x[:4]
@@ -517,11 +518,12 @@ class TestRotationRepresentation:
 
         assert op_space.n_pose_dim == 9  # 6 rotation + 3 position
         assert op_space.n_orientation_dim == 6
-        assert op_space.n_operational_space == 9
+        assert op_space.n_operational_space == 6  # Velocity space is always 6 for 3D
+        assert op_space.n_pose_operational_space == 9  # Pose space with 6D rotation
 
         q = jnp.zeros(pcs_robot.num_dofs)
         x = op_space.operational_space_coordinates(q)
-        assert x.shape == (9,)
+        assert x.shape == (9,)  # Returns pose-space coordinates
 
     def test_planar_ignores_rotation_representation(self, planar_pcs_robot):
         """Test that planar robots ignore rotation representation setting."""
@@ -659,9 +661,9 @@ class TestComputePoseError:
         x = op_space.operational_space_coordinates(q)
         x_des = x + 0.1
 
-        # JIT the pose error computation
-        jit_error = jax.jit(op_space.compute_pose_error)
-        error = jit_error(x, x_des)
+        # compute_pose_error is already JIT-decorated via @eqx.filter_jit
+        # Just call it directly to test JIT compatibility
+        error = op_space.compute_pose_error(x, x_des)
 
         assert error.shape == x.shape
         assert jnp.all(jnp.isfinite(error))
@@ -772,6 +774,967 @@ class TestGeometricVsNaiveError:
             assert jnp.abs(error[0]) <= jnp.pi + 1e-6, (
                 f"Orientation error > π: {error[0]} for θ_c={theta_current}, θ_d={theta_desired}"
             )
+
+
+# -----------------------
+# Task selection basis matrix tests
+# -----------------------
+
+
+class TestTaskSelectionBasisMatrices:
+    """Tests for B_task (velocity) and B_task_pose (pose) basis matrices."""
+
+    def test_btask_shape_planar_full_selection(self, planar_pcs_robot):
+        """Test B_task shape for planar robot with full selection."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        # B_task: (total_velocity_dim, n_operational_space)
+        assert op_space.B_task.shape == (3, 3)
+        assert op_space.B_task_pose.shape == (3, 3)
+
+        # For full selection, B_task should be identity
+        assert_allclose(op_space.B_task, jnp.eye(3), atol=1e-10)
+        assert_allclose(op_space.B_task_pose, jnp.eye(3), atol=1e-10)
+
+    def test_btask_shape_planar_position_only(self, planar_pcs_robot):
+        """Test B_task shape for planar robot with position-only selection."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, True, True])  # [omega_z, v_x, v_y]
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        # B_task: (3, 2), B_task_pose: (3, 2)
+        assert op_space.B_task.shape == (3, 2)
+        assert op_space.B_task_pose.shape == (3, 2)
+        assert op_space.n_operational_space == 2
+        assert op_space.n_pose_operational_space == 2
+
+    def test_btask_shape_3d_full_selection(self, pcs_robot):
+        """Test B_task shape for 3D robot with full selection."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        # B_task: (6, 6), B_task_pose: (6, 6)
+        assert op_space.B_task.shape == (6, 6)
+        assert op_space.B_task_pose.shape == (6, 6)
+        assert op_space.n_operational_space == 6
+        assert op_space.n_pose_operational_space == 6
+
+    def test_btask_shape_3d_position_only(self, pcs_robot):
+        """Test B_task shape for 3D robot with position-only selection."""
+        s_ps = jnp.array([0.2])
+        # Select only position (v_x, v_y, v_z at indices 3,4,5)
+        task_selector = jnp.array([False, False, False, True, True, True])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        # B_task: (6, 3) velocity space
+        assert op_space.B_task.shape == (6, 3)
+        # B_task_pose: (6, 3) pose space (same for ROTATION_VECTOR)
+        assert op_space.B_task_pose.shape == (6, 3)
+        assert op_space.n_operational_space == 3
+        assert op_space.n_pose_operational_space == 3
+
+    def test_btask_pose_differs_for_quaternion(self, pcs_robot):
+        """Test that B_task_pose differs from B_task for QUATERNION representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        # Velocity space: 6D (3 angular + 3 linear)
+        assert op_space.B_task.shape == (6, 6)
+        # Pose space: 7D (4 quaternion + 3 position)
+        assert op_space.B_task_pose.shape == (7, 7)
+
+        assert op_space.n_operational_space == 6
+        assert op_space.n_pose_operational_space == 7
+
+    def test_btask_pose_differs_for_6d_rotation(self, pcs_robot):
+        """Test that B_task_pose differs from B_task for ROTATION_MATRIX_6D representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        # Velocity space: 6D (3 angular + 3 linear)
+        assert op_space.B_task.shape == (6, 6)
+        # Pose space: 9D (6 rotation + 3 position)
+        assert op_space.B_task_pose.shape == (9, 9)
+
+        assert op_space.n_operational_space == 6
+        assert op_space.n_pose_operational_space == 9
+
+    def test_btask_pose_position_only_quaternion(self, pcs_robot):
+        """Test B_task_pose for position-only task with QUATERNION."""
+        s_ps = jnp.array([0.2])
+        # Select only position
+        task_selector = jnp.array([False, False, False, True, True, True])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        # Velocity space: (6, 3) - position only
+        assert op_space.B_task.shape == (6, 3)
+        # Pose space: (7, 3) - position only (no quaternion)
+        assert op_space.B_task_pose.shape == (7, 3)
+
+        assert op_space.n_operational_space == 3
+        assert op_space.n_pose_operational_space == 3
+
+    def test_btask_multiple_points(self, planar_pcs_robot):
+        """Test B_task shapes for multiple points."""
+        s_ps = jnp.array([0.1, 0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        # 2 points × 3 dims = 6
+        assert op_space.B_task.shape == (6, 6)
+        assert op_space.B_task_pose.shape == (6, 6)
+
+    def test_btask_multiple_points_mixed_selection(self, planar_pcs_robot):
+        """Test B_task for multiple points with different selection per point."""
+        s_ps = jnp.array([0.1, 0.2])
+        # Point 0: positions only, Point 1: all
+        task_selector = jnp.array(
+            [[False, True, True], [True, True, True]]
+        )
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        # 2 + 3 = 5 selected dimensions
+        assert op_space.B_task.shape == (6, 5)
+        assert op_space.B_task_pose.shape == (6, 5)
+        assert op_space.n_operational_space == 5
+        assert op_space.n_pose_operational_space == 5
+
+
+# -----------------------
+# Partial rotation selection validation tests
+# -----------------------
+
+
+class TestRotationSelectionValidation:
+    """Tests for validation of rotation selection (all-or-nothing rule for 3D)."""
+
+    def test_partial_rotation_selection_raises_3d(self, pcs_robot):
+        """Test that partial rotation selection raises ValueError for 3D robot."""
+        s_ps = jnp.array([0.2])
+
+        # Select only omega_x and omega_y, not omega_z - should fail
+        task_selector = jnp.array([True, True, False, True, True, True])
+        with pytest.raises(ValueError, match="rotation components must be either ALL selected"):
+            OperationalSpaceDynamics(
+                robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
+            )
+
+    def test_partial_rotation_selection_raises_3d_single_axis(self, pcs_robot):
+        """Test that selecting single rotation axis raises ValueError for 3D robot."""
+        s_ps = jnp.array([0.2])
+
+        # Select only omega_z
+        task_selector = jnp.array([False, False, True, True, True, True])
+        with pytest.raises(ValueError, match="rotation components must be either ALL selected"):
+            OperationalSpaceDynamics(
+                robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
+            )
+
+    def test_all_rotation_selected_ok(self, pcs_robot):
+        """Test that all rotation components selected is valid."""
+        s_ps = jnp.array([0.2])
+
+        # Select all rotation and all position
+        task_selector = jnp.array([True, True, True, True, True, True])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+        assert op_space.n_operational_space == 6
+        assert op_space.rotation_selected_per_point[0]
+
+    def test_no_rotation_selected_ok(self, pcs_robot):
+        """Test that no rotation components selected is valid."""
+        s_ps = jnp.array([0.2])
+
+        # Select no rotation, all position
+        task_selector = jnp.array([False, False, False, True, True, True])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+        assert op_space.n_operational_space == 3
+        assert not op_space.rotation_selected_per_point[0]
+
+    def test_planar_any_rotation_selection_ok(self, planar_pcs_robot):
+        """Test that planar robots can select rotation freely."""
+        s_ps = jnp.array([0.2])
+
+        # Planar has only 1 rotation component, so there's no partial selection issue
+        task_selector = jnp.array([True, True, True])
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+        assert op_space.n_operational_space == 3
+
+        task_selector = jnp.array([False, True, True])
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+        assert op_space.n_operational_space == 2
+
+    def test_per_point_rotation_selection_3d(self, pcs_robot):
+        """Test per-point rotation selection for 3D robot."""
+        s_ps = jnp.array([0.1, 0.2])
+
+        # Point 0: no rotation, Point 1: all rotation
+        task_selector = jnp.array([
+            [False, False, False, True, True, True],  # no rot, all pos
+            [True, True, True, True, True, True],     # all rot, all pos
+        ])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        assert op_space.n_operational_space == 9  # 3 + 6
+        assert not op_space.rotation_selected_per_point[0]
+        assert op_space.rotation_selected_per_point[1]
+
+    def test_per_point_partial_rotation_raises_3d(self, pcs_robot):
+        """Test that partial rotation in one point raises error for 3D robot."""
+        s_ps = jnp.array([0.1, 0.2])
+
+        # Point 0: all selected, Point 1: partial rotation
+        task_selector = jnp.array([
+            [True, True, True, True, True, True],  # all
+            [True, False, True, True, True, True], # partial rotation - should fail
+        ])
+        with pytest.raises(ValueError, match="For point 1"):
+            OperationalSpaceDynamics(
+                robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
+            )
+
+
+# -----------------------
+# operational_space_poses vs operational_space_coordinates tests
+# -----------------------
+
+
+class TestPosesVsCoordinates:
+    """Tests comparing operational_space_poses and operational_space_coordinates."""
+
+    def test_poses_and_coords_equal_full_selection_planar(self, planar_pcs_robot):
+        """Test that poses and coordinates are equal for full selection (planar)."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (3,)
+        assert coords.shape == (3,)
+        assert_allclose(poses, coords, atol=1e-10)
+
+    def test_poses_full_coords_selected_planar(self, planar_pcs_robot):
+        """Test that poses are full and coordinates are selected (planar)."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, True, True])  # positions only
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (3,)  # Full: [theta, x, y]
+        assert coords.shape == (2,)  # Selected: [x, y]
+
+        # coords should be the position part of poses
+        assert_allclose(coords, poses[1:], atol=1e-10)
+
+    def test_poses_full_coords_selected_3d(self, pcs_robot):
+        """Test that poses are full and coordinates are selected (3D)."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (6,)  # Full: [rot(3), pos(3)]
+        assert coords.shape == (3,)  # Selected: [pos(3)]
+
+        # coords should be the position part of poses (last 3 elements for ROTATION_VECTOR)
+        n_orient = op_space.n_orientation_dim  # 3 for ROTATION_VECTOR
+        assert_allclose(coords, poses[n_orient:], atol=1e-10)
+
+    def test_poses_full_coords_selected_quaternion(self, pcs_robot):
+        """Test poses vs coordinates for QUATERNION representation."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (7,)  # Full: [quat(4), pos(3)]
+        assert coords.shape == (3,)  # Selected: [pos(3)]
+
+        # coords should be the position part of poses (last 3 elements for QUATERNION)
+        n_orient = op_space.n_orientation_dim  # 4 for QUATERNION
+        assert_allclose(coords, poses[n_orient:], atol=1e-10)
+
+    def test_poses_full_coords_selected_6d_rotation(self, pcs_robot):
+        """Test poses vs coordinates for ROTATION_MATRIX_6D representation."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (9,)  # Full: [rot6d(6), pos(3)]
+        assert coords.shape == (3,)  # Selected: [pos(3)]
+
+        # coords should be the position part of poses (last 3 elements for 6D rotation)
+        n_orient = op_space.n_orientation_dim  # 6 for ROTATION_MATRIX_6D
+        assert_allclose(coords, poses[n_orient:], atol=1e-10)
+
+    def test_poses_coords_multiple_points(self, planar_pcs_robot):
+        """Test poses vs coordinates for multiple points with mixed selection."""
+        s_ps = jnp.array([0.1, 0.2])
+        # Point 0: positions only, Point 1: all
+        task_selector = jnp.array([
+            [False, True, True],
+            [True, True, True]
+        ])
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        # Poses: 2 points × 3D = 6
+        assert poses.shape == (6,)
+        # Coords: 2 (point 0 pos) + 3 (point 1 all) = 5
+        assert coords.shape == (5,)
+
+        # Check that coords are the selected parts of poses
+        # Point 0 coords should be poses[1:3] (x, y)
+        # Point 1 coords should be poses[3:6] (theta, x, y)
+        assert_allclose(coords[:2], poses[1:3], atol=1e-10)
+        assert_allclose(coords[2:], poses[3:6], atol=1e-10)
+
+
+# -----------------------
+# compute_pose_error vs compute_task_pose_error tests
+# -----------------------
+
+
+class TestPoseErrorVsTaskPoseError:
+    """Tests comparing compute_pose_error and compute_task_pose_error."""
+
+    def test_equal_for_full_selection_planar(self, planar_pcs_robot):
+        """Test that errors are equal for full selection (planar)."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, -0.03])
+
+        full_error = op_space.compute_pose_error(x, x_des)
+        task_error = op_space.compute_task_pose_error(x, x_des)
+
+        assert full_error.shape == (3,)
+        assert task_error.shape == (3,)
+        assert_allclose(full_error, task_error, atol=1e-10)
+
+    def test_task_error_subset_of_full_planar(self, planar_pcs_robot):
+        """Test that task error is a subset of full error (planar)."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, True, True])  # positions only
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, -0.03])
+
+        full_error = op_space.compute_pose_error(x, x_des)
+        task_error = op_space.compute_task_pose_error(x, x_des)
+
+        assert full_error.shape == (3,)
+        assert task_error.shape == (2,)
+
+        # Task error should be the position part of full error
+        assert_allclose(task_error, full_error[1:], atol=1e-10)
+
+    def test_task_error_subset_of_full_3d(self, pcs_robot):
+        """Test that task error is a subset of full error (3D)."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, -0.02, 0.03, 0.01, -0.01])
+
+        full_error = op_space.compute_pose_error(x, x_des)
+        task_error = op_space.compute_task_pose_error(x, x_des)
+
+        # Full error is in velocity space (6D)
+        assert full_error.shape == (6,)
+        # Task error is selected (3D)
+        assert task_error.shape == (3,)
+
+        # Task error should be the position part of full error
+        assert_allclose(task_error, full_error[3:], atol=1e-10)
+
+    def test_task_error_rotation_only_3d(self, pcs_robot):
+        """Test task error for rotation-only selection (3D)."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([True, True, True, False, False, False])  # rotation only
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, -0.02, 0.03, 0.01, -0.01])
+
+        full_error = op_space.compute_pose_error(x, x_des)
+        task_error = op_space.compute_task_pose_error(x, x_des)
+
+        # Full error is in velocity space (6D)
+        assert full_error.shape == (6,)
+        # Task error is selected (3D rotation)
+        assert task_error.shape == (3,)
+
+        # Task error should be the rotation part of full error
+        assert_allclose(task_error, full_error[:3], atol=1e-10)
+
+    def test_task_error_multiple_points(self, planar_pcs_robot):
+        """Test task error for multiple points with mixed selection."""
+        s_ps = jnp.array([0.1, 0.2])
+        # Point 0: positions only, Point 1: all
+        task_selector = jnp.array([
+            [False, True, True],
+            [True, True, True]
+        ])
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, -0.03, 0.2, 0.04, 0.01])
+
+        full_error = op_space.compute_pose_error(x, x_des)
+        task_error = op_space.compute_task_pose_error(x, x_des)
+
+        # Full error: 2 points × 3D = 6
+        assert full_error.shape == (6,)
+        # Task error: 2 (point 0 pos) + 3 (point 1 all) = 5
+        assert task_error.shape == (5,)
+
+        # Point 0 task error should be full_error[1:3]
+        # Point 1 task error should be full_error[3:6]
+        assert_allclose(task_error[:2], full_error[1:3], atol=1e-10)
+        assert_allclose(task_error[2:], full_error[3:6], atol=1e-10)
+
+    def test_pose_error_input_validation_wrong_shape(self, planar_pcs_robot):
+        """Test that compute_pose_error raises for wrong input shape."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, True, True])  # positions only
+        op_space = OperationalSpaceDynamics(
+            robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        # Try to pass task-selected coordinates instead of full poses
+        wrong_shape = jnp.array([0.1, 0.2])  # 2D instead of 3D
+        x = op_space.operational_space_poses(jnp.zeros(planar_pcs_robot.num_dofs))
+
+        with pytest.raises(ValueError, match="must have shape"):
+            op_space.compute_pose_error(wrong_shape, x)
+
+        with pytest.raises(ValueError, match="must have shape"):
+            op_space.compute_pose_error(x, wrong_shape)
+
+
+# -----------------------
+# 3D rotation representation comprehensive tests
+# -----------------------
+
+
+class TestRotationRepresentationComprehensive:
+    """Comprehensive tests for different rotation representations."""
+
+    def test_rotation_vector_dimensions(self, pcs_robot):
+        """Test dimensions for ROTATION_VECTOR representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        assert op_space.n_pose_dim == 6
+        assert op_space.n_orientation_dim == 3
+        assert op_space.n_velocity_dim == 6
+        assert op_space.n_angular_velocity_dim == 3
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (6,)
+        assert coords.shape == (6,)
+
+    def test_quaternion_dimensions(self, pcs_robot):
+        """Test dimensions for QUATERNION representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        assert op_space.n_pose_dim == 7  # 4 quat + 3 pos
+        assert op_space.n_orientation_dim == 4
+        assert op_space.n_velocity_dim == 6
+        assert op_space.n_angular_velocity_dim == 3
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (7,)
+        assert coords.shape == (7,)
+
+        # Quaternion should be unit
+        quat = poses[:4]
+        assert_allclose(jnp.linalg.norm(quat), 1.0, atol=1e-6)
+
+    def test_rotation_matrix_6d_dimensions(self, pcs_robot):
+        """Test dimensions for ROTATION_MATRIX_6D representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        assert op_space.n_pose_dim == 9  # 6 rot + 3 pos
+        assert op_space.n_orientation_dim == 6
+        assert op_space.n_velocity_dim == 6
+        assert op_space.n_angular_velocity_dim == 3
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (9,)
+        assert coords.shape == (9,)
+
+    def test_jacobian_same_for_all_representations(self, pcs_robot):
+        """Test that Jacobian is the same regardless of rotation representation."""
+        s_ps = jnp.array([0.2])
+
+        op_rv = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+        op_quat = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+        op_6d = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+
+        J_rv = op_rv.jacobian(q)
+        J_quat = op_quat.jacobian(q)
+        J_6d = op_6d.jacobian(q)
+
+        # All should have the same shape and values (velocity space is independent of pose repr)
+        assert J_rv.shape == J_quat.shape == J_6d.shape == (6, pcs_robot.num_dofs)
+        assert_allclose(J_rv, J_quat, atol=1e-10)
+        assert_allclose(J_rv, J_6d, atol=1e-10)
+
+    def test_dynamics_same_for_all_representations(self, pcs_robot):
+        """Test that inertia matrix is the same regardless of rotation representation."""
+        s_ps = jnp.array([0.2])
+
+        op_rv = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+        op_quat = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+        op_6d = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+
+        Lambda_rv = op_rv.inertia_matrix(q)
+        Lambda_quat = op_quat.inertia_matrix(q)
+        Lambda_6d = op_6d.inertia_matrix(q)
+
+        # All should have the same shape and values
+        assert Lambda_rv.shape == Lambda_quat.shape == Lambda_6d.shape == (6, 6)
+        assert_allclose(Lambda_rv, Lambda_quat, atol=1e-10)
+        assert_allclose(Lambda_rv, Lambda_6d, atol=1e-10)
+
+    def test_pose_error_zero_for_same_pose_all_representations(self, pcs_robot):
+        """Test that same pose gives zero error for all representations."""
+        s_ps = jnp.array([0.2])
+
+        for rep in [
+            RotationRepresentation.ROTATION_VECTOR,
+            RotationRepresentation.QUATERNION,
+            RotationRepresentation.ROTATION_MATRIX_6D,
+        ]:
+            op_space = OperationalSpaceDynamics(
+                robot=pcs_robot, s_ps=s_ps, rotation_representation=rep
+            )
+
+            q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+            x = op_space.operational_space_poses(q)
+
+            error = op_space.compute_pose_error(x, x)
+            assert error.shape == (6,)  # Always 6D velocity-space error
+            assert_allclose(error, jnp.zeros(6), atol=1e-10)
+
+    def test_task_pose_error_zero_for_same_pose_all_representations(self, pcs_robot):
+        """Test that same pose gives zero task error for all representations."""
+        s_ps = jnp.array([0.2])
+        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+
+        for rep in [
+            RotationRepresentation.ROTATION_VECTOR,
+            RotationRepresentation.QUATERNION,
+            RotationRepresentation.ROTATION_MATRIX_6D,
+        ]:
+            op_space = OperationalSpaceDynamics(
+                robot=pcs_robot,
+                s_ps=s_ps,
+                task_selector=task_selector,
+                rotation_representation=rep,
+            )
+
+            q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+            x = op_space.operational_space_poses(q)
+
+            error = op_space.compute_task_pose_error(x, x)
+            assert error.shape == (3,)  # 3D position error
+            assert_allclose(error, jnp.zeros(3), atol=1e-10)
+
+    def test_position_same_for_all_representations(self, pcs_robot):
+        """Test that position part is the same for all representations."""
+        s_ps = jnp.array([0.2])
+
+        op_rv = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+        op_quat = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+        op_6d = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+
+        poses_rv = op_rv.operational_space_poses(q)
+        poses_quat = op_quat.operational_space_poses(q)
+        poses_6d = op_6d.operational_space_poses(q)
+
+        # Extract position (last 3 elements)
+        pos_rv = poses_rv[3:]
+        pos_quat = poses_quat[4:]
+        pos_6d = poses_6d[6:]
+
+        assert_allclose(pos_rv, pos_quat, atol=1e-10)
+        assert_allclose(pos_rv, pos_6d, atol=1e-10)
+
+
+# -----------------------
+# Multiple points tests
+# -----------------------
+
+
+class TestMultiplePoints:
+    """Tests for operational space with multiple points."""
+
+    def test_two_points_planar_full_selection(self, planar_pcs_robot):
+        """Test two points for planar robot with full selection."""
+        s_ps = jnp.array([0.1, 0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        assert op_space.n_points == 2
+        assert op_space.n_operational_space == 6  # 2 × 3
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+        J = op_space.jacobian(q)
+
+        assert poses.shape == (6,)
+        assert coords.shape == (6,)
+        assert J.shape == (6, planar_pcs_robot.num_dofs)
+
+    def test_two_points_3d_full_selection(self, pcs_robot):
+        """Test two points for 3D robot with full selection."""
+        s_ps = jnp.array([0.1, 0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        assert op_space.n_points == 2
+        assert op_space.n_operational_space == 12  # 2 × 6
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+        J = op_space.jacobian(q)
+
+        assert poses.shape == (12,)
+        assert coords.shape == (12,)
+        assert J.shape == (12, pcs_robot.num_dofs)
+
+    def test_two_points_3d_quaternion(self, pcs_robot):
+        """Test two points for 3D robot with quaternion representation."""
+        s_ps = jnp.array([0.1, 0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        assert op_space.n_points == 2
+        assert op_space.n_operational_space == 12  # 2 × 6 (velocity space)
+        assert op_space.n_pose_operational_space == 14  # 2 × 7 (pose space)
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+        J = op_space.jacobian(q)
+
+        assert poses.shape == (14,)
+        assert coords.shape == (14,)
+        assert J.shape == (12, pcs_robot.num_dofs)
+
+        # Check both quaternions are unit
+        quat1 = poses[:4]
+        quat2 = poses[7:11]
+        assert_allclose(jnp.linalg.norm(quat1), 1.0, atol=1e-6)
+        assert_allclose(jnp.linalg.norm(quat2), 1.0, atol=1e-6)
+
+    def test_two_points_mixed_selection_3d(self, pcs_robot):
+        """Test two points with mixed selection for 3D robot."""
+        s_ps = jnp.array([0.1, 0.2])
+        # Point 0: position only, Point 1: all
+        task_selector = jnp.array([
+            [False, False, False, True, True, True],
+            [True, True, True, True, True, True],
+        ])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            task_selector=task_selector,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        assert op_space.n_operational_space == 9  # 3 + 6
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (12,)  # Full: 2 × 6
+        assert coords.shape == (9,)  # Selected: 3 + 6
+
+    def test_three_points_planar(self, planar_pcs_robot):
+        """Test three points for planar robot."""
+        s_ps = jnp.array([0.05, 0.1, 0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        assert op_space.n_points == 3
+        assert op_space.n_operational_space == 9  # 3 × 3
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+
+        poses = op_space.operational_space_poses(q)
+        coords = op_space.operational_space_coordinates(q)
+
+        assert poses.shape == (9,)
+        assert coords.shape == (9,)
+
+    def test_pose_error_multiple_points(self, planar_pcs_robot):
+        """Test pose error computation for multiple points."""
+        s_ps = jnp.array([0.1, 0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, -0.03, 0.2, 0.04, 0.01])
+
+        error = op_space.compute_pose_error(x, x_des)
+        task_error = op_space.compute_task_pose_error(x, x_des)
+
+        assert error.shape == (6,)
+        assert task_error.shape == (6,)
+        assert_allclose(error, task_error, atol=1e-10)  # Full selection
+
+
+# -----------------------
+# JIT and vmap tests for new methods
+# -----------------------
+
+
+class TestJITCompatibilityExtended:
+    """Extended JIT compatibility tests for new methods."""
+
+    def test_jit_operational_space_poses(self, pendulum_robot):
+        """Test JIT compatibility of operational_space_poses."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+
+        # Methods are already JIT-decorated
+        poses1 = op_space.operational_space_poses(q)
+        poses2 = op_space.operational_space_poses(q)
+
+        assert poses1.shape == (3,)
+        assert_allclose(poses1, poses2, rtol=0, atol=0)
+
+    def test_jit_compute_task_pose_error(self, pendulum_robot):
+        """Test JIT compatibility of compute_task_pose_error."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        task_selector = jnp.array([False, True, True])  # position only
+        op_space = OperationalSpaceDynamics(
+            robot=pendulum_robot, s_ps=s_ps, task_selector=task_selector
+        )
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        x = op_space.operational_space_poses(q)
+        x_des = x + jnp.array([0.1, 0.05, 0.02])
+
+        error1 = op_space.compute_task_pose_error(x, x_des)
+        error2 = op_space.compute_task_pose_error(x, x_des)
+
+        assert error1.shape == (2,)
+        assert_allclose(error1, error2, rtol=0, atol=0)
+
+    def test_vmap_operational_space_poses(self, pendulum_robot):
+        """Test vmapping over operational_space_poses."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        batch_size = 5
+        qs = jnp.tile(
+            jnp.linspace(-0.3, 0.4, pendulum_robot.num_links), (batch_size, 1)
+        )
+
+        vmapped_poses = jax.vmap(op_space.operational_space_poses)
+        poses = vmapped_poses(qs)
+
+        assert poses.shape == (batch_size, 3)
+
+    def test_vmap_compute_pose_error(self, pendulum_robot):
+        """Test vmapping over compute_pose_error."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        batch_size = 5
+        qs = jnp.tile(
+            jnp.linspace(-0.3, 0.4, pendulum_robot.num_links), (batch_size, 1)
+        )
+        xs = jax.vmap(op_space.operational_space_poses)(qs)
+        xs_des = xs + 0.1
+
+        vmapped_error = jax.vmap(op_space.compute_pose_error)
+        errors = vmapped_error(xs, xs_des)
+
+        assert errors.shape == (batch_size, 3)
 
 
 if __name__ == "__main__":

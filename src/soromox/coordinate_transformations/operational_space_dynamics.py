@@ -1,6 +1,5 @@
 __all__ = ["OperationalSpaceDynamics"]
 
-
 import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
@@ -47,20 +46,28 @@ class OperationalSpaceDynamics(eqx.Module):
         robot: The soft robot (e.g., PCS, PlanarPCS, Pendulum) to transform.
         s_ps: Array of shape (N,) specifying points along the backbone where the
             operational space is defined. Each value should be in [0, L_total].
-        task_selector: Boolean array specifying which pose axes are active. The shape
+        task_selector: Boolean array specifying which velocity axes are active. The shape
             depends on the robot type and number of points:
             - For 3D robots (PCS): shape (N, 6) or (6*N,) selecting from
               [omega_x, omega_y, omega_z, v_x, v_y, v_z] per point
             - For planar robots (PlanarPCS, Pendulum): shape (N, 3) or (3*N,) selecting from
               [omega_z, v_x, v_y] per point
+            IMPORTANT: For 3D robots, rotation components (omega_x, omega_y, omega_z) must
+            be either ALL selected or ALL unselected for each point. This ensures consistency
+            between velocity and pose spaces.
         rotation_representation: The representation used for orientation in the
             operational space coordinates. Options are:
             - ROTATION_VECTOR (default): 3D rotation vector (axis-angle)
             - QUATERNION: 4D unit quaternion
             - ROTATION_MATRIX_6D: 6D continuous representation
             Note: For planar robots, this is ignored as orientation is always a scalar angle.
-        n_operational_space: Total dimension of the operational space after selection.
-        n_pose_dim: Dimension of a single pose (depends on rotation_representation for 3D).
+        n_operational_space: Total dimension of the operational space after task selection.
+            This is the same for both velocity space and pose space when using ROTATION_VECTOR.
+            For other rotation representations, pose dimension differs.
+        n_pose_operational_space: Dimension of task-selected pose space. Equal to
+            n_operational_space for ROTATION_VECTOR and planar robots, but differs
+            for QUATERNION (+1 per point with rotation) and ROTATION_MATRIX_6D (+3 per point).
+        n_pose_dim: Dimension of a single full pose (depends on rotation_representation for 3D).
         n_points: Number of points along the backbone.
 
     Notes:
@@ -68,9 +75,12 @@ class OperationalSpaceDynamics(eqx.Module):
         operational space forces and configuration space accelerations through the
         mass matrix, ensuring physical consistency of the transformed dynamics.
 
-        For control applications, use `compute_pose_error()` to compute the geometric
-        orientation error rather than naive subtraction of coordinates. The geometric
-        error takes the shortest path and is suitable for PID control.
+        All methods consistently apply task selection:
+        - `operational_space_poses()` returns full poses (for trajectories and error computation)
+        - `operational_space_coordinates()` returns task-selected pose coordinates
+        - `jacobian()` and dynamics methods return task-selected quantities
+        - `compute_pose_error()` takes full poses and returns full error
+        - `compute_task_pose_error()` takes full poses and returns task-selected error
 
     References:
         Khatib, O. (1987). A unified approach for motion and force control of robot
@@ -86,17 +96,25 @@ class OperationalSpaceDynamics(eqx.Module):
 
     robot: SoftRobot
     s_ps: Array  # Points along the backbone, shape (N,)
-    task_selector: Array  # Boolean selector for which axes are active
-    B_task: Array  # Task selection basis matrix, shape (n_velocity_dim * N, n_operational_space)
+    task_selector: Array  # Boolean selector for which velocity axes are active
+    B_task: Array  # Task selection basis matrix for velocity and acceleration space
+    B_task_pose: Array  # Task selection basis matrix for pose space
+    rotation_selected_per_point: (
+        Array  # Boolean array (n_points,) indicating if rotation is selected
+    )
     rotation_representation: RotationRepresentation = eqx.field(static=True)
-    n_operational_space: int = eqx.field(static=True)
+    n_operational_space: int = eqx.field(static=True)  # Velocity space dimension
+    n_pose_operational_space: int = eqx.field(static=True)  # Pose space dimension
     n_velocity_dim: int = eqx.field(
         static=True
-    )  # Velocity space dim (always 6 for 3D, 3 for planar)
+    )  # Velocity space dim per point (always 6 for 3D, 3 for planar)
     n_pose_dim: int = eqx.field(
         static=True
-    )  # Pose dim (varies with rotation repr for 3D)
+    )  # Full pose dim per point (varies with rotation repr for 3D)
     n_orientation_dim: int = eqx.field(static=True)  # Dim of orientation in chosen repr
+    n_angular_velocity_dim: int = eqx.field(
+        static=True
+    )  # Dim of angular velocity (3 for 3D, 1 for planar)
     n_points: int = eqx.field(static=True)
     is_planar: bool = eqx.field(
         static=True, default=False
@@ -132,8 +150,9 @@ class OperationalSpaceDynamics(eqx.Module):
                 - Shape (N, n_velocity_dim): Different selection per point
                 - Shape (N * n_velocity_dim,): Flattened selection
                 If None, all velocity components at all points are active.
-                NOTE: The task selector dimension is INDEPENDENT of the rotation
-                representation because dynamics operate in velocity space.
+                IMPORTANT: For 3D robots, the rotation components (omega_x, omega_y, omega_z)
+                must be either ALL selected or ALL unselected for each point. This ensures
+                consistency between velocity and pose space representations.
             rotation_representation: The representation to use for orientations
                 when reporting pose coordinates. This affects:
                 - The output of `operational_space_coordinates()`
@@ -149,6 +168,7 @@ class OperationalSpaceDynamics(eqx.Module):
         Raises:
             ValueError: If s_ps is empty or has invalid shape.
             ValueError: If task_selector has incompatible shape.
+            ValueError: If rotation components are partially selected (3D robots only).
         """
         self.robot = robot
         self.s_ps = jnp.atleast_1d(jnp.asarray(s_ps))
@@ -171,6 +191,7 @@ class OperationalSpaceDynamics(eqx.Module):
         # The velocity dimension is fixed by the Jacobian (angular vel + linear vel)
         # This is independent of how we represent orientation
         self.n_velocity_dim = jacobian_rows  # 6 for 3D, 3 for planar
+        self.n_angular_velocity_dim = 1 if self.is_planar else 3
 
         # Determine orientation dimension based on representation
         # This only affects how coordinates are reported, not the dynamics
@@ -235,10 +256,23 @@ class OperationalSpaceDynamics(eqx.Module):
                 "task_selector must have at least one True value to define a non-empty operational space"
             )
 
-        # Build the task selection basis matrix
-        # B_task maps from full pose space to selected operational space
-        # Shape: (total_pose_dim, n_operational_space)
+        # Validate rotation selection: all-or-nothing per point (for 3D robots only)
+        # This ensures consistency between velocity and pose space
+        rotation_selected_per_point = self._validate_rotation_selection(task_selector)
+        self.rotation_selected_per_point = rotation_selected_per_point
+
+        # Build the velocity-space task selection basis matrix
+        # B_task maps from full velocity space to selected operational space
+        # Shape: (total_velocity_dim, n_operational_space)
         self.B_task = self._compute_task_basis(task_selector)
+
+        # Build the pose-space task selection basis matrix
+        # B_task_pose maps from full pose space to selected pose operational space
+        pose_task_selector, n_pose_operational_space = self._compute_pose_task_selector(
+            task_selector, rotation_selected_per_point
+        )
+        self.B_task_pose = self._compute_pose_task_basis(pose_task_selector)
+        self.n_pose_operational_space = n_pose_operational_space
 
     # =========================================================================
     # Private helper methods
@@ -262,7 +296,7 @@ class OperationalSpaceDynamics(eqx.Module):
 
     def _compute_task_basis(self, task_selector: Array) -> Array:
         """
-        Compute the task selection basis matrix.
+        Compute the task selection basis matrix for velocity space.
 
         The task selector operates on the velocity space (Jacobian rows), which
         is always 6D for 3D robots and 3D for planar robots, regardless of the
@@ -283,6 +317,133 @@ class OperationalSpaceDynamics(eqx.Module):
         B_task = B_task.at[selected_indices, jnp.arange(n_selected)].set(1.0)
 
         return B_task
+
+    def _validate_rotation_selection(self, task_selector: Array) -> Array:
+        """
+        Validate that rotation components are selected all-or-nothing per point.
+
+        For 3D robots, the rotation components (omega_x, omega_y, omega_z at indices 0, 1, 2)
+        must be either ALL selected or ALL unselected for each point. This ensures
+        consistency between velocity and pose space representations.
+
+        For planar robots, there's only one rotation component so no constraint is needed.
+
+        Args:
+            task_selector: Boolean array of shape (total_velocity_dim,).
+
+        Returns:
+            rotation_selected: Boolean array of shape (n_points,) indicating whether
+                rotation is selected for each point.
+
+        Raises:
+            ValueError: If rotation components are partially selected for any point.
+        """
+        import numpy as np  # Use numpy for validation at construction time
+
+        task_selector_np = np.asarray(task_selector)
+        task_selector_reshaped = task_selector_np.reshape(
+            self.n_points, self.n_velocity_dim
+        )
+
+        rotation_selected = np.zeros(self.n_points, dtype=bool)
+
+        for i in range(self.n_points):
+            if self.is_planar:
+                # Planar: only 1 rotation component (omega_z at index 0)
+                rotation_selected[i] = task_selector_reshaped[i, 0]
+            else:
+                # 3D: rotation components are indices 0, 1, 2
+                rot_selector = task_selector_reshaped[i, :3]
+                all_rot = np.all(rot_selector)
+                no_rot = not np.any(rot_selector)
+
+                if not (all_rot or no_rot):
+                    raise ValueError(
+                        f"For point {i} (s={float(self.s_ps[i]):.4f}), rotation components "
+                        f"must be either ALL selected or ALL unselected. "
+                        f"Got task_selector for [omega_x, omega_y, omega_z] = {rot_selector.tolist()}. "
+                        f"This constraint ensures consistency between velocity and pose spaces."
+                    )
+
+                rotation_selected[i] = all_rot
+
+        return jnp.array(rotation_selected)
+
+    def _compute_pose_task_selector(
+        self, task_selector: Array, rotation_selected_per_point: Array
+    ) -> tuple[Array, int]:
+        """
+        Compute the pose-space task selector from the velocity-space selector.
+
+        The pose space may have a different dimension than velocity space due to
+        different rotation representations:
+        - Velocity space: angular velocity is always 3D (or 1D for planar)
+        - Pose space: orientation dim depends on representation (3, 4, or 6 for 3D)
+
+        Args:
+            task_selector: Boolean array of shape (total_velocity_dim,).
+            rotation_selected_per_point: Boolean array of shape (n_points,).
+
+        Returns:
+            pose_task_selector: Boolean array of shape (total_pose_dim,).
+            n_pose_operational_space: Dimension of task-selected pose space.
+        """
+        import numpy as np
+
+        task_selector_np = np.asarray(task_selector)
+        rotation_selected_np = np.asarray(rotation_selected_per_point)
+        task_selector_reshaped = task_selector_np.reshape(
+            self.n_points, self.n_velocity_dim
+        )
+
+        # Build pose-space task selector
+        pose_selectors = []
+
+        for i in range(self.n_points):
+            if self.is_planar:
+                # Planar: pose = [theta, x, y], velocity = [omega_z, v_x, v_y]
+                # Direct 1-to-1 mapping
+                pose_selectors.append(task_selector_reshaped[i, :])
+            else:
+                # 3D: velocity = [omega_x, omega_y, omega_z, v_x, v_y, v_z]
+                # Pose = [orientation (n_orientation_dim), position (3)]
+                point_pose_selector = []
+
+                # Orientation: all selected if rotation is in task, all False otherwise
+                if rotation_selected_np[i]:
+                    point_pose_selector.extend([True] * self.n_orientation_dim)
+                else:
+                    point_pose_selector.extend([False] * self.n_orientation_dim)
+
+                # Position: direct mapping from v_x, v_y, v_z (indices 3, 4, 5)
+                point_pose_selector.extend(task_selector_reshaped[i, 3:6].tolist())
+
+                pose_selectors.append(np.array(point_pose_selector))
+
+        pose_task_selector = np.concatenate(pose_selectors)
+        n_pose_operational_space = int(np.sum(pose_task_selector))
+
+        return jnp.array(pose_task_selector, dtype=bool), n_pose_operational_space
+
+    def _compute_pose_task_basis(self, pose_task_selector: Array) -> Array:
+        """
+        Compute the task selection basis matrix for pose space.
+
+        Args:
+            pose_task_selector: Boolean array of shape (total_pose_dim,).
+
+        Returns:
+            B_task_pose: Selection matrix of shape (total_pose_dim, n_pose_operational_space).
+        """
+        total_pose_dim = self.n_points * self.n_pose_dim
+        n_selected = int(jnp.sum(pose_task_selector))
+
+        # Build selection matrix: columns correspond to selected dimensions
+        selected_indices = jnp.where(pose_task_selector, size=n_selected)[0]
+        B_task_pose = jnp.zeros((total_pose_dim, n_selected))
+        B_task_pose = B_task_pose.at[selected_indices, jnp.arange(n_selected)].set(1.0)
+
+        return B_task_pose
 
     @eqx.filter_jit
     def _stacked_jacobian_full(self, q: Array) -> Array:
@@ -474,7 +635,7 @@ class OperationalSpaceDynamics(eqx.Module):
     @eqx.filter_jit
     def compute_pose_error(self, pose_current: Array, pose_desired: Array) -> Array:
         """
-        Compute the geometric pose error between current and desired poses.
+        Compute the FULL geometric pose error between current and desired poses.
 
         This method computes the proper geometric error for orientations, which is
         essential for PID-based control. Unlike naive subtraction (x_des - x), this:
@@ -482,48 +643,103 @@ class OperationalSpaceDynamics(eqx.Module):
         - Properly wraps angles for planar systems
         - Works correctly regardless of the rotation representation
 
-        IMPORTANT: The returned error is always in the velocity space (6D for 3D robots,
-        3D for planar), not the pose space. This is because:
-        1. The dynamics (Jacobian, inertia) operate in velocity space
-        2. Orientation errors naturally live in the tangent space (same as angular velocity)
-        3. Control gains K_x and D_x are sized for the operational space (velocity-based)
+        The returned error is in velocity space (always 6D per point for 3D robots,
+        3D per point for planar robots), NOT task-selected. Use `compute_task_pose_error`
+        if you need the task-selected error.
 
         Args:
-            pose_current: Current pose in the chosen representation. Shape depends on
-                representation: (n_points * n_pose_dim,) where n_pose_dim is:
-                - Planar: 3 (theta, x, y)
-                - 3D + ROTATION_VECTOR: 6 (omega, p)
-                - 3D + QUATERNION: 7 (q, p)
-                - 3D + ROTATION_MATRIX_6D: 9 (r6d, p)
-            pose_desired: Desired pose in the same representation.
+            pose_current: Current full pose of shape (n_points * n_pose_dim,).
+                For 3D robots: n_pose_dim is 6 (ROTATION_VECTOR), 7 (QUATERNION),
+                or 9 (ROTATION_MATRIX_6D). For planar robots: n_pose_dim is 3.
+            pose_desired: Desired full pose of shape (n_points * n_pose_dim,).
 
         Returns:
-            error: Geometric pose error in velocity space (always n_velocity_dim per point).
-                   Shape: (n_operational_space,) after task selection.
+            error: Full geometric pose error in velocity space.
+                   Shape: (n_points * n_velocity_dim,).
+
+        Raises:
+            ValueError: If input poses have incorrect shape.
 
         Example:
-            >>> # For a planar robot, angles wrap correctly:
-            >>> osd = OperationalSpaceDynamics(robot, s_ps)
-            >>> pose_current = jnp.array([jnp.deg2rad(10), 0.0, 0.0])
-            >>> pose_desired = jnp.array([jnp.deg2rad(350), 0.0, 0.0])
-            >>> error = osd.compute_pose_error(pose_current, pose_desired)
-            >>> # error[0] ≈ -0.349 (≈ -20°, not +340°)
+            >>> # Get FULL current pose
+            >>> x = osd.operational_space_poses(q)  # shape (6,) for 1 point
+            >>> # Define FULL desired pose
+            >>> x_des = jnp.array([0., 0., 0., 0.0, 0.0, 0.2])  # [rot, pos]
+            >>> # Compute FULL error (all 6 components)
+            >>> error = osd.compute_pose_error(x, x_des)  # shape (6,)
 
-        Note:
-            The input poses should be FULL poses (all points, all dimensions), not
-            task-selected. This is different from the velocity-based operational
-            space coordinates. Use `operational_space_coordinates()` to get the
-            full pose.
+        See Also:
+            compute_task_pose_error: Returns task-selected pose error.
         """
+        # Validate input shapes
+        expected_shape = (self.n_points * self.n_pose_dim,)
+        if pose_current.shape != expected_shape:
+            raise ValueError(
+                f"pose_current must have shape {expected_shape}, "
+                f"got {pose_current.shape}. Use operational_space_poses() "
+                f"to get the full pose."
+            )
+        if pose_desired.shape != expected_shape:
+            raise ValueError(
+                f"pose_desired must have shape {expected_shape}, "
+                f"got {pose_desired.shape}. The reference trajectory must provide "
+                f"full poses (n_points * n_pose_dim dimensions)."
+            )
+
         # Reshape to per-point poses
         poses_current = pose_current.reshape(self.n_points, self.n_pose_dim)
         poses_desired = pose_desired.reshape(self.n_points, self.n_pose_dim)
 
         # Compute geometric error for each point (returns velocity-space error)
+        # _compute_single_pose_error returns n_velocity_dim error per point
         errors = vmap(self._compute_single_pose_error)(poses_current, poses_desired)
 
         # errors is (n_points, n_velocity_dim) - always 6D for 3D, 3D for planar
-        error_full = errors.flatten()
+        return errors.flatten()
+
+    @eqx.filter_jit
+    def compute_task_pose_error(
+        self, pose_current: Array, pose_desired: Array
+    ) -> Array:
+        """
+        Compute the task-selected geometric pose error between current and desired poses.
+
+        This method calls `compute_pose_error` to get the full geometric error, then
+        applies task selection to return only the error components that are part of
+        the task.
+
+        IMPORTANT:
+        - Input poses must be FULL poses (all points, all dimensions), not task-selected.
+        - Use `operational_space_poses(q)` to get the current full pose.
+        - The reference trajectory should also provide full poses (some components
+          may be ignored by the controller based on task selection).
+
+        Args:
+            pose_current: Current full pose of shape (n_points * n_pose_dim,).
+                For 3D robots: n_pose_dim is 6 (ROTATION_VECTOR), 7 (QUATERNION),
+                or 9 (ROTATION_MATRIX_6D). For planar robots: n_pose_dim is 3.
+            pose_desired: Desired full pose of shape (n_points * n_pose_dim,).
+
+        Returns:
+            error: Task-selected geometric pose error in velocity space.
+                   Shape: (n_operational_space,).
+
+        Example:
+            >>> # Create operational space dynamics with position-only task
+            >>> osd = OperationalSpaceDynamics(robot, s_ps,
+            ...     task_selector=jnp.array([False, False, False, True, True, True]))
+            >>> # Get FULL current pose (includes rotation even though not in task)
+            >>> x = osd.operational_space_poses(q)  # shape (6,)
+            >>> # Define FULL desired pose
+            >>> x_des = jnp.array([0., 0., 0., 0.0, 0.0, 0.2])  # [rot, pos]
+            >>> # Compute task-selected error (only position error)
+            >>> error = osd.compute_task_pose_error(x, x_des)  # shape (3,)
+
+        See Also:
+            compute_pose_error: Returns full pose error without task selection.
+        """
+        # Compute full pose error
+        error_full = self.compute_pose_error(pose_current, pose_desired)
 
         # Apply task selection (operates on velocity space)
         return self.B_task.T @ error_full
@@ -535,18 +751,55 @@ class OperationalSpaceDynamics(eqx.Module):
     @eqx.filter_jit
     def operational_space_coordinates(self, q: Array) -> Array:
         """
-        Compute the full operational space pose coordinates from forward kinematics.
+        Compute the task-selected operational space pose coordinates from forward kinematics.
 
         This method evaluates the forward kinematics at the specified points
         along the backbone (s_ps) and extracts the pose components in the chosen
-        rotation representation.
+        rotation representation, then applies task selection.
 
-        IMPORTANT: This returns the FULL pose (all points, all dimensions) without
-        task selection. Task selection only applies to velocity-space quantities
-        (Jacobian, dynamics). The pose dimension depends on the rotation representation:
+        Task selection is applied consistently with the velocity-space selection:
+        - If rotation is selected for a point, all orientation components are included
+        - Position components are included according to the task selector
+
+        The pose dimension depends on the rotation representation and task selection:
+
+        For 3D robots, the FULL pose at each point depends on rotation_representation:
+        - ROTATION_VECTOR: [rx, ry, rz, p_x, p_y, p_z] (6D per point)
+        - QUATERNION: [q_x, q_y, q_z, q_w, p_x, p_y, p_z] (7D per point)
+        - ROTATION_MATRIX_6D: [r6d_0, ..., r6d_5, p_x, p_y, p_z] (9D per point)
+
+        For planar robots, the pose at each point is [theta, x, y] (3D per point).
+
+        After task selection, only the selected components are returned.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            x: Task-selected operational space coordinates of shape
+               (n_pose_operational_space,).
+
+        Note:
+            For computing errors for control, use `compute_task_pose_error()` which
+            properly handles the geometric orientation error.
+        """
+        # Get full pose and apply task selection
+        pose_full = self.operational_space_poses(q)
+        return self.B_task_pose.T @ pose_full
+
+    @eqx.filter_jit
+    def operational_space_poses(self, q: Array) -> Array:
+        """
+        Compute the FULL operational space poses without task selection.
+
+        This method returns the complete pose at each point along the backbone,
+        regardless of the task selector. Use this for:
+        - Defining reference trajectories (which should be in full pose space)
+        - Computing pose errors with `compute_pose_error()` or `compute_task_pose_error()`
+        - Visualization
 
         For 3D robots, the pose at each point depends on rotation_representation:
-        - ROTATION_VECTOR: [omega_x, omega_y, omega_z, p_x, p_y, p_z] (6D per point)
+        - ROTATION_VECTOR: [rx, ry, rz, p_x, p_y, p_z] (6D per point)
         - QUATERNION: [q_x, q_y, q_z, q_w, p_x, p_y, p_z] (7D per point)
         - ROTATION_MATRIX_6D: [r6d_0, ..., r6d_5, p_x, p_y, p_z] (9D per point)
 
@@ -556,14 +809,12 @@ class OperationalSpaceDynamics(eqx.Module):
             q: Generalized coordinates of shape (num_dofs,).
 
         Returns:
-            x: Full operational space coordinates of shape (n_points * n_pose_dim,).
-               Note: This is NOT n_operational_space because task selection does
-               not apply to pose coordinates.
+            poses: Full operational space poses of shape (n_points * n_pose_dim,).
 
-        Note:
-            For computing errors for control, use `compute_pose_error()` which
-            properly handles the geometric orientation error and applies task
-            selection to the velocity-space error output.
+        See Also:
+            operational_space_coordinates: Returns task-selected coordinates.
+            compute_pose_error: Returns full pose error.
+            compute_task_pose_error: Returns task-selected pose error.
         """
         # Compute forward kinematics at all points
         fk_results = self.robot.forward_kinematics_batched(q, self.s_ps)
@@ -572,9 +823,7 @@ class OperationalSpaceDynamics(eqx.Module):
         poses = vmap(self._extract_pose_from_fk)(fk_results)
 
         # Flatten to get full pose vector
-        pose_full = poses.flatten()
-
-        return pose_full
+        return poses.flatten()
 
     @eqx.filter_jit
     def operational_space_velocity(self, q: Array, qd: Array) -> Array:
