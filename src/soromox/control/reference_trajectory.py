@@ -216,7 +216,6 @@ class ReferenceTrajectory:
         obj = object.__new__(cls)
         object.__setattr__(obj, "ts", ts)
         object.__setattr__(obj, "x_des_ts", x_des_ts)
-        object.__setattr__(obj, "xd_des_fn", aux["x_des_fn"])
         object.__setattr__(obj, "x_des_fn", aux["x_des_fn"])
         object.__setattr__(obj, "xd_des_ts", xd_des_ts)
         object.__setattr__(obj, "xd_des_fn", aux["xd_des_fn"])
