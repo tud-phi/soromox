@@ -1,10 +1,8 @@
 __all__ = ["Pendulum", "normalize_joint_angles"]
+
 import equinox as eqx
-import jax
-from jax import Array, jit, lax, vmap
+from jax import Array, jit, vmap
 from jax import numpy as jnp
-import numpy as onp
-from typing import Dict, List, Tuple, Union, Optional
 
 from soromox.systems.soft_robot import SoftRobot
 
@@ -90,7 +88,8 @@ class Pendulum(SoftRobot):
 
     def __init__(
         self,
-        params: Dict[str, Array],
+        params: dict[str, Array],
+        **kwargs,
     ) -> None:
         """
         Initialize the pendulum system with the given parameters.
@@ -104,7 +103,10 @@ class Pendulum(SoftRobot):
                 - "K": stiffness matrix (N,N) (optional)
                 - "D": damping matrix (N,N) (optional)
                 - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
+            **kwargs: Additional keyword arguments for SoftRobot and DynamicalSystem.
         """
+        super().__init__(**kwargs)
+
         # Basic parameter extraction
         m = jnp.asarray(params["m"])  # (n,)
         I = jnp.asarray(params["I"])  # (n,)
@@ -134,7 +136,7 @@ class Pendulum(SoftRobot):
         self.D = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
         self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
 
-    def update_params(self, params: Dict[str, Array]) -> "Pendulum":
+    def update_params(self, params: dict[str, Array]) -> "Pendulum":
         """
         Update the system parameters and return a new instance (functional style).
 
@@ -171,7 +173,9 @@ class Pendulum(SoftRobot):
         if "D" in params:
             updated = eqx.tree_at(lambda x: x.D, updated, jnp.asarray(params["D"]))
         if "q_ref_k" in params:
-            updated = eqx.tree_at(lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"]))
+            updated = eqx.tree_at(
+                lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"])
+            )
         return updated
 
     # -------------------------------------------------
@@ -424,7 +428,7 @@ class Pendulum(SoftRobot):
     @eqx.filter_jit
     def jacobians_and_derivatives_tips(
         self, q: Array, qd: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 
@@ -503,7 +507,7 @@ class Pendulum(SoftRobot):
         return jnp.concatenate([jnp.zeros(1), jnp.cumsum(self.L)])
 
     @eqx.filter_jit
-    def classify_segment(self, s: Array) -> Tuple[Array, Array]:
+    def classify_segment(self, s: Array) -> tuple[Array, Array]:
         """
         Determine which link contains the point at arc-length s.
 
@@ -632,7 +636,7 @@ class Pendulum(SoftRobot):
     @eqx.filter_jit
     def jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time derivative at arc-length position s.
 
@@ -683,7 +687,7 @@ class Pendulum(SoftRobot):
     @eqx.filter_jit
     def jacobian_and_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute Jacobians and their derivatives at multiple arc-length positions.
 
@@ -866,7 +870,7 @@ class Pendulum(SoftRobot):
         self,
         t: Array,
         y: Array,
-        actuation_args: Optional[Tuple] = None,
+        actuation_args: tuple | None = None,
     ) -> Array:
         """
         Compute forward dynamics for the pendulum system in state space form.

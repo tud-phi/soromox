@@ -1,9 +1,7 @@
 __all__ = ["SoftRobot"]
 
 from abc import abstractmethod
-from typing import Optional, Tuple
 
-import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
@@ -39,21 +37,23 @@ class SoftRobot(DynamicalSystem):
     @property
     def tangent_eps(self) -> Array:
         """Epsilon value for Lie algebra tangent computations.
-        
+
         Returns:
             Array: Epsilon value for Lie algebra tangent computations.
         """
         return jnp.sqrt(self.global_eps)
-    
-    def __init__(self, eps: Optional[float] = None, **kwargs):
+
+    def __init__(self, eps: float | None = None, **kwargs):
         """Initialize the SoftRobot.
 
         Args:
             eps (float): Optional global epsilon value for numerical computations.
                 If not provided, defaults to 10x machine epsilon for float64.
-            **kwargs: Additional keyword arguments for Equinox Module.
+            **kwargs: Additional keyword arguments (unused, kept for API compatibility).
         """
-        super().__init__(**kwargs)
+        # Note: We don't call super().__init__() here because Equinox modules
+        # work like dataclasses - fields are set directly rather than through
+        # parent __init__ calls. Child classes must set num_dofs and num_actuators.
         if eps is not None:
             self.global_eps = eps
         else:
@@ -137,7 +137,7 @@ class SoftRobot(DynamicalSystem):
     @abstractmethod
     def jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time derivative at a point s along the robot.
 
@@ -154,7 +154,7 @@ class SoftRobot(DynamicalSystem):
 
     def jacobian_and_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its derivative at multiple points along the robot.
 
@@ -339,7 +339,7 @@ class SoftRobot(DynamicalSystem):
 
     @abstractmethod
     def forward_dynamics(
-        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
+        self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
         """
         Compute the forward dynamics of the system.
