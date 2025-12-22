@@ -532,7 +532,7 @@ class Pendulum(SoftRobot):
 
         Args:
             q: Joint angles, shape (N,) [rad].
-            s: Arc-length position in [0, total_length] [m].
+            s: Arc-length position in ``[0, total_length]`` (m).
 
         Returns:
             chi: Pose [theta, x, y] at position s, shape (3,).
@@ -582,7 +582,7 @@ class Pendulum(SoftRobot):
 
         Args:
             q: Joint angles, shape (N,) [rad].
-            s: Arc-length position in [0, total_length] [m].
+            s: Arc-length position in ``[0, total_length]`` (m).
 
         Returns:
             J: Jacobian matrix, shape (3, N).
@@ -639,7 +639,7 @@ class Pendulum(SoftRobot):
         Args:
             q: Joint angles, shape (N,) [rad].
             qd: Joint velocities, shape (N,) [rad/s].
-            s: Arc-length position in [0, total_length] [m].
+            s: Arc-length position in ``[0, total_length]`` (m).
 
         Returns:
             J: Jacobian matrix, shape (3, N).

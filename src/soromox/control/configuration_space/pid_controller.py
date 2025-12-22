@@ -33,14 +33,18 @@ class PIDController(ClosedFormModelBasedController):
     where:
         - e = q_des - q is the configuration error
         - ed = qd_des - qd is the velocity error
+        - integral_error = integral of sat(e) over time
+        - sat() is an optional saturation function for anti-windup
         - A(q) is the state-dependent actuation matrix of the robot
         - tau is the generalized force in configuration space
         - u is the actuator input
 
-    The integral error is updated according to:
-        integral_error_dot = sat(e)
+    The integral error dynamics are:
+        d(integral_error)/dt = sat(e)
 
-    where sat() is an optional saturation function for anti-windup.
+    where sat() can be the identity (no saturation), tanh, or a custom function.
+    The saturation function provides anti-windup protection by limiting the
+    growth of the integral term when errors are large.
 
     Note:
         This base PID controller uses u = A.T @ tau, which naturally handles

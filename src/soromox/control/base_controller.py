@@ -19,7 +19,7 @@ class BaseController(eqx.Module, ABC):
     and a reference trajectory. They can maintain internal state (e.g.,
     integrator terms for PID control) that evolves over time.
 
-    Args:
+    Attributes:
         robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory to track.
     """
