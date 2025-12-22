@@ -29,8 +29,11 @@ def _make_interp_fn(ts: Array, vals: Array) -> Callable[[Array], Array]:
     """
 
     def interp_fn(t: Array) -> Array:
-        # Handle single time point case
         n = ts.shape[0]
+
+        # Handle single time point case: return the single value for any time
+        if n == 1:
+            return vals[0]
 
         # Find index: ts[idx-1] <= t < ts[idx]
         idx = jnp.searchsorted(ts, t)
