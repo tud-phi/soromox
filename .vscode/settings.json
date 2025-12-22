@@ -10,9 +10,5 @@
             "source.fixAll.ruff": "always",
             "source.organizeImports.ruff": "always"
         }
-    },
-
-    "ruff.format.args": [],
-    "ruff.lint.args": [],
-    "ruff.organizeImports": true
+    }
 }
