@@ -1,7 +1,7 @@
-__all__ = ["Pendulum", "normalize_joint_angles"]
+__all__ = ["Pendulum"]
 
 import equinox as eqx
-from jax import Array, jit, vmap
+from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.systems.soft_robot import SoftRobot
@@ -1018,18 +1018,3 @@ class Pendulum(SoftRobot):
         U = self.potential_energy(q)
         E = T + U
         return E
-
-
-@jit
-def normalize_joint_angles(q: Array) -> Array:
-    """
-    Normalize joint angles to the interval [-pi, pi].
-
-    Args:
-        q (Array): Joint angles.
-
-    Returns:
-        q_norm (Array): Normalized joint angles.
-    """
-    q_norm = jnp.mod(q + jnp.pi, 2 * jnp.pi) - jnp.pi
-    return q_norm
