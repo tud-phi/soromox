@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING
 import jax.numpy as jnp
 
 if TYPE_CHECKING:
-    from soromox.systems.dynamical_system import DynamicalSystem
+    from soromox.systems.soft_robot import SoftRobot
 
 
 class ActuationScenario(Enum):
@@ -37,7 +37,7 @@ class ActuationScenario(Enum):
 
 
 def analyze_actuation_matrix(
-    robot: "DynamicalSystem",
+    robot: "SoftRobot",
 ) -> tuple[ActuationScenario, tuple[int, int], int]:
     """
     Analyze the actuation matrix of a robot at zero configuration.
@@ -74,7 +74,7 @@ def analyze_actuation_matrix(
 
 def emit_actuation_warnings(
     controller_name: str,
-    robot: "DynamicalSystem",
+    robot: "SoftRobot",
     is_regulator: bool = False,
     is_computed_torque: bool = False,
     stacklevel: int = 3,
@@ -87,7 +87,7 @@ def emit_actuation_warnings(
 
     Args:
         controller_name: Name of the controller class for warning messages.
-        robot: The dynamical system (robot) to be controlled.
+        robot: The soft robot system to be controlled.
         is_regulator: Whether the controller is a regulator (vs. tracker).
         is_computed_torque: Whether this is the ComputedTorqueTracker (which handles
             configuration-dependent actuation via feedback linearization).

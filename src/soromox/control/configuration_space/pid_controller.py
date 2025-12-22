@@ -15,7 +15,7 @@ from soromox.control.closed_form_model_based_controller import (
 )
 from soromox.control.pid_control import PIDControl, PIDControllerState
 from soromox.control.reference_trajectory import ReferenceTrajectory
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import SystemState
 
 
@@ -49,7 +49,7 @@ class PIDController(ClosedFormModelBasedController):
         considerations for non-square actuation matrices.
 
     Attributes:
-        robot: The dynamical system (robot) to be controlled.
+        robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory to track.
         pid_control: The PIDControl instance containing the gains and saturation.
     """
@@ -58,7 +58,7 @@ class PIDController(ClosedFormModelBasedController):
 
     def __init__(
         self,
-        robot: DynamicalSystem,
+        robot: SoftRobot,
         reference_trajectory: ReferenceTrajectory,
         pid_control: PIDControl,
     ):

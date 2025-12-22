@@ -1437,62 +1437,6 @@ class PlanarHSA(DynamicalSystem):
         return Shat
 
     @eqx.filter_jit
-    def operational_space_dynamical_matrices(
-        self, q: Array, qd: Array, eps: Optional[float] = None
-    ) -> Tuple[Array, Array, Array, Array, Array]:
-        """
-        Compute the dynamics in operational space.
-        The implementation is based on Chapter 7.8 of "Modelling, Planning and Control of Robotics" by
-        Siciliano, Sciavicco, Villani, Oriolo.
-
-        Args:
-            q: generalized coordinates of shape (num_dofs,)
-            qd: generalized velocities of shape (num_dofs,)
-            eps: small number to avoid singularities (e.g., division by zero). By default, it will be initialized to 1e4 * self.global_eps.
-
-        Returns:
-            Lambda: inertia matrix in the operational space of shape (n_x, n_x)
-            mu: matrix with corioli and centrifugal terms in the operational space of shape (n_x, n_x)
-            Jee: Jacobian of the end-effector pose with respect to the generalized coordinates of shape (3, num_dofs)
-            Jeed: time-derivative of the Jacobian of the end-effector pose with respect to the generalized coordinates
-            JeeB_pinv: Dynamically-consistent pseudo-inverse of the Jacobian. Allows the mapping of torques
-                from the generalized coordinates to the operational space: f = JB_pinv.T @ tau_q
-                Shape (num_dofs, n_x)
-        """
-        # initialize eps if not provided
-        if eps is None:
-            eps = 1e4 * self.global_eps
-
-        # map the configuration to the strains
-        xi = self.strain(q)
-        xid = self.B_xi @ qd
-        # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi, eps)
-
-        # end-effector Jacobian and its time-derivative
-        Jee = self.Jee_lambda(*self.params_for_lambdify, *xi_epsed)
-        Jeed = self.Jeed_lambda(*self.params_for_lambdify, *xi_epsed, *xid)
-
-        # inverse of the inertia matrix in the configuration space
-        B = self.inertia_matrix(q, eps)
-        B_inv = jnp.linalg.inv(B)
-
-        C = self.coriolis_matrix(q, qd, eps)
-
-        Lambda = jnp.linalg.inv(
-            Jee @ B_inv @ Jee.T
-        )  # inertia matrix in the operational space
-        mu = Lambda @ (
-            Jee @ B_inv @ C - Jeed
-        )  # coriolis and centrifugal matrix in the operational space
-
-        JeeB_pinv = (
-            B_inv @ Jee.T @ Lambda
-        )  # dynamically-consistent pseudo-inverse of the Jacobian
-
-        return Lambda, mu, Jee, Jeed, JeeB_pinv
-
-    @eqx.filter_jit
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: Tuple[Array, Optional[Array]]
     ) -> Array:

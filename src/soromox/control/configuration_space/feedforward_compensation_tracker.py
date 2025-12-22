@@ -9,7 +9,7 @@ from soromox.control.actuation_matrix_utils import emit_actuation_warnings
 from soromox.control.configuration_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
 from soromox.control.reference_trajectory import ReferenceTrajectory
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import SystemState
 
 
@@ -52,7 +52,7 @@ class FeedforwardCompensationTracker(PIDController):
         actuation-space controllers.
 
     Attributes:
-        robot: The dynamical system (robot) to be controlled.
+        robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory to track.
         pid_control: The PIDControl instance containing the gains and saturation.
 
@@ -68,7 +68,7 @@ class FeedforwardCompensationTracker(PIDController):
 
     def __init__(
         self,
-        robot: DynamicalSystem,
+        robot: SoftRobot,
         reference_trajectory: ReferenceTrajectory,
         pid_control: PIDControl,
     ):
@@ -76,7 +76,7 @@ class FeedforwardCompensationTracker(PIDController):
         Initialize the feedforward compensation trajectory tracker.
 
         Args:
-            robot: The dynamical system (robot) to be controlled.
+            robot: The soft robot system to be controlled.
                 Must have `actuation_matrix(q)`, `inertia_matrix(q)`,
                 `coriolis_matrix(q, qd)`, `gravitational_force(q)`,
                 `elastic_force(q)`, and `damping_matrix(q)` methods.

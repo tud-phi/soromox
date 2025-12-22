@@ -9,7 +9,7 @@ from soromox.control.actuation_matrix_utils import emit_actuation_warnings
 from soromox.control.configuration_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
 from soromox.control.reference_trajectory import ReferenceTrajectory
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import SystemState
 
 
@@ -50,7 +50,7 @@ class PotentialCancellationRegulator(PIDController):
         - u_feedback is the PID feedback term from the parent class
 
     Attributes:
-        robot: The dynamical system (robot) to be controlled.
+        robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory to track.
         pid_control: The PIDControl instance containing the gains and saturation.
 
@@ -85,7 +85,7 @@ class PotentialCancellationRegulator(PIDController):
 
     def __init__(
         self,
-        robot: DynamicalSystem,
+        robot: SoftRobot,
         reference_trajectory: ReferenceTrajectory,
         pid_control: PIDControl,
     ):
@@ -93,7 +93,7 @@ class PotentialCancellationRegulator(PIDController):
         Initialize the potential cancellation regulator.
 
         Args:
-            robot: The dynamical system (robot) to be controlled.
+            robot: The soft robot system to be controlled.
                 Must have `actuation_matrix(q)`, `gravitational_force(q)`,
                 and `elastic_force(q)` methods.
             reference_trajectory: The desired trajectory to track.

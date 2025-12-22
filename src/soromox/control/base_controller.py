@@ -7,7 +7,7 @@ from typing import Any, Optional, Tuple
 from jax import Array
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import SystemState
 
 
@@ -20,11 +20,11 @@ class BaseController(eqx.Module, ABC):
     integrator terms for PID control) that evolves over time.
 
     Args:
-        robot: The dynamical system (robot) to be controlled.
+        robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory to track.
     """
 
-    robot: DynamicalSystem
+    robot: SoftRobot
     reference_trajectory: ReferenceTrajectory
 
     @abstractmethod
