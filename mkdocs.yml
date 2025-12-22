@@ -85,6 +85,11 @@ nav:
         - Pneumatic Actuated Planar PCS: api/pneumatic-actuated-planar-pcs.md
         - Tendon Actuated Planar PCS: api/tendon-actuated-planar-pcs.md
       - Planar HSA: api/planar-hsa.md
+    - Control:
+        - Overview: api/control/index.md
+        - Configuration-Space Controllers: api/control/configuration-space.md
+        - Operational-Space Controllers: api/control/operational-space.md
+        - Utilities: api/control/utilities.md
     - Actuation: api/actuation.md
     - Utilities:
       - Overview: api/utils.md
@@ -94,7 +99,7 @@ nav:
   - Authors & Maintainers: authors.md
   - Development:
     - Contributing: development/contributing.md
-    - System Benchmarking: development/system-benchmarking.md
+    - Benchmarking: development/benchmarking.md
     - Changelog: development/changelog.md
 
 plugins:
@@ -212,3 +217,4 @@ extra:
 
 watch:
   - src/soromox
+

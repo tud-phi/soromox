@@ -11,6 +11,23 @@ SoRoMoX provides implementations for various robot systems, from classical rigid
 - **Dynamics**: Mass matrices, Coriolis forces, and gravitational effects
 - **Factory Functions**: Convenient initialization and configuration
 
+## Common Components
+
+### SystemState
+
+The `SystemState` class is a container for the robot state used throughout SoRoMoX for simulation, control, and analysis.
+
+::: soromox.systems.SystemState
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 4
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+---
+
 ## Available Systems
 
 ### Pendulum Systems
