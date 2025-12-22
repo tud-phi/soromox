@@ -6,7 +6,7 @@ import equinox as eqx
 import jax
 from jax import Array, jit, lax, vmap
 from jax import numpy as jnp
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, ClassVar, Optional, Tuple, Union
 
 # Diffrax (for time integration helpers)
 from diffrax import (
@@ -25,6 +25,28 @@ from soromox.systems.system_state import SystemState
 class DynamicalSystem(eqx.Module):
     num_dofs: int = eqx.field(static=True)  # Number of degrees of freedom (configuration variables)
     num_actuators: int = eqx.field(static=True)  # Number of actuators
+
+    # global epsilon for numerical computations
+    global_eps: float  # Global epsilon for numerical computations
+
+    @property
+    def tangent_eps(self) -> Array:
+        """Epsilon value for Lie algebra tangent computations."""
+        return jnp.sqrt(self.global_eps)
+    
+    def __init__(self, eps: Optional[float] = None, **kwargs):
+        """Initialize the DynamicalSystem.
+
+        Args:
+            eps (float): Optional global epsilon value for numerical computations.
+                If not provided, defaults to 10x machine epsilon for float64.
+            **kwargs: Additional keyword arguments for Equinox Module.
+        """
+        super().__init__(**kwargs)
+        if eps is not None:
+            self.global_eps = eps
+        else:
+            self.global_eps = 1e1 * float(jnp.finfo(jnp.float64).eps)
 
     @abstractmethod
     def forward_dynamics(

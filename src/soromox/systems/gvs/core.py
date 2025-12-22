@@ -134,8 +134,6 @@ class GVS(DynamicalSystem):
 
     B_select: Array  # Strain basis functions for the robot (6, max_dof)
 
-    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
-
     # Dynamic attributes
     V_L: Array  # List of lengths for each link (num_segments, )
     V_L_cum: Array  # Cumulative lengths of the links (num_segments + 1, )
@@ -177,6 +175,7 @@ class GVS(DynamicalSystem):
         max_dof: Optional[int] = None,
         max_nGauss: Optional[int] = None,
         p0: Optional[Array] = None,
+        **kwargs,
     ) -> None:
         """
         Initialize the GVS class.
@@ -229,6 +228,10 @@ class GVS(DynamicalSystem):
         p0: (optional) List/Array of shape (6,)
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
+        eps (float, optional):
+            Global epsilon for numerical computations.
+            If None, defaults to machine epsilon for float64.
+                
         Raises
         ------
         ValueError
@@ -245,6 +248,8 @@ class GVS(DynamicalSystem):
         - Internal arrays are padded to `max_dof` and `max_nip` to allow vectorized
         batched computations across all segments.
         """
+        super().__init__(**kwargs)
+
         warnings.warn(
             "GVS is not fully validated yet and might not match the behavior of PlanarPCS and PCS."
         )
@@ -1216,7 +1221,7 @@ class GVS(DynamicalSystem):
 
             g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # shape (4, 4)
             T_g_joint = lie.Tangent_gi_se3(
-                xi_joint_i, 1, self.global_eps
+                xi_joint_i, 1, eps=self.tangent_eps
             )  # shape (6, 6)
 
             T_g_joint_i_B_joint_i = (
@@ -1289,7 +1294,7 @@ class GVS(DynamicalSystem):
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)  # shape (4, 4)
                 T_step = lie.Tangent_gi_se3(
-                    Magnus_j, 1, self.global_eps
+                    Magnus_j, 1, eps=self.tangent_eps
                 )  # shape (6, 6)
 
                 T_step_B_step = (
@@ -1401,7 +1406,7 @@ class GVS(DynamicalSystem):
             xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i
 
             g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # (4,4)
-            T_g_joint = lie.Tangent_gi_se3(xi_joint_i, 1, self.global_eps)  # (6,6)
+            T_g_joint = lie.Tangent_gi_se3(xi_joint_i, 1, eps=self.tangent_eps)  # (6,6)
 
             # contribution of this joint to its own block
             T_g_joint_i_B_joint_i = (
@@ -1467,7 +1472,7 @@ class GVS(DynamicalSystem):
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus_j, 1, self.global_eps)
+                T_step = lie.Tangent_gi_se3(Magnus_j, 1, eps=self.tangent_eps)
 
                 # add contribution for this link block
                 T_step_B_step = (
@@ -1552,7 +1557,7 @@ class GVS(DynamicalSystem):
                 ) * (ad_xi_Z1_j @ Bp[1] - ad_xi_Z2_j @ Bp[0])
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus_p, 1, self.global_eps)
+                T_step = lie.Tangent_gi_se3(Magnus_p, 1, eps=self.tangent_eps)
 
                 T_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
@@ -1656,10 +1661,10 @@ class GVS(DynamicalSystem):
 
             g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # shape (4, 4)
             T_g_joint = lie.Tangent_gi_se3(
-                xi_joint_i, 1, self.global_eps
+                xi_joint_i, 1, eps=self.tangent_eps
             )  # shape (6, 6)
             Td_g_joint = lie.Tangent_derivative_gi_se3(
-                xi_joint_i, xid_joint_i, 1, self.global_eps
+                xi_joint_i, xid_joint_i, 1, eps=self.tangent_eps
             )  # shape (6, 6)
 
             Td_g_joint_B_joint_i = (
@@ -1742,10 +1747,10 @@ class GVS(DynamicalSystem):
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)  # shape (4, 4)
                 T_Magnus_j = lie.Tangent_gi_se3(
-                    Magnus_j, 1, self.global_eps
+                    Magnus_j, 1, eps=self.tangent_eps
                 )  # shape (6, 6)
                 Td_Magnus_j = lie.Tangent_derivative_gi_se3(
-                    Magnus_j, Magnusd_j, 1, self.global_eps
+                    Magnus_j, Magnusd_j, 1, eps=self.tangent_eps
                 )  # shape (6, 6)
 
                 T_B_Magnus_step = T_Magnus_j @ B_Magnus_j  # shape (6, max_dof)
@@ -1870,9 +1875,9 @@ class GVS(DynamicalSystem):
             xid_joint_i = B_joint_i @ qd_joint_i  # (6,)
 
             g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # (4,4)
-            T_g_joint = lie.Tangent_gi_se3(xi_joint_i, 1, self.global_eps)  # (6,6)
+            T_g_joint = lie.Tangent_gi_se3(xi_joint_i, 1, eps=self.tangent_eps)  # (6,6)
             Td_g_joint = lie.Tangent_derivative_gi_se3(
-                xi_joint_i, xid_joint_i, 1, self.global_eps
+                xi_joint_i, xid_joint_i, 1, eps=self.tangent_eps
             )  # (6,6)
 
             # contribution dans le bloc "joint" de ce segment
@@ -1954,9 +1959,9 @@ class GVS(DynamicalSystem):
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus_j, 1, self.global_eps)
+                T_step = lie.Tangent_gi_se3(Magnus_j, 1, eps=self.tangent_eps)
                 Td_step = lie.Tangent_derivative_gi_se3(
-                    Magnus_j, Magnusd_j, 1, self.global_eps
+                    Magnus_j, Magnusd_j, 1, eps=self.tangent_eps
                 )
 
                 Td_block_link = (
@@ -2054,9 +2059,9 @@ class GVS(DynamicalSystem):
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus_p, 1, self.global_eps)
+                T_step = lie.Tangent_gi_se3(Magnus_p, 1, eps=self.tangent_eps)
                 Td_step = lie.Tangent_derivative_gi_se3(
-                    Magnus_p, Magnusd_p, 1, self.global_eps
+                    Magnus_p, Magnusd_p, 1, eps=self.tangent_eps
                 )
 
                 Td_block_link = (

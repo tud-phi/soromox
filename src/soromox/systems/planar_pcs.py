@@ -81,9 +81,6 @@ class PlanarPCS(SoftRobot):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
-    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
-
     num_segments: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True)  #
     num_strains: int = eqx.field(static=True)  # Number of strains (3 * num_segments)
@@ -102,6 +99,7 @@ class PlanarPCS(SoftRobot):
         order_gauss: int = 5,
         strain_selector: Optional[Array] = None,
         xi_ref: Optional[Array] = None,
+        **kwargs
     ):
         """
         Initialize the PlanarPCS class.
@@ -137,8 +135,12 @@ class PlanarPCS(SoftRobot):
             xi_ref (Optional[Array], optional):
                 Reference strain of shape (3 * num_segments,).
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-
+            eps (float, optional):
+                Global epsilon for numerical computations.
+                If None, defaults to machine epsilon for float64.
         """
+        super().__init__(**kwargs)
+
         # Number of segments
         if not isinstance(num_segments, int):
             raise TypeError(
@@ -897,7 +899,7 @@ class PlanarPCS(SoftRobot):
             # Map the previous Jacobian into the current segment frame using the inverse adjoint.
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
             # Integrate the local tangent contribution for this segment length.
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             # Rotate the previous Jacobian into the current frame.
             J_rot = jnp.matmul(Ad_inv, J_prev)
             # Overwrite the slice associated with the active segment.
@@ -998,7 +1000,7 @@ class PlanarPCS(SoftRobot):
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, L_i, eps=self.global_eps)
-            T = lie.Tangent_gi_se2(xi_i, L_i, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, L_i, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -1046,7 +1048,7 @@ class PlanarPCS(SoftRobot):
             J_base: Array,
         ) -> Array:
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -1147,9 +1149,9 @@ class PlanarPCS(SoftRobot):
             # Inverse adjoint transformation and tangent integration for the current segment
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
             # Compute the tangent vector and its derivative
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se2(
-                xi_i, xid_i, arc_len, eps=self.global_eps
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
             # Rotate the previous Jacobian into the current frame and add the local contribution
@@ -1287,11 +1289,11 @@ class PlanarPCS(SoftRobot):
             lambda xi_i, L_i: lie.Adjoint_gi_se2_inv(xi_i, L_i, eps=self.global_eps)
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se2(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: lie.Tangent_gi_se2(xi_i, L_i, eps=self.tangent_eps)
         )(xi, self.L)
         Td_tips = vmap(
             lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se2(
-                xi_i, xid_i, L_i, eps=self.global_eps
+                xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
 
@@ -1378,9 +1380,9 @@ class PlanarPCS(SoftRobot):
             Jd_base: Array,
         ) -> Tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se2(
-                xi_i, xid_i, arc_len, eps=self.global_eps
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)

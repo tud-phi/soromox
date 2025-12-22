@@ -1,15 +1,5 @@
 __all__ = ["PlanarHSA"]
 import equinox as eqx
-import jax
-from diffrax import (
-    diffeqsolve,
-    ODETerm,
-    SaveAt,
-    Tsit5,
-    AbstractStepSizeController,
-    ConstantStepSize,
-    AbstractSolver,
-)
 import dill
 from jax import Array, lax, vmap
 from jax import numpy as jnp
@@ -200,9 +190,6 @@ class PlanarHSA(DynamicalSystem):
 
     # parameters for lambdify
     params_for_lambdify: List[Array]
-
-    # epsilon for numerical stability
-    global_eps: float
 
     def __init__(
         self,
