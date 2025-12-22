@@ -577,3 +577,89 @@ class OperationalSpaceDynamics(eqx.Module):
         n_dof = self.robot.num_dofs
         N = jnp.eye(n_dof) - J_bar @ J
         return N
+
+    def _extract_pose_from_fk(self, fk_result: Array) -> Array:
+        """
+        Extract the pose vector from the forward kinematics result.
+
+        For 3D robots (PCS), forward_kinematics returns a 4x4 SE(3) matrix.
+        We extract the pose as [omega_x, omega_y, omega_z, p_x, p_y, p_z] where
+        omega is obtained from the rotation matrix (as rotation vector) and
+        p is the position.
+
+        For planar robots (PlanarPCS, Pendulum), forward_kinematics returns
+        a 3-vector [theta, x, y], which we return directly.
+
+        Args:
+            fk_result: Forward kinematics result from the robot.
+
+        Returns:
+            pose: Pose vector of shape (n_pose_dim,).
+        """
+        if self.n_pose_dim == 3:
+            # Planar robot: fk_result is [theta, x, y]
+            return fk_result
+        else:
+            # 3D robot: fk_result is a 4x4 SE(3) matrix
+            # Extract position from the last column
+            p = fk_result[:3, 3]
+            # Extract rotation matrix
+            R = fk_result[:3, :3]
+            # Convert rotation matrix to rotation vector (axis-angle representation)
+            # Using the formula: omega = (1/2) * (R - R^T)^vee * theta / sin(theta)
+            # For simplicity, we use a small angle approximation or the skew-symmetric part
+            # This is a common simplification for impedance control
+            trace = jnp.trace(R)
+            # Clamp to avoid numerical issues with arccos
+            cos_theta = jnp.clip((trace - 1) / 2, -1.0, 1.0)
+            theta = jnp.arccos(cos_theta)
+            # Skew-symmetric part of R
+            skew = (R - R.T) / 2
+            # Extract rotation vector components from skew-symmetric matrix
+            omega_x = skew[2, 1]  # -skew[1, 2]
+            omega_y = skew[0, 2]  # -skew[2, 0]
+            omega_z = skew[1, 0]  # -skew[0, 1]
+            # Scale by theta / sin(theta) for axis-angle
+            # Use safe division to handle theta close to 0
+            scale = jnp.where(
+                jnp.abs(jnp.sin(theta)) > 1e-6,
+                theta / jnp.sin(theta),
+                1.0  # For small theta, sin(theta) ≈ theta
+            )
+            omega = jnp.array([omega_x, omega_y, omega_z]) * scale
+            # Concatenate orientation and position
+            return jnp.concatenate([omega, p])
+
+    @eqx.filter_jit
+    def operational_space_coordinates(self, q: Array) -> Array:
+        """
+        Compute the operational space coordinates from forward kinematics.
+
+        This method evaluates the forward kinematics at the specified points
+        along the backbone (s_ps) and extracts the pose components, applying
+        the task selector to return only the active dimensions.
+
+        For 3D robots, the pose at each point is [omega_x, omega_y, omega_z, p_x, p_y, p_z]
+        where omega is the rotation vector and p is the position.
+
+        For planar robots, the pose at each point is [theta, x, y].
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            x: Operational space coordinates of shape (n_operational_space,).
+        """
+        # Compute forward kinematics at all points
+        fk_results = self.robot.forward_kinematics_batched(q, self.s_ps)
+
+        # Extract pose vectors from forward kinematics results
+        poses = vmap(self._extract_pose_from_fk)(fk_results)
+
+        # Flatten to get full pose vector
+        pose_full = poses.flatten()
+
+        # Apply task selection
+        x = self.B_task.T @ pose_full
+
+        return x

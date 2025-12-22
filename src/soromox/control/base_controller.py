@@ -27,6 +27,34 @@ class BaseController(eqx.Module, ABC):
     robot: SoftRobot
     reference_trajectory: ReferenceTrajectory
 
+    @staticmethod
+    def _apply_gain(gain: Array, x: Array) -> Array:
+        """
+        Apply a gain (scalar, diagonal vector, or matrix) to a vector.
+
+        This utility method handles different gain representations:
+        - 1-d array: Element-wise multiplication (diagonal gain)
+        - 2-d array: Matrix-vector multiplication (full gain matrix)
+
+        Args:
+            gain: The gain to apply (1-d or 2-d array).
+            x: The input vector.
+
+        Returns:
+            The result of applying the gain to the input.
+
+        Raises:
+            ValueError: If gain is not 1-d or 2-d.
+        """
+        if gain.ndim == 1:
+            # Diagonal or scalar (broadcasted): element-wise multiplication
+            return gain * x
+        elif gain.ndim == 2:
+            # Full matrix: matrix-vector multiplication
+            return gain @ x
+        else:
+            raise ValueError(f"Gain must be 1-d or 2-d, got {gain.ndim}-d")
+
     @abstractmethod
     def __call__(
         self, system_state: SystemState

@@ -214,6 +214,22 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
+    @abstractmethod
+    def actuation_matrix(self, q: Array) -> Array:
+        """
+        Compute the actuation matrix.
+
+        The actuation matrix maps actuator inputs to generalized forces:
+            tau = A(q) @ u
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            A: Actuation matrix of shape (num_dofs, num_actuators).
+        """
+        ...
+
     # -----------------------------------------
     # Energy methods
     # -----------------------------------------
