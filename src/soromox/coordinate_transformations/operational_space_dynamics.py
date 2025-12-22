@@ -1017,12 +1017,51 @@ class OperationalSpaceDynamics(eqx.Module):
         return Lambda
 
     @eqx.filter_jit
+    def mu_x(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the operational space Coriolis/centrifugal matrix mu_x that
+            connects the operational-space Coriolis forces with the configuration-space velocities qd.
+
+        This Coriolis matrix of shape (n_operational_space, num_dofs) is defined as:
+            mu_x = Lambda @ (J @ M^{-1} @ C - Jd)
+
+        where:
+            - Lambda is the operational space inertia matrix
+            - J is the Jacobian
+            - M is the configuration space inertia matrix
+            - C is the configuration space Coriolis matrix
+            - Jd is the time derivative of the Jacobian
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            qd: Generalized velocities of shape (num_dofs,).
+
+        Returns:
+            mu_x: Operational space Coriolis matrix of shape
+                (n_operational_space, num_dofs) that connects the operational-space Coriolis forces with the configuration-space velocities.
+        """
+        J, Jd = self.jacobian_and_derivative(q, qd)
+        M = self.robot.inertia_matrix(q)
+        C = self.robot.coriolis_matrix(q, qd)
+        M_inv = jnp.linalg.inv(M)
+
+        # Compute Lambda
+        Lambda_inv = J @ M_inv @ J.T
+        Lambda = jnp.linalg.inv(Lambda_inv)
+
+        # Compute the Coriolis force acting on the operational space with factorized qd
+        mu_x = Lambda @ (J @ M_inv @ C - Jd)
+
+        return mu_x
+
+    @eqx.filter_jit
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
         """
-        Compute the operational space Coriolis/centrifugal matrix.
+        Compute the operational space Coriolis/centrifugal matrix mu_xx that
+            connects the operational-space Coriolis forces with the operational-space velocities xd.
 
         The operational space Coriolis matrix is defined as:
-            mu = Lambda @ (J @ M^{-1} @ C - Jd) @ J_bar
+            mu_xx = Lambda @ (J @ M^{-1} @ C - Jd) @ J_bar
 
         where:
             - Lambda is the operational space inertia matrix
@@ -1040,25 +1079,16 @@ class OperationalSpaceDynamics(eqx.Module):
             qd: Generalized velocities of shape (num_dofs,).
 
         Returns:
-            mu: Operational space Coriolis matrix of shape
-                (n_operational_space, n_operational_space).
+            mu_xx: Operational space Coriolis matrix of shape
+                (n_operational_space, n_operational_space) that connects the operational-space Coriolis forces with the operational-space velocities.
         """
-        J, Jd = self.jacobian_and_derivative(q, qd)
-        M = self.robot.inertia_matrix(q)
-        C = self.robot.coriolis_matrix(q, qd)
-        M_inv = jnp.linalg.inv(M)
+        Jbar = self.dynamically_consistent_pseudoinverse(q)
+        mu_x = self.mu_x(q, qd)
 
-        # Compute Lambda
-        Lambda_inv = J @ M_inv @ J.T
-        Lambda = jnp.linalg.inv(Lambda_inv)
+        # mu_xx = mu_x @ Jbar
+        mu_xx = mu_x @ Jbar
 
-        # Compute J_bar
-        J_bar = M_inv @ J.T @ Lambda
-
-        # mu = Lambda @ (J @ M^{-1} @ C - Jd) @ J_bar
-        mu = Lambda @ (J @ M_inv @ C - Jd) @ J_bar
-
-        return mu
+        return mu_xx
 
     @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:

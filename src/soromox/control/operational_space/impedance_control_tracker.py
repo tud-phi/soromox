@@ -239,23 +239,10 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # Null-space projector: N = I - J_bar @ J
         N = jnp.eye(n_dof) - J_bar @ J
 
-        # Configuration-space inertia and Coriolis matrices
-        M = self.robot.inertia_matrix(q)
-        M_inv = jnp.linalg.inv(M)
-        C = self.robot.coriolis_matrix(q, qd)
-
         # Configuration-space forces
         tau_el = self.robot.elastic_force(q)  # Elastic force
         D_config = self.robot.damping_matrix(q)  # Damping matrix
         G = self.robot.gravitational_force(q)  # Gravitational force
-
-        # Compute Lambda
-        Lambda_inv = J @ M_inv @ J.T
-        Lambda = jnp.linalg.inv(Lambda_inv)
-
-        # compute the matrix that connections the operationa-space Coriolis forces with the configuration-space velocity
-        # shape: (n_operational_space, n_dof)
-        mu_x = Lambda @ (J @ M_inv @ C - Jd)
 
         # ===== Compute control torque components =====
 
@@ -273,9 +260,9 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # The null-space Coriolis coupling term cancels the effect of null-space
         # motions on the task dynamics through the Coriolis matrix.
         # From the formula: J^T @ Lambda @ (J @ M^{-1} @ C - Jd) @ N @ qd
-        # But a simpler form uses the configuration-space Coriolis directly:
         # tau_cancel_coriolis = J.T @ mu_x @ qd_null
         # This projects the null-space Coriolis force to the task space and then back.
+        mu_x = osd.mu_x(q, qd)
         qd_null = N @ qd  # Null-space velocity
         tau_cancel_coriolis = J.T @ mu_x @ qd_null
 
