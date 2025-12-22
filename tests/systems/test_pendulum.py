@@ -250,6 +250,211 @@ def test_forward_dynamics_rest_with_zero_forces(N):
     )
 
 
+# -----------------------
+# Arc-length parameterized kinematics tests
+# -----------------------
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_forward_kinematics_at_link_tips(N):
+    """Test that forward_kinematics(q, s) at link tips matches forward_kinematics_tips."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+
+    # Get tips using both methods
+    chi_tips_direct = robot.forward_kinematics_tips(q)
+
+    # Get tips using arc-length method
+    L_cum = onp.array(robot.L_cum)
+    for i in range(N):
+        s_tip = L_cum[i + 1]  # tip of link i
+        chi_s = robot.forward_kinematics(q, jnp.array(s_tip))
+        assert_allclose(
+            chi_s, chi_tips_direct[i], rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_forward_kinematics_at_base(N):
+    """Test that forward_kinematics(q, s=0) returns correct base pose."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+
+    # At s=0, we're in link 0, so theta should be cumsum[0] = q[0]
+    # Position should be at origin
+    chi_s = robot.forward_kinematics(q, jnp.array(0.0))
+
+    # Expected: theta = q[0], position = (0, 0)
+    theta_cumsum = onp.cumsum(onp.array(q))
+    expected_theta = theta_cumsum[0]
+    expected_pos = onp.array([0.0, 0.0])
+
+    assert_allclose(chi_s[0], expected_theta, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(chi_s[1:], expected_pos, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_forward_kinematics_interpolates_along_link(N):
+    """Test that forward_kinematics interpolates linearly within a link."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+
+    L_cum = onp.array(robot.L_cum)
+    L = onp.array(robot.L)
+    theta_cumsum = onp.cumsum(onp.array(q))
+
+    for i in range(N):
+        # Test at start, middle, and end of link i (but not at boundaries with next link)
+        s_start = L_cum[i] + 1e-10  # slightly after start
+        s_mid = L_cum[i] + L[i] / 2
+        s_end = L_cum[i + 1] - 1e-10  # slightly before end
+
+        chi_start = robot.forward_kinematics(q, jnp.array(s_start))
+        chi_mid = robot.forward_kinematics(q, jnp.array(s_mid))
+        chi_end = robot.forward_kinematics(q, jnp.array(s_end))
+
+        # Orientation should be constant within a link (theta_cumsum[i])
+        expected_theta = theta_cumsum[i]
+        assert_allclose(
+            chi_start[0], expected_theta, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+        assert_allclose(
+            chi_mid[0], expected_theta, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+        assert_allclose(
+            chi_end[0], expected_theta, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+        # Position should be linearly interpolated along link direction
+        # midpoint position should be average of start and end
+        expected_mid_pos = (chi_start[1:] + chi_end[1:]) / 2
+        assert_allclose(
+            chi_mid[1:], expected_mid_pos, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_jacobian_at_tips_matches_jacobians_tips(N):
+    """Test that jacobian(q, s) at link tips matches jacobians_tips."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+
+    # Get Jacobians using both methods
+    J_tips_direct = robot.jacobians_tips(q)
+
+    # Get Jacobians using arc-length method
+    L_cum = onp.array(robot.L_cum)
+    for i in range(N):
+        s_tip = L_cum[i + 1]  # tip of link i
+        J_s = robot.jacobian(q, jnp.array(s_tip))
+        assert_allclose(
+            J_s, J_tips_direct[i], rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_jacobian_matches_autodiff(N):
+    """Test that jacobian(q, s) matches autodiff of forward_kinematics."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+
+    # Test at several points along the robot
+    L_cum = onp.array(robot.L_cum)
+    total_len = L_cum[-1]
+    s_values = jnp.linspace(0.0, total_len, 10)
+
+    for s in s_values:
+        s = float(s)
+        # Analytical Jacobian
+        J_analytical = robot.jacobian(q, jnp.array(s))
+
+        # Autodiff Jacobian
+        def fk_at_s(q_):
+            return robot.forward_kinematics(q_, jnp.array(s))
+
+        J_autodiff = jax.jacfwd(fk_at_s)(q)
+
+        assert_allclose(
+            J_analytical, J_autodiff, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_jacobian_and_derivative_at_tips(N):
+    """Test jacobian_and_derivative at tips matches jacobians_and_derivatives_tips."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+    qd = jnp.linspace(0.6, -0.5, N)
+
+    # Get from tips method
+    J_tips_direct, Jd_tips_direct = robot.jacobians_and_derivatives_tips(q, qd)
+
+    # Get using arc-length method
+    L_cum = onp.array(robot.L_cum)
+    for i in range(N):
+        s_tip = L_cum[i + 1]
+        J_s, Jd_s = robot.jacobian_and_derivative(q, qd, jnp.array(s_tip))
+        assert_allclose(
+            J_s, J_tips_direct[i], rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+        assert_allclose(
+            Jd_s, Jd_tips_direct[i], rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_jacobian_derivative_matches_jvp(N):
+    """Test that Jacobian derivative matches JVP."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+    qd = jnp.linspace(0.6, -0.5, N)
+
+    L_cum = onp.array(robot.L_cum)
+    total_len = L_cum[-1]
+    s_values = [0.5 * total_len, total_len]  # midpoint and tip
+
+    for s in s_values:
+        s_arr = jnp.array(s)
+
+        # Closed-form
+        J_closed, Jd_closed = robot.jacobian_and_derivative(q, qd, s_arr)
+
+        # JVP
+        def J_of_q(q_):
+            return robot.jacobian(q_, s_arr)
+
+        _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
+
+        assert_allclose(Jd_closed, Jd_jvp, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+
+@pytest.mark.parametrize("N", [2, 3])
+def test_batched_methods(N):
+    """Test that batched methods work correctly."""
+    robot = make_pendulum(N)
+    q = jnp.linspace(-0.3, 0.4, N)
+    qd = jnp.linspace(0.6, -0.5, N)
+
+    L_cum = onp.array(robot.L_cum)
+    s_ps = jnp.array(L_cum[1:])  # all tip positions
+
+    # Forward kinematics batched
+    chi_batched = robot.forward_kinematics_batched(q, s_ps)
+    chi_tips = robot.forward_kinematics_tips(q)
+    assert_allclose(chi_batched, chi_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    # Jacobian batched
+    J_batched = robot.jacobian_batched(q, s_ps)
+    J_tips = robot.jacobians_tips(q)
+    assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    # Jacobian and derivative batched
+    J_batched, Jd_batched = robot.jacobian_and_derivative_batched(q, qd, s_ps)
+    J_tips, Jd_tips = robot.jacobians_and_derivatives_tips(q, qd)
+    assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(Jd_batched, Jd_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+
 if __name__ == "__main__":
     # Allow running this file directly for ad-hoc checks
     for N in (2, 3):
