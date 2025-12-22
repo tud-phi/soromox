@@ -1,11 +1,15 @@
 __all__ = ["OperationalSpaceDynamics"]
 
+
 import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
-from typing import Optional, Tuple
 
 from soromox.systems.soft_robot import SoftRobot
+from soromox.utils.rotations import (
+    quaternion_to_rotation_vector,
+    rotation_matrix_to_quaternion,
+)
 
 
 class OperationalSpaceDynamics(eqx.Module):
@@ -76,7 +80,7 @@ class OperationalSpaceDynamics(eqx.Module):
         self,
         robot: SoftRobot,
         s_ps: Array,
-        task_selector: Optional[Array] = None,
+        task_selector: Array | None = None,
     ):
         """
         Initialize the operational space dynamics transformer.
@@ -223,7 +227,7 @@ class OperationalSpaceDynamics(eqx.Module):
     @eqx.filter_jit
     def _stacked_jacobian_and_derivative_full(
         self, q: Array, qd: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the full stacked Jacobian and its time derivative for all points.
 
@@ -274,28 +278,10 @@ class OperationalSpaceDynamics(eqx.Module):
             p = fk_result[:3, 3]
             # Extract rotation matrix
             R = fk_result[:3, :3]
-            # Convert rotation matrix to rotation vector (axis-angle representation)
-            # Using the formula: omega = (1/2) * (R - R^T)^vee * theta / sin(theta)
-            # For simplicity, we use a small angle approximation or the skew-symmetric part
-            # This is a common simplification for impedance control
-            trace = jnp.trace(R)
-            # Clamp to avoid numerical issues with arccos
-            cos_theta = jnp.clip((trace - 1) / 2, -1.0, 1.0)
-            theta = jnp.arccos(cos_theta)
-            # Skew-symmetric part of R
-            skew = (R - R.T) / 2
-            # Extract rotation vector components from skew-symmetric matrix
-            omega_x = skew[2, 1]  # -skew[1, 2]
-            omega_y = skew[0, 2]  # -skew[2, 0]
-            omega_z = skew[1, 0]  # -skew[0, 1]
-            # Scale by theta / sin(theta) for axis-angle
-            # Use safe division to handle theta close to 0
-            scale = jnp.where(
-                jnp.abs(jnp.sin(theta)) > 1e-6,
-                theta / jnp.sin(theta),
-                1.0  # For small theta, sin(theta) ≈ theta
-            )
-            omega = jnp.array([omega_x, omega_y, omega_z]) * scale
+            # Convert rotation matrix to rotation vector using quaternion intermediate
+            # This correctly handles both θ ≈ 0 and θ ≈ π (near-180-degree rotations)
+            quat = rotation_matrix_to_quaternion(R)
+            omega = quaternion_to_rotation_vector(quat)
             # Concatenate orientation and position
             return jnp.concatenate([omega, p])
 
@@ -369,7 +355,7 @@ class OperationalSpaceDynamics(eqx.Module):
         return J
 
     @eqx.filter_jit
-    def jacobian_and_derivative(self, q: Array, qd: Array) -> Tuple[Array, Array]:
+    def jacobian_and_derivative(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Compute the operational space Jacobian and its time derivative.
 
@@ -430,7 +416,7 @@ class OperationalSpaceDynamics(eqx.Module):
     @eqx.filter_jit
     def jacobian_and_dynamically_consistent_pseudoinverse(
         self, q: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute both the Jacobian and its dynamically-consistent pseudo-inverse.
 

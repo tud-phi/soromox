@@ -3,4 +3,5 @@ from .basic import *
 from .integration import *
 from .lie_algebra import *
 from .numerical_jacobian import *
+from .rotations import *
 from .tolerance import *
