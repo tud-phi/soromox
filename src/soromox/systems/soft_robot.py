@@ -5,6 +5,7 @@ from typing import Optional, Tuple
 
 import equinox as eqx
 from jax import Array, vmap
+from jax import numpy as jnp
 
 from soromox.systems.dynamical_system import DynamicalSystem
 
@@ -27,9 +28,36 @@ class SoftRobot(DynamicalSystem):
     - Energy computation methods
 
     Attributes:
-        num_dofs: Number of degrees of freedom (configuration variables).
-        num_actuators: Number of actuators.
+        num_dofs (int): Number of degrees of freedom (configuration variables).
+        num_actuators (int): Number of actuators.
+        global_eps (float): Global epsilon for numerical computations.
     """
+
+    # global epsilon for numerical computations
+    global_eps: float  # Global epsilon for numerical computations
+
+    @property
+    def tangent_eps(self) -> Array:
+        """Epsilon value for Lie algebra tangent computations.
+        
+        Returns:
+            Array: Epsilon value for Lie algebra tangent computations.
+        """
+        return jnp.sqrt(self.global_eps)
+    
+    def __init__(self, eps: Optional[float] = None, **kwargs):
+        """Initialize the SoftRobot.
+
+        Args:
+            eps (float): Optional global epsilon value for numerical computations.
+                If not provided, defaults to 10x machine epsilon for float64.
+            **kwargs: Additional keyword arguments for Equinox Module.
+        """
+        super().__init__(**kwargs)
+        if eps is not None:
+            self.global_eps = eps
+        else:
+            self.global_eps = 1e1 * float(jnp.finfo(jnp.float64).eps)
 
     # -----------------------------------------
     # Arc-length parameterized kinematics
