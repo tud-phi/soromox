@@ -659,9 +659,6 @@ class Pendulum(SoftRobot):
         # Angular Jacobian derivative is zero (planar revolute)
         Jd_omega = jnp.zeros(N, dtype=q.dtype)
 
-        # Position and velocity at s
-        chi = self.forward_kinematics(q, s)
-
         # Joint positions and velocities
         J_joints = self.jacobians_joints(q)  # (N, 3, N)
         Jv_joints = J_joints[:, 1:, :]  # (N, 2, N) linear part
