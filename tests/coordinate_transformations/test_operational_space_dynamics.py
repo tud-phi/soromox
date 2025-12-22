@@ -912,9 +912,7 @@ class TestTaskSelectionBasisMatrices:
         """Test B_task for multiple points with different selection per point."""
         s_ps = jnp.array([0.1, 0.2])
         # Point 0: positions only, Point 1: all
-        task_selector = jnp.array(
-            [[False, True, True], [True, True, True]]
-        )
+        task_selector = jnp.array([[False, True, True], [True, True, True]])
         op_space = OperationalSpaceDynamics(
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
@@ -940,7 +938,9 @@ class TestRotationSelectionValidation:
 
         # Select only omega_x and omega_y, not omega_z - should fail
         task_selector = jnp.array([True, True, False, True, True, True])
-        with pytest.raises(ValueError, match="rotation components must be either ALL selected"):
+        with pytest.raises(
+            ValueError, match="rotation components must be either ALL selected"
+        ):
             OperationalSpaceDynamics(
                 robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
             )
@@ -951,7 +951,9 @@ class TestRotationSelectionValidation:
 
         # Select only omega_z
         task_selector = jnp.array([False, False, True, True, True, True])
-        with pytest.raises(ValueError, match="rotation components must be either ALL selected"):
+        with pytest.raises(
+            ValueError, match="rotation components must be either ALL selected"
+        ):
             OperationalSpaceDynamics(
                 robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
             )
@@ -1002,10 +1004,12 @@ class TestRotationSelectionValidation:
         s_ps = jnp.array([0.1, 0.2])
 
         # Point 0: no rotation, Point 1: all rotation
-        task_selector = jnp.array([
-            [False, False, False, True, True, True],  # no rot, all pos
-            [True, True, True, True, True, True],     # all rot, all pos
-        ])
+        task_selector = jnp.array(
+            [
+                [False, False, False, True, True, True],  # no rot, all pos
+                [True, True, True, True, True, True],  # all rot, all pos
+            ]
+        )
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
@@ -1019,10 +1023,12 @@ class TestRotationSelectionValidation:
         s_ps = jnp.array([0.1, 0.2])
 
         # Point 0: all selected, Point 1: partial rotation
-        task_selector = jnp.array([
-            [True, True, True, True, True, True],  # all
-            [True, False, True, True, True, True], # partial rotation - should fail
-        ])
+        task_selector = jnp.array(
+            [
+                [True, True, True, True, True, True],  # all
+                [True, False, True, True, True, True],  # partial rotation - should fail
+            ]
+        )
         with pytest.raises(ValueError, match="For point 1"):
             OperationalSpaceDynamics(
                 robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
@@ -1073,7 +1079,9 @@ class TestPosesVsCoordinates:
     def test_poses_full_coords_selected_3d(self, pcs_robot):
         """Test that poses are full and coordinates are selected (3D)."""
         s_ps = jnp.array([0.2])
-        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        task_selector = jnp.array(
+            [False, False, False, True, True, True]
+        )  # position only
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot,
             s_ps=s_ps,
@@ -1096,7 +1104,9 @@ class TestPosesVsCoordinates:
     def test_poses_full_coords_selected_quaternion(self, pcs_robot):
         """Test poses vs coordinates for QUATERNION representation."""
         s_ps = jnp.array([0.2])
-        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        task_selector = jnp.array(
+            [False, False, False, True, True, True]
+        )  # position only
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot,
             s_ps=s_ps,
@@ -1119,7 +1129,9 @@ class TestPosesVsCoordinates:
     def test_poses_full_coords_selected_6d_rotation(self, pcs_robot):
         """Test poses vs coordinates for ROTATION_MATRIX_6D representation."""
         s_ps = jnp.array([0.2])
-        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        task_selector = jnp.array(
+            [False, False, False, True, True, True]
+        )  # position only
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot,
             s_ps=s_ps,
@@ -1143,10 +1155,7 @@ class TestPosesVsCoordinates:
         """Test poses vs coordinates for multiple points with mixed selection."""
         s_ps = jnp.array([0.1, 0.2])
         # Point 0: positions only, Point 1: all
-        task_selector = jnp.array([
-            [False, True, True],
-            [True, True, True]
-        ])
+        task_selector = jnp.array([[False, True, True], [True, True, True]])
         op_space = OperationalSpaceDynamics(
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
@@ -1216,7 +1225,9 @@ class TestPoseErrorVsTaskPoseError:
     def test_task_error_subset_of_full_3d(self, pcs_robot):
         """Test that task error is a subset of full error (3D)."""
         s_ps = jnp.array([0.2])
-        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        task_selector = jnp.array(
+            [False, False, False, True, True, True]
+        )  # position only
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot,
             s_ps=s_ps,
@@ -1242,7 +1253,9 @@ class TestPoseErrorVsTaskPoseError:
     def test_task_error_rotation_only_3d(self, pcs_robot):
         """Test task error for rotation-only selection (3D)."""
         s_ps = jnp.array([0.2])
-        task_selector = jnp.array([True, True, True, False, False, False])  # rotation only
+        task_selector = jnp.array(
+            [True, True, True, False, False, False]
+        )  # rotation only
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot,
             s_ps=s_ps,
@@ -1269,10 +1282,7 @@ class TestPoseErrorVsTaskPoseError:
         """Test task error for multiple points with mixed selection."""
         s_ps = jnp.array([0.1, 0.2])
         # Point 0: positions only, Point 1: all
-        task_selector = jnp.array([
-            [False, True, True],
-            [True, True, True]
-        ])
+        task_selector = jnp.array([[False, True, True], [True, True, True]])
         op_space = OperationalSpaceDynamics(
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
@@ -1473,7 +1483,9 @@ class TestRotationRepresentationComprehensive:
     def test_task_pose_error_zero_for_same_pose_all_representations(self, pcs_robot):
         """Test that same pose gives zero task error for all representations."""
         s_ps = jnp.array([0.2])
-        task_selector = jnp.array([False, False, False, True, True, True])  # position only
+        task_selector = jnp.array(
+            [False, False, False, True, True, True]
+        )  # position only
 
         for rep in [
             RotationRepresentation.ROTATION_VECTOR,
@@ -1610,10 +1622,12 @@ class TestMultiplePoints:
         """Test two points with mixed selection for 3D robot."""
         s_ps = jnp.array([0.1, 0.2])
         # Point 0: position only, Point 1: all
-        task_selector = jnp.array([
-            [False, False, False, True, True, True],
-            [True, True, True, True, True, True],
-        ])
+        task_selector = jnp.array(
+            [
+                [False, False, False, True, True, True],
+                [True, True, True, True, True, True],
+            ]
+        )
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot,
             s_ps=s_ps,
