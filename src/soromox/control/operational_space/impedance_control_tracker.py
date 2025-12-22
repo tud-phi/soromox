@@ -1,7 +1,7 @@
 __all__ = ["ImpedanceControlTracker"]
 
 import warnings
-from typing import Any, Optional, Tuple, Union
+from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
@@ -95,8 +95,8 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         self,
         operational_space_dynamics: OperationalSpaceDynamics,
         reference_trajectory: ReferenceTrajectory,
-        K_x: Union[float, Array],
-        D_x: Union[float, Array],
+        K_x: float | Array,
+        D_x: float | Array,
     ):
         """
         Initialize the operational-space impedance controller.
@@ -132,9 +132,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # Check that the actuation matrix is square and invertible
         self._check_actuation()
 
-    def _process_gain(
-        self, gain: Union[float, Array], n_op: int, name: str
-    ) -> Array:
+    def _process_gain(self, gain: float | Array, n_op: int, name: str) -> Array:
         """
         Process a gain parameter into the appropriate array format.
 
@@ -188,9 +186,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
             stacklevel=3,
         )
 
-    def __call__(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def __call__(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the operational-space impedance control action.
 
@@ -275,29 +271,31 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         tau_cancel_coriolis = J.T @ mu_x @ qd_null
 
         # 4. PD control in operational space
-        # tau_pd = J^T @ (K_x @ (x_des - x) - D_x @ xd)
-        # Note: We want the closed-loop to track x_des, so we use (x_des - x)
-        # and we want to inject damping opposing the actual velocity xd
-        # Actually, for impedance control, we inject:
-        #   J^T @ (K_x @ (x_des - x) - D_x @ (xd - xd_des))
-        # to track velocity as well, but the standard formulation uses:
-        #   J^T @ (K_x @ (x_des - x) + D_x @ (xd_des - xd))
-        # which is equivalent with sign convention.
+        # tau_pd = J^T @ (K_x @ e_x + D_x @ ed_x)
+        #
+        # IMPORTANT: For orientation, we use the geometric error (shortest path)
+        # computed via osd.compute_pose_error(), not naive subtraction (x_des - x).
+        # This ensures:
+        #   - Proper angle wrapping for planar systems
+        #   - Geodesic (shortest path) error for 3D orientations
+        #   - Correct behavior near angle wrap-around points
+        #
+        # The velocity error (xd_des - xd) uses naive subtraction because
+        # angular velocities live in the tangent space where subtraction is valid.
 
-        # Position error in operational space
-        e_x = x_des - x
-        # Velocity error in operational space
+        # Position/orientation error in operational space (geometric error)
+        e_x = osd.compute_pose_error(x, x_des)
+        # Velocity error in operational space (tangent space, naive subtraction is OK)
         ed_x = xd_des - xd
 
         # PD term: K_x @ e_x + D_x @ ed_x
-        tau_pd = J.T @ (self._apply_gain(self.K_x, e_x) + self._apply_gain(self.D_x, ed_x))
+        tau_pd = J.T @ (
+            self._apply_gain(self.K_x, e_x) + self._apply_gain(self.D_x, ed_x)
+        )
 
         # Total generalized torque
         tau_control = (
-            tau_cancel_task
-            + tau_cancel_gravity
-            + tau_cancel_coriolis
-            + tau_pd
+            tau_cancel_task + tau_cancel_gravity + tau_cancel_coriolis + tau_pd
         )
 
         # Get the actuation matrix and compute actuator input
@@ -305,4 +303,3 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         u_control = jnp.linalg.inv(A) @ tau_control
 
         return u_control, None
-

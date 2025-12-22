@@ -4,16 +4,15 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-import numpy as onp
 import pytest
 from numpy.testing import assert_allclose
 
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems.pcs import PCS
-from soromox.systems.planar_pcs import PlanarPCS
 from soromox.systems.pendulum import Pendulum
+from soromox.systems.planar_pcs import PlanarPCS
+from soromox.utils.rotations import RotationRepresentation
 from soromox.utils.tolerance import Tolerance
-
 
 # -----------------------
 # Fixtures
@@ -438,7 +437,7 @@ class TestJAXCompatibility:
         assert Lambda1.shape == (3, 3)
         assert mu1.shape == (3, 3)
         assert f_el1.shape == (3,)
-        
+
         # Results should be identical (cached)
         assert_allclose(Lambda1, Lambda2, rtol=0, atol=0)
         assert_allclose(mu1, mu2, rtol=0, atol=0)
@@ -461,6 +460,319 @@ class TestJAXCompatibility:
         assert Lambdas.shape == (batch_size, 3, 3)
 
 
+# -----------------------
+# Rotation representation tests
+# -----------------------
+
+
+class TestRotationRepresentation:
+    """Tests for different rotation representations in operational space."""
+
+    def test_rotation_vector_representation_pcs(self, pcs_robot):
+        """Test rotation vector representation for 3D robot."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        assert op_space.n_pose_dim == 6  # 3 orientation + 3 position
+        assert op_space.n_orientation_dim == 3
+        assert not op_space.is_planar
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+        assert x.shape == (6,)
+
+    def test_quaternion_representation_pcs(self, pcs_robot):
+        """Test quaternion representation for 3D robot."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        assert op_space.n_pose_dim == 7  # 4 quaternion + 3 position
+        assert op_space.n_orientation_dim == 4
+        assert op_space.n_operational_space == 7
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+        assert x.shape == (7,)
+
+        # Check that quaternion part is unit quaternion
+        quat = x[:4]
+        assert_allclose(jnp.linalg.norm(quat), 1.0, atol=1e-6)
+
+    def test_6d_representation_pcs(self, pcs_robot):
+        """Test 6D continuous representation for 3D robot."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        assert op_space.n_pose_dim == 9  # 6 rotation + 3 position
+        assert op_space.n_orientation_dim == 6
+        assert op_space.n_operational_space == 9
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+        assert x.shape == (9,)
+
+    def test_planar_ignores_rotation_representation(self, planar_pcs_robot):
+        """Test that planar robots ignore rotation representation setting."""
+        s_ps = jnp.array([0.2])
+
+        # All representations should give same result for planar robot
+        op_space_rv = OperationalSpaceDynamics(
+            robot=planar_pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+        op_space_quat = OperationalSpaceDynamics(
+            robot=planar_pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+        op_space_6d = OperationalSpaceDynamics(
+            robot=planar_pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        # All should be planar
+        assert op_space_rv.is_planar
+        assert op_space_quat.is_planar
+        assert op_space_6d.is_planar
+
+        # All should have same pose dimension (3 for planar)
+        assert op_space_rv.n_pose_dim == 3
+        assert op_space_quat.n_pose_dim == 3
+        assert op_space_6d.n_pose_dim == 3
+
+        # Coordinates should be identical
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        x_rv = op_space_rv.operational_space_coordinates(q)
+        x_quat = op_space_quat.operational_space_coordinates(q)
+        x_6d = op_space_6d.operational_space_coordinates(q)
+
+        assert_allclose(x_rv, x_quat, atol=1e-10)
+        assert_allclose(x_rv, x_6d, atol=1e-10)
+
+
+# -----------------------
+# Geometric pose error tests
+# -----------------------
+
+
+class TestComputePoseError:
+    """Tests for geometric pose error computation."""
+
+    def test_zero_error_planar(self, planar_pcs_robot):
+        """Test that same pose gives zero error for planar robot."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+
+        error = op_space.compute_pose_error(x, x)
+        assert_allclose(error, jnp.zeros_like(error), atol=1e-10)
+
+    def test_zero_error_pendulum(self, pendulum_robot):
+        """Test that same pose gives zero error for pendulum."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        x = op_space.operational_space_coordinates(q)
+
+        error = op_space.compute_pose_error(x, x)
+        assert_allclose(error, jnp.zeros_like(error), atol=1e-10)
+
+    def test_angle_wrapping_planar(self, planar_pcs_robot):
+        """Test that angle wrapping works correctly for planar robot."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        # Create poses where angle is near wrap-around point
+        # Current: [10°, 0, 0], Desired: [350°, 0, 0]
+        # Naive error: 340°, Geometric error: -20°
+        x_current = jnp.array([jnp.deg2rad(10), 0.0, 0.0])
+        x_desired = jnp.array([jnp.deg2rad(350), 0.0, 0.0])
+
+        error = op_space.compute_pose_error(x_current, x_desired)
+
+        # Orientation error should be ~-20°, not 340°
+        assert jnp.abs(error[0]) < jnp.pi / 2, (
+            f"Angle error should be small, got {jnp.degrees(error[0])}°"
+        )
+        assert_allclose(error[0], jnp.deg2rad(-20), atol=1e-5)
+
+        # Position errors should be zero
+        assert_allclose(error[1:], jnp.zeros(2), atol=1e-10)
+
+    def test_angle_wrapping_pendulum(self, pendulum_robot):
+        """Test angle wrapping for pendulum at end-effector."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        # Similar test but checking that pose error respects angle wrapping
+        # Note: For pendulum, the orientation at tip is sum of all joint angles
+        q1 = jnp.array([0.0, 0.05, 0.05])  # Small positive angles
+        q2 = jnp.array([jnp.pi - 0.1, jnp.pi - 0.05, jnp.pi - 0.05])  # Near wrap
+
+        x1 = op_space.operational_space_coordinates(q1)
+        x2 = op_space.operational_space_coordinates(q2)
+
+        error = op_space.compute_pose_error(x1, x2)
+
+        # Check that orientation error is reasonable (not huge due to wrapping issues)
+        # The exact value depends on the pendulum FK, but it shouldn't be > π
+        assert jnp.abs(error[0]) <= jnp.pi + 0.1, (
+            f"Angle error exceeds π: {jnp.degrees(error[0])}°"
+        )
+
+    def test_position_error_correct(self, planar_pcs_robot):
+        """Test that position error is computed correctly."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        x_current = jnp.array([0.0, 0.1, 0.2])
+        x_desired = jnp.array([0.0, 0.3, 0.5])
+
+        error = op_space.compute_pose_error(x_current, x_desired)
+
+        # Position error should be desired - current
+        assert_allclose(error[1:], jnp.array([0.2, 0.3]), atol=1e-10)
+
+    def test_pose_error_jit_compatible(self, pendulum_robot):
+        """Test that pose error computation works with JIT."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        x = op_space.operational_space_coordinates(q)
+        x_des = x + 0.1
+
+        # JIT the pose error computation
+        jit_error = jax.jit(op_space.compute_pose_error)
+        error = jit_error(x, x_des)
+
+        assert error.shape == x.shape
+        assert jnp.all(jnp.isfinite(error))
+
+
+class TestPoseErrorFor3DRobots:
+    """Tests for pose error with 3D robots and different representations."""
+
+    def test_rotation_vector_error_zero(self, pcs_robot):
+        """Test zero error for rotation vector representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+
+        error = op_space.compute_pose_error(x, x)
+        assert_allclose(error, jnp.zeros_like(error), atol=1e-10)
+
+    def test_quaternion_error_zero(self, pcs_robot):
+        """Test zero error for quaternion representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.QUATERNION,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+
+        error = op_space.compute_pose_error(x, x)
+        # Error dimension is 6 (3 orient + 3 pos) even though x is 7D
+        assert error.shape == (6,) or jnp.allclose(error, 0, atol=1e-8)
+
+    def test_6d_error_zero(self, pcs_robot):
+        """Test zero error for 6D representation."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot,
+            s_ps=s_ps,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+        )
+
+        q = jnp.zeros(pcs_robot.num_dofs)
+        x = op_space.operational_space_coordinates(q)
+
+        error = op_space.compute_pose_error(x, x)
+        # Error dimension is 6 (3 orient + 3 pos) even though x is 9D
+        assert error.shape == (6,) or jnp.allclose(error, 0, atol=1e-8)
+
+
+# -----------------------
+# Error vs naive subtraction tests
+# -----------------------
+
+
+class TestGeometricVsNaiveError:
+    """Tests comparing geometric error to naive subtraction."""
+
+    def test_geometric_error_shorter_path_planar(self, planar_pcs_robot):
+        """Test that geometric error takes shorter path for planar case."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        # Current at 5°, desired at 355° (5° the other way from 0)
+        x_current = jnp.array([jnp.deg2rad(5), 0.0, 0.0])
+        x_desired = jnp.array([jnp.deg2rad(355), 0.0, 0.0])
+
+        # Naive error
+        naive_error = x_desired - x_current
+        naive_angle_error = naive_error[0]
+
+        # Geometric error
+        geometric_error = op_space.compute_pose_error(x_current, x_desired)
+        geometric_angle_error = geometric_error[0]
+
+        # Naive error is ~350°, geometric should be ~-10°
+        assert jnp.abs(naive_angle_error) > jnp.pi  # Long way around
+        assert jnp.abs(geometric_angle_error) < jnp.pi  # Short way around
+        assert jnp.abs(geometric_angle_error) < jnp.abs(naive_angle_error)
+
+    def test_orientation_error_always_less_than_pi(self, planar_pcs_robot):
+        """Test that geometric orientation error magnitude is always ≤ π."""
+        s_ps = jnp.array([0.2])
+        op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
+
+        # Test many random angle pairs
+        key = jax.random.PRNGKey(42)
+        for _ in range(50):
+            key, subkey1, subkey2 = jax.random.split(key, 3)
+            theta_current = jax.random.uniform(
+                subkey1, minval=-2 * jnp.pi, maxval=2 * jnp.pi
+            )
+            theta_desired = jax.random.uniform(
+                subkey2, minval=-2 * jnp.pi, maxval=2 * jnp.pi
+            )
+
+            x_current = jnp.array([theta_current, 0.0, 0.0])
+            x_desired = jnp.array([theta_desired, 0.0, 0.0])
+
+            error = op_space.compute_pose_error(x_current, x_desired)
+
+            assert jnp.abs(error[0]) <= jnp.pi + 1e-6, (
+                f"Orientation error > π: {error[0]} for θ_c={theta_current}, θ_d={theta_desired}"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

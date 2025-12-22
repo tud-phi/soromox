@@ -19,12 +19,21 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.utils.rotations import (
+    RotationRepresentation,
+    angle_error,
+    quaternion_conjugate,
+    quaternion_multiply,
     quaternion_to_rotation_matrix,
     quaternion_to_rotation_vector,
+    rotation_6d_to_rotation_matrix,
+    rotation_matrix_error,
+    rotation_matrix_to_6d,
     rotation_matrix_to_quaternion,
     rotation_matrix_to_rotation_vector,
+    rotation_quat_error,
     rotation_vector_to_quaternion,
     rotation_vector_to_rotation_matrix,
+    wrap_angle,
 )
 
 
@@ -571,6 +580,457 @@ class TestJAXCompatibility:
         grad_q = grad_fn(q)
         assert grad_q.shape == (4,)
         assert jnp.all(jnp.isfinite(grad_q))
+
+
+class TestRotationRepresentationEnum:
+    """Tests for the RotationRepresentation enum."""
+
+    def test_enum_values(self):
+        """Test that all expected enum values exist."""
+        assert RotationRepresentation.ROTATION_VECTOR.value == "rotation_vector"
+        assert RotationRepresentation.QUATERNION.value == "quaternion"
+        assert RotationRepresentation.ROTATION_MATRIX_6D.value == "rotation_matrix_6d"
+
+    def test_enum_members(self):
+        """Test that we have exactly three representations."""
+        members = list(RotationRepresentation)
+        assert len(members) == 3
+
+
+class TestRotationMatrix6D:
+    """Tests for 6D continuous rotation representation (Zhou et al. 2019)."""
+
+    def test_identity_rotation(self):
+        """Test that identity rotation matrix gives expected 6D representation."""
+        R = jnp.eye(3)
+        r6d = rotation_matrix_to_6d(R)
+
+        # First two columns of identity: [1,0,0] and [0,1,0]
+        expected = jnp.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+        assert_allclose(r6d, expected, atol=1e-10)
+
+    def test_roundtrip_identity(self):
+        """Test identity rotation roundtrip."""
+        R = jnp.eye(3)
+        r6d = rotation_matrix_to_6d(R)
+        R_recovered = rotation_6d_to_rotation_matrix(r6d)
+        assert_allclose(R_recovered, R, atol=1e-10)
+
+    @pytest.mark.parametrize(
+        "axis,angle_deg",
+        [
+            ([1, 0, 0], 45.0),
+            ([0, 1, 0], 90.0),
+            ([0, 0, 1], 135.0),
+            ([1, 1, 1], 60.0),
+            ([0.3, 0.7, 0.2], 170.0),
+        ],
+    )
+    def test_roundtrip_general_rotations(self, axis, angle_deg):
+        """Test roundtrip for general rotations."""
+        angle = np.radians(angle_deg)
+        R = rotation_matrix_from_axis_angle(axis, angle)
+
+        r6d = rotation_matrix_to_6d(R)
+        R_recovered = rotation_6d_to_rotation_matrix(r6d)
+
+        assert_allclose(R_recovered, R, atol=1e-10)
+
+    def test_6d_representation_shape(self):
+        """Test that 6D representation has correct shape."""
+        R = rotation_matrix_from_axis_angle([1, 2, 3], 1.0)
+        r6d = rotation_matrix_to_6d(R)
+        assert r6d.shape == (6,)
+
+    def test_orthonormalization(self):
+        """Test that Gram-Schmidt orthonormalization works for non-orthonormal input."""
+        # Create a slightly perturbed 6D representation
+        r6d = jnp.array([1.0, 0.1, 0.0, 0.1, 1.0, 0.0])  # Not perfectly orthonormal
+        R = rotation_6d_to_rotation_matrix(r6d)
+
+        # Output should be a valid rotation matrix
+        assert_allclose(R @ R.T, jnp.eye(3), atol=1e-10)
+        assert_allclose(jnp.linalg.det(R), 1.0, atol=1e-10)
+
+    def test_vmap_compatibility(self):
+        """Test that 6D conversion works with vmap."""
+        batch_size = 5
+        Rs = jnp.stack(
+            [
+                rotation_matrix_from_axis_angle([1, 0, 0], 0.5 * i)
+                for i in range(batch_size)
+            ]
+        )
+
+        vmapped_to_6d = jax.vmap(rotation_matrix_to_6d)
+        vmapped_from_6d = jax.vmap(rotation_6d_to_rotation_matrix)
+
+        r6ds = vmapped_to_6d(Rs)
+        Rs_recovered = vmapped_from_6d(r6ds)
+
+        assert r6ds.shape == (batch_size, 6)
+        assert Rs_recovered.shape == (batch_size, 3, 3)
+        assert_allclose(Rs_recovered, Rs, atol=1e-10)
+
+
+class TestQuaternionOperations:
+    """Tests for quaternion multiplication and conjugate."""
+
+    def test_quaternion_identity_multiply(self):
+        """Test that multiplying by identity gives the same quaternion."""
+        q_identity = jnp.array([0.0, 0.0, 0.0, 1.0])
+        q = jnp.array([0.1, 0.2, 0.3, 0.9])
+        q = q / jnp.linalg.norm(q)
+
+        result = quaternion_multiply(q_identity, q)
+        assert_allclose(result, q, atol=1e-10)
+
+        result2 = quaternion_multiply(q, q_identity)
+        assert_allclose(result2, q, atol=1e-10)
+
+    def test_quaternion_multiply_inverse(self):
+        """Test that q * q^{-1} = identity."""
+        q = jnp.array([0.1, 0.2, 0.3, 0.9])
+        q = q / jnp.linalg.norm(q)
+
+        q_inv = quaternion_conjugate(q)
+        result = quaternion_multiply(q, q_inv)
+
+        # Should be identity quaternion
+        identity = jnp.array([0.0, 0.0, 0.0, 1.0])
+        assert_allclose(result, identity, atol=1e-10)
+
+    def test_quaternion_conjugate(self):
+        """Test quaternion conjugate."""
+        q = jnp.array([0.1, 0.2, 0.3, 0.9])
+        q_conj = quaternion_conjugate(q)
+
+        expected = jnp.array([-0.1, -0.2, -0.3, 0.9])
+        assert_allclose(q_conj, expected, atol=1e-10)
+
+    def test_quaternion_multiply_composition(self):
+        """Test that quaternion multiplication correctly composes rotations."""
+        # Two 90-degree rotations around z-axis should give 180-degree rotation
+        angle = np.pi / 2
+        q_90z = jnp.array([0, 0, np.sin(angle / 2), np.cos(angle / 2)])
+
+        q_180z = quaternion_multiply(q_90z, q_90z)
+
+        # Should represent 180-degree rotation around z
+        # q = [0, 0, sin(90°), cos(90°)] = [0, 0, 1, 0]
+        expected = jnp.array([0.0, 0.0, 1.0, 0.0])
+        assert_allclose(jnp.abs(q_180z), jnp.abs(expected), atol=1e-10)
+
+
+class TestWrapAngle:
+    """Tests for angle wrapping utility."""
+
+    def test_wrap_zero(self):
+        """Test that zero remains zero."""
+        assert_allclose(wrap_angle(jnp.array(0.0)), 0.0, atol=1e-10)
+
+    def test_wrap_within_range(self):
+        """Test that angles within [-π, π] are unchanged."""
+        angles = jnp.array([-3.0, -1.0, 0.0, 1.0, 3.0])
+        wrapped = jax.vmap(wrap_angle)(angles)
+        assert_allclose(wrapped, angles, atol=1e-10)
+
+    def test_wrap_positive_overflow(self):
+        """Test wrapping angles > π."""
+        assert_allclose(wrap_angle(jnp.array(np.pi + 0.1)), -np.pi + 0.1, atol=1e-10)
+        assert_allclose(wrap_angle(jnp.array(2 * np.pi)), 0.0, atol=1e-10)
+        assert_allclose(wrap_angle(jnp.array(3 * np.pi)), -np.pi, atol=1e-10)
+
+    def test_wrap_negative_overflow(self):
+        """Test wrapping angles < -π."""
+        assert_allclose(wrap_angle(jnp.array(-np.pi - 0.1)), np.pi - 0.1, atol=1e-10)
+        assert_allclose(wrap_angle(jnp.array(-2 * np.pi)), 0.0, atol=1e-10)
+        # -3π wraps to -π (which is equivalent to π, but wrap_angle returns [-π, π))
+        assert_allclose(wrap_angle(jnp.array(-3 * np.pi)), -np.pi, atol=1e-10)
+
+    def test_wrap_vectorized(self):
+        """Test that wrapping works with arrays."""
+        angles = jnp.array([0.0, 2 * np.pi, -2 * np.pi, 5 * np.pi, -5 * np.pi])
+        wrapped = jax.vmap(wrap_angle)(angles)
+        # 5π wraps to -π (same as π but in [-π, π) convention)
+        expected = jnp.array([0.0, 0.0, 0.0, -np.pi, -np.pi])
+        assert_allclose(wrapped, expected, atol=1e-10)
+
+
+class TestAngleError:
+    """Tests for planar angle error computation."""
+
+    def test_zero_error(self):
+        """Test that same angle gives zero error."""
+        theta = jnp.array(1.0)
+        error = angle_error(theta, theta)
+        assert_allclose(error, 0.0, atol=1e-10)
+
+    def test_small_positive_error(self):
+        """Test small positive error."""
+        current = jnp.array(0.0)
+        desired = jnp.array(0.5)
+        error = angle_error(current, desired)
+        assert_allclose(error, 0.5, atol=1e-10)
+
+    def test_small_negative_error(self):
+        """Test small negative error."""
+        current = jnp.array(0.5)
+        desired = jnp.array(0.0)
+        error = angle_error(current, desired)
+        assert_allclose(error, -0.5, atol=1e-10)
+
+    def test_shortest_path_positive_wrap(self):
+        """Test that error takes shortest path across 2π boundary."""
+        # Current: 10°, Desired: 350° → Should be -20°, not +340°
+        current = jnp.deg2rad(jnp.array(10.0))
+        desired = jnp.deg2rad(jnp.array(350.0))
+        error = angle_error(current, desired)
+        expected = jnp.deg2rad(jnp.array(-20.0))
+        assert_allclose(error, expected, atol=1e-6)
+
+    def test_shortest_path_negative_wrap(self):
+        """Test that error takes shortest path the other way."""
+        # Current: 350°, Desired: 10° → Should be +20°, not -340°
+        current = jnp.deg2rad(jnp.array(350.0))
+        desired = jnp.deg2rad(jnp.array(10.0))
+        error = angle_error(current, desired)
+        expected = jnp.deg2rad(jnp.array(20.0))
+        assert_allclose(error, expected, atol=1e-6)
+
+    def test_half_rotation(self):
+        """Test 180-degree error."""
+        current = jnp.array(0.0)
+        desired = jnp.array(np.pi)
+        error = angle_error(current, desired)
+        assert_allclose(jnp.abs(error), np.pi, atol=1e-10)
+
+    def test_vectorized(self):
+        """Test vectorized angle error computation."""
+        currents = jnp.array([0.0, np.pi / 2, np.pi])
+        desireds = jnp.array([0.1, np.pi / 2, -np.pi])
+        errors = jax.vmap(angle_error)(currents, desireds)
+        expected = jnp.array([0.1, 0.0, 0.0])  # π and -π are the same
+        assert_allclose(errors, expected, atol=1e-10)
+
+
+class TestRotationMatrixError:
+    """Tests for geometric 3D rotation error computation."""
+
+    def test_zero_error(self):
+        """Test that same rotation gives zero error."""
+        R = rotation_matrix_from_axis_angle([1, 2, 3], 1.0)
+        error = rotation_matrix_error(R, R)
+        assert_allclose(error, jnp.zeros(3), atol=1e-10)
+
+    def test_small_rotation_error(self):
+        """Test small rotation error."""
+        R_current = jnp.eye(3)
+        omega_error = jnp.array([0.0, 0.0, 0.1])
+        R_desired = rotation_vector_to_rotation_matrix(omega_error)
+
+        error = rotation_matrix_error(R_current, R_desired)
+        assert_allclose(error, omega_error, atol=1e-6)
+
+    def test_error_direction(self):
+        """Test that error direction is correct."""
+        # Current: 10° around z, Desired: 30° around z → Error: 20° around z
+        R_current = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(10))
+        R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(30))
+
+        error = rotation_matrix_error(R_current, R_desired)
+
+        # Error should be approximately 20° around z-axis
+        expected = jnp.array([0.0, 0.0, np.radians(20)])
+        assert_allclose(error, expected, atol=1e-6)
+
+    def test_shortest_path(self):
+        """Test that error takes shortest path for large rotations."""
+        # Current: 10° around z, Desired: 350° around z
+        # Naive difference: 340°. Shortest path: -20°
+        R_current = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(10))
+        R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(350))
+
+        error = rotation_matrix_error(R_current, R_desired)
+
+        # Error magnitude should be 20° (not 340°)
+        error_magnitude = jnp.linalg.norm(error)
+        assert error_magnitude < np.radians(30), (
+            f"Expected ~20°, got {np.degrees(error_magnitude)}°"
+        )
+        assert_allclose(error_magnitude, np.radians(20), atol=1e-5)
+
+        # Direction should be negative z (clockwise)
+        assert error[2] < 0, "Error should be negative (clockwise) rotation"
+
+    def test_near_180_degree_error(self):
+        """Test error computation near 180 degrees."""
+        R_current = jnp.eye(3)
+        R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(179))
+
+        error = rotation_matrix_error(R_current, R_desired)
+        error_magnitude = jnp.linalg.norm(error)
+
+        assert_allclose(error_magnitude, np.radians(179), atol=1e-4)
+
+    def test_exactly_180_degree_error(self):
+        """Test error computation at exactly 180 degrees."""
+        R_current = jnp.eye(3)
+        R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.pi)
+
+        error = rotation_matrix_error(R_current, R_desired)
+        error_magnitude = jnp.linalg.norm(error)
+
+        assert_allclose(error_magnitude, np.pi, atol=1e-5)
+
+    def test_arbitrary_axis_error(self):
+        """Test error for rotation around arbitrary axis."""
+        axis = np.array([1, 1, 1]) / np.sqrt(3)
+        R_current = rotation_matrix_from_axis_angle(axis, 0.5)
+        R_desired = rotation_matrix_from_axis_angle(axis, 0.8)
+
+        error = rotation_matrix_error(R_current, R_desired)
+
+        # Error should be 0.3 radians around the same axis
+        error_magnitude = jnp.linalg.norm(error)
+        assert_allclose(error_magnitude, 0.3, atol=1e-5)
+
+        # Direction should be along the axis
+        error_direction = error / error_magnitude
+        assert_allclose(jnp.abs(error_direction), jnp.abs(axis), atol=1e-5)
+
+
+class TestRotationQuatError:
+    """Tests for geometric rotation error computation using quaternions."""
+
+    def test_zero_error(self):
+        """Test that same quaternion gives zero error."""
+        q = rotation_vector_to_quaternion(jnp.array([0.5, 0.3, 0.1]))
+        error = rotation_quat_error(q, q)
+        assert_allclose(error, jnp.zeros(3), atol=1e-10)
+
+    def test_small_rotation_error(self):
+        """Test small rotation error."""
+        q_current = jnp.array([0.0, 0.0, 0.0, 1.0])  # Identity
+        omega_error = jnp.array([0.0, 0.0, 0.1])
+        q_desired = rotation_vector_to_quaternion(omega_error)
+
+        error = rotation_quat_error(q_current, q_desired)
+        assert_allclose(error, omega_error, atol=1e-6)
+
+    def test_consistency_with_rotation_matrix_version(self):
+        """Test that quaternion and rotation matrix versions give same result."""
+        # Random rotations
+        for _ in range(10):
+            axis1 = np.random.randn(3)
+            axis1 = axis1 / np.linalg.norm(axis1)
+            angle1 = np.random.uniform(0.1, 2.5)
+
+            axis2 = np.random.randn(3)
+            axis2 = axis2 / np.linalg.norm(axis2)
+            angle2 = np.random.uniform(0.1, 2.5)
+
+            R_current = rotation_matrix_from_axis_angle(axis1, angle1)
+            R_desired = rotation_matrix_from_axis_angle(axis2, angle2)
+
+            q_current = rotation_matrix_to_quaternion(R_current)
+            q_desired = rotation_matrix_to_quaternion(R_desired)
+
+            error_R = rotation_matrix_error(R_current, R_desired)
+            error_q = rotation_quat_error(q_current, q_desired)
+
+            assert_allclose(error_R, error_q, atol=1e-5)
+
+    def test_antipodal_handling(self):
+        """Test that antipodal quaternions give zero error."""
+        q = jnp.array([0.1, 0.2, 0.3, 0.9])
+        q = q / jnp.linalg.norm(q)
+
+        # Antipodal quaternion represents the same rotation
+        q_antipodal = -q
+
+        error = rotation_quat_error(q, q_antipodal)
+        assert_allclose(error, jnp.zeros(3), atol=1e-10)
+
+
+class TestGeometricErrorForControl:
+    """Integration tests for geometric errors in control applications."""
+
+    def test_planar_control_scenario(self):
+        """Test typical planar control scenario with angle wrapping."""
+        # Robot at 10°, wants to go to 350°
+        # A naive controller would command +340° (the long way)
+        # A proper controller should command -20° (shortest path)
+
+        theta_current = jnp.deg2rad(jnp.array(10.0))
+        theta_desired = jnp.deg2rad(jnp.array(350.0))
+
+        # Wrong (naive) approach:
+        naive_error = theta_desired - theta_current
+        assert jnp.abs(naive_error) > np.pi, "Naive error should be > π"
+
+        # Correct (geometric) approach:
+        geometric_error = angle_error(theta_current, theta_desired)
+        assert jnp.abs(geometric_error) < np.pi, "Geometric error should be < π"
+        assert geometric_error < 0, "Should rotate clockwise (negative)"
+
+    def test_3d_orientation_control_scenario(self):
+        """Test 3D orientation control with shortest path."""
+        # Scenario: current at 10°, desired at 350° around z
+        # The rotation vector for 350° wraps to -10° (or stays at 350° ≈ 6.1 rad)
+        # depending on quaternion sign convention
+
+        R_current = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(10))
+        R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(350))
+
+        # Geometric error: should be the shortest path
+        geometric_error = rotation_matrix_error(R_current, R_desired)
+        geometric_error_magnitude = jnp.linalg.norm(geometric_error)
+
+        # The geometric error should be 20° (or -20°), not 340°
+        assert geometric_error_magnitude < np.radians(30), (
+            f"Expected ~20°, got {np.degrees(geometric_error_magnitude)}°"
+        )
+        assert_allclose(geometric_error_magnitude, np.radians(20), atol=1e-4)
+
+        # Direction should be negative z (clockwise to go from 10° to 350°)
+        assert geometric_error[2] < 0, "Error should be clockwise (negative)"
+
+    def test_jit_compatibility_of_errors(self):
+        """Test that all error functions work with jit."""
+        jit_angle_error = jax.jit(angle_error)
+        jit_rotation_error = jax.jit(rotation_matrix_error)
+        jit_rotation_error_quat = jax.jit(rotation_quat_error)
+
+        theta_c = jnp.array(0.1)
+        theta_d = jnp.array(0.2)
+        assert jnp.isfinite(jit_angle_error(theta_c, theta_d))
+
+        R_c = rotation_matrix_from_axis_angle([1, 0, 0], 0.5)
+        R_d = rotation_matrix_from_axis_angle([1, 0, 0], 0.8)
+        error_R = jit_rotation_error(R_c, R_d)
+        assert jnp.all(jnp.isfinite(error_R))
+
+        q_c = rotation_matrix_to_quaternion(R_c)
+        q_d = rotation_matrix_to_quaternion(R_d)
+        error_q = jit_rotation_error_quat(q_c, q_d)
+        assert jnp.all(jnp.isfinite(error_q))
+
+    def test_grad_compatibility_of_errors(self):
+        """Test that error functions are differentiable."""
+
+        def loss_rotation_error(omega_d):
+            R_c = jnp.eye(3)
+            R_d = rotation_vector_to_rotation_matrix(omega_d)
+            error = rotation_matrix_error(R_c, R_d)
+            return jnp.sum(error**2)
+
+        omega_d = jnp.array([0.1, 0.2, 0.3])
+        grad_fn = jax.grad(loss_rotation_error)
+        grad = grad_fn(omega_d)
+
+        assert grad.shape == (3,)
+        assert jnp.all(jnp.isfinite(grad))
 
 
 if __name__ == "__main__":
