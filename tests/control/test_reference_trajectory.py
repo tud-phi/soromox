@@ -4,9 +4,9 @@ jax.config.update("jax_enable_x64", True)  # double precision
 
 import jax.numpy as jnp
 import pytest
-from jax import random
 
 from soromox.control import ReferenceTrajectory
+from soromox.utils.rotations import RotationRepresentation
 
 
 class TestReferenceTrajectoryFromDiscrete:
@@ -256,6 +256,181 @@ class TestReferenceTrajectoryExplicitDerivatives:
         assert jnp.allclose(ref.xd_des_fn(0.5), jnp.array([1.0, 2.0]), atol=1e-10)
         # xd_des_ts should be evaluated from the function
         assert ref.xd_des_ts.shape == (10, 2)
+
+
+class TestReferenceTrajectoryWithPoses:
+    """Tests for ReferenceTrajectory with pose (orientation + position) data."""
+
+    def test_rotation_vector_velocity_derivation_fn(self):
+        """Test that velocity is properly derived for ROTATION_VECTOR poses from function."""
+        ts = jnp.linspace(0, 1, 10)
+
+        # Pose function: linear motion in rotation and position
+        def x_fn(t):
+            # [rot_x, rot_y, rot_z, p_x, p_y, p_z]
+            return jnp.array([0.0, 0.0, t * 0.1, 0.0, 0.0, 0.2 + t * 0.05])
+
+        ref = ReferenceTrajectory(
+            ts=ts,
+            x_des_fn=x_fn,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+            n_points=1,
+        )
+
+        # For ROTATION_VECTOR, velocity ≈ d(pose)/dt
+        xd = ref.xd_des_fn(0.5)
+        expected_xd = jnp.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.05])
+
+        assert xd.shape == (6,)
+        assert jnp.allclose(xd, expected_xd, atol=1e-6)
+
+    def test_rotation_vector_velocity_derivation_ts(self):
+        """Test that velocity is properly derived for ROTATION_VECTOR poses from discrete data."""
+        ts = jnp.linspace(0, 1, 100)
+
+        # Discrete pose data: linear motion in rotation and position
+        x_des_ts = jnp.stack(
+            [
+                jnp.zeros_like(ts),  # rot_x
+                jnp.zeros_like(ts),  # rot_y
+                ts * 0.1,  # rot_z
+                jnp.zeros_like(ts),  # p_x
+                jnp.zeros_like(ts),  # p_y
+                0.2 + ts * 0.05,  # p_z
+            ],
+            axis=1,
+        )
+
+        ref = ReferenceTrajectory(
+            ts=ts,
+            x_des_ts=x_des_ts,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+            n_points=1,
+        )
+
+        # For ROTATION_VECTOR, velocity ≈ d(pose)/dt
+        xd = ref.xd_des_fn(0.5)
+        expected_xd = jnp.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.05])
+
+        assert xd.shape == (6,)
+        assert jnp.allclose(
+            xd, expected_xd, atol=1e-2
+        )  # Looser tolerance for interpolation
+
+    def test_planar_velocity_derivation(self):
+        """Test that velocity is properly derived for planar poses."""
+        ts = jnp.linspace(0, 1, 10)
+
+        # Planar pose function: [theta, x, y]
+        def x_fn(t):
+            return jnp.array([t * 0.1, 0.0, 0.2 + t * 0.05])
+
+        ref = ReferenceTrajectory(
+            ts=ts,
+            x_des_fn=x_fn,
+            is_planar=True,
+            n_points=1,
+        )
+
+        # For planar, velocity = d(pose)/dt directly
+        xd = ref.xd_des_fn(0.5)
+        expected_xd = jnp.array([0.1, 0.0, 0.05])
+
+        assert xd.shape == (3,)
+        assert jnp.allclose(xd, expected_xd, atol=1e-6)
+
+    def test_multiple_points(self):
+        """Test velocity derivation with multiple points."""
+        ts = jnp.linspace(0, 1, 10)
+
+        # 2 points, each with 6D pose (ROTATION_VECTOR)
+        def x_fn(t):
+            # [rot1_x, rot1_y, rot1_z, p1_x, p1_y, p1_z, rot2_x, rot2_y, rot2_z, p2_x, p2_y, p2_z]
+            return jnp.array(
+                [
+                    0.0,
+                    0.0,
+                    t * 0.1,
+                    0.0,
+                    0.0,
+                    0.1,  # Point 1
+                    0.0,
+                    0.0,
+                    t * 0.2,
+                    0.0,
+                    0.0,
+                    0.2,  # Point 2
+                ]
+            )
+
+        ref = ReferenceTrajectory(
+            ts=ts,
+            x_des_fn=x_fn,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+            n_points=2,
+        )
+
+        xd = ref.xd_des_fn(0.5)
+
+        # Expected velocities
+        expected_xd = jnp.array(
+            [
+                0.0,
+                0.0,
+                0.1,
+                0.0,
+                0.0,
+                0.0,  # Point 1
+                0.0,
+                0.0,
+                0.2,
+                0.0,
+                0.0,
+                0.0,  # Point 2
+            ]
+        )
+
+        assert xd.shape == (12,)
+        assert jnp.allclose(xd, expected_xd, atol=1e-6)
+
+    def test_rotation_representation_stored(self):
+        """Test that rotation representation is stored and accessible."""
+        ts = jnp.linspace(0, 1, 10)
+        x_des_ts = jnp.zeros((10, 6))
+
+        ref = ReferenceTrajectory(
+            ts=ts,
+            x_des_ts=x_des_ts,
+            rotation_representation=RotationRepresentation.QUATERNION,
+            n_points=1,
+        )
+
+        assert ref.rotation_representation == RotationRepresentation.QUATERNION
+        assert ref.n_points == 1
+        assert ref.is_planar is False
+
+    def test_pytree_preserves_rotation_representation(self):
+        """Test that flatten/unflatten preserves rotation representation."""
+        ts = jnp.linspace(0, 1, 10)
+        x_des_ts = jnp.zeros((10, 6))
+
+        ref = ReferenceTrajectory(
+            ts=ts,
+            x_des_ts=x_des_ts,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+            n_points=2,
+            is_planar=False,
+        )
+
+        children, aux = ref.tree_flatten()
+        ref_restored = ReferenceTrajectory.tree_unflatten(aux, children)
+
+        assert (
+            ref_restored.rotation_representation
+            == RotationRepresentation.ROTATION_VECTOR
+        )
+        assert ref_restored.n_points == 2
+        assert ref_restored.is_planar is False
 
 
 if __name__ == "__main__":
