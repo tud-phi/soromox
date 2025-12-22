@@ -1,13 +1,13 @@
 __all__ = ["gauss_quadrature", "scale_gaussian_quadrature"]
-from jax import numpy as jnp
-from jax import lax
 
 # For documentation purposes
-from jax import Array
-from typing import Tuple
+from jax import Array, lax
+from jax import numpy as jnp
 
 
-def gauss_quadrature(N_GQ: int, a: Array = jnp.zeros(()), b: Array = jnp.ones(())) -> Tuple[Array, Array, int]:
+def gauss_quadrature(
+    N_GQ: int, a: Array = jnp.zeros(()), b: Array = jnp.ones(())
+) -> tuple[Array, Array, int]:
     """
     Computes the Legendre-Gauss nodes and weights on the interval [0, 1]
     using Legendre-Gauss Quadrature with truncation order N_GQ.
@@ -81,9 +81,7 @@ def gauss_quadrature(N_GQ: int, a: Array = jnp.zeros(()), b: Array = jnp.ones(()
         needs_more_its = jnp.max(jnp.abs(y_new - y)) > jnp.finfo(jnp.float32).eps
         return needs_more_its
 
-    y = lax.while_loop(
-        convergence_condition, legendre_iteration, y
-    )
+    y = lax.while_loop(convergence_condition, legendre_iteration, y)
 
     # Linear map from [-1, 1] to [a, b]
     Xs = (a * (1 - y) + b * (1 + y)) / 2
@@ -102,14 +100,14 @@ def gauss_quadrature(N_GQ: int, a: Array = jnp.zeros(()), b: Array = jnp.ones(()
     Ws = (b - a) / ((1 - y**2) * Lp**2) * (N2 / N1) ** 2
 
     # Add the boundary points
-    Ws = jnp.concatenate([jnp.zeros((1, )), Ws, jnp.zeros((1, ))], axis=0)
+    Ws = jnp.concatenate([jnp.zeros((1,)), Ws, jnp.zeros((1,))], axis=0)
 
     return Xs, Ws, N_GQ + 2
 
 
 def scale_gaussian_quadrature(
     Xs: Array, Ws: Array, a: Array = jnp.zeros(()), b: Array = jnp.ones(())
-) -> Tuple[Array, Array]:
+) -> tuple[Array, Array]:
     """
     Scale the Gauss nodes and weights from [0, 1] to the interval [a, b].
 
