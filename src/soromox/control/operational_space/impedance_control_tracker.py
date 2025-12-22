@@ -38,7 +38,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         τ = A^{-1}(q) [
             J^T(q) J_bar^T(q) (τ_el(q) + D(q) q̇)     (Cancel elastic & damping forces on task)
             + G(q)                                    (Cancel gravity)
-            + J^T(q) μ(q,q̇) (I - J_bar(q) J(q)) q̇   (Cancel null-space Coriolis coupling to task)
+            + J^T(q) μ_x(q,q̇) (I - J_bar(q) J(q)) q̇   (Cancel null-space Coriolis coupling to task)
             + J^T(q) (K_x (x^d - x) - D_x ẋ)         (PD for shaping operational space impedance)
         ]
 
@@ -224,7 +224,8 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         xd_des = self.reference_trajectory.xd_des_fn(t)
 
         # Compute operational space quantities
-        J, J_bar = osd.jacobian_and_dynamically_consistent_pseudoinverse(q)
+        J, Jd = osd.jacobian_and_derivative(q, qd)
+        J_bar = osd.dynamically_consistent_pseudoinverse(q)
 
         # Current operational space position (from forward kinematics) and velocity
         x = osd.operational_space_coordinates(q)
@@ -233,13 +234,23 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # Null-space projector: N = I - J_bar @ J
         N = jnp.eye(n_dof) - J_bar @ J
 
+        # Configuration-space inertia and Coriolis matrices
+        M = self.robot.inertia_matrix(q)
+        M_inv = jnp.linalg.inv(M)
+        C = self.robot.coriolis_matrix(q, qd)
+
         # Configuration-space forces
         tau_el = self.robot.elastic_force(q)  # Elastic force
         D_config = self.robot.damping_matrix(q)  # Damping matrix
         G = self.robot.gravitational_force(q)  # Gravitational force
 
-        # Configuration-space Coriolis matrix
-        C = self.robot.coriolis_matrix(q, qd)
+        # Compute Lambda
+        Lambda_inv = J @ M_inv @ J.T
+        Lambda = jnp.linalg.inv(Lambda_inv)
+
+        # compute the matrix that connections the operationa-space Coriolis forces with the configuration-space velocity
+        # shape: (n_operational_space, n_dof)
+        mu_x = Lambda @ (J @ M_inv @ C - Jd)
 
         # ===== Compute control torque components =====
 
@@ -258,10 +269,10 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # motions on the task dynamics through the Coriolis matrix.
         # From the formula: J^T @ Lambda @ (J @ M^{-1} @ C - Jd) @ N @ qd
         # But a simpler form uses the configuration-space Coriolis directly:
-        # tau_cancel_coriolis = J^T @ J_bar^T @ C @ N @ qd
+        # tau_cancel_coriolis = J.T @ mu_x @ qd_null
         # This projects the null-space Coriolis force to the task space and then back.
         qd_null = N @ qd  # Null-space velocity
-        tau_cancel_coriolis = J.T @ (J_bar.T @ (C @ qd_null))
+        tau_cancel_coriolis = J.T @ mu_x @ qd_null
 
         # 4. PD control in operational space
         # tau_pd = J^T @ (K_x @ (x_des - x) - D_x @ xd)
