@@ -532,12 +532,17 @@ class OperationalSpaceDynamics(eqx.Module):
         Returns:
             f_c_x: Operational space Coriolis force of shape (n_operational_space,).
         """
-        mu = self.coriolis_matrix(q, qd)
-        J = self.jacobian(q)
-        xd = J @ qd
+        J, Jd = self.jacobian_and_derivative(q, qd)
+        M = self.robot.inertia_matrix(q)
+        C = self.robot.coriolis_matrix(q, qd)
+        M_inv = jnp.linalg.inv(M)
 
-        # f_c_x = mu @ xd
-        f_c_x = mu @ xd
+        # Compute Lambda
+        Lambda_inv = J @ M_inv @ J.T
+        Lambda = jnp.linalg.inv(Lambda_inv)
+
+        # Compute the Coriolis force acting on the operational space
+        f_c_x = Lambda @ (J @ M_inv @ C - Jd) @ qd
 
         return f_c_x
 
