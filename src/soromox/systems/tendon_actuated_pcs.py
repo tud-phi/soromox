@@ -646,6 +646,7 @@ class TendonActuatedPCS(PCS):
         )
 
     tendon_length = active_tendon_length  # Alias for compatibility
+    actuated_coordinates = active_tendon_length  # Alias for actuation space dynamics
 
     @eqx.filter_jit
     def _tendon_length(
