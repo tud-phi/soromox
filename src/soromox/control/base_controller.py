@@ -1,9 +1,9 @@
 __all__ = ["BaseController"]
 
 from abc import ABC, abstractmethod
-import equinox as eqx
-from typing import Any, Optional, Tuple
+from typing import Any
 
+import equinox as eqx
 from jax import Array
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
@@ -56,9 +56,7 @@ class BaseController(eqx.Module, ABC):
             raise ValueError(f"Gain must be 1-d or 2-d, got {gain.ndim}-d")
 
     @abstractmethod
-    def __call__(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def __call__(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the control action given the current system state.
 
