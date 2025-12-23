@@ -3,6 +3,7 @@ __all__ = ["ActuationSpaceBaseController"]
 from abc import ABC
 
 from soromox.control.base_controller import BaseController
+from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations.actuation_space import ActuationSpaceDynamics
 
 
@@ -92,8 +93,12 @@ class ActuationSpaceBaseController(BaseController, ABC):
     Attributes:
         robot: The soft robot system to be controlled (set to
             actuation_space_dynamics.robot).
-        reference_trajectory: The desired trajectory to track (can be in either
-            configuration space or actuation space, depending on usage).
+        reference_trajectory: The desired trajectory in actuation space.
+        reference_trajectory_config_space: The original configuration-space trajectory,
+            or None if trajectory was provided directly in actuation space. This is
+            needed for model-based control terms that evaluate dynamics at q_des,
+            since the inverse mapping from actuation space y back to configuration
+            space q is generally nonlinear and not trivially invertible.
         actuation_space_dynamics: The ActuationSpaceDynamics instance that provides
             coordinate transformations between configuration and actuation space.
 
@@ -109,3 +114,4 @@ class ActuationSpaceBaseController(BaseController, ABC):
     """
 
     actuation_space_dynamics: ActuationSpaceDynamics
+    reference_trajectory_config_space: ReferenceTrajectory | None

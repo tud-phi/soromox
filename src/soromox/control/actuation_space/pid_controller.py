@@ -78,6 +78,9 @@ class PIDController(ActuationSpaceBaseController, ClosedFormModelBasedController
     Attributes:
         robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory in actuation space.
+        reference_trajectory_config_space: The original configuration-space trajectory,
+            or None if trajectory was provided in actuation space. Used by subclasses
+            for model-based control terms that need to evaluate dynamics at q_des.
         actuation_space_dynamics: The ActuationSpaceDynamics instance for
             coordinate transformations.
         pid_control: The PIDControl instance containing gains and saturation.
@@ -110,19 +113,33 @@ class PIDController(ActuationSpaceBaseController, ClosedFormModelBasedController
                 trajectory is in configuration space and will be converted to
                 actuation space. If False, the reference trajectory is already
                 in actuation space.
+
+        Note:
+            When `reference_in_configuration_space=True`, the original configuration-
+            space trajectory is stored in `reference_trajectory_config_space` for use
+            by model-based controllers that need to evaluate dynamics at q_des. This
+            is necessary because the mapping from actuation space y back to configuration
+            space q is generally nonlinear and not trivially invertible (e.g., for
+            PCS with configuration-dependent tendon routing).
         """
         self.actuation_space_dynamics = actuation_space_dynamics
         self.robot = actuation_space_dynamics.robot
         self.pid_control = pid_control
 
-        # Convert reference trajectory if needed
+        # Convert reference trajectory if needed, but also store the original
+        # configuration-space trajectory for model-based terms
         if reference_in_configuration_space:
+            # Store original config-space trajectory for model-based evaluation
+            self.reference_trajectory_config_space = reference_trajectory
+            # Convert to actuation space for PID feedback
             self.reference_trajectory = (
                 self.actuation_space_dynamics.convert_reference_trajectory(
                     reference_trajectory
                 )
             )
         else:
+            # No config-space trajectory available
+            self.reference_trajectory_config_space = None
             self.reference_trajectory = reference_trajectory
 
     def error_based_feedback_term(
