@@ -61,6 +61,10 @@ class ActuationSpaceDynamics(eqx.Module):
         Pustina, P. (2025). Analysis and control of the underactuation in continuum
         soft robots: a kinematic independent approach.
         PhD Thesis, Sapienza University of Rome.
+
+        Stölzle, M. (2025). Safe yet Precise Soft Robots: Incorporating Physics
+        into Learned Models for Control. Dissertation, Delft University of Technology.
+        https://doi.org/10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da
     """
 
     robot: SoftRobot
