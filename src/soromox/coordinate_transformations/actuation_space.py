@@ -1,10 +1,16 @@
 __all__ = ["ActuationSpaceDynamics"]
 
+from typing import TYPE_CHECKING
+
 import equinox as eqx
+import jax
 from jax import Array
 from jax import numpy as jnp
 
 from soromox.systems.soft_robot import SoftRobot
+
+if TYPE_CHECKING:
+    from soromox.control.reference_trajectory import ReferenceTrajectory
 
 
 class ActuationSpaceDynamics(eqx.Module):
@@ -543,3 +549,139 @@ class ActuationSpaceDynamics(eqx.Module):
         )
 
         return A_y
+
+    # =========================================================================
+    # Reference trajectory conversion
+    # =========================================================================
+
+    def convert_reference_trajectory(
+        self, reference_trajectory: "ReferenceTrajectory"
+    ) -> "ReferenceTrajectory":
+        """
+        Convert a configuration-space reference trajectory to actuation space.
+
+        This method transforms the entries of the reference trajectory (positions,
+        velocities, accelerations) from configuration space (q, qd, qdd) to
+        actuation space (y, yd, ydd) using the coordinate transformations.
+
+        Only entries that are present (not None) in the input reference trajectory
+        are transformed and included in the output. The ReferenceTrajectory
+        __post_init__ will auto-derive missing entries as needed.
+
+        The transformation is:
+            y = [actuated_coordinates(q), unactuated_coordinates(q)]
+            yd = J(q) @ qd
+            ydd = J(q) @ qdd + Jd(q, qd) @ qd
+
+        where J is the Jacobian of the coordinate transformation and Jd is its
+        time derivative.
+
+        Args:
+            reference_trajectory: Reference trajectory in configuration space,
+                containing desired configurations (x_des_fn), velocities (xd_des_fn),
+                and accelerations (xdd_des_fn) as functions of time.
+
+        Returns:
+            ReferenceTrajectory in actuation space with transformed entries.
+            Only entries that were present in the input are explicitly set;
+            missing entries will be auto-derived by ReferenceTrajectory.__post_init__.
+        """
+        # Import here to avoid circular dependency
+        from soromox.control.reference_trajectory import ReferenceTrajectory
+
+        # Helper to transform position: q -> y
+        def transform_position(q: Array) -> Array:
+            return self.actuated_unactuated_coordinates(q)
+
+        # Helper to transform velocity: (q, qd) -> yd = J(q) @ qd
+        def transform_velocity(q: Array, qd: Array) -> Array:
+            J = self.jacobian(q)
+            return J @ qd
+
+        # Helper to transform acceleration: (q, qd, qdd) -> ydd = J @ qdd + Jd @ qd
+        def transform_acceleration(q: Array, qd: Array, qdd: Array) -> Array:
+            J = self.jacobian(q)
+
+            # Compute Jd @ qd using automatic differentiation
+            # d/dt[J(q)] @ qd can be computed via JVP
+            def J_times_qd(q_inner: Array) -> Array:
+                return self.jacobian(q_inner) @ qd
+
+            Jd_times_qd = jax.jvp(J_times_qd, (q,), (qd,))[1]
+            return J @ qdd + Jd_times_qd
+
+        # Build output dictionary with only non-None entries
+        output_kwargs: dict = {"ts": reference_trajectory.ts}
+
+        # Transform position function if present
+        if reference_trajectory.x_des_fn is not None:
+
+            def y_des_fn(t: Array) -> Array:
+                q = reference_trajectory.x_des_fn(t)  # type: ignore[misc]
+                return transform_position(q)
+
+            output_kwargs["x_des_fn"] = y_des_fn
+
+        # Transform position time series if present
+        if reference_trajectory.x_des_ts is not None:
+            output_kwargs["x_des_ts"] = jax.vmap(transform_position)(
+                reference_trajectory.x_des_ts
+            )
+
+        # Transform velocity function if present
+        if (
+            reference_trajectory.xd_des_fn is not None
+            and reference_trajectory.x_des_fn is not None
+        ):
+
+            def yd_des_fn(t: Array) -> Array:
+                q = reference_trajectory.x_des_fn(t)  # type: ignore[misc]
+                qd = reference_trajectory.xd_des_fn(t)  # type: ignore[misc]
+                return transform_velocity(q, qd)
+
+            output_kwargs["xd_des_fn"] = yd_des_fn
+
+        # Transform velocity time series if present
+        if (
+            reference_trajectory.xd_des_ts is not None
+            and reference_trajectory.x_des_ts is not None
+        ):
+            output_kwargs["xd_des_ts"] = jax.vmap(transform_velocity)(
+                reference_trajectory.x_des_ts, reference_trajectory.xd_des_ts
+            )
+
+        # Transform acceleration function if present
+        if (
+            reference_trajectory.xdd_des_fn is not None
+            and reference_trajectory.xd_des_fn is not None
+            and reference_trajectory.x_des_fn is not None
+        ):
+
+            def ydd_des_fn(t: Array) -> Array:
+                q = reference_trajectory.x_des_fn(t)  # type: ignore[misc]
+                qd = reference_trajectory.xd_des_fn(t)  # type: ignore[misc]
+                qdd = reference_trajectory.xdd_des_fn(t)  # type: ignore[misc]
+                return transform_acceleration(q, qd, qdd)
+
+            output_kwargs["xdd_des_fn"] = ydd_des_fn
+
+        # Transform acceleration time series if present
+        if (
+            reference_trajectory.xdd_des_ts is not None
+            and reference_trajectory.xd_des_ts is not None
+            and reference_trajectory.x_des_ts is not None
+        ):
+            output_kwargs["xdd_des_ts"] = jax.vmap(transform_acceleration)(
+                reference_trajectory.x_des_ts,
+                reference_trajectory.xd_des_ts,
+                reference_trajectory.xdd_des_ts,
+            )
+
+        # Preserve metadata from original trajectory
+        output_kwargs["rotation_representation"] = (
+            reference_trajectory.rotation_representation
+        )
+        output_kwargs["n_points"] = reference_trajectory.n_points
+        output_kwargs["is_planar"] = reference_trajectory.is_planar
+
+        return ReferenceTrajectory(**output_kwargs)
