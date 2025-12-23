@@ -45,9 +45,7 @@ from .configuration_space import (
 from .operational_space import (
     ImpedanceControlTracker as OperationalSpaceImpedanceControlTracker,
 )
-from .operational_space import (
-    OperationalSpaceBaseController,
-)
+from .operational_space import OperationalSpaceBaseController
 from .pid_control import PIDControl, PIDControllerState
 from .reference_trajectory import ReferenceTrajectory
 

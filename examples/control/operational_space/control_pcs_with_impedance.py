@@ -1,7 +1,7 @@
 """
 Operational-Space Impedance Control Example for PCS (Piecewise Constant Strain) Soft Robot.
 
-This example demonstrates how to use the ImpedanceControlTracker to control a
+This example demonstrates how to use the OperationalSpaceImpedanceControlTracker to control a
 two-segment PCS soft robot in operational space, where the task is defined as
 tracking the end-effector position.
 
@@ -26,7 +26,7 @@ import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # Double precision
 
-from soromox.control import ImpedanceControlTracker, ReferenceTrajectory
+from soromox.control import OperationalSpaceImpedanceControlTracker, ReferenceTrajectory
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems.pcs import PCS
 from soromox.systems.system_state import SystemState
@@ -157,7 +157,7 @@ def main():
     D_x = 0.2 * jnp.ones((osd.n_operational_space,))  # Damping [N·s/m]
 
     # Create the impedance controller
-    controller = ImpedanceControlTracker(
+    controller = OperationalSpaceImpedanceControlTracker(
         operational_space_dynamics=osd,
         reference_trajectory=reference_trajectory,
         K_x=K_x,

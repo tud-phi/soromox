@@ -35,7 +35,7 @@ All operational-space controllers inherit from `OperationalSpaceBaseController`:
 
 ## Trajectory Trackers
 
-### ImpedanceControlTracker
+### OperationalSpaceImpedanceControlTracker
 
 Operational-space impedance control implements partial feedback linearization to cancel the original task dynamics and replace them with desired linear impedance behavior.
 
@@ -67,7 +67,7 @@ The control law implements five key terms:
     - **Invertible actuation matrix**: \(A(q)\) must be full rank
     - **Stable null space**: Typically satisfied when stiffness and damping matrices are positive definite
 
-::: soromox.control.ImpedanceControlTracker
+::: soromox.control.OperationalSpaceImpedanceControlTracker
     options:
       show_root_heading: true
       show_source: false
@@ -82,7 +82,7 @@ The control law implements five key terms:
 
 ```python
 import jax.numpy as jnp
-from soromox.control import ImpedanceControlTracker, ReferenceTrajectory
+from soromox.control import OperationalSpaceImpedanceControlTracker, ReferenceTrajectory
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 
 # Create operational space dynamics (defines the task space)
@@ -99,7 +99,7 @@ x_des = jnp.zeros((len(ts), osd.n_operational_space))
 ref_traj = ReferenceTrajectory(ts=ts, x_des_ts=x_des)
 
 # Create impedance controller
-controller = ImpedanceControlTracker(
+controller = OperationalSpaceImpedanceControlTracker(
     operational_space_dynamics=osd,
     reference_trajectory=ref_traj,
     K_x=100.0,  # Stiffness (scalar, vector, or matrix)
