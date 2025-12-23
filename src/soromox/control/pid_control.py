@@ -1,13 +1,13 @@
 __all__ = ["PIDControl", "PIDControllerState"]
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Literal, Optional, Union
+from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jax import Array
-
 
 # Supported saturation function names
 SaturationFnName = Literal["identity", "tanh"]
@@ -78,6 +78,10 @@ class PIDControl(eqx.Module):
         Ki: Integral gain (scalar, diagonal vector, or matrix).
         Kd: Derivative gain (scalar, diagonal vector, or matrix).
         gamma: Scaling parameter for built-in saturation functions (e.g., "tanh").
+
+    References:
+        Pustina, P., Borja, P., Della Santina, C., & De Luca, A. (2022).
+        P-satI-D shape regulation of soft robots. IEEE Robotics and Automation Letters, 8(1), 1-8.
     """
 
     Kp: Array
@@ -85,15 +89,15 @@ class PIDControl(eqx.Module):
     Kd: Array
     gamma: Array
     _saturation_fn_name: str = eqx.field(static=True)
-    _custom_saturation_fn: Optional[Callable[[Array], Array]] = eqx.field(static=True)
+    _custom_saturation_fn: Callable[[Array], Array] | None = eqx.field(static=True)
 
     def __init__(
         self,
-        Kp: Union[float, Array],
-        Ki: Union[float, Array],
-        Kd: Union[float, Array],
-        saturation_fn: Optional[Union[SaturationFnName, Callable[[Array], Array]]] = None,
-        gamma: Union[float, Array] = 1.0,
+        Kp: float | Array,
+        Ki: float | Array,
+        Kd: float | Array,
+        saturation_fn: SaturationFnName | Callable[[Array], Array] | None = None,
+        gamma: float | Array = 1.0,
     ):
         """
         Initialize the PID controller.
@@ -222,4 +226,3 @@ class PIDControl(eqx.Module):
         integral_error_dot = self._apply_saturation(e)
 
         return u, integral_error_dot
-
