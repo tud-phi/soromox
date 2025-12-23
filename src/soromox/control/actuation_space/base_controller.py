@@ -43,10 +43,17 @@ class ActuationSpaceBaseController(BaseController, ABC):
     Zero Dynamics and Stability
     ---------------------------
 
-    A key assumption in actuation-space control is that the **zero dynamics**
-    (i.e., the dynamics of the unactuated coordinates when the actuated coordinates
-    are perfectly controlled) are stable or at least bounded. This is often satisfied
-    for soft robots because:
+    In any underactuated control setting—regardless of whether the controller operates
+    in configuration space, operational space, or actuation space—a key assumption is
+    that the **zero dynamics** (i.e., the dynamics of the unactuated coordinates when
+    the actuated coordinates are perfectly controlled) are stable or at least bounded.
+
+    We emphasize this assumption here because actuation-space controllers are
+    **particularly well-suited for underactuated robots**, and the clean separation
+    between actuated and unactuated dynamics in this formulation makes the role of
+    zero dynamics especially transparent.
+
+    This assumption is often satisfied for soft robots because:
 
     - Elastic and damping forces provide natural stabilization of the unactuated modes
     - The internal dynamics of soft materials tend to be dissipative
@@ -57,6 +64,8 @@ class ActuationSpaceBaseController(BaseController, ABC):
     - The unactuated coordinates evolve according to the zero dynamics
     - If the zero dynamics are unstable, trajectory tracking may fail despite
       perfect tracking on the actuated coordinates
+    - This limitation is fundamental to underactuation and cannot be overcome by any
+      control strategy—whether in configuration space, operational space, or actuation space
 
     Feasibility of Reference Trajectories in Underactuated Settings
     ----------------------------------------------------------------

@@ -57,11 +57,14 @@ class PIDController(ActuationSpaceBaseController, ClosedFormModelBasedController
     Zero Dynamics Assumption
     ------------------------
 
-    This controller assumes that the zero dynamics (dynamics of unactuated
-    coordinates when actuated coordinates are perfectly tracked) are stable.
-    For soft robots with elastic restoring forces and damping, this is typically
-    satisfied. If the zero dynamics are unstable, the unactuated coordinates may
-    diverge even with perfect tracking on the actuated coordinates.
+    In any underactuated control setting—regardless of whether the controller
+    operates in configuration space, operational space, or actuation space—a key
+    assumption is that the zero dynamics (dynamics of unactuated coordinates when
+    actuated coordinates are perfectly tracked) are stable. We emphasize this here
+    because actuation-space controllers are particularly well-suited for underactuated
+    robots. For soft robots with elastic restoring forces and damping, this assumption
+    is typically satisfied. If the zero dynamics are unstable, the unactuated
+    coordinates may diverge even with perfect tracking on the actuated coordinates.
 
     Usage
     -----

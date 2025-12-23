@@ -1,6 +1,6 @@
 # Configuration-Space Controllers
 
-Configuration-space controllers operate directly in the robot's generalized coordinates (joint angles, strains, curvatures, etc.). These controllers are suitable for applications where the desired trajectory is naturally expressed in configuration space.
+Configuration-space controllers operate directly in the robot's generalized coordinates (joint angles, strains, curvatures, etc.). These controllers are suitable for applications where the desired trajectory is naturally expressed in configuration space and the actuation matrix is easily invertible (i.e., full actuation) and (preferably) configuration-independent (i.e., constant).
 
 ## Overview
 
@@ -227,14 +227,14 @@ $$
 ## Actuation Matrix Considerations
 
 !!! warning "Configuration-Dependent Actuation Matrices"
-    For full theoretical stability guarantees, most controllers assume the actuation matrix \(A(q)\) is configuration-independent (constant). If your system has a configuration-dependent actuation matrix, consider:
+    For full theoretical stability guarantees, most controllers assume the actuation matrix $A(q)$ is configuration-independent (constant). If your system has a configuration-dependent actuation matrix, consider:
     
-    1. **ComputedTorqueTracker**: Achieves full feedback linearization regardless of \(A(q)\) dependence
-    2. **Actuation-space controllers**: (Future) Work directly in actuator coordinates
+    1. **ComputedTorqueTracker**: Achieves full feedback linearization regardless of $A(q)$ dependence
+    2. **[Actuation-space controllers](actuation-space.md)**: Work directly in actuator coordinates without requiring actuation matrix inversion
 
 The controllers handle different actuation scenarios:
 
-- **Full actuation** (\(n = m\), square \(A\)): Uses matrix inverse \(A^{-1}\)
-- **Overactuation** (\(m > n\)): Uses pseudo-inverse \(A^{\dagger}\) to minimize actuator effort
-- **Underactuation** (\(m < n\)): Not supported by computed torque methods; consider actuation-space controllers
+- **Full actuation** ($n = m$, square $A$): Uses matrix inverse $A^{-1}$
+- **Overactuation** ($m > n$): Uses pseudo-inverse $A^{\dagger}$ to minimize actuator effort
+- **Underactuation** ($m < n$): Only supported via pseudo-inverse $A^{\dagger}$ and transpose $A^T$; Preferably use [actuation-space controllers](actuation-space.md) instead
 
