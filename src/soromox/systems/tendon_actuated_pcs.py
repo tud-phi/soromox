@@ -856,10 +856,11 @@ class TendonActuatedPCS(PCS):
         # Damping of the body
         D = super().damping_matrix(q)
 
-        # Stiffness of the springs attached to the passive tendons
+        # Damping of the dampers attached to the passive tendons
+        # Note: jacobian_passive_tendon returns J_pt in active strain space (n_p, num_dofs),
+        # so J_pt.T @ D_pt @ J_pt is already in active strain space (num_dofs, num_dofs)
         J_pt = self.jacobian_passive_tendon(q)
-        D_pt_full = J_pt.T @ self.D_pt @ J_pt
-        D_pt = self.B_xi.T @ D_pt_full @ self.B_xi
+        D_pt = J_pt.T @ self.D_pt @ J_pt
 
         D_tot = D + D_pt
         return D_tot
