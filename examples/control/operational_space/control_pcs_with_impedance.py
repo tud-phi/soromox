@@ -28,6 +28,7 @@ jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.control import OperationalSpaceImpedanceControlTracker, ReferenceTrajectory
 from soromox.coordinate_transformations import OperationalSpaceDynamics
+from soromox.rendering import Open3DRenderer
 from soromox.systems import PCS, SystemState
 
 
@@ -324,6 +325,22 @@ def main():
     print("\nPlots saved to:")
     print("  - control_pcs_with_impedance_results.pdf")
     print("  - control_pcs_with_impedance_config.pdf")
+
+    if Open3DRenderer is None:
+        print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
+    else:
+        target_radius = float(jnp.mean(params["r"])) * 0.5
+        target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
+        renderer = Open3DRenderer(robot, num_points=50)
+        renderer.render_sequence(
+            ts=t_traj,
+            q_ts=q_traj,
+            playback_speed=1.0,
+            dynamic_spheres_positions=target_positions,
+            dynamic_spheres_radii=jnp.array([target_radius]),
+            dynamics_spheres_colors=jnp.array([[0.1, 0.6, 0.9]]),
+            window_name="Operational-Space Tracking (Open3D)",
+        )
 
 
 if __name__ == "__main__":

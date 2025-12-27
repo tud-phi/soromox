@@ -17,6 +17,7 @@ jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
 from soromox.control.configuration_space import PIDController
+from soromox.rendering import Open3DRenderer
 from soromox.systems import PCS, SystemState
 
 
@@ -257,6 +258,17 @@ def main():
     print(
         "Plots saved to control_pcs_with_pid_results.png and control_pcs_with_pid_integral_error.png"
     )
+
+    if Open3DRenderer is None:
+        print("Open3DRenderer unavailable. Install open3d to view the animation.")
+    else:
+        renderer = Open3DRenderer(robot, num_points=50)
+        renderer.render_sequence(
+            ts=t_traj,
+            q_ts=q_traj,
+            playback_speed=1.0,
+            window_name="Configuration-Space PID Control (Open3D)",
+        )
 
 
 if __name__ == "__main__":

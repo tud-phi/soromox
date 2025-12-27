@@ -37,6 +37,7 @@ from soromox.control.actuation_space import (
     PotentialCompensationRegulator,
 )
 from soromox.coordinate_transformations.actuation_space import ActuationSpaceDynamics
+from soromox.rendering import Open3DRenderer
 from soromox.systems import SystemState, TendonActuatedPCS
 
 
@@ -575,6 +576,21 @@ def main():
     print("  - actuation_space_regulation_errors.pdf")
     print("  - actuation_space_regulation_inputs.pdf")
     print("  - actuation_space_regulation_rmse.pdf")
+
+    if Open3DRenderer is None:
+        print("Open3DRenderer unavailable. Install open3d to view the animation.")
+    else:
+        render_name = "PID (model-free)"
+        if render_name not in all_results:
+            render_name = next(iter(all_results.keys()))
+        render_results = all_results[render_name]
+        renderer = Open3DRenderer(robot, num_points=50)
+        renderer.render_sequence(
+            ts=render_results["t"],
+            q_ts=render_results["q"],
+            playback_speed=1.0,
+            window_name=f"Actuation-Space Regulation ({render_name})",
+        )
 
 
 if __name__ == "__main__":

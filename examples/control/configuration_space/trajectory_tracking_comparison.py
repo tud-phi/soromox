@@ -44,6 +44,7 @@ from soromox.control.configuration_space import (
     PotentialCancellationRegulator,
     PotentialCompensationRegulator,
 )
+from soromox.rendering import Open3DRenderer
 from soromox.systems import PCS, SystemState
 
 
@@ -552,6 +553,32 @@ def main():
     plt.tight_layout()
     plt.savefig("trajectory_tracking_rmse_summary.pdf", dpi=200, bbox_inches="tight")
     plt.show()
+
+    if Open3DRenderer is None:
+        print("Open3DRenderer unavailable. Install open3d to view the animation.")
+    else:
+        renderer = Open3DRenderer(robot, num_points=50)
+        slow_render_name = "Computed Torque"
+        if slow_render_name not in slow_results:
+            slow_render_name = next(iter(slow_results.keys()))
+        slow_render_results = slow_results[slow_render_name]
+        renderer.render_sequence(
+            ts=slow_render_results["t"],
+            q_ts=slow_render_results["q"],
+            playback_speed=1.0,
+            window_name=f"Slow Trajectory ({slow_render_name})",
+        )
+
+        fast_render_name = "Computed Torque"
+        if fast_render_name not in fast_results:
+            fast_render_name = next(iter(fast_results.keys()))
+        fast_render_results = fast_results[fast_render_name]
+        renderer.render_sequence(
+            ts=fast_render_results["t"],
+            q_ts=fast_render_results["q"],
+            playback_speed=1.0,
+            window_name=f"Fast Trajectory ({fast_render_name})",
+        )
 
     print("\n" + "=" * 80)
     print("Plots saved:")
