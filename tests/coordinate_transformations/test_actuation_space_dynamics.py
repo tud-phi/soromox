@@ -20,8 +20,10 @@ from numpy.testing import assert_allclose
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations import ActuationSpaceDynamics
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
-from soromox.systems.tendon_actuated_pendulum import TendonActuatedPendulum
+from soromox.systems import (
+    TendonActuatedPCS,
+    TendonActuatedPendulum,
+)
 
 # -----------------------
 # Fixtures

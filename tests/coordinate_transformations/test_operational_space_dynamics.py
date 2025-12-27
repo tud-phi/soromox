@@ -8,9 +8,7 @@ import pytest
 from numpy.testing import assert_allclose
 
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.systems.pcs import PCS
-from soromox.systems.pendulum import Pendulum
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.systems import PCS, Pendulum, PlanarPCS
 from soromox.utils.rotations import RotationRepresentation
 from soromox.utils.tolerance import Tolerance
 
