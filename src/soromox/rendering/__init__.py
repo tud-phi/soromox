@@ -5,7 +5,7 @@ This module provides various backends for visualizing robots:
 - MatplotlibRenderer: Generic renderer using Matplotlib (2D and 3D)
 - Open3DRenderer: Generic 3D renderer using Open3D
 - OpenCVPlanarHSARenderer: Specialized renderer for PlanarHSA robots
-- OpenCVPlanarPCSRenderer: Specialized renderer for PlanarPCS robots
+- OpenCVPlanarRenderer: Generic renderer for planar robots
 """
 
 from soromox.rendering.base import BaseSoftRobotRenderer
@@ -18,8 +18,8 @@ except ImportError:
     Open3DRenderer = None
 
 # Specialized OpenCV renderers
+from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
-from soromox.rendering.planar_pcs.opencv_renderer import OpenCVPlanarPCSRenderer
 
 __all__ = [
     # Base class
@@ -29,5 +29,5 @@ __all__ = [
     "Open3DRenderer",
     # Specialized renderers
     "OpenCVPlanarHSARenderer",
-    "OpenCVPlanarPCSRenderer",
+    "OpenCVPlanarRenderer",
 ]

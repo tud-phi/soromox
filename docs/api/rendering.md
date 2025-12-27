@@ -13,7 +13,7 @@ BaseSoftRobotRenderer (abstract base)
 ├── MatplotlibRenderer         # Generic, works with any robot (2D/3D)
 ├── Open3DRenderer             # Generic, works with any 3D robot
 ├── OpenCVPlanarHSARenderer    # Specialized for PlanarHSA
-└── OpenCVPlanarPCSRenderer    # Specialized for PlanarPCS
+└── OpenCVPlanarRenderer       # Generic for planar robots
 ```
 
 ### Quick Start
@@ -74,13 +74,13 @@ BaseSoftRobotRenderer (abstract base)
     )
     ```
 
-=== "OpenCV (specialized)"
+=== "OpenCV (planar)"
 
     ```python
-    from soromox.rendering.planar_pcs import OpenCVPlanarPCSRenderer
+    from soromox.rendering import OpenCVPlanarRenderer
 
-    # Create renderer for planar PCS
-    renderer = OpenCVPlanarPCSRenderer(robot, width=800, height=600)
+    # Create renderer for planar robots
+    renderer = OpenCVPlanarRenderer(robot, width=800, height=600)
 
     # Render single frame to numpy array
     img = renderer.render_frame(q)
@@ -137,9 +137,9 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
       heading_level: 3
       members_order: source
 
-## OpenCV Planar PCS Renderer
+## OpenCV Planar Renderer
 
-::: soromox.rendering.planar_pcs.opencv_renderer.OpenCVPlanarPCSRenderer
+::: soromox.rendering.opencv_planar_renderer.OpenCVPlanarRenderer
     options:
       show_root_heading: true
       show_source: false

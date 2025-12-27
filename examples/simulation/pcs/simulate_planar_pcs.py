@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import MatplotlibRenderer
-from soromox.rendering.planar_pcs import OpenCVPlanarPCSRenderer
+from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
 from soromox.systems import PlanarPCS, SystemState
 
 jnp.set_printoptions(
@@ -185,15 +184,11 @@ if __name__ == "__main__":
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
 
     # =====================================================
-    # OpenCV-based rendering example (Planar PCS)
+    # OpenCV-based rendering example
     # =====================================================
-    opencv_renderer = OpenCVPlanarPCSRenderer(
-        robot, num_points=50, width=700, height=700
+    opencv_renderer = OpenCVPlanarRenderer(
+        robot, num_points=50, width=700, height=700, length_scale=3.0
     )
-    frame_bgr = opencv_renderer.render_frame(q_ts[0])
-    # Display the frame using matplotlib (convert BGR -> RGB for plt)
-    plt.figure()
-    plt.imshow(frame_bgr[..., ::-1])
-    plt.axis("off")
-    plt.tight_layout()
-    plt.show()
+    opencv_renderer.render_sequence(
+        ts, q_ts, record_path="videos/planar_pcs_opencv.mp4"
+    )
