@@ -1735,7 +1735,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     self._apply_cached_mesh(cached, curve[p], None, None)
                     vis.update_geometry(cached.mesh)
 
-    def _build_legacy_scene(
+    def _build_scene(
         self, vis, scene_data: SceneData, frame_idx: int = 0
     ) -> LegacySceneHandles:
         """Construct initial geometry for the legacy viewer."""
@@ -1827,7 +1827,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             dynamic_trajs=dynamic_trajs,
         )
 
-    def _update_legacy_scene(
+    def _update_scene(
         self,
         vis,
         scene_data: SceneData,
@@ -1914,7 +1914,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     ) -> None:
         """Interactive legacy viewer with shared geometry and recording."""
         vis, ctrl = self._create_visualizer(window_name)
-        handles = self._build_legacy_scene(vis, scene_data, frame_idx=0)
+        handles = self._build_scene(vis, scene_data, frame_idx=0)
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
         video_writer, frame_dir, video_path = self._init_recorder(
             record_cfg.path, dt_seq
@@ -1977,7 +1977,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             i = max(0, min(scene_data.num_frames - 1, i))
             state["idx"] = i
 
-            self._update_legacy_scene(vis, scene_data, handles, frame_idx=i)
+            self._update_scene(vis, scene_data, handles, frame_idx=i)
 
             vis.poll_events()
             vis.update_renderer()
