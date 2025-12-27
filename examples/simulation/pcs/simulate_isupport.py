@@ -103,9 +103,6 @@ if __name__ == "__main__":
     solver_dt = 5e-5
     save_dt = 0.01
 
-    # Solver
-    solver = Tsit5()  # Runge-Kutta 5(4) method
-
     initial_state = SystemState(t=t0, y=jnp.concatenate([q0, qd0]))
     trajectory = robot.rollout_to(
         initial_state=initial_state,
@@ -113,7 +110,6 @@ if __name__ == "__main__":
         t1=t1,
         solver_dt=solver_dt,
         save_dt=save_dt,
-        solver=solver,
         max_steps=None,
     )
     ts = trajectory.t

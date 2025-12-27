@@ -50,10 +50,10 @@ class DynamicalSystem(eqx.Module):
 
     @staticmethod
     def _compute_save_times(
-        t0: float,
-        t1: float,
-        solver_dt: float,
-        save_dt: float | None,
+        t0: float | Array,
+        t1: float | Array,
+        solver_dt: float | Array,
+        save_dt: float | Array | None,
         save_ts: Array | None,
     ) -> Array:
         """Build the array of time stamps to save during integration."""
@@ -142,11 +142,11 @@ class DynamicalSystem(eqx.Module):
         initial_state: SystemState,
         u: Array | None = None,
         tau_ext: Array | None = None,
-        t1: float | None = 10.0,
-        solver_dt: float | None = 1e-4,
-        save_dt: float | None = 0.01,
+        t1: float | Array = 10.0,
+        solver_dt: float | Array = 1e-4,
+        save_dt: float | Array | None = 0.01,
         save_ts: Array | None = None,
-        solver: AbstractSolver | None = Tsit5(),
+        solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
     ) -> SystemState:
@@ -191,6 +191,9 @@ class DynamicalSystem(eqx.Module):
         term = ODETerm(self._open_loop_forward_dynamics)
         saveat = SaveAt(ts=save_ts)  # Save at specified time points
 
+        if solver is None:
+            solver = Tsit5()
+
         sol = diffeqsolve(
             terms=term,
             solver=solver,
@@ -205,22 +208,22 @@ class DynamicalSystem(eqx.Module):
         )
 
         ts = sol.ts
-        y_out = sol.ys
+        y_ts = sol.ys
 
         us = jnp.broadcast_to(base_u, (ts.shape[0], base_u.shape[0]))
 
-        return SystemState(t=ts, y=y_out, u=us, control_state=None)
+        return SystemState(t=ts, y=y_ts, u=us, control_state=None)
 
     def rollout_closed_loop_to(
         self,
         initial_state: SystemState,
         controller: Callable[[SystemState], tuple[Array, Any | None]],
         tau_ext: Array | None = None,
-        t1: float | None = 10.0,
-        solver_dt: float | None = 1e-4,
-        save_dt: float | None = 0.01,
+        t1: float | Array = 10.0,
+        solver_dt: float | Array = 1e-4,
+        save_dt: float | Array = 0.01,
         save_ts: Array | None = None,
-        solver: AbstractSolver | None = Tsit5(),
+        solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
     ) -> SystemState:
@@ -282,6 +285,9 @@ class DynamicalSystem(eqx.Module):
 
         y0_for_solver = (y0, controller_state0) if track_control_state else y0
 
+        if solver is None:
+            solver = Tsit5()
+
         sol = diffeqsolve(
             terms=term,
             solver=solver,
@@ -297,9 +303,9 @@ class DynamicalSystem(eqx.Module):
 
         ts = sol.ts
         if track_control_state:
-            y_out, controller_state_out = sol.ys
+            y_ts, controller_state_out = sol.ys
         else:
-            y_out = sol.ys
+            y_ts = sol.ys
             controller_state_out = None
 
         if track_control_state:
@@ -307,28 +313,28 @@ class DynamicalSystem(eqx.Module):
                 lambda t_i, y_i, c_i: controller(
                     SystemState(t=t_i, y=y_i, u=base_u, control_state=c_i)
                 )[0]
-            )(ts, y_out, controller_state_out)
+            )(ts, y_ts, controller_state_out)
         else:
             u_controls = vmap(
                 lambda t_i, y_i: controller(
                     SystemState(t=t_i, y=y_i, u=base_u, control_state=None)
                 )[0]
-            )(ts, y_out)
+            )(ts, y_ts)
         us = u_controls + base_u
 
-        return SystemState(t=ts, y=y_out, u=us, control_state=controller_state_out)
+        return SystemState(t=ts, y=y_ts, u=us, control_state=controller_state_out)
 
     def rollout_discrete_closed_loop_to(
         self,
         initial_state: SystemState,
         controller: Callable[[SystemState], tuple[Array, Any | None]],
         tau_ext: Array | None = None,
-        t1: float | None = 10.0,
-        solver_dt: float | None = 1e-4,
-        control_dt: float | None = 1e-2,
-        save_dt: float | None = 0.01,
+        t1: float | Array = 10.0,
+        solver_dt: float | Array = 1e-4,
+        control_dt: float | Array = 1e-2,
+        save_dt: float | Array = 0.01,
         save_ts: Array | None = None,
-        solver: AbstractSolver | None = Tsit5(),
+        solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
     ) -> SystemState:
@@ -367,6 +373,9 @@ class DynamicalSystem(eqx.Module):
             save_ts = self._compute_save_times(
                 float(initial_state.t), t1, solver_dt, save_dt, save_ts
             )
+
+        if solver is None:
+            solver = Tsit5()
 
         base_u = initial_state.u
         if base_u is None:
