@@ -5,13 +5,12 @@ tensions to generate multiple trajectories from the same initial condition,
 and visualizes them in a grid using Open3DRenderer.
 """
 
-from diffrax import Tsit5
 import jax
 import jax.numpy as jnp
+from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer, Open3DRenderer
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import SystemState, TendonActuatedPCS
 
 jax.config.update("jax_enable_x64", True)
 
@@ -99,7 +98,9 @@ def main():
         )
 
     robot = build_robot()
-    ts, q_ts_batched = simulate_batched(robot, num_robots=9, rng_key=jax.random.PRNGKey(0))
+    ts, q_ts_batched = simulate_batched(
+        robot, num_robots=9, rng_key=jax.random.PRNGKey(0)
+    )
 
     grid_spacing = (0.3, 0.3)
 
@@ -114,9 +115,7 @@ def main():
         tendon_line_width=2.0,
     )
     # q_ts_batched is (N, T, DOF); animate in slider mode for quick inspection
-    matplotlib_renderer.animate(
-        ts=ts, q_ts=q_ts_batched, mode="slider", show=True
-    )
+    matplotlib_renderer.animate(ts=ts, q_ts=q_ts_batched, mode="slider", show=True)
 
     # render using the Open3DRenderer
     renderer = Open3DRenderer(
@@ -124,7 +123,9 @@ def main():
         grid_spacing=grid_spacing,
         robot_colors="viridis",
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts_batched, record_path="videos/batched_tendon_actuated_pcs.mp4")
+    renderer.render_sequence(
+        ts=ts, q_ts=q_ts_batched, record_path="videos/batched_tendon_actuated_pcs.mp4"
+    )
 
 
 if __name__ == "__main__":
