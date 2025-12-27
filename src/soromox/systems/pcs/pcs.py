@@ -7,7 +7,7 @@ from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import CROSS_SECTION_CIRCULAR, SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
@@ -222,6 +222,20 @@ class PCS(SoftRobot):
 
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
+
+    @property
+    def length(self) -> Array:
+        """Total backbone length."""
+        return jnp.sum(self.L)
+
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Circular cross-section with segment radius."""
+        segment_idx, _ = self.classify_segment(s)
+        radius = jnp.asarray(self.r)[segment_idx]
+        tag = jnp.asarray(CROSS_SECTION_CIRCULAR, dtype=jnp.int32)
+        return tag, jnp.array([radius])
 
     def _set_params(self, params: dict[str, Array]) -> None:
         """

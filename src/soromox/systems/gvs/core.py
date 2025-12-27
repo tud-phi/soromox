@@ -35,7 +35,12 @@ from soromox.systems.gvs.strain_bases import (
     B_LegendrePolynomial,
     B_Monomial,
 )
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import (
+    CROSS_SECTION_CIRCULAR,
+    CROSS_SECTION_ELLIPTICAL,
+    CROSS_SECTION_RECTANGULAR,
+    SoftRobot,
+)
 from soromox.utils.basic import compute_strain_basis
 from soromox.utils.integration import gauss_quadrature
 
@@ -163,6 +168,12 @@ class GVS(SoftRobot):
     V_basistype_idx: Array  # Index of the basis type for each segment (num_segments,)
     V_Bdof_params: Array  # Parameters for the basis DOFs (num_segments, max_dof)
     V_Bodr_params: Array  # Parameters for the basis orientation (num_segments, max_dof)
+    V_section_idx: Array  # Index of the cross-section type for each segment
+    V_r_params: Array  # Circular params (num_segments, 2)
+    V_h_params: Array  # Rectangular height params (num_segments, 2)
+    V_w_params: Array  # Rectangular width params (num_segments, 2)
+    V_a_params: Array  # Elliptical semi-major params (num_segments, 2)
+    V_b_params: Array  # Elliptical semi-minor params (num_segments, 2)
 
     def __init__(
         self,
@@ -350,6 +361,12 @@ class GVS(SoftRobot):
         V_basistype_idx = jnp.empty((self.num_segments,), dtype=int)
         V_Bdof_params = jnp.empty((self.num_segments, 6))
         V_Bodr_params = jnp.empty((self.num_segments, 6))
+        V_section_idx = jnp.empty((self.num_segments,), dtype=int)
+        V_r_params = jnp.empty((self.num_segments, 2))
+        V_h_params = jnp.empty((self.num_segments, 2))
+        V_w_params = jnp.empty((self.num_segments, 2))
+        V_a_params = jnp.empty((self.num_segments, 2))
+        V_b_params = jnp.empty((self.num_segments, 2))
 
         for i_segment in range(self.num_segments):
             # Use the provided attributes from the links_list
@@ -403,6 +420,14 @@ class GVS(SoftRobot):
             )
             V_Bdof_params = V_Bdof_params.at[i_segment].set(basis_attrs.Bdof)
             V_Bodr_params = V_Bodr_params.at[i_segment].set(basis_attrs.Bodr)
+            V_section_idx = V_section_idx.at[i_segment].set(
+                Link.SECTION_MAP[link_attrs.section]
+            )
+            V_r_params = V_r_params.at[i_segment].set([link_attrs.r_i, link_attrs.r_f])
+            V_h_params = V_h_params.at[i_segment].set([link_attrs.h_i, link_attrs.h_f])
+            V_w_params = V_w_params.at[i_segment].set([link_attrs.w_i, link_attrs.w_f])
+            V_a_params = V_a_params.at[i_segment].set([link_attrs.a_i, link_attrs.a_f])
+            V_b_params = V_b_params.at[i_segment].set([link_attrs.b_i, link_attrs.b_f])
 
         self.V_L = V_L
         self.V_nip = V_nip
@@ -426,6 +451,12 @@ class GVS(SoftRobot):
         self.V_basistype_idx = V_basistype_idx
         self.V_Bdof_params = V_Bdof_params
         self.V_Bodr_params = V_Bodr_params
+        self.V_section_idx = V_section_idx
+        self.V_r_params = V_r_params
+        self.V_h_params = V_h_params
+        self.V_w_params = V_w_params
+        self.V_a_params = V_a_params
+        self.V_b_params = V_b_params
 
         # Strain selector ========================================================
         strain_selector_full = jnp.concatenate(V_strain_selector, axis=0)
@@ -461,6 +492,39 @@ class GVS(SoftRobot):
             raise ValueError("p0 must have shape (6,) when provided")
         self.p0 = p0_arr
         self.g0 = lie.exp_SE3(p0_arr)
+
+    @property
+    def length(self) -> Array:
+        """Total backbone length."""
+        return jnp.sum(self.V_L)
+
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Cross-section geometry evaluated from stored link parameters."""
+        segment_idx, s_local = self.classify_segment(s)
+        length_i = self.V_L[segment_idx]
+        x = jnp.where(length_i > self.global_eps, s_local / length_i, 0.0)
+        section_idx = self.V_section_idx[segment_idx]
+        section_idx_int = int(section_idx)
+        if section_idx_int == Link.SECTION_MAP["Circular"]:
+            params = self.V_r_params[segment_idx]
+            radius = Link.interpolate_param(x, params[0], params[1])
+            tag = jnp.asarray(CROSS_SECTION_CIRCULAR, dtype=jnp.int32)
+            return tag, jnp.array([radius])
+        if section_idx_int == Link.SECTION_MAP["Rectangular"]:
+            h_params = self.V_h_params[segment_idx]
+            w_params = self.V_w_params[segment_idx]
+            height = Link.interpolate_param(x, h_params[0], h_params[1])
+            width = Link.interpolate_param(x, w_params[0], w_params[1])
+            tag = jnp.asarray(CROSS_SECTION_RECTANGULAR, dtype=jnp.int32)
+            return tag, jnp.array([width, height])
+        a_params = self.V_a_params[segment_idx]
+        b_params = self.V_b_params[segment_idx]
+        a_val = Link.interpolate_param(x, a_params[0], a_params[1])
+        b_val = Link.interpolate_param(x, b_params[0], b_params[1])
+        tag = jnp.asarray(CROSS_SECTION_ELLIPTICAL, dtype=jnp.int32)
+        return tag, jnp.array([a_val, b_val])
 
     def _build_segment_i(
         self,

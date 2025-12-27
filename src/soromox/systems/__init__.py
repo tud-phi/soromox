@@ -1,5 +1,10 @@
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import (
+    CROSS_SECTION_CIRCULAR,
+    CROSS_SECTION_ELLIPTICAL,
+    CROSS_SECTION_RECTANGULAR,
+    SoftRobot,
+)
 from soromox.systems.system_state import SystemState
 
 from .gvs import GVS, TendonActuatedGVS
@@ -18,6 +23,9 @@ __all__ = [
     # base classes
     "DynamicalSystem",
     "SoftRobot",
+    "CROSS_SECTION_CIRCULAR",
+    "CROSS_SECTION_RECTANGULAR",
+    "CROSS_SECTION_ELLIPTICAL",
     "SystemState",
     # gvs systems
     "GVS",

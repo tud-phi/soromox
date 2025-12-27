@@ -6,7 +6,7 @@ import numpy as onp
 from jax import Array, jit, vmap
 from jax import numpy as jnp
 
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import CROSS_SECTION_CIRCULAR, SoftRobot
 
 
 class Pendulum(SoftRobot):
@@ -63,8 +63,8 @@ class Pendulum(SoftRobot):
         Number of links / DoFs.
     num_actuators: int (static)
         Number of joint actuators. Equal to num_links.
-    m, I, L, Lc : Array (shape (N,))
-        Physical link properties.
+    m, I, L, Lc, r : Array (shape (N,))
+        Physical link properties (radius used for visualization).
     g : Array (shape (2,))
         Planar gravity vector [g_x, g_y].
     K, D : Array (shape (N, N))
@@ -81,6 +81,7 @@ class Pendulum(SoftRobot):
     I: Array
     L: Array
     Lc: Array
+    r: Array
     g: Array  # planar gravity acceleration vector
 
     # Optional linear elasticity/damping to make it an articulated soft robot.
@@ -102,6 +103,7 @@ class Pendulum(SoftRobot):
                 - "L": Link lengths (N,)
                 - "Lc": COM offset from prior joint (N,)
                 - "g": Planar gravity vector (2,)
+                - "r": Link radii for visualization (N,) (optional)
                 - "K": stiffness matrix (N,N) (optional)
                 - "D": damping matrix (N,N) (optional)
                 - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
@@ -133,10 +135,26 @@ class Pendulum(SoftRobot):
         self.L = L
         self.Lc = Lc
         self.g = g
+        self.r = jnp.asarray(params.get("r", 0.05 * L))
 
         self.K = jnp.asarray(params.get("K", jnp.zeros((n_q, n_q))))
         self.D = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
         self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
+
+    @property
+    def length(self) -> Array:
+        """Total chain length."""
+        return jnp.sum(self.L)
+
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Circular cross-section using per-link radius."""
+        L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
+        segment_idx = jnp.clip(jnp.sum(s > L_cum) - 1, 0, self.num_links - 1)
+        radius = self.r[segment_idx]
+        tag = jnp.asarray(CROSS_SECTION_CIRCULAR, dtype=jnp.int32)
+        return tag, jnp.array([radius])
 
     def update_params(self, params: dict[str, Array]) -> "Pendulum":
         """
@@ -155,6 +173,7 @@ class Pendulum(SoftRobot):
                 - "K": Joint stiffness matrix, shape (N,N) [N⋅m/rad] (optional)
                 - "D": Joint damping matrix, shape (N,N) [N⋅m⋅s/rad] (optional)
                 - "q_ref_k": rest configuration of the torsional springs defined in K (N,) [rad] (optional)
+                - "r": Link radii for visualization (N,) (optional)
 
         Returns:
             Pendulum: New instance with updated parameters.
@@ -178,6 +197,8 @@ class Pendulum(SoftRobot):
             updated = eqx.tree_at(
                 lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"])
             )
+        if "r" in params:
+            updated = eqx.tree_at(lambda x: x.r, updated, jnp.asarray(params["r"]))
         return updated
 
     # -------------------------------------------------

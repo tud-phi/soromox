@@ -1,4 +1,9 @@
-__all__ = ["SoftRobot"]
+__all__ = [
+    "CROSS_SECTION_CIRCULAR",
+    "CROSS_SECTION_RECTANGULAR",
+    "CROSS_SECTION_ELLIPTICAL",
+    "SoftRobot",
+]
 
 from abc import abstractmethod
 
@@ -6,6 +11,12 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.systems.dynamical_system import DynamicalSystem
+
+
+# Integer tags for JAX-friendly cross-section branching.
+CROSS_SECTION_CIRCULAR = 0
+CROSS_SECTION_RECTANGULAR = 1
+CROSS_SECTION_ELLIPTICAL = 2
 
 
 class SoftRobot(DynamicalSystem):
@@ -58,6 +69,25 @@ class SoftRobot(DynamicalSystem):
             self.global_eps = eps
         else:
             self.global_eps = 1e1 * float(jnp.finfo(jnp.float64).eps)
+
+    @property
+    @abstractmethod
+    def length(self) -> Array:
+        """Total backbone length of the robot (scalar)."""
+        ...
+
+    @abstractmethod
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Return integer cross-section tag and geometry parameters at position s.
+
+        Tag values:
+            - CROSS_SECTION_CIRCULAR
+            - CROSS_SECTION_RECTANGULAR
+            - CROSS_SECTION_ELLIPTICAL
+        """
+        ...
 
     # -----------------------------------------
     # Arc-length parameterized kinematics
