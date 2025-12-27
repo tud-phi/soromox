@@ -658,6 +658,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
         robot_colors: str | Array | np.ndarray | None = None,
         backbone_style: str = "discrete",
+        recompute_normals: bool = True,
         tube_resolution: int = 20,
         sphere_resolution: int = 32,
         base_plate_color: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -668,7 +669,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
-        recompute_normals: bool = True,
     ):
         """Initialize Open3D renderer.
 
@@ -687,6 +687,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 - Colormap name (e.g., "viridis", "plasma"): Distinct colors per robot
                 - Array of RGB or RGBA colors of shape (N, 3/4); cycled if fewer than N
             backbone_style: "discrete" or "swept"
+            recompute_normals: Whether to recompute vertex normals per segment update
             tube_resolution: Radial resolution for tube segments
             sphere_resolution: Resolution for backbone spheres
             base_plate_color: RGB color for the base plate geometry
@@ -697,7 +698,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             tendon_color: RGB color for tendon lines
             tendon_line_width: Width of tendon lines
             camera_margin_ratio: Margin ratio for camera bounding box
-            recompute_normals: Whether to recompute vertex normals per segment update
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -709,7 +709,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.seg_colors = seg_colors
         self._seg_colors_config = seg_colors
         self._robot_colors_config = robot_colors
+        self.backbone_style = backbone_style
+        self._backbone_mode = self._resolve_backbone_mode(backbone_style)
+        self.recompute_normals = bool(recompute_normals)
+
         self.sphere_resolution = sphere_resolution
+        self.tube_resolution = int(tube_resolution)
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
         self.tendon_color = tendon_color
@@ -718,10 +723,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.base_plate_color = tuple(base_plate_color)
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
-        self.recompute_normals = bool(recompute_normals)
-        self.backbone_style = backbone_style
-        self._backbone_mode = self._resolve_backbone_mode(backbone_style)
-        self.tube_resolution = int(tube_resolution)
         self._warned_dynamic_geometry = False
 
         self._unit_meshes = {
