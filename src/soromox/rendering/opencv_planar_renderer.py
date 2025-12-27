@@ -11,7 +11,12 @@ import numpy as np
 from jax import Array
 
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import (
+    CROSS_SECTION_CIRCULAR,
+    CROSS_SECTION_ELLIPTICAL,
+    CROSS_SECTION_RECTANGULAR,
+    SoftRobot,
+)
 
 
 class OpenCVPlanarRenderer(BaseOpenCVRenderer):
@@ -36,6 +41,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         base_color: tuple[int, int, int] = (0, 255, 0),
         backbone_color: tuple[int, int, int] = (0, 0, 0),
         backbone_thickness: int | None = None,
+        base_radius_scale: float = 2.0,
         length_scale: float = 2.0,
         origin_uv: tuple[int, int] | None = None,
     ):
@@ -50,6 +56,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             base_color: BGR color for base marker
             backbone_color: BGR color for backbone
             backbone_thickness: Line thickness for backbone (None = auto)
+            base_radius_scale: Multiplier applied to the cross-section span for the base marker
             length_scale: Scale factor for robot in image (robot occupies height/length_scale)
             origin_uv: Pixel coordinates of robot base (None = center of image)
         """
@@ -58,6 +65,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         self.base_color = base_color
         self.backbone_color = backbone_color
         self.backbone_thickness = backbone_thickness
+        self.base_radius_scale = float(base_radius_scale)
         self.length_scale = length_scale
         self.origin_uv = origin_uv
 
@@ -83,34 +91,41 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             return np.atleast_1d(np.asarray(self.robot.V_L, dtype=float))
         return None
 
+    def _cross_section_span(self, q: Array, s: float) -> float:
+        geom_tag, geom_params = self.robot.cross_section_geometry(q, s)
+        tag = int(np.asarray(geom_tag).item())
+        params = np.asarray(geom_params, dtype=float).reshape(-1)
+        if params.size == 0:
+            return 0.0
+        if tag == CROSS_SECTION_CIRCULAR:
+            return float(params[0])
+        if tag == CROSS_SECTION_RECTANGULAR:
+            return float(max(params[0], params[1])) if params.size >= 2 else 0.0
+        if tag == CROSS_SECTION_ELLIPTICAL:
+            return float(max(params[0], params[1])) if params.size >= 2 else 0.0
+        return 0.0
+
     def _auto_backbone_thickness(
-        self, ppm: float, lengths: np.ndarray | None
+        self, ppm: float, lengths: np.ndarray | None, q: Array
     ) -> tuple[np.ndarray | None, int]:
         if self.backbone_thickness is not None:
             return None, max(1, int(self.backbone_thickness))
 
-        r = getattr(self.robot, "r", None)
-        if r is None:
-            return None, 2
+        if lengths is None:
+            span = self._cross_section_span(q, 0.0)
+            thickness = max(1, int(float(span) * ppm)) if span > 0 else 2
+            return None, thickness
 
-        r_arr = np.atleast_1d(np.asarray(r, dtype=float))
-        if r_arr.size == 1:
-            return None, max(1, int(float(r_arr.item()) * ppm))
+        L_cum = np.concatenate(([0.0], np.cumsum(lengths)))
+        mids = (L_cum[:-1] + L_cum[1:]) * 0.5
+        spans = np.array([self._cross_section_span(q, s) for s in mids], dtype=float)
+        thicknesses = np.maximum(1, (spans * ppm).astype(np.int32))
+        return thicknesses, 0
 
-        num_segments = lengths.size if lengths is not None else r_arr.size
-        if r_arr.size == num_segments:
-            thicknesses = np.maximum(1, (r_arr * ppm).astype(np.int32))
-            return thicknesses, 0
-
-        return None, max(1, int(float(np.mean(r_arr)) * ppm))
-
-    def _base_radius_px(self, ppm: float) -> int:
-        r = getattr(self.robot, "r", None)
-        if r is None:
+    def _base_radius_px(self, ppm: float, q: Array) -> int:
+        base_radius_m = self.base_radius_scale * self._cross_section_span(q, 0.0)
+        if base_radius_m <= 0.0:
             base_radius_m = 0.02 * self.L_max
-        else:
-            r_arr = np.atleast_1d(np.asarray(r, dtype=float))
-            base_radius_m = float(np.mean(r_arr))
         return max(2, int(base_radius_m * ppm))
 
     def render_frame(self, q: Array) -> np.ndarray:
@@ -140,7 +155,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
 
         # Draw base marker
-        base_radius = self._base_radius_px(ppm)
+        base_radius = self._base_radius_px(ppm, q)
         cv2.circle(img, tuple(origin_uv), base_radius, self.base_color, -1)
 
         # Compute backbone curve in pixel coordinates (N, 2)
@@ -153,7 +168,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         curve_px[:, 1] = -curve_px[:, 1]  # Invert y for image coordinates
 
         lengths = self._segment_lengths()
-        thicknesses, uniform_thickness = self._auto_backbone_thickness(ppm, lengths)
+        thicknesses, uniform_thickness = self._auto_backbone_thickness(ppm, lengths, q)
 
         if thicknesses is not None and lengths is not None:
             s_ps = np.linspace(0.0, self.L_max, self.num_points)

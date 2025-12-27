@@ -2,11 +2,9 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as onp
 
 jax.config.update("jax_enable_x64", True)
-from soromox.rendering import MatplotlibRenderer  # double precision
+from soromox.rendering import Open3DRenderer  # double precision
 from soromox.systems import GVS, SystemState
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
@@ -105,18 +103,12 @@ if __name__ == "__main__":
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
-    # Plot the initial configuration using MatplotlibRenderer
-    renderer = MatplotlibRenderer(robot, num_points=50)
-    curve = onp.array(renderer.compute_backbone_curve(q0))
+    if Open3DRenderer is None:
+        raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
-    fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": "3d"})
-    ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_zlabel("Z [m]")
-    ax.set_title("Initial configuration")
-    ax.axis("equal")
-    plt.show()
+    # Visualize the initial configuration using Open3DRenderer
+    renderer = Open3DRenderer(robot, num_points=50)
+    renderer.show(q0)
 
     # Actuation parameters
     u = jnp.zeros_like(q0)
@@ -145,12 +137,11 @@ if __name__ == "__main__":
     # End-effector position upon time
     # =====================================================
     forward_kinematics_end_effector = jax.jit(
-        partial(
-            robot.forward_kinematics,
-            s=jnp.sum(robot.V_L),  # end-effector position
-        )
+        partial(robot.forward_kinematics, s=robot.length)  # end-effector position
     )
     g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
+
+    import matplotlib.pyplot as plt
 
     plt.figure()
     plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
@@ -180,4 +171,4 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
+    renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)

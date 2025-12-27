@@ -43,7 +43,7 @@ class BaseSoftRobotRenderer(ABC):
         """Initialize the renderer with a robot and visualization parameters.
 
         Args:
-            robot: Robot system with forward_kinematics method and L attribute
+            robot: Robot system with forward_kinematics method and length property
             width: Image width in pixels
             height: Image height in pixels
             num_points: Number of points for backbone curve discretization
@@ -55,13 +55,8 @@ class BaseSoftRobotRenderer(ABC):
         self.num_points = num_points
         self.background_color = background_color
 
-        # Handle different length attribute names (L for PCS, V_L for GVS)
-        if hasattr(robot, "L"):
-            self.L_max = float(jnp.sum(robot.L))
-        elif hasattr(robot, "V_L"):
-            self.L_max = float(jnp.sum(robot.V_L))
-        else:
-            raise AttributeError("Robot must have 'L' or 'V_L' attribute for lengths")
+        # Total robot length
+        self.L_max = float(jnp.asarray(robot.length))
 
     @property
     @abstractmethod

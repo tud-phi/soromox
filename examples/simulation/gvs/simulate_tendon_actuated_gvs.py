@@ -3,10 +3,9 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import numpy as onp
 import optimistix as optx
 
-from soromox.rendering import MatplotlibRenderer
+from soromox.rendering import Open3DRenderer
 from soromox.systems import SystemState, TendonActuatedGVS
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
@@ -191,8 +190,11 @@ l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
 print("tendon lengths (m):", jax.device_get(l_tendons))
 
 
+if Open3DRenderer is None:
+    raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
+
 # Create renderer for visualization
-renderer = MatplotlibRenderer(robot, num_points=50)
+renderer = Open3DRenderer(robot, num_points=50)
 
 # =====================================================
 # Static equilibrium (solve statics) and plot its shape
@@ -202,54 +204,13 @@ res_stat = solve_equilibrium(robot, u, q0)
 q_stat = res_stat.value  # equilibrium generalized coordinates
 print("q* =", q_stat)
 
-# Draw static equilibrium curve
-curve_stat = onp.array(renderer.compute_backbone_curve(q_stat))
-
-# Also draw initial (q0) for comparison
-curve_init = onp.array(renderer.compute_backbone_curve(q0))
-
-fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(111, projection="3d")
-ax.plot(
-    curve_init[:, 0],
-    curve_init[:, 1],
-    curve_init[:, 2],
-    lw=2,
-    color="gray",
-    linestyle="--",
-    label="Initial (q0)",
-)
-ax.plot(
-    curve_stat[:, 0],
-    curve_stat[:, 1],
-    curve_stat[:, 2],
-    lw=4,
-    color="red",
-    label="Static equilibrium (q*)",
-)
-ax.set_xlabel("X [m]")
-ax.set_ylabel("Y [m]")
-ax.set_zlabel("Z [m]")
-ax.set_title("Static equilibrium shape")
-ax.legend()
-ax.axis("equal")
-plt.show()
+renderer.show(q_stat)
+renderer.show(q0)
 
 
 # =====================================================
 # Simulation upon time
 # =====================================================
-
-# Plot the initial configuration
-curve = onp.array(renderer.compute_backbone_curve(q0))
-fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": "3d"})
-ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-ax.set_xlabel("X [m]")
-ax.set_ylabel("Y [m]")
-ax.set_zlabel("Z [m]")
-ax.set_title("Initial configuration")
-ax.axis("equal")
-plt.show()
 
 # Simulation time parameters
 t0 = 0.0
@@ -276,11 +237,8 @@ print(f"Simulation completed with {len(ts)} time steps.")
 # End-effector position upon time
 # =====================================================
 forward_kinematics_end_effector = jax.jit(
-    partial(
-        robot.forward_kinematics,
-        s=jnp.sum(robot.V_L),  # end-effector position
+        partial(robot.forward_kinematics, s=robot.length)  # end-effector position
     )
-)
 g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
 
@@ -324,7 +282,7 @@ p_marker_3_ts = g_marker_3_ts[:, :3, 3] + g_marker_3_ts[:, :3, :3] @ jnp.array(
 forward_kinematics_marker_4 = jax.jit(
     partial(
         robot.forward_kinematics,
-        s=jnp.sum(robot.V_L),
+        s=robot.length,
     )
 )
 g_marker_4_ts = jax.vmap(forward_kinematics_marker_4)(q_ts)
@@ -361,4 +319,4 @@ plt.show()
 # =====================================================
 # Plot the robot configuration upon time
 # =====================================================
-renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
+renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)

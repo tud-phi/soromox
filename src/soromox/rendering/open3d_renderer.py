@@ -24,6 +24,7 @@ import copy
 import os
 import subprocess
 import time
+import warnings
 from dataclasses import dataclass
 
 import jax
@@ -45,7 +46,12 @@ _GUI_APP_INITIALIZED = False
 DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import (
+    CROSS_SECTION_CIRCULAR,
+    CROSS_SECTION_ELLIPTICAL,
+    CROSS_SECTION_RECTANGULAR,
+    SoftRobot,
+)
 
 # ======================================================================================
 # Geometry helper functions (module-level, stateless)
@@ -114,6 +120,85 @@ def _make_sphere(
     return mesh
 
 
+@dataclass(frozen=True)
+class UnitMesh:
+    vertices: np.ndarray
+    triangles: np.ndarray
+    normals: np.ndarray
+
+
+@dataclass
+class CachedMesh:
+    mesh: o3d.geometry.TriangleMesh
+    base_vertices: np.ndarray
+    base_normals: np.ndarray | None
+    scale_base: np.ndarray
+    dynamic_length: bool
+    rotate_to_axis: bool
+
+
+def _unit_mesh_from_o3d(mesh: o3d.geometry.TriangleMesh) -> UnitMesh:
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    triangles = np.asarray(mesh.triangles, dtype=np.int32)
+    normals = np.asarray(mesh.vertex_normals, dtype=np.float64)
+    return UnitMesh(vertices=vertices, triangles=triangles, normals=normals)
+
+
+def _make_unit_sphere_mesh(resolution: int) -> UnitMesh:
+    mesh = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=resolution)
+    mesh.compute_vertex_normals()
+    return _unit_mesh_from_o3d(mesh)
+
+
+def _make_unit_cylinder_mesh(resolution: int) -> UnitMesh:
+    mesh = o3d.geometry.TriangleMesh.create_cylinder(
+        radius=1.0, height=1.0, resolution=resolution, split=1
+    )
+    mesh.translate(np.array([0.0, 0.0, -0.5], dtype=np.float64), relative=True)
+    mesh.compute_vertex_normals()
+    return _unit_mesh_from_o3d(mesh)
+
+
+def _make_unit_box_mesh() -> UnitMesh:
+    mesh = o3d.geometry.TriangleMesh.create_box(width=1.0, height=1.0, depth=1.0)
+    mesh.translate(np.array([-0.5, -0.5, -0.5], dtype=np.float64), relative=True)
+    mesh.compute_vertex_normals()
+    return _unit_mesh_from_o3d(mesh)
+
+
+def _axis_alignment_rotation(axis: np.ndarray) -> np.ndarray:
+    """Rotation matrix aligning +Z with the given axis."""
+    axis = np.asarray(axis, dtype=np.float64)
+    length = float(np.linalg.norm(axis))
+    if length < 1e-9:
+        axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    else:
+        axis = axis / length
+
+    z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    v = np.cross(z_axis, axis)
+    s = np.linalg.norm(v)
+    c = float(np.dot(z_axis, axis))
+    if s < 1e-9 and c > 0.0:
+        return np.eye(3)
+    if s < 1e-9 and c < 0.0:
+        return np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, -1.0, 0.0],
+                [0.0, 0.0, -1.0],
+            ]
+        )
+    vx = np.array(
+        [
+            [0.0, -v[2], v[1]],
+            [v[2], 0.0, -v[0]],
+            [-v[1], v[0], 0.0],
+        ]
+    )
+    return np.eye(3) + vx + vx @ vx * ((1 - c) / (s**2))
+
+
 def _make_cylinder_between(
     p0: np.ndarray,
     p1: np.ndarray,
@@ -141,31 +226,125 @@ def _make_cylinder_between(
         mesh.paint_uniform_color(np.array(color, dtype=np.float64))
 
     # Align cylinder's +Z with desired axis
-    z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
-    v = np.cross(z_axis, axis)
-    s = np.linalg.norm(v)
-    c = np.dot(z_axis, axis)
-    if s < 1e-9 and c > 0.0:
-        R = np.eye(3)
-    elif s < 1e-9 and c < 0.0:
-        R = np.array(
-            [
-                [1.0, 0.0, 0.0],
-                [0.0, -1.0, 0.0],
-                [0.0, 0.0, -1.0],
-            ]
-        )
-    else:
-        vx = np.array(
-            [
-                [0.0, -v[2], v[1]],
-                [v[2], 0.0, -v[0]],
-                [-v[1], v[0], 0.0],
-            ]
-        )
-        R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s**2))
+    R = _axis_alignment_rotation(axis)
     mesh.rotate(R, center=np.zeros(3))
 
+    mid = (p0 + p1) / 2.0
+    mesh.translate(mid, relative=False)
+    return mesh
+
+
+def _make_box_centered(
+    center_xyz: np.ndarray,
+    width: float,
+    height: float,
+    depth: float,
+    color: tuple[float, float, float],
+    apply_color: bool = True,
+    apply_translation: bool = True,
+) -> o3d.geometry.TriangleMesh:
+    """Create a box mesh centered at center_xyz."""
+    mesh = o3d.geometry.TriangleMesh.create_box(
+        width=float(width), height=float(height), depth=float(depth)
+    )
+    mesh.compute_vertex_normals()
+    mesh.translate(
+        np.array([-width / 2.0, -height / 2.0, -depth / 2.0], dtype=np.float64),
+        relative=True,
+    )
+    if apply_color:
+        mesh.paint_uniform_color(np.array(color, dtype=np.float64))
+    if apply_translation:
+        mesh.translate(np.array(center_xyz, dtype=np.float64), relative=False)
+    return mesh
+
+
+def _make_ellipsoid(
+    center_xyz: np.ndarray,
+    radii: tuple[float, float, float],
+    color: tuple[float, float, float],
+    resolution: int = 16,
+    apply_color: bool = True,
+    apply_translation: bool = True,
+) -> o3d.geometry.TriangleMesh:
+    """Create an ellipsoid mesh centered at center_xyz."""
+    rx, ry, rz = radii
+    mesh = o3d.geometry.TriangleMesh.create_sphere(radius=1.0, resolution=resolution)
+    mesh.compute_vertex_normals()
+    scale = np.diag([float(rx), float(ry), float(rz), 1.0])
+    mesh.transform(scale)
+    if apply_color:
+        mesh.paint_uniform_color(np.array(color, dtype=np.float64))
+    if apply_translation:
+        mesh.translate(np.array(center_xyz, dtype=np.float64), relative=False)
+    return mesh
+
+
+def _make_box_between(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    width: float,
+    height: float,
+    color: tuple[float, float, float],
+    apply_color: bool = True,
+) -> o3d.geometry.TriangleMesh:
+    """Create a box prism connecting p0->p1 with rectangular cross-section."""
+    p0 = np.asarray(p0, dtype=np.float64)
+    p1 = np.asarray(p1, dtype=np.float64)
+    axis = p1 - p0
+    length = float(np.linalg.norm(axis))
+    if length < 1e-9:
+        axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        length = 1e-9
+    else:
+        axis = axis / length
+    mesh = o3d.geometry.TriangleMesh.create_box(
+        width=float(width), height=float(height), depth=length
+    )
+    mesh.compute_vertex_normals()
+    mesh.translate(
+        np.array([-width / 2.0, -height / 2.0, -length / 2.0], dtype=np.float64),
+        relative=True,
+    )
+    if apply_color:
+        mesh.paint_uniform_color(np.array(color, dtype=np.float64))
+    R = _axis_alignment_rotation(axis)
+    mesh.rotate(R, center=np.zeros(3))
+    mid = (p0 + p1) / 2.0
+    mesh.translate(mid, relative=False)
+    return mesh
+
+
+def _make_elliptical_cylinder_between(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    a: float,
+    b: float,
+    color: tuple[float, float, float],
+    resolution: int = 20,
+    apply_color: bool = True,
+) -> o3d.geometry.TriangleMesh:
+    """Create an elliptical cylinder mesh connecting p0->p1."""
+    p0 = np.asarray(p0, dtype=np.float64)
+    p1 = np.asarray(p1, dtype=np.float64)
+    axis = p1 - p0
+    length = float(np.linalg.norm(axis))
+    if length < 1e-9:
+        axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        length = 1e-9
+    else:
+        axis = axis / length
+
+    mesh = o3d.geometry.TriangleMesh.create_cylinder(
+        radius=1.0, height=length, resolution=resolution, split=1
+    )
+    mesh.compute_vertex_normals()
+    scale = np.diag([float(a), float(b), 1.0, 1.0])
+    mesh.transform(scale)
+    if apply_color:
+        mesh.paint_uniform_color(np.array(color, dtype=np.float64))
+    R = _axis_alignment_rotation(axis)
+    mesh.rotate(R, center=np.zeros(3))
     mid = (p0 + p1) / 2.0
     mesh.translate(mid, relative=False)
     return mesh
@@ -388,6 +567,7 @@ class DynamicSpheres:
 @dataclass
 class SceneData:
     curves: np.ndarray  # (N, T, P, 3)
+    q_ts: np.ndarray  # (N, T, DOF)
     ts: np.ndarray  # (T,)
     layout: SegmentLayout
     robot_colors_rgba: np.ndarray | None  # (N, 4) or None for per-segment colors
@@ -414,7 +594,7 @@ class RecordingConfig:
 @dataclass
 class LegacySceneHandles:
     base_meshes: list
-    backbone_meshes: list[list[list]]
+    backbone_meshes: list[list[list[CachedMesh]]]
     tendon_lines: list[list]
     static_meshes: list
     dynamic_meshes: list
@@ -448,7 +628,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
         robot_colors: str | Array | np.ndarray | None = None,
-        backbone_style: str = "spheres",
+        backbone_style: str = "discrete",
         tube_resolution: int = 20,
         sphere_resolution: int = 32,
         base_plate_color: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -459,7 +639,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
-        viewer_backend: str = "legacy",
     ):
         """Initialize Open3D renderer.
 
@@ -477,18 +656,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 - "same": All robots use the first resolved segment color
                 - Colormap name (e.g., "viridis", "plasma"): Distinct colors per robot
                 - Array of RGB or RGBA colors of shape (N, 3/4); cycled if fewer than N
-            backbone_style: "spheres" (default) or "tube" (swept cylinder segments)
+            backbone_style: "discrete" or "swept"
             tube_resolution: Radial resolution for tube segments
             sphere_resolution: Resolution for backbone spheres
             base_plate_color: RGB color for the base plate geometry
-            base_plate_radius_scale: Multiplier applied to the maximum segment radius to size the base plate
+            base_plate_radius_scale: Multiplier applied to the maximum cross-section radius to size the base plate
             base_plate_thickness: Absolute thickness of the base plate geometry
             grid_spacing: (x, y) spacing between robot bases for batched rendering
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             tendon_color: RGB color for tendon lines
             tendon_line_width: Width of tendon lines
             camera_margin_ratio: Margin ratio for camera bounding box
-            viewer_backend: "legacy" (default), "gui" (force SceneWidget), or "auto"
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -510,11 +688,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
         self.backbone_style = backbone_style
+        self._backbone_mode = self._resolve_backbone_mode(backbone_style)
         self.tube_resolution = int(tube_resolution)
-        vb = viewer_backend.lower()
-        if vb not in ("auto", "gui", "legacy"):
-            raise ValueError('viewer_backend must be "auto", "gui", or "legacy"')
-        self.viewer_backend = vb
+        self._warned_dynamic_geometry = False
+
+        self._unit_meshes = {
+            "sphere": _make_unit_sphere_mesh(self.sphere_resolution),
+            "ellipsoid": _make_unit_sphere_mesh(self.sphere_resolution),
+            "box": _make_unit_box_mesh(),
+            "cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
+            "elliptical_cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
+        }
 
         # Cache tendon FK if available
         self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
@@ -522,6 +706,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             self._batched_fk_tendons = jax.vmap(
                 robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
             )
+
+    @staticmethod
+    def _resolve_backbone_mode(style: str) -> str:
+        style_norm = str(style).strip().lower()
+        style_map = {
+            "discrete": "discrete",
+            "swept": "swept",
+        }
+        if style_norm not in style_map:
+            raise ValueError("backbone_style must be one of: discrete, swept")
+        return style_map[style_norm]
 
     @property
     def is_3d(self) -> bool:
@@ -587,6 +782,48 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         blended = alpha * rgb + (1.0 - alpha) * bg
         return tuple(np.clip(blended, 0.0, 1.0).tolist())
 
+    def _instantiate_mesh(self, unit: UnitMesh, color: tuple[float, float, float]):
+        mesh = o3d.geometry.TriangleMesh()
+        mesh.vertices = o3d.utility.Vector3dVector(unit.vertices.copy())
+        mesh.triangles = o3d.utility.Vector3iVector(unit.triangles.copy())
+        if unit.normals.size:
+            mesh.vertex_normals = o3d.utility.Vector3dVector(unit.normals.copy())
+        mesh.paint_uniform_color(np.array(color, dtype=np.float64))
+        return mesh
+
+    def _apply_cached_mesh(
+        self,
+        cached: CachedMesh,
+        translation: np.ndarray,
+        rotation: np.ndarray | None,
+        length: float | None,
+    ) -> None:
+        if cached.dynamic_length:
+            length_val = max(float(length or 0.0), 1e-9)
+            scale = np.array(
+                [cached.scale_base[0], cached.scale_base[1], length_val],
+                dtype=np.float64,
+            )
+        else:
+            scale = np.asarray(cached.scale_base, dtype=np.float64)
+
+        if cached.rotate_to_axis and rotation is not None:
+            R = rotation
+        else:
+            R = np.eye(3)
+
+        linear = R @ np.diag(scale)
+        verts = cached.base_vertices @ linear.T + translation
+        cached.mesh.vertices = o3d.utility.Vector3dVector(verts)
+
+        if cached.base_normals is not None and cached.base_normals.size:
+            scale_safe = np.where(scale > 1e-9, scale, 1e-9)
+            normals = cached.base_normals / scale_safe
+            normals = normals @ R.T
+            norms = np.linalg.norm(normals, axis=1, keepdims=True)
+            normals = np.where(norms > 1e-9, normals / norms, normals)
+            cached.mesh.vertex_normals = o3d.utility.Vector3dVector(normals)
+
     def _frame_intervals_from_ts(self, ts: Array, playback_speed: float) -> np.ndarray:
         """Compute per-frame wall-clock intervals from timestamps, scaled by playback speed."""
         speed = float(playback_speed)
@@ -606,8 +843,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
     def _compute_segment_layout(self, P: int) -> SegmentLayout:
         """Compute start/end indices, radii, and colors for backbone segments."""
-        L_np = np.asarray(self.robot.L, dtype=np.float64).reshape(-1)
-        r_seg = np.asarray(self.robot.r, dtype=np.float64).reshape(-1)
+        if hasattr(self.robot, "L"):
+            L_np = np.asarray(self.robot.L, dtype=np.float64).reshape(-1)
+        elif hasattr(self.robot, "V_L"):
+            L_np = np.asarray(self.robot.V_L, dtype=np.float64).reshape(-1)
+        else:
+            L_np = np.array([self.L_max], dtype=np.float64)
+
+        if hasattr(self.robot, "r"):
+            r_seg = np.asarray(self.robot.r, dtype=np.float64).reshape(-1)
+        else:
+            r_seg = np.zeros_like(L_np, dtype=np.float64)
         counts = _split_counts_by_lengths(P, L_np)
         starts = np.cumsum([0] + counts[:-1]).astype(int)
         ends = np.cumsum(counts).astype(int)
@@ -711,19 +957,64 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         colors = self._normalize_color_array(dynamics_spheres_colors, N, default_color)
         return DynamicSpheres(trajectories=centers, radii=radii, colors=colors)
 
-    def _resolve_backend(self, backend: str | None) -> str:
-        """Resolve requested backend to either 'legacy' or 'gui'."""
-        mode = (backend or self.viewer_backend or "legacy").lower()
-        if mode == "auto":
-            try:
-                import open3d.visualization.gui as _  # noqa: F401
+    @staticmethod
+    def _effective_radius(geom_tag: int, params: np.ndarray) -> float:
+        params = np.asarray(params, dtype=np.float64).reshape(-1)
+        if geom_tag == CROSS_SECTION_CIRCULAR:
+            return float(params[0]) if params.size else 0.0
+        if geom_tag == CROSS_SECTION_RECTANGULAR:
+            return 0.5 * float(max(params[0], params[1])) if params.size >= 2 else 0.0
+        if geom_tag == CROSS_SECTION_ELLIPTICAL:
+            return float(max(params[0], params[1])) if params.size >= 2 else 0.0
+        return float(max(params[0], params[1])) if params.size >= 2 else 0.0
 
-                return "gui"
-            except Exception:
-                return "legacy"
-        if mode in ("legacy", "gui"):
-            return mode
-        raise ValueError("backend must be 'legacy', 'gui', or 'auto'")
+    def _cross_sections_for_points(
+        self, q: Array, s_ps: np.ndarray
+    ) -> tuple[list[tuple[int, np.ndarray]], float]:
+        sections: list[tuple[int, np.ndarray]] = []
+        max_radius = 0.0
+        q_arr = jnp.asarray(q)
+        for s_val in s_ps:
+            geom_tag, geom_params = self.robot.cross_section_geometry(q_arr, s_val)
+            tag = int(np.asarray(geom_tag).item())
+            params = np.asarray(geom_params, dtype=np.float64).reshape(-1)
+            sections.append((tag, params))
+            max_radius = max(max_radius, self._effective_radius(tag, params))
+        if max_radius <= 0.0:
+            max_radius = 0.02 * self.L_max
+        return sections, max_radius
+
+    def _primitive_from_section(
+        self, geom_tag: int, params: np.ndarray
+    ) -> tuple[str, np.ndarray, bool, bool]:
+        params = np.asarray(params, dtype=np.float64).reshape(-1)
+        mode = self._backbone_mode
+        eps = 1e-6
+        if geom_tag == CROSS_SECTION_CIRCULAR:
+            radius = max(float(params[0]) if params.size else 0.0, eps)
+            if mode == "swept":
+                return "cylinder", np.array([radius, radius, 1.0]), True, True
+            return "sphere", np.array([radius, radius, radius]), False, False
+        if geom_tag == CROSS_SECTION_RECTANGULAR:
+            width = max(float(params[0]) if params.size else 0.0, eps)
+            height = max(float(params[1]) if params.size > 1 else 0.0, eps)
+            if mode == "swept":
+                return "box", np.array([width, height, 1.0]), True, True
+            depth = max(width, height)
+            return "box", np.array([width, height, depth]), False, False
+        if geom_tag == CROSS_SECTION_ELLIPTICAL:
+            a_val = max(float(params[0]) if params.size else 0.0, eps)
+            b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
+            if mode == "swept":
+                return "elliptical_cylinder", np.array([a_val, b_val, 1.0]), True, True
+            rz = max(a_val, b_val)
+            return "ellipsoid", np.array([a_val, b_val, rz]), False, False
+        a_val = max(float(params[0]) if params.size else 0.0, eps)
+        b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
+        if mode == "swept":
+            return "elliptical_cylinder", np.array([a_val, b_val, 1.0]), True, True
+        rz = max(a_val, b_val)
+        return "ellipsoid", np.array([a_val, b_val, rz]), False, False
 
     def _prepare_scene_data(
         self,
@@ -753,6 +1044,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             )
 
         N, T, _ = q_ts_arr.shape
+        q_ts_np = np.asarray(q_ts_arr, dtype=np.float64)
         if ts_np.shape[0] not in (1, T):
             raise ValueError(
                 f"ts length ({ts_np.shape[0]}) must be 1 or match q_ts time dimension ({T})"
@@ -822,6 +1114,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         return SceneData(
             curves=curves,
+            q_ts=q_ts_np,
             ts=ts_np,
             layout=layout,
             robot_colors_rgba=robot_colors_rgba,
@@ -860,9 +1153,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         scene.clear_geometry()
         layout = scene_data.layout
+        s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
 
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
+            q_frame = scene_data.q_ts[robot_idx, frame_idx]
+            sections, max_radius = self._cross_sections_for_points(q_frame, s_ps)
             color_override = (
                 scene_data.robot_colors_rgba[robot_idx]
                 if scene_data.robot_colors_rgba is not None
@@ -871,7 +1167,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_color_rgba = _ensure_rgba(np.asarray(self.base_plate_color))[0]
             base_mesh = _make_base_plate(
                 curve[0],
-                radius=float(self.base_plate_radius_scale * layout.radii.max()),
+                radius=float(self.base_plate_radius_scale * max_radius),
                 thickness=self.base_plate_thickness,
                 color=tuple(base_color_rgba[:3]),
                 apply_color=False,
@@ -887,32 +1183,120 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     else layout.colors_rgba[s]
                 )
                 raw_color_rgb = tuple(np.asarray(raw_color_rgba).reshape(-1)[:3])
-                if self.backbone_style == "tube" and c1 - c0 >= 1:
+                if self._backbone_mode == "swept" and c1 - c0 >= 1:
                     for p in range(c0, c1 - 1):
-                        cyl = _make_cylinder_between(
-                            curve[p],
-                            curve[p + 1],
-                            radius=float(layout.radii[min(s, len(layout.radii) - 1)]),
-                            color=raw_color_rgb,
-                            resolution=self.tube_resolution,
-                            apply_color=False,
-                        )
-                        scene.add_geometry(
-                            f"tube_{robot_idx}_{s}_{p}", cyl, mat_for(raw_color_rgba)
-                        )
+                        geom_type, params = sections[p]
+                        if geom_type == CROSS_SECTION_CIRCULAR:
+                            radius = float(params[0]) if params.size else 0.0
+                            radius = max(radius, 1e-6)
+                            cyl = _make_cylinder_between(
+                                curve[p],
+                                curve[p + 1],
+                                radius=radius,
+                                color=raw_color_rgb,
+                                resolution=self.tube_resolution,
+                                apply_color=False,
+                            )
+                            scene.add_geometry(
+                                f"tube_{robot_idx}_{s}_{p}",
+                                cyl,
+                                mat_for(raw_color_rgba),
+                            )
+                        elif geom_type == CROSS_SECTION_RECTANGULAR:
+                            if params.size < 2:
+                                continue
+                            width = max(float(params[0]), 1e-6)
+                            height = max(float(params[1]), 1e-6)
+                            box = _make_box_between(
+                                curve[p],
+                                curve[p + 1],
+                                width=width,
+                                height=height,
+                                color=raw_color_rgb,
+                                apply_color=False,
+                            )
+                            scene.add_geometry(
+                                f"box_{robot_idx}_{s}_{p}",
+                                box,
+                                mat_for(raw_color_rgba),
+                            )
+                        else:
+                            if params.size < 2:
+                                continue
+                            a_val = max(float(params[0]), 1e-6)
+                            b_val = max(float(params[1]), 1e-6)
+                            cyl = _make_elliptical_cylinder_between(
+                                curve[p],
+                                curve[p + 1],
+                                a=a_val,
+                                b=b_val,
+                                color=raw_color_rgb,
+                                resolution=self.tube_resolution,
+                                apply_color=False,
+                            )
+                            scene.add_geometry(
+                                f"ell_{robot_idx}_{s}_{p}",
+                                cyl,
+                                mat_for(raw_color_rgba),
+                            )
                 else:
                     for p in range(c0, c1):
-                        sp = _make_sphere(
-                            curve[p],
-                            radius=float(layout.radii[min(s, len(layout.radii) - 1)]),
-                            color=raw_color_rgb,
-                            resolution=self.sphere_resolution,
-                            apply_color=False,
-                            apply_translation=True,
-                        )
-                        scene.add_geometry(
-                            f"sphere_{robot_idx}_{s}_{p}", sp, mat_for(raw_color_rgba)
-                        )
+                        geom_type, params = sections[p]
+                        if geom_type == CROSS_SECTION_CIRCULAR:
+                            radius = float(params[0]) if params.size else 0.0
+                            radius = max(radius, 1e-6)
+                            sp = _make_sphere(
+                                curve[p],
+                                radius=radius,
+                                color=raw_color_rgb,
+                                resolution=self.sphere_resolution,
+                                apply_color=False,
+                                apply_translation=True,
+                            )
+                            scene.add_geometry(
+                                f"sphere_{robot_idx}_{s}_{p}",
+                                sp,
+                                mat_for(raw_color_rgba),
+                            )
+                        elif geom_type == CROSS_SECTION_RECTANGULAR:
+                            if params.size < 2:
+                                continue
+                            width = max(float(params[0]), 1e-6)
+                            height = max(float(params[1]), 1e-6)
+                            depth = max(width, height)
+                            box = _make_box_centered(
+                                curve[p],
+                                width=width,
+                                height=height,
+                                depth=depth,
+                                color=raw_color_rgb,
+                                apply_color=False,
+                                apply_translation=True,
+                            )
+                            scene.add_geometry(
+                                f"box_{robot_idx}_{s}_{p}",
+                                box,
+                                mat_for(raw_color_rgba),
+                            )
+                        else:
+                            if params.size < 2:
+                                continue
+                            a_val = max(float(params[0]), 1e-6)
+                            b_val = max(float(params[1]), 1e-6)
+                            rz = max(a_val, b_val)
+                            ell = _make_ellipsoid(
+                                curve[p],
+                                radii=(a_val, b_val, rz),
+                                color=raw_color_rgb,
+                                resolution=self.sphere_resolution,
+                                apply_color=False,
+                                apply_translation=True,
+                            )
+                            scene.add_geometry(
+                                f"ell_{robot_idx}_{s}_{p}",
+                                ell,
+                                mat_for(raw_color_rgba),
+                            )
 
             if scene_data.tendon_curves is not None:
                 robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
@@ -1040,7 +1424,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
-            backend: Viewer backend override ("legacy", "gui", or "auto").
+            backend: Viewer backend override ("legacy" or "auto").
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
@@ -1098,7 +1482,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Args:
             ts: Time stamps of shape (T,).
             q_ts: Configurations of shape (T, DOF) or batched (N, T, DOF).
-            backend: Viewer backend override ("legacy", "gui", or "auto").
+            backend: Viewer backend override ("legacy" or "auto").
             playback_speed: Playback speed multiplier (>0).
             loop: Whether to loop the animation when it reaches the end.
             record_path: Optional path to save frames or video (extension determines mode).
@@ -1122,7 +1506,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 "Open3D is not installed. Install with: pip install open3d"
             )
 
-        backend_resolved = self._resolve_backend(backend)
         scene_data = self._prepare_scene_data(
             ts=ts,
             q_ts=q_ts,
@@ -1138,17 +1521,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         record_cfg = RecordingConfig(
             path=record_path, prefix=record_prefix, every_n=record_every_n
         )
-        if backend_resolved == "legacy":
-            self._run_legacy_viewer(
-                scene_data,
-                playback_speed=playback_speed,
-                loop=loop,
-                record_cfg=record_cfg,
-                window_name=window_name,
-            )
-            return
-
-        self._run_gui_viewer(
+        self._run_viewer(
             scene_data,
             playback_speed=playback_speed,
             loop=loop,
@@ -1254,57 +1627,82 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         vis,
         curve0: np.ndarray,
+        sections: list[tuple[int, np.ndarray]],
+        max_radius: float,
         layout: SegmentLayout,
         color_override: np.ndarray | None = None,
-    ) -> tuple[object, list[list[object]]]:
+    ) -> tuple[object, list[list[CachedMesh]]]:
         """Add base and backbone meshes for one robot; return handles."""
         base_color = self._blend_with_background(self.base_plate_color)
         base_mesh = _make_base_plate(
             curve0[0],
-            radius=float(self.base_plate_radius_scale * layout.radii.max()),
+            radius=float(self.base_plate_radius_scale * max_radius),
             thickness=self.base_plate_thickness,
             color=base_color,
         )
         vis.add_geometry(base_mesh)
 
-        spheres_groups: list[list] = []
+        meshes_groups: list[list[CachedMesh]] = []
         for s in range(layout.segments):
-            seg_spheres: list = []
+            seg_meshes: list[CachedMesh] = []
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
             raw_color_rgba = (
                 color_override if color_override is not None else layout.colors_rgba[s]
             )
             seg_color = self._blend_with_background(raw_color_rgba)
-            if self.backbone_style == "tube" and c1 - c0 >= 1:
+            if self._backbone_mode == "swept" and c1 - c0 >= 1:
                 for p in range(c0, c1 - 1):
-                    cyl = _make_cylinder_between(
-                        curve0[p],
-                        curve0[p + 1],
-                        radius=float(layout.radii[min(s, len(layout.radii) - 1)]),
-                        color=seg_color,
-                        resolution=self.tube_resolution,
+                    geom_tag, params = sections[p]
+                    unit_key, scale_base, dynamic_length, rotate_to_axis = (
+                        self._primitive_from_section(geom_tag, params)
                     )
-                    seg_spheres.append(cyl)
-                    vis.add_geometry(cyl)
+                    unit = self._unit_meshes[unit_key]
+                    mesh = self._instantiate_mesh(unit, seg_color)
+                    cached = CachedMesh(
+                        mesh=mesh,
+                        base_vertices=unit.vertices,
+                        base_normals=unit.normals,
+                        scale_base=scale_base,
+                        dynamic_length=dynamic_length,
+                        rotate_to_axis=rotate_to_axis,
+                    )
+                    p0 = curve0[p]
+                    p1 = curve0[p + 1]
+                    axis = p1 - p0
+                    length = float(np.linalg.norm(axis))
+                    R = _axis_alignment_rotation(axis)
+                    mid = (p0 + p1) / 2.0
+                    self._apply_cached_mesh(cached, mid, R, length)
+                    seg_meshes.append(cached)
+                    vis.add_geometry(mesh)
             else:
                 for p in range(c0, c1):
-                    sp = _make_sphere(
-                        curve0[p],
-                        radius=float(layout.radii[min(s, len(layout.radii) - 1)]),
-                        color=seg_color,
-                        resolution=self.sphere_resolution,
+                    geom_tag, params = sections[p]
+                    unit_key, scale_base, dynamic_length, rotate_to_axis = (
+                        self._primitive_from_section(geom_tag, params)
                     )
-                    seg_spheres.append(sp)
-                    vis.add_geometry(sp)
-            spheres_groups.append(seg_spheres)
-        return base_mesh, spheres_groups
+                    unit = self._unit_meshes[unit_key]
+                    mesh = self._instantiate_mesh(unit, seg_color)
+                    cached = CachedMesh(
+                        mesh=mesh,
+                        base_vertices=unit.vertices,
+                        base_normals=unit.normals,
+                        scale_base=scale_base,
+                        dynamic_length=dynamic_length,
+                        rotate_to_axis=rotate_to_axis,
+                    )
+                    self._apply_cached_mesh(cached, curve0[p], None, None)
+                    seg_meshes.append(cached)
+                    vis.add_geometry(mesh)
+            meshes_groups.append(seg_meshes)
+        return base_mesh, meshes_groups
 
     def _update_robot_geometry(
         self,
         vis,
         curve: np.ndarray,
         base_mesh,
-        spheres_groups: list[list],
+        meshes_groups: list[list[CachedMesh]],
         layout: SegmentLayout,
     ) -> None:
         """Translate base and backbone geometry to a new curve position."""
@@ -1312,59 +1710,62 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_mesh.translate(delta, relative=True)
         vis.update_geometry(base_mesh)
 
-        for s in range(len(spheres_groups)):
+        for s in range(len(meshes_groups)):
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
-            seg_spheres = spheres_groups[s]
-            if self.backbone_style == "tube" and c1 - c0 >= 1:
+            seg_meshes = meshes_groups[s]
+            if self._backbone_mode == "swept" and c1 - c0 >= 1:
                 # Cylinders need full re-orientation + centering, not just translation
                 for i_local, p in enumerate(
-                    range(c0, min(c1 - 1, c0 + len(seg_spheres)))
+                    range(c0, min(c1 - 1, c0 + len(seg_meshes)))
                 ):
-                    mesh = seg_spheres[i_local]
-                    # Preserve existing color while regenerating geometry
-                    color_arr = np.asarray(mesh.vertex_colors)
-                    base_color = (
-                        color_arr[0]
-                        if color_arr.size >= 3
-                        else np.array([1.0, 1.0, 1.0])
-                    )
-                    updated = _make_cylinder_between(
-                        curve[p],
-                        curve[p + 1],
-                        radius=float(layout.radii[min(s, len(layout.radii) - 1)]),
-                        color=tuple(np.asarray(base_color).reshape(-1)[:3]),
-                        resolution=self.tube_resolution,
-                    )
-                    mesh.vertices = updated.vertices
-                    mesh.triangles = updated.triangles
-                    mesh.vertex_normals = updated.vertex_normals
-                    mesh.triangle_normals = updated.triangle_normals
-                    mesh.vertex_colors = updated.vertex_colors
-                    vis.update_geometry(mesh)
+                    cached = seg_meshes[i_local]
+                    p0 = curve[p]
+                    p1 = curve[p + 1]
+                    axis = p1 - p0
+                    length = float(np.linalg.norm(axis))
+                    R = _axis_alignment_rotation(axis)
+                    mid = (p0 + p1) / 2.0
+                    self._apply_cached_mesh(cached, mid, R, length)
+                    vis.update_geometry(cached.mesh)
             else:
-                for i_local, p in enumerate(range(c0, min(c1, c0 + len(seg_spheres)))):
-                    mesh = seg_spheres[i_local]
-                    delta = curve[p] - _mesh_center(mesh)
-                    mesh.translate(delta, relative=True)
-                    vis.update_geometry(mesh)
+                for i_local, p in enumerate(range(c0, min(c1, c0 + len(seg_meshes)))):
+                    cached = seg_meshes[i_local]
+                    self._apply_cached_mesh(cached, curve[p], None, None)
+                    vis.update_geometry(cached.mesh)
 
     def _build_legacy_scene(
         self, vis, scene_data: SceneData, frame_idx: int = 0
     ) -> LegacySceneHandles:
         """Construct initial geometry for the legacy viewer."""
         layout = scene_data.layout
+        s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
         base_meshes: list = []
-        backbone_meshes: list[list[list]] = []
+        backbone_meshes: list[list[list[CachedMesh]]] = []
+
+        if not self._warned_dynamic_geometry:
+            warnings.warn(
+                "Open3D legacy viewer assumes cross_section_geometry is configuration-independent; "
+                "geometry is frozen to the first frame.",
+                RuntimeWarning,
+            )
+            self._warned_dynamic_geometry = True
 
         for robot_idx in range(scene_data.num_robots):
             curve0 = scene_data.curves[robot_idx, frame_idx]
+            q0 = scene_data.q_ts[robot_idx, frame_idx]
             color_override = (
                 scene_data.robot_colors_rgba[robot_idx]
                 if scene_data.robot_colors_rgba is not None
                 else None
             )
+            sections, max_radius = self._cross_sections_for_points(q0, s_ps)
             base_mesh, groups = self._build_robot_geometry(
-                vis, curve0, layout, color_override=color_override
+                vis,
+                curve0,
+                sections,
+                max_radius,
+                layout,
+                color_override=color_override,
             )
             base_meshes.append(base_mesh)
             backbone_meshes.append(groups)
@@ -1500,7 +1901,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         return video_writer, frame_dir, video_path
 
-    def _run_legacy_viewer(
+    def _run_viewer(
         self,
         scene_data: SceneData,
         *,
@@ -1612,485 +2013,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             time.sleep(0.001)
         if video_writer is not None:
             video_writer.close()
-
-    # -------------------------------------------------------------------------
-    # GUI viewer backend (SceneWidget)
-    # -------------------------------------------------------------------------
-
-    def _run_gui_viewer(
-        self,
-        scene_data: SceneData,
-        *,
-        playback_speed: float,
-        loop: bool,
-        record_cfg: RecordingConfig,
-        window_name: str,
-    ) -> None:
-        """Interactive GUI viewer using SceneWidget."""
-        raise NotImplementedError("Open3D GUI backend doesn't work well yet.")
-        try:
-            import open3d.visualization.gui as gui
-            import open3d.visualization.rendering as rendering
-        except Exception as exc:
-            raise RuntimeError(
-                f"[Open3D] GUI backend unavailable ({exc}). "
-                "Use backend='legacy' or install Open3D with GUI support."
-            ) from exc
-
-        dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
-        # Recorder is initialized after we confirm capture support
-        video_writer: _FFmpegVideoWriter | None = None
-        frame_dir: str | None = None
-        video_path: str | None = None
-        material_cache: dict[tuple[float, float, float], rendering.MaterialRecord] = {}
-        missing_render_to_image_warned = False
-        recording_enabled = {"ok": True}
-
-        app = gui.Application.instance
-        global _GUI_APP_INITIALIZED
-        is_running = getattr(app, "is_running", lambda: _GUI_APP_INITIALIZED)()
-        if not is_running:
-            app.initialize()
-            _GUI_APP_INITIALIZED = True
-        window = app.create_window(window_name, self.width, self.height)
-
-        scene_widget = gui.SceneWidget()
-        scene_widget.scene = rendering.Open3DScene(window.renderer)
-        scene_widget.scene.set_background(
-            np.array([*self.background_color, 1.0], dtype=np.float32)
-        )
-        window.add_child(scene_widget)
-
-        # Check capture support; disable recording pre-emptively if unsupported
-        _supports_capture = hasattr(scene_widget.scene, "render_to_image") or hasattr(
-            getattr(scene_widget.scene, "scene", None), "render_to_image"
-        )
-        if record_cfg.path and not _supports_capture:
-            print(
-                "[Open3D] GUI: capture not supported on this build; "
-                "record_path will be ignored."
-            )
-        else:
-            video_writer, frame_dir, video_path = self._init_recorder(
-                record_cfg.path, dt_seq
-            )
-
-        def _grab_frame():
-            """Best-effort frame capture across Open3D builds."""
-            nonlocal \
-                missing_render_to_image_warned, \
-                recording_enabled, \
-                video_writer, \
-                frame_dir
-            # Newer builds: method on Open3DScene
-            if hasattr(scene_widget.scene, "render_to_image"):
-                try:
-                    return scene_widget.scene.render_to_image()
-                except Exception:
-                    pass
-            # Older builds: RenderScene may be exposed via .scene
-            inner_scene = getattr(scene_widget.scene, "scene", None)
-            if inner_scene is not None and hasattr(inner_scene, "render_to_image"):
-                try:
-                    return inner_scene.render_to_image()
-                except Exception:
-                    pass
-            if not missing_render_to_image_warned:
-                print(
-                    "[Open3D] GUI: render_to_image unavailable on this build; "
-                    "recording disabled."
-                )
-                missing_render_to_image_warned = True
-            if recording_enabled["ok"]:
-                if video_writer is not None:
-                    try:
-                        video_writer.close()
-                    except Exception:
-                        pass
-                    video_writer = None
-                frame_dir = None
-                recording_enabled["ok"] = False
-            return None
-
-        def populate(idx: int) -> None:
-            self._populate_rendering_scene(
-                scene_widget.scene,
-                scene_data,
-                frame_idx=idx,
-                material_cache=material_cache,
-            )
-
-        populate(0)
-        bbox = scene_widget.scene.bounding_box
-        center = bbox.get_center()
-        try:
-            scene_widget.scene.setup_camera(60.0, bbox, center)
-        except Exception:
-            extent = bbox.get_max_extent()
-            eye = center + np.array([0, 0, extent * 2])
-            scene_widget.scene.camera.look_at(center, eye, [0, 1, 0])
-
-        # Cache initial camera for reset/load
-        cam = scene_widget.scene.camera
-        bbox_init = scene_widget.scene.bounding_box
-        center_init = bbox_init.get_center()
-        extent_init = bbox_init.get_max_extent()
-        eye_init = center_init + np.array([0, 0, extent_init * 2])
-        up_init = np.array([0, 1, 0])
-
-        def _capture_cam():
-            """Capture current camera parameters in a version-tolerant way."""
-            try:
-                eye = np.asarray(cam.get_position())
-                look_at = np.asarray(cam.get_look_at())
-                up = np.asarray(cam.get_up_vector())
-            except Exception:
-                eye, look_at, up = eye_init, center_init, up_init
-            fov = getattr(cam, "get_field_of_view", lambda: None)()
-            aspect = getattr(cam, "get_aspect_ratio", lambda: None)()
-            near = getattr(cam, "get_near", lambda: None)()
-            far = getattr(cam, "get_far", lambda: None)()
-            fov_type = getattr(cam, "get_field_of_view_type", lambda: None)()
-            print(
-                "[Open3D][gui] Capture cam:",
-                f"eye={eye}, look_at={look_at}, up={up}, fov={fov}, aspect={aspect}, near={near}, far={far}, fov_type={fov_type}",
-            )
-            return {
-                "eye": eye,
-                "look_at": look_at,
-                "up": up,
-                "fov": fov,
-                "aspect": aspect,
-                "near": near,
-                "far": far,
-                "fov_type": fov_type,
-            }
-
-        camera_state = {
-            "initial": {
-                "eye": eye_init,
-                "look_at": center_init,
-                "up": up_init,
-                "fov": getattr(cam, "get_field_of_view", lambda: None)(),
-                "aspect": getattr(cam, "get_aspect_ratio", lambda: None)(),
-                "near": getattr(cam, "get_near", lambda: None)(),
-                "far": getattr(cam, "get_far", lambda: None)(),
-                "fov_type": getattr(cam, "get_field_of_view_type", lambda: None)(),
-            },
-            "saved": _capture_cam(),
-        }
-
-        def _apply_projection(saved):
-            """Apply saved projection if compatible; otherwise skip quietly."""
-            fov = saved.get("fov", None)
-            aspect = saved.get("aspect", None)
-            near = saved.get("near", None)
-            far = saved.get("far", None)
-            fov_type = saved.get("fov_type", None)
-            if fov is None or near is None or far is None:
-                return
-            aspect_eff = (
-                aspect
-                if aspect not in (None, 0)
-                else float(self.width) / float(max(1, self.height))
-            )
-            try:
-                cam.set_projection(
-                    float(fov),
-                    float(aspect_eff),
-                    float(near),
-                    float(far),
-                    fov_type if fov_type is not None else cam.FovType.Vertical,
-                )
-            except Exception as exc:
-                print(f"[Open3D][gui] Projection apply failed: {exc}")
-
-        state = {
-            "idx": 0,
-            "playing": True,  # match legacy default: start playing
-            "last_tick": time.time(),
-            "dt_seq": dt_seq,
-        }
-
-        def _record_frame(i: int, force: bool = False) -> None:
-            nonlocal video_writer, frame_dir, video_path
-            if video_writer is not None:
-                if not (force or (i % record_cfg.every_n) == 0):
-                    return
-                try:
-                    img = _grab_frame()
-                    if img is None:
-                        return
-                    frame = np.asarray(img)
-                    if frame.ndim == 3 and frame.shape[2] == 4:
-                        frame = frame[:, :, :3]
-                    if frame.dtype != np.uint8:
-                        frame = np.clip(frame * 255.0, 0.0, 255.0).astype(np.uint8)
-                    video_writer.write(frame)
-                    return
-                except BrokenPipeError:
-                    if frame_dir is None:
-                        frame_dir = os.path.splitext(video_path or "frames")[0]
-                        os.makedirs(frame_dir, exist_ok=True)
-                        print(
-                            "[Open3D] GUI: ffmpeg stream failed (broken pipe); "
-                            f"falling back to frame directory {frame_dir}"
-                        )
-                    if video_writer.stderr_log:
-                        print(f"[Open3D] ffmpeg stderr: {video_writer.stderr_log}")
-                    video_writer = None
-                except Exception as exc:
-                    if frame_dir is None:
-                        frame_dir = os.path.splitext(video_path or "frames")[0]
-                        os.makedirs(frame_dir, exist_ok=True)
-                        print(
-                            f"[Open3D] GUI: ffmpeg stream failed ({exc}); "
-                            f"falling back to frame directory {frame_dir}"
-                        )
-                    if video_writer and video_writer.stderr_log:
-                        print(f"[Open3D] ffmpeg stderr: {video_writer.stderr_log}")
-                    video_writer = None
-
-            if frame_dir is None:
-                return
-
-            if force or (i % record_cfg.every_n) == 0:
-                img = _grab_frame()
-                if img is None:
-                    return
-                frame_np = np.asarray(img)
-                if frame_np.ndim == 3 and frame_np.shape[2] == 4:
-                    frame_np = frame_np[:, :, :3]
-                if frame_np.dtype != np.uint8:
-                    frame_np = np.clip(frame_np * 255.0, 0.0, 255.0).astype(np.uint8)
-                img_to_save = o3d.geometry.Image(frame_np)
-                fname = os.path.join(frame_dir, f"{record_cfg.prefix}{i:05d}.png")
-                o3d.io.write_image(fname, img_to_save)
-
-        def update_frame(i: int) -> None:
-            i = max(0, min(scene_data.num_frames - 1, i))
-            state["idx"] = i
-            populate(i)
-            _record_frame(i)
-
-        _record_frame(0, force=True)
-
-        _ECR = getattr(gui, "EventCallbackResult", None)
-        _HANDLED = _ECR.HANDLED if _ECR else True
-        _IGNORED = _ECR.IGNORED if _ECR else False
-        _KEYTYPE_DOWN = getattr(gui.KeyEvent, "DOWN", None)
-        _KEYTYPE_UP = getattr(gui.KeyEvent, "UP", None)
-        _TYPE_ENUM = getattr(gui.KeyEvent, "Type", None)
-        _KEY_DOWN_ENUM = getattr(_TYPE_ENUM, "DOWN", None) if _TYPE_ENUM else None
-        _KEY_UP_ENUM = getattr(_TYPE_ENUM, "UP", None) if _TYPE_ENUM else None
-        _debug_count = {"n": 0}
-
-        def _handle_key(event):
-            evt_type = getattr(event, "type", None)
-            key = getattr(event, "key", None)
-            if _debug_count["n"] < 5:
-                print(f"[Open3D][gui] key event: type={evt_type} key={key}")
-                _debug_count["n"] += 1
-
-            # Only act on key-down (ignore repeats/up to avoid double toggles)
-            is_down = False
-            if _KEYTYPE_DOWN is not None and evt_type == _KEYTYPE_DOWN:
-                is_down = True
-            if _KEY_DOWN_ENUM is not None and evt_type == _KEY_DOWN_ENUM:
-                is_down = True
-            if isinstance(evt_type, int):
-                # Many builds use 0 for DOWN, 2 for UP; treat only 0 as down
-                is_down = evt_type == 0
-            if not is_down:
-                return _IGNORED
-
-            # Key mapping aligned with legacy viewer
-            space = getattr(gui.KeyName, "SPACE", None)
-            left = getattr(gui.KeyName, "LEFT", None)
-            right = getattr(gui.KeyName, "RIGHT", None)
-            home = getattr(gui.KeyName, "HOME", None)
-            esc = getattr(gui.KeyName, "ESCAPE", None)
-            reset_cam = getattr(gui.KeyName, "R", ord("R"))
-            capture_cam = getattr(gui.KeyName, "C", ord("C"))
-            load_cam = getattr(gui.KeyName, "L", ord("L"))
-            print_cam = getattr(gui.KeyName, "V", ord("V"))
-            snapshot_key = getattr(gui.KeyName, "S", ord("S"))
-
-            # Build tolerant lookup sets (fallback to GLFW key codes where possible)
-            left_keys = {left, 263, 260}  # LEFT, GLFW_LEFT
-            right_keys = {right, 262, 261}  # RIGHT, GLFW_RIGHT
-            home_keys = {home, ord("h"), ord("H")}
-            quit_keys = {esc, ord("q"), ord("Q")}
-            reset_keys = {reset_cam, ord("r"), ord("R")}
-            capture_keys = {capture_cam, ord("c"), ord("C")}
-            load_keys = {load_cam, ord("l"), ord("L")}
-            print_keys = {print_cam, ord("v"), ord("V")}
-            snapshot_keys = {snapshot_key, ord("s"), ord("S")}
-
-            if key == space or key == ord(" "):
-                state["playing"] = not state["playing"]
-                state["last_tick"] = time.time()
-                # print(f"[Open3D][gui] Playing={state['playing']}")
-                return _HANDLED
-            if key in left_keys:
-                update_frame(state["idx"] - 1)
-                return _HANDLED
-            if key in right_keys:
-                update_frame(state["idx"] + 1)
-                return _HANDLED
-            if key in home_keys:
-                update_frame(0)
-                return _HANDLED
-            if key in snapshot_keys:
-                _record_frame(state["idx"], force=True)
-                print(f"[Open3D][gui] Snapshot at frame {state['idx']}")
-                return _HANDLED
-            if key in quit_keys:
-                state["playing"] = False
-                app.post_to_main_thread(window, window.close) if hasattr(
-                    app, "post_to_main_thread"
-                ) else window.close()
-                return _HANDLED
-            if key in reset_keys:
-                try:
-                    _apply_projection(camera_state["initial"])
-                    cam.look_at(
-                        camera_state["initial"]["look_at"],
-                        camera_state["initial"]["eye"],
-                        camera_state["initial"]["up"],
-                    )
-                    if hasattr(scene_widget, "force_redraw"):
-                        scene_widget.force_redraw()
-                    else:
-                        scene_widget.scene.force_redraw()
-                    try:
-                        pos = cam.get_position()
-                        la = cam.get_look_at()
-                        up_vec = cam.get_up_vector()
-                        print(
-                            f"[Open3D][gui] Camera reset. pos={pos}, look_at={la}, up={up_vec}"
-                        )
-                    except Exception:
-                        print("[Open3D][gui] Camera reset (camera query unavailable).")
-                except Exception as exc:
-                    print(f"[Open3D][gui] Camera reset failed: {exc}")
-                return _HANDLED
-            if key in capture_keys:
-                camera_state["saved"] = _capture_cam()
-                print("[Open3D][gui] Camera captured.")
-                return _HANDLED
-            if key in load_keys:
-                try:
-                    saved = camera_state["saved"]
-                    _apply_projection(saved)
-                    cam.look_at(saved["look_at"], saved["eye"], saved["up"])
-                    if hasattr(scene_widget, "force_redraw"):
-                        scene_widget.force_redraw()
-                    else:
-                        scene_widget.scene.force_redraw()
-                    try:
-                        pos = cam.get_position()
-                        la = cam.get_look_at()
-                        up_vec = cam.get_up_vector()
-                        print(
-                            f"[Open3D][gui] Camera loaded. pos={pos}, look_at={la}, up={up_vec}"
-                        )
-                    except Exception:
-                        print("[Open3D][gui] Camera loaded (camera query unavailable).")
-                except Exception as exc:
-                    print(f"[Open3D][gui] Load failed: {exc}")
-                return _HANDLED
-            if key in print_keys:
-                try:
-                    print("[Open3D][gui] Camera matrices:")
-                    if hasattr(cam, "get_view_matrix"):
-                        print("View:\n", cam.get_view_matrix())
-                    if hasattr(cam, "get_projection_matrix"):
-                        print("Proj:\n", cam.get_projection_matrix())
-                    try:
-                        print("Eye:", cam.get_position())
-                        print("Look-at:", cam.get_look_at())
-                        print("Up:", cam.get_up_vector())
-                    except Exception:
-                        pass
-                except Exception as exc:
-                    print(f"[Open3D][gui] Print failed: {exc}")
-                return _HANDLED
-            return _IGNORED
-
-        # Attach to both window and scene_widget to handle focus differences
-        if hasattr(window, "set_on_key"):
-            window.set_on_key(_handle_key)
-        if hasattr(scene_widget, "set_on_key"):
-            scene_widget.set_on_key(_handle_key)
-
-        def on_tick(_dt: float) -> bool:
-            now = time.time()
-            dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
-            if state["playing"] and (now - state["last_tick"] >= dt_now):
-                nxt = state["idx"] + 1
-                if nxt >= scene_data.num_frames:
-                    nxt = 0 if loop else scene_data.num_frames - 1
-                    state["playing"] = state["playing"] and loop
-                update_frame(nxt)
-                state["last_tick"] = now
-            return True
-
-        if hasattr(app, "set_on_tick"):
-            app.set_on_tick(on_tick)
-            print(
-                f"{window_name} (gui): Space=Play/Pause  ←/→=Step  H=Home  S=Snapshot  R/C/L/V camera controls  Q=close window"
-            )
-            try:
-                app.run()
-            finally:
-                if video_writer is not None:
-                    video_writer.close()
-            return
-
-        # Fallback: manual ticking
-        if hasattr(app, "run_one_tick"):
-            print(
-                f"{window_name} (gui, manual loop): Space=Play/Pause  ←/→=Step  H=Home  S=Snapshot  R/C/L/V camera controls  Q=close window"
-            )
-
-            def on_close():
-                state["playing"] = False
-                return True
-
-            if hasattr(window, "set_on_close"):
-                window.set_on_close(on_close)
-
-            vis_attr = getattr(window, "is_visible", None)
-
-            def _window_visible():
-                if callable(vis_attr):
-                    try:
-                        return bool(vis_attr())
-                    except Exception:
-                        return False
-                return bool(vis_attr) if vis_attr is not None else True
-
-            while _window_visible():
-                now = time.time()
-                dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
-                if state["playing"] and (now - state["last_tick"] >= dt_now):
-                    nxt = state["idx"] + 1
-                    if nxt >= scene_data.num_frames:
-                        nxt = 0 if loop else scene_data.num_frames - 1
-                        state["playing"] = state["playing"] and loop
-                    update_frame(nxt)
-                    state["last_tick"] = now
-                app.run_one_tick()
-                time.sleep(0.01)
-            if video_writer is not None:
-                video_writer.close()
-            return
-
-        raise RuntimeError(
-            "[Open3D] GUI ticking not available in this build. "
-            "Use backend='legacy' or upgrade Open3D."
-        )
 
 
 def _get_robot_colors(
