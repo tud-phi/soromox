@@ -13,9 +13,10 @@ from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 
 # Open3D renderer is optional (requires open3d package)
 try:
-    from soromox.rendering.open3d_renderer import Open3DRenderer
+    from soromox.rendering.open3d_renderer import Open3DRenderer, VideoEncodingConfig
 except ImportError:
     Open3DRenderer = None
+    VideoEncodingConfig = None
 
 # Specialized OpenCV renderers
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
@@ -27,6 +28,7 @@ __all__ = [
     # Generic renderers
     "MatplotlibRenderer",
     "Open3DRenderer",
+    "VideoEncodingConfig",
     # Specialized renderers
     "OpenCVPlanarHSARenderer",
     "OpenCVPlanarRenderer",

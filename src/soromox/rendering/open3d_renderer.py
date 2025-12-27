@@ -463,35 +463,71 @@ def _normalize_color_palette(
     return np.clip(palette, 0.0, 1.0)
 
 
+@dataclass
+class VideoEncodingConfig:
+    codec: str = "libx264"
+    pix_fmt: str = "yuv420p"
+    preset: str | None = None
+    crf: int | None = None
+    tune: str | None = None
+    profile: str | None = None
+    bitrate: str | None = None
+    gop: int | None = None
+    extra_args: tuple[str, ...] = ()
+
+
 class _FFmpegVideoWriter:
     """Minimal ffmpeg pipe for RGB frames."""
 
-    def __init__(self, path: str, width: int, height: int, fps: float):
+    def __init__(
+        self,
+        path: str,
+        width: int,
+        height: int,
+        fps: float,
+        video_config: VideoEncodingConfig | None = None,
+    ):
         self.path = path
         self._stderr_log: str | None = None
+        cfg = video_config or VideoEncodingConfig()
+        args = [
+            "ffmpeg",
+            "-y",
+            "-f",
+            "rawvideo",
+            "-vcodec",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-s",
+            f"{width}x{height}",
+            "-r",
+            f"{fps}",
+            "-i",
+            "-",
+            "-an",
+            "-vcodec",
+            cfg.codec,
+        ]
+        if cfg.preset:
+            args += ["-preset", cfg.preset]
+        if cfg.crf is not None:
+            args += ["-crf", str(cfg.crf)]
+        if cfg.tune:
+            args += ["-tune", cfg.tune]
+        if cfg.profile:
+            args += ["-profile:v", cfg.profile]
+        if cfg.bitrate:
+            args += ["-b:v", cfg.bitrate]
+        if cfg.gop is not None:
+            args += ["-g", str(cfg.gop)]
+        if cfg.pix_fmt:
+            args += ["-pix_fmt", cfg.pix_fmt]
+        if cfg.extra_args:
+            args += [str(arg) for arg in cfg.extra_args]
+        args.append(path)
         self.proc = subprocess.Popen(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "rawvideo",
-                "-vcodec",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-s",
-                f"{width}x{height}",
-                "-r",
-                f"{fps}",
-                "-i",
-                "-",
-                "-an",
-                "-vcodec",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                path,
-            ],
+            args,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
@@ -581,6 +617,7 @@ class RecordingConfig:
     path: str | None
     prefix: str = "frame_"
     every_n: int = 1
+    video_config: VideoEncodingConfig | None = None
 
 
 @dataclass
@@ -1467,6 +1504,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         record_path: str | None = None,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
+        video_config: VideoEncodingConfig | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         static_spheres_positions: Array | None = None,
@@ -1488,6 +1526,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             record_path: Optional path to save frames or video (extension determines mode).
             record_every_n: Save every n-th frame when recording images.
             record_prefix: Filename prefix for recorded frames.
+            video_config: Optional ffmpeg encoding configuration for video output.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
@@ -1519,7 +1558,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             dynamics_spheres_colors=dynamics_spheres_colors,
         )
         record_cfg = RecordingConfig(
-            path=record_path, prefix=record_prefix, every_n=record_every_n
+            path=record_path,
+            prefix=record_prefix,
+            every_n=record_every_n,
+            video_config=video_config,
         )
         self._run_viewer(
             scene_data,
@@ -1862,7 +1904,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             vis.update_geometry(mesh)
 
     def _init_recorder(
-        self, record_path: str | None, dt_seq: np.ndarray
+        self,
+        record_path: str | None,
+        dt_seq: np.ndarray,
+        video_config: VideoEncodingConfig | None,
     ) -> tuple[_FFmpegVideoWriter | None, str | None, str | None]:
         """Initialize ffmpeg writer or frame directory based on path."""
         if record_path is None:
@@ -1879,7 +1924,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
             try:
                 video_writer = _FFmpegVideoWriter(
-                    video_path, int(self.width), int(self.height), fps_est
+                    video_path,
+                    int(self.width),
+                    int(self.height),
+                    fps_est,
+                    video_config=video_config,
                 )
                 print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")
             except FileNotFoundError:
@@ -1917,7 +1966,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         handles = self._build_scene(vis, scene_data, frame_idx=0)
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
         video_writer, frame_dir, video_path = self._init_recorder(
-            record_cfg.path, dt_seq
+            record_cfg.path, dt_seq, record_cfg.video_config
         )
 
         initial_cam = ctrl.convert_to_pinhole_camera_parameters()
