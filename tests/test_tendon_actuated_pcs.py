@@ -7,7 +7,7 @@ from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from typing import Dict, Optional
 
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
+from soromox.systems import TendonActuatedPCS
 from soromox.utils.tolerance import Tolerance
 
 XI_REF = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64)

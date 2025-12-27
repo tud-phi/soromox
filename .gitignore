@@ -143,6 +143,5 @@ dmypy.json
 # Documentation build
 site/
 
-# ignore .vscode and .claude settings
-.vscode/
+# ignore .claude settings
 .claude/

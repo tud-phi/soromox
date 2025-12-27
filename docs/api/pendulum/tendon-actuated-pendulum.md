@@ -67,7 +67,7 @@ where:
 
 ```python
 import jax.numpy as jnp
-from soromox.systems.tendon_actuated_pendulum import TendonActuatedPendulum
+from soromox.systems import TendonActuatedPendulum
 
 # Base pendulum parameters
 params = {
@@ -147,7 +147,7 @@ robot_updated = robot.update_tendon_params(new_tendon_params)
 
 ```python
 from diffrax import Tsit5
-from soromox.systems.system_state import SystemState
+from soromox.systems import SystemState
 
 # Simulation setup
 q0 = jnp.array([jnp.pi/8, -jnp.pi/4])       # Initial angles

@@ -21,8 +21,7 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 
-from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.system_state import SystemState
+from soromox.systems import DynamicalSystem, SystemState
 from tools.benchmarks._benchmark_common import (
     add_integration_args,
     add_system_selection_args,

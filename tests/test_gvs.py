@@ -8,8 +8,8 @@ import pytest
 
 from numpy.testing import assert_allclose
 
-from soromox.systems.gvs import GVS, LinkAttributes, JointAttributes, BasisAttributes
-from soromox.systems.pcs import PCS
+from soromox.systems import GVS, PCS
+from soromox.systems.gvs import LinkAttributes, JointAttributes, BasisAttributes
 import soromox.utils.lie_algebra as lie
 from soromox.utils.tolerance import Tolerance
 

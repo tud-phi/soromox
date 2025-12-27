@@ -197,7 +197,7 @@ def forward_kinematics(params: Dict, q: Array) -> Array:
 ```python
 import pytest
 import jax.numpy as jnp
-from soromox.systems import your_system
+from soromox.systems import YourSystem
 
 class TestYourSystem:
     def setup_method(self):

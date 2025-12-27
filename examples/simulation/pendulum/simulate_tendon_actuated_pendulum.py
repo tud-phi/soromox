@@ -11,8 +11,7 @@ from typing import Optional
 from functools import partial
 
 import soromox
-from soromox.systems.tendon_actuated_pendulum import TendonActuatedPendulum
-from soromox.systems.system_state import SystemState
+from soromox.systems import TendonActuatedPendulum, SystemState
 
 import matplotlib.pyplot as plt
 

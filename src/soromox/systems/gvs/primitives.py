@@ -1,18 +1,18 @@
 __all__ = ["Basis", "Joint", "Link"]
+from collections.abc import Callable
+
 import jax
 import jax.numpy as jnp
 from jax import Array
-from typing import Callable, List, Optional, Tuple
-
 
 from soromox.systems.gvs.operands import GeometricOperand, JointOperand
 from soromox.systems.gvs.strain_bases import (
-    dof_Monomial,
-    dof_LegendrePolynomial,
     dof_Chebychev,
     dof_Fourier,
     dof_Gaussian,
     dof_IMQ,
+    dof_LegendrePolynomial,
+    dof_Monomial,
 )
 
 
@@ -39,6 +39,7 @@ class Basis:
     - Basis columns map generalized coordinates to the 6D Cosserat strain twist per
       unit length [rad/m, rad/m, rad/m, 1/m, 1/m, 1/m].
     """
+
     BASISTYPE_MAP = {
         "Monomial": 0,
         "Legendre": 1,
@@ -91,6 +92,7 @@ class Joint:
         Wrap a joint basis generator so its (6, dof_joint) output is padded or
         truncated to (6, max_dof). Columns map joint coordinates to 6D twist.
     """
+
     JOINTTYPE_MAP = {
         "Revolute": 0,  # Revolute joint
         "Prismatic": 1,  # Prismatic joint
@@ -180,6 +182,7 @@ class Link:
     - `compute_*_params` return tuples (I_x, I_y, I_z, A) with shape (nip,):
         I_* [m^4], A [m^2]. These feed mass/stiffness/damping computations.
     """
+
     section_idx: int
     SECTION_MAP = {
         "Circular": 0,  # Circular cross-section
@@ -194,11 +197,11 @@ class Link:
     eta: Array  # Material Damping [N·s/m]
     l: Array  # Length of each divisions of the link (soft link) [m]
 
-    r: Tuple[float, float]  # Initial and final value of the geometrical parameter
-    h: Tuple[float, float]  # Initial and final value of the geometrical parameter
-    w: Tuple[float, float]  # Initial and final value of the geometrical parameter
-    a: Tuple[float, float]  # Initial and final value of the geometrical parameter
-    b: Tuple[float, float]  # Initial and final value of the geometrical parameter
+    r: tuple[float, float]  # Initial and final value of the geometrical parameter
+    h: tuple[float, float]  # Initial and final value of the geometrical parameter
+    w: tuple[float, float]  # Initial and final value of the geometrical parameter
+    a: tuple[float, float]  # Initial and final value of the geometrical parameter
+    b: tuple[float, float]  # Initial and final value of the geometrical parameter
 
     @staticmethod
     def geometric_branches():
@@ -230,7 +233,7 @@ class Link:
     @staticmethod
     def compute_rectangular_params(
         operand: GeometricOperand,
-    ) -> Tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array]:
         """
         Compute area and second moments for a rectangular section along the link.
 
@@ -266,7 +269,7 @@ class Link:
     @staticmethod
     def compute_circular_params(
         operand: GeometricOperand,
-    ) -> Tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array]:
         """
         Compute area and second moments for a circular section along the link.
 
@@ -300,7 +303,7 @@ class Link:
     @staticmethod
     def compute_elliptical_params(
         operand: GeometricOperand,
-    ) -> Tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array]:
         """
         Compute area and second moments for an elliptical section along the link.
 
@@ -332,4 +335,3 @@ class Link:
         Ix_p = Iy_p + Iz_p
         A_p = jnp.pi * a_nGauss * b_nGauss
         return Ix_p, Iy_p, Iz_p, A_p
-    

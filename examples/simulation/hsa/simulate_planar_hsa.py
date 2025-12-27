@@ -1,6 +1,7 @@
 import cv2  # importing cv2
 import jax
 import jax.numpy as jnp
+
 jax.config.update("jax_enable_x64", True)  # double precision
 from pathlib import Path
 
@@ -9,10 +10,10 @@ from soromox.parameters.hsa_params import (
     PARAMS_FPU_CONTROL,
     PARAMS_FPU_HYSTERESIS_CONTROL,
 )
-from soromox.systems.planar_hsa import PlanarHSA
-from soromox.systems.system_state import SystemState
-from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
-
+from soromox.rendering.planar_hsa.opencv_renderer import (
+    OpenCVPlanarHSARenderer,
+)
+from soromox.systems import PlanarHSA, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -102,7 +103,9 @@ if __name__ == "__main__":
         max_steps=None,
     )
     ts = trajectory.t
-    q_ts, qd_ts, _ = jnp.split(trajectory.y, [robot.num_dofs, 2 * robot.num_dofs], axis=1)
+    q_ts, qd_ts, _ = jnp.split(
+        trajectory.y, [robot.num_dofs, 2 * robot.num_dofs], axis=1
+    )
 
     # create video
     video_path = Path("videos") / "planar_hsa.mp4"

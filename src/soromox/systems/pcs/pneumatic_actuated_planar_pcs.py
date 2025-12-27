@@ -1,9 +1,8 @@
 __all__ = ["PneumaticActuatedPlanarPCS"]
-from jax import Array, vmap
-import jax.numpy as jnp
-from typing import Dict, Optional
 
 import equinox as eqx
+import jax.numpy as jnp
+from jax import Array, vmap
 
 from .planar_pcs import PlanarPCS
 
@@ -99,9 +98,9 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
     def __init__(
         self,
         num_segments: int,
-        params: Dict[str, Array],
+        params: dict[str, Array],
         *args,
-        segment_actuation_selector: Optional[Array] = None,
+        segment_actuation_selector: Array | None = None,
         chamber_cross_section_geometry: str = "circular",
         pneumatic_load_distribution_assumption: str = "infitesimal",
         **kwargs,
@@ -152,7 +151,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
 
         self._set_params(params)
 
-    def _set_params(self, params: Dict[str, Array]):
+    def _set_params(self, params: dict[str, Array]):
         """
         Set the parameters of the PneumaticallyActuatedPlanarPCS.
 
@@ -243,7 +242,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
             )
         self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)
 
-    def update_params(self, params: Dict[str, Array]) -> "PneumaticActuatedPlanarPCS":
+    def update_params(self, params: dict[str, Array]) -> "PneumaticActuatedPlanarPCS":
         """
         Update the parameters of the PneumaticallyActuatedPlanarPCS.
 

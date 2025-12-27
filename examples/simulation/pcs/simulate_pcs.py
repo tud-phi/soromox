@@ -1,14 +1,13 @@
-from diffrax import Tsit5
 from functools import partial
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer, Open3DRenderer
-from soromox.systems.pcs import PCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,

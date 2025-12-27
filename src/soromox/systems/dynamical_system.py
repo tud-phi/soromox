@@ -1,26 +1,29 @@
 __all__ = ["DynamicalSystem"]
 import warnings
+from collections.abc import Callable
+from typing import Any
+
 import equinox as eqx
 import jax
-from jax import Array, jit, lax, vmap
-from jax import numpy as jnp
-from typing import Any, Callable, Optional, Tuple
 
 # Diffrax (for time integration helpers)
 from diffrax import (
-    diffeqsolve,
+    AbstractSolver,
+    AbstractStepSizeController,
+    ConstantStepSize,
     ODETerm,
     SaveAt,
     Tsit5,
-    AbstractStepSizeController,
-    ConstantStepSize,
-    AbstractSolver,
+    diffeqsolve,
 )
+from jax import Array, lax, vmap
+from jax import numpy as jnp
 
 from soromox.systems.system_state import SystemState
 
 
 class DynamicalSystem(eqx.Module):
+    num_dofs: int = eqx.field(static=True)  # Number of degrees of freedom
     num_actuators: int = eqx.field(static=True)  # Number of actuators
 
     @staticmethod
@@ -28,8 +31,8 @@ class DynamicalSystem(eqx.Module):
         t0: float,
         t1: float,
         solver_dt: float,
-        save_dt: Optional[float],
-        save_ts: Optional[Array],
+        save_dt: float | None,
+        save_ts: Array | None,
     ) -> Array:
         """Build the array of time stamps to save during integration."""
         if save_ts is not None:
@@ -37,23 +40,23 @@ class DynamicalSystem(eqx.Module):
 
         assert save_dt is not None, "Either save_ts or save_dt must be provided."
         assert save_dt > 0.0, "save_dt must be positive."
-        assert (
-            save_dt >= solver_dt
-        ), "save_dt must be greater than or equal to the solver step size."
+        assert save_dt >= solver_dt, (
+            "save_dt must be greater than or equal to the solver step size."
+        )
         return jnp.arange(t0, t1 + save_dt, save_dt)
 
     @staticmethod
-    def _zero_like_control_state(control_state: Optional[Any]) -> Optional[Any]:
+    def _zero_like_control_state(control_state: Any | None) -> Any | None:
         """Create a zero-structured control_state derivative matching the provided PyTree."""
         if control_state is None:
             return None
         return jax.tree_util.tree_map(jnp.zeros_like, control_state)
 
     def _open_loop_forward_dynamics(
-        self, t: Array, ode_state: Array, actuation_args: Tuple[Array, Array]
+        self, t: Array, ode_state: Array, actuation_args: tuple[Array, Array]
     ) -> Array:
         """Wrapper for forward_dynamics used in open-loop rollouts.
-        
+
         This is defined as a class method rather than an inline closure to avoid
         JAX/XLA compilation overhead associated with closures.
         """
@@ -64,13 +67,13 @@ class DynamicalSystem(eqx.Module):
         self,
         t: Array,
         ode_state,
-        actuation_args: Tuple[Array, Array, Callable, bool, Optional[Any]],
+        actuation_args: tuple[Array, Array, Callable, bool, Any | None],
     ):
         """Wrapper for forward_dynamics used in closed-loop rollouts.
-        
+
         This is defined as a class method rather than an inline closure to avoid
         JAX/XLA compilation overhead associated with closures.
-        
+
         Args:
             t: Current time.
             ode_state: Current ODE state (y or (y, control_state) depending on track_control_state).
@@ -81,8 +84,14 @@ class DynamicalSystem(eqx.Module):
                 - track_control_state: Whether to track control state.
                 - zero_control_state_dot: Zero-structured control state derivative.
         """
-        base_u_val, base_tau_ext, controller, track_control_state, zero_control_state_dot = actuation_args
-        
+        (
+            base_u_val,
+            base_tau_ext,
+            controller,
+            track_control_state,
+            zero_control_state_dot,
+        ) = actuation_args
+
         if track_control_state:
             y, ctrl_state = ode_state
         else:
@@ -98,22 +107,26 @@ class DynamicalSystem(eqx.Module):
         u_total = base_u_val + u_control
         yd = self.forward_dynamics(t, y, (u_total, base_tau_ext))
         if track_control_state:
-            control_state_dot = control_state_dot if control_state_dot is not None else zero_control_state_dot
+            control_state_dot = (
+                control_state_dot
+                if control_state_dot is not None
+                else zero_control_state_dot
+            )
             return yd, control_state_dot
         return yd
 
     def rollout_to(
         self,
         initial_state: SystemState,
-        u: Optional[Array] = None,
-        tau_ext: Optional[Array] = None,
-        t1: Optional[float] = 10.0,
-        solver_dt: Optional[float] = 1e-4,
-        save_dt: Optional[float] = 0.01,
-        save_ts: Optional[Array] = None,
-        solver: Optional[AbstractSolver] = Tsit5(),
-        stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
-        max_steps: Optional[int] = None,
+        u: Array | None = None,
+        tau_ext: Array | None = None,
+        t1: float | None = 10.0,
+        solver_dt: float | None = 1e-4,
+        save_dt: float | None = 0.01,
+        save_ts: Array | None = None,
+        solver: AbstractSolver | None = Tsit5(),
+        stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
+        max_steps: int | None = None,
     ) -> SystemState:
         """
         Roll out the system dynamics in open loop using Diffrax.
@@ -179,15 +192,15 @@ class DynamicalSystem(eqx.Module):
     def rollout_closed_loop_to(
         self,
         initial_state: SystemState,
-        controller: Callable[[SystemState], Tuple[Array, Optional[Any]]],
-        tau_ext: Optional[Array] = None,
-        t1: Optional[float] = 10.0,
-        solver_dt: Optional[float] = 1e-4,
-        save_dt: Optional[float] = 0.01,
-        save_ts: Optional[Array] = None,
-        solver: Optional[AbstractSolver] = Tsit5(),
-        stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
-        max_steps: Optional[int] = None,
+        controller: Callable[[SystemState], tuple[Array, Any | None]],
+        tau_ext: Array | None = None,
+        t1: float | None = 10.0,
+        solver_dt: float | None = 1e-4,
+        save_dt: float | None = 0.01,
+        save_ts: Array | None = None,
+        solver: AbstractSolver | None = Tsit5(),
+        stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
+        max_steps: int | None = None,
     ) -> SystemState:
         """
         Roll out the system dynamics in closed loop using Diffrax.
@@ -235,7 +248,13 @@ class DynamicalSystem(eqx.Module):
         save_ts = self._compute_save_times(t0, t1, solver_dt, save_dt, save_ts)
 
         # Use class method to avoid closure overhead
-        actuation_args = (base_u, tau_ext, controller, track_control_state, zero_control_state_dot)
+        actuation_args = (
+            base_u,
+            tau_ext,
+            controller,
+            track_control_state,
+            zero_control_state_dot,
+        )
         term = ODETerm(self._closed_loop_forward_dynamics)
         saveat = SaveAt(ts=save_ts)  # Save at specified time points
 
@@ -263,11 +282,15 @@ class DynamicalSystem(eqx.Module):
 
         if track_control_state:
             u_controls = vmap(
-                lambda t_i, y_i, c_i: controller(SystemState(t=t_i, y=y_i, u=base_u, control_state=c_i))[0]
+                lambda t_i, y_i, c_i: controller(
+                    SystemState(t=t_i, y=y_i, u=base_u, control_state=c_i)
+                )[0]
             )(ts, y_out, controller_state_out)
         else:
             u_controls = vmap(
-                lambda t_i, y_i: controller(SystemState(t=t_i, y=y_i, u=base_u, control_state=None))[0]
+                lambda t_i, y_i: controller(
+                    SystemState(t=t_i, y=y_i, u=base_u, control_state=None)
+                )[0]
             )(ts, y_out)
         us = u_controls + base_u
 
@@ -276,16 +299,16 @@ class DynamicalSystem(eqx.Module):
     def rollout_discrete_closed_loop_to(
         self,
         initial_state: SystemState,
-        controller: Callable[[SystemState], Tuple[Array, Optional[Any]]],
-        tau_ext: Optional[Array] = None,
-        t1: Optional[float] = 10.0,
-        solver_dt: Optional[float] = 1e-4,
-        control_dt: Optional[float] = 1e-2,
-        save_dt: Optional[float] = 0.01,
-        save_ts: Optional[Array] = None,
-        solver: Optional[AbstractSolver] = Tsit5(),
-        stepsize_controller: Optional[AbstractStepSizeController] = ConstantStepSize(),
-        max_steps: Optional[int] = None,
+        controller: Callable[[SystemState], tuple[Array, Any | None]],
+        tau_ext: Array | None = None,
+        t1: float | None = 10.0,
+        solver_dt: float | None = 1e-4,
+        control_dt: float | None = 1e-2,
+        save_dt: float | None = 0.01,
+        save_ts: Array | None = None,
+        solver: AbstractSolver | None = Tsit5(),
+        stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
+        max_steps: int | None = None,
     ) -> SystemState:
         """
         Roll out the system in discrete-time closed loop.
@@ -319,7 +342,9 @@ class DynamicalSystem(eqx.Module):
         if controller is None:
             raise ValueError("A controller must be provided for closed-loop rollouts.")
         if save_ts is None:
-            save_ts = self._compute_save_times(float(initial_state.t), t1, solver_dt, save_dt, save_ts)
+            save_ts = self._compute_save_times(
+                float(initial_state.t), t1, solver_dt, save_dt, save_ts
+            )
 
         base_u = initial_state.u
         if base_u is None:
@@ -340,13 +365,15 @@ class DynamicalSystem(eqx.Module):
         max_save_slots = max_saves + 1  # include control interval end time
 
         def body(
-            carry: Tuple[Array, Optional[Any]],
-            t_bounds: Tuple[Array, Array],
-        ) -> Tuple[Tuple[Array, Optional[Any]], Tuple[Array, Array, Array, Optional[Any], Array]]:
+            carry: tuple[Array, Any | None],
+            t_bounds: tuple[Array, Array],
+        ) -> tuple[
+            tuple[Array, Any | None], tuple[Array, Array, Array, Any | None, Array]
+        ]:
             """
             Advance one control interval: evaluate controller at ``t_start``, hold actuation
             for the interval, integrate dynamics, and return padded saved trajectories.
-            
+
             Args:
                 carry: tuple of current state ``y_in`` and current control state ``ctrl_state_in``.
                 t_bounds: tuple of start and end times for this control interval.
@@ -358,13 +385,19 @@ class DynamicalSystem(eqx.Module):
             y_in, ctrl_state_in = carry
             t_start, t_end = t_bounds
 
-            system_state = SystemState(t=t_start, y=y_in, u=base_u, control_state=ctrl_state_in)
+            system_state = SystemState(
+                t=t_start, y=y_in, u=base_u, control_state=ctrl_state_in
+            )
             u_control, control_state_dot = controller(system_state)
             if control_state_dot is not None and not track_control_state:
                 raise ValueError(
                     "Controller returned a control_state derivative but no initial control_state was provided."
                 )
-            control_state_dot = control_state_dot if control_state_dot is not None else zero_control_state_dot
+            control_state_dot = (
+                control_state_dot
+                if control_state_dot is not None
+                else zero_control_state_dot
+            )
 
             u_total = base_u + u_control
 
@@ -373,7 +406,9 @@ class DynamicalSystem(eqx.Module):
             idxs = jnp.nonzero(mask, size=max_saves, fill_value=0)[0]
             valid_mask = jnp.arange(max_save_slots - 1) < count
             ts_control_interval = jnp.where(valid_mask, save_ts[idxs], t_end)
-            ts_control_interval = jnp.concatenate((ts_control_interval, jnp.array([t_end])))
+            ts_control_interval = jnp.concatenate(
+                (ts_control_interval, jnp.array([t_end]))
+            )
 
             # Use class method to avoid closure overhead
             term = ODETerm(self._open_loop_forward_dynamics)
@@ -424,7 +459,9 @@ class DynamicalSystem(eqx.Module):
             y_next = sol.ys[-1]
             ctrl_state_next = (
                 jax.tree_util.tree_map(
-                    lambda c, cdot: c + cdot * (t_end - t_start), ctrl_state_in, control_state_dot
+                    lambda c, cdot: c + cdot * (t_end - t_start),
+                    ctrl_state_in,
+                    control_state_dot,
                 )
                 if track_control_state
                 else None
@@ -453,4 +490,6 @@ class DynamicalSystem(eqx.Module):
         else:
             control_state_out = None
 
-        return SystemState(t=ts_all, y=ys_all, u=us_all, control_state=control_state_out)
+        return SystemState(
+            t=ts_all, y=ys_all, u=us_all, control_state=control_state_out
+        )

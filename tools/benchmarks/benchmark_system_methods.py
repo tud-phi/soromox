@@ -39,7 +39,7 @@ from tools.benchmarks._benchmark_common import (
     block_until_ready,
     get_system_registry,
 )
-from soromox.systems.system_state import SystemState
+from soromox.systems import SystemState
 
 Array = jax.Array
 Tree = Any

@@ -1,12 +1,13 @@
-__all__ = ["PCS"]
+__all__ = ["PlanarPCS"]
+
+
 import equinox as eqx
-import jax
+import numpy as onp
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-import numpy as onp
-from typing import Callable, ClassVar, Dict, Tuple, Optional
 
-from soromox.systems.dynamical_system import DynamicalSystem
+import soromox.utils.lie_algebra as lie
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
@@ -15,14 +16,13 @@ from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
 )
-import soromox.utils.lie_algebra as lie
 
 
-class PCS(DynamicalSystem):
+class PlanarPCS(SoftRobot):
     """
-    Piecewise Constant Strain (PCS) model for 3D soft continuum robots.
+    Planar Piecewise Constant Strain (PCS) model for 2D soft continuum robots.
 
-    This class implements the geometric and dynamic modeling of a 3D soft robot
+    This class implements the geometric and dynamic modeling of a 2D soft robot
     using the Cosserat rod theory and piecewise constant strain assumption.
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
 
@@ -32,11 +32,11 @@ class PCS(DynamicalSystem):
         Number of segments (constant strain sections) along the robot.
     num_actuators : int
         Number of actuators (control inputs) for the robot.
-    g0 : Array
-        Initial pose of the robot base as an SE(3) transformation matrix.
+    th0 : Array
+        Initial orientation angle of the robot in radians.
     g : Array
-        Gravitational acceleration vector (embedded in a 6D vector).
-        [0, 0, 0, g_x, g_y, g_z]
+        Gravitational acceleration vector (embedded in a 3D vector).
+        [0, g_x, g_y]
     L, r, E, G, rho, D : Array
         Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
     num_active_strains : int
@@ -55,16 +55,13 @@ class PCS(DynamicalSystem):
 
     Notes:
     -----
-    - The strain vector is composed of 6 components per segment:
-      [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z].
+    - The strain vector is composed of 3 components per segment:
+      [kappa_z, sigma_x, sigma_y].
       By default, the rod is assumed to be straight and aligned with the x-axis,
-        so the reference strain is set to [0, 0, 0, 1, 0, 0].
-        Thus:   - kappa_x corresponds to torsion around the x-axis,
-                - kappa_y corresponds to bending around the y-axis,
-                - kappa_z corresponds to bending around the z-axis,
+        so the reference strain is set to [0, 1, 0].
+        Thus:   - kappa_z corresponds to bending around the z-axis,
                 - sigma_x corresponds to axial strain along the x-axis,
-                - sigma_y corresponds to shear along the y-axis,
-                - sigma_z corresponds to shear along the z-axis.
+                - sigma_y corresponds to shear along the y-axis.
 
     References:
     ----------
@@ -73,7 +70,7 @@ class PCS(DynamicalSystem):
     """
 
     # Robot parameters
-    g0: Array  # Initial position and orientation of the rod
+    th0: Array  # Initial orientation angle [rad]
     g: Array  # Gravitational acceleration vector
 
     L: Array  # Length of the segments
@@ -84,12 +81,9 @@ class PCS(DynamicalSystem):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
-    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
-
     num_segments: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True)  #
-    num_strains: int = eqx.field(static=True)  # Number of strains (6 * num_segments)
+    num_strains: int = eqx.field(static=True)  # Number of strains (3 * num_segments)
 
     xi_ref: Array  # Reference configuration strain
     B_xi: Array  # Strain basis matrix
@@ -101,28 +95,23 @@ class PCS(DynamicalSystem):
     def __init__(
         self,
         num_segments: int,
-        params: Dict[str, Array],
+        params: dict[str, Array],
         order_gauss: int = 5,
-        strain_selector: Optional[Array] = None,
-        xi_ref: Optional[Array] = None,
+        strain_selector: Array | None = None,
+        xi_ref: Array | None = None,
+        **kwargs,
     ):
         """
-        Initialize the PCS class.
+        Initialize the PlanarPCS class.
 
         Args:
             num_segments (int):
                 Number of segments in the robot.
             params (Dict[str, Array]):
                 Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
+                    Default is 90 degrees (1.57 radians).
                 - "L": List/Array of num_segments floats
                     Length of each segment [m]
                 - "r": List/Array of num_segments floats
@@ -141,13 +130,15 @@ class PCS(DynamicalSystem):
                 Order of the Gauss-Legendre quadrature for integration over each segment.
                 Defaults to 5.
             strain_selector (Optional[Array], optional):
-                Boolean array of shape (6 * num_segments,) specifying which strain components are active.
+                Boolean array of shape (3 * num_segments,) specifying which strain components are active.
                 Defaults to all strains active (i.e. all True).
             xi_ref (Optional[Array], optional):
-                Reference strain of shape (6 * num_segments,).
+                Reference strain of shape (3 * num_segments,).
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-
+            **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
+        super().__init__(**kwargs)
+
         # Number of segments
         if not isinstance(num_segments, int):
             raise TypeError(
@@ -157,7 +148,7 @@ class PCS(DynamicalSystem):
             raise ValueError(f"num_segments must be at least 1, got {num_segments}")
         self.num_segments = num_segments
 
-        num_strains = 6 * num_segments
+        num_strains = 3 * num_segments
         self.num_strains = num_strains
 
         # ================================================================
@@ -180,7 +171,7 @@ class PCS(DynamicalSystem):
         # ================================================================
         # Strain basis matrix
         if strain_selector is None:
-            strain_selector = jnp.ones(num_strains, dtype=bool)
+            strain_selector = jnp.ones(self.num_strains, dtype=bool)
         else:
             if not isinstance(strain_selector, (list, jnp.ndarray)):
                 raise TypeError(
@@ -191,52 +182,47 @@ class PCS(DynamicalSystem):
                 raise TypeError(
                     f"strain_selector must be a boolean array, got {strain_selector.dtype}"
                 )
-            if strain_selector.size != num_strains:
+            if strain_selector.size != self.num_strains:
                 raise ValueError(
-                    f"strain_selector must have {num_strains} elements, got {strain_selector.size}"
+                    f"strain_selector must have {self.num_strains} elements, got {strain_selector.size}"
                 )
-            strain_selector = strain_selector.reshape(num_strains)
+            strain_selector = strain_selector.reshape(self.num_strains)
         self.B_xi = compute_strain_basis(strain_selector)
 
         self.num_active_strains = jnp.sum(strain_selector)
+        self.num_dofs = int(self.num_active_strains.item())
 
         # Reference configuration strain
         if xi_ref is None:
             xi_ref = jnp.tile(
-                jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64),
-                (num_segments, 1),
-            ).reshape(num_strains)
+                jnp.array([0.0, 1.0, 0.0], dtype=jnp.float64), (self.num_segments, 1)
+            ).reshape(self.num_strains)
         else:
             if not isinstance(xi_ref, (list, jnp.ndarray)):
                 raise TypeError(
                     f"xi_ref must be a list or an array, got {type(xi_ref).__name__}"
                 )
             xi_ref = jnp.asarray(xi_ref)
-            if xi_ref.size != num_strains:
+            if xi_ref.size != self.num_strains:
                 raise ValueError(
-                    f"xi_ref must have {num_strains} elements, got {xi_ref.size}"
+                    f"xi_ref must have {self.num_strains} elements, got {xi_ref.size}"
                 )
-            xi_ref = xi_ref.reshape(num_strains)
+            xi_ref = xi_ref.reshape(self.num_strains)
         self.xi_ref = xi_ref
 
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
 
-    def _set_params(self, params: Dict[str, Array]) -> None:
+    def _set_params(self, params: dict[str, Array]) -> None:
         """
-        Set the robot parameters from a dictionary.
+        Set the parameters of the PCS model.
+
         Args:
             params (Dict[str, Array]):
                 Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
+                    Default is 90 degrees (1.57 radians).
                 - "L": List/Array of num_segments floats
                     Length of each segment [m]
                 - "r": List/Array of num_segments floats
@@ -252,14 +238,14 @@ class PCS(DynamicalSystem):
                 - "D": List/Array of (num_segments x num_segments) floats
                     Damping matrix of each segment [Pa*s]
         """
-        # Initial position and orientation angle
-        p0 = params.get("p0", jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]))
-        if not (isinstance(p0, (list, jnp.ndarray))):
-            raise TypeError(f"p0 must be a list or an array, got {type(p0).__name__}")
-        p0 = jnp.asarray(p0, dtype=jnp.float64)
-        if p0.size != 6:
-            raise ValueError(f"p0 must have shape (6,), got {p0.size}")
-        self.g0 = lie.exp_SE3(p0)
+        # Initial orientation angle
+        th0 = params.get("th0", jnp.pi / 2.0)  # Default to 90 degrees
+        if not (isinstance(th0, (float, int, jnp.ndarray))):
+            raise TypeError(
+                f"th0 must be a float, int, or an array, got {type(th0).__name__}"
+            )
+        th0 = jnp.asarray(th0, dtype=jnp.float64)
+        self.th0 = th0
 
         # Gravitational acceleration vector
         try:
@@ -269,11 +255,11 @@ class PCS(DynamicalSystem):
         if not (isinstance(g, (list, jnp.ndarray))):
             raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
         g = jnp.asarray(g, dtype=jnp.float64)
-        if g.size != 3:
-            raise ValueError(f"g must be a vector of shape (3,), got {g.size}")
+        if g.size != 2:
+            raise ValueError(f"g must be a vector of shape (2,), got {g.size}")
         self.g = jnp.concatenate(
-            [jnp.zeros(3), g]
-        )  # Add zeros for the orientation angles
+            [jnp.zeros(1), g]
+        )  # Add a zero for the orientation angle
 
         # Lengths of the segments
         try:
@@ -353,21 +339,15 @@ class PCS(DynamicalSystem):
             raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
         self.D = D
 
-    def update_params(self, params: Dict[str, Array]) -> "PCS":
+    def update_params(self, params: dict[str, Array]) -> "PlanarPCS":
         """
         Update the parameters of the PCS model.
 
         Args:
             params (Dict[str, Array]):
                 Dictionary that contains the robot parameters to update:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
+                - "th0": (optional) float
+                    Initial orientation angle [rad]
                 - "L": List/Array of num_segments floats
                     Length of each segment [m]
                 - "r": List/Array of num_segments floats
@@ -382,28 +362,32 @@ class PCS(DynamicalSystem):
                     Shear modulus of each segment [Pa]
                 - "D": List/Array of (num_segments x num_segments) floats
                     Damping matrix of each segment [Pa*s]
+
+        Returns:
+            updated_self (PlanarPCS):
+                A new instance of PlanarPCS with updated parameters.
         """
         # Apply updates sequentially
         updated_self = self
 
-        if "p0" in params:
-            p0 = params["p0"]
-            if not (isinstance(p0, (list, jnp.ndarray))):
+        if "th0" in params:
+            th0 = params["th0"]
+            if not (isinstance(th0, (float, int, jnp.ndarray))):
                 raise TypeError(
-                    f"p0 must be a list or an array, got {type(p0).__name__}"
+                    f"th0 must be a float, int, or an array, got {type(th0).__name__}"
                 )
-            p0 = jnp.asarray(p0, dtype=jnp.float64)
-            updated_self = eqx.tree_at(lambda m: m.g0, updated_self, lie.exp_SE3(p0))
+            th0 = jnp.asarray(th0, dtype=jnp.float64)
+            updated_self = eqx.tree_at(lambda m: m.th0, updated_self, th0)
 
         if "g" in params:
             g = params["g"]
             if not (isinstance(g, (list, jnp.ndarray))):
                 raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
             g = jnp.asarray(g, dtype=jnp.float64)
-            if g.size != 3:
-                raise ValueError(f"g must be a vector of shape (3,), got {g.size}")
+            if g.size != 2:
+                raise ValueError(f"g must be a vector of shape (2,), got {g.size}")
             updated_self = eqx.tree_at(
-                lambda m: m.g, updated_self, jnp.concatenate([jnp.zeros(3), g])
+                lambda m: m.g, updated_self, jnp.concatenate([jnp.zeros(1), g])
             )
 
         if "L" in params:
@@ -479,7 +463,7 @@ class PCS(DynamicalSystem):
         return updated_self
 
     @eqx.filter_jit
-    def classify_segment(self, s: Array) -> Tuple[Array, Array]:
+    def classify_segment(self, s: Array) -> tuple[Array, Array]:
         """
         Classify the point along the robot to the corresponding segment.
 
@@ -517,6 +501,77 @@ class PCS(DynamicalSystem):
         return xi
 
     @eqx.filter_jit
+    def chi(self, xi: Array, s: Array) -> Array:
+        """
+        Compute the forward kinematics of the robot.
+
+        Args:
+            xi (Array): strain vector of shape (3*num_segments,) where each row corresponds to a segment
+            s (Array): point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            chi_s (Array): forward kinematics of the robot at point s, shape (3,) : [theta, x, y]
+        """
+        xi = xi.reshape(self.num_segments, 3)
+
+        segment_idx, s_local = self.classify_segment(s)
+
+        chi_0 = jnp.concatenate(
+            [self.th0[None], jnp.zeros(2)]
+        )  # Initial configuration [theta, x, y]
+
+        # Iteration function
+        def chi_i(chi_prev: Array, i: Array) -> tuple[Array, Array]:
+            th_prev = chi_prev[0]
+            p_prev = chi_prev[1:]
+
+            # rotational/bending strain of the current segment
+            kappa_i = xi[i, 0]
+            # linear strains of the current segment
+            sigmas_i = xi[i, 1:]
+
+            l_i = jnp.where(i == segment_idx, s_local, self.L[i])
+
+            # classify whether it is a small strain
+            small_strain = jnp.abs(kappa_i * l_i) < self.global_eps
+
+            # compute the orientation
+            th = th_prev + kappa_i * l_i
+
+            # compute the components of the rotation matrix
+            int_cos_th = lax.cond(
+                small_strain,
+                lambda _: l_i * jnp.cos(th_prev),
+                lambda _: (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+                operand=None,
+            )
+            int_sin_th = lax.cond(
+                small_strain,
+                lambda _: l_i * jnp.sin(th_prev),
+                lambda _: -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+                operand=None,
+            )
+
+            R = jnp.stack(
+                [
+                    jnp.stack([int_cos_th, -int_sin_th]),
+                    jnp.stack([int_sin_th, int_cos_th]),
+                ]
+            )
+
+            p = p_prev + R @ sigmas_i
+
+            chi = jnp.concatenate([th[None], p])
+
+            return chi, chi
+
+        _, chi_list = lax.scan(f=chi_i, init=chi_0, xs=jnp.arange(self.num_segments))
+
+        chi_s = chi_list[segment_idx]
+
+        return chi_s
+
+    @eqx.filter_jit
     def forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a point s along the robot.
@@ -526,216 +581,266 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            g_s (Array): forward kinematics of the robot at point s, shape (4, 4) :
-                [[  R,      p],
-                [0, 0, 0,   1]] where R is the rotation matrix and p is the position vector.
+            chi (Array): forward kinematics of the robot at point s, shape (3,) : [theta, x, y]
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
+        xi = self.strain(q)
 
-        # Compute the point coordinate along the segment in the interval [0, L_i]
-        segment_idx, s_local = self.classify_segment(s)
+        chi = self.chi(xi, s)
 
-        def body_segment_i(g_base_i: Array, i: Array) -> Tuple[Array, Array]:
-            """
-            Compute the forward kinematics of the robot for the i-th segment. Either until the tip of the segment or until the point s_local.
-            Args:
-                g_base_i (Array): transformation matrix of the base of the segment, shape (4, 4).
-                i (Array): index of the segment.
-            Returns:
-                g_i (Array): transformation matrix of the point s_local if i == segment_idx, otherwise the tip of the segment, shape (4, 4).
-                g_i (Array): transformation matrix of the point s_local if i == segment_idx, otherwise the tip of the segment, shape (4, 4).
-            """
-            length_i = jnp.where(i == segment_idx, s_local, self.L[i])
-            xi_i = xi[i]
-
-            # Magnus expansion
-            Magnus_i = length_i * xi_i
-
-            # Compute the transformation matrix from the base of the segment until length_i using the exponential map
-            g_step = lie.exp_gn_SE3(Magnus_i, eps=self.global_eps)
-
-            g_i = g_base_i @ g_step
-
-            return g_i, g_i
-
-        indices_link = jnp.arange(self.num_segments)
-
-        g_ini = self.g0  # Initial position and orientation of the robot base
-
-        _, g_ls = lax.scan(f=body_segment_i, init=g_ini, xs=indices_link)
-
-        # # For debugging purposes, you can uncomment the following line to see the list of transformations
-        # carry = g_ini
-        # g_list = []
-        # for i_segment in indices_link:
-        #     g_tip_i, g_list_i = body_segment_i(carry, i_segment)
-        #     carry = g_tip_i
-        #     g_list.append(g_list_i)
-        # g_list = jnp.array(g_list)
-
-        g_s = g_ls[segment_idx]
-
-        return g_s
+        return chi
 
     @eqx.filter_jit
     def forward_kinematics_tips(self, q: Array) -> Array:
         """
-        Compute the forward kinematics of the robot at all segment tips.
+        Compute the forward kinematics of the robot at the tips of all segments.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            g_tips (Array): forward kinematics of the robot at all segment tips, shape (num_segments, 4, 4) :
-                g_tip_i = [[  R,      p],
-                           [0, 0, 0,   1]] where R is the rotation matrix and p is the position vector.
+            chi_tips (Array): forward kinematics at each segment tip, shape (num_segments, 3)
+                where each row is [theta, x, y].
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
+        xi = self.strain(q).reshape(self.num_segments, 3)
 
-        def body_segment_i(g_base_i: Array, i: Array) -> Tuple[Array, Array]:
-            # Magnus expansion
-            Magnus_Li = self.L[i] * xi[i]
+        # base configuration [theta, x, y]
+        chi_base = jnp.concatenate(
+            [
+                jnp.asarray(self.th0, dtype=xi.dtype)[None],
+                jnp.zeros(2, dtype=xi.dtype),
+            ]
+        )
 
-            # Compute the transformation matrix from the base until the tip of the segment using the exponential map
-            g_Li_rel = lie.exp_gn_SE3(Magnus_Li, eps=self.global_eps)
+        def integrate_segment(chi_prev: Array, i: Array) -> tuple[Array, Array]:
+            xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+            kappa_i = xi_i[0]  # rotational/bending strain of the current segment
+            sigmas_i = xi_i[1:]  # linear strains of the current segment
 
-            g_Li = g_base_i @ g_Li_rel
+            L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
-            return g_Li, g_Li
+            th_prev = chi_prev[0]
+            p_prev = chi_prev[1:]
 
-        indices_link = jnp.arange(self.num_segments)
+            # classify whether it is a small strain
+            small_strain = jnp.abs(kappa_i * L_i) < self.global_eps
 
-        # Initial position and orientation of the robot base
-        g_ini = self.g0
+            # compute the orientation
+            th = th_prev + kappa_i * L_i
 
-        _, g_tips = lax.scan(f=body_segment_i, init=g_ini, xs=indices_link)
+            # compute the components of the rotation matrix
+            int_cos_th = lax.cond(
+                small_strain,
+                lambda _: L_i * jnp.cos(th_prev),
+                lambda _: (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+                operand=None,
+            )
+            int_sin_th = lax.cond(
+                small_strain,
+                lambda _: L_i * jnp.sin(th_prev),
+                lambda _: -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+                operand=None,
+            )
 
-        return g_tips
+            R = jnp.stack(
+                [
+                    jnp.stack([int_cos_th, -int_sin_th]),
+                    jnp.stack([int_sin_th, int_cos_th]),
+                ]
+            )
+
+            p = p_prev + R @ sigmas_i
+            chi_tip = jnp.concatenate([th[None], p])
+
+            return chi_tip, chi_tip
+
+        indices = jnp.arange(self.num_segments, dtype=jnp.int32)
+        _, chi_tips = lax.scan(integrate_segment, chi_base, indices)
+
+        return chi_tips
 
     @eqx.filter_jit
     def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
         """
-        Compute the forward kinematics of the robot at a batch of points s_ps along the robot.
+        Compute the forward kinematics of the robot at a batch of arc-length positions.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
-            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+            s_ps (Array): arc-length positions in [0, L] of shape (N,).
 
         Returns:
-            g_ps: forward kinematics of the robot at all points s_ps, shape (N, 4, 4) :
-                g_si = [[  R,      p],
-                        [0, 0, 0,   1]] where R is the rotation matrix and p is the position vector.
+            chi_ps (Array): forward kinematics evaluated at all points, shape (N, 3)
+                where each row is [theta, x, y].
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
+        xi = self.strain(q).reshape(self.num_segments, 3)
 
-        # compute the forward kinematics at the tips
-        g_tips = self.forward_kinematics_tips(q)
-
-        # Compute the point coordinates along the segment in the interval [0, L_i]
-        segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
-
-        # collect the base transform for each segment (g0 for the first, previous tip otherwise)
-        g_bases = jnp.concatenate([self.g0[None, :, :], g_tips[:-1]], axis=0)
-
-        # compute the magnus expansion for each point
-        magnus = s_local_ps.reshape(-1, 1) * xi[segment_indices]
-        # compute the relative transform from the base of the segment to the point
-        g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(
-            magnus
+        chi_tips = self.forward_kinematics_tips(q)
+        chi_base = jnp.concatenate(
+            [
+                jnp.asarray(self.th0, dtype=xi.dtype)[None],
+                jnp.zeros(2, dtype=xi.dtype),
+            ]
         )
-        # get the base transform for each point
-        g_base_points = g_bases[segment_indices]
+        chi_bases = jnp.concatenate([chi_base[None, :], chi_tips[:-1]], axis=0)
 
-        # combine to get the absolute transforms
-        g_ps = vmap(lambda g_base_i, g_rel_i: g_base_i @ g_rel_i)(g_base_points, g_rel)
+        segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
+        xi_ps = xi[segment_indices]
+        chi_base_ps = chi_bases[segment_indices]
 
-        return g_ps
+        def integrate_point(chi_prev: Array, xi_i: Array, arc_len: Array) -> Array:
+            th_prev = chi_prev[0]
+            p_prev = chi_prev[1:]
 
-    @eqx.filter_jit
-    def _compute_relative_segment_transforms(self, g_tips: Array) -> Array:
-        """Return the SE(3) transforms from each segment base to its distal tip.
+            kappa_i = xi_i[0]  # rotational/bending strain of the current segment
+            sigmas_i = xi_i[1:]  # linear strains of the current segment
 
-        The first entry is measured from the global base pose ``g0``; subsequent entries
-        use the distal pose of the previous segment, mirroring the serial chain geometry.
+            # classify whether it is a small strain
+            small_strain = jnp.abs(kappa_i * arc_len) < self.global_eps
 
-        Args:
-            g_tips (Array): absolute tip transforms of shape (num_segments, 4, 4).
+            # compute the orientation
+            th = th_prev + kappa_i * arc_len
 
-        Returns:
-            g_rels (Array): relative transforms of shape (num_segments, 4, 4).
-        """
-        g_tips = jnp.asarray(g_tips).reshape(self.num_segments, 4, 4)
+            # compute the components of the rotation matrix
+            int_cos_th = lax.cond(
+                small_strain,
+                lambda _: arc_len * jnp.cos(th_prev),
+                lambda _: (jnp.sin(th) - jnp.sin(th_prev)) / kappa_i,
+                operand=None,
+            )
+            int_sin_th = lax.cond(
+                small_strain,
+                lambda _: arc_len * jnp.sin(th_prev),
+                lambda _: -(jnp.cos(th) - jnp.cos(th_prev)) / kappa_i,
+                operand=None,
+            )
 
-        # prepend the base transform so every segment has its proximal pose available
-        g_prev = jnp.concatenate([self.g0[None, :, :], g_tips[:-1]], axis=0)
+            R = jnp.stack(
+                [
+                    jnp.stack([int_cos_th, -int_sin_th]),
+                    jnp.stack([int_sin_th, int_cos_th]),
+                ]
+            )
 
-        def rel_transform(g_prev_i: Array, g_curr_i: Array) -> Array:
-            """
-            Compute ``g_prev_i^{-1} @ g_curr_i`` without explicitly inverting ``g_prev_i``.
-            This is more numerically stable and efficient than computing the inverse directly.
-            Args:
-                g_prev_i (Array): previous segment tip transform of shape (4, 4).
-                g_curr_i (Array): current segment tip transform of shape (4, 4).
-            Returns:
-                g_rel (Array): relative transform of shape (4, 4).
-            """
-            R_prev = g_prev_i[:3, :3]
-            p_prev = g_prev_i[:3, 3]
+            p = p_prev + R @ sigmas_i
 
-            R_curr = g_curr_i[:3, :3]
-            p_curr = g_curr_i[:3, 3]
+            return jnp.concatenate([th[None], p])
 
-            R_rel = R_prev.T @ R_curr
-            p_rel = R_prev.T @ (p_curr - p_prev)
+        chi_ps = vmap(integrate_point)(chi_base_ps, xi_ps, s_local_ps)
 
-            upper = jnp.concatenate([R_rel, p_rel[:, None]], axis=1)
-            lower = jnp.array([0.0, 0.0, 0.0, 1.0], dtype=g_curr_i.dtype)[None, :]
-            g_rel = jnp.concatenate([upper, lower], axis=0)
-            return g_rel
-
-        g_rels = vmap(rel_transform)(g_prev, g_tips)
-        return g_rels
+        return chi_ps
 
     @eqx.filter_jit
-    def inverse_kinematics(self, g_tips: Array) -> Array:
+    def _compute_relative_segment_poses(self, chi_tips: Array) -> Array:
         """
-        Recover generalized coordinates from the absolute tip poses of each segment.
-
-        The routine converts each tip pose into a body-relative transform, extracts the
-        corresponding twist via the SE(3) logarithmic map, and normalises by segment length
-        to obtain the constant strain representation used by the PCS model.
+        Compute the relative pose differences of each segment tip w.r.t. the previous segment tip
+        in a vectorized fashion.
 
         Args:
-            g_tips (Array): homogeneous tip transforms of shape (num_segments, 4, 4).
+            chi_tips (Array): absolute tip poses of shape (num_segments, 3) where each row is [theta, x, y]
+                              representing the pose of each segment tip in the global frame.
 
         Returns:
-            q (Array): generalized coordinates ``q`` of shape (num_active_strains,).
+            chi_rel (Array): relative poses of shape (num_segments, 3) where each row is [delta_theta, delta_x, delta_y]
+                            representing the relative pose change from the previous segment tip.
+                            The first segment's relative pose is computed w.r.t. the base at (0, 0, 0).
         """
-        # Relative pose of each segment distal tip with respect to its proximal base
-        g_rel = self._compute_relative_segment_transforms(g_tips)
+        # Ensure chi_tips has the correct shape
+        chi_tips = chi_tips.reshape(self.num_segments, 3)
 
-        def _segment_inverse(g_rel_i: Array, length_i: Array) -> Array:
+        # Base pose at the origin: [theta=self.th0, x=0, y=0]
+        base_pose = jnp.array([self.th0, 0.0, 0.0])
+
+        # Create array of previous poses: base + all segment tips except the last
+        prev_poses = jnp.concatenate([base_pose[None, :], chi_tips[:-1]], axis=0)
+
+        # Compute relative poses vectorized
+        # For SE(2), the relative transformation between poses chi_prev and chi_curr is:
+        # delta_chi = log(exp(chi_prev)^(-1) @ exp(chi_curr))
+        # But for computational efficiency, we can compute this more directly:
+
+        # Extract angles and positions
+        theta_prev = prev_poses[:, 0]  # (num_segments,)
+        p_prev = prev_poses[:, 1:]  # (num_segments, 2)
+
+        theta_curr = chi_tips[:, 0]  # (num_segments,)
+        p_curr = chi_tips[:, 1:]  # (num_segments, 2)
+
+        # Relative angle is simply the difference
+        delta_theta = theta_curr - theta_prev  # (num_segments,)
+
+        # Relative position needs to be rotated to the previous frame
+        cos_prev = jnp.cos(theta_prev)  # (num_segments,)
+        sin_prev = jnp.sin(theta_prev)  # (num_segments,)
+
+        # Relative position in global frame
+        delta_p_global = p_curr - p_prev  # (num_segments, 2)
+
+        # Transform relative position to the previous segment frame using rotation matrix transpose
+        # R_prev^T @ delta_p_global for each segment
+        delta_x = cos_prev * delta_p_global[:, 0] + sin_prev * delta_p_global[:, 1]
+        delta_y = -sin_prev * delta_p_global[:, 0] + cos_prev * delta_p_global[:, 1]
+
+        # Combine relative transformations
+        chi_rel = jnp.column_stack([delta_theta, delta_x, delta_y])  # (num_segments, 3)
+
+        return chi_rel
+
+    @eqx.filter_jit
+    def inverse_kinematics(self, chi_tips: Array) -> Array:
+        """
+        Execute inverse kinematics to find the generalized coordinates / configurations.
+        Instead of an iterative IK procedure, we leverage here the closed-form solution for the mapping
+        the relative tip poses of each segment distal end with respect to the proximal end of the segment
+        to the planar constant strain parameters.
+
+        Args:
+            chi_tips (Array): the tip poses of shape (num_segments, 3)
+                where each row is [theta, x, y] for the corresponding segment tip.
+        Returns:
+            q (Array): the generalized coordinates of shape (num_active_strains,)
+        """
+        # Compute the relative poses of each segment tip w.r.t. the previous segment tip
+        chi_rel = self._compute_relative_segment_poses(chi_tips)
+
+        def _inverse_kinematics_single_segment(chi_rel_i: Array, s_i: Array) -> Array:
             """
-            Map the relative tip pose of a segment to its constant strain twist.
+            Compute the inverse kinematics for a single segment given its relative tip pose and arc-length.
+
             Args:
-                g_rel_i (Array): relative transform of shape (4, 4).
-                length_i (Array): length of the segment.
+                chi_rel_i (Array): relative tip pose of shape (3,) : [delta_theta, delta_x, delta_y]
+                s_i (Array): arc-length position of the tip along the segment.
             Returns:
-                xi (Array): strain twist of shape (6,).
+                xi_i (Array): strain parameters of shape (3,) : [kappa_z, sigma_x, sigma_y]
             """
-            xi_mag = lie.log_SE3(g_rel_i, eps=self.global_eps)
-            xi = jnp.where(
-                jnp.abs(length_i) < self.global_eps,
-                jnp.zeros_like(xi_mag),
-                xi_mag / length_i,
+            th, px, py = chi_rel_i
+
+            # compute the inverse kinematics for the virtual backbone
+            divisor = jnp.cos(th) - 1
+            xi = lax.select(
+                jnp.abs(th) < self.global_eps,
+                jnp.array([0.0, px / s_i, py / s_i]),
+                (
+                    th
+                    / (2 * s_i)
+                    * jnp.stack(
+                        [
+                            2 * jnp.ones((), dtype=th.dtype),
+                            py - (px * jnp.sin(th)) / divisor,
+                            -px - (py * jnp.sin(th)) / divisor,
+                        ]
+                    )
+                ),
             )
             return xi
 
-        # Convert every relative transform to segment twist parameters
-        xi_segments = vmap(_segment_inverse)(g_rel, self.L)
-        xi = xi_segments.reshape(-1)
+        # define the local arc-length positions of each segment tip
+        s_local = self.L
 
-        # Project the strain difference onto the active strain basis to obtain ``q``
+        # apply the closed-form inverse kinematics for each segment using the
+        xi_sgs = vmap(_inverse_kinematics_single_segment)(chi_rel, s_local)
+        # flatten to (3*num_segments,)
+        xi = xi_sgs.reshape(-1)
+
+        # use the pseudo-inverse of the strain basis matrix to map to generalized coordinates
         q = jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
 
         return q
@@ -746,56 +851,88 @@ class PCS(DynamicalSystem):
         Convert the Jacobian or its derivative from the full computation form to the selected strains form.
 
         Args:
-            J_full (Array): Full Jacobian of shape (num_segments, 6, 6)
+            J_full (Array): Full Jacobian of shape (num_segments, 3, 3)
 
         Returns:
-            J_selected (Array): Jacobian for the selected strains of shape (6, num_active_strains)
+            J_final (Array): Jacobian for the selected strains of shape (3, num_strains)
         """
-        J_final = J_full.transpose(1, 0, 2).reshape(6, self.num_strains)
+        J_final = J_full.transpose(1, 0, 2).reshape(3, self.num_strains)
 
         return J_final
 
     @eqx.filter_jit
     def _J_local(self, q: Array, s: Array) -> Array:
         """
-        Compute the Jacobian of the forward kinematics at a point s along the robot.
+        Compute the body frame Jacobian of the forward kinematics at a point s along the robot.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s, shape (6, num_strains)
+            J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
             where each row corresponds to a segment.
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
+        xi = self.strain(q).reshape(self.num_segments, 3)
 
         segment_idx, s_local = self.classify_segment(s)
 
-        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
-        zero_slice = jnp.zeros((6, 6), dtype=xi.dtype)
+        zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
         def integrate_segment(
-            J_prev: Array,
-            i: Array,
-            xi_i: Array,
-            arc_len: Array,
+            J_prev: Array, i: Array, xi_i: Array, arc_len: Array
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            """
+            Propagate the Jacobian one segment forward and overwrite the active slice.
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
+            Args:
+                J_prev (Array): Jacobian accumulated up to the previous segment, shape (num_segments, 3, 3).
+                i (Array): Index of the segment being updated.
+                xi_i (Array): Strain parameters of the current segment, shape (3,).
+                arc_len (Array): Integration length used for this evaluation (either segment length or `s_local`).
+
+            Returns:
+                J_next: Jacobian including the contribution of the current segment, shape (num_segments, 3, 3).
+            """
+            # Map the previous Jacobian into the current segment frame using the inverse adjoint.
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
+            # Integrate the local tangent contribution for this segment length.
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
+            # Rotate the previous Jacobian into the current frame.
+            J_rot = jnp.matmul(Ad_inv, J_prev)
+            # Overwrite the slice associated with the active segment.
             J_next = J_rot.at[i].set(Ad_inv @ T)
-
             return J_next
 
-        def scan_body(
-            carry: Tuple[Array, Array, Array],
-            i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array], Array]:
-            J_prev, J_local, done = carry
+        zero_output = jnp.zeros((3, 3), dtype=xi.dtype)
 
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
+        def scan_body(
+            carry: tuple[Array, Array, Array],
+            i: Array,
+        ) -> tuple[tuple[Array, Array, Array], Array]:
+            """
+            Advance the running Jacobian and capture the value once the target segment is reached.
+
+            Args:
+                carry (Tuple[Array, Array, Array]): Tuple storing the running Jacobian, the cached target result,
+                    and a boolean flag indicating whether the target segment was already processed.
+                i (Array): Current segment index handled by the scan.
+
+            Returns:
+                Tuple[Tuple[Array, Array, Array], Array]: Updated carry together with a dummy output required by `lax.scan`.
+            """
+            J_prev, J_target, done = carry
+
+            def compute_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
+                """
+                Integrate the current segment and update the cached result if this is the target.
+
+                Args:
+                    _: None: Unused placeholder to comply with `lax.switch` signature.
+
+                Returns:
+                    Tuple[Tuple[Array, Array, Array], Array]: Carry with the latest Jacobian state plus dummy scan output.
+                """
                 xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
@@ -803,15 +940,30 @@ class PCS(DynamicalSystem):
                 J_next = integrate_segment(J_prev, i, xi_i, arc_len)
 
                 is_target = i == segment_idx
-                J_target_next = jnp.where(is_target, J_next, J_local)
+                J_target_next = jnp.where(is_target, J_next, J_target)
                 done_next = jnp.logical_or(done, is_target)
 
-                return (J_next, J_target_next, done_next), zero_slice
+                return (J_next, J_target_next, done_next), zero_output
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
-                return (J_prev, J_local, done), zero_slice
+            def skip_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
+                """
+                Keep the cached Jacobian untouched once the target segment has been processed.
 
-            return lax.cond(done, skip_branch, compute_branch, operand=None)
+                Args:
+                    _: None: Unused placeholder required by `lax.switch`.
+
+                Returns:
+                    Tuple[Tuple[Array, Array, Array], Array]: Original carry and dummy scan output.
+                """
+                return (J_prev, J_target, done), zero_output
+
+            branch_index = lax.convert_element_type(done, jnp.int32)
+
+            return lax.switch(
+                branch_index,
+                (compute_branch, skip_branch),
+                operand=None,
+            )
 
         carry_init = (
             zeros,
@@ -820,36 +972,33 @@ class PCS(DynamicalSystem):
         )
 
         indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
-        (_, J_target, _), _ = lax.scan(scan_body, carry_init, indices)
+        (_, J_local, _), _ = lax.scan(scan_body, carry_init, indices)
 
-        J_local = self._final_size_jacobian(J_target)
+        J_local = self._final_size_jacobian(J_local)
 
         return J_local
 
     @eqx.filter_jit
     def _J_local_tips(self, q: Array) -> Array:
         """
-        Compute the Jacobian of the forward kinematics at the tips of all segments.
+        Compute the body-frame Jacobian at the tips of all segments.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            J_local_tips (Array): Jacobian of the forward kinematics the tips of all segments, shape (num_segments, 6, num_strains)
+            J_local_tips (Array): Jacobian at each segment tip, shape (num_segments, 3, num_strains).
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
+        xi = self.strain(q).reshape(self.num_segments, 3)
 
-        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
+        zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
-        def scan_body(
-            J_prev: Array,
-            i: Array,
-        ) -> Tuple[Array, Array]:
+        def scan_body(J_prev: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, L_i, eps=self.global_eps)
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, L_i, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, L_i, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -866,58 +1015,48 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def _J_local_batched(self, q: Array, s_ps: Array) -> Array:
         """
-        Compute the Jacobian for the forward kinematics at a batch of points s_ps along the robot.
+        Compute the body-frame Jacobian at a batch of arc-length positions.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
-            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+            s_ps (Array): arc-length positions in [0, L] of shape (N,).
 
         Returns:
-            J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_strains)
+            J_local_ps (Array): Jacobians evaluated at all points, shape (N, 3, num_strains).
         """
-        # num points
-        N = s_ps.shape[0]
+        xi = self.strain(q).reshape(self.num_segments, 3)
 
-        # compute the strain for each segment
-        xi = self.strain(q).reshape(self.num_segments, 6)
-
-        # classify all points along the robot to the corresponding segment and compute local coordinates
         segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
 
-        # compute the Jacobian at the tips
-        J_tips = self._J_local_tips(q)  # shape (num_segments, 6, num_strains)
-
-        # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
+        J_tips = self._J_local_tips(q)  # (num_segments, 3, num_strains)
         J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
 
-        J_base_ps = J_bases[segment_indices]
-        # select the other variables for each point
+        J_base_ps = J_bases[segment_indices]  # (N, 3, num_strains)
         xi_ps = xi[segment_indices]
-        idx_ps = segment_indices
 
-        # reshape for easier indexing
-        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(
+        N = s_ps.shape[0]
+        J_base_ps = J_base_ps.reshape(N, 3, self.num_segments, 3).transpose(
             0, 2, 1, 3
-        )  # shape (N, 6, num_segments, 6)
+        )  # (N, num_segments, 3, 3)
 
         def integrate_segment(
             i: Array,
             xi_i: Array,
-            s_local: Array,
+            arc_len: Array,
             J_base: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.global_eps)
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
             J_next = J_rot.at[i].set(Ad_inv @ T)
 
             return J_next
 
-        # vmap the segment integration over all points
-        J_local_ps = vmap(integrate_segment)(idx_ps, xi_ps, s_local_ps, J_base_ps)
+        J_local_ps = vmap(integrate_segment)(
+            segment_indices, xi_ps, s_local_ps, J_base_ps
+        )
 
-        # reshape back to (N, 6, num_strains)
         J_local_ps = vmap(self._final_size_jacobian)(J_local_ps)
 
         return J_local_ps
@@ -932,11 +1071,9 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
+            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (3, num_active_strains)
         """
-        J_local = self._J_local(q, s) @ self.B_xi
-
-        return J_local
+        return self._J_local(q, s) @ self.B_xi
 
     @eqx.filter_jit
     def jacobian_inertialframe(self, q: Array, s: Array) -> Array:
@@ -948,25 +1085,23 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
+            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (3, num_active_strains)
         """
-        # compute the Jacobian in the body frame
         J_local = self._J_local(q, s)
 
-        g_s = self.forward_kinematics(q, s)
-        # construct g with zero translation for the Adjoint transformation
-        g_rot = jnp.block(
-            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
-        )
-        Ad_g = lie.Adjoint_g_SE3(g_rot)
+        chi = self.forward_kinematics(q, s)
+        theta = chi[0]
+        # SE(2) transformation at point s
+        g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
+        # Adjoint representation of the SE(2) transformation
+        Ad_g = lie.Adjoint_g_SE2(g)
 
-        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local)
-        J_global = J_global_ @ self.B_xi
+        J_global_full = Ad_g @ J_local
 
-        return J_global
+        return J_global_full @ self.B_xi
 
     @eqx.filter_jit
-    def _J_Jd_local(self, q: Array, qd: Array, s: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local(self, q: Array, qd: Array, s: Array) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot.
 
@@ -976,16 +1111,15 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s, shape (6, num_strains)
-            Jd_local (Array): Time-derivative of the Jacobian at point s, shape (6, num_strains)
+            J_local (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 3, 3)
+            Jd_local (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 3, 3)
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
-        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
         segment_idx, s_local = self.classify_segment(s)
 
-        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
-        zero_slice = jnp.zeros((6, 6), dtype=xi.dtype)
+        zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
         def integrate_segment(
             J_prev: Array,
@@ -994,37 +1128,78 @@ class PCS(DynamicalSystem):
             xi_i: Array,
             xid_i: Array,
             arc_len: Array,
-        ) -> Tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(
-                xi_i, xid_i, arc_len, eps=self.global_eps
+        ) -> tuple[Array, Array]:
+            """
+            Propagate Jacobian/Jacobian rate forward by one segment and insert the local contribution.
+
+            Args:
+                J_prev (Array): Jacobian accumulated up to the previous segment, shape (num_segments, 3, 3).
+                Jd_prev (Array): Time derivative of the Jacobian up to the previous segment, shape (num_segments, 3, 3).
+                i (Array): Index of the segment being updated.
+                xi_i (Array): Strain parameters for the current segment, shape (3,).
+                xid_i (Array): Time derivative of the strain for the current segment, shape (3,).
+                arc_len (Array): Integration length used for this evaluation (either segment length or `s_local`).
+
+            Returns:
+                J_next (Array): Updated Jacobian including the current segment, shape (num_segments, 3, 3).
+                Jd_next (Array): Updated Jacobian rate including the current segment, shape (num_segments, 3, 3).
+            """
+            # Inverse adjoint transformation and tangent integration for the current segment
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
+            # Compute the tangent vector and its derivative
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
+            Td = lie.Tangent_derivative_gi_se2(
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
+            # Rotate the previous Jacobian into the current frame and add the local contribution
+            J_rot = jnp.matmul(Ad_inv, J_prev)
+            # Overwrite the slice associated with the active segment
             J_next = J_rot.at[i].set(Ad_inv @ T)
 
-            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            eta = jnp.matmul(J_next_slice, xid_i)
+            # Compute the bodyframe velocity twist at the end of the current segment
+            eta = jnp.matmul(J_next[i], xid_i)
+            # Time-derivative of the inverse adjoint
+            Ad_inv_dot = -lie.adjoint_se2(eta) @ Ad_inv
 
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
-
-            Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_prev) + jnp.einsum(
-                "ij, njk->nik", Ad_inv_dot, J_prev
-            )
+            # Rotate the previous Jacobian rate into the current frame and add the convective term
+            Jd_rot = jnp.matmul(Ad_inv, Jd_prev) + jnp.matmul(Ad_inv_dot, J_prev)
+            # Overwrite the slice associated with the active segment
             Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T + Ad_inv @ Td)
 
             return J_next, Jd_next
 
+        zero_output = jnp.zeros((3, 3), dtype=xi.dtype)
+
         def scan_body(
-            carry: Tuple[Array, Array, Array, Array, Array],
+            carry: tuple[Array, Array, Array, Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
+            """
+            Advance Jacobian/Jacobian rate along segments and remember the target-segment tensors.
+
+            Args:
+                carry (Tuple[Array, Array, Array, Array, Array]): Running Jacobian, Jacobian rate, cached target tensors,
+                    and processed flag for the target segment.
+                i (Array): Current segment index handled by the scan.
+
+            Returns:
+                Tuple[Tuple[Array, Array, Array, Array, Array], Array]: Updated carry and dummy scan output.
+            """
             J_prev, Jd_prev, J_target, Jd_target, done = carry
 
             def compute_branch(
                 _: None,
-            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
+                """
+                Integrate the current segment and cache the result if this corresponds to the query index.
+
+                Args:
+                    _: None: Unused placeholder required by `lax.switch`.
+
+                Returns:
+                    Tuple[Tuple[Array, Array, Array, Array, Array], Array]: Updated carry and dummy scan output.
+                """
                 xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
                 xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
@@ -1050,14 +1225,29 @@ class PCS(DynamicalSystem):
                     J_target_next,
                     Jd_target_next,
                     done_next,
-                ), zero_slice
+                ), zero_output
 
             def skip_branch(
                 _: None,
-            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
-                return (J_prev, Jd_prev, J_target, Jd_target, done), zero_slice
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
+                """
+                Reuse the previously cached tensors after the target segment has been handled.
 
-            return lax.cond(done, skip_branch, compute_branch, operand=None)
+                Args:
+                    _: None: Unused placeholder required by `lax.switch`.
+
+                Returns:
+                    Tuple[Tuple[Array, Array, Array, Array, Array], Array]: Original carry and dummy scan output.
+                """
+                return (J_prev, Jd_prev, J_target, Jd_target, done), zero_output
+
+            branch_index = lax.convert_element_type(done, jnp.int32)
+
+            return lax.switch(
+                branch_index,
+                (compute_branch, skip_branch),
+                operand=None,
+            )
 
         carry_init = (
             zeros,
@@ -1068,66 +1258,60 @@ class PCS(DynamicalSystem):
         )
 
         indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
-        (_, _, J_target, Jd_target, _), _ = lax.scan(scan_body, carry_init, indices)
+        (_, _, J_local, Jd_local, _), _ = lax.scan(scan_body, carry_init, indices)
 
-        J_local = self._final_size_jacobian(J_target)
-        Jd_local = self._final_size_jacobian(Jd_target)
+        J_local = self._final_size_jacobian(J_local)
+        Jd_local = self._final_size_jacobian(Jd_local)
 
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def _J_Jd_local_tips(self, q: Array, qd: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
-        Compute the Jacobian and its time-derivative for the forward kinematics at all segment tips.
+        Compute the body-frame Jacobian and its time derivative at the tips of all segments.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
 
         Returns:
-            J_local_tips (Array): Jacobian of the forward kinematics at point s, shape (num_segments, 6, num_strains)
-            Jd_local_tips (Array): Time-derivative of the Jacobian at point s, shape (num_segments, 6, num_strains)
+            Tuple[Array, Array]: Jacobian and Jacobian time derivative at each segment tip,
+                both of shape (num_segments, 3, num_strains).
         """
-        # compute the strain and strain rate for each segment
-        xi = self.strain(q).reshape(self.num_segments, 6)
-        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
-        # precompute the Lie algebra expressions for all segment tips
+        zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
+
         Ad_inv_tips = vmap(
-            lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: lie.Adjoint_gi_se2_inv(xi_i, L_i, eps=self.global_eps)
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: lie.Tangent_gi_se2(xi_i, L_i, eps=self.tangent_eps)
         )(xi, self.L)
         Td_tips = vmap(
-            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
-                xi_i, xid_i, L_i, eps=self.global_eps
+            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se2(
+                xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
 
-        # initialize zeros
-        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
-
         def scan_body(
-            carry: Tuple[Array, Array],
+            carry: tuple[Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             J_prev, Jd_prev = carry
 
-            # extract the current segment variables
-            xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
-            xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
             Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
             T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
             Td_i = lax.dynamic_index_in_dim(Td_tips, i, axis=0, keepdims=False)
+            xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+            xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv_i, J_prev)
             J_next = J_rot.at[i].set(Ad_inv_i @ T_i)
 
-            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            eta = jnp.matmul(J_next_slice, xid_i)
-
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv_i
+            eta = jnp.matmul(J_next[i], xid_i)
+            Ad_inv_dot = -lie.adjoint_se2(eta) @ Ad_inv_i
 
             Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv_i, Jd_prev) + jnp.einsum(
                 "ij, njk->nik", Ad_inv_dot, J_prev
@@ -1136,10 +1320,10 @@ class PCS(DynamicalSystem):
 
             return (J_next, Jd_next), (J_next, Jd_next)
 
-        carry_init = (zeros, zeros)
-
         indices = jnp.arange(self.num_segments, dtype=jnp.int32)
-        (_, _), (J_local_tips, Jd_local_tips) = lax.scan(scan_body, carry_init, indices)
+        (_, _), (J_local_tips, Jd_local_tips) = lax.scan(
+            scan_body, (zeros, zeros), indices
+        )
 
         J_local_tips = vmap(self._final_size_jacobian)(J_local_tips)
         Jd_local_tips = vmap(self._final_size_jacobian)(Jd_local_tips)
@@ -1149,73 +1333,61 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def _J_Jd_local_batched(
         self, q: Array, qd: Array, s_ps: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
-        Compute the Jacobian and its time-derivative for the forward kinematics at a batch of points s_ps along the robot.
+        Compute the body-frame Jacobian and its time derivative at a batch of arc-length positions.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
             qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-            s_ps (Array): point coordinates along the robot in the interval [0, L] of shape (N,).
+            s_ps (Array): arc-length positions in [0, L] of shape (N,).
 
         Returns:
-            J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_strains)
-            Jd_local_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_strains)
+            Tuple[Array, Array]: Jacobians and their time derivatives evaluated at all points,
+                both of shape (N, 3, num_strains).
         """
-        # num points
-        N = s_ps.shape[0]
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
 
-        # compute the strain and strain rate for each segment
-        xi = self.strain(q).reshape(self.num_segments, 6)
-        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
-
-        # classify all points along the robot to the corresponding segment and compute local coordinates
         segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
 
-        # compute the Jacobian at the tips
-        J_tips, Jd_tips = self._J_Jd_local_tips(
-            q, qd
-        )  # shape (num_segments, 6, num_strains)
+        J_tips, Jd_tips = self._J_Jd_local_tips(q, qd)
+        zeros_like_tip = jnp.zeros_like(J_tips[:1])
 
-        # select the base Jacobian for each point (g0 for the first, previous tip otherwise)
-        J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
-        Jd_bases = jnp.concatenate([jnp.zeros_like(Jd_tips[:1]), Jd_tips[:-1]], axis=0)
+        J_bases = jnp.concatenate([zeros_like_tip, J_tips[:-1]], axis=0)
+        Jd_bases = jnp.concatenate([zeros_like_tip, Jd_tips[:-1]], axis=0)
 
         J_base_ps = J_bases[segment_indices]
         Jd_base_ps = Jd_bases[segment_indices]
-        # select the other variables for each point
-        xi_ps, xid_ps = xi[segment_indices], xid[segment_indices]
-        idx_ps = segment_indices
 
-        # reshape for easier indexing
-        J_base_ps = J_base_ps.reshape(N, 6, self.num_segments, 6).transpose(
+        xi_ps = xi[segment_indices]
+        xid_ps = xid[segment_indices]
+
+        N = s_ps.shape[0]
+        J_base_ps = J_base_ps.reshape(N, 3, self.num_segments, 3).transpose(0, 2, 1, 3)
+        Jd_base_ps = Jd_base_ps.reshape(N, 3, self.num_segments, 3).transpose(
             0, 2, 1, 3
-        )  # shape (N, 6, num_segments, 6)
-        Jd_base_ps = Jd_base_ps.reshape(N, 6, self.num_segments, 6).transpose(
-            0, 2, 1, 3
-        )  # shape (N, 6, num_segments, 6)
+        )
 
         def integrate_segment(
             i: Array,
             xi_i: Array,
             xid_i: Array,
-            s_local: Array,
+            arc_len: Array,
             J_base: Array,
             Jd_base: Array,
-        ) -> Tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(
-                xi_i, xid_i, s_local, eps=self.global_eps
+        ) -> tuple[Array, Array]:
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
+            Td = lie.Tangent_derivative_gi_se2(
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
             J_next = J_rot.at[i].set(Ad_inv @ T)
 
-            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            eta = jnp.matmul(J_next_slice, xid_i)
-
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
+            eta = jnp.matmul(J_next[i], xid_i)
+            Ad_inv_dot = -lie.adjoint_se2(eta) @ Ad_inv
 
             Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_base) + jnp.einsum(
                 "ij, njk->nik", Ad_inv_dot, J_base
@@ -1224,12 +1396,10 @@ class PCS(DynamicalSystem):
 
             return J_next, Jd_next
 
-        # vmap the segment integration over all points
         J_local_ps, Jd_local_ps = vmap(integrate_segment)(
-            idx_ps, xi_ps, xid_ps, s_local_ps, J_base_ps, Jd_base_ps
+            segment_indices, xi_ps, xid_ps, s_local_ps, J_base_ps, Jd_base_ps
         )
 
-        # reshape back to (N, 6, num_strains)
         J_local_ps = vmap(self._final_size_jacobian)(J_local_ps)
         Jd_local_ps = vmap(self._final_size_jacobian)(Jd_local_ps)
 
@@ -1238,7 +1408,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def jacobian_and_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the body frame.
 
@@ -1248,20 +1418,20 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
-            Jd_local (Array): Time-derivative of the Jacobian at point s in the body frame, shape (6, num_active_strains)
+            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (3, num_active_strains)
+            Jd_local (Array): Time-derivative of the Jacobian at point s in the body frame, shape (3, num_active_strains)
         """
-        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
+        J_local_full, Jd_local_full = self._J_Jd_local(q, qd, s)
 
-        J_local = J_local_ @ self.B_xi
-        Jd_local = Jd_local_ @ self.B_xi
+        J_local = J_local_full @ self.B_xi
+        Jd_local = Jd_local_full @ self.B_xi
 
         return J_local, Jd_local
 
     @eqx.filter_jit
     def jacobian_and_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
 
@@ -1271,34 +1441,36 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
-            Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_strains)
+            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (3, num_active_strains)
+            Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (3, num_active_strains)
         """
-        J_local_, Jd_local_ = self._J_Jd_local(q, qd, s)
+        # Compute the bodyframe Jacobian and its derivative
+        J_local, Jd_local = self._J_Jd_local(q, qd, s)  # shape (num_segments, 3, 3)
 
-        # compute the Adjoint transformation matrix at point s
-        g_s = self.forward_kinematics(q, s)
-        g_rot = jnp.block(
-            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
-        )
-        Ad_g = lie.Adjoint_g_SE3(g_rot)
-
-        # compute the body twist eta
-        J_body = J_local_ @ self.B_xi
+        J_body = J_local @ self.B_xi
         eta_body = J_body @ qd
 
-        omega = eta_body[:3]
-        eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
-        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+        # Compute the forward kinematics to get the pose at point s
+        chi = self.forward_kinematics(q, s)
+        # extract the orientation
+        theta = chi[0]
+        # SE(2) transformation at point s
+        g = lie.exp_SE2(jnp.stack([theta, 0.0, 0.0]))
+        # Adjoint representation of the SE(2) transformation
+        Ad_g = lie.Adjoint_g_SE2(g)
+        # Derivative of the Adjoint of g
+        eta_rot = jnp.stack([eta_body[0], 0.0, 0.0])
+        Ad_g_dot = Ad_g @ lie.adjoint_se2(eta_rot)
 
-        # rotate both J and Jd to the inertial frame
-        J_global_ = jnp.einsum("ij, jk->ik", Ad_g, J_local_)
-        Jd_global_ = jnp.einsum("ij, jk->ik", Ad_g, Jd_local_) + jnp.einsum(
-            "ij, jk->ik", Ad_g_dot, J_local_
-        )
+        # Rotate the Jacobian to the inertial frame
+        J_global_full = Ad_g @ J_local
 
-        J_global = J_global_ @ self.B_xi
-        Jd_global = Jd_global_ @ self.B_xi
+        # compute the inertial frame Jacobian derivative
+        Jd_global_full = Ad_g @ Jd_local + Ad_g_dot @ J_local
+
+        # reduce to the active strains
+        J_global = J_global_full @ self.B_xi
+        Jd_global = Jd_global_full @ self.B_xi
 
         return J_global, Jd_global
 
@@ -1312,7 +1484,7 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
+            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (3, num_active_strains)
         """
         J_global = self.jacobian_inertialframe(q, s)
 
@@ -1321,7 +1493,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
 
@@ -1331,8 +1503,8 @@ class PCS(DynamicalSystem):
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
-            Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_strains)
+            J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (3, num_active_strains)
+            Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (3, num_active_strains)
         """
         J_global, Jd_global = self.jacobian_and_derivative_inertialframe(q, qd, s)
 
@@ -1347,12 +1519,12 @@ class PCS(DynamicalSystem):
         Compute the local cross-sectional area for the i-th segment.
 
         Args:
-            i (Array): index of the segment as array of shape ()
+            i (Array): index of the segment
 
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
         """
-        # Cross-sectional area for a circular cross-section
+        # Cross-sectional area
         A_i = jnp.pi * self.r[i] ** 2
         return A_i
 
@@ -1362,17 +1534,13 @@ class PCS(DynamicalSystem):
         Compute the local second moment of area for the i-th segment.
 
         Args:
-            i (Array): index of the segment as array of shape ()
+            i (Array): index of the segment
 
         Returns:
-            I_i (Array): local second moment of area of the i-th segment as array of shape (3, ) where the entries correspond to [I_xx, I_yy, I_zz]
+            I_i (Array): local second moment of area of the i-th segment
         """
-        # Second moment of area for a circular cross-section
-        I_i = jnp.array([
-            jnp.pi * self.r[i] ** 4 / 2,  # I_xx
-            jnp.pi * self.r[i] ** 4 / 4,  # I_yy
-            jnp.pi * self.r[i] ** 4 / 4,  # I_zz
-        ])
+        # Second moment of area
+        I_i = jnp.pi * self.r[i] ** 4 / 4
         return I_i
 
     @eqx.filter_jit
@@ -1381,15 +1549,15 @@ class PCS(DynamicalSystem):
         Compute the local mass matrix for the i-th segment.
 
         Args:
-            i (Array): index of the segment as array of shape ()
+            i (Array): index of the segment
         Returns:
-            M_i (Array): local mass matrix of shape (6, 6) for the i-th segment
+            M_i (Array): local mass matrix of shape (3, 3) for the i-th segment
         """
         rho_i = self.rho[i]
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area as array of shape (3, )
+        I_i = self._local_second_moment_of_area(i)  # Second moment of area
 
-        M_i = rho_i * jnp.diag(jnp.array([I_i[0], I_i[1], I_i[2], A_i, A_i, A_i]))
+        M_i = rho_i * jnp.diag(jnp.array([I_i, A_i, A_i]))
         return M_i
 
     # ===========================================
@@ -1406,47 +1574,27 @@ class PCS(DynamicalSystem):
         Returns:
             B_full (Array): Full inertia matrix of shape (num_strains, num_strains).
         """
-        # compute the gauss quadrature points and weights for each segment
         Xs_scaled, Ws_scaled = vmap(
             scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
-        # compute the jacobian for each quadrature point
-        J_ps = self._J_local_batched(
-            q, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps = self._J_local_batched(q, Xs_scaled.flatten())
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
 
         def B_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
 
             def B_ij(j: Array) -> Array:
-                # select the j-th quadrature weight
                 Ws_ij = Ws_scaled[i][j]
-                # select the j-th jacobian
                 J_ij = J_ps[i, j]
 
-                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
-                return B_ij
+                return Ws_ij * J_ij.T @ M_i @ J_ij
 
-            # we can skip the first and last quadrature points since their weight is zero
             B_blocks_i = vmap(B_ij)(jnp.arange(1, self.num_gauss_points - 1))
-
-            # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
-            # B_blocks_i = jnp.stack(
-            #     [B_j(j) for j in range(self.num_gauss_points)], axis=0
-            # )
 
             return B_blocks_i
 
         B_blocks_tot = vmap(B_i)(jnp.arange(self.num_segments))
-
-        # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
-        # B_blocks_tot = jnp.stack([B_i(i) for i in range(self.num_segments)], axis=0)
 
         B_full = jnp.sum(
             B_blocks_tot, axis=(0, 1)
@@ -1483,45 +1631,32 @@ class PCS(DynamicalSystem):
         Returns:
             C_full (Array): Full Coriolis matrix of shape (num_strains, num_strains).
         """
-        # compute the gauss quadrature points and weights for each segment
         Xs_scaled, Ws_scaled = vmap(
             scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
-        # compute the jacobian and its time-derivative for each quadrature point
-        J_ps, Jd_ps = self._J_Jd_local_batched(
-            q, qd, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
         Jd_ps = Jd_ps.reshape(
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        )
 
         def C_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
 
             def C_ij(j: Array) -> Array:
-                # select the j-th quadrature weight
                 Ws_ij = Ws_scaled[i][j]
-                # select the j-th jacobian and its time-derivative
                 J_ij = J_ps[i, j]
                 Jd_ij = Jd_ps[i, j]
 
-                C_ij = (
-                    Ws_ij
-                    * J_ij.T
+                return Ws_ij * (
+                    J_ij.T
                     @ (
                         M_i @ Jd_ij
-                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
+                        + lie.coadjoint_se2(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
                     )
                 )
-                return C_ij
 
-            # we can skip the first and last quadrature points since their weight is zero
             C_blocks_i = vmap(C_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
             return C_blocks_i
@@ -1561,62 +1696,34 @@ class PCS(DynamicalSystem):
         Returns:
             G (Array): Full gravitational force of shape (num_strains,).
         """
-        # compute the gauss quadrature points and weights for each segment
         Xs_scaled, Ws_scaled = vmap(
             scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
-        # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(
-            q, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(
-            self.num_segments, self.num_gauss_points, 4, 4
-        )  # shape (num_segments, num_gauss_points, 4, 4)
+        chi_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())
+        g_ps = vmap(lie.exp_SE2)(chi_ps.reshape(-1, 3))
+        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 3, 3)
 
-        # compute the jacobian for each quadrature point
-        J_ps = self._J_local_batched(
-            q, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps = self._J_local_batched(q, Xs_scaled.flatten())
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
 
         def G_i(i: Array) -> Array:
             M_i = self._local_mass_matrix(i)
 
             def G_ij(j: Array) -> Array:
-                # select the j-th quadrature weight
                 Ws_ij = Ws_scaled[i][j]
-                # select the j-th Cartesian pose
                 g_ij = g_ps[i, j]
-                # select the j-th jacobian and its time-derivative
                 J_ij = J_ps[i, j]
 
-                # compute the inverse Adjoint transformation matrix at point s
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE2(g_ij)
 
-                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
-                return G_ij
+                return -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 
-            # we can skip the first and last quadrature points since their weight is zero
             G_blocks_segment_i = vmap(G_ij)(jnp.arange(1, self.num_gauss_points - 1))
-
-            # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
-            # G_blocks_segment_i = jnp.stack(
-            #     [G_j(j) for j in range(self.num_gauss_points)], axis=0
-            # )
 
             return G_blocks_segment_i
 
         G_blocks_tot = vmap(G_i)(jnp.arange(self.num_segments))
-
-        # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
-        # G_blocks_tot = jnp.stack(
-        #     [G_i(i) for i in range(self.num_segments)], axis=0
-        # )
 
         G_full = jnp.sum(
             G_blocks_tot, axis=(0, 1)
@@ -1647,23 +1754,20 @@ class PCS(DynamicalSystem):
         Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
 
         Args:
-            i (Array): index of the segment as array of shape ()
+            i (Array): index of the segment
 
         Returns:
-            S_i (Array): Local stiffness matrix of shape (6, 6) for the i-th segment.
+            S_i (Array): Local stiffness matrix of shape (3, 3) for the i-th segment.
         """
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area as array of shape (3, )
+        I_i = self._local_second_moment_of_area(i)  # Second moment of area
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
 
         S_i = self.L[i] * jnp.diag(
             jnp.stack(
                 [
-                    self.G[i] * I_i[0],  # torsion X
-                    self.E[i] * I_i[1],  # bending Y
-                    self.E[i] * I_i[2],  # bending Z
+                    I_i * self.E[i],  # bending Z
                     A_i * self.E[i],  # axial X
                     A_i * self.G[i],  # shear Y
-                    A_i * self.G[i],  # shear Z
                 ],
                 axis=0,
             )
@@ -1673,8 +1777,9 @@ class PCS(DynamicalSystem):
 
     @eqx.filter_jit
     def _stiffness(self, formulate_in_strain_space: bool = False) -> Array:
-        # stiffness matrix of shape (num_segments, 6, 6)
+        # stiffness matrix of shape (num_segments, 3, 3)
         S_sms = vmap(self._local_stiffness_matrix)(jnp.arange(self.num_segments))
+
         # we define the elastic matrix of shape (num_strains, num_strains) as K(xi) = K @ xi where K is equal to
         S = blk_diag(S_sms)
 
@@ -1790,39 +1895,6 @@ class PCS(DynamicalSystem):
         return tau_u
 
     @eqx.filter_jit
-    def kinetic_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the kinetic energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            T (float): Kinetic energy of the robot.
-        """
-        B = self.inertia_matrix(q)
-        T = 0.5 * qd.T @ B @ qd
-
-        return T
-
-    @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
-        """
-        Compute the elastic energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            U_K (float): Elastic energy of the robot.
-        """
-        K_full = self._stiffness_full_matrix()
-        U_K = 0.5 * (self.B_xi @ q).T @ K_full @ (self.B_xi @ q)
-
-        return U_K
-
-    @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational energy of the robot.
@@ -1833,92 +1905,35 @@ class PCS(DynamicalSystem):
         Returns:
             U_G (float): Gravitational energy of the robot.
         """
-        # compute the gauss quadrature points and weights for each segment
         Xs_scaled, Ws_scaled = vmap(
             scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
-        # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(
-            q, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(
-            self.num_segments, self.num_gauss_points, 4, 4
-        )  # shape (num_segments, num_gauss_points, 4, 4)
+        chi_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())
+        chi_ps = chi_ps.reshape(self.num_segments, self.num_gauss_points, 3)
 
         def U_G_i(i: Array) -> Array:
             rho_i = self.rho[i]
-            A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
+            A_i = self._local_cross_sectional_area(i)
 
             def U_G_ij(j: Array) -> Array:
-                # select the j-th quadrature weight
                 Ws_ij = Ws_scaled[i][j]
-                # select the j-th Cartesian pose
-                g_ij = g_ps[i, j]
+                chi_ij = chi_ps[i, j]
+                p_j = chi_ij.at[0].set(0.0)
 
-                p_j = jnp.concatenate(
-                    [jnp.zeros(3), g_ij[:3, 3]]
-                )  # Add zeros for the orientation angles
-                U_G_ij = -Ws_ij * rho_i * A_i * jnp.dot(p_j, self.g)
-                return U_G_ij
+                return -Ws_ij * rho_i * A_i * jnp.dot(p_j, self.g)
 
-            # we can skip the first and last quadrature points since their weight is zero
             U_G_blocks_segment_i = vmap(U_G_ij)(
                 jnp.arange(1, self.num_gauss_points - 1)
             )
-
-            # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
-            # U_G_blocks_segment_i = jnp.stack(
-            #     [U_G_j(j) for j in range(self.num_gauss_points)], axis=0
-            # )
 
             return U_G_blocks_segment_i
 
         U_G_blocks_tot = vmap(U_G_i)(jnp.arange(self.num_segments))
 
-        # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
-        # U_G_blocks_tot = jnp.stack(
-        #     [U_G_i(i) for i in range(self.num_segments)], axis=0
-        # )
-
         U_G = jnp.sum(U_G_blocks_tot, axis=(0, 1))  # Sum over segments and Gauss points
 
         return U_G
-
-    @eqx.filter_jit
-    def potential_energy(self, q: Array) -> Array:
-        """
-        Compute the potential energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            U (float): Potential energy of the robot.
-        """
-        U_K = self.elastic_energy(q)
-        U_G = self.gravitational_energy(q)
-
-        return U_K + U_G
-
-    @eqx.filter_jit
-    def total_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the total energy of the robot, which is the sum of kinetic and potential energy.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            E (float): Total energy of the robot.
-        """
-        T = self.kinetic_energy(q, qd)
-        U = self.potential_energy(q)
-        E = T + U
-        return E
 
     @eqx.filter_jit
     def operational_space_dynamical_matrices(
@@ -1926,8 +1941,8 @@ class PCS(DynamicalSystem):
         q: Array,
         qd: Array,
         s: Array,
-        operational_space_selector: Tuple = (True, True, True),
-    ) -> Tuple[Array, Array, Array, Array, Array]:
+        operational_space_selector: tuple = (True, True, True),
+    ) -> tuple[Array, Array, Array, Array, Array]:
         """
         Compute the operational space dynamical matrices for the robot at a point s along the robot.
 
@@ -1936,7 +1951,7 @@ class PCS(DynamicalSystem):
             qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
             s (Array): point coordinate along the robot in the interval [0, L].
             operational_space_selector (Tuple): Selector for the operational space dimensions.
-                Default is (True, True, True, True, True, True) for all dimensions.
+                Default is (True, True, True) for all dimensions.
 
         Returns:
             Lambda (Array): Inertia matrix in the operational space, shape (num_operational_space_dims, num_operational_space_dims).
@@ -1974,7 +1989,7 @@ class PCS(DynamicalSystem):
 
     @eqx.filter_jit
     def forward_dynamics(
-        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
+        self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
         """
         Forward dynamics function.
@@ -2007,96 +2022,53 @@ class PCS(DynamicalSystem):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        # compute the gauss quadrature points and weights for each segment
         Xs_scaled, Ws_scaled = vmap(
             scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
 
-        # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(
-            q, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(
-            self.num_segments, self.num_gauss_points, 4, 4
-        )  # shape (num_segments, num_gauss_points, 4, 4)
+        chi_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())
+        g_ps = vmap(lie.exp_SE2)(chi_ps.reshape(-1, 3))
+        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 3, 3)
 
-        # compute the jacobian and its time-derivative for each quadrature point
-        J_ps, Jd_ps = self._J_Jd_local_batched(
-            q, qd, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())
+        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
         Jd_ps = Jd_ps.reshape(
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
+        )
 
-        def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
-            """
-            Compute the integrand for the dynamical matrices at the i-th segment.
-            Args:
-                i (Array): index of the segment
-            Returns:
-                Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
-            """
+        def dynamical_matrices_i(i: Array) -> tuple[Array, Array, Array]:
             M_i = self._local_mass_matrix(i)
 
-            def dynamical_matrices_ij(j: Array) -> Tuple[Array, Array, Array]:
-                """
-                Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
-                Args:
-                    j (Array): index of the quadrature point
-                Returns:
-                    Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
-                """
-                # select the j-th quadrature weight
+            def dynamical_matrices_ij(j: Array) -> tuple[Array, Array, Array]:
                 Ws_ij = Ws_scaled[i][j]
-                # select the j-th Cartesian pose
                 g_ij = g_ps[i, j]
-                # select the j-th jacobian and its time-derivative
                 J_ij = J_ps[i, j]
                 Jd_ij = Jd_ps[i, j]
 
-                # compute the lie algebra expressions.
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE2(g_ij)
 
-                # compute the inertia matrix integrand
                 B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
-
-                # compute the coriolis matrix integrand
                 C_ij = Ws_ij * (
                     J_ij.T
                     @ (
                         M_i @ Jd_ij
-                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
+                        + lie.coadjoint_se2(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
                     )
                 )
-
-                # compute the gravitational force integrand
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 
                 return B_ij, C_ij, G_ij
 
-            # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_ij)(
-                jnp.arange(1, self.num_gauss_points - 1)
-            )
+            return vmap(dynamical_matrices_ij)(jnp.arange(1, self.num_gauss_points - 1))
 
-            return B_blocks_i, C_blocks_i, G_blocks_i
-
-        # compute the dynamical matrices for each segment
         B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(
             jnp.arange(self.num_segments)
         )
 
-        # sum over segments and Gauss points
         B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
         C_full = jnp.sum(C_blocks_tot, axis=(0, 1))
         G_full = jnp.sum(G_blocks_tot, axis=(0, 1))
 
-        # construct the dynamical matrices
         B = self.B_xi.T @ B_full @ self.B_xi
         C = self.B_xi.T @ C_full @ self.B_xi
         G = self.B_xi.T @ G_full

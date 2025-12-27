@@ -1,15 +1,15 @@
 __all__ = ["Pendulum", "normalize_joint_angles"]
+
+
 import equinox as eqx
-import jax
-from jax import Array, jit, lax
-from jax import numpy as jnp
 import numpy as onp
-from typing import Dict, List, Tuple, Union, Optional
+from jax import Array, jit, vmap
+from jax import numpy as jnp
 
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 
 
-class Pendulum(DynamicalSystem):
+class Pendulum(SoftRobot):
     """
     Planar N-link serial pendulum (revolute chain) with closed-form JAX dynamics.
 
@@ -90,7 +90,8 @@ class Pendulum(DynamicalSystem):
 
     def __init__(
         self,
-        params: Dict[str, Array],
+        params: dict[str, Array],
+        **kwargs,
     ) -> None:
         """
         Initialize the pendulum system with the given parameters.
@@ -104,7 +105,10 @@ class Pendulum(DynamicalSystem):
                 - "K": stiffness matrix (N,N) (optional)
                 - "D": damping matrix (N,N) (optional)
                 - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
+            **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
+        super().__init__(**kwargs)
+
         # Basic parameter extraction
         m = jnp.asarray(params["m"])  # (n,)
         I = jnp.asarray(params["I"])  # (n,)
@@ -120,6 +124,7 @@ class Pendulum(DynamicalSystem):
         assert g.shape[0] == 2, "Gravity vector must be length 2"
 
         self.num_links = int(n_q)
+        self.num_dofs = self.num_links
         self.num_actuators = self.num_links
 
         # set parameters
@@ -133,7 +138,7 @@ class Pendulum(DynamicalSystem):
         self.D = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
         self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
 
-    def update_params(self, params: Dict[str, Array]) -> "Pendulum":
+    def update_params(self, params: dict[str, Array]) -> "Pendulum":
         """
         Update the system parameters and return a new instance (functional style).
 
@@ -170,7 +175,9 @@ class Pendulum(DynamicalSystem):
         if "D" in params:
             updated = eqx.tree_at(lambda x: x.D, updated, jnp.asarray(params["D"]))
         if "q_ref_k" in params:
-            updated = eqx.tree_at(lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"]))
+            updated = eqx.tree_at(
+                lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"])
+            )
         return updated
 
     # -------------------------------------------------
@@ -423,7 +430,7 @@ class Pendulum(DynamicalSystem):
     @eqx.filter_jit
     def jacobians_and_derivatives_tips(
         self, q: Array, qd: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 
@@ -486,6 +493,216 @@ class Pendulum(DynamicalSystem):
         Jw_all = self._angular_jacobians()  # (N,N)
         J_coms = jnp.concatenate([Jw_all[:, None, :], Jv_all_com], axis=1)
         return J_coms
+
+    # -----------------------------------------
+    # Arc-length parameterized kinematics/Jacobians
+    # -----------------------------------------
+
+    @property
+    def total_length(self) -> Array:
+        """Total arc-length of the pendulum (sum of all link lengths)."""
+        return jnp.sum(self.L)
+
+    @property
+    def L_cum(self) -> Array:
+        """Cumulative link lengths [0, L[0], L[0]+L[1], ...]."""
+        return jnp.concatenate([jnp.zeros(1), jnp.cumsum(self.L)])
+
+    @eqx.filter_jit
+    def classify_segment(self, s: Array) -> tuple[Array, Array]:
+        """
+        Determine which link contains the point at arc-length s.
+
+        Args:
+            s: Arc-length position in [0, total_length].
+
+        Returns:
+            link_idx: Index of the link containing point s (0-indexed).
+            s_local: Local arc-length within that link, in [0, L[link_idx]].
+        """
+        L_cum = self.L_cum
+        # Find the link index: s lies in [L_cum[i], L_cum[i+1]]
+        # Using side="left" ensures that s at exact boundary L_cum[i+1] stays in segment i
+        link_idx = jnp.searchsorted(L_cum[1:], s, side="left")
+        link_idx = jnp.clip(link_idx, 0, self.num_links - 1)
+        s_local = s - L_cum[link_idx]
+        return link_idx, s_local
+
+    @eqx.filter_jit
+    def forward_kinematics(self, q: Array, s: Array) -> Array:
+        """
+        Compute the forward kinematics at arc-length position s along the pendulum.
+
+        The pose is computed as [theta, x, y] where theta is the orientation angle
+        and (x, y) is the Cartesian position.
+
+        Args:
+            q: Joint angles, shape (N,) [rad].
+            s: Arc-length position in [0, total_length] [m].
+
+        Returns:
+            chi: Pose [theta, x, y] at position s, shape (3,).
+        """
+        link_idx, s_local = self.classify_segment(s)
+
+        # Cumulative angles at each link
+        theta_cumsum = self._cumulative_angles(q)
+
+        # Base positions for each link (tip positions of previous links)
+        p_tips = self._tip_positions(q)  # (N, 2)
+        p_base = jnp.concatenate([jnp.zeros((1, 2)), p_tips[:-1]], axis=0)
+
+        # Get the base position and angle for this link
+        p_link_base = p_base[link_idx]
+        theta_link = theta_cumsum[link_idx]
+
+        # Direction vector for this link
+        dir_vec = jnp.array([jnp.cos(theta_link), jnp.sin(theta_link)])
+
+        # Position at s is base + s_local * direction
+        p_s = p_link_base + s_local * dir_vec
+
+        chi = jnp.concatenate([theta_link[None], p_s])
+        return chi
+
+    @eqx.filter_jit
+    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute forward kinematics at multiple arc-length positions.
+
+        Args:
+            q: Joint angles, shape (N,) [rad].
+            s_ps: Arc-length positions, shape (M,) [m].
+
+        Returns:
+            chi_ps: Poses at all positions, shape (M, 3).
+        """
+        return vmap(lambda s: self.forward_kinematics(q, s))(s_ps)
+
+    @eqx.filter_jit
+    def jacobian(self, q: Array, s: Array) -> Array:
+        """
+        Compute the Jacobian at arc-length position s along the pendulum.
+
+        The Jacobian maps joint velocities to Cartesian velocities [omega_z, v_x, v_y].
+
+        Args:
+            q: Joint angles, shape (N,) [rad].
+            s: Arc-length position in [0, total_length] [m].
+
+        Returns:
+            J: Jacobian matrix, shape (3, N).
+        """
+        link_idx, s_local = self.classify_segment(s)
+        N = self.num_links
+
+        # Angular Jacobian: J_omega[j] = 1 if joint j affects this point (j <= link_idx)
+        j_indices = jnp.arange(N)
+        J_omega = (j_indices <= link_idx).astype(q.dtype)
+
+        # Position at s
+        chi = self.forward_kinematics(q, s)
+        p_s = chi[1:]
+
+        # Joint positions
+        p_joints = self._joint_positions(q)  # (N, 2)
+
+        # Linear Jacobian: for joints j <= link_idx
+        # J_v[:, j] = z × (p_s - p_joint[j]) = [-dy, dx] where d = p_s - p_joint[j]
+        r = p_s[None, :] - p_joints  # (N, 2): vectors from each joint to p_s
+        Jv_x = -r[:, 1]  # (N,)
+        Jv_y = r[:, 0]  # (N,)
+
+        # Mask: only joints j <= link_idx contribute
+        mask = (j_indices <= link_idx).astype(q.dtype)
+        Jv_x = Jv_x * mask
+        Jv_y = Jv_y * mask
+
+        J = jnp.stack([J_omega, Jv_x, Jv_y], axis=0)  # (3, N)
+        return J
+
+    @eqx.filter_jit
+    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute Jacobians at multiple arc-length positions.
+
+        Args:
+            q: Joint angles, shape (N,) [rad].
+            s_ps: Arc-length positions, shape (M,) [m].
+
+        Returns:
+            J_ps: Jacobians at all positions, shape (M, 3, N).
+        """
+        return vmap(lambda s: self.jacobian(q, s))(s_ps)
+
+    @eqx.filter_jit
+    def jacobian_and_derivative(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the Jacobian and its time derivative at arc-length position s.
+
+        Args:
+            q: Joint angles, shape (N,) [rad].
+            qd: Joint velocities, shape (N,) [rad/s].
+            s: Arc-length position in [0, total_length] [m].
+
+        Returns:
+            J: Jacobian matrix, shape (3, N).
+            Jd: Time derivative of the Jacobian, shape (3, N).
+        """
+        link_idx, s_local = self.classify_segment(s)
+        N = self.num_links
+        j_indices = jnp.arange(N)
+
+        # Get Jacobian
+        J = self.jacobian(q, s)
+
+        # Angular Jacobian derivative is zero (planar revolute)
+        Jd_omega = jnp.zeros(N, dtype=q.dtype)
+
+        # Position and velocity at s
+        chi = self.forward_kinematics(q, s)
+
+        # Joint positions and velocities
+        J_joints = self.jacobians_joints(q)  # (N, 3, N)
+        Jv_joints = J_joints[:, 1:, :]  # (N, 2, N) linear part
+        v_joints = jnp.einsum("icj,j->ic", Jv_joints, qd)  # (N, 2)
+
+        # Velocity at point s
+        J_s_linear = J[1:, :]  # (2, N)
+        v_s = J_s_linear @ qd  # (2,)
+
+        # Time derivative of linear Jacobian
+        # d/dt(J_v[:, j]) = z × (v_s - v_joint[j]) for j <= link_idx
+        dv = v_s[None, :] - v_joints  # (N, 2)
+        Jvd_x = -dv[:, 1]
+        Jvd_y = dv[:, 0]
+
+        mask = (j_indices <= link_idx).astype(q.dtype)
+        Jvd_x = Jvd_x * mask
+        Jvd_y = Jvd_y * mask
+
+        Jd = jnp.stack([Jd_omega, Jvd_x, Jvd_y], axis=0)  # (3, N)
+        return J, Jd
+
+    @eqx.filter_jit
+    def jacobian_and_derivative_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute Jacobians and their derivatives at multiple arc-length positions.
+
+        Args:
+            q: Joint angles, shape (N,) [rad].
+            qd: Joint velocities, shape (N,) [rad/s].
+            s_ps: Arc-length positions, shape (M,) [m].
+
+        Returns:
+            J_ps: Jacobians at all positions, shape (M, 3, N).
+            Jd_ps: Jacobian derivatives at all positions, shape (M, 3, N).
+        """
+        return vmap(lambda s: self.jacobian_and_derivative(q, qd, s))(s_ps)
 
     # -------------------------------
     # Standardized dynamics interface
@@ -655,7 +872,7 @@ class Pendulum(DynamicalSystem):
         self,
         t: Array,
         y: Array,
-        actuation_args: Optional[Tuple] = None,
+        actuation_args: tuple | None = None,
     ) -> Array:
         """
         Compute forward dynamics for the pendulum system in state space form.
@@ -706,25 +923,6 @@ class Pendulum(DynamicalSystem):
     # ---------------------
     # Energy methods
     # ---------------------
-    @eqx.filter_jit
-    def kinetic_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the kinetic energy of the pendulum system.
-
-        The kinetic energy is computed as:
-        T = 0.5 * qd^T @ B(q) @ qd
-        where B(q) is the generalized inertia matrix.
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-            qd (Array): Joint velocities, shape (N,) [rad/s]
-
-        Returns:
-            T (Array): Kinetic energy [J] (scalar)
-        """
-        B = self.inertia_matrix(q)
-        T = 0.5 * qd.T @ B @ qd
-        return T
 
     @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
@@ -765,45 +963,6 @@ class Pendulum(DynamicalSystem):
         U_K = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
         return U_K
 
-    @eqx.filter_jit
-    def potential_energy(self, q: Array) -> Array:
-        """
-        Compute the total potential energy of the pendulum system.
-
-        The potential energy is the sum of gravitational and elastic energy:
-        U = U_G + U_K
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-
-        Returns:
-            U (Array): Total potential energy [J] (scalar)
-        """
-        U_G = self.gravitational_energy(q)
-        U_K = self.elastic_energy(q)
-        U = U_G + U_K
-        return U
-
-    @eqx.filter_jit
-    def total_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the total energy of the pendulum system.
-
-        The total energy is the sum of kinetic and potential energy:
-        E = T + U
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-            qd (Array): Joint velocities, shape (N,) [rad/s]
-
-        Returns:
-            E (Array): Total energy [J] (scalar)
-        """
-        T = self.kinetic_energy(q, qd)
-        U = self.potential_energy(q)
-        E = T + U
-        return E
-
     # --------------------------
     # Operational space dynamics
     # --------------------------
@@ -813,8 +972,8 @@ class Pendulum(DynamicalSystem):
         q: Array,
         qd: Array,
         link_idx: Array,
-        operational_space_selector: Tuple = (True, True, True),
-    ) -> Tuple[Array, Array, Array, Array, Array]:
+        operational_space_selector: tuple = (True, True, True),
+    ) -> tuple[Array, Array, Array, Array, Array]:
         """
         Compute the operational space dynamical matrices for the tip of the specified link.
 

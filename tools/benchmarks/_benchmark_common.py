@@ -9,10 +9,8 @@ from typing import Any, Callable, Dict, Mapping, MutableMapping, Sequence
 import jax
 import jax.numpy as jnp
 
-from soromox.systems.gvs import BasisAttributes, GVS, JointAttributes, LinkAttributes
-from soromox.systems.pcs import PCS
-from soromox.systems.pendulum import Pendulum
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.systems import GVS, PCS, Pendulum, PlanarPCS
+from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 Array = jax.Array
 

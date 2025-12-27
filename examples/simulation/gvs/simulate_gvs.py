@@ -4,12 +4,11 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as onp
-from typing import List
 
-jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import MatplotlibRenderer
-from soromox.systems.gvs import *
-from soromox.systems.system_state import SystemState
+jax.config.update("jax_enable_x64", True)
+from soromox.rendering import MatplotlibRenderer  # double precision
+from soromox.systems import GVS, SystemState
+from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -20,10 +19,10 @@ jnp.set_printoptions(
 
 if __name__ == "__main__":
     # Define model inputs
-    List_links: List[LinkAttributes] = []
-    List_joints: List[JointAttributes] = []
-    List_basis: List[BasisAttributes] = []
-    List_nGauss: List[int] = []
+    List_links: list[LinkAttributes] = []
+    List_joints: list[JointAttributes] = []
+    List_basis: list[BasisAttributes] = []
+    List_nGauss: list[int] = []
 
     link1 = LinkAttributes(
         section="Circular", E=1e6, nu=0.5, rho=1000, eta=1e4, L=0.3, r_i=0.03, r_f=0.03

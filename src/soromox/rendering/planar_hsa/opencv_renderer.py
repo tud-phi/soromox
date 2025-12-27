@@ -6,15 +6,13 @@ for virtual backbone, rods, and platforms.
 
 from __future__ import annotations
 
-from typing import Tuple
-
 import cv2
 import jax.numpy as jnp
-from jax import Array, jit, vmap
 import numpy as np
+from jax import Array, jit, vmap
 
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
-from soromox.systems.planar_hsa import PlanarHSA
+from soromox.systems import PlanarHSA
 
 
 class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
@@ -35,11 +33,11 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         width: int = 700,
         height: int = 700,
         num_points: int = 50,
-        background_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-        base_color: Tuple[int, int, int] = (0, 0, 0),
-        backbone_color: Tuple[int, int, int] = (255, 0, 0),
-        rod_color: Tuple[int, int, int] = (0, 255, 0),
-        platform_color: Tuple[int, int, int] = (0, 0, 255),
+        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        base_color: tuple[int, int, int] = (0, 0, 0),
+        backbone_color: tuple[int, int, int] = (255, 0, 0),
+        rod_color: tuple[int, int, int] = (0, 255, 0),
+        platform_color: tuple[int, int, int] = (0, 0, 255),
         backbone_thickness: int = 5,
         rod_thickness: int = 10,
     ):
@@ -112,7 +110,9 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         chip_ps = self._batched_fk_platform(q, jnp.arange(0, robot.num_segments))
 
         # Initialize white background
-        bg_uint8 = tuple(int(c * 255) for c in self.background_color[::-1])  # RGB to BGR
+        bg_uint8 = tuple(
+            int(c * 255) for c in self.background_color[::-1]
+        )  # RGB to BGR
         img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
 
         # Robot origin in pixel coordinates

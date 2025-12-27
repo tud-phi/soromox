@@ -1,17 +1,14 @@
-from diffrax import Tsit5
 from functools import partial
 from pathlib import Path
 
 import jax
-from jax import numpy as jnp
 import matplotlib.pyplot as plt
-import numpy as onp
+from diffrax import Tsit5
+from jax import numpy as jnp
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems.tendon_actuated_planar_pcs import TendonActuatedPlanarPCS
-from soromox.systems.system_state import SystemState
-
+from soromox.systems import SystemState, TendonActuatedPlanarPCS
 
 videos_dir = Path("videos")
 videos_dir.mkdir(parents=True, exist_ok=True)
@@ -67,9 +64,12 @@ if __name__ == "__main__":
     # q0 = jnp.zeros_like(q0)
     # randomly sample initial configuration
     key = jax.random.PRNGKey(4)
-    q0 = jax.random.normal(key, shape=int(robot.num_active_strains)) * jnp.repeat(
-        jnp.array([5.0 * jnp.pi, 0.1, 0.05])[None, :], num_segments, axis=0
-    ).flatten()
+    q0 = (
+        jax.random.normal(key, shape=int(robot.num_active_strains))
+        * jnp.repeat(
+            jnp.array([5.0 * jnp.pi, 0.1, 0.05])[None, :], num_segments, axis=0
+        ).flatten()
+    )
     print("q0 =\n", q0)
 
     # # visualize initial configuration

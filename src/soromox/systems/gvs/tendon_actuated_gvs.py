@@ -1,20 +1,15 @@
 __all__ = ["TendonActuatedGVS"]
+from collections.abc import Callable
+
 import equinox as eqx
-import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-from typing import Callable, Dict, Optional, List
 
-import soromox.utils.lie_algebra as lie
 import soromox.actuation.tendon_actuation as act
-
-from soromox.systems.gvs.attributes import (
-    LinkAttributes,
-    JointAttributes,
-    BasisAttributes,
-)
-from soromox.systems.gvs.core import GVS
+import soromox.utils.lie_algebra as lie
 from soromox.utils.integration import scale_gaussian_quadrature
+
+from .core import GVS
 
 
 class TendonActuatedGVS(GVS):
@@ -80,7 +75,7 @@ class TendonActuatedGVS(GVS):
 
     """
 
-    tendon_routing_params: Dict[str, Array]
+    tendon_routing_params: dict[str, Array]
     # B_xi_segments: Array
     d_s: Callable
     dd_s_ds: Callable
@@ -88,8 +83,8 @@ class TendonActuatedGVS(GVS):
     def __init__(
         self,
         *args,
-        tendon_routing_basis: Optional[Dict[str, Callable]] = None,
-        tendon_routing_params: Dict[str, Array],
+        tendon_routing_basis: dict[str, Callable] | None = None,
+        tendon_routing_params: dict[str, Array],
         **kwargs,
     ):
         """
@@ -179,7 +174,7 @@ class TendonActuatedGVS(GVS):
         self._set_tendon_routing_basis(tendon_routing_basis)
         self._set_tendon_routing_params(tendon_routing_params)
 
-    def _set_tendon_routing_params(self, tendon_routing_params: Dict[str, Array]):
+    def _set_tendon_routing_params(self, tendon_routing_params: dict[str, Array]):
         """
         This internal function stores as attributes of the class the parameters of
         the tendon routings specified by the user.
@@ -200,14 +195,14 @@ class TendonActuatedGVS(GVS):
         for idx in tendon_routing_params["idx_seg_att"]:
             if idx >= self.num_segments:
                 raise ValueError(
-                    f'The indexes of the segments of attachment (tendon_routing_params["idx_seg_att"]) must be strictly '
+                    'The indexes of the segments of attachment (tendon_routing_params["idx_seg_att"]) must be strictly '
                     + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
                 )
         # if self._check_tendon_routing_in_body(tendon_routing_params):
         #     raise UserWarning(f"Tendon(s) exit the robot body.")
         self.tendon_routing_params = tendon_routing_params
 
-    def _set_tendon_routing_basis(self, tendon_routing_basis: Dict[str, Callable]):
+    def _set_tendon_routing_basis(self, tendon_routing_basis: dict[str, Callable]):
         """
         This internal function stores as attributes of the class the basis functions of
         the tendon routings specified by the user.
@@ -219,7 +214,7 @@ class TendonActuatedGVS(GVS):
         self.dd_s_ds = tendon_routing_basis["dd_s_ds"]
 
     def update_tendon_routing_params(
-        self, tendon_routing_params: Dict[str, Array]
+        self, tendon_routing_params: dict[str, Array]
     ) -> "TendonActuatedGVS":
         """
         This function updates the parameters of the tendon routings of the object.
@@ -249,7 +244,7 @@ class TendonActuatedGVS(GVS):
     @eqx.filter_jit
     def _local_actuation_basis_single(
         self,
-        single_tendon_routing_params: Dict[str, Array],
+        single_tendon_routing_params: dict[str, Array],
         q: Array,
         s: Array,
         i: Array,
@@ -419,7 +414,7 @@ class TendonActuatedGVS(GVS):
         """
 
         def forward_kinematics_tendon_k(
-            single_tendon_routing_params: Dict[str, Array], q: Array, s: Array
+            single_tendon_routing_params: dict[str, Array], q: Array, s: Array
         ) -> Array:
             """
             Compute the forward kinematics of one tendon actuator at a point s along the robot.
@@ -494,7 +489,7 @@ class TendonActuatedGVS(GVS):
                 Ws_j = Ws_scaled[j]
 
                 def tendon_length_density_tendon_k(
-                    tendon_routing_params_k: Dict[str, Array],
+                    tendon_routing_params_k: dict[str, Array],
                 ) -> Array:
                     """
                     Compute the tendon length density contribution of one tendon at the

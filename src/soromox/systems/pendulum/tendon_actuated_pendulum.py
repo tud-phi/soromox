@@ -1,12 +1,8 @@
 __all__ = ["TendonActuatedPendulum"]
-import equinox as eqx
-import jax
-from jax import Array, lax, vmap
-from jax import numpy as jnp
-from typing import Callable, Dict, Optional, Tuple
 
-import soromox.utils.lie_algebra as lie
-import soromox.actuation.tendon_actuation as act
+import equinox as eqx
+from jax import Array
+from jax import numpy as jnp
 
 from .pendulum import Pendulum
 
@@ -127,8 +123,8 @@ class TendonActuatedPendulum(Pendulum):
 
     def __init__(
         self,
-        params: Dict[str, Array],
-        tendon_params: Dict[str, Array] = {},
+        params: dict[str, Array],
+        tendon_params: dict[str, Array] = {},
         *args,
         **kwargs,
     ):
@@ -230,9 +226,9 @@ class TendonActuatedPendulum(Pendulum):
             "'R_pt' and 'k_pt' are mutually dependent. If one of them is specified, the other must be specified too."
         )
 
-        assert (
-            self.q_ref_at.shape[0] == N and self.q_ref_pt.shape[0] == N
-        ), "q_ref_at and q_ref_pt must have length equal to the number of links."
+        assert self.q_ref_at.shape[0] == N and self.q_ref_pt.shape[0] == N, (
+            "q_ref_at and q_ref_pt must have length equal to the number of links."
+        )
 
     def _check_routing_feasibility(self, A: Array) -> bool:
         """
@@ -269,7 +265,7 @@ class TendonActuatedPendulum(Pendulum):
         return flag
 
     def update_tendon_params(
-        self, tendon_params: Dict[str, Array]
+        self, tendon_params: dict[str, Array]
     ) -> "TendonActuatedPendulum":
         """
         Update the tendon parameters and return a new instance (functional style).
@@ -314,9 +310,13 @@ class TendonActuatedPendulum(Pendulum):
             updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
             updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
         if "q_ref_at" in tendon_params:
-            updated = eqx.tree_at(lambda x: x.q_ref_at, updated, tendon_params["q_ref_at"])
+            updated = eqx.tree_at(
+                lambda x: x.q_ref_at, updated, tendon_params["q_ref_at"]
+            )
         if "q_ref_pt" in tendon_params:
-            updated = eqx.tree_at(lambda x: x.q_ref_pt, updated, tendon_params["q_ref_pt"])
+            updated = eqx.tree_at(
+                lambda x: x.q_ref_pt, updated, tendon_params["q_ref_pt"]
+            )
         return updated
 
     # -------------------------------------------------
@@ -335,7 +335,7 @@ class TendonActuatedPendulum(Pendulum):
         """
         l_a = self.R_at @ (q - self.q_ref_at)
         return l_a
-    
+
     @eqx.filter_jit
     def active_tendon_length(self, q: Array) -> Array:
         """
@@ -356,7 +356,7 @@ class TendonActuatedPendulum(Pendulum):
         l0_a = jnp.sum(self.L * mask * cond, axis=1)
         l_tot_a = self.active_tendon_displacement(q) + l0_a
         return l_tot_a
-    
+
     @eqx.filter_jit
     def passive_tendon_displacement(self, q: Array) -> Array:
         """
@@ -370,7 +370,7 @@ class TendonActuatedPendulum(Pendulum):
         """
         l_p = self.R_pt @ (q - self.q_ref_pt) + self.l_pt0
         return l_p
-    
+
     @eqx.filter_jit
     def passive_tendon_length(self, q: Array) -> Array:
         """
@@ -386,12 +386,14 @@ class TendonActuatedPendulum(Pendulum):
         Returns:
             l_tot_p (Array): length of the passive tendons, shape (Np,) [m]
         """
-        cond = jnp.logical_not(jnp.array_equal(self.R_pt, jnp.zeros((self.num_links, self.num_links))))
+        cond = jnp.logical_not(
+            jnp.array_equal(self.R_pt, jnp.zeros((self.num_links, self.num_links)))
+        )
         mask = jnp.abs(self.R_pt) > 0.0
         l0_p = jnp.sum(self.L * mask * cond, axis=1)
         l_tot_p = self.passive_tendon_displacement(q) + l0_p
         return l_tot_p
-    
+
     tendon_length = active_tendon_length  # Alias for compatibility
 
     # -------------------------------
@@ -478,7 +480,7 @@ class TendonActuatedPendulum(Pendulum):
     # ---------------------
     # Actuation coordinates
     # ---------------------
-    def _set_conf2act_tranformation(self, A: Array) -> Tuple[Array, Array]:
+    def _set_conf2act_tranformation(self, A: Array) -> tuple[Array, Array]:
         """
         Sets the transformation matrix between actuation (y) and configuration coordinates,
         and adds it as attribute (as it is constant).
@@ -503,7 +505,7 @@ class TendonActuatedPendulum(Pendulum):
                 A_expanded (Array): square matrix which last n - r columns are linearly independent from the first m, shape (n, n)
             """
             # Rank the input matrix ASSUMED to be equal to self.num_actuators
-            #r = jnp.linalg.matrix_rank(A)
+            # r = jnp.linalg.matrix_rank(A)
 
             # Full orthonormal Q (n, n)
             Q_complete, _ = jnp.linalg.qr(
@@ -583,7 +585,7 @@ class TendonActuatedPendulum(Pendulum):
         self,
         q: Array,
         qd: Array,
-    ) -> Tuple[Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array]:
         """
         Compute the actuation space dynamical matrices, which can be expressed as
             M_y(q) @ ydd + eta_y(q, qd) @ yd + JhM_pinv.T @ (G(q) + K @ q + D @ qd) = [tau, 0_{n - m}],

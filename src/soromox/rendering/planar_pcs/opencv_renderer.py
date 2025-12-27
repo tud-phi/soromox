@@ -6,15 +6,13 @@ backbone thickness based on robot diameter.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
-
 import cv2
 import jax.numpy as jnp
-from jax import Array
 import numpy as np
+from jax import Array
 
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.systems import PlanarPCS
 
 
 class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
@@ -34,12 +32,12 @@ class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
         width: int = 700,
         height: int = 700,
         num_points: int = 50,
-        background_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-        base_color: Tuple[int, int, int] = (0, 255, 0),
-        backbone_color: Tuple[int, int, int] = (0, 0, 0),
-        backbone_thickness: Optional[int] = None,
+        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        base_color: tuple[int, int, int] = (0, 255, 0),
+        backbone_color: tuple[int, int, int] = (0, 0, 0),
+        backbone_thickness: int | None = None,
         length_scale: float = 2.0,
-        origin_uv: Optional[Tuple[int, int]] = None,
+        origin_uv: tuple[int, int] | None = None,
     ):
         """Initialize OpenCV renderer for Planar PCS.
 
@@ -94,7 +92,8 @@ class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
             )
         else:
             backbone_thicknesses = (
-                jnp.ones((robot.num_segments,), dtype=jnp.int32) * self.backbone_thickness
+                jnp.ones((robot.num_segments,), dtype=jnp.int32)
+                * self.backbone_thickness
             )
 
         # Robot origin in pixel coordinates
@@ -110,7 +109,9 @@ class OpenCVPlanarPCSRenderer(BaseOpenCVRenderer):
         chi_ps = self._batched_fk(q, s_ps)  # (num_points, 3)
 
         # Initialize background
-        bg_uint8 = tuple(int(c * 255) for c in self.background_color[::-1])  # RGB to BGR
+        bg_uint8 = tuple(
+            int(c * 255) for c in self.background_color[::-1]
+        )  # RGB to BGR
         img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
 
         # Draw base circle

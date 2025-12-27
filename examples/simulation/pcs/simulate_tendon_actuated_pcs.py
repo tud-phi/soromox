@@ -1,17 +1,13 @@
-from diffrax import Tsit5
-from functools import partial
 import time
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
-import numpy as np
+from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer, Open3DRenderer
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import SystemState, TendonActuatedPCS
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -23,7 +19,9 @@ if __name__ == "__main__":
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     params = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # Initial position and orientation
+        "p0": jnp.array(
+            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
+        ),  # Initial position and orientation
         "L": 1e-1 * jnp.ones((num_segments,)),  # default: 1e-1
         "r": 2e-2 * jnp.ones((num_segments,)),  # default: 2e-2
         "rho": rho,
@@ -58,17 +56,11 @@ if __name__ == "__main__":
     }
     passive_tendon_routing_params = {
         "ry": 2e-2
-        * jnp.array(
-            [0.0]
-        ),  # y-coordinate of the pulling point of the tendons [m]
+        * jnp.array([0.0]),  # y-coordinate of the pulling point of the tendons [m]
         "rz": 2e-2
         * jnp.array([1.0]),  # z-coordinate of the pulling point of the tendons [m]
-        "my": jnp.array(
-            [0.0]
-        ),  # slope coefficient in the x-y plane of the tendons [-]
-        "mz": jnp.array(
-            [0.0]
-        ),  # slope coefficient in the x-z plane of the tendons [-]
+        "my": jnp.array([0.0]),  # slope coefficient in the x-y plane of the tendons [-]
+        "mz": jnp.array([0.0]),  # slope coefficient in the x-z plane of the tendons [-]
         "idx_seg_att": jnp.array(
             [1]
         ),  # length of the tendons = x-coordinate of the attachment points [m]
@@ -87,7 +79,7 @@ if __name__ == "__main__":
         params=params,
         active_tendon_routing_params=active_tendon_routing_params,
         passive_tendon_routing_params=passive_tendon_routing_params,
-        passive_tendon_params=passive_tendon_params
+        passive_tendon_params=passive_tendon_params,
     )
 
     # =====================================================
@@ -137,7 +129,7 @@ if __name__ == "__main__":
     tp_s = robot.forward_kinematics_passive_tendons(q0, robot.L_cum[-1])
     print("tp_s =\n", tp_s.shape)
     print(tp_s)
-    
+
     # Simulation time parameters
     t0 = 0.0
     t1 = 2.0
@@ -238,4 +230,6 @@ if __name__ == "__main__":
         backbone_style="spheres",
         viewer_backend="legacy",  # 'legacy' or 'gui' for Open3D
     )
-    renderer.render_sequence(ts=ts, q_ts=q_ts, record_path="videos/tendon_actuated_pcs.mp4")
+    renderer.render_sequence(
+        ts=ts, q_ts=q_ts, record_path="videos/tendon_actuated_pcs.mp4"
+    )

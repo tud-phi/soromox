@@ -1,8 +1,8 @@
 __all__ = ["LinkAttributes", "JointAttributes", "BasisAttributes"]
 from dataclasses import dataclass, field
-import jax
+from typing import Literal
+
 from jax import Array
-from typing import List, Literal, Optional, Tuple, Union
 
 
 @dataclass
@@ -52,6 +52,7 @@ class LinkAttributes:
       point.
     - Shear modulus is internally computed as G = E / (2 (1 + nu)).
     """
+
     section: Literal["Circular", "Rectangular", "Elliptical"]
     E: float
     nu: float
@@ -59,16 +60,16 @@ class LinkAttributes:
     eta: float
     L: float
 
-    r_i: Optional[float] = 0.0
-    r_f: Optional[float] = 0.0
-    h_i: Optional[float] = 0.0
-    h_f: Optional[float] = 0.0
-    w_i: Optional[float] = 0.0
-    w_f: Optional[float] = 0.0
-    a_i: Optional[float] = 0.0
-    a_f: Optional[float] = 0.0
-    b_i: Optional[float] = 0.0
-    b_f: Optional[float] = 0.0
+    r_i: float | None = 0.0
+    r_f: float | None = 0.0
+    h_i: float | None = 0.0
+    h_f: float | None = 0.0
+    w_i: float | None = 0.0
+    w_f: float | None = 0.0
+    a_i: float | None = 0.0
+    a_f: float | None = 0.0
+    b_i: float | None = 0.0
+    b_f: float | None = 0.0
 
 
 @dataclass
@@ -93,6 +94,7 @@ class JointAttributes:
         terms [N/m]; off-diagonal couplings accordingly. If omitted or with
         mismatching shape it defaults to zeros.
     """
+
     jointtype: Literal[
         "Revolute",
         "Prismatic",
@@ -108,7 +110,7 @@ class JointAttributes:
     plane: Literal["xy", "yz", "xz"] = "xy"
     pitch: float = 0.0
 
-    K_joint: Union[Array, List] = field(default_factory=list)
+    K_joint: Array | list = field(default_factory=list)
 
 
 @dataclass
@@ -145,17 +147,16 @@ class BasisAttributes:
       `max_dof` for batched computations.
     - `xi_ref` can be used to impose prestrain.
     """
+
     basistype: Literal[
         "Monomial", "Legendre", "Chebychev", "Fourier", "Gaussian", "IMQ"
     ]
-    Bdof: Union[
-        Array, List
-    ]  # shape (6,1) indicating whether each type of deformation is selected (1) or not (0)
-    Bodr: Union[
-        Array, List
-    ]  # shape (6,1) indicating the orders of the basis functions for each type of deformation
-    xi_ref: Union[
-        Array, List
-    ] = field(
+    Bdof: (
+        Array | list
+    )  # shape (6,1) indicating whether each type of deformation is selected (1) or not (0)
+    Bodr: (
+        Array | list
+    )  # shape (6,1) indicating the orders of the basis functions for each type of deformation
+    xi_ref: Array | list = field(
         default_factory=lambda: [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
     )  # shape (6,1) indicating the reference strain values for each type of deformation

@@ -5,7 +5,7 @@ Alessi, Carlo, Egidio Falotico, and Alessandro Lucantonio.
 "Ablation study of a dynamic model for a 3d-printed pneumatic soft robotic arm." IEEE Access 11 (2023): 37840-37853.
 https://ieeexplore.ieee.org/abstract/document/10098800
 """
-from diffrax import Tsit5
+
 from functools import partial
 
 import jax
@@ -14,17 +14,17 @@ import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems.isupport import ISupport
-from soromox.systems.system_state import SystemState
-
+from soromox.systems import ISupport, SystemState
 
 if __name__ == "__main__":
     num_segments = 1
 
     # Elastic modulus and poisson ratio
-    E = 1.6464 * 1e6 # Elastic modulus [Pa]
+    E = 1.6464 * 1e6  # Elastic modulus [Pa]
     poisson_ratio = 0.5
-    G = E / (2 * (1 + poisson_ratio))  # Shear modulus from elastic modulus and poisson ratio
+    G = E / (
+        2 * (1 + poisson_ratio)
+    )  # Shear modulus from elastic modulus and poisson ratio
 
     params = {
         "p0": jnp.array(
@@ -32,13 +32,26 @@ if __name__ == "__main__":
         ),  # Initial position and orientation
         "L": 190 * 1e-3 * jnp.ones((num_segments,)),
         "r": 35.6 * 1e-3 * jnp.ones((num_segments,)),
-        "rho": 1104 * jnp.ones((num_segments,)),  # material density of TPU 80 A LF by BASF [kg/m^3]
+        "rho": 1104
+        * jnp.ones((num_segments,)),  # material density of TPU 80 A LF by BASF [kg/m^3]
         "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
         "E": E * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         "G": G * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "r_chamber_in": 6.39 * 1e-3 * jnp.ones((num_segments,)),  # inner radius of each segment's pneumatic chamber [m]
-        "r_chamber_out": 7.79 * 1e-3 * jnp.ones((num_segments,)),  # outer radius of each segment's pneumatic chamber [m]
-        "d_chamber": 20 * 1e-3 * jnp.ones((num_segments,)),  # radial distance of the center of the chambers from the centerline of the backbone [m]
+        "r_chamber_in": 6.39
+        * 1e-3
+        * jnp.ones(
+            (num_segments,)
+        ),  # inner radius of each segment's pneumatic chamber [m]
+        "r_chamber_out": 7.79
+        * 1e-3
+        * jnp.ones(
+            (num_segments,)
+        ),  # outer radius of each segment's pneumatic chamber [m]
+        "d_chamber": 20
+        * 1e-3
+        * jnp.ones(
+            (num_segments,)
+        ),  # radial distance of the center of the chambers from the centerline of the backbone [m]
     }
 
     # damping coefficient
@@ -50,7 +63,9 @@ if __name__ == "__main__":
     params["D"] = jnp.diag(
         (
             jnp.repeat(
-                jnp.array([[gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]]), num_segments, axis=0
+                jnp.array([[gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]]),
+                num_segments,
+                axis=0,
             )
         ).flatten()
     )

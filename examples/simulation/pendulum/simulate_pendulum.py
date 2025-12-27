@@ -11,8 +11,7 @@ from pathlib import Path
 from typing import Callable, Dict
 
 import soromox
-from soromox.systems import pendulum
-from soromox.systems.system_state import SystemState
+from soromox.systems import Pendulum, SystemState
 
 num_links = 2
 params = {
@@ -39,7 +38,7 @@ video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(
-    robot: pendulum.Pendulum,
+    robot: Pendulum,
     q: Array,
     width: int,
     height: int,
@@ -70,7 +69,7 @@ def draw_robot(
 
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = pendulum.Pendulum(params)
+    robot = Pendulum(params)
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation

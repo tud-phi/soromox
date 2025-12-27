@@ -1,18 +1,15 @@
-from diffrax import Tsit5
 from functools import partial
 
 import jax
-from jax import numpy as jnp
-from jax import vmap
 import matplotlib.pyplot as plt
 import numpy as np
+from diffrax import Tsit5
+from jax import numpy as jnp
+from jax import vmap
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems.pneumatic_actuated_planar_pcs import (
-    PneumaticActuatedPlanarPCS,
-)
-from soromox.systems.system_state import SystemState
+from soromox.systems import PneumaticActuatedPlanarPCS, SystemState
 
 
 def sweep_actuation_mapping(
@@ -177,7 +174,7 @@ if __name__ == "__main__":
         num_segments=num_segments,
         params=params,
         strain_selector=strain_selector,
-        chamber_cross_section_geometry="concentric"
+        chamber_cross_section_geometry="concentric",
     )
 
     print("A=", robot.actuation_matrix(q=jnp.zeros(robot.num_active_strains)))

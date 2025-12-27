@@ -7,7 +7,7 @@ import pytest
 
 from numpy.testing import assert_allclose
 
-from soromox.systems.pendulum import Pendulum
+from soromox.systems import Pendulum
 from soromox.utils.tolerance import Tolerance
 
 
