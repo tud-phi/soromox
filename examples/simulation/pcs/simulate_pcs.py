@@ -7,7 +7,7 @@ from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer, Open3DRenderer
-from soromox.systems import SystemState
+from soromox.systems import PCS, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
