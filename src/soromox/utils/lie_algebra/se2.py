@@ -14,11 +14,9 @@ __all__ = [
     "Tangent_derivative_gi_se2",
 ]
 
-import jax
+
 import jax.numpy as jnp
 from jax import Array, lax
-from typing import Union
-
 
 J = jnp.array([[0, -1], [1, 0]])
 
@@ -88,7 +86,7 @@ def exp_SE2(vec3: Array) -> Array:
     return g
 
 
-def log_SE2(g: Array, eps: Union[float, Array]) -> Array:
+def log_SE2(g: Array, eps: float | Array) -> Array:
     """Compute the logarithmic map from SE(2) to se(2).
 
     Args:
@@ -113,7 +111,7 @@ def log_SE2(g: Array, eps: Union[float, Array]) -> Array:
     return jnp.concatenate([jnp.array([theta]), p])
 
 
-def exp_gn_SE2(vec3: Array, eps: Union[float, Array]) -> Array:
+def exp_gn_SE2(vec3: Array, eps: float | Array) -> Array:
     """Compute the exponential map using the Magnus expansion for SE(2).
 
     Args:
@@ -221,7 +219,7 @@ def Adjoint_g_SE2(mat3: Array) -> Array:
 
     Ad = jnp.concatenate(
         [
-            jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
+            jnp.concatenate([jnp.ones((1, 1)), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-J @ t, R], axis=1),
         ]
     )
@@ -252,7 +250,7 @@ def Adjoint_g_inv_SE2(mat3: Array) -> Array:
     # Construct the inverse Adjoint matrix
     Ad_inv = jnp.concatenate(
         [
-            jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
+            jnp.concatenate([jnp.ones((1, 1)), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-R_inv @ mJt, R_inv], axis=1),
         ]
     )
@@ -263,7 +261,7 @@ def Adjoint_g_inv_SE2(mat3: Array) -> Array:
 def Adjoint_gi_se2(
     xi_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the adjoint at arclength ``s_i`` for a segment strained by ``xi_i``.
@@ -328,7 +326,7 @@ def Adjoint_gi_se2(
 def Adjoint_gi_se2_inv(
     xi_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the inverse adjoint at arclength ``s_i`` for a segment strained by ``xi_i``.
@@ -356,7 +354,7 @@ def Adjoint_gi_se2_inv(
     # Construct the inverse Adjoint matrix
     Ad_inv = jnp.concatenate(
         [
-            jnp.concatenate([jnp.ones(((1, 1))), jnp.zeros((1, 2))], axis=1),
+            jnp.concatenate([jnp.ones((1, 1)), jnp.zeros((1, 2))], axis=1),
             jnp.concatenate([-R_inv @ mJt, R_inv], axis=1),
         ]
     )
@@ -367,7 +365,7 @@ def Adjoint_gi_se2_inv(
 def Tangent_gi_se2(
     xi_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the tangent operator accumulated over arclength ``s_i`` for strain ``xi_i``.
@@ -433,7 +431,7 @@ def Tangent_derivative_gi_se2(
     xi_i: Array,
     xid_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the time derivative of the tangent operator at arclength ``s_i``.

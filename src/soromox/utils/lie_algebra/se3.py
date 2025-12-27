@@ -13,13 +13,12 @@ __all__ = [
     "Tangent_gi_se3",
     "Tangent_derivative_gi_se3",
 ]
-import jax
+
 import jax.numpy as jnp
 from jax import Array, lax
-from typing import Union
 
 
-def _rotational_strain_magnitude(xi: Array, eps: Union[float, Array]) -> Array:
+def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
     """
     Computes the magnitude of the rotational strain component of a 6D vector.
 
@@ -130,7 +129,7 @@ def exp_SE3(vec6: Array) -> Array:
     return g
 
 
-def log_SE3(g: Array, eps: Union[float, Array]) -> Array:
+def log_SE3(g: Array, eps: float | Array) -> Array:
     """
     Computes the logarithm map from SE(3) to se(3), i.e., extracts the twist from a transformation matrix.
 
@@ -218,7 +217,7 @@ def log_SE3(g: Array, eps: Union[float, Array]) -> Array:
     return log
 
 
-def exp_gn_SE3(vec6: Array, eps: Union[float, Array]) -> Array:
+def exp_gn_SE3(vec6: Array, eps: float | Array) -> Array:
     """
     Function to compute the exponential map of the Magnus expansion.
 
@@ -365,7 +364,7 @@ def Adjoint_g_inv_SE3(mat4: Array) -> Array:
 def Adjoint_gi_se3(
     xi_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
@@ -431,7 +430,7 @@ def Adjoint_gi_se3(
 def Adjoint_gi_se3_inv(
     xi_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
@@ -467,7 +466,7 @@ def Adjoint_gi_se3_inv(
 def Tangent_gi_se3(
     xi_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the tangent representation of a position of a points at s_i (local curvilinear coordinate)
@@ -534,7 +533,7 @@ def Tangent_derivative_gi_se3(
     xi_i: Array,
     xid_i: Array,
     s_i: Array,
-    eps: Union[float, Array],
+    eps: float | Array,
 ) -> Array:
     """
     Computes the tangent derivative representation of a position of a points at s_i (local curvilinear coordinate)
