@@ -639,6 +639,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
+        recompute_normals: bool = True,
     ):
         """Initialize Open3D renderer.
 
@@ -667,6 +668,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             tendon_color: RGB color for tendon lines
             tendon_line_width: Width of tendon lines
             camera_margin_ratio: Margin ratio for camera bounding box
+            recompute_normals: Whether to recompute vertex normals per segment update
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -687,6 +689,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.base_plate_color = tuple(base_plate_color)
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
+        self.recompute_normals = bool(recompute_normals)
         self.backbone_style = backbone_style
         self._backbone_mode = self._resolve_backbone_mode(backbone_style)
         self.tube_resolution = int(tube_resolution)
@@ -815,6 +818,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         linear = R @ np.diag(scale)
         verts = cached.base_vertices @ linear.T + translation
         cached.mesh.vertices = o3d.utility.Vector3dVector(verts)
+
+        if self.recompute_normals:
+            cached.mesh.compute_vertex_normals()
+            return
 
         if cached.base_normals is not None and cached.base_normals.size:
             scale_safe = np.where(scale > 1e-9, scale, 1e-9)
