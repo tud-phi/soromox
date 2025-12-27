@@ -3,19 +3,20 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Optional, Tuple, Union
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.systems.soft_robot import SoftRobot
 
-class BaseContinuumSoftRobotRenderer(ABC):
-    """Abstract base class for continuum soft robot visualization backends.
+
+class BaseSoftRobotRenderer(ABC):
+    """Abstract base class for soft robot visualization backends.
 
     Provides cached forward kinematics and a common interface for rendering
-    continuum soft robots across different backends (Matplotlib, Open3D, OpenCV).
+    soft robots across different backends (Matplotlib, Open3D, OpenCV).
 
     Subclasses must implement:
         - is_3d: Property indicating 2D (planar) or 3D robot
@@ -23,7 +24,7 @@ class BaseContinuumSoftRobotRenderer(ABC):
         - render_frame: Render single configuration to RGB image array
 
     Attributes:
-        robot: The robot system object with forward_kinematics method
+        robot: SoftRobot system object with forward_kinematics method
         width: Image width in pixels
         height: Image height in pixels
         num_points: Number of points for discretizing backbone curve
@@ -33,11 +34,11 @@ class BaseContinuumSoftRobotRenderer(ABC):
 
     def __init__(
         self,
-        robot,
+        robot: SoftRobot,
         width: int = 800,
         height: int = 600,
         num_points: int = 50,
-        background_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
+        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
     ):
         """Initialize the renderer with a robot and visualization parameters.
 
@@ -48,7 +49,7 @@ class BaseContinuumSoftRobotRenderer(ABC):
             num_points: Number of points for backbone curve discretization
             background_color: RGB background color tuple (values 0-1)
         """
-        self.robot = robot
+        self.robot: SoftRobot = robot
         self.width = width
         self.height = height
         self.num_points = num_points
@@ -119,7 +120,7 @@ class BaseContinuumSoftRobotRenderer(ABC):
         ts: Array,
         q_ts: Array,
         playback_speed: float = 1.0,
-        record_path: Optional[str] = None,
+        record_path: str | None = None,
         **kwargs,
     ) -> None:
         """Render animated sequence to video file.
@@ -152,7 +153,7 @@ class BaseContinuumSoftRobotRenderer(ABC):
     # =========================================================================
 
     def _compute_grid_offsets(
-        self, num_robots: int, grid_spacing: Tuple[float, float]
+        self, num_robots: int, grid_spacing: tuple[float, float]
     ) -> Array:
         """Compute grid layout offsets for N robots.
 
@@ -211,7 +212,7 @@ class BaseContinuumSoftRobotRenderer(ABC):
                 f"base_offsets first dimension ({base_offsets.shape[0]}) must "
                 f"match batch size ({q_batch.shape[0]})"
             )
-        
+
         # vmap over the configurations
         curves = jax.vmap(self.compute_backbone_curve)(q_batch)  # (N, num_points, dim)
 

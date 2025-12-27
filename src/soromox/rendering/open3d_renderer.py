@@ -25,12 +25,11 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple, Union
 
 import jax
-from jax import Array
 import jax.numpy as jnp
 import numpy as np
+from jax import Array
 
 try:
     import open3d as o3d
@@ -45,8 +44,8 @@ _GUI_APP_INITIALIZED = False
 # Default colormap used for segment colors when none are provided
 DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
-from soromox.rendering.base import BaseContinuumSoftRobotRenderer
-
+from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.systems.soft_robot import SoftRobot
 
 # ======================================================================================
 # Geometry helper functions (module-level, stateless)
@@ -55,8 +54,8 @@ from soromox.rendering.base import BaseContinuumSoftRobotRenderer
 
 def _make_polyline_lineset(
     points_np: np.ndarray,
-    color: Tuple[float, float, float] = (0.9, 0.15, 0.15),
-) -> "o3d.geometry.LineSet":
+    color: tuple[float, float, float] = (0.9, 0.15, 0.15),
+) -> o3d.geometry.LineSet:
     """Create a colored polyline LineSet from (N,3) points."""
     pts = np.array(points_np, dtype=np.float64, order="C", copy=True)
     N = pts.shape[0]
@@ -78,11 +77,11 @@ def _make_base_plate(
     center_xyz: np.ndarray,
     radius: float,
     thickness: float = 0.005,
-    color: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+    color: tuple[float, float, float] = (0.0, 0.0, 0.0),
     resolution: int = 48,
     apply_color: bool = True,
     apply_translation: bool = True,
-) -> "o3d.geometry.TriangleMesh":
+) -> o3d.geometry.TriangleMesh:
     """Create a base plate cylinder mesh."""
     mesh = o3d.geometry.TriangleMesh.create_cylinder(
         radius=float(radius), height=float(thickness), resolution=resolution, split=1
@@ -98,13 +97,15 @@ def _make_base_plate(
 def _make_sphere(
     center_xyz: np.ndarray,
     radius: float,
-    color: Tuple[float, float, float] = (0.1, 0.45, 1.0),
+    color: tuple[float, float, float] = (0.1, 0.45, 1.0),
     resolution: int = 16,
     apply_color: bool = True,
     apply_translation: bool = True,
-) -> "o3d.geometry.TriangleMesh":
+) -> o3d.geometry.TriangleMesh:
     """Create a colored sphere at center_xyz with given radius."""
-    mesh = o3d.geometry.TriangleMesh.create_sphere(radius=float(radius), resolution=resolution)
+    mesh = o3d.geometry.TriangleMesh.create_sphere(
+        radius=float(radius), resolution=resolution
+    )
     mesh.compute_vertex_normals()
     if apply_color:
         mesh.paint_uniform_color(np.array(color, dtype=np.float64))
@@ -117,10 +118,10 @@ def _make_cylinder_between(
     p0: np.ndarray,
     p1: np.ndarray,
     radius: float,
-    color: Tuple[float, float, float],
+    color: tuple[float, float, float],
     resolution: int = 20,
     apply_color: bool = True,
-) -> "o3d.geometry.TriangleMesh":
+) -> o3d.geometry.TriangleMesh:
     """Create a cylinder mesh connecting p0->p1."""
     p0 = np.asarray(p0, dtype=np.float64)
     p1 = np.asarray(p1, dtype=np.float64)
@@ -173,9 +174,9 @@ def _make_cylinder_between(
 def _make_target_sphere(
     center_xyz: np.ndarray,
     radius: float = 0.01,
-    color: Tuple[float, float, float] = (1.0, 0.0, 0.0),
+    color: tuple[float, float, float] = (1.0, 0.0, 0.0),
     resolution: int = 16,
-) -> "o3d.geometry.TriangleMesh":
+) -> o3d.geometry.TriangleMesh:
     """Create a colored sphere marking a target point."""
     return _make_sphere(center_xyz, radius, color, resolution)
 
@@ -183,14 +184,14 @@ def _make_target_sphere(
 def _make_obstacle_sphere(
     center_xyz: np.ndarray,
     radius: float,
-    color: Tuple[float, float, float] = (0.5, 0.5, 0.5),
+    color: tuple[float, float, float] = (0.5, 0.5, 0.5),
     resolution: int = 24,
-) -> "o3d.geometry.TriangleMesh":
+) -> o3d.geometry.TriangleMesh:
     """Create a colored obstacle sphere."""
     return _make_sphere(center_xyz, radius, color, resolution)
 
 
-def _split_counts_by_lengths(num_points: int, L: np.ndarray) -> List[int]:
+def _split_counts_by_lengths(num_points: int, L: np.ndarray) -> list[int]:
     """Split num_points across len(L) segments proportionally to lengths."""
     L = np.asarray(L, dtype=np.float64).reshape(-1)
     S = int(L.size)
@@ -248,12 +249,12 @@ def _ensure_rgba(arr: np.ndarray) -> np.ndarray:
     arr = np.asarray(arr, dtype=np.float64)
     if arr.ndim == 1:
         if arr.shape[0] not in (3, 4):
-            raise ValueError(
-                f"Color must have 3 or 4 channels; got shape {arr.shape}"
-            )
+            raise ValueError(f"Color must have 3 or 4 channels; got shape {arr.shape}")
         arr = arr.reshape(1, -1)
     if arr.ndim != 2 or arr.shape[1] not in (3, 4):
-        raise ValueError(f"Color array must have shape (N, 3) or (N, 4); got {arr.shape}")
+        raise ValueError(
+            f"Color array must have shape (N, 3) or (N, 4); got {arr.shape}"
+        )
     if arr.shape[1] == 3:
         alpha = np.ones((arr.shape[0], 1), dtype=np.float64)
         arr = np.concatenate([arr, alpha], axis=1)
@@ -261,7 +262,7 @@ def _ensure_rgba(arr: np.ndarray) -> np.ndarray:
 
 
 def _normalize_color_palette(
-    color_spec: Optional[Union[str, Array, np.ndarray]],
+    color_spec: str | Array | np.ndarray | None,
     count: int,
     *,
     default_palette: np.ndarray,
@@ -296,7 +297,7 @@ class _FFmpegVideoWriter:
 
     def __init__(self, path: str, width: int, height: int, fps: float):
         self.path = path
-        self._stderr_log: Optional[str] = None
+        self._stderr_log: str | None = None
         self.proc = subprocess.Popen(
             [
                 "ffmpeg",
@@ -347,11 +348,11 @@ class _FFmpegVideoWriter:
             self.proc.wait()
 
     @property
-    def stderr_log(self) -> Optional[str]:
+    def stderr_log(self) -> str | None:
         return self._stderr_log
 
 
-def _mesh_center(mesh: "o3d.geometry.TriangleMesh") -> np.ndarray:
+def _mesh_center(mesh: o3d.geometry.TriangleMesh) -> np.ndarray:
     """Approximate center: mean of vertices."""
     return np.asarray(mesh.vertices).mean(axis=0)
 
@@ -389,10 +390,10 @@ class SceneData:
     curves: np.ndarray  # (N, T, P, 3)
     ts: np.ndarray  # (T,)
     layout: SegmentLayout
-    robot_colors_rgba: Optional[np.ndarray]  # (N, 4) or None for per-segment colors
-    tendon_curves: Optional[np.ndarray] = None  # (N, T, n_tend, P, 3)
-    static_spheres: Optional[SphereSet] = None
-    dynamic_spheres: Optional[DynamicSpheres] = None
+    robot_colors_rgba: np.ndarray | None  # (N, 4) or None for per-segment colors
+    tendon_curves: np.ndarray | None = None  # (N, T, n_tend, P, 3)
+    static_spheres: SphereSet | None = None
+    dynamic_spheres: DynamicSpheres | None = None
 
     @property
     def num_robots(self) -> int:
@@ -405,19 +406,19 @@ class SceneData:
 
 @dataclass
 class RecordingConfig:
-    path: Optional[str]
+    path: str | None
     prefix: str = "frame_"
     every_n: int = 1
 
 
 @dataclass
 class LegacySceneHandles:
-    base_meshes: List
-    backbone_meshes: List[List[List]]
-    tendon_lines: List[List]
-    static_meshes: List
-    dynamic_meshes: List
-    dynamic_trajs: List[np.ndarray]
+    base_meshes: list
+    backbone_meshes: list[list[list]]
+    tendon_lines: list[list]
+    static_meshes: list
+    dynamic_meshes: list
+    dynamic_trajs: list[np.ndarray]
 
 
 # ======================================================================================
@@ -425,7 +426,7 @@ class LegacySceneHandles:
 # ======================================================================================
 
 
-class Open3DRenderer(BaseContinuumSoftRobotRenderer):
+class Open3DRenderer(BaseSoftRobotRenderer):
     """Open3D visualization for any continuum soft robot.
 
     Provides interactive 3D visualization with spheres for backbone,
@@ -440,22 +441,22 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
     def __init__(
         self,
-        robot,
+        robot: SoftRobot,
         width: int = 1280,
         height: int = 800,
         num_points: int = 80,
-        background_color: Tuple[float, float, float] = (1.0, 1.0, 1.0),
-        seg_colors: Optional[Union[str, Array, np.ndarray]] = DEFAULT_SEGMENT_COLORMAP,
-        robot_colors: Optional[Union[str, Array, np.ndarray]] = None,
+        background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
+        robot_colors: str | Array | np.ndarray | None = None,
         backbone_style: str = "spheres",
         tube_resolution: int = 20,
         sphere_resolution: int = 32,
-        base_plate_color: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        base_plate_color: tuple[float, float, float] = (0.0, 0.0, 0.0),
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 5e-2 * 1.3,
-        grid_spacing: Tuple[float, float] = (0.5, 0.5),
-        base_offsets: Optional[Array] = None,
-        tendon_color: Tuple[float, float, float] = (0.9, 0.15, 0.15),
+        grid_spacing: tuple[float, float] = (0.5, 0.5),
+        base_offsets: Array | None = None,
+        tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
         viewer_backend: str = "legacy",
@@ -535,7 +536,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         """Extract xyz from SE(3) matrices."""
         return poses[:, :3, 3]
 
-    def compute_tendon_curves(self, q: Array) -> Optional[Array]:
+    def compute_tendon_curves(self, q: Array) -> Array | None:
         """Compute tendon paths if the robot exposes tendon kinematics.
 
         Args:
@@ -556,18 +557,26 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
     # -------------------------------------------------------------------------
 
     def _make_mesh_material(
-        self, color_rgba: Union[Tuple[float, float, float], Tuple[float, float, float, float]]
-    ) -> "o3d.visualization.rendering.MaterialRecord":
+        self, color_rgba: tuple[float, float, float] | tuple[float, float, float, float]
+    ) -> o3d.visualization.rendering.MaterialRecord:
         """Create an Open3D material honoring per-color alpha."""
         rgba = _ensure_rgba(np.asarray(color_rgba, dtype=np.float64))[0]
         mat = o3d.visualization.rendering.MaterialRecord()
         mat.shader = "defaultLitTransparency" if rgba[3] < 0.999 else "defaultLit"
-        mat.base_color = (float(rgba[0]), float(rgba[1]), float(rgba[2]), float(rgba[3]))
+        mat.base_color = (
+            float(rgba[0]),
+            float(rgba[1]),
+            float(rgba[2]),
+            float(rgba[3]),
+        )
         return mat
 
     def _blend_with_background(
-        self, color: Union[Tuple[float, float, float], Tuple[float, float, float, float], np.ndarray]
-    ) -> Tuple[float, float, float]:
+        self,
+        color: tuple[float, float, float]
+        | tuple[float, float, float, float]
+        | np.ndarray,
+    ) -> tuple[float, float, float]:
         """Approximate transparency for the legacy visualizer by blending with the background."""
         rgba = _ensure_rgba(np.asarray(color, dtype=np.float64))[0]
         alpha = float(rgba[3])
@@ -578,9 +587,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         blended = alpha * rgb + (1.0 - alpha) * bg
         return tuple(np.clip(blended, 0.0, 1.0).tolist())
 
-    def _frame_intervals_from_ts(
-        self, ts: Array, playback_speed: float
-    ) -> np.ndarray:
+    def _frame_intervals_from_ts(self, ts: Array, playback_speed: float) -> np.ndarray:
         """Compute per-frame wall-clock intervals from timestamps, scaled by playback speed."""
         speed = float(playback_speed)
         if speed <= 0.0:
@@ -618,7 +625,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
     @staticmethod
     def _normalize_color_array(
-        colors: Optional[Array], count: int, default_color: Tuple[float, float, float]
+        colors: Array | None, count: int, default_color: tuple[float, float, float]
     ) -> np.ndarray:
         """Validate and normalize color arrays to shape (count, 3)."""
         if colors is None:
@@ -639,11 +646,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
     def _prepare_static_spheres(
         self,
-        static_spheres_positions: Optional[Array],
-        static_spheres_radii: Optional[Array],
-        static_spheres_colors: Optional[Array],
-        default_color: Tuple[float, float, float] = (0.8, 0.2, 0.2),
-    ) -> Optional[SphereSet]:
+        static_spheres_positions: Array | None,
+        static_spheres_radii: Array | None,
+        static_spheres_colors: Array | None,
+        default_color: tuple[float, float, float] = (0.8, 0.2, 0.2),
+    ) -> SphereSet | None:
         """Validate static sphere inputs and return a SphereSet."""
         if static_spheres_positions is None:
             return None
@@ -670,12 +677,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
     def _prepare_dynamic_spheres(
         self,
-        dynamic_spheres_positions: Optional[Array],
-        dynamic_spheres_radii: Optional[Array],
-        dynamics_spheres_colors: Optional[Array],
-        expected_T: Optional[int],
-        default_color: Tuple[float, float, float] = (0.2, 0.2, 0.8),
-    ) -> Optional[DynamicSpheres]:
+        dynamic_spheres_positions: Array | None,
+        dynamic_spheres_radii: Array | None,
+        dynamics_spheres_colors: Array | None,
+        expected_T: int | None,
+        default_color: tuple[float, float, float] = (0.2, 0.2, 0.8),
+    ) -> DynamicSpheres | None:
         """Validate dynamic sphere inputs and return a DynamicSpheres struct."""
         if dynamic_spheres_positions is None:
             return None
@@ -704,7 +711,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         colors = self._normalize_color_array(dynamics_spheres_colors, N, default_color)
         return DynamicSpheres(trajectories=centers, radii=radii, colors=colors)
 
-    def _resolve_backend(self, backend: Optional[str]) -> str:
+    def _resolve_backend(self, backend: str | None) -> str:
         """Resolve requested backend to either 'legacy' or 'gui'."""
         mode = (backend or self.viewer_backend or "legacy").lower()
         if mode == "auto":
@@ -723,14 +730,14 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         ts: Array,
         q_ts: Array,
         *,
-        base_offsets: Optional[Array],
-        robot_colors: Optional[Union[str, Array, np.ndarray]],
-        static_spheres_positions: Optional[Array],
-        static_spheres_radii: Optional[Array],
-        static_spheres_colors: Optional[Array],
-        dynamic_spheres_positions: Optional[Array],
-        dynamic_spheres_radii: Optional[Array],
-        dynamics_spheres_colors: Optional[Array],
+        base_offsets: Array | None,
+        robot_colors: str | Array | np.ndarray | None,
+        static_spheres_positions: Array | None,
+        static_spheres_radii: Array | None,
+        static_spheres_colors: Array | None,
+        dynamic_spheres_positions: Array | None,
+        dynamic_spheres_radii: Array | None,
+        dynamics_spheres_colors: Array | None,
     ) -> SceneData:
         """Compute curves/tendons and validate auxiliary geometry."""
         ts_np = np.asarray(ts, dtype=np.float64).reshape(-1)
@@ -770,15 +777,13 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         def _compute_curves_for_timestep(q_batch: jax.Array) -> jax.Array:
             return self.compute_backbone_curves_batched(q_batch, offsets)
 
-        all_curves_time_first = jax.vmap(_compute_curves_for_timestep)(
-            q_ts_time_first
-        )
-        curves = np.array(
-            all_curves_time_first.transpose(1, 0, 2, 3), dtype=np.float64
-        )
+        all_curves_time_first = jax.vmap(_compute_curves_for_timestep)(q_ts_time_first)
+        curves = np.array(all_curves_time_first.transpose(1, 0, 2, 3), dtype=np.float64)
 
         layout = self._compute_segment_layout(curves.shape[2])
-        robot_colors_cfg = self._robot_colors_config if robot_colors is None else robot_colors
+        robot_colors_cfg = (
+            self._robot_colors_config if robot_colors is None else robot_colors
+        )
         robot_colors_rgba = None
         if robot_colors_cfg is not None:
             robot_colors_rgba = _get_robot_colors(
@@ -834,18 +839,20 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         scene,
         scene_data: SceneData,
         frame_idx: int,
-        material_cache: Optional[Dict[Tuple[float, float, float], object]] = None,
+        material_cache: dict[tuple[float, float, float], object] | None = None,
     ) -> None:
         """Add all geometries for a specific frame to an Open3DScene."""
         try:
             import open3d.visualization.rendering as rendering
-        except Exception as exc:  # pragma: no cover - only used when rendering is available
+        except (
+            Exception
+        ) as exc:  # pragma: no cover - only used when rendering is available
             raise RuntimeError("Open3D rendering backend unavailable") from exc
 
         if material_cache is None:
             material_cache = {}
 
-        def mat_for(color_rgba: Union[np.ndarray, Tuple[float, ...]]):
+        def mat_for(color_rgba: np.ndarray | tuple[float, ...]):
             key = tuple(np.asarray(color_rgba, dtype=np.float64).reshape(-1))
             if key not in material_cache:
                 material_cache[key] = self._make_mesh_material(key)
@@ -875,7 +882,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             for s in range(layout.segments):
                 c0, c1 = int(layout.starts[s]), int(layout.ends[s])
                 raw_color_rgba = (
-                    color_override if color_override is not None else layout.colors_rgba[s]
+                    color_override
+                    if color_override is not None
+                    else layout.colors_rgba[s]
                 )
                 raw_color_rgb = tuple(np.asarray(raw_color_rgba).reshape(-1)[:3])
                 if self.backbone_style == "tube" and c1 - c0 >= 1:
@@ -908,7 +917,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             if scene_data.tendon_curves is not None:
                 robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
                 for k in range(robot_tendons.shape[0]):
-                    ls = _make_polyline_lineset(robot_tendons[k], color=self.tendon_color)
+                    ls = _make_polyline_lineset(
+                        robot_tendons[k], color=self.tendon_color
+                    )
                     mat_line = rendering.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = self.tendon_line_width
@@ -955,14 +966,14 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self,
         q: Array,
         *,
-        base_offsets: Optional[Array] = None,
-        robot_colors: Optional[Union[str, Array, np.ndarray]] = None,
-        static_spheres_positions: Optional[Array] = None,
-        static_spheres_radii: Optional[Array] = None,
-        static_spheres_colors: Optional[Array] = None,
-        dynamic_spheres_positions: Optional[Array] = None,
-        dynamic_spheres_radii: Optional[Array] = None,
-        dynamics_spheres_colors: Optional[Array] = None,
+        base_offsets: Array | None = None,
+        robot_colors: str | Array | np.ndarray | None = None,
+        static_spheres_positions: Array | None = None,
+        static_spheres_radii: Array | None = None,
+        static_spheres_colors: Array | None = None,
+        dynamic_spheres_positions: Array | None = None,
+        dynamic_spheres_radii: Array | None = None,
+        dynamics_spheres_colors: Array | None = None,
     ) -> np.ndarray:
         """Render a single configuration headlessly and return an RGB array.
 
@@ -1015,15 +1026,15 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self,
         q: Array,
         *,
-        backend: Optional[str] = None,
-        base_offsets: Optional[Array] = None,
-        robot_colors: Optional[Union[str, Array, np.ndarray]] = None,
-        static_spheres_positions: Optional[Array] = None,
-        static_spheres_radii: Optional[Array] = None,
-        static_spheres_colors: Optional[Array] = None,
-        dynamic_spheres_positions: Optional[Array] = None,
-        dynamic_spheres_radii: Optional[Array] = None,
-        dynamics_spheres_colors: Optional[Array] = None,
+        backend: str | None = None,
+        base_offsets: Array | None = None,
+        robot_colors: str | Array | np.ndarray | None = None,
+        static_spheres_positions: Array | None = None,
+        static_spheres_radii: Array | None = None,
+        static_spheres_colors: Array | None = None,
+        dynamic_spheres_positions: Array | None = None,
+        dynamic_spheres_radii: Array | None = None,
+        dynamics_spheres_colors: Array | None = None,
     ) -> None:
         """Display a single frame interactively with full geometry options.
 
@@ -1066,20 +1077,20 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         ts: Array,
         q_ts: Array,
         *,
-        backend: Optional[str] = None,
+        backend: str | None = None,
         playback_speed: float = 1.0,
         loop: bool = False,
-        record_path: Optional[str] = None,
+        record_path: str | None = None,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
-        base_offsets: Optional[Array] = None,
-        robot_colors: Optional[Union[str, Array, np.ndarray]] = None,
-        static_spheres_positions: Optional[Array] = None,
-        static_spheres_radii: Optional[Array] = None,
-        static_spheres_colors: Optional[Array] = None,
-        dynamic_spheres_positions: Optional[Array] = None,
-        dynamic_spheres_radii: Optional[Array] = None,
-        dynamics_spheres_colors: Optional[Array] = None,
+        base_offsets: Array | None = None,
+        robot_colors: str | Array | np.ndarray | None = None,
+        static_spheres_positions: Array | None = None,
+        static_spheres_radii: Array | None = None,
+        static_spheres_colors: Array | None = None,
+        dynamic_spheres_positions: Array | None = None,
+        dynamic_spheres_radii: Array | None = None,
+        dynamics_spheres_colors: Array | None = None,
         window_name: str = "Robot Animation (Open3D)",
     ) -> None:
         """Render an animated trajectory interactively or headlessly.
@@ -1167,11 +1178,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         self,
         vis,
         ctrl,
-        state: Dict[str, Union[int, bool, float]],
+        state: dict[str, int | bool | float],
         update_frame,
         save_frame_fn,
         initial_cam,
-        saved_cam_holder: List,
+        saved_cam_holder: list,
         print_prefix: str,
     ) -> None:
         """Attach shared keyboard callbacks to a visualizer."""
@@ -1244,8 +1255,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         vis,
         curve0: np.ndarray,
         layout: SegmentLayout,
-        color_override: Optional[np.ndarray] = None,
-    ) -> Tuple[object, List[List[object]]]:
+        color_override: np.ndarray | None = None,
+    ) -> tuple[object, list[list[object]]]:
         """Add base and backbone meshes for one robot; return handles."""
         base_color = self._blend_with_background(self.base_plate_color)
         base_mesh = _make_base_plate(
@@ -1256,9 +1267,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         )
         vis.add_geometry(base_mesh)
 
-        spheres_groups: List[List] = []
+        spheres_groups: list[list] = []
         for s in range(layout.segments):
-            seg_spheres: List = []
+            seg_spheres: list = []
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
             raw_color_rgba = (
                 color_override if color_override is not None else layout.colors_rgba[s]
@@ -1293,7 +1304,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
         vis,
         curve: np.ndarray,
         base_mesh,
-        spheres_groups: List[List],
+        spheres_groups: list[list],
         layout: SegmentLayout,
     ) -> None:
         """Translate base and backbone geometry to a new curve position."""
@@ -1306,11 +1317,17 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             seg_spheres = spheres_groups[s]
             if self.backbone_style == "tube" and c1 - c0 >= 1:
                 # Cylinders need full re-orientation + centering, not just translation
-                for i_local, p in enumerate(range(c0, min(c1 - 1, c0 + len(seg_spheres)))):
+                for i_local, p in enumerate(
+                    range(c0, min(c1 - 1, c0 + len(seg_spheres)))
+                ):
                     mesh = seg_spheres[i_local]
                     # Preserve existing color while regenerating geometry
                     color_arr = np.asarray(mesh.vertex_colors)
-                    base_color = color_arr[0] if color_arr.size >= 3 else np.array([1.0, 1.0, 1.0])
+                    base_color = (
+                        color_arr[0]
+                        if color_arr.size >= 3
+                        else np.array([1.0, 1.0, 1.0])
+                    )
                     updated = _make_cylinder_between(
                         curve[p],
                         curve[p + 1],
@@ -1336,8 +1353,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
     ) -> LegacySceneHandles:
         """Construct initial geometry for the legacy viewer."""
         layout = scene_data.layout
-        base_meshes: List = []
-        backbone_meshes: List[List[List]] = []
+        base_meshes: list = []
+        backbone_meshes: list[list[list]] = []
 
         for robot_idx in range(scene_data.num_robots):
             curve0 = scene_data.curves[robot_idx, frame_idx]
@@ -1352,10 +1369,10 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             base_meshes.append(base_mesh)
             backbone_meshes.append(groups)
 
-        tendon_lines: List[List] = []
+        tendon_lines: list[list] = []
         if scene_data.tendon_curves is not None:
             for robot_idx in range(scene_data.num_robots):
-                robot_lines: List = []
+                robot_lines: list = []
                 robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
                 for k in range(robot_tendons.shape[0]):
                     ls = _make_polyline_lineset(
@@ -1365,7 +1382,7 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     vis.add_geometry(ls)
                 tendon_lines.append(robot_lines)
 
-        static_meshes: List = []
+        static_meshes: list = []
         if scene_data.static_spheres is not None:
             static_set = scene_data.static_spheres
             for ctr, rad, col in zip(
@@ -1380,8 +1397,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 static_meshes.append(mesh)
                 vis.add_geometry(mesh)
 
-        dynamic_meshes: List = []
-        dynamic_trajs: List[np.ndarray] = []
+        dynamic_meshes: list = []
+        dynamic_trajs: list[np.ndarray] = []
         if scene_data.dynamic_spheres is not None:
             dyn_set = scene_data.dynamic_spheres
             for centers_T3, rad, col in zip(
@@ -1442,15 +1459,15 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             vis.update_geometry(mesh)
 
     def _init_recorder(
-        self, record_path: Optional[str], dt_seq: np.ndarray
-    ) -> Tuple[Optional[_FFmpegVideoWriter], Optional[str], Optional[str]]:
+        self, record_path: str | None, dt_seq: np.ndarray
+    ) -> tuple[_FFmpegVideoWriter | None, str | None, str | None]:
         """Initialize ffmpeg writer or frame directory based on path."""
         if record_path is None:
             return None, None, None
 
-        frame_dir: Optional[str] = None
-        video_writer: Optional[_FFmpegVideoWriter] = None
-        video_path: Optional[str] = None
+        frame_dir: str | None = None
+        video_writer: _FFmpegVideoWriter | None = None
+        video_path: str | None = None
 
         ext = os.path.splitext(record_path)[1].lower()
         video_exts = {".mp4", ".mov", ".avi", ".mkv"}
@@ -1533,7 +1550,8 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             if video_writer is not None:
                 try:
                     img = np.asarray(
-                        vis.capture_screen_float_buffer(do_render=True), dtype=np.float32
+                        vis.capture_screen_float_buffer(do_render=True),
+                        dtype=np.float32,
                     )
                     frame = np.clip(img * 255.0, 0.0, 255.0).astype(np.uint8)
                     video_writer.write(frame)
@@ -1544,7 +1562,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                     _fallback_to_frames(str(exc))
             if frame_dir is None:
                 if force:
-                    vis.capture_screen_image(f"{record_cfg.prefix}{i:05d}.png", do_render=True)
+                    vis.capture_screen_image(
+                        f"{record_cfg.prefix}{i:05d}.png", do_render=True
+                    )
                 return
             if force or (i % record_cfg.every_n) == 0:
                 fname = os.path.join(frame_dir, f"{record_cfg.prefix}{i:05d}.png")
@@ -1619,10 +1639,10 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
         # Recorder is initialized after we confirm capture support
-        video_writer: Optional[_FFmpegVideoWriter] = None
-        frame_dir: Optional[str] = None
-        video_path: Optional[str] = None
-        material_cache: Dict[Tuple[float, float, float], rendering.MaterialRecord] = {}
+        video_writer: _FFmpegVideoWriter | None = None
+        frame_dir: str | None = None
+        video_path: str | None = None
+        material_cache: dict[tuple[float, float, float], rendering.MaterialRecord] = {}
         missing_render_to_image_warned = False
         recording_enabled = {"ok": True}
 
@@ -1657,7 +1677,11 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
         def _grab_frame():
             """Best-effort frame capture across Open3D builds."""
-            nonlocal missing_render_to_image_warned, recording_enabled, video_writer, frame_dir
+            nonlocal \
+                missing_render_to_image_warned, \
+                recording_enabled, \
+                video_writer, \
+                frame_dir
             # Newer builds: method on Open3DScene
             if hasattr(scene_widget.scene, "render_to_image"):
                 try:
@@ -1765,8 +1789,10 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
             fov_type = saved.get("fov_type", None)
             if fov is None or near is None or far is None:
                 return
-            aspect_eff = aspect if aspect not in (None, 0) else float(self.width) / float(
-                max(1, self.height)
+            aspect_eff = (
+                aspect
+                if aspect not in (None, 0)
+                else float(self.width) / float(max(1, self.height))
             )
             try:
                 cam.set_projection(
@@ -1921,7 +1947,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                 return _HANDLED
             if key in quit_keys:
                 state["playing"] = False
-                app.post_to_main_thread(window, window.close) if hasattr(app, "post_to_main_thread") else window.close()
+                app.post_to_main_thread(window, window.close) if hasattr(
+                    app, "post_to_main_thread"
+                ) else window.close()
                 return _HANDLED
             if key in reset_keys:
                 try:
@@ -1939,7 +1967,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                         pos = cam.get_position()
                         la = cam.get_look_at()
                         up_vec = cam.get_up_vector()
-                        print(f"[Open3D][gui] Camera reset. pos={pos}, look_at={la}, up={up_vec}")
+                        print(
+                            f"[Open3D][gui] Camera reset. pos={pos}, look_at={la}, up={up_vec}"
+                        )
                     except Exception:
                         print("[Open3D][gui] Camera reset (camera query unavailable).")
                 except Exception as exc:
@@ -1962,7 +1992,9 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
                         pos = cam.get_position()
                         la = cam.get_look_at()
                         up_vec = cam.get_up_vector()
-                        print(f"[Open3D][gui] Camera loaded. pos={pos}, look_at={la}, up={up_vec}")
+                        print(
+                            f"[Open3D][gui] Camera loaded. pos={pos}, look_at={la}, up={up_vec}"
+                        )
                     except Exception:
                         print("[Open3D][gui] Camera loaded (camera query unavailable).")
                 except Exception as exc:
@@ -2063,16 +2095,12 @@ class Open3DRenderer(BaseContinuumSoftRobotRenderer):
 
 def _get_robot_colors(
     num_robots: int,
-    robot_colors: Optional[
-        Union[
-            str,
-            Array,
-            np.ndarray,
-        ]
-    ],
-    default_color: Union[
-        Tuple[float, float, float], Tuple[float, float, float, float]
-    ] = (0.1, 0.45, 1.0),
+    robot_colors: str | Array | np.ndarray | None,
+    default_color: tuple[float, float, float] | tuple[float, float, float, float] = (
+        0.1,
+        0.45,
+        1.0,
+    ),
 ) -> np.ndarray:
     """Get colors for each robot.
 

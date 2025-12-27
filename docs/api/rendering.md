@@ -4,12 +4,12 @@ Visualization and rendering utilities for robot systems.
 
 ## Overview
 
-The rendering module provides a class-based architecture for visualizing continuum soft robots. All renderers inherit from a common base class `BaseContinuumSoftRobotRenderer` which provides cached forward kinematics and a unified interface.
+The rendering module provides a class-based architecture for visualizing soft robots. All renderers inherit from a common base class `BaseSoftRobotRenderer` which provides cached forward kinematics and a unified interface.
 
 ### Architecture
 
 ```text
-BaseContinuumSoftRobotRenderer (abstract base)
+BaseSoftRobotRenderer (abstract base)
 ├── MatplotlibRenderer         # Generic, works with any robot (2D/3D)
 ├── Open3DRenderer             # Generic, works with any 3D robot
 ├── OpenCVPlanarHSARenderer    # Specialized for PlanarHSA
@@ -112,7 +112,7 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
 
 ## Base Class
 
-::: soromox.rendering.base.BaseContinuumSoftRobotRenderer
+::: soromox.rendering.base.BaseSoftRobotRenderer
     options:
       show_root_heading: true
       show_source: false
@@ -121,7 +121,7 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
 
 ## Matplotlib Renderer
 
-::: soromox.rendering.continuum_soft_robot.matplotlib_renderer.MatplotlibRenderer
+::: soromox.rendering.matplotlib_renderer.MatplotlibRenderer
     options:
       show_root_heading: true
       show_source: false
@@ -130,7 +130,7 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
 
 ## Open3D Renderer
 
-::: soromox.rendering.continuum_soft_robot.open3d_renderer.Open3DRenderer
+::: soromox.rendering.open3d_renderer.Open3DRenderer
     options:
       show_root_heading: true
       show_source: false

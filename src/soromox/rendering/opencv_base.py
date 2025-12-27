@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
 from jax import Array
 
-from soromox.rendering.base import BaseContinuumSoftRobotRenderer
+from soromox.rendering.base import BaseSoftRobotRenderer
 
 FFMPEG_VIDEO_CODEC = "libx264"
 FFMPEG_PIXEL_FORMAT = "yuv420p"
@@ -21,7 +20,7 @@ class _BGRFFmpegVideoWriter:
 
     def __init__(self, path: str, width: int, height: int, fps: float):
         self.path = path
-        self._stderr_log: Optional[str] = None
+        self._stderr_log: str | None = None
         self.proc = subprocess.Popen(
             [
                 "ffmpeg",
@@ -72,11 +71,11 @@ class _BGRFFmpegVideoWriter:
             self.proc.wait()
 
     @property
-    def stderr_log(self) -> Optional[str]:
+    def stderr_log(self) -> str | None:
         return self._stderr_log
 
 
-class BaseOpenCVRenderer(BaseContinuumSoftRobotRenderer):
+class BaseOpenCVRenderer(BaseSoftRobotRenderer):
     """Base class adding video recording for OpenCV renderers."""
 
     def _writer_label(self) -> str:
@@ -87,7 +86,7 @@ class BaseOpenCVRenderer(BaseContinuumSoftRobotRenderer):
         ts: Array,
         q_ts: Array,
         playback_speed: float = 1.0,
-        record_path: Optional[str] = None,
+        record_path: str | None = None,
     ) -> None:
         """Render animated sequence to video file using ffmpeg (H.264, yuv420p).
 
@@ -109,19 +108,29 @@ class BaseOpenCVRenderer(BaseContinuumSoftRobotRenderer):
         print(f"{label} Rendering video with dt={video_dt:.4f} and {len(ts_np)} frames")
 
         width, height = int(self.width), int(self.height)
-        video_writer: Optional[_BGRFFmpegVideoWriter] = None
-        cv_video: Optional[cv2.VideoWriter] = None
+        video_writer: _BGRFFmpegVideoWriter | None = None
+        cv_video: cv2.VideoWriter | None = None
         try:
-            video_writer = _BGRFFmpegVideoWriter(str(record_path), width, height, actual_fps)
-            print(f"{label} Writing video via ffmpeg to: {record_path} (fps≈{actual_fps:.2f})")
+            video_writer = _BGRFFmpegVideoWriter(
+                str(record_path), width, height, actual_fps
+            )
+            print(
+                f"{label} Writing video via ffmpeg to: {record_path} (fps≈{actual_fps:.2f})"
+            )
         except FileNotFoundError:
-            print(f"{label} ffmpeg not found; falling back to OpenCV VideoWriter (mp4v)")
+            print(
+                f"{label} ffmpeg not found; falling back to OpenCV VideoWriter (mp4v)"
+            )
         except Exception as exc:
-            print(f"{label} ffmpeg failed to start ({exc}); falling back to OpenCV VideoWriter (mp4v)")
+            print(
+                f"{label} ffmpeg failed to start ({exc}); falling back to OpenCV VideoWriter (mp4v)"
+            )
 
         if video_writer is None:
             fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            cv_video = cv2.VideoWriter(str(record_path), fourcc, actual_fps, (width, height))
+            cv_video = cv2.VideoWriter(
+                str(record_path), fourcc, actual_fps, (width, height)
+            )
             if not cv_video.isOpened():
                 print(f"{label} OpenCV VideoWriter failed to open; skipping write.")
                 cv_video = None
