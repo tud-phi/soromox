@@ -6,13 +6,12 @@ and visualizes them in a grid using Open3DRenderer.
 """
 
 import jax
+
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer, Open3DRenderer
 from soromox.systems import SystemState, TendonActuatedPCS
-
-jax.config.update("jax_enable_x64", True)
 
 
 def build_robot() -> TendonActuatedPCS:
@@ -60,7 +59,6 @@ def simulate_batched(robot: TendonActuatedPCS, num_robots: int, rng_key: jax.Arr
     ).flatten()
     qd0 = jnp.zeros_like(q0)
 
-    solver = Tsit5()
     initial_state = SystemState(t=jnp.array(0.0), y=jnp.concatenate([q0, qd0]))
 
     # Sample constant tendon tensions per robot in [-1, 0]
@@ -79,7 +77,6 @@ def simulate_batched(robot: TendonActuatedPCS, num_robots: int, rng_key: jax.Arr
             t1=1.5,
             solver_dt=1e-4,
             save_dt=0.02,
-            solver=solver,
             max_steps=None,
         )
 
