@@ -17,8 +17,7 @@ jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
 from soromox.control.configuration_space import PIDController
-from soromox.systems.pcs import PCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import PCS, SystemState
 
 
 def main():
@@ -262,4 +261,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

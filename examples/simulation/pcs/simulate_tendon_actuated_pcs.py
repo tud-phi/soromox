@@ -15,8 +15,7 @@ from functools import partial
 
 import time
 
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import TendonActuatedPCS, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
 

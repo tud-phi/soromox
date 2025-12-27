@@ -16,8 +16,7 @@ from pathlib import Path
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering.animation import animate_cv2
 from soromox.rendering.planar_pcs.opencv_renderer import render_planar_pcs
-from soromox.systems.tendon_actuated_planar_pcs import TendonActuatedPlanarPCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import TendonActuatedPlanarPCS, SystemState
 
 
 videos_dir = Path("videos")

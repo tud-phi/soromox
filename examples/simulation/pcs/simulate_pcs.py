@@ -12,8 +12,7 @@ import numpy as onp
 from typing import Callable
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pcs import PCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import PCS, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,

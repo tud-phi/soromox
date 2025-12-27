@@ -10,8 +10,7 @@ from matplotlib.widgets import Slider
 import numpy as onp
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.planar_pcs import PlanarPCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import PlanarPCS, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,

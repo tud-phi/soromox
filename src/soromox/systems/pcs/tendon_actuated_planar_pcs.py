@@ -1,11 +1,10 @@
 __all__ = ["TendonActuatedPlanarPCS"]
-from jax import Array, vmap
-import jax.numpy as jnp
-from typing import Dict, Optional
 
 import equinox as eqx
+import jax.numpy as jnp
+from jax import Array, vmap
 
-from soromox.systems.planar_pcs import PlanarPCS
+from .planar_pcs import PlanarPCS
 
 
 class TendonActuatedPlanarPCS(PlanarPCS):
@@ -65,9 +64,9 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     def __init__(
         self,
         num_segments: int,
-        params: Dict[str, Array],
+        params: dict[str, Array],
         *args,
-        segment_actuation_selector: Optional[Array] = None,
+        segment_actuation_selector: Array | None = None,
         **kwargs,
     ):
         """
@@ -121,7 +120,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
 
         self._set_params(params)
 
-    def _set_params(self, params: Dict[str, Array]):
+    def _set_params(self, params: dict[str, Array]):
         """
         Set the parameters of the tendon-driven planar PCS.
 
@@ -165,7 +164,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
             )
         self.d = jnp.asarray(d, dtype=jnp.float64)
 
-    def update_params(self, params: Dict[str, Array]) -> "TendonActuatedPlanarPCS":
+    def update_params(self, params: dict[str, Array]) -> "TendonActuatedPlanarPCS":
         """
         Update the parameters of the tendon-driven planar PCS.
 
@@ -352,9 +351,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
             d = d[:, None]
 
         local_extension = axial + d * kappa
-        segment_lengths = self.L[:, None] * jnp.sqrt(
-            shear**2 + local_extension**2
-        )
+        segment_lengths = self.L[:, None] * jnp.sqrt(shear**2 + local_extension**2)
 
         cumulative_lengths = jnp.cumsum(segment_lengths, axis=0)
         tendon_lengths = cumulative_lengths[self.segment_indices_to_actuate]

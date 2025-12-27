@@ -216,6 +216,15 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
+    def stiffness_matrix(self) -> Array:
+        """
+        Compute the stiffness matrix of the robot.
+
+        Returns:
+            K: Stiffness matrix of shape (num_dofs, num_dofs).
+        """
+        ...
+
     @abstractmethod
     def elastic_force(self, q: Array) -> Array:
         """
@@ -242,30 +251,15 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
-    @abstractmethod
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Compute the actuation matrix.
-
-        The actuation matrix maps actuator inputs to generalized forces:
-            tau = A(q) @ u
-
-        Args:
-            q: Generalized coordinates of shape (num_dofs,).
-
-        Returns:
-            A: Actuation matrix of shape (num_dofs, num_actuators).
-        """
-        ...
-
     # -----------------------------------------
     # Energy methods
     # -----------------------------------------
 
-    @abstractmethod
     def kinetic_energy(self, q: Array, qd: Array) -> Array:
         """
         Compute the kinetic energy of the system.
+
+        Default implementation: T = 0.5 * qd^T * M(q) * qd
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -274,7 +268,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             T: Kinetic energy (scalar).
         """
-        ...
+        M = self.inertia_matrix(q)
+        T = 0.5 * qd @ M @ qd
+        return T
 
     @abstractmethod
     def gravitational_energy(self, q: Array) -> Array:
@@ -289,25 +285,27 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
-    @abstractmethod
     def elastic_energy(self, q: Array) -> Array:
         """
         Compute the elastic potential energy stored in the system.
+
+        Default implementation: U_k = 0.5 * q^T * K * q
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
 
         Returns:
-            U_K: Elastic potential energy (scalar).
+            U_k: Elastic potential energy (scalar).
         """
-        ...
+        S = self.stiffness_matrix()
+        U_k = 0.5 * q @ S @ q
+        return U_k
 
-    @abstractmethod
     def potential_energy(self, q: Array) -> Array:
         """
         Compute the total potential energy of the system.
 
-        Typically this is the sum of gravitational and elastic energy.
+        This is the sum of gravitational and elastic energy.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -315,9 +313,11 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U: Total potential energy (scalar).
         """
-        ...
+        U_g = self.gravitational_energy(q)
+        U_k = self.elastic_energy(q)
+        U = U_g + U_k
+        return U
 
-    @abstractmethod
     def total_energy(self, q: Array, qd: Array) -> Array:
         """
         Compute the total energy of the system.
@@ -331,7 +331,10 @@ class SoftRobot(DynamicalSystem):
         Returns:
             E: Total energy (scalar).
         """
-        ...
+        T = self.kinetic_energy(q, qd)
+        U = self.potential_energy(q)
+        E = T + U
+        return E
 
     # -----------------------------------------
     # Dynamics

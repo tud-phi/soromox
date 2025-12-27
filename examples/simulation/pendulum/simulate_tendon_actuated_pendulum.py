@@ -2,20 +2,15 @@ import cv2  # importing cv2
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from jax import Array, lax, vmap
-from jax import numpy as jnp
-import numpy as onp
-from pathlib import Path
-from typing import Optional
-
 from functools import partial
-
-import soromox
-from soromox.systems.tendon_actuated_pendulum import TendonActuatedPendulum
-from soromox.systems.system_state import SystemState
+from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as onp
+from jax import Array
+from jax import numpy as jnp
 
+from soromox.systems import SystemState, TendonActuatedPendulum
 
 num_links = 2
 
@@ -25,13 +20,13 @@ params = {
     "L": jnp.array([2.0, 1.0]),
     "Lc": jnp.array([1.0, 0.5]),
     "g": jnp.array([0.0, -9.81]),
-    "K": jnp.diag(jnp.array([1.5, 2.0]))
+    "K": jnp.diag(jnp.array([1.5, 2.0])),
 }
 tendon_params = {
     "R_at": jnp.array([[0.2, -0.25]]),
     "R_pt": jnp.array([[-0.15, 0.3]]),
     "k_pt": jnp.array([2.75]),
-    "l_pt0": jnp.array([0.5])
+    "l_pt0": jnp.array([0.5]),
 }
 
 # define initial configuration
@@ -50,19 +45,25 @@ video_path = Path("videos") / f"tendon_actuated_pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(
-        robot: TendonActuatedPendulum,
-        q: Array,
-        width: int,
-        height: int,
-        target_position: Optional[Array] = None,
-        draw_active_tendons: bool = True,
-        draw_passive_tendons: bool = True,
-    ) -> onp.ndarray:
+    robot: TendonActuatedPendulum,
+    q: Array,
+    width: int,
+    height: int,
+    target_position: Array | None = None,
+    draw_active_tendons: bool = True,
+    draw_passive_tendons: bool = True,
+) -> onp.ndarray:
     # Colors
     # BGR: [tab:blue, tab:orange, tab:green]
     color_links = [(14, 127, 255), (180, 119, 31), (44, 160, 44)]
     # BGR: [tab:red, black, tab:purple, tab:brown, tab:cyan]
-    a_color_cables = [(40, 39, 214), (0, 0, 0), (75, 86, 140), (189, 103, 148), (207, 190, 23)]
+    a_color_cables = [
+        (40, 39, 214),
+        (0, 0, 0),
+        (75, 86, 140),
+        (189, 103, 148),
+        (207, 190, 23),
+    ]
     p_color_cables = list(reversed(a_color_cables))
 
     # Plot in OpenCV
@@ -77,7 +78,14 @@ def draw_robot(
     if target_position is not None:
         target = onp.array(origin + target_position * ppm, dtype=onp.int32)
         target[1] = h - target[1]
-        cv2.drawMarker(img=img, position=target, color=(0, 0, 0), markerType=cv2.MARKER_STAR, markerSize=20, thickness=2)
+        cv2.drawMarker(
+            img=img,
+            position=target,
+            color=(0, 0, 0),
+            markerType=cv2.MARKER_STAR,
+            markerSize=20,
+            thickness=2,
+        )
 
     # Poses along the robot of shape (n, 3)
     chi_ls = robot.forward_kinematics_tips(q)
@@ -127,7 +135,8 @@ def draw_robot(
                     cable_pts.append(origin + cable_pt * ppm)
                     if j > 0 and j < A_at.shape[0] - 1:
                         cable_pt = chi[j, 1:] + A_at[j, i] * onp.array(
-                            [onp.cos(angles[idx + 1]), onp.sin(angles[idx + 1])])
+                            [onp.cos(angles[idx + 1]), onp.sin(angles[idx + 1])]
+                        )
                         cable_pts.append(origin + cable_pt * ppm)
             cable_pts = onp.array(cable_pts, dtype=onp.int32)
             cable_pts[:, 1] = h - cable_pts[:, 1]
@@ -158,7 +167,8 @@ def draw_robot(
                     cable_pts.append(origin + cable_pt * ppm)
                     if j > 0 and j < A_pt.shape[0] - 1:
                         cable_pt = chi[j, 1:] + A_pt[j, i] * onp.array(
-                            [onp.cos(angles[idx + 1]), onp.sin(angles[idx + 1])])
+                            [onp.cos(angles[idx + 1]), onp.sin(angles[idx + 1])]
+                        )
                         cable_pts.append(origin + cable_pt * ppm)
             cable_pts = onp.array(cable_pts, dtype=onp.int32)
             cable_pts[:, 1] = h - cable_pts[:, 1]
@@ -177,12 +187,6 @@ if __name__ == "__main__":
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
     u = jnp.array([0.0])  # torques (actuation)
-
-    # compute the operational space matrices
-    Lambda, mu, J, Jd, JB_inv = robot.operational_space_dynamical_matrices(
-        q0, qd0, link_idx=1
-    )
-    print("Lambda:\n", Lambda)
 
     # call the forward dynamics
     yd = robot.forward_dynamics(t0, jnp.concatenate([q0, qd0]), (u,))
@@ -222,7 +226,6 @@ if __name__ == "__main__":
     video_ts = ts
     print("Final configuration:\n", qs[-1])
 
-
     # =====================================================
     # Energy computation upon time
     # =====================================================
@@ -242,7 +245,6 @@ if __name__ == "__main__":
     plt.box(True)
     plt.tight_layout()
     plt.show()
-
 
     # =====================================================
     # Create video

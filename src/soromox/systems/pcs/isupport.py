@@ -1,10 +1,6 @@
-import jax
-from jax import Array, vmap
-import jax.numpy as jnp
-import numpy as onp
-from typing import Dict, Optional
-
 import equinox as eqx
+import jax.numpy as jnp
+from jax import Array, vmap
 
 from .pcs import PCS
 
@@ -64,6 +60,7 @@ class ISupport(PCS):
         https://advanced.onlinelibrary.wiley.com/doi/full/10.1002/aisy.202300899
 
     """
+
     num_chambers_per_segment: int = eqx.field(
         static=True, default=3
     )  # number of pneumatic chambers per segment
@@ -79,9 +76,9 @@ class ISupport(PCS):
     def __init__(
         self,
         num_segments: int,
-        params: Dict[str, Array],
+        params: dict[str, Array],
         *args,
-        segment_actuation_selector: Optional[Array] = None,
+        segment_actuation_selector: Array | None = None,
         num_chambers_per_segment: int = 3,
         **kwargs,
     ):
@@ -153,7 +150,7 @@ class ISupport(PCS):
 
         self._set_params(params)
 
-    def _set_params(self, params: Dict[str, Array]):
+    def _set_params(self, params: dict[str, Array]):
         """
         Set the parameters of the ISupport class.
 
@@ -257,7 +254,7 @@ class ISupport(PCS):
             )
         self.varphi_chamber_off = jnp.asarray(varphi_chamber_off, dtype=jnp.float64)
 
-    def update_params(self, params: Dict[str, Array]) -> "ISupport":
+    def update_params(self, params: dict[str, Array]) -> "ISupport":
         """
         Update the parameters of the ISupport class.
 

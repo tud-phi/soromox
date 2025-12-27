@@ -1,17 +1,17 @@
-import dill
 from pathlib import Path
+
+import dill
 import sympy as sp
-from typing import Callable, Dict, Tuple, Union
 
 from .symbolic_utils import compute_coriolis_matrix, compute_dAdt
 
 
 def symbolically_derive_planar_hsa_model(
     num_segments: int,
-    filepath: Union[str, Path] = None,
+    filepath: str | Path = None,
     num_rods_per_segment: int = 2,
     simplify: bool = True,
-) -> Dict:
+) -> dict:
     """
     Symbolically derive the kinematics and dynamics of a planar hsa robot modelled with
     Piecewise Constant Strain.
@@ -63,7 +63,7 @@ def symbolically_derive_planar_hsa_model(
         sp.symbols(f"C_varepsilon1:{num_segments * num_rods_per_segment + 1}")
     )
     pcudim_syms = list(
-        sp.symbols(f"pcudim1:{3*num_segments + 1}", nonnegative=True)
+        sp.symbols(f"pcudim1:{3 * num_segments + 1}", nonnegative=True)
     )  # dimensions of platform cuboid consisting of [width, height, depth] [m]
     rhor_syms = list(
         sp.symbols(f"rhor1:{num_segments * num_rods_per_segment + 1}", nonnegative=True)
@@ -74,7 +74,7 @@ def symbolically_derive_planar_hsa_model(
     rhoec_syms = list(
         sp.symbols(f"rhoec1:{num_segments + 1}", nonnegative=True)
     )  # volumetric mass density of the rod end caps (both at the proximal and distal ends) [kg/m^3]
-    g_syms = list(sp.symbols(f"g1:3"))  # gravity vector
+    g_syms = list(sp.symbols("g1:3"))  # gravity vector
     S_b_hat_syms = list(
         sp.symbols(
             f"S_b_hat1:{num_segments * num_rods_per_segment + 1}", nonnegative=True
@@ -158,13 +158,17 @@ def symbolically_derive_planar_hsa_model(
     # radial offset of each rod from the centerline
     roff = sp.Matrix(roff_syms).reshape(num_segments, num_rods_per_segment)
     # bending reference strain of each rod
-    kappa_b_ref = sp.Matrix(kappa_b_ref_syms).reshape(num_segments, num_rods_per_segment)
+    kappa_b_ref = sp.Matrix(kappa_b_ref_syms).reshape(
+        num_segments, num_rods_per_segment
+    )
     # shear reference strain of each rod
     sigma_sh_ref = sp.Matrix(sigma_sh_ref_syms).reshape(
         num_segments, num_rods_per_segment
     )
     # axial reference strain of each rod
-    sigma_a_ref = sp.Matrix(sigma_a_ref_syms).reshape(num_segments, num_rods_per_segment)
+    sigma_a_ref = sp.Matrix(sigma_a_ref_syms).reshape(
+        num_segments, num_rods_per_segment
+    )
     C_varepsilon = sp.Matrix(C_varepsilon_syms).reshape(
         num_segments, num_rods_per_segment
     )  # elongation factor
@@ -465,7 +469,7 @@ def symbolically_derive_planar_hsa_model(
         if simplify:
             Bp = sp.simplify(Bp)
         B = B + Bp
-        # potential energy of the platform
+        # gravitational potential energy of the platform
         U_g_p = sp.simplify(-mp * g.T @ pCoGp)
         U_g = U_g + U_g_p
 
@@ -595,6 +599,7 @@ def symbolically_derive_planar_hsa_model(
             "K": K,  # nominal elastic forces on the virtual backbone
             "D": D,
             "alpha": alpha,
+            "U_g": U_g,  # gravitational potential energy
         },
     }
 

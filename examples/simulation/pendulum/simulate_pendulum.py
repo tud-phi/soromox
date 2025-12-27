@@ -1,18 +1,17 @@
-import cv2  # importing cv2
 from functools import partial
+
+import cv2  # importing cv2
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from jax import Array, lax, vmap
-from jax import numpy as jnp
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as onp
-from pathlib import Path
-from typing import Callable, Dict
+from jax import Array
+from jax import numpy as jnp
 
-import soromox
-from soromox.systems import pendulum
-from soromox.systems.system_state import SystemState
+from soromox.systems import Pendulum, SystemState
 
 num_links = 2
 params = {
@@ -39,7 +38,7 @@ video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(
-    robot: pendulum.Pendulum,
+    robot: Pendulum,
     q: Array,
     width: int,
     height: int,
@@ -70,17 +69,11 @@ def draw_robot(
 
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = pendulum.Pendulum(params)
+    robot = Pendulum(params)
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
     u = jnp.zeros_like(q0)  # torques (actuation)
-
-    # compute the operational space matrices
-    Lambda, mu, J, Jd, JB_inv = robot.operational_space_dynamical_matrices(
-        q0, qd0, link_idx=1
-    )
-    print("Lambda:\n", Lambda)
 
     # call the forward dynamics
     yd = robot.forward_dynamics(t0, jnp.concatenate([q0, qd0]), (u,))
@@ -103,7 +96,9 @@ if __name__ == "__main__":
     # =====================================================
     # End-effector position upon time
     # =====================================================
-    chi_ee_ts = jax.vmap(robot.forward_kinematics_tips,)(q_ts)[:, -1, :]
+    chi_ee_ts = jax.vmap(
+        robot.forward_kinematics_tips,
+    )(q_ts)[:, -1, :]
 
     plt.figure()
     for link_idx in range(num_links):
@@ -133,7 +128,11 @@ if __name__ == "__main__":
 
     # end effector orientation vs. time
     plt.figure()
-    plt.plot(ts, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.plot(
+        ts,
+        chi_ee_ts[:, 0] / jnp.pi * 180,
+        label=r"End-effector Orientation $\theta$ [deg]",
+    )
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector Orientation [deg]")
     plt.legend()

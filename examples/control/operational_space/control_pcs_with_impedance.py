@@ -28,8 +28,7 @@ jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.control import OperationalSpaceImpedanceControlTracker, ReferenceTrajectory
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.systems.pcs import PCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import PCS, SystemState
 
 
 def main():

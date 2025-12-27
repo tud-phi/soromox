@@ -7,8 +7,9 @@ from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
 import soromox.utils.lie_algebra as lie
-from soromox.systems.pcs import PCS
 from soromox.utils.integration import scale_gaussian_quadrature
+
+from .pcs import PCS
 
 
 class TendonActuatedPCS(PCS):

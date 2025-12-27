@@ -1,8 +1,7 @@
 import equinox as eqx
 from jax import numpy as jnp
 
-from soromox.systems import pendulum
-from soromox.systems.system_state import SystemState
+from soromox.systems import Pendulum, SystemState
 
 
 def _pendulum_params():
@@ -36,7 +35,7 @@ class PIDController(eqx.Module):
 
 
 def test_rollout_to_keeps_equilibrium():
-    robot = pendulum.Pendulum(_pendulum_params())
+    robot = Pendulum(_pendulum_params())
 
     q0 = jnp.zeros((2,))
     qd0 = jnp.zeros_like(q0)
@@ -55,7 +54,7 @@ def test_rollout_to_keeps_equilibrium():
 
 
 def test_rollout_closed_loop_to_tracks_target():
-    robot = pendulum.Pendulum(_pendulum_params())
+    robot = Pendulum(_pendulum_params())
 
     q0 = jnp.array([0.2, -0.1])
     qd0 = jnp.zeros_like(q0)
@@ -82,7 +81,7 @@ def test_rollout_closed_loop_to_tracks_target():
 
 
 def test_rollout_discrete_closed_loop_to_tracks_target():
-    robot = pendulum.Pendulum(_pendulum_params())
+    robot = Pendulum(_pendulum_params())
 
     q0 = jnp.array([0.3, -0.2])
     qd0 = jnp.zeros_like(q0)

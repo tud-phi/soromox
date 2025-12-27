@@ -37,8 +37,7 @@ from soromox.control.actuation_space import (
     PotentialCompensationRegulator,
 )
 from soromox.coordinate_transformations.actuation_space import ActuationSpaceDynamics
-from soromox.systems.system_state import SystemState
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
+from soromox.systems import SystemState, TendonActuatedPCS
 
 
 def create_robot() -> tuple[TendonActuatedPCS, int]:

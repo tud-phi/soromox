@@ -1,7 +1,15 @@
-__all__ = ["B_Fixed", "B_Free", "B_Spherical", "B_Planar", "B_Cylindrical", "B_Helical", "B_Prismatic", "B_Revolute"]
+__all__ = [
+    "B_Fixed",
+    "B_Free",
+    "B_Spherical",
+    "B_Planar",
+    "B_Cylindrical",
+    "B_Helical",
+    "B_Prismatic",
+    "B_Revolute",
+]
 import jax.numpy as jnp
-from jax import Array
-from jax import lax
+from jax import Array, lax
 
 from soromox.systems.gvs.operands import JointOperand
 

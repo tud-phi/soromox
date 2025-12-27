@@ -18,22 +18,20 @@ the axial stretch strain (sigma_x).
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from typing import Dict, Tuple, Type
 
 jax.config.update("jax_enable_x64", True)  # Double precision
 
 from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
 from soromox.control.configuration_space import (
-    PIDController,
-    PotentialCompensationRegulator,
-    PotentialCancellationRegulator,
     GravityCancellationRegulator,
+    PIDController,
+    PotentialCancellationRegulator,
+    PotentialCompensationRegulator,
 )
-from soromox.systems.pcs import PCS
-from soromox.systems.system_state import SystemState
+from soromox.systems import PCS, SystemState
 
 
-def create_robot() -> Tuple[PCS, int]:
+def create_robot() -> tuple[PCS, int]:
     """Create the PCS robot and return it along with the number of DOFs."""
     num_segments = 1
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
@@ -66,7 +64,7 @@ def create_robot() -> Tuple[PCS, int]:
 def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
     """
     Create PID control gains that are used by all controllers.
-    
+
     The gains are structured for PCS strains:
     [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z] per segment.
     """
@@ -101,20 +99,20 @@ def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
 
 def create_setpoint_trajectory(
     num_dofs: int, t0: float, t1: float
-) -> Tuple[ReferenceTrajectory, jnp.ndarray]:
+) -> tuple[ReferenceTrajectory, jnp.ndarray]:
     """
     Create a sequence of step setpoints for regulation.
-    
+
     The setpoints are defined on:
     - kappa_y (index 1): bending around y-axis
-    - kappa_z (index 2): bending around z-axis  
+    - kappa_z (index 2): bending around z-axis
     - sigma_x (index 3): axial stretch
     """
     ts = jnp.linspace(t0, t1, 1000)
 
     # Define step setpoint times
     step_times = jnp.array([0.0, 3.0, 6.0, 9.0, 12.0])
-    
+
     # Setpoint values for each strain component
     # kappa_y: bending in y [rad/m]
     kappa_y_values = jnp.array([0.0, 2.0, -1.0, 1.5, 0.0])
@@ -129,18 +127,18 @@ def create_setpoint_trajectory(
         # Find which step we're in
         step_idx = jnp.searchsorted(step_times, t, side="right") - 1
         step_idx = jnp.clip(step_idx, 0, len(kappa_y_values) - 1)
-        
+
         # Set kappa_y (index 1)
         q_des = q_des.at[1].set(kappa_y_values[step_idx])
         # Set kappa_z (index 2)
         q_des = q_des.at[2].set(kappa_z_values[step_idx])
         # Set sigma_x (index 3)
         q_des = q_des.at[3].set(sigma_x_values[step_idx])
-        
+
         return q_des
 
     reference_trajectory = ReferenceTrajectory(ts=ts, x_des_fn=x_des_fn)
-    
+
     return reference_trajectory, step_times
 
 
@@ -152,7 +150,7 @@ def run_simulation(
     t1: float,
     solver_dt: float = 1e-4,
     save_dt: float = 0.01,
-) -> Dict:
+) -> dict:
     """Run closed-loop simulation with the given controller."""
     # Initial conditions
     q0 = jnp.zeros((num_dofs,))
@@ -191,27 +189,27 @@ def run_simulation(
     }
 
 
-def compute_metrics(results: Dict, q_des_fn, strain_indices: list) -> Dict:
+def compute_metrics(results: dict, q_des_fn, strain_indices: list) -> dict:
     """Compute performance metrics for the simulation results."""
     t = results["t"]
     q = results["q"]
-    
+
     # Compute desired trajectory at saved times
     q_des = jax.vmap(q_des_fn)(t)
-    
+
     # Compute tracking error for selected strains
     tracking_error = q_des - q
-    
+
     # Root mean square error for each strain
     rmse = jnp.sqrt(jnp.mean(tracking_error[:, strain_indices] ** 2, axis=0))
-    
+
     # Maximum absolute error
     max_error = jnp.max(jnp.abs(tracking_error[:, strain_indices]), axis=0)
-    
+
     # Integral of squared error (ISE)
     dt = t[1] - t[0]
     ise = jnp.sum(tracking_error[:, strain_indices] ** 2, axis=0) * dt
-    
+
     return {
         "rmse": rmse,
         "max_error": max_error,
@@ -227,7 +225,7 @@ def main():
     # =========================================================================
     robot, num_dofs = create_robot()
     num_segments = 1
-    
+
     print(f"Number of DOFs: {num_dofs}")
     print(f"Number of actuators: {robot.num_actuators}")
 
@@ -255,10 +253,10 @@ def main():
     # Run Simulations
     # =========================================================================
     import warnings
-    
+
     for name, ControllerClass in controllers.items():
         print(f"\nRunning simulation with {name}...")
-        
+
         # Suppress actuation warnings for cleaner output
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -267,7 +265,7 @@ def main():
                 reference_trajectory=reference_trajectory,
                 pid_control=pid_control,
             )
-        
+
         results = run_simulation(robot, controller, num_dofs, t0, t1)
         all_results[name] = results
         print(f"  Completed {len(results['t'])} time steps.")
@@ -282,7 +280,9 @@ def main():
     print("\n" + "=" * 70)
     print("Performance Metrics (RMSE)")
     print("=" * 70)
-    print(f"{'Controller':<25} {strain_names[0]:>12} {strain_names[1]:>12} {strain_names[2]:>12}")
+    print(
+        f"{'Controller':<25} {strain_names[0]:>12} {strain_names[1]:>12} {strain_names[2]:>12}"
+    )
     print("-" * 70)
 
     for name, results in all_results.items():
@@ -306,15 +306,15 @@ def main():
 
     # Create figure for strain tracking comparison
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-    
+
     for idx, (strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
         ax = axes[idx]
-        
+
         # Plot desired trajectory (same for all controllers)
         t = all_results["PID (model-free)"]["t"]
         q_des = all_results["PID (model-free)"]["metrics"]["q_des"]
         ax.plot(t, q_des[:, strain_idx], "k--", linewidth=2, label="Desired", alpha=0.7)
-        
+
         # Plot actual trajectories for each controller
         for name, results in all_results.items():
             ax.plot(
@@ -324,30 +324,30 @@ def main():
                 linewidth=1.5,
                 label=name,
             )
-        
+
         # Add vertical lines at step times
         for st in step_times[1:]:
             ax.axvline(x=st, color="gray", linestyle=":", alpha=0.5)
-        
+
         ax.set_ylabel(f"{strain_name}")
         ax.grid(True, alpha=0.3)
-        
+
         if idx == 0:
             ax.legend(loc="upper right", fontsize=9)
-    
+
     axes[-1].set_xlabel("Time [s]")
     axes[0].set_title("Setpoint Regulation: Strain Tracking Comparison")
-    
+
     plt.tight_layout()
     plt.savefig("setpoint_regulation_tracking.pdf", dpi=200, bbox_inches="tight")
     plt.show()
 
     # Create figure for tracking errors
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
-    
+
     for idx, (strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
         ax = axes[idx]
-        
+
         for name, results in all_results.items():
             tracking_error = results["metrics"]["tracking_error"]
             ax.plot(
@@ -357,36 +357,38 @@ def main():
                 linewidth=1.5,
                 label=name,
             )
-        
+
         # Add vertical lines at step times
         for st in step_times[1:]:
             ax.axvline(x=st, color="gray", linestyle=":", alpha=0.5)
-        
+
         ax.set_ylabel(f"Error {strain_name}")
         ax.axhline(y=0, color="k", linestyle="-", alpha=0.3)
         ax.grid(True, alpha=0.3)
-        
+
         if idx == 0:
             ax.legend(loc="upper right", fontsize=9)
-    
+
     axes[-1].set_xlabel("Time [s]")
     axes[0].set_title("Setpoint Regulation: Tracking Error Comparison")
-    
+
     plt.tight_layout()
     plt.savefig("setpoint_regulation_errors.pdf", dpi=200, bbox_inches="tight")
     plt.show()
 
     # Create bar chart for RMSE comparison
     fig, ax = plt.subplots(figsize=(10, 6))
-    
+
     controller_names = list(all_results.keys())
     x = jnp.arange(len(controller_names))
     width = 0.25
-    
+
     for i, (strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
-        rmse_values = [all_results[name]["metrics"]["rmse"][i] for name in controller_names]
+        rmse_values = [
+            all_results[name]["metrics"]["rmse"][i] for name in controller_names
+        ]
         bars = ax.bar(x + i * width, rmse_values, width, label=strain_name)
-    
+
     ax.set_xlabel("Controller")
     ax.set_ylabel("RMSE")
     ax.set_title("Setpoint Regulation: RMSE Comparison")
@@ -394,7 +396,7 @@ def main():
     ax.set_xticklabels(controller_names, rotation=15, ha="right")
     ax.legend()
     ax.grid(True, alpha=0.3, axis="y")
-    
+
     plt.tight_layout()
     plt.savefig("setpoint_regulation_rmse.pdf", dpi=200, bbox_inches="tight")
     plt.show()
@@ -407,4 +409,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

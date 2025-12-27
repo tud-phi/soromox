@@ -1,10 +1,12 @@
-import cv2  # importing cv2
-from jax import Array, jit, vmap
-import jax.numpy as jnp
-import numpy as onp
 from os import PathLike
 
-from soromox.systems.planar_hsa import PlanarHSA
+import cv2  # importing cv2
+import jax.numpy as jnp
+import numpy as onp
+from jax import Array, jit, vmap
+
+from soromox.systems import PlanarHSA
+
 
 def draw_robot(
     robot: PlanarHSA,
@@ -32,13 +34,13 @@ def draw_robot(
     platform_color = (0, 0, 255)  # red platform color in BGR
 
     batched_forward_kinematics_virtual_backbone_fn = vmap(
-        robot.forward_kinematics_virtual_backbone_fn, in_axes=(None, 0), out_axes=-1
+        robot.forward_kinematics_virtual_backbone, in_axes=(None, 0), out_axes=-1
     )
     batched_forward_kinematics_rod_fn = vmap(
-        robot.forward_kinematics_rod_fn, in_axes=(None, 0, None), out_axes=-1
+        robot.forward_kinematics_rod, in_axes=(None, 0, None), out_axes=-1
     )
     batched_forward_kinematics_platform_fn = vmap(
-        robot.forward_kinematics_platform_fn, in_axes=(None, 0), out_axes=0
+        robot.forward_kinematics_platform, in_axes=(None, 0), out_axes=0
     )
 
     # we use for plotting N points along the length of the robot

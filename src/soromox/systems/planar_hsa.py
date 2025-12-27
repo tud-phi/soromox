@@ -5,17 +5,17 @@ from pathlib import Path
 import dill
 import equinox as eqx
 import sympy as sp
-from jax import Array, lax
+from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
-from soromox.systems.dynamical_system import DynamicalSystem
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.basic import (
     compute_strain_basis,
     concatenate_params_syms,
 )
 
 
-class PlanarHSA(DynamicalSystem):
+class PlanarHSA(SoftRobot):
     """
     A kinematic and dynamic model for planar Handed Shearing Auxetics (HSA) robots.
 
@@ -119,8 +119,6 @@ class PlanarHSA(DynamicalSystem):
 
     params_for_lambdify : List[Array]
         Flattened parameter list for symbolic function evaluation.
-    global_eps : float
-        Small number for numerical stability to avoid singularities.
 
     Notes:
     -----
@@ -140,7 +138,6 @@ class PlanarHSA(DynamicalSystem):
     # static settings
     num_segments: int = eqx.field(static=True)
     num_rods_per_segment: int = eqx.field(static=True)
-    num_dofs: int = eqx.field(static=True)
     consider_underactuation: bool = eqx.field(static=True)
     consider_hysteresis: bool = eqx.field(static=True)
     num_hysteresis: int = eqx.field(static=True)
@@ -148,11 +145,15 @@ class PlanarHSA(DynamicalSystem):
     chiv_lambda_sms: list[Callable]
     chir_lambda_sms: list[Callable]
     chip_lambda_sms: list[Callable]
+    Jv_lambda_sms: list[Callable]  # Jacobian of the virtual backbone at each segment
 
     # kinematic lambda functions
     chiee_lambda: Callable
     Jee_lambda: Callable
     Jeed_lambda: Callable
+
+    # energy lambda functions
+    U_g_lambda: Callable  # gravitational potential energy
 
     # dynamic lambda functions
     B_lambda: Callable
@@ -192,17 +193,15 @@ class PlanarHSA(DynamicalSystem):
     # parameters for lambdify
     params_for_lambdify: list[Array]
 
-    # numerical stability
-    global_eps: float
-
     def __init__(
         self,
         sym_exp_filepath: str | Path,
         params: dict[str, Array],
         strain_selector: Array | None = None,
-        global_eps: float = 1e-6,
         consider_underactuation: bool = True,
         consider_hysteresis: bool = False,
+        eps: float = 1e-6,
+        **kwargs,
     ) -> None:
         """
         Initialize the PlanarHSA system.
@@ -212,12 +211,13 @@ class PlanarHSA(DynamicalSystem):
             params: dictionary with robot parameters
             strain_selector: array of shape (num_dofs, ) with boolean values indicating which components of the
                     strain are active / non-zero
-            global_eps: small number to avoid singularities (e.g., division by zero)
             consider_underactuation (bool): If True, the underactuation model is considered. Otherwise, the fully-actuated
                     model is considered with the identity matrix as the actuation matrix.
             consider_hysteresis: If True, Bouc-Wen is used to model hysteresis. Otherwise, hysteresis will be neglected.
+            eps: small number to avoid singularities (e.g., division by zero)
+            **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
-        self.global_eps = global_eps
+        super().__init__(eps=eps, **kwargs)
 
         # Load saved symbolic data
         try:
@@ -402,6 +402,24 @@ class PlanarHSA(DynamicalSystem):
             )
         self.chip_lambda_sms = chip_lambda_sms
 
+        # lambdify the Jacobians of the virtual backbone for each segment
+        Jv_lambda_sms = []
+        try:
+            for Jv_exp in sym_exps["exps"]["Jv_sms"]:
+                Jv_lambda = sp.lambdify(
+                    params_syms_cat
+                    + sym_exps["state_syms"]["xi"]
+                    + [sym_exps["state_syms"]["s"]],
+                    Jv_exp,
+                    "jax",
+                )
+                Jv_lambda_sms.append(Jv_lambda)
+        except KeyError:
+            raise KeyError(
+                "Symbolic expressions file does not contain ['exps']['Jv_sms']. Please generate the symbolic expressions first."
+            )
+        self.Jv_lambda_sms = Jv_lambda_sms
+
         # end-effector kinematics
         try:
             chiee_lambda = sp.lambdify(
@@ -469,6 +487,19 @@ class PlanarHSA(DynamicalSystem):
         except ValueError:
             raise ValueError("Fail to lambdify G. Check the symbolic expressions file.")
         self.G_lambda = G_lambda
+
+        # gravitational potential energy
+        try:
+            U_g_lambda = sp.lambdify(
+                params_syms_cat + sym_exps["state_syms"]["xi"],
+                sym_exps["exps"]["U_g"],
+                "jax",
+            )
+        except ValueError:
+            raise ValueError(
+                "Fail to lambdify U_g. Check the symbolic expressions file."
+            )
+        self.U_g_lambda = U_g_lambda
 
         try:
             Shat_lambda = sp.lambdify(params_syms_cat, sym_exps["exps"]["Shat"], "jax")
@@ -818,7 +849,7 @@ class PlanarHSA(DynamicalSystem):
             xi: strains of the virtual backbone of shape (num_dofs, )
         """
         # reference strains of the virtual backbone
-        xi_ref = self.ref_strains_fn()
+        xi_ref = self.ref_strains()
 
         # map the configuration to the strains
         xi = self.B_xi @ q + xi_ref
@@ -826,7 +857,7 @@ class PlanarHSA(DynamicalSystem):
         return xi
 
     @eqx.filter_jit
-    def beta_fn(self, vxi: Array) -> Array:
+    def beta(self, vxi: Array) -> Array:
         """
         Map the generalized coordinates to the strains in the physical rods
         Args:
@@ -847,7 +878,7 @@ class PlanarHSA(DynamicalSystem):
         return pxi
 
     @eqx.filter_jit
-    def beta_inv_fn(self, pxi: Array) -> Array:
+    def beta_inv(self, pxi: Array) -> Array:
         """
         Map the strains in the physical rods to the strains of the virtual backbone
         Args:
@@ -862,7 +893,7 @@ class PlanarHSA(DynamicalSystem):
         return vxi
 
     @eqx.filter_jit
-    def ref_strains_fn(self) -> Array:
+    def ref_strains(self) -> Array:
         """
         Compute the ref strains of the virtual backbone
 
@@ -876,13 +907,11 @@ class PlanarHSA(DynamicalSystem):
         pxi_ref = pxi_ref.at[:, :, 2].set(self.sigma_a_ref)
 
         # map the reference strains from the physical rods to the virtual backbone
-        vxi_ref = self.beta_inv_fn(pxi_ref)
+        vxi_ref = self.beta_inv(pxi_ref)
         return vxi_ref
 
     @eqx.filter_jit
-    def apply_eps_to_bend_strains_fn(
-        self, xi: Array, eps: float | None = None
-    ) -> Array:
+    def apply_eps_to_bend_strains(self, xi: Array, eps: float | None = None) -> Array:
         """
         Add a small number to the bending strain to avoid singularities
         Args:
@@ -919,7 +948,7 @@ class PlanarHSA(DynamicalSystem):
         return xi_epsed
 
     @eqx.filter_jit
-    def forward_kinematics_virtual_backbone_fn(self, q: Array, s: Array) -> Array:
+    def forward_kinematics_virtual_backbone(self, q: Array, s: Array) -> Array:
         """
         Evaluate the forward kinematics the virtual backbone
         Args:
@@ -935,7 +964,7 @@ class PlanarHSA(DynamicalSystem):
         xi = self.strain(q)
 
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi)
+        xi_epsed = self.apply_eps_to_bend_strains(xi)
 
         # determine in which segment the point is located
         segment_idx, s_local = self.classify_segment(s)
@@ -954,8 +983,10 @@ class PlanarHSA(DynamicalSystem):
 
         return chi
 
+    forward_kinematics = forward_kinematics_virtual_backbone
+
     @eqx.filter_jit
-    def forward_kinematics_rod_fn(
+    def forward_kinematics_rod(
         self,
         q: Array,
         s: Array,
@@ -978,7 +1009,7 @@ class PlanarHSA(DynamicalSystem):
         xi = self.strain(q)
 
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi)
+        xi_epsed = self.apply_eps_to_bend_strains(xi)
 
         # determine in which segment the point is located
         segment_idx, s_local = self.classify_segment(s)
@@ -999,7 +1030,7 @@ class PlanarHSA(DynamicalSystem):
         return chir
 
     @eqx.filter_jit
-    def forward_kinematics_platform_fn(self, q: Array, segment_idx: Array) -> Array:
+    def forward_kinematics_platform(self, q: Array, segment_idx: Array) -> Array:
         """
         Evaluate the forward kinematics the platform
         Args:
@@ -1015,7 +1046,7 @@ class PlanarHSA(DynamicalSystem):
         xi = self.strain(q)
 
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi)
+        xi_epsed = self.apply_eps_to_bend_strains(xi)
 
         chip = lax.switch(
             segment_idx, self.chip_lambda_sms, *self.params_for_lambdify, *xi_epsed
@@ -1028,7 +1059,7 @@ class PlanarHSA(DynamicalSystem):
         return chip
 
     @eqx.filter_jit
-    def forward_kinematics_end_effector_fn(self, q: Array) -> Array:
+    def forward_kinematics_end_effector(self, q: Array) -> Array:
         """
         Evaluate the forward kinematics of the end-effector
         Args:
@@ -1042,7 +1073,7 @@ class PlanarHSA(DynamicalSystem):
         # map the configuration to the strains
         xi = self.strain(q)
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi)
+        xi_epsed = self.apply_eps_to_bend_strains(xi)
 
         # evaluate the symbolic expression
         chiee = self.chiee_lambda(*self.params_for_lambdify, *xi_epsed).squeeze()
@@ -1054,7 +1085,7 @@ class PlanarHSA(DynamicalSystem):
         return chiee
 
     @eqx.filter_jit
-    def jacobian_end_effector_fn(self, q: Array) -> Array:
+    def jacobian_end_effector(self, q: Array) -> Array:
         """
         Evaluate the Jacobian of the end-effector
         Args:
@@ -1066,7 +1097,7 @@ class PlanarHSA(DynamicalSystem):
         # map the configuration to the strains
         xi = self.strain(q)
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi)
+        xi_epsed = self.apply_eps_to_bend_strains(xi)
 
         # evaluate the symbolic expression
         Jee = self.Jee_lambda(*self.params_for_lambdify, *xi_epsed)
@@ -1074,7 +1105,89 @@ class PlanarHSA(DynamicalSystem):
         return Jee
 
     @eqx.filter_jit
-    def inverse_kinematics_end_effector_fn(self, chiee: Array) -> Array:
+    def jacobian_virtual_backbone(self, q: Array, s: Array) -> Array:
+        """
+        Compute the Jacobian of the virtual backbone forward kinematics at a point s.
+
+        The Jacobian maps configuration space velocities to operational space
+        (Cartesian/task space) velocities at point s using the symbolic expressions.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            s: Point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            J: Jacobian matrix of shape (3, num_dofs), mapping velocities in
+                configuration space to velocities in operational space [omega_z, v_x, v_y].
+        """
+        # map the configuration to the strains
+        xi = self.strain(q)
+
+        # add a small number to the bending strain to avoid singularities
+        xi_epsed = self.apply_eps_to_bend_strains(xi)
+
+        # determine in which segment the point is located
+        segment_idx, s_local = self.classify_segment(s)
+
+        # evaluate the symbolic Jacobian expression
+        # The symbolic Jacobian is with respect to strains xi, shape (3, num_dofs)
+        # with rows [p_x, p_y, theta] from symbolic derivation
+        J_xi = lax.switch(
+            segment_idx,
+            self.Jv_lambda_sms,
+            *self.params_for_lambdify,
+            *xi_epsed,
+            s_local,
+        )
+
+        # Reorder rows from [p_x, p_y, theta] to [theta, p_x, p_y] (SE(2) convention)
+        J_xi = jnp.roll(J_xi, 1, axis=0)
+
+        # Chain rule: J_q = J_xi @ B_xi (since xi = B_xi @ q + xi_ref)
+        J = J_xi @ self.B_xi
+
+        return J
+
+    # Alias for consistency: jacobian is the same as jacobian_virtual_backbone
+    jacobian = jacobian_virtual_backbone
+
+    @eqx.filter_jit
+    def jacobian_and_derivative_virtual_backbone(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the Jacobian and its time derivative of the virtual backbone at point s.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            qd: Generalized velocities of shape (num_dofs,).
+            s: Point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            J: Jacobian matrix of shape (3, num_dofs).
+            Jd: Time derivative of the Jacobian, shape (3, num_dofs).
+        """
+        # Compute the Jacobian using the symbolic expression
+        J = self.jacobian_virtual_backbone(q, s)
+
+        # Compute the Jacobian derivative: d/dt(J(q(t))) = d(J)/dq @ qd
+        # Define a function that computes the Jacobian for a given q
+        def jacobian_fn(q: Array) -> Array:
+            return self.jacobian_virtual_backbone(q, s)
+
+        # Compute dJ/dq (shape: 3, num_dofs, num_dofs)
+        dJ_dq = jacfwd(jacobian_fn, argnums=0)(q)
+
+        # Contract with qd to get Jd: Jd[i, j] = sum_k (dJ[i, j]/dq[k] * qd[k])
+        Jd = jnp.einsum("ijk,k->ij", dJ_dq, qd)
+
+        return J, Jd
+
+    # Alias for consistency: jacobian_and_derivative is the same as jacobian_and_derivative_virtual_backbone
+    jacobian_and_derivative = jacobian_and_derivative_virtual_backbone
+
+    @eqx.filter_jit
+    def inverse_kinematics_end_effector(self, chiee: Array) -> Array:
         """
         Evaluates the inverse kinematics for a given end-effector pose.
             Important: only works for one segment!
@@ -1159,7 +1272,7 @@ class PlanarHSA(DynamicalSystem):
         )
 
         # reference strains of the virtual backbone
-        vxi_ref = self.ref_strains_fn()
+        vxi_ref = self.ref_strains()
 
         # map the strains to the generalized coordinates
         q = jnp.linalg.pinv(self.B_xi) @ (vxi - vxi_ref)
@@ -1185,7 +1298,7 @@ class PlanarHSA(DynamicalSystem):
         xi = self.strain(q)
 
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi, eps)
+        xi_epsed = self.apply_eps_to_bend_strains(xi, eps)
 
         B_full = self.B_lambda(*self.params_for_lambdify, *xi_epsed)
 
@@ -1235,7 +1348,7 @@ class PlanarHSA(DynamicalSystem):
         xid = self.B_xi @ qd
 
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi, eps)
+        xi_epsed = self.apply_eps_to_bend_strains(xi, eps)
 
         C_full = self.C_lambda(*self.params_for_lambdify, *xi_epsed, *xid)
 
@@ -1283,7 +1396,7 @@ class PlanarHSA(DynamicalSystem):
         xi = self.strain(q)
 
         # add a small number to the bending strain to avoid singularities
-        xi_epsed = self.apply_eps_to_bend_strains_fn(xi, eps)
+        xi_epsed = self.apply_eps_to_bend_strains(xi, eps)
 
         G_full = self.G_lambda(*self.params_for_lambdify, *xi_epsed).squeeze()
 
@@ -1432,6 +1545,51 @@ class PlanarHSA(DynamicalSystem):
         Shat = self.Shat_lambda(*self.params_for_lambdify)
 
         return Shat
+
+    @eqx.filter_jit
+    def stiffness_matrix(self) -> Array:
+        """
+        Compute the stiffness matrix of the robot in configuration space.
+
+        Returns:
+            K (Array): Stiffness matrix of shape (num_dofs, num_dofs).
+        """
+        Shat_full = self.Shat()
+        K = self.B_xi.T @ Shat_full @ self.B_xi
+        return K
+
+    # -----------------------------------------
+    # Energy methods
+    # -----------------------------------------
+
+    @eqx.filter_jit
+    def gravitational_energy(self, q: Array, eps: float | None = None) -> Array:
+        """
+        Compute the gravitational potential energy of the robot.
+
+        This uses the symbolic expression U_g derived from the gravitational
+        potential energy of all rods, platforms, and payload.
+
+        Args:
+            q (Array): Generalized coordinates of shape (num_dofs,).
+            eps (float): Small number to avoid singularities. Defaults to 1e4 * global_eps.
+
+        Returns:
+            U_g (Array): Gravitational potential energy [J] (scalar).
+        """
+        # initialize eps if not provided
+        if eps is None:
+            eps = 1e4 * self.global_eps
+
+        xi = self.strain(q)
+
+        # add a small number to the bending strain to avoid singularities
+        xi_epsed = self.apply_eps_to_bend_strains(xi, eps)
+
+        # evaluate the symbolic expression for gravitational potential energy
+        U_g = self.U_g_lambda(*self.params_for_lambdify, *xi_epsed).squeeze()
+
+        return U_g
 
     @eqx.filter_jit
     def forward_dynamics(

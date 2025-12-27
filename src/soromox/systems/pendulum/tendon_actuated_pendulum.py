@@ -457,9 +457,9 @@ class TendonActuatedPendulum(Pendulum):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            U_K_tot (Array): Total elastic potential energy [J] (scalar)
+            U_k (Array): Total elastic potential energy [J] (scalar)
         """
-        U_K_tot = 0.5 * q.T @ self.K @ q + 0.5 * (
+        U_k = 0.5 * q.T @ self.K @ q + 0.5 * (
             self.R_pt @ q + self.l_pt0
         ).T @ self.K_pt @ (self.R_pt @ q + self.l_pt0)
-        return U_K_tot
+        return U_k

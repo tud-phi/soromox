@@ -1,11 +1,11 @@
 __all__ = ["PlanarPCS"]
+
+
 import equinox as eqx
-import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-import numpy as onp
-from typing import Callable, Dict, Tuple, Optional, ClassVar
 
+import soromox.utils.lie_algebra as lie
 from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
@@ -15,7 +15,6 @@ from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
 )
-import soromox.utils.lie_algebra as lie
 
 
 class PlanarPCS(SoftRobot):
@@ -95,11 +94,11 @@ class PlanarPCS(SoftRobot):
     def __init__(
         self,
         num_segments: int,
-        params: Dict[str, Array],
+        params: dict[str, Array],
         order_gauss: int = 5,
-        strain_selector: Optional[Array] = None,
-        xi_ref: Optional[Array] = None,
-        **kwargs
+        strain_selector: Array | None = None,
+        xi_ref: Array | None = None,
+        **kwargs,
     ):
         """
         Initialize the PlanarPCS class.
@@ -135,9 +134,7 @@ class PlanarPCS(SoftRobot):
             xi_ref (Optional[Array], optional):
                 Reference strain of shape (3 * num_segments,).
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-            eps (float, optional):
-                Global epsilon for numerical computations.
-                If None, defaults to machine epsilon for float64.
+            **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
         super().__init__(**kwargs)
 
@@ -215,7 +212,7 @@ class PlanarPCS(SoftRobot):
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
 
-    def _set_params(self, params: Dict[str, Array]) -> None:
+    def _set_params(self, params: dict[str, Array]) -> None:
         """
         Set the parameters of the PCS model.
 
@@ -341,7 +338,7 @@ class PlanarPCS(SoftRobot):
             raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
         self.D = D
 
-    def update_params(self, params: Dict[str, Array]) -> "PlanarPCS":
+    def update_params(self, params: dict[str, Array]) -> "PlanarPCS":
         """
         Update the parameters of the PCS model.
 
@@ -465,7 +462,7 @@ class PlanarPCS(SoftRobot):
         return updated_self
 
     @eqx.filter_jit
-    def classify_segment(self, s: Array) -> Tuple[Array, Array]:
+    def classify_segment(self, s: Array) -> tuple[Array, Array]:
         """
         Classify the point along the robot to the corresponding segment.
 
@@ -523,7 +520,7 @@ class PlanarPCS(SoftRobot):
         )  # Initial configuration [theta, x, y]
 
         # Iteration function
-        def chi_i(chi_prev: Array, i: Array) -> Tuple[Array, Array]:
+        def chi_i(chi_prev: Array, i: Array) -> tuple[Array, Array]:
             th_prev = chi_prev[0]
             p_prev = chi_prev[1:]
 
@@ -613,7 +610,7 @@ class PlanarPCS(SoftRobot):
             ]
         )
 
-        def integrate_segment(chi_prev: Array, i: Array) -> Tuple[Array, Array]:
+        def integrate_segment(chi_prev: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             kappa_i = xi_i[0]  # rotational/bending strain of the current segment
             sigmas_i = xi_i[1:]  # linear strains of the current segment
@@ -909,9 +906,9 @@ class PlanarPCS(SoftRobot):
         zero_output = jnp.zeros((3, 3), dtype=xi.dtype)
 
         def scan_body(
-            carry: Tuple[Array, Array, Array],
+            carry: tuple[Array, Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array, Array], Array]:
             """
             Advance the running Jacobian and capture the value once the target segment is reached.
 
@@ -925,7 +922,7 @@ class PlanarPCS(SoftRobot):
             """
             J_prev, J_target, done = carry
 
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
+            def compute_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
                 """
                 Integrate the current segment and update the cached result if this is the target.
 
@@ -947,7 +944,7 @@ class PlanarPCS(SoftRobot):
 
                 return (J_next, J_target_next, done_next), zero_output
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
+            def skip_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
                 """
                 Keep the cached Jacobian untouched once the target segment has been processed.
 
@@ -995,7 +992,7 @@ class PlanarPCS(SoftRobot):
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
-        def scan_body(J_prev: Array, i: Array) -> Tuple[Array, Array]:
+        def scan_body(J_prev: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
@@ -1103,7 +1100,7 @@ class PlanarPCS(SoftRobot):
         return J_global_full @ self.B_xi
 
     @eqx.filter_jit
-    def _J_Jd_local(self, q: Array, qd: Array, s: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local(self, q: Array, qd: Array, s: Array) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot.
 
@@ -1130,7 +1127,7 @@ class PlanarPCS(SoftRobot):
             xi_i: Array,
             xid_i: Array,
             arc_len: Array,
-        ) -> Tuple[Array, Array]:
+        ) -> tuple[Array, Array]:
             """
             Propagate Jacobian/Jacobian rate forward by one segment and insert the local contribution.
 
@@ -1174,9 +1171,9 @@ class PlanarPCS(SoftRobot):
         zero_output = jnp.zeros((3, 3), dtype=xi.dtype)
 
         def scan_body(
-            carry: Tuple[Array, Array, Array, Array, Array],
+            carry: tuple[Array, Array, Array, Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
             """
             Advance Jacobian/Jacobian rate along segments and remember the target-segment tensors.
 
@@ -1192,7 +1189,7 @@ class PlanarPCS(SoftRobot):
 
             def compute_branch(
                 _: None,
-            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
                 """
                 Integrate the current segment and cache the result if this corresponds to the query index.
 
@@ -1231,7 +1228,7 @@ class PlanarPCS(SoftRobot):
 
             def skip_branch(
                 _: None,
-            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
                 """
                 Reuse the previously cached tensors after the target segment has been handled.
 
@@ -1268,7 +1265,7 @@ class PlanarPCS(SoftRobot):
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def _J_Jd_local_tips(self, q: Array, qd: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Compute the body-frame Jacobian and its time derivative at the tips of all segments.
 
@@ -1298,9 +1295,9 @@ class PlanarPCS(SoftRobot):
         )(xi, xid, self.L)
 
         def scan_body(
-            carry: Tuple[Array, Array],
+            carry: tuple[Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             J_prev, Jd_prev = carry
 
             Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
@@ -1335,7 +1332,7 @@ class PlanarPCS(SoftRobot):
     @eqx.filter_jit
     def _J_Jd_local_batched(
         self, q: Array, qd: Array, s_ps: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the body-frame Jacobian and its time derivative at a batch of arc-length positions.
 
@@ -1378,7 +1375,7 @@ class PlanarPCS(SoftRobot):
             arc_len: Array,
             J_base: Array,
             Jd_base: Array,
-        ) -> Tuple[Array, Array]:
+        ) -> tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
             T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se2(
@@ -1410,7 +1407,7 @@ class PlanarPCS(SoftRobot):
     @eqx.filter_jit
     def jacobian_and_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the body frame.
 
@@ -1433,7 +1430,7 @@ class PlanarPCS(SoftRobot):
     @eqx.filter_jit
     def jacobian_and_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
 
@@ -1495,7 +1492,7 @@ class PlanarPCS(SoftRobot):
     @eqx.filter_jit
     def jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
 
@@ -1897,39 +1894,6 @@ class PlanarPCS(SoftRobot):
         return tau_u
 
     @eqx.filter_jit
-    def kinetic_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the kinetic energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            T (float): Kinetic energy of the robot.
-        """
-        B = self.inertia_matrix(q)
-        T = 0.5 * qd.T @ B @ qd
-
-        return T
-
-    @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
-        """
-        Compute the elastic energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            U_K (float): Elastic energy of the robot.
-        """
-        K_full = self._stiffness_full_matrix()
-        U_K = 0.5 * (self.B_xi @ q).T @ K_full @ (self.B_xi @ q)
-
-        return U_K
-
-    @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational energy of the robot.
@@ -1971,41 +1935,8 @@ class PlanarPCS(SoftRobot):
         return U_G
 
     @eqx.filter_jit
-    def potential_energy(self, q: Array) -> Array:
-        """
-        Compute the potential energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            U (float): Potential energy of the robot.
-        """
-        U_K = self.elastic_energy(q)
-        U_G = self.gravitational_energy(q)
-
-        return U_K + U_G
-
-    @eqx.filter_jit
-    def total_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the total energy of the robot, which is the sum of kinetic and potential energy.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            E (float): Total energy of the robot.
-        """
-        T = self.kinetic_energy(q, qd)
-        U = self.potential_energy(q)
-        E = T + U
-        return E
-
-    @eqx.filter_jit
     def forward_dynamics(
-        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
+        self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
         """
         Forward dynamics function.
@@ -2052,10 +1983,10 @@ class PlanarPCS(SoftRobot):
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
         )
 
-        def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
+        def dynamical_matrices_i(i: Array) -> tuple[Array, Array, Array]:
             M_i = self._local_mass_matrix(i)
 
-            def dynamical_matrices_ij(j: Array) -> Tuple[Array, Array, Array]:
+            def dynamical_matrices_ij(j: Array) -> tuple[Array, Array, Array]:
                 Ws_ij = Ws_scaled[i][j]
                 g_ij = g_ps[i, j]
                 J_ij = J_ps[i, j]

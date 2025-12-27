@@ -1,15 +1,14 @@
 __all__ = ["GVS"]
+import math
+import warnings
+from typing import cast
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-from jax import vmap, lax, Array
-import math
-from typing import Callable, ClassVar, List, Optional, Tuple
-from typing import cast
-import warnings
+from jax import Array, lax, vmap
 
-
-from soromox.systems.dynamical_system import DynamicalSystem
+import soromox.utils.lie_algebra as lie
 from soromox.systems.gvs.attributes import (
     BasisAttributes,
     JointAttributes,
@@ -17,31 +16,31 @@ from soromox.systems.gvs.attributes import (
 )
 from soromox.systems.gvs.data_classes import SegmentData
 from soromox.systems.gvs.joint_bases import (
+    B_Cylindrical,
     B_Fixed,
     B_Free,
-    B_Spherical,
-    B_Planar,
-    B_Cylindrical,
     B_Helical,
+    B_Planar,
     B_Prismatic,
     B_Revolute,
+    B_Spherical,
 )
 from soromox.systems.gvs.operands import GeometricOperand, JointOperand
 from soromox.systems.gvs.primitives import Basis, Joint, Link
 from soromox.systems.gvs.strain_bases import (
-    B_Monomial,
-    B_LegendrePolynomial,
+    B_IMQ,
     B_Chebychev,
     B_Fourier,
     B_Gaussian,
-    B_IMQ,
+    B_LegendrePolynomial,
+    B_Monomial,
 )
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.basic import compute_strain_basis
 from soromox.utils.integration import gauss_quadrature
-import soromox.utils.lie_algebra as lie
 
 
-class GVS(DynamicalSystem):
+class GVS(SoftRobot):
     """
     Generalized Variable Strain (GVS) model for 3D soft continuum robots.
 
@@ -167,14 +166,14 @@ class GVS(DynamicalSystem):
 
     def __init__(
         self,
-        links_list: List[LinkAttributes,],
-        joints_list: List[JointAttributes,],
-        basis_list: List[BasisAttributes,],
-        n_gauss_list: List[int],
-        gravity_vector: List[float],
-        max_dof: Optional[int] = None,
-        max_nGauss: Optional[int] = None,
-        p0: Optional[Array] = None,
+        links_list: list[LinkAttributes,],
+        joints_list: list[JointAttributes,],
+        basis_list: list[BasisAttributes,],
+        n_gauss_list: list[int],
+        gravity_vector: list[float],
+        max_dof: int | None = None,
+        max_nGauss: int | None = None,
+        p0: Array | None = None,
         **kwargs,
     ) -> None:
         """
@@ -228,10 +227,8 @@ class GVS(DynamicalSystem):
         p0: (optional) List/Array of shape (6,)
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
-        eps (float, optional):
-            Global epsilon for numerical computations.
-            If None, defaults to machine epsilon for float64.
-                
+        **kwargs: Additional keyword arguments for SoftRobot.__init__.
+
         Raises
         ------
         ValueError
@@ -858,7 +855,7 @@ class GVS(DynamicalSystem):
                 Forward kinematics transformation matrices at all significant points
         """
 
-        def body_segment_i(carry: Array, i_segment: Array) -> Tuple[Array, Array]:
+        def body_segment_i(carry: Array, i_segment: Array) -> tuple[Array, Array]:
             """Propagate transforms for a segment and collect frames.
 
             Args:
@@ -970,7 +967,7 @@ class GVS(DynamicalSystem):
         return g_list
 
     @eqx.filter_jit
-    def classify_segment(self, s: Array) -> Tuple[Array, Array]:
+    def classify_segment(self, s: Array) -> tuple[Array, Array]:
         """
         Classify the point along the robot to the corresponding segment.
 
@@ -1008,7 +1005,7 @@ class GVS(DynamicalSystem):
         # Compute the point coordinate along the segment in the interval [0, l_segment]
         segment_idx, s_local = self.classify_segment(s)
 
-        def body_segment_i(carry: Array, i_segment: Array) -> Tuple[Array, Array]:
+        def body_segment_i(carry: Array, i_segment: Array) -> tuple[Array, Array]:
             """Compose joint transform and integrate the link up to `s`.
 
             Args:
@@ -1043,7 +1040,7 @@ class GVS(DynamicalSystem):
             q_i = q_gathered[i_segment, 1]
 
             # advance on complete cells if i < seg_idx
-            def full_cell(carry: Array, j: Array) -> Tuple[Array, None]:
+            def full_cell(carry: Array, j: Array) -> tuple[Array, None]:
                 """Integrate one full cell `j` of the link using Magnus.
 
                 Args:
@@ -1095,7 +1092,7 @@ class GVS(DynamicalSystem):
                 j = jnp.clip(jnp.searchsorted(Xs_i, x) - 1, 0, self.max_nip - 2)
 
                 # compose complete cells up to j-1 without dynamic-length arange
-                def full_cell_masked(carry: Array, idx: Array) -> Tuple[Array, None]:
+                def full_cell_masked(carry: Array, idx: Array) -> tuple[Array, None]:
                     """Advance a cell only if `idx < j`, keep state otherwise.
 
                     Args:
@@ -1152,7 +1149,7 @@ class GVS(DynamicalSystem):
         g0 = self.g0
 
         # we scan *at least* up to segment seg_idx; for subsequent segments, we don't change a thing
-        def step(carry: Array, i: Array) -> Tuple[Array, None]:
+        def step(carry: Array, i: Array) -> tuple[Array, None]:
             """Scan over segments; freeze state after the target segment.
 
             Args:
@@ -1195,7 +1192,7 @@ class GVS(DynamicalSystem):
 
         def body_segment_i(
             carry: Array, i_segment: Array
-        ) -> Tuple[Tuple[Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array], Array]:
             """Accumulate transforms/Jacobians for a segment.
 
             Args:
@@ -1254,7 +1251,7 @@ class GVS(DynamicalSystem):
 
             def body_eval_points(
                 carry: Array, j_eval: Array
-            ) -> Tuple[Tuple[Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array], Array]:
                 """Advance one cell and update the Jacobian via Magnus terms.
 
                 Args:
@@ -1383,7 +1380,7 @@ class GVS(DynamicalSystem):
 
         def body_segment_i(
             carry: Array, i_segment: Array
-        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             """Propagate body-frame Jacobian across a segment up to `s`.
 
             Args:
@@ -1439,7 +1436,7 @@ class GVS(DynamicalSystem):
 
             def full_cell(
                 carry: Array, j_eval: Array
-            ) -> Tuple[Tuple[Array, Array], None]:
+            ) -> tuple[tuple[Array, Array], None]:
                 """Consume a full cell; update g and J in body frame.
 
                 Args:
@@ -1491,7 +1488,7 @@ class GVS(DynamicalSystem):
                 return (g_next, J_next), None
 
             # If this segment is before the target, consume all cells.
-            def do_full_link() -> Tuple[Array, Array]:
+            def do_full_link() -> tuple[Array, Array]:
                 """Segment before target `s`: consume all its cells.
 
                 Returns:
@@ -1504,7 +1501,7 @@ class GVS(DynamicalSystem):
                 return g_end, J_end
 
             # If this segment is the one containing s, step up to the cell j-1 (masked), then do a partial cell of size Hp.
-            def do_partial_link() -> Tuple[Array, Array]:
+            def do_partial_link() -> tuple[Array, Array]:
                 """Segment containing `s`: consume up to j-1, then partial cell.
 
                 Returns:
@@ -1516,7 +1513,7 @@ class GVS(DynamicalSystem):
                 # masked full cells up to j-1
                 def full_cell_masked(
                     carry: Array, idx: Array
-                ) -> Tuple[Tuple[Array, Array], None]:
+                ) -> tuple[tuple[Array, Array], None]:
                     """Advance only while idx < j; otherwise keep state unchanged.
 
                     Args:
@@ -1583,7 +1580,7 @@ class GVS(DynamicalSystem):
             return (g_pass, J_pass), (g_pass, J_pass)
 
         # walk the chain, but freeze state after we pass the segment that contains s
-        def step(carry: Array, i: Array) -> Tuple[Tuple[Array, Array], None]:
+        def step(carry: Array, i: Array) -> tuple[tuple[Array, Array], None]:
             """Walk segments; freeze state after the one containing `s`.
 
             Args:
@@ -1613,6 +1610,23 @@ class GVS(DynamicalSystem):
         return J_local
 
     @eqx.filter_jit
+    def jacobian(self, q: Array, s: Array) -> Array:
+        """
+        Compute the Jacobian and its time derivative at a point s along the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+            s (Array): point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            J (Array): Jacobian matrix of shape (6, num_dofs).
+        """
+        # TODO: Properly implement jacobian_and_derivative
+        # This should compute the Jacobian and its time derivative in the inertial frame
+        J = jnp.zeros((6, self.num_dofs))
+        return J
+
+    @eqx.filter_jit
     def _jacobian_derivative_gauss(
         self, q_gathered: Array, qd_gathered: Array
     ) -> Array:
@@ -1633,7 +1647,7 @@ class GVS(DynamicalSystem):
 
         def body_segment_i(
             carry: Array, i_segment: Array
-        ) -> Tuple[Tuple[Array, Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array, Array], Array]:
             """Accumulate transforms/Jacobian derivatives for a segment.
 
             Args:
@@ -1703,7 +1717,7 @@ class GVS(DynamicalSystem):
 
             def body_eval_points(
                 carry: Array, j_eval: Array
-            ) -> Tuple[Tuple[Array, Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array, Array], Array]:
                 """Advance one cell; update Jdot using Magnus/Tangent terms.
 
                 Args:
@@ -1851,7 +1865,7 @@ class GVS(DynamicalSystem):
 
         def body_segment_i(
             carry: Array, i_segment: Array
-        ) -> Tuple[Tuple[Array, Array, Array], Tuple[Array, Array, Array]]:
+        ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
             """Propagate body-frame Jdot across a segment up to `s`.
 
             Args:
@@ -1917,7 +1931,7 @@ class GVS(DynamicalSystem):
 
             def full_cell(
                 carry: Array, j_eval: Array
-            ) -> Tuple[Tuple[Array, Array, Array], None]:
+            ) -> tuple[tuple[Array, Array, Array], None]:
                 """Consume a full cell; update g, Jdot and convective term.
 
                 Args:
@@ -1985,7 +1999,7 @@ class GVS(DynamicalSystem):
                 return (g_next, Jd_next, eta_next), None
 
             # Case 1: segment entirely before s → consume every cell
-            def do_full_link() -> Tuple[Array, Array, Array]:
+            def do_full_link() -> tuple[Array, Array, Array]:
                 """Segment before target `s`: integrate all its cells (Jdot).
 
                 Returns:
@@ -1997,7 +2011,7 @@ class GVS(DynamicalSystem):
                 return g_end, Jd_end, eta_end
 
             # Case 2: segment containing s → full cells up to j-1 then partial cell Hp
-            def do_partial_link() -> Tuple[Array, Array, Array]:
+            def do_partial_link() -> tuple[Array, Array, Array]:
                 """Segment containing `s`: consume up to j-1, then partial cell.
 
                 Returns:
@@ -2009,7 +2023,7 @@ class GVS(DynamicalSystem):
                 # consume up to j-1 (masked)
                 def full_cell_masked(
                     carry: Array, idx: Array
-                ) -> Tuple[Tuple[Array, Array, Array], None]:
+                ) -> tuple[tuple[Array, Array, Array], None]:
                     """Advance only for idx < j; keep state otherwise.
 
                     Args:
@@ -2099,7 +2113,7 @@ class GVS(DynamicalSystem):
             return (g_pass, Jd_pass, eta_pass), (g_pass, Jd_pass, eta_pass)
 
         # Traverse the chain; freeze the state after the segment containing s
-        def step(carry: Array, i: Array) -> Tuple[Tuple[Array, Array, Array], None]:
+        def step(carry: Array, i: Array) -> tuple[tuple[Array, Array, Array], None]:
             """Walk segments; freeze state after the segment containing `s`.
 
             Args:
@@ -2130,6 +2144,28 @@ class GVS(DynamicalSystem):
         Jd_local = Jd_flat @ self.B_select  # (6, num_active_strains)
 
         return Jd_local
+
+    @eqx.filter_jit
+    def jacobian_and_derivative(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the Jacobian and its time derivative at a point s along the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+            qd (Array): generalized velocities of shape (dof_tot,).
+            s (Array): point coordinate along the robot in the interval [0, L].
+
+        Returns:
+            J (Array): Jacobian matrix of shape (6, num_dofs).
+            Jd (Array): Time derivative of the Jacobian, shape (6, num_dofs).
+        """
+        # TODO: Properly implement jacobian_and_derivative
+        # This should compute the Jacobian and its time derivative in the inertial frame
+        J = jnp.zeros((6, self.num_dofs))
+        Jd = jnp.zeros((6, self.num_dofs))
+        return J, Jd
 
     # ===========================================
     # Dynamical matrices computation
@@ -2426,6 +2462,21 @@ class GVS(DynamicalSystem):
         return G
 
     @eqx.filter_jit
+    def gravitational_energy(self, q: Array) -> Array:
+        """
+        Compute the gravitational potential energy of the robot.
+
+        Args:
+            q (Array): generalized coordinates of shape (dof_tot,).
+
+        Returns:
+            U_g (Array): Gravitational potential energy (scalar).
+        """
+        # TODO: Properly implement gravitational energy computation
+        # This should integrate the gravitational potential energy over the robot's mass distribution
+        return jnp.array(0.0)
+
+    @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
         """
         Compute the full stiffness matrix of the robot.
@@ -2658,7 +2709,7 @@ class GVS(DynamicalSystem):
 
     @eqx.filter_jit
     def forward_dynamics(
-        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
+        self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
         """
         Forward dynamics function.

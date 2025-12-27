@@ -7,8 +7,9 @@ from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
 import soromox.utils.lie_algebra as lie
-from soromox.systems.gvs.core import GVS
 from soromox.utils.integration import scale_gaussian_quadrature
+
+from .core import GVS
 
 
 class TendonActuatedGVS(GVS):

@@ -3,14 +3,8 @@
 import jax
 import pandas as pd
 import jax.numpy as jnp
-from soromox.systems.gvs.attributes import (
-    LinkAttributes,
-    JointAttributes,
-    BasisAttributes,
-)
-
-# from soromox.systems.gvs.core import GVS
-from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
+from soromox.systems import TendonActuatedGVS
+from soromox.systems.gvs import LinkAttributes, JointAttributes, BasisAttributes
 from functools import partial
 from IPython.display import HTML
 from matplotlib.animation import FuncAnimation

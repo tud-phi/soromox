@@ -2,21 +2,13 @@ import jax
 import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from jax import Array
+import numpy as onp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
-import numpy as onp
-from typing import Dict, Optional
 
-from soromox.systems.tendon_actuated_pcs import TendonActuatedPCS
+from soromox.systems import TendonActuatedGVS, TendonActuatedPCS
+from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 from soromox.utils.tolerance import Tolerance
-
-from soromox.systems.gvs.attributes import (
-    LinkAttributes,
-    JointAttributes,
-    BasisAttributes,
-)
-from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
 
 
 def test_actuation_matrix_gvs():

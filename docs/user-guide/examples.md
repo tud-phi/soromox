@@ -182,7 +182,7 @@ New Example: Description of what this example demonstrates
 """
 
 import jax.numpy as jnp
-from soromox.systems import your_system
+from soromox.systems import YourSystem
 
 # Parameters
 params = {

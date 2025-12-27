@@ -15,8 +15,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     ```python
     import jax.numpy as jnp
     import matplotlib.pyplot as plt
-    from soromox.systems import pendulum
-    from soromox.systems.system_state import SystemState
+    from soromox.systems import Pendulum, SystemState
 
     # Define parameters for a double pendulum
     num_links = 2
@@ -33,7 +32,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
 
     ```python
     # Create the system using the class API
-    robot = pendulum.Pendulum(params)
+    robot = Pendulum(params)
 
     # Set initial conditions
     q0 = jnp.array([jnp.pi/4, jnp.pi/6])   # Initial angles [rad]
@@ -177,7 +176,7 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 === "🌊 Continuum Robot"
 
     ```python
-    from soromox.systems.planar_pcs import PlanarPCS
+    from soromox.systems import PlanarPCS
     from soromox.parameters import Params
 
     # Create a 3-segment soft robot

@@ -10,7 +10,7 @@ The pendulum system implements classical rigid-body dynamics for articulated rob
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import pendulum
+from soromox.systems import Pendulum
 
 # Parameters for an N-link planar pendulum
 params = {
@@ -21,7 +21,7 @@ params = {
     "g": jnp.array([0.0, -9.81]),        # Gravity vector [m/s²]
 }
 
-robot = pendulum.Pendulum(params)
+robot = Pendulum(params)
 q = jnp.array([0.2, -0.3])
 qd = jnp.array([0.0, 0.0])
 

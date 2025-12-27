@@ -1,24 +1,17 @@
-import jax
-
-import jax.numpy as jnp
-from soromox.systems.gvs.attributes import (
-    LinkAttributes,
-    JointAttributes,
-    BasisAttributes,
-)
-from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
 from functools import partial
-from IPython.display import HTML
-from matplotlib.animation import FuncAnimation
+
+import jax
+import jax.numpy as jnp
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
-import optimistix as optx
-
-from jax import Array
 import numpy as onp
-from soromox.systems.system_state import SystemState
+import optimistix as optx
+from IPython.display import HTML
+from jax import Array
+from matplotlib.animation import FuncAnimation
+from matplotlib.widgets import Slider
 
-
+from soromox.systems import SystemState, TendonActuatedGVS
+from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"

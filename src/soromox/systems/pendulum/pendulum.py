@@ -1,5 +1,6 @@
 __all__ = ["Pendulum"]
 
+
 import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
@@ -103,7 +104,7 @@ class Pendulum(SoftRobot):
                 - "K": stiffness matrix (N,N) (optional)
                 - "D": damping matrix (N,N) (optional)
                 - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
-            **kwargs: Additional keyword arguments for SoftRobot and DynamicalSystem.
+            **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
         super().__init__(**kwargs)
 
@@ -536,7 +537,7 @@ class Pendulum(SoftRobot):
 
         Args:
             q: Joint angles, shape (N,) [rad].
-            s: Arc-length position in ``[0, total_length]`` (m).
+            s: Arc-length position in [0, total_length] [m].
 
         Returns:
             chi: Pose [theta, x, y] at position s, shape (3,).
@@ -586,7 +587,7 @@ class Pendulum(SoftRobot):
 
         Args:
             q: Joint angles, shape (N,) [rad].
-            s: Arc-length position in ``[0, total_length]`` (m).
+            s: Arc-length position in [0, total_length] [m].
 
         Returns:
             J: Jacobian matrix, shape (3, N).
@@ -643,7 +644,7 @@ class Pendulum(SoftRobot):
         Args:
             q: Joint angles, shape (N,) [rad].
             qd: Joint velocities, shape (N,) [rad/s].
-            s: Arc-length position in ``[0, total_length]`` (m).
+            s: Arc-length position in [0, total_length] [m].
 
         Returns:
             J: Jacobian matrix, shape (3, N).
@@ -658,6 +659,9 @@ class Pendulum(SoftRobot):
 
         # Angular Jacobian derivative is zero (planar revolute)
         Jd_omega = jnp.zeros(N, dtype=q.dtype)
+
+        # Position and velocity at s
+        chi = self.forward_kinematics(q, s)
 
         # Joint positions and velocities
         J_joints = self.jacobians_joints(q)  # (N, 3, N)
@@ -918,25 +922,6 @@ class Pendulum(SoftRobot):
     # ---------------------
     # Energy methods
     # ---------------------
-    @eqx.filter_jit
-    def kinetic_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the kinetic energy of the pendulum system.
-
-        The kinetic energy is computed as:
-        T = 0.5 * qd^T @ B(q) @ qd
-        where B(q) is the generalized inertia matrix.
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-            qd (Array): Joint velocities, shape (N,) [rad/s]
-
-        Returns:
-            T (Array): Kinetic energy [J] (scalar)
-        """
-        B = self.inertia_matrix(q)
-        T = 0.5 * qd.T @ B @ qd
-        return T
 
     @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
@@ -952,12 +937,12 @@ class Pendulum(SoftRobot):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            U_G (Array): Gravitational potential energy [J] (scalar)
+            U_g (Array): Gravitational potential energy [J] (scalar)
         """
         p_coms = self._com_positions(q)  # (n, 2)
         # U_G = -Σ_i m_i * g^T @ p_com_i
-        U_G = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
-        return U_G
+        U_g = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
+        return U_g
 
     @eqx.filter_jit
     def elastic_energy(self, q: Array) -> Array:
@@ -965,53 +950,14 @@ class Pendulum(SoftRobot):
         Compute the elastic potential energy stored in joint springs.
 
         The elastic energy is computed as:
-        U_K = 0.5 * q^T @ K @ q
+        U_k = 0.5 * q^T @ K @ q
         where K is the joint stiffness matrix.
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            U_K (Array): Elastic potential energy [J] (scalar)
+            U_k (Array): Elastic potential energy [J] (scalar)
         """
-        U_K = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
-        return U_K
-
-    @eqx.filter_jit
-    def potential_energy(self, q: Array) -> Array:
-        """
-        Compute the total potential energy of the pendulum system.
-
-        The potential energy is the sum of gravitational and elastic energy:
-        U = U_G + U_K
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-
-        Returns:
-            U (Array): Total potential energy [J] (scalar)
-        """
-        U_G = self.gravitational_energy(q)
-        U_K = self.elastic_energy(q)
-        U = U_G + U_K
-        return U
-
-    @eqx.filter_jit
-    def total_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the total energy of the pendulum system.
-
-        The total energy is the sum of kinetic and potential energy:
-        E = T + U
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad]
-            qd (Array): Joint velocities, shape (N,) [rad/s]
-
-        Returns:
-            E (Array): Total energy [J] (scalar)
-        """
-        T = self.kinetic_energy(q, qd)
-        U = self.potential_energy(q)
-        E = T + U
-        return E
+        U_k = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
+        return U_k

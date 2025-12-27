@@ -13,10 +13,7 @@ from IPython.display import HTML
 from matplotlib.widgets import Slider
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pneumatic_actuated_planar_pcs import (
-    PneumaticActuatedPlanarPCS,
-)
-from soromox.systems.system_state import SystemState
+from soromox.systems import PneumaticActuatedPlanarPCS, SystemState
 
 
 def draw_robot(

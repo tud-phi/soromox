@@ -4,7 +4,7 @@ from jax import numpy as jnp
 import numpy as onp
 from typing import Callable, Dict, Optional, Tuple
 
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.systems import PlanarPCS
 
 
 def render_planar_pcs(
