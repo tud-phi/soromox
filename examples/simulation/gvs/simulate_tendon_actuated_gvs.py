@@ -3,14 +3,10 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import numpy as onp
 import optimistix as optx
-from IPython.display import HTML
-from jax import Array
-from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
 
-from soromox.systems import SystemState, TendonActuatedGVS
+from soromox.rendering import Open3DRenderer
+from soromox.systems import CrossSectionGeometry, SystemState, TendonActuatedGVS
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jax.config.update("jax_enable_x64", True)
@@ -36,7 +32,6 @@ def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray)
     return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
 
 
-# DRAWING FUNCTIONS
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
@@ -44,125 +39,12 @@ jnp.set_printoptions(
 )
 
 
-def draw_robot_curve(
-    robot: TendonActuatedGVS,
-    q: Array,
-    num_points: int = 50,
-):
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = jnp.sum(robot.V_L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
-
-def animate_robot_matplotlib(
-    robot: TendonActuatedGVS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    width = jnp.linalg.norm(robot.V_L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    if animation:
-        (line,) = ax.plot([], [], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(-width / 2, width / 2)
-        ax.set_zlim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            line.set_3d_properties([])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            curve = draw_robot_curve(robot, q)
-            line.set_data(curve[:, 0], curve[:, 1])
-            line.set_3d_properties(curve[:, 2])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(-width / 2, width / 2)
-            ax.set_zlim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            q = q_list[frame_idx]
-            curve = draw_robot_curve(robot, q)
-            ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
-
-
 ### BODY DEFINITION OF THE SOFT ROBOT ###
 
 # 2 link version
 # Link 1
 link1 = LinkAttributes(
-    section="Circular",
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     E=3.04e5,
     nu=0.45,
     rho=1310.0,
@@ -174,7 +56,7 @@ link1 = LinkAttributes(
 
 # Link 2
 link2 = LinkAttributes(
-    section="Circular",
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     E=3.04e5,
     nu=0.45,
     rho=1310.0,
@@ -308,6 +190,12 @@ l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
 print("tendon lengths (m):", jax.device_get(l_tendons))
 
 
+if Open3DRenderer is None:
+    raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
+
+# Create renderer for visualization
+renderer = Open3DRenderer(robot, num_points=50)
+
 # =====================================================
 # Static equilibrium (solve statics) and plot its shape
 # =====================================================
@@ -316,54 +204,13 @@ res_stat = solve_equilibrium(robot, u, q0)
 q_stat = res_stat.value  # equilibrium generalized coordinates
 print("q* =", q_stat)
 
-# Draw static equilibrium curve
-curve_stat = draw_robot_curve(robot, q_stat)
-
-# Also draw initial (q0) for comparison
-curve_init = draw_robot_curve(robot, q0)
-
-fig = plt.figure(figsize=(8, 6))
-ax = fig.add_subplot(111, projection="3d")
-ax.plot(
-    curve_init[:, 0],
-    curve_init[:, 1],
-    curve_init[:, 2],
-    lw=2,
-    color="gray",
-    linestyle="--",
-    label="Initial (q0)",
-)
-ax.plot(
-    curve_stat[:, 0],
-    curve_stat[:, 1],
-    curve_stat[:, 2],
-    lw=4,
-    color="red",
-    label="Static equilibrium (q*)",
-)
-ax.set_xlabel("X [m]")
-ax.set_ylabel("Y [m]")
-ax.set_zlabel("Z [m]")
-ax.set_title("Static equilibrium shape")
-ax.legend()
-ax.axis("equal")
-plt.show()
+renderer.show(q_stat)
+renderer.show(q0)
 
 
 # =====================================================
 # Simulation upon time
 # =====================================================
-
-# Plot the initial configuration
-curve = draw_robot_curve(robot, q0)
-fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": "3d"})
-ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-ax.set_xlabel("X [m]")
-ax.set_ylabel("Y [m]")
-ax.set_zlabel("Z [m]")
-ax.set_title("Initial configuration")
-ax.axis("equal")
-plt.show()
 
 # Simulation time parameters
 t0 = 0.0
@@ -390,10 +237,7 @@ print(f"Simulation completed with {len(ts)} time steps.")
 # End-effector position upon time
 # =====================================================
 forward_kinematics_end_effector = jax.jit(
-    partial(
-        robot.forward_kinematics,
-        s=jnp.sum(robot.V_L),  # end-effector position
-    )
+    partial(robot.forward_kinematics, s=robot.length)  # end-effector position
 )
 g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
@@ -438,7 +282,7 @@ p_marker_3_ts = g_marker_3_ts[:, :3, 3] + g_marker_3_ts[:, :3, :3] @ jnp.array(
 forward_kinematics_marker_4 = jax.jit(
     partial(
         robot.forward_kinematics,
-        s=jnp.sum(robot.V_L),
+        s=robot.length,
     )
 )
 g_marker_4_ts = jax.vmap(forward_kinematics_marker_4)(q_ts)
@@ -475,10 +319,4 @@ plt.show()
 # =====================================================
 # Plot the robot configuration upon time
 # =====================================================
-animate_robot_matplotlib(
-    robot,
-    t_list=ts,  # shape (T,)
-    q_list=q_ts,  # shape (T, DOF)
-    interval=100,  # ms
-    slider=True,
-)
+renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)

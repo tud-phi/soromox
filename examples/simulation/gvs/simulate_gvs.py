@@ -2,15 +2,10 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as onp
-from IPython.display import HTML
-from jax import Array
-from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
 
-jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems import GVS, SystemState
+jax.config.update("jax_enable_x64", True)
+from soromox.rendering import Open3DRenderer  # double precision
+from soromox.systems import CrossSectionGeometry, GVS, SystemState
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jnp.set_printoptions(
@@ -18,124 +13,6 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
-
-def draw_robot_curve(
-    robot: GVS,
-    q: Array,
-    num_points: int = 50,
-):
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = jnp.sum(robot.V_L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
-
-    # q_gathered = robot._min_size_gathered(q)
-    # V_g = robot._forward_kinematics_gauss(q_gathered)
-
-    # g_ps = jnp.concatenate(V_g[:, :, :-1, -1:], axis=0)
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
-
-def animate_robot_matplotlib(
-    robot: GVS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    width = jnp.linalg.norm(robot.V_L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    if animation:
-        (line,) = ax.plot([], [], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(-width / 2, width / 2)
-        ax.set_zlim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            line.set_3d_properties([])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            curve = draw_robot_curve(robot, q)
-            line.set_data(curve[:, 0], curve[:, 1])
-            line.set_3d_properties(curve[:, 2])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(-width / 2, width / 2)
-            ax.set_zlim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            q = q_list[frame_idx]
-            curve = draw_robot_curve(robot, q)
-            ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
 
 
 if __name__ == "__main__":
@@ -146,7 +23,14 @@ if __name__ == "__main__":
     List_nGauss: list[int] = []
 
     link1 = LinkAttributes(
-        section="Circular", E=1e6, nu=0.5, rho=1000, eta=1e4, L=0.3, r_i=0.03, r_f=0.03
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=1e6,
+        nu=0.5,
+        rho=1000,
+        eta=1e4,
+        L=0.3,
+        r_i=0.03,
+        r_f=0.03,
     )
     List_links.append(link1)
     joint1 = JointAttributes(jointtype="Fixed")
@@ -161,7 +45,14 @@ if __name__ == "__main__":
     List_nGauss.append(5)  # Number of Gauss points for the first link
 
     link2 = LinkAttributes(
-        section="Circular", E=1e6, nu=0.5, rho=1000, eta=1e4, L=0.3, r_i=0.03, r_f=0.03
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=1e6,
+        nu=0.5,
+        rho=1000,
+        eta=1e4,
+        L=0.3,
+        r_i=0.03,
+        r_f=0.03,
     )
     List_links.append(link2)
     joint2 = JointAttributes(jointtype="Fixed")
@@ -177,7 +68,7 @@ if __name__ == "__main__":
     List_nGauss.append(6)  # Number of Gauss points for the second link
 
     # link3 = LinkAttributes(
-    #     section='Elliptical',  # Section type
+    #     cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,  # Section type
     #     E=1e7,                # Young's modulus in Pascals
     #     nu=0.4,               # Poisson's ratio [-1, 0.5]
     #     rho=1050,             # Density [kg/m^3]
@@ -226,17 +117,12 @@ if __name__ == "__main__":
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
-    # Plot the initial configuration
-    curve = draw_robot_curve(robot, q0)
+    if Open3DRenderer is None:
+        raise ImportError("Open3DRenderer is unavailable. Install open3d to run this.")
 
-    fig, ax = plt.subplots(figsize=(8, 6), subplot_kw={"projection": "3d"})
-    ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-    ax.set_xlabel("X [m]")
-    ax.set_ylabel("Y [m]")
-    ax.set_zlabel("Z [m]")
-    ax.set_title("Initial configuration")
-    ax.axis("equal")
-    plt.show()
+    # Visualize the initial configuration using Open3DRenderer
+    renderer = Open3DRenderer(robot, num_points=50)
+    renderer.show(q0)
 
     # Actuation parameters
     u = jnp.zeros_like(q0)
@@ -265,12 +151,11 @@ if __name__ == "__main__":
     # End-effector position upon time
     # =====================================================
     forward_kinematics_end_effector = jax.jit(
-        partial(
-            robot.forward_kinematics,
-            s=jnp.sum(robot.V_L),  # end-effector position
-        )
+        partial(robot.forward_kinematics, s=robot.length)  # end-effector position
     )
     g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
+
+    import matplotlib.pyplot as plt
 
     plt.figure()
     plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
@@ -300,10 +185,4 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    animate_robot_matplotlib(
-        robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
-        interval=100,  # ms
-        slider=True,
-    )
+    renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)

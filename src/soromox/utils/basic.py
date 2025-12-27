@@ -1,20 +1,18 @@
 __all__ = [
-    "concatenate_params_syms", 
+    "concatenate_params_syms",
     "compute_strain_basis",
 ]
-from functools import partial
-import jax
-from jax import Array, jit
-from jax import numpy as jnp
+
 import sympy as sp
-from typing import Callable, Dict, List, Tuple, Union
+from jax import Array
+from jax import numpy as jnp
 
 
 def concatenate_params_syms(
-    params_syms: Dict[str, Union[sp.Symbol, List[sp.Symbol]]],
-) -> List[sp.Symbol]:
+    params_syms: dict[str, sp.Symbol | list[sp.Symbol]],
+) -> list[sp.Symbol]:
     # concatenate the robot params symbols
-    params_syms_cat: List[sp.Symbol] = []
+    params_syms_cat: list[sp.Symbol] = []
     for params_key, params_sym in sorted(params_syms.items()):
         if type(params_sym) in [list, tuple]:
             params_syms_cat += params_sym

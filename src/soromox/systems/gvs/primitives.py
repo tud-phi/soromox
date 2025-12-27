@@ -149,8 +149,8 @@ class Link:
 
     Attributes
     ----------
-    SECTION_MAP : Dict[str, int]
-        Cross-section type to index mapping: 'Circular', 'Rectangular', 'Elliptical'.
+    cross_section_geometry : int
+        Cross-section index using CrossSectionGeometry values.
     E : Array
         Young's modulus [N/m^2] (Pa). Scalar.
     nu : Array
@@ -183,12 +183,7 @@ class Link:
         I_* [m^4], A [m^2]. These feed mass/stiffness/damping computations.
     """
 
-    section_idx: int
-    SECTION_MAP = {
-        "Circular": 0,  # Circular cross-section
-        "Rectangular": 1,  # Rectangular cross-section
-        "Elliptical": 2,  # Elliptical cross-section
-    }
+    cross_section_geometry: int
 
     E: Array  # Young's Modulus [N/m²]
     nu: Array  # Poisson Ratio [-1, 0.5]

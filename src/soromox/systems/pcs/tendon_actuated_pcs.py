@@ -770,6 +770,27 @@ class TendonActuatedPCS(PCS):
         )
 
     @eqx.filter_jit
+    def forward_kinematics_tendons(self, q: Array, s: Array) -> Array:
+        """
+        Forward kinematics for all tendons (active + passive) at abscissa s.
+
+        Args:
+            q: Generalized coordinates (num_active_strains,)
+            s: Position along the backbone
+
+        Returns:
+            Cartesian tendon positions of shape (n_actuators, 3)
+        """
+        active_pos = self.forward_kinematics_active_tendons(q, s)
+        passive_pos = self.forward_kinematics_passive_tendons(q, s)
+
+        if active_pos.size == 0:
+            return passive_pos
+        if passive_pos.size == 0:
+            return active_pos
+        return jnp.concatenate([active_pos, passive_pos], axis=0)
+
+    @eqx.filter_jit
     def _forward_kinematics_tendons(
         self, q: Array, s: Array, tendon_routing_params: dict[str, Array], d_s: Callable
     ) -> Array:

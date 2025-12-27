@@ -1,17 +1,12 @@
-from diffrax import Tsit5
 from functools import partial
 
-from IPython.display import HTML
 import jax
-from jax import Array
 import jax.numpy as jnp
-from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
-import numpy as onp
-from typing import Callable
+from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
+from soromox.rendering import MatplotlibRenderer, Open3DRenderer
 from soromox.systems import PCS, SystemState
 
 jnp.set_printoptions(
@@ -19,119 +14,6 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
-
-def draw_robot_curve(
-    robot: PCS,
-    q: Array,
-    num_points: int = 50,
-):
-    L_max = jnp.sum(robot.L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = robot.forward_kinematics_batched(q, s_ps)[:, :3, 3]
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
-
-def animate_robot_matplotlib(
-    robot: PCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    num_points: int = 50,
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    width = jnp.linalg.norm(robot.L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    if animation:
-        (line,) = ax.plot([], [], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(-width / 2, width / 2)
-        ax.set_zlim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            line.set_3d_properties([])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            curve = draw_robot_curve(robot, q, num_points)
-            line.set_data(curve[:, 0], curve[:, 1])
-            line.set_3d_properties(curve[:, 2])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(-width / 2, width / 2)
-            ax.set_zlim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            q = q_list[frame_idx]
-            curve = draw_robot_curve(robot, q, num_points)
-            ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
 
 
 if __name__ == "__main__":
@@ -259,13 +141,9 @@ if __name__ == "__main__":
     plt.show()
 
     # =====================================================
-    # Plot the robot configuration upon time
+    # Animate the robot motion
     # =====================================================
-    animate_robot_matplotlib(
-        robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
-        num_points=50,
-        interval=100,  # ms
-        slider=True,
-    )
+    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
+    renderer = Open3DRenderer(robot, num_points=50)
+    renderer.render_sequence(ts, q_ts)

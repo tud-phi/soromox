@@ -142,3 +142,6 @@ dmypy.json
 
 # Documentation build
 site/
+
+# ignore .claude settings
+.claude/

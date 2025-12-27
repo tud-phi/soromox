@@ -8,7 +8,7 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
-from soromox.systems.soft_robot import SoftRobot
+from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.basic import (
     compute_strain_basis,
     concatenate_params_syms,
@@ -538,6 +538,21 @@ class PlanarHSA(SoftRobot):
                 "Fail to lambdify alpha. Check the symbolic expressions file."
             )
         self.alpha_lambda = alpha_lambda
+
+    @property
+    def length(self) -> Array:
+        """Total backbone length."""
+        return self.Lmax
+
+    def cross_section_geometry(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Circular cross-section using max rod offset for the segment."""
+        segment_idx, _ = self.classify_segment(s)
+        roff = jnp.asarray(self.roff)
+        radius = jnp.max(jnp.abs(roff[segment_idx]))
+        tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
+        return tag, jnp.array([radius])
 
     def _set_params(
         self, params: dict[str, Array], consider_hysteresis: bool, num_dofs: int

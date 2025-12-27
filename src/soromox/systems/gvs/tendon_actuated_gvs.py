@@ -95,7 +95,7 @@ class TendonActuatedGVS(GVS):
         links_list : List[LinkAttributes]
             List of link property objects (one per segment) containing geometric and
             material attributes:
-            - section: Type of cross-section ('Circular', 'Rectangular', 'Elliptical').
+            - cross_section_geometry: CrossSectionGeometry value.
             - E: Young's modulus [N/m²].
             - nu: Poisson's ratio [-1, 0.5].
             - rho: Density [kg/m³].
