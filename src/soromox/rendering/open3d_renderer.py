@@ -1191,7 +1191,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 )
                 raw_color_rgb = tuple(np.asarray(raw_color_rgba).reshape(-1)[:3])
                 if self._backbone_mode == "swept" and c1 - c0 >= 1:
-                    for p in range(c0, c1 - 1):
+                    edge_end = min(c1, curve.shape[0] - 1)
+                    for p in range(c0, edge_end):
                         geom_type, params = sections[p]
                         if geom_type == CROSS_SECTION_CIRCULAR:
                             radius = float(params[0]) if params.size else 0.0
@@ -1658,7 +1659,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             )
             seg_color = self._blend_with_background(raw_color_rgba)
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
-                for p in range(c0, c1 - 1):
+                edge_end = min(c1, curve0.shape[0] - 1)
+                for p in range(c0, edge_end):
                     geom_tag, params = sections[p]
                     unit_key, scale_base, dynamic_length, rotate_to_axis = (
                         self._primitive_from_section(geom_tag, params)
@@ -1721,10 +1723,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
             seg_meshes = meshes_groups[s]
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
+                edge_end = min(c1, curve.shape[0] - 1)
                 # Cylinders need full re-orientation + centering, not just translation
-                for i_local, p in enumerate(
-                    range(c0, min(c1 - 1, c0 + len(seg_meshes)))
-                ):
+                for i_local, p in enumerate(range(c0, edge_end)):
+                    if i_local >= len(seg_meshes):
+                        break
                     cached = seg_meshes[i_local]
                     p0 = curve[p]
                     p1 = curve[p + 1]

@@ -225,11 +225,7 @@ if __name__ == "__main__":
     )
 
     # render using the Open3DRenderer
-    renderer = Open3DRenderer(
-        robot,
-        backbone_style="spheres",
-        viewer_backend="legacy",  # 'legacy' or 'gui' for Open3D
-    )
+    renderer = Open3DRenderer(robot)
     renderer.render_sequence(
         ts=ts, q_ts=q_ts, record_path="videos/tendon_actuated_pcs.mp4"
     )

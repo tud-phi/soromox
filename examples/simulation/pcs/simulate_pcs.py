@@ -141,7 +141,7 @@ if __name__ == "__main__":
     plt.show()
 
     # =====================================================
-    # Plot the robot configuration upon time
+    # Animate the robot motion
     # =====================================================
     renderer = MatplotlibRenderer(robot, num_points=50)
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
