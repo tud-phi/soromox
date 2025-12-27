@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import optimistix as optx
 
 from soromox.rendering import Open3DRenderer
-from soromox.systems import SystemState, TendonActuatedGVS
+from soromox.systems import CrossSectionGeometry, SystemState, TendonActuatedGVS
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jax.config.update("jax_enable_x64", True)
@@ -44,7 +44,7 @@ jnp.set_printoptions(
 # 2 link version
 # Link 1
 link1 = LinkAttributes(
-    section="Circular",
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     E=3.04e5,
     nu=0.45,
     rho=1310.0,
@@ -56,7 +56,7 @@ link1 = LinkAttributes(
 
 # Link 2
 link2 = LinkAttributes(
-    section="Circular",
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     E=3.04e5,
     nu=0.45,
     rho=1310.0,
@@ -237,8 +237,8 @@ print(f"Simulation completed with {len(ts)} time steps.")
 # End-effector position upon time
 # =====================================================
 forward_kinematics_end_effector = jax.jit(
-        partial(robot.forward_kinematics, s=robot.length)  # end-effector position
-    )
+    partial(robot.forward_kinematics, s=robot.length)  # end-effector position
+)
 g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
 

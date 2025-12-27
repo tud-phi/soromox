@@ -1,11 +1,10 @@
 __all__ = [
-    "CROSS_SECTION_CIRCULAR",
-    "CROSS_SECTION_RECTANGULAR",
-    "CROSS_SECTION_ELLIPTICAL",
+    "CrossSectionGeometry",
     "SoftRobot",
 ]
 
 from abc import abstractmethod
+from enum import IntEnum
 
 from jax import Array, vmap
 from jax import numpy as jnp
@@ -13,10 +12,10 @@ from jax import numpy as jnp
 from soromox.systems.dynamical_system import DynamicalSystem
 
 
-# Integer tags for JAX-friendly cross-section branching.
-CROSS_SECTION_CIRCULAR = 0
-CROSS_SECTION_RECTANGULAR = 1
-CROSS_SECTION_ELLIPTICAL = 2
+class CrossSectionGeometry(IntEnum):
+    CIRCULAR = 0
+    RECTANGULAR = 1
+    ELLIPTICAL = 2
 
 
 class SoftRobot(DynamicalSystem):
@@ -77,15 +76,13 @@ class SoftRobot(DynamicalSystem):
         ...
 
     @abstractmethod
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array]:
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Return integer cross-section tag and geometry parameters at position s.
 
         Tag values:
-            - CROSS_SECTION_CIRCULAR
-            - CROSS_SECTION_RECTANGULAR
-            - CROSS_SECTION_ELLIPTICAL
+            - CrossSectionGeometry.CIRCULAR
+            - CrossSectionGeometry.RECTANGULAR
+            - CrossSectionGeometry.ELLIPTICAL
         """
         ...
 

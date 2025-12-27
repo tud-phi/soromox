@@ -6,7 +6,7 @@ import numpy as onp
 from jax import Array, jit, vmap
 from jax import numpy as jnp
 
-from soromox.systems.soft_robot import CROSS_SECTION_CIRCULAR, SoftRobot
+from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
 class Pendulum(SoftRobot):
@@ -146,14 +146,12 @@ class Pendulum(SoftRobot):
         """Total chain length."""
         return jnp.sum(self.L)
 
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array]:
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Circular cross-section using per-link radius."""
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
         segment_idx = jnp.clip(jnp.sum(s > L_cum) - 1, 0, self.num_links - 1)
         radius = self.r[segment_idx]
-        tag = jnp.asarray(CROSS_SECTION_CIRCULAR, dtype=jnp.int32)
+        tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
         return tag, jnp.array([radius])
 
     def update_params(self, params: dict[str, Array]) -> "Pendulum":

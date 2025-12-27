@@ -4,6 +4,8 @@ from typing import Literal
 
 from jax import Array
 
+from soromox.systems.soft_robot import CrossSectionGeometry
+
 
 @dataclass
 class LinkAttributes:
@@ -12,11 +14,11 @@ class LinkAttributes:
 
     The cross-section may vary linearly from an initial value at the link base
     (index i) to a final value at the link tip (index f). Only the parameters
-    relevant to the selected `section` are used; the others are ignored.
+    relevant to the selected `cross_section_geometry` are used; the others are ignored.
 
     Attributes
     ----------
-    section : {"Circular", "Rectangular", "Elliptical"}
+    cross_section_geometry : CrossSectionGeometry
         Cross-section family used for geometric and inertial properties.
     E : float
         Young's modulus [Pa].
@@ -31,19 +33,19 @@ class LinkAttributes:
 
     r_i, r_f : float, optional
         Initial and final radius for circular section [m]. Used only if
-        `section == "Circular"`.
+        `cross_section_geometry == CrossSectionGeometry.CIRCULAR`.
     h_i, h_f : float, optional
         Initial and final height for rectangular section [m]. Used only if
-        `section == "Rectangular"`.
+        `cross_section_geometry == CrossSectionGeometry.RECTANGULAR`.
     w_i, w_f : float, optional
         Initial and final width for rectangular section [m]. Used only if
-        `section == "Rectangular"`.
+        `cross_section_geometry == CrossSectionGeometry.RECTANGULAR`.
     a_i, a_f : float, optional
         Initial and final semi-major axis for elliptical section [m]. Used only if
-        `section == "Elliptical"`.
+        `cross_section_geometry == CrossSectionGeometry.ELLIPTICAL`.
     b_i, b_f : float, optional
         Initial and final semi-minor axis for elliptical section [m]. Used only if
-        `section == "Elliptical"`.
+        `cross_section_geometry == CrossSectionGeometry.ELLIPTICAL`.
 
     Notes
     -----
@@ -53,7 +55,7 @@ class LinkAttributes:
     - Shear modulus is internally computed as G = E / (2 (1 + nu)).
     """
 
-    section: Literal["Circular", "Rectangular", "Elliptical"]
+    cross_section_geometry: CrossSectionGeometry
     E: float
     nu: float
     rho: float

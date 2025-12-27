@@ -11,12 +11,7 @@ import numpy as np
 from jax import Array
 
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
-from soromox.systems.soft_robot import (
-    CROSS_SECTION_CIRCULAR,
-    CROSS_SECTION_ELLIPTICAL,
-    CROSS_SECTION_RECTANGULAR,
-    SoftRobot,
-)
+from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
 class OpenCVPlanarRenderer(BaseOpenCVRenderer):
@@ -97,11 +92,11 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         params = np.asarray(geom_params, dtype=float).reshape(-1)
         if params.size == 0:
             return 0.0
-        if tag == CROSS_SECTION_CIRCULAR:
+        if tag == CrossSectionGeometry.CIRCULAR:
             return float(params[0])
-        if tag == CROSS_SECTION_RECTANGULAR:
+        if tag == CrossSectionGeometry.RECTANGULAR:
             return float(max(params[0], params[1])) if params.size >= 2 else 0.0
-        if tag == CROSS_SECTION_ELLIPTICAL:
+        if tag == CrossSectionGeometry.ELLIPTICAL:
             return float(max(params[0], params[1])) if params.size >= 2 else 0.0
         return 0.0
 

@@ -3,7 +3,7 @@
 import jax
 import pandas as pd
 import jax.numpy as jnp
-from soromox.systems import TendonActuatedGVS
+from soromox.systems import CrossSectionGeometry, TendonActuatedGVS
 from soromox.systems.gvs import LinkAttributes, JointAttributes, BasisAttributes
 from functools import partial
 import matplotlib.pyplot as plt
@@ -349,7 +349,7 @@ def draw_robot_curve(
 # 2 link version
 # Link 1
 link1 = LinkAttributes(
-    section="Circular",
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     # E=3.04e5,
     # E=4.00e5,
     E=5.05e5,
@@ -365,7 +365,7 @@ link1 = LinkAttributes(
 
 # Link 2
 link2 = LinkAttributes(
-    section="Circular",
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     # E=3.04e5,
     # E=4.00e5,
     E=5.05e5,

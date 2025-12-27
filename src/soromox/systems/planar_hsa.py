@@ -8,7 +8,7 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
-from soromox.systems.soft_robot import CROSS_SECTION_CIRCULAR, SoftRobot
+from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.basic import (
     compute_strain_basis,
     concatenate_params_syms,
@@ -551,7 +551,7 @@ class PlanarHSA(SoftRobot):
         segment_idx, _ = self.classify_segment(s)
         roff = jnp.asarray(self.roff)
         radius = jnp.max(jnp.abs(roff[segment_idx]))
-        tag = jnp.asarray(CROSS_SECTION_CIRCULAR, dtype=jnp.int32)
+        tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
         return tag, jnp.array([radius])
 
     def _set_params(

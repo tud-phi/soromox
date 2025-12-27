@@ -5,7 +5,7 @@ import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
 from soromox.rendering import Open3DRenderer  # double precision
-from soromox.systems import GVS, SystemState
+from soromox.systems import CrossSectionGeometry, GVS, SystemState
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jnp.set_printoptions(
@@ -23,7 +23,14 @@ if __name__ == "__main__":
     List_nGauss: list[int] = []
 
     link1 = LinkAttributes(
-        section="Circular", E=1e6, nu=0.5, rho=1000, eta=1e4, L=0.3, r_i=0.03, r_f=0.03
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=1e6,
+        nu=0.5,
+        rho=1000,
+        eta=1e4,
+        L=0.3,
+        r_i=0.03,
+        r_f=0.03,
     )
     List_links.append(link1)
     joint1 = JointAttributes(jointtype="Fixed")
@@ -38,7 +45,14 @@ if __name__ == "__main__":
     List_nGauss.append(5)  # Number of Gauss points for the first link
 
     link2 = LinkAttributes(
-        section="Circular", E=1e6, nu=0.5, rho=1000, eta=1e4, L=0.3, r_i=0.03, r_f=0.03
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=1e6,
+        nu=0.5,
+        rho=1000,
+        eta=1e4,
+        L=0.3,
+        r_i=0.03,
+        r_f=0.03,
     )
     List_links.append(link2)
     joint2 = JointAttributes(jointtype="Fixed")
@@ -54,7 +68,7 @@ if __name__ == "__main__":
     List_nGauss.append(6)  # Number of Gauss points for the second link
 
     # link3 = LinkAttributes(
-    #     section='Elliptical',  # Section type
+    #     cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,  # Section type
     #     E=1e7,                # Young's modulus in Pascals
     #     nu=0.4,               # Poisson's ratio [-1, 0.5]
     #     rho=1050,             # Density [kg/m^3]

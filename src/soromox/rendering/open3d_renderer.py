@@ -39,19 +39,11 @@ try:
 except ImportError:
     OPEN3D_AVAILABLE = False
 
-# Track initialization of the Open3D GUI app for older versions without is_running.
-_GUI_APP_INITIALIZED = False
-
 # Default colormap used for segment colors when none are provided
 DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.systems.soft_robot import (
-    CROSS_SECTION_CIRCULAR,
-    CROSS_SECTION_ELLIPTICAL,
-    CROSS_SECTION_RECTANGULAR,
-    SoftRobot,
-)
+from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 # ======================================================================================
 # Geometry helper functions (module-level, stateless)
@@ -967,11 +959,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     @staticmethod
     def _effective_radius(geom_tag: int, params: np.ndarray) -> float:
         params = np.asarray(params, dtype=np.float64).reshape(-1)
-        if geom_tag == CROSS_SECTION_CIRCULAR:
+        if geom_tag == CrossSectionGeometry.CIRCULAR:
             return float(params[0]) if params.size else 0.0
-        if geom_tag == CROSS_SECTION_RECTANGULAR:
+        if geom_tag == CrossSectionGeometry.RECTANGULAR:
             return 0.5 * float(max(params[0], params[1])) if params.size >= 2 else 0.0
-        if geom_tag == CROSS_SECTION_ELLIPTICAL:
+        if geom_tag == CrossSectionGeometry.ELLIPTICAL:
             return float(max(params[0], params[1])) if params.size >= 2 else 0.0
         return float(max(params[0], params[1])) if params.size >= 2 else 0.0
 
@@ -997,19 +989,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         params = np.asarray(params, dtype=np.float64).reshape(-1)
         mode = self._backbone_mode
         eps = 1e-6
-        if geom_tag == CROSS_SECTION_CIRCULAR:
+        if geom_tag == CrossSectionGeometry.CIRCULAR:
             radius = max(float(params[0]) if params.size else 0.0, eps)
             if mode == "swept":
                 return "cylinder", np.array([radius, radius, 1.0]), True, True
             return "sphere", np.array([radius, radius, radius]), False, False
-        if geom_tag == CROSS_SECTION_RECTANGULAR:
+        if geom_tag == CrossSectionGeometry.RECTANGULAR:
             width = max(float(params[0]) if params.size else 0.0, eps)
             height = max(float(params[1]) if params.size > 1 else 0.0, eps)
             if mode == "swept":
                 return "box", np.array([width, height, 1.0]), True, True
             depth = max(width, height)
             return "box", np.array([width, height, depth]), False, False
-        if geom_tag == CROSS_SECTION_ELLIPTICAL:
+        if geom_tag == CrossSectionGeometry.ELLIPTICAL:
             a_val = max(float(params[0]) if params.size else 0.0, eps)
             b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
             if mode == "swept":
@@ -1194,7 +1186,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     edge_end = min(c1, curve.shape[0] - 1)
                     for p in range(c0, edge_end):
                         geom_type, params = sections[p]
-                        if geom_type == CROSS_SECTION_CIRCULAR:
+                        if geom_type == CrossSectionGeometry.CIRCULAR:
                             radius = float(params[0]) if params.size else 0.0
                             radius = max(radius, 1e-6)
                             cyl = _make_cylinder_between(
@@ -1210,7 +1202,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 cyl,
                                 mat_for(raw_color_rgba),
                             )
-                        elif geom_type == CROSS_SECTION_RECTANGULAR:
+                        elif geom_type == CrossSectionGeometry.RECTANGULAR:
                             if params.size < 2:
                                 continue
                             width = max(float(params[0]), 1e-6)
@@ -1250,7 +1242,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 else:
                     for p in range(c0, c1):
                         geom_type, params = sections[p]
-                        if geom_type == CROSS_SECTION_CIRCULAR:
+                        if geom_type == CrossSectionGeometry.CIRCULAR:
                             radius = float(params[0]) if params.size else 0.0
                             radius = max(radius, 1e-6)
                             sp = _make_sphere(
@@ -1266,7 +1258,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 sp,
                                 mat_for(raw_color_rgba),
                             )
-                        elif geom_type == CROSS_SECTION_RECTANGULAR:
+                        elif geom_type == CrossSectionGeometry.RECTANGULAR:
                             if params.size < 2:
                                 continue
                             width = max(float(params[0]), 1e-6)
