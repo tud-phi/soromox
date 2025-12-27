@@ -154,12 +154,3 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
       show_source: false
       heading_level: 3
       members_order: source
-
-## Animation Utilities
-
-::: soromox.rendering.animation
-    options:
-      show_root_heading: true
-      show_source: false
-      heading_level: 3
-      members_order: source
