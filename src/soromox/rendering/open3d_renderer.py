@@ -555,8 +555,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 1280,
-        height: int = 800,
+        width: int = 1920,
+        height: int = 1200,
         num_points: int = 80,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
