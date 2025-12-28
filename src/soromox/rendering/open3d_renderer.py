@@ -567,7 +567,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         sphere_resolution: int = 32,
         base_plate_color: tuple[float, float, float] = (0.0, 0.0, 0.0),
         base_plate_radius_scale: float = 2.0,
-        base_plate_thickness: float = 5e-2 * 1.3,
+        base_plate_thickness: float = 0.06,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
         tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),

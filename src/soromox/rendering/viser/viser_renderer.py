@@ -206,7 +206,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         base_plate_color: tuple[float, float, float] = (0.2, 0.2, 0.2),
         base_plate_radius_scale: float = 2.0,
-        base_plate_thickness: float = 0.01,
+        base_plate_thickness: float = 0.06,
         tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 3.0,
         camera_fov: float = 75.0,
@@ -392,8 +392,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Note: Viser doesn't support setting background color via API
         # Background is controlled by the client/browser theme
 
-        # Configure world axes
-        self._server.scene.world_axes.visible = False
+        # Set Z-up coordinate convention for the scene
+        self._server.scene.set_up_direction("-z")
 
         # Initialize empty scene handles
         self._scene_handles = SceneHandles()
@@ -789,15 +789,27 @@ class ViserRenderer(BaseSoftRobotRenderer):
         max_extent = float(np.max(extent))
 
         # Position camera to see entire scene
-        distance = max_extent * 2.5
-        camera_pos = center + np.array([distance * 0.7, distance * 0.7, distance * 0.5])
+        # For Z-up convention: position camera to the side and slightly above center
+        # so we look down at the robot extending along the +Z axis
+        distance = max_extent * 10.0
+        camera_pos = center + np.array(
+            [distance * 0.8, -distance * 0.8, distance * 0.5]
+        )
 
-        # Set camera for all connected clients
-        @self._server.on_client_connect
-        def on_connect(client: viser.ClientHandle) -> None:
+        # Helper function to configure a client's camera
+        def configure_camera(client: viser.ClientHandle) -> None:
             client.camera.position = tuple(camera_pos)
             client.camera.look_at = tuple(center)
             client.camera.fov = self._camera_fov
+
+        # Update already-connected clients
+        for client in self._server.get_clients().values():
+            configure_camera(client)
+
+        # Set camera for new clients
+        @self._server.on_client_connect
+        def on_connect(client: viser.ClientHandle) -> None:
+            configure_camera(client)
 
     def _setup_lighting(self) -> None:
         """Configure scene lighting for enhanced visual quality."""
