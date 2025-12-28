@@ -97,6 +97,38 @@ class BaseSoftRobotRenderer(ABC):
         """
         pass
 
+    def _extract_positions_3d(self, poses: Array) -> Array:
+        """Extract 3D positions from SE(2) or SE(3) poses.
+
+        This helper method allows 3D renderers to handle both SE(2) (planar) and
+        SE(3) (3D) robots by converting SE(2) poses to 3D coordinates.
+
+        Args:
+            poses: Forward kinematics output - either:
+                - (N, 3) for SE(2) poses [theta, x, y]
+                - (N, 4, 4) for SE(3) transformation matrices
+
+        Returns:
+            Position array of shape (N, 3) with xyz coordinates.
+            For SE(2) poses, z is set to 0.
+        """
+        poses = jnp.asarray(poses)
+
+        # Check if poses are SE(3) matrices (4x4) or SE(2) vectors (3-element)
+        if poses.ndim == 3 and poses.shape[-2:] == (4, 4):
+            # SE(3): extract translation from 4x4 matrices
+            return poses[:, :3, 3]
+        elif poses.ndim == 2 and poses.shape[-1] == 3:
+            # SE(2): extract x, y from [theta, x, y] and pad with z=0
+            xy = poses[:, 1:3]  # Extract x, y (skip theta at index 0)
+            z = jnp.zeros((poses.shape[0], 1), dtype=poses.dtype)
+            return jnp.concatenate([xy, z], axis=1)
+        else:
+            raise ValueError(
+                f"Unsupported pose format: expected SE(2) (N, 3) or SE(3) (N, 4, 4), "
+                f"got shape {poses.shape}"
+            )
+
     @abstractmethod
     def render_frame(self, q: Array) -> np.ndarray:
         """Render single configuration to RGB image array.

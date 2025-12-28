@@ -666,8 +666,20 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         return True
 
     def _extract_positions(self, poses: Array) -> Array:
-        """Extract xyz from SE(3) matrices."""
-        return poses[:, :3, 3]
+        """Extract 3D positions from SE(2) or SE(3) poses.
+
+        Supports both planar (SE(2)) and 3D (SE(3)) robots by converting
+        SE(2) poses [theta, x, y] to 3D coordinates [x, y, 0].
+
+        Args:
+            poses: Forward kinematics output - either:
+                - (N, 3) for SE(2) poses [theta, x, y]
+                - (N, 4, 4) for SE(3) transformation matrices
+
+        Returns:
+            Position array of shape (N, 3) with xyz coordinates.
+        """
+        return self._extract_positions_3d(poses)
 
     def compute_tendon_curves(self, q: Array) -> Array | None:
         """Compute tendon paths if the robot exposes tendon kinematics.

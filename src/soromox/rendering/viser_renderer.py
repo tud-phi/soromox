@@ -423,15 +423,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
         return f"http://localhost:{self._port}"
 
     def _extract_positions(self, poses: Array) -> Array:
-        """Extract xyz positions from SE(3) matrices.
+        """Extract 3D positions from SE(2) or SE(3) poses.
+
+        Supports both planar (SE(2)) and 3D (SE(3)) robots by converting
+        SE(2) poses [theta, x, y] to 3D coordinates [x, y, 0].
 
         Args:
-            poses: FK output of shape (N, 4, 4) SE(3) matrices
+            poses: Forward kinematics output - either:
+                - (N, 3) for SE(2) poses [theta, x, y]
+                - (N, 4, 4) for SE(3) transformation matrices
 
         Returns:
-            Position array of shape (N, 3)
+            Position array of shape (N, 3) with xyz coordinates.
         """
-        return poses[:, :3, 3]
+        return self._extract_positions_3d(poses)
 
     def start(self) -> None:
         """Start the Viser server."""

@@ -5,10 +5,10 @@ import jax
 import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
-jax.config.update("jax_enable_x64", True)  # double precision
-
-from soromox.rendering import OpenCVPlanarRenderer
+from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
 from soromox.systems import Pendulum, SystemState
+
+jax.config.update("jax_enable_x64", True)  # double precision
 
 num_links = 2
 params = {
@@ -69,7 +69,9 @@ if __name__ == "__main__":
     # =====================================================
     # End-effector position upon time
     # =====================================================
-    chi_ee_ts = jax.vmap(robot.forward_kinematics_tips,)(q_ts)[:, -1, :]
+    chi_ee_ts = jax.vmap(
+        robot.forward_kinematics_tips,
+    )(q_ts)[:, -1, :]
 
     plt.figure()
     for link_idx in range(num_links):
@@ -99,7 +101,11 @@ if __name__ == "__main__":
 
     # end effector orientation vs. time
     plt.figure()
-    plt.plot(ts, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.plot(
+        ts,
+        chi_ee_ts[:, 0] / jnp.pi * 180,
+        label=r"End-effector Orientation $\theta$ [deg]",
+    )
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector Orientation [deg]")
     plt.legend()
@@ -148,3 +154,21 @@ if __name__ == "__main__":
     )
     renderer.render_sequence(video_ts, q_ts, record_path=str(video_path))
     print(f"Video saved to {video_path}")
+
+    # =====================================================
+    # Viser web-based visualization with plotly plots
+    # =====================================================
+    # Note: ViserRenderer is designed for 3D soft robots, so 3D visualization
+    # may not work well for this planar pendulum system. However, we can still
+    # use it to display plotly plots in the GUI.
+    # Plotly plots are automatically added to the GUI at the end of the sidebar
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+        plot_configurations=True,
+        robot_name="Pendulum",
+    )
