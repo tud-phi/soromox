@@ -466,10 +466,10 @@ def _normalize_color_palette(
 @dataclass
 class VideoEncodingConfig:
     codec: str = "libx264"
-    pix_fmt: str = "yuv420p"
-    preset: str | None = None
-    crf: int | None = None
-    tune: str | None = None
+    pix_fmt: str = "yuv444p"
+    preset: str | None = "veryslow"
+    crf: int | None = 12
+    tune: str | None = "animation"
     profile: str | None = None
     bitrate: str | None = None
     gop: int | None = None
@@ -1932,6 +1932,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     video_config=video_config,
                 )
                 print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")
+                video_writer = None
+                raise NotImplementedError  # to trigger fallback for testing
             except FileNotFoundError:
                 frame_dir = os.path.splitext(video_path)[0]
                 os.makedirs(frame_dir, exist_ok=True)
