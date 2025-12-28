@@ -7,7 +7,7 @@ Provides 3D visualization with:
 - Interactive camera controls
 
 Controls:
-    Space: play/pause
+    Space: play/pause (press to start if autoplay is disabled)
     →/← : next/prev frame
     H   : go to frame 0
     S   : save snapshot
@@ -1394,6 +1394,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         q_ts: Array,
         *,
         playback_speed: float = 1.0,
+        autoplay: bool = True,
         loop: bool = False,
         record_path: str | None = None,
         record_every_n: int = 1,
@@ -1415,6 +1416,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             ts: Time stamps of shape (T,).
             q_ts: Configurations of shape (T, DOF) or batched (N, T, DOF).
             playback_speed: Playback speed multiplier (>0).
+            autoplay: Start playback immediately. If False, wait for space bar to play.
             loop: Whether to loop the animation when it reaches the end.
             record_path: Optional path to save frames or video (extension determines mode).
             record_every_n: Save every n-th frame when recording images.
@@ -1459,6 +1461,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self._run_viewer(
             scene_data,
             playback_speed=playback_speed,
+            autoplay=autoplay,
             loop=loop,
             record_cfg=record_cfg,
             window_name=window_name,
@@ -1492,7 +1495,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """Attach shared keyboard callbacks to a visualizer."""
 
         def cb_space(_):
-            state["playing"] = not state["playing"]
+            was_playing = bool(state["playing"])
+            state["playing"] = not was_playing
+            if state["playing"] and not was_playing:
+                state["last_tick"] = time.time()
             return False
 
         def cb_next(_):
@@ -1847,6 +1853,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         scene_data: SceneData,
         *,
         playback_speed: float,
+        autoplay: bool,
         loop: bool,
         record_cfg: RecordingConfig,
         window_name: str,
@@ -1864,7 +1871,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         state = {
             "idx": 0,
-            "playing": True,
+            "playing": bool(autoplay),
             "last_tick": time.time(),
             "dt_seq": dt_seq,
         }
