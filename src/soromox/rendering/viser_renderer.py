@@ -248,7 +248,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         port: int = 8080,
         seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
         robot_colors: str | Array | np.ndarray | None = None,
-        backbone_style: Literal["discrete", "swept"] = "swept",
+        backbone_style: Literal["discrete", "swept"] = "discrete",
         sphere_resolution: int = 3,
         cylinder_sections: int = 48,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
