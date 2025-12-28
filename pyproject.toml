@@ -162,6 +162,7 @@ rendering = [
     "ffmpeg-python",
     "matplotlib",
     "open3d>=0.18",
+    "plotly",
     "viser",
 ]
 test = [
@@ -189,6 +190,7 @@ all = [
     "mkdocs-section-index",
     "mkdocs-autorefs",
     "open3d>=0.18",
+    "plotly",
     "pre-commit",
     "pytest",
     "pytest-cov",
