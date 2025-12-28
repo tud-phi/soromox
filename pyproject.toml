@@ -159,9 +159,10 @@ examples = [
     "seaborn",
 ]
 rendering = [
+    "ffmpeg-python",
     "matplotlib",
     "open3d>=0.18",
-    "ffmpeg-python",
+    "viser",
 ]
 test = [
     "codecov",
@@ -195,6 +196,7 @@ all = [
     "ruff",
     "seaborn",
     "tox",
+    "viser",
 ]
 
 # List URLs that are relevant to your project
