@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import MatplotlibRenderer, Open3DRenderer
+from soromox.rendering import MatplotlibRenderer, Open3DRenderer, ViserRenderer
 from soromox.systems import PCS, SystemState
 
 jnp.set_printoptions(
@@ -147,3 +147,19 @@ if __name__ == "__main__":
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
     renderer = Open3DRenderer(robot, num_points=50)
     renderer.render_sequence(ts, q_ts)
+
+    # =====================================================
+    # Viser web-based visualization (opens in browser)
+    # =====================================================
+    # ViserRenderer provides interactive 3D visualization in the browser
+    # with GUI controls for playback, speed, and looping.
+    viser_renderer = ViserRenderer(
+        robot, port=8080, num_points=50, backbone_style="discrete"
+    )
+    viser_renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+    )
