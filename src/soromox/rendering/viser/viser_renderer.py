@@ -26,6 +26,7 @@ from jax import Array
 from matplotlib import colormaps
 
 try:
+    import trimesh
     import viser
 
     VISER_AVAILABLE = True
@@ -73,6 +74,12 @@ class SceneHandles:
     base_plates: list = field(default_factory=list)
     backbone_points: list[list] = field(default_factory=list)
     tendon_lines: list = field(default_factory=list)
+
+    # Track if geometry has been initially built (for efficient updates)
+    geometry_initialized: bool = False
+    # Store number of robots and points for geometry validation
+    num_robots: int = 0
+    num_backbone_points: int = 0
 
     # Lighting
     lights: list = field(default_factory=list)
@@ -159,6 +166,47 @@ def _rgb_to_viser_color(rgb: np.ndarray) -> tuple[int, int, int]:
     """Convert RGB floats [0,1] to Viser color tuple (0-255)."""
     rgb = np.clip(rgb[:3], 0.0, 1.0)
     return (int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+
+
+def _direction_to_quaternion(
+    direction: np.ndarray,
+) -> tuple[float, float, float, float]:
+    """Compute quaternion (wxyz) to rotate Z-axis to align with direction.
+
+    Args:
+        direction: Target direction vector (3,), will be normalized
+
+    Returns:
+        Quaternion as (w, x, y, z) tuple
+    """
+    direction = np.asarray(direction, dtype=np.float64)
+    dir_norm = np.linalg.norm(direction)
+    if dir_norm < 1e-9:
+        return (1.0, 0.0, 0.0, 0.0)  # Identity quaternion
+    direction = direction / dir_norm
+
+    z_axis = np.array([0.0, 0.0, 1.0])
+
+    # Check for parallel/anti-parallel cases
+    dot = np.dot(z_axis, direction)
+    if dot > 0.9999:
+        # Already aligned with Z
+        return (1.0, 0.0, 0.0, 0.0)
+    elif dot < -0.9999:
+        # Opposite to Z - rotate 180° around X axis
+        return (0.0, 1.0, 0.0, 0.0)
+
+    # General case: axis-angle to quaternion
+    axis = np.cross(z_axis, direction)
+    axis = axis / np.linalg.norm(axis)
+    angle = np.arccos(np.clip(dot, -1.0, 1.0))
+
+    # Quaternion from axis-angle
+    half_angle = angle / 2.0
+    w = np.cos(half_angle)
+    xyz = axis * np.sin(half_angle)
+
+    return (float(w), float(xyz[0]), float(xyz[1]), float(xyz[2]))
 
 
 # =============================================================================
@@ -498,7 +546,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     p0 = curve[pt_idx]
                     p1 = curve[pt_idx + 1]
                     color_rgba = seg_colors[pt_idx]
-                    color = _rgb_to_viser_color(color_rgba)
 
                     # Compute cylinder parameters
                     direction = p1 - p0
@@ -507,17 +554,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
                         continue
 
                     center = (p0 + p1) / 2.0
+                    # Compute quaternion for orientation (Z-aligned cylinder rotated to direction)
+                    wxyz = _direction_to_quaternion(direction)
 
-                    # Create cylinder mesh using trimesh
+                    # Create Z-aligned cylinder mesh, apply rotation via handle
                     handle = self._server.scene.add_mesh_trimesh(
                         name=f"/robots/robot_{robot_idx}/backbone/seg_{pt_idx}",
                         mesh=self._make_cylinder_trimesh(
                             length=length,
                             radius=self._robot_radius,
-                            direction=direction,
                             color=color_rgba[:3],
+                            direction=None,  # Keep Z-aligned for efficient updates
                         ),
                         position=tuple(center),
+                        wxyz=wxyz,
                     )
                     robot_points.append(handle)
 
@@ -540,21 +590,25 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
             self._scene_handles.backbone_points.append(robot_points)
 
-            # Create base plate
+            # Create base plate (Z-aligned, no rotation needed)
             base_pos = curve[0].copy()
             base_pos[2] -= self._base_plate_thickness / 2
-            base_color = _rgb_to_viser_color(np.array(self._base_plate_color))
             base_handle = self._server.scene.add_mesh_trimesh(
                 name=f"/robots/robot_{robot_idx}/base_plate",
                 mesh=self._make_cylinder_trimesh(
                     length=self._base_plate_thickness,
                     radius=self._robot_radius * self._base_plate_radius_scale,
-                    direction=np.array([0, 0, 1]),
                     color=self._base_plate_color,
+                    direction=None,  # Already Z-aligned
                 ),
                 position=tuple(base_pos),
             )
             self._scene_handles.base_plates.append(base_handle)
+
+        # Mark geometry as initialized for efficient updates
+        self._scene_handles.geometry_initialized = True
+        self._scene_handles.num_robots = num_robots
+        self._scene_handles.num_backbone_points = num_points
 
     def _build_tendon_geometry(
         self,
@@ -621,12 +675,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self,
         length: float,
         radius: float,
-        direction: np.ndarray,
         color: tuple | np.ndarray,
+        direction: np.ndarray | None = None,
     ):
-        """Create a trimesh cylinder aligned with the given direction."""
-        import trimesh
+        """Create a trimesh cylinder, optionally aligned with a direction.
 
+        Args:
+            length: Cylinder height
+            radius: Cylinder radius
+            color: RGB color (0-1 range)
+            direction: If provided, rotate cylinder to align with this direction.
+                      If None, cylinder remains Z-aligned (for use with handle rotation).
+        """
         # Create cylinder along Z axis
         cylinder = trimesh.creation.cylinder(
             radius=radius,
@@ -634,28 +694,29 @@ class ViserRenderer(BaseSoftRobotRenderer):
             sections=self._cylinder_sections,
         )
 
-        # Compute rotation to align Z with direction
-        direction = np.asarray(direction, dtype=np.float64)
-        dir_norm = np.linalg.norm(direction)
-        if dir_norm > 1e-9:
-            direction = direction / dir_norm
+        # Apply rotation only if direction is provided
+        if direction is not None:
+            direction = np.asarray(direction, dtype=np.float64)
+            dir_norm = np.linalg.norm(direction)
+            if dir_norm > 1e-9:
+                direction = direction / dir_norm
 
-        z_axis = np.array([0.0, 0.0, 1.0])
-        if np.allclose(direction, z_axis):
-            R = np.eye(3)
-        elif np.allclose(direction, -z_axis):
-            R = np.diag([1.0, -1.0, -1.0])
-        else:
-            v = np.cross(z_axis, direction)
-            s = np.linalg.norm(v)
-            c = np.dot(z_axis, direction)
-            vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
-            R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s**2 + 1e-12))
+            z_axis = np.array([0.0, 0.0, 1.0])
+            if np.allclose(direction, z_axis):
+                R = np.eye(3)
+            elif np.allclose(direction, -z_axis):
+                R = np.diag([1.0, -1.0, -1.0])
+            else:
+                v = np.cross(z_axis, direction)
+                s = np.linalg.norm(v)
+                c = np.dot(z_axis, direction)
+                vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+                R = np.eye(3) + vx + vx @ vx * ((1 - c) / (s**2 + 1e-12))
 
-        # Apply rotation
-        transform = np.eye(4)
-        transform[:3, :3] = R
-        cylinder.apply_transform(transform)
+            # Apply rotation
+            transform = np.eye(4)
+            transform[:3, :3] = R
+            cylinder.apply_transform(transform)
 
         # Set vertex colors
         color_arr = np.asarray(color)[:3]
@@ -672,7 +733,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves: np.ndarray,
         robot_configs: list[RobotRenderConfig],
     ) -> None:
-        """Update existing robot geometry positions.
+        """Update existing robot geometry positions (and orientations for swept mode).
+
+        This is more efficient than rebuilding geometry each frame:
+        - Discrete mode: Only updates sphere positions
+        - Swept mode: Updates cylinder positions and orientations via handle properties
 
         Args:
             curves: Backbone curves of shape (num_robots, num_points, 3)
@@ -682,20 +747,43 @@ class ViserRenderer(BaseSoftRobotRenderer):
             return
 
         num_robots = min(len(curves), len(self._scene_handles.backbone_points))
+        num_points = curves.shape[1]
 
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
             robot_points = self._scene_handles.backbone_points[robot_idx]
 
             if self._backbone_style == "discrete":
+                # Update sphere positions only
                 for pt_idx, handle in enumerate(robot_points):
                     if pt_idx < len(curve):
                         handle.position = tuple(curve[pt_idx])
             else:
-                # For swept style, we need to rebuild geometry
-                # as cylinder orientations change
-                # This is less efficient but necessary for swept mode
-                pass
+                # Swept style: update cylinder positions and orientations
+                # robot_points contains (num_points - 1) cylinders + 1 tip sphere
+                num_segments = num_points - 1
+                for seg_idx in range(min(len(robot_points) - 1, num_segments)):
+                    handle = robot_points[seg_idx]
+                    p0 = curve[seg_idx]
+                    p1 = curve[seg_idx + 1]
+
+                    # Compute new center and orientation
+                    direction = p1 - p0
+                    length = float(np.linalg.norm(direction))
+                    if length < 1e-9:
+                        continue
+
+                    center = (p0 + p1) / 2.0
+                    wxyz = _direction_to_quaternion(direction)
+
+                    # Update handle properties (no mesh recreation!)
+                    handle.position = tuple(center)
+                    handle.wxyz = wxyz
+
+                # Update tip sphere position (last element in robot_points)
+                if len(robot_points) > 0:
+                    tip_handle = robot_points[-1]
+                    tip_handle.position = tuple(curve[-1])
 
     def _build_static_spheres(
         self,
@@ -1338,7 +1426,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         seg_colors: np.ndarray,
         show_tendons: bool = True,
     ) -> None:
-        """Update scene for given frame index."""
+        """Update scene for given frame index.
+
+        Uses efficient position/orientation updates when geometry is already
+        initialized, avoiding expensive mesh recreation each frame.
+        """
         # Get configurations for this frame
         q_frame = q_ts[:, frame_idx, :]  # (num_robots, DOF)
         num_robots = q_frame.shape[0]
@@ -1346,8 +1438,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Compute new curves
         curves = np.asarray(self.compute_backbone_curves_batched(q_frame, base_offsets))
 
-        # Rebuild robot geometry (needed for swept mode, efficient for discrete)
-        self._build_robot_geometry(curves, robot_configs, seg_colors)
+        # Check if we can use efficient updates (geometry already built with same config)
+        can_update = (
+            self._scene_handles is not None
+            and self._scene_handles.geometry_initialized
+            and self._scene_handles.num_robots == num_robots
+            and self._scene_handles.num_backbone_points == curves.shape[1]
+        )
+
+        if can_update:
+            # Efficient update: only modify position/orientation properties
+            self._update_robot_geometry(curves, robot_configs)
+        else:
+            # Full rebuild needed (first frame or configuration changed)
+            self._build_robot_geometry(curves, robot_configs, seg_colors)
 
         # Update tendon geometry if available and requested
         if show_tendons and self._has_tendons:
@@ -1747,7 +1851,11 @@ class LiveModeController:
             time.sleep(self._dt)
 
     def _process_state(self, q: np.ndarray) -> None:
-        """Process and render a state."""
+        """Process and render a state.
+
+        Uses efficient position/orientation updates when geometry is already
+        initialized, avoiding expensive mesh recreation each frame.
+        """
         q = jnp.asarray(q)
         if q.ndim == 1:
             q = q[None, :]
@@ -1771,12 +1879,23 @@ class LiveModeController:
         # Build configs
         robot_configs = self._renderer._build_robot_configs(num_robots, None, None)
 
-        # Get segment colors
-        seg_colors = _normalize_color_palette(
-            self._renderer._seg_colors,
-            self._renderer.num_points,
-            default_palette=DEFAULT_SEGMENT_COLORMAP,
+        # Check if we can use efficient updates
+        scene_handles = self._renderer._scene_handles
+        can_update = (
+            scene_handles is not None
+            and scene_handles.geometry_initialized
+            and scene_handles.num_robots == num_robots
+            and scene_handles.num_backbone_points == curves.shape[1]
         )
 
-        # Update geometry
-        self._renderer._build_robot_geometry(curves, robot_configs, seg_colors)
+        if can_update:
+            # Efficient update: only modify position/orientation properties
+            self._renderer._update_robot_geometry(curves, robot_configs)
+        else:
+            # Full rebuild needed (first frame or configuration changed)
+            seg_colors = _normalize_color_palette(
+                self._renderer._seg_colors,
+                self._renderer.num_points,
+                default_palette=DEFAULT_SEGMENT_COLORMAP,
+            )
+            self._renderer._build_robot_geometry(curves, robot_configs, seg_colors)
