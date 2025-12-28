@@ -22,7 +22,7 @@ except ImportError:
 
 # Viser renderer is optional (requires viser package)
 try:
-    from soromox.rendering.viser import ViserRenderer
+    from soromox.rendering.viser_renderer import ViserRenderer
 except ImportError:
     ViserRenderer = None
 

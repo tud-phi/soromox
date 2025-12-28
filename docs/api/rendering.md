@@ -249,7 +249,7 @@ The `ViserRenderer` provides web-based interactive 3D visualization using [Viser
 - **Dynamic spheres**: Visualize setpoints, obstacles, targets
 - **Video export**: Record animations to MP4
 
-::: soromox.rendering.viser.viser_renderer.ViserRenderer
+::: soromox.rendering.viser_renderer.ViserRenderer
     options:
       show_root_heading: true
       show_source: false
