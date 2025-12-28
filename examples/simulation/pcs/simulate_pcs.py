@@ -3,6 +3,7 @@ from functools import partial
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -153,13 +154,63 @@ if __name__ == "__main__":
     # =====================================================
     # ViserRenderer provides interactive 3D visualization in the browser
     # with GUI controls for playback, speed, and looping.
-    viser_renderer = ViserRenderer(
-        robot, port=8080, num_points=50, backbone_style="discrete"
+    # Plotly plots are automatically added to the GUI at the end of the sidebar
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+
+    # Create custom strain plots for PCS
+    # Reshape to (T, num_segments, 6)
+    q_reshaped = q_ts.reshape(len(ts), num_segments, 6)
+
+    # Rotational strains (first 3 components)
+    fig_rot = go.Figure()
+    for seg in range(num_segments):
+        for i, label in enumerate(["κx", "κy", "κz"]):
+            fig_rot.add_trace(
+                go.Scatter(
+                    x=ts,
+                    y=q_reshaped[:, seg, i],
+                    mode="lines",
+                    name=f"Seg {seg} - {label}",
+                )
+            )
+    fig_rot.update_layout(
+        title="PCS - Rotational Strains vs Time",
+        xaxis_title="Time [s]",
+        yaxis_title="Rotational Strain [rad/m]",
+        height=400,
+        margin={"l": 50, "r": 50, "t": 50, "b": 50},
     )
+
+    # Linear strains (last 3 components)
+    fig_lin = go.Figure()
+    for seg in range(num_segments):
+        for i, label in enumerate(["σx", "σy", "σz"]):
+            fig_lin.add_trace(
+                go.Scatter(
+                    x=ts,
+                    y=q_reshaped[:, seg, i + 3],
+                    mode="lines",
+                    name=f"Seg {seg} - {label}",
+                )
+            )
+    fig_lin.update_layout(
+        title="PCS - Linear Strains vs Time",
+        xaxis_title="Time [s]",
+        yaxis_title="Linear Strain [-]",
+        height=400,
+        margin={"l": 50, "r": 50, "t": 50, "b": 50},
+    )
+
     viser_renderer.render_sequence(
         ts,
         q_ts,
         playback_speed=1.0,
         loop=True,
         autoplay=True,
+        plot_configurations=False,
+        custom_plots={
+            "Rotational Strains": (fig_rot, 2.0),
+            "Linear Strains": (fig_lin, 2.0),
+        },
+        robot_name="PCS",
     )

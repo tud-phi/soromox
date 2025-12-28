@@ -26,12 +26,14 @@ from jax import Array
 from matplotlib import colormaps
 
 try:
+    import plotly.graph_objects as go
     import trimesh
     import viser
 
     VISER_AVAILABLE = True
 except ImportError:
     VISER_AVAILABLE = False
+    go = None
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
@@ -1218,6 +1220,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_colors: Array | None = None,
         show_tendons: bool = True,
         blocking: bool = True,
+        plot_configurations: bool = False,
+        plot_tendon_positions: bool = False,
+        custom_plots: dict[str, tuple] | None = None,
+        robot_name: str = "Robot",
     ) -> None:
         """Render animated trajectory with full visualization options.
 
@@ -1240,12 +1246,26 @@ class ViserRenderer(BaseSoftRobotRenderer):
             dynamic_spheres_*: Time-varying sphere configuration
             show_tendons: If True, render tendons (if available)
             blocking: If True, block until viewer closes
+            plot_configurations: If True, add configuration vs time plot to GUI
+            plot_tendon_positions: If True, add tendon position plot to GUI
+            custom_plots: Dictionary mapping plot names to (figure, aspect) tuples
+                         for custom plotly figures to add to the GUI
+            robot_name: Name for plot titles
         """
         if self._server is None:
             self.start()
 
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
+
+        if q_ts.ndim == 3 and (plot_configurations or plot_tendon_positions):
+            raise ValueError(
+                "Plotting configurations or tendon positions requires q_ts with shape "
+                "(T, DOF); got batched (N, T, DOF)."
+            )
+
+        # Save original 2D q_ts for plots (before reshaping to 3D)
+        q_ts_for_plots = q_ts if q_ts.ndim == 2 else q_ts[0]
 
         # Handle shape: (T, DOF) -> (1, T, DOF)
         if q_ts.ndim == 2:
@@ -1343,6 +1363,26 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Setup GUI controls
         self._setup_playback_gui()
+
+        # Add plots after playback controls (so they appear at the end)
+        if plot_configurations or plot_tendon_positions or custom_plots:
+            with self._server.gui.add_folder("Plots"):
+                if plot_configurations:
+                    config_fig = self.create_configuration_plot(
+                        ts, q_ts_for_plots, robot_name=robot_name
+                    )
+                    self.add_gui_plotly("Configurations", config_fig, aspect=2.0)
+
+                if plot_tendon_positions and hasattr(self.robot, "tendon_length"):
+                    tendon_fig = self.create_tendon_position_plot(
+                        ts, q_ts_for_plots, self.robot, robot_name=robot_name
+                    )
+                    self.add_gui_plotly("Tendon Positions", tendon_fig, aspect=2.0)
+
+                # Add custom plots
+                if custom_plots:
+                    for plot_name, (figure, aspect) in custom_plots.items():
+                        self.add_gui_plotly(plot_name, figure, aspect=aspect)
 
         # Open browser
         if self._open_browser:
@@ -1544,6 +1584,132 @@ class ViserRenderer(BaseSoftRobotRenderer):
             self._gui_handles["play_button"].icon = (
                 viser.Icon.PLAYER_PAUSE if state.playing else viser.Icon.PLAYER_PLAY
             )
+
+    # =========================================================================
+    # Plot panels
+    # =========================================================================
+
+    def add_gui_plotly(self, name: str, figure, aspect: float = 1.0):
+        """Add a plotly figure to the GUI.
+
+        Args:
+            name: Unique name for the plot
+            figure: Plotly figure object
+            aspect: Aspect ratio (width/height)
+
+        Returns:
+            Viser plotly handle
+        """
+        if self._server is None:
+            self.start()
+
+        if go is None:
+            raise ImportError(
+                "plotly is required for plot panels. "
+                "Install it with: pip install plotly"
+            )
+
+        handle = self._server.gui.add_plotly(figure=figure, aspect=aspect)
+        return handle
+
+    def create_configuration_plot(
+        self,
+        ts: Array | np.ndarray,
+        q_ts: Array | np.ndarray,
+        robot_name: str = "Robot",
+    ):
+        """Create a plotly figure showing configurations over time.
+
+        Args:
+            ts: Time array (T,)
+            q_ts: Configuration array (T, DOF)
+            robot_name: Name for the plot title
+
+        Returns:
+            Plotly figure
+        """
+        if go is None:
+            raise ImportError("plotly is required. Install with: pip install plotly")
+
+        ts = np.asarray(ts)
+        q_ts = np.asarray(q_ts)
+        fig = go.Figure()
+
+        # Plot each configuration variable
+        num_dofs = q_ts.shape[1]
+        for i in range(num_dofs):
+            fig.add_trace(
+                go.Scatter(
+                    x=ts,
+                    y=q_ts[:, i],
+                    mode="lines",
+                    name=f"q[{i}]",
+                )
+            )
+
+        fig.update_layout(
+            title=f"{robot_name} - Configurations vs Time",
+            xaxis_title="Time [s]",
+            yaxis_title="Configuration",
+            height=400,
+            margin={"l": 50, "r": 50, "t": 50, "b": 50},
+        )
+
+        return fig
+
+    def create_tendon_position_plot(
+        self,
+        ts: Array | np.ndarray,
+        q_ts: Array | np.ndarray,
+        robot,
+        robot_name: str = "Robot",
+    ):
+        """Create a plotly figure showing tendon positions over time.
+
+        Args:
+            ts: Time array (T,)
+            q_ts: Configuration array (T, DOF)
+            robot: Robot instance with tendon_length method
+            robot_name: Name for the plot title
+
+        Returns:
+            Plotly figure
+        """
+        if go is None:
+            raise ImportError("plotly is required. Install with: pip install plotly")
+
+        if not hasattr(robot, "tendon_length"):
+            raise AttributeError("Robot does not have tendon_length method")
+
+        ts = np.asarray(ts)
+        q_ts = jnp.asarray(q_ts)
+        fig = go.Figure()
+
+        # Compute tendon lengths for all timesteps using vmap
+        tendon_lengths_ts = jax.vmap(robot.tendon_length)(q_ts)
+        tendon_lengths_ts = np.asarray(tendon_lengths_ts)  # (T, num_tendons)
+        num_tendons = tendon_lengths_ts.shape[1]
+
+        # Plot each tendon
+        for i in range(num_tendons):
+            fig.add_trace(
+                go.Scatter(
+                    x=ts,
+                    y=tendon_lengths_ts[:, i],
+                    mode="lines",
+                    name=f"Tendon {i}",
+                )
+            )
+
+        fig.update_layout(
+            title=f"{robot_name} - Tendon Positions vs Time",
+            xaxis_title="Time [s]",
+            yaxis_title="Tendon Length [m]",
+            height=400,
+            margin={"l": 50, "r": 50, "t": 50, "b": 50},
+        )
+
+        return fig
 
     # =========================================================================
     # Live mode
