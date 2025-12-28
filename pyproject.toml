@@ -109,8 +109,6 @@ dependencies = [
   "equinox",
   "jax",
   "numpy",
-  "quadax",
-  "peppercorn",
   "scipy",
   "sympy",
   "tqdm",
