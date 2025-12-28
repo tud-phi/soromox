@@ -34,6 +34,7 @@ except ImportError:
     VISER_AVAILABLE = False
 
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
 from soromox.systems.soft_robot import SoftRobot
 
@@ -865,10 +866,23 @@ class ViserRenderer(BaseSoftRobotRenderer):
             idx = min(frame_idx, len(traj) - 1)
             handle.position = tuple(traj[idx])
 
-    def _setup_camera(self, curves: np.ndarray) -> None:
-        """Configure camera to view the robot(s)."""
+    def _setup_camera(
+        self,
+        curves: np.ndarray,
+        camera_config: CameraConfig | None = None,
+    ) -> None:
+        """Configure camera to view the robot(s).
+
+        Args:
+            curves: Backbone curves array of shape (N, num_points, 3)
+            camera_config: Optional camera configuration. If None, uses
+                default settings from renderer initialization.
+        """
         if self._server is None:
             return
+
+        # Use provided config or create default
+        config = camera_config or CameraConfig(fov=self._camera_fov)
 
         # Compute bounding box of all curves
         all_points = curves.reshape(-1, 3)
@@ -876,19 +890,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
         extent = np.max(all_points, axis=0) - np.min(all_points, axis=0)
         max_extent = float(np.max(extent))
 
-        # Position camera to see entire scene
-        # For Z-up convention: position camera to the side and slightly above center
-        # so we look down at the robot extending along the +Z axis
-        distance = max_extent * 10.0
-        camera_pos = center + np.array(
-            [distance * 0.8, -distance * 0.8, distance * 0.5]
-        )
+        # Compute camera position and look_at from config
+        camera_pos, look_at = config.compute_auto_position(center, max_extent)
 
         # Helper function to configure a client's camera
         def configure_camera(client: viser.ClientHandle) -> None:
             client.camera.position = tuple(camera_pos)
-            client.camera.look_at = tuple(center)
-            client.camera.fov = self._camera_fov
+            client.camera.look_at = tuple(look_at)
+            client.camera.fov = config.fov
 
         # Update already-connected clients
         for client in self._server.get_clients().values():
@@ -952,6 +961,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         robot_alphas: list[float] | None = None,
+        camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -966,6 +976,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 3)
             robot_colors: Per-robot color specification
             robot_alphas: Per-robot alpha values
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1029,7 +1040,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 ),
             )
 
-        self._setup_camera(curves)
+        self._setup_camera(curves, camera_config)
 
         # Wait for client and capture
         time.sleep(0.1)  # Give time for scene to render
@@ -1083,6 +1094,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         robot_alphas: list[float] | None = None,
+        camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1098,6 +1110,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 3)
             robot_colors: Per-robot color specification
             robot_alphas: Per-robot alpha values
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1163,7 +1176,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 ),
             )
 
-        self._setup_camera(curves)
+        self._setup_camera(curves, camera_config)
         self._setup_lighting()
 
         # Open browser
@@ -1191,6 +1204,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         record_path: str | None = None,
         record_every_n: int = 1,
         video_config: VideoEncodingConfig | None = None,
+        camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         overlay_mode: Literal["grid", "overlay"] = "grid",
@@ -1216,6 +1230,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             record_path: Path to save video (mp4, mov)
             record_every_n: Record every N frames
             video_config: FFmpeg encoding settings
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
             robot_colors: Per-robot color specification
             overlay_mode: "grid" for side-by-side, "overlay" for same position
@@ -1313,7 +1328,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 ),
             )
 
-        self._setup_camera(curves_0)
+        self._setup_camera(curves_0, camera_config)
         self._setup_lighting()
 
         # Setup animation state

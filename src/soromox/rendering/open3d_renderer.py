@@ -42,6 +42,7 @@ except ImportError:
 DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
@@ -1287,6 +1288,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
+        camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1300,6 +1302,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1331,7 +1334,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         bbox = render.scene.bounding_box
         center = bbox.get_center()
         extent = bbox.get_max_extent()
-        render.setup_camera(60.0, center, center + [0, 0, extent * 2], [0, 1, 0])
+
+        # Use camera config if provided, otherwise use defaults
+        config = camera_config or CameraConfig()
+        camera_pos, look_at = config.compute_auto_position(center, extent)
+
+        render.setup_camera(config.fov, look_at, camera_pos, list(config.up))
 
         img = render.render_to_image()
         frame = np.asarray(img)
@@ -1347,6 +1355,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
+        camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1360,6 +1369,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1380,6 +1390,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             record_path=None,
             base_offsets=base_offsets,
             robot_colors=robot_colors,
+            camera_config=camera_config,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1400,6 +1411,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         record_every_n: int = 1,
         record_prefix: str = "frame_",
         video_config: VideoEncodingConfig | None = None,
+        camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         static_spheres_positions: Array | None = None,
@@ -1422,6 +1434,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             record_every_n: Save every n-th frame when recording images.
             record_prefix: Filename prefix for recorded frames.
             video_config: Optional ffmpeg encoding configuration for video output.
+            camera_config: Camera configuration (fov, position, look_at, etc.).
+                Note: For interactive viewing, user can adjust camera with mouse.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
@@ -1465,6 +1479,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             loop=loop,
             record_cfg=record_cfg,
             window_name=window_name,
+            camera_config=camera_config,
         )
 
     def _create_visualizer(self, window_name: str):
@@ -1480,6 +1495,57 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         opt.background_color = np.array(self.background_color, dtype=np.float64)
         opt.line_width = self.tendon_line_width
         return vis, vis.get_view_control()
+
+    def _setup_interactive_camera(
+        self,
+        vis,
+        ctrl,
+        scene_data: SceneData,
+        camera_config: CameraConfig | None = None,
+    ) -> None:
+        """Set up camera for interactive viewer using CameraConfig.
+
+        Args:
+            vis: Open3D visualizer
+            ctrl: View control from visualizer
+            scene_data: Scene data containing curves for bounding box computation
+            camera_config: Camera configuration, or None to use defaults
+        """
+        # First, let Open3D compute its default view to initialize internals
+        vis.reset_view_point(True)
+
+        # Compute scene bounds from all curves (shape: N, T, P, 3)
+        all_points = scene_data.curves.reshape(-1, 3)
+        center = np.mean(all_points, axis=0)
+        extent = np.max(all_points, axis=0) - np.min(all_points, axis=0)
+        max_extent = float(np.max(extent))
+
+        # Use provided config or defaults
+        config = camera_config or CameraConfig()
+        camera_pos, look_at = config.compute_auto_position(center, max_extent)
+        up = np.array(config.up, dtype=np.float64)
+
+        # Compute front direction (from camera toward look_at)
+        front = look_at - camera_pos
+        front_norm = np.linalg.norm(front)
+        if front_norm > 1e-9:
+            front = front / front_norm
+
+        # Use ViewControl API for orientation
+        ctrl.set_front(-front)  # Open3D front points away from scene
+        ctrl.set_lookat(look_at)
+        ctrl.set_up(up)
+
+        # Compute zoom empirically based on distance-to-extent ratio
+        # Open3D's zoom doesn't scale linearly with distance, but this formula
+        # provides consistent results: when camera is at ~10x scene extent, zoom≈1.0
+        # The constant 0.1 was determined empirically to match typical viewing distances.
+        desired_distance = float(np.linalg.norm(camera_pos - look_at))
+        zoom = 0.1 * (desired_distance / max_extent) if max_extent > 1e-9 else 0.7
+        ctrl.set_zoom(zoom)
+
+        vis.poll_events()
+        vis.update_renderer()
 
     def _register_key_callbacks(
         self,
@@ -1857,10 +1923,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         loop: bool,
         record_cfg: RecordingConfig,
         window_name: str,
+        camera_config: CameraConfig | None = None,
     ) -> None:
         """Interactive viewer with shared geometry and recording."""
         vis, ctrl = self._create_visualizer(window_name)
         handles = self._build_scene(vis, scene_data, frame_idx=0)
+
+        # Apply camera configuration
+        self._setup_interactive_camera(vis, ctrl, scene_data, camera_config)
+
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
         video_writer, frame_dir, video_path = self._init_recorder(
             record_cfg.path, dt_seq, record_cfg.video_config

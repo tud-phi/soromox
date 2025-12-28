@@ -11,6 +11,7 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.widgets import Slider
 
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.camera_config import CameraConfig
 from soromox.systems.soft_robot import SoftRobot
 
 
@@ -157,6 +158,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None = None,
         robot_colors: str | list | None = None,
+        camera_config: CameraConfig | None = None,
         show_tendons: bool = True,
     ) -> np.ndarray:
         """Render configuration(s) to an RGB image array.
@@ -169,6 +171,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 (1, dim).
             robot_colors: Optional color configuration for batched layouts
                 (None/"same", colormap name, or explicit list cycled across robots).
+            camera_config: Camera configuration. Note: For Matplotlib, only position
+                and look_at are used to set view angle for 3D plots.
             show_tendons: Whether to render tendons if available.
 
         Returns:
@@ -296,6 +300,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None = None,
         robot_colors: str | list | None = None,
+        camera_config: CameraConfig | None = None,
         render_tendons: bool = True,
     ) -> None:  # type: ignore[override]
         """Display a single frame interactively (supports batched inputs).
@@ -306,6 +311,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 (N, 2/3) or (1, dim) for single robot.
             robot_colors: Optional color configuration for batched layouts
                 (None/"same", colormap name, or explicit list cycled across robots).
+            camera_config: Camera configuration. Note: For Matplotlib, only position
+                and look_at are used to set view angle for 3D plots.
             render_tendons: Whether to render tendons if available.
 
         Returns:
@@ -315,6 +322,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             q,
             base_offsets=base_offsets,
             robot_colors=robot_colors,
+            camera_config=camera_config,
             show_tendons=render_tendons,
         )
         plt.figure(figsize=(self.width / 100, self.height / 100))
@@ -334,6 +342,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         record_path: str | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | list | None = None,
+        camera_config: CameraConfig | None = None,
         render_tendons: bool = True,
     ):
         """Interactive matplotlib animation with slider or auto-play.
@@ -349,6 +358,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional explicit base offsets for batched layouts
             robot_colors: Optional color configuration for batched layouts
                 (None/"same", colormap name, or explicit list cycled across robots).
+            camera_config: Camera configuration. Note: For Matplotlib, only position
+                and look_at are used to set view angle for 3D plots.
             render_tendons: Whether to render tendons if available
 
         Returns:
@@ -729,14 +740,26 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         q_ts: Array,
         *,
         interval: int = 50,
-        render_tendons: bool = True,
         record_path: str | None = None,
         playback_speed: float = 1.0,
+        camera_config: CameraConfig | None = None,
+        render_tendons: bool = True,
         show: bool = False,
     ) -> None:
         """Render an animated sequence (optionally saving to disk).
 
         This reuses the animation code path with mode='animation'.
+
+        Args:
+            ts: Time stamps array of shape (T,)
+            q_ts: Configurations array of shape (T, DOF) or (N, T, DOF)
+            interval: Frame interval in ms
+            record_path: Optional path to save animation
+            playback_speed: Multiplier for playback speed
+            camera_config: Camera configuration. Note: For Matplotlib, only position
+                and look_at are used to set view angle for 3D plots.
+            render_tendons: Whether to render tendons if available
+            show: Whether to display the animation
         """
         self.animate(
             ts=ts,
@@ -744,9 +767,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             interval=interval,
             mode="animation",
             show=show,
-            render_tendons=render_tendons,
             record_path=record_path,
             playback_speed=playback_speed,
+            camera_config=camera_config,
+            render_tendons=render_tendons,
         )
 
     def _setup_axes(self, ax, width_m: float, center_origin: bool = False) -> None:
