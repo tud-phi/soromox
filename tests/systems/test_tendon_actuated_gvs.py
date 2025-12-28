@@ -6,7 +6,7 @@ import numpy as onp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
-from soromox.systems import TendonActuatedGVS, TendonActuatedPCS
+from soromox.systems import CrossSectionGeometry, TendonActuatedGVS, TendonActuatedPCS
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 from soromox.utils.tolerance import Tolerance
 
@@ -62,7 +62,7 @@ def test_actuation_matrix_gvs():
     for segment_lengths, tendon_params in test_cases:
         if segment_lengths.shape[0] == 1:
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -89,7 +89,7 @@ def test_actuation_matrix_gvs():
             )
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -99,7 +99,7 @@ def test_actuation_matrix_gvs():
                 r_f=0.015,
             )
             link2 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -197,7 +197,7 @@ def test_tendon_length_gvs():
     for segment_lengths, tendon_params in test_cases:
         if segment_lengths.shape[0] == 1:
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -224,7 +224,7 @@ def test_tendon_length_gvs():
             )
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -234,7 +234,7 @@ def test_tendon_length_gvs():
                 r_f=0.015,
             )
             link2 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -349,7 +349,7 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
     for segment_lengths, tendon_params in test_cases:
         if segment_lengths.shape[0] == 1:
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -376,7 +376,7 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
             )
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -386,7 +386,7 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
                 r_f=0.015,
             )
             link2 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -487,7 +487,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
     for segment_lengths, tendon_params in test_cases:
         if segment_lengths.shape[0] == 1:
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -515,7 +515,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
 
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,
@@ -525,7 +525,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
                 r_f=0.015,
             )
             link2 = LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=3e5,
                 nu=0.45,
                 rho=1300.0,

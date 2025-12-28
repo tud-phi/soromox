@@ -7,7 +7,7 @@ Provides 3D visualization with:
 - Interactive camera controls
 
 Controls:
-    Space: play/pause
+    Space: play/pause (press to start if autoplay is disabled)
     →/← : next/prev frame
     H   : go to frame 0
     S   : save snapshot
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import os
-import subprocess
 import time
 import warnings
 from dataclasses import dataclass
@@ -43,6 +42,7 @@ except ImportError:
 DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 # ======================================================================================
@@ -463,66 +463,6 @@ def _normalize_color_palette(
     return np.clip(palette, 0.0, 1.0)
 
 
-class _FFmpegVideoWriter:
-    """Minimal ffmpeg pipe for RGB frames."""
-
-    def __init__(self, path: str, width: int, height: int, fps: float):
-        self.path = path
-        self._stderr_log: str | None = None
-        self.proc = subprocess.Popen(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "rawvideo",
-                "-vcodec",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-s",
-                f"{width}x{height}",
-                "-r",
-                f"{fps}",
-                "-i",
-                "-",
-                "-an",
-                "-vcodec",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                path,
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-
-    def write(self, frame: np.ndarray) -> None:
-        if self.proc is None or self.proc.stdin is None:
-            return
-        self.proc.stdin.write(frame.tobytes())
-
-    def close(self) -> None:
-        if self.proc is None:
-            return
-        try:
-            if self.proc.stdin:
-                self.proc.stdin.close()
-            if self.proc.stderr:
-                try:
-                    err = self.proc.stderr.read()
-                    if err:
-                        self._stderr_log = err.decode("utf-8", errors="ignore")
-                except Exception:
-                    pass
-        finally:
-            self.proc.wait()
-
-    @property
-    def stderr_log(self) -> str | None:
-        return self._stderr_log
-
-
 def _mesh_center(mesh: o3d.geometry.TriangleMesh) -> np.ndarray:
     """Approximate center: mean of vertices."""
     return np.asarray(mesh.vertices).mean(axis=0)
@@ -581,10 +521,11 @@ class RecordingConfig:
     path: str | None
     prefix: str = "frame_"
     every_n: int = 1
+    video_config: VideoEncodingConfig | None = None
 
 
 @dataclass
-class LegacySceneHandles:
+class SceneHandles:
     base_meshes: list
     backbone_meshes: list[list[list[CachedMesh]]]
     tendon_lines: list[list]
@@ -614,13 +555,14 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     def __init__(
         self,
         robot: SoftRobot,
-        width: int = 1280,
-        height: int = 800,
+        width: int = 1920,
+        height: int = 1200,
         num_points: int = 80,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
         robot_colors: str | Array | np.ndarray | None = None,
         backbone_style: str = "discrete",
+        recompute_normals: bool = True,
         tube_resolution: int = 20,
         sphere_resolution: int = 32,
         base_plate_color: tuple[float, float, float] = (0.0, 0.0, 0.0),
@@ -631,7 +573,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
-        recompute_normals: bool = True,
     ):
         """Initialize Open3D renderer.
 
@@ -650,6 +591,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 - Colormap name (e.g., "viridis", "plasma"): Distinct colors per robot
                 - Array of RGB or RGBA colors of shape (N, 3/4); cycled if fewer than N
             backbone_style: "discrete" or "swept"
+            recompute_normals: Whether to recompute vertex normals per segment update
             tube_resolution: Radial resolution for tube segments
             sphere_resolution: Resolution for backbone spheres
             base_plate_color: RGB color for the base plate geometry
@@ -660,7 +602,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             tendon_color: RGB color for tendon lines
             tendon_line_width: Width of tendon lines
             camera_margin_ratio: Margin ratio for camera bounding box
-            recompute_normals: Whether to recompute vertex normals per segment update
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -672,7 +613,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.seg_colors = seg_colors
         self._seg_colors_config = seg_colors
         self._robot_colors_config = robot_colors
+        self.backbone_style = backbone_style
+        self._backbone_mode = self._resolve_backbone_mode(backbone_style)
+        self.recompute_normals = bool(recompute_normals)
+
         self.sphere_resolution = sphere_resolution
+        self.tube_resolution = int(tube_resolution)
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
         self.tendon_color = tendon_color
@@ -681,10 +627,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.base_plate_color = tuple(base_plate_color)
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
-        self.recompute_normals = bool(recompute_normals)
-        self.backbone_style = backbone_style
-        self._backbone_mode = self._resolve_backbone_mode(backbone_style)
-        self.tube_resolution = int(tube_resolution)
         self._warned_dynamic_geometry = False
 
         self._unit_meshes = {
@@ -767,7 +709,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         | tuple[float, float, float, float]
         | np.ndarray,
     ) -> tuple[float, float, float]:
-        """Approximate transparency for the legacy visualizer by blending with the background."""
+        """Approximate transparency for the visualizer by blending with the background."""
         rgba = _ensure_rgba(np.asarray(color, dtype=np.float64))[0]
         alpha = float(rgba[3])
         rgb = rgba[:3]
@@ -1134,13 +1076,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         material_cache: dict[tuple[float, float, float], object] | None = None,
     ) -> None:
         """Add all geometries for a specific frame to an Open3DScene."""
-        try:
-            import open3d.visualization.rendering as rendering
-        except (
-            Exception
-        ) as exc:  # pragma: no cover - only used when rendering is available
-            raise RuntimeError("Open3D rendering backend unavailable") from exc
-
         if material_cache is None:
             material_cache = {}
 
@@ -1304,7 +1239,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     ls = _make_polyline_lineset(
                         robot_tendons[k], color=self.tendon_color
                     )
-                    mat_line = rendering.MaterialRecord()
+                    mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = self.tendon_line_width
                     scene.add_geometry(f"tendon_{robot_idx}_{k}", ls, mat_line)
@@ -1410,7 +1345,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         q: Array,
         *,
-        backend: str | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         static_spheres_positions: Array | None = None,
@@ -1424,7 +1358,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
-            backend: Viewer backend override ("legacy" or "auto").
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
@@ -1442,7 +1375,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.render_sequence(
             ts=ts,
             q_ts=q_ts,
-            backend=backend,
             playback_speed=1.0,
             loop=False,
             record_path=None,
@@ -1461,12 +1393,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         ts: Array,
         q_ts: Array,
         *,
-        backend: str | None = None,
         playback_speed: float = 1.0,
+        autoplay: bool = True,
         loop: bool = False,
         record_path: str | None = None,
         record_every_n: int = 1,
         record_prefix: str = "frame_",
+        video_config: VideoEncodingConfig | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         static_spheres_positions: Array | None = None,
@@ -1482,12 +1415,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Args:
             ts: Time stamps of shape (T,).
             q_ts: Configurations of shape (T, DOF) or batched (N, T, DOF).
-            backend: Viewer backend override ("legacy" or "auto").
             playback_speed: Playback speed multiplier (>0).
+            autoplay: Start playback immediately. If False, wait for space bar to play.
             loop: Whether to loop the animation when it reaches the end.
             record_path: Optional path to save frames or video (extension determines mode).
             record_every_n: Save every n-th frame when recording images.
             record_prefix: Filename prefix for recorded frames.
+            video_config: Optional ffmpeg encoding configuration for video output.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
@@ -1519,19 +1453,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             dynamics_spheres_colors=dynamics_spheres_colors,
         )
         record_cfg = RecordingConfig(
-            path=record_path, prefix=record_prefix, every_n=record_every_n
+            path=record_path,
+            prefix=record_prefix,
+            every_n=record_every_n,
+            video_config=video_config,
         )
         self._run_viewer(
             scene_data,
             playback_speed=playback_speed,
+            autoplay=autoplay,
             loop=loop,
             record_cfg=record_cfg,
             window_name=window_name,
         )
-
-    # -------------------------------------------------------------------------
-    # Legacy viewer backend
-    # -------------------------------------------------------------------------
 
     def _create_visualizer(self, window_name: str):
         """Create a visualizer with common options set."""
@@ -1561,7 +1495,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """Attach shared keyboard callbacks to a visualizer."""
 
         def cb_space(_):
-            state["playing"] = not state["playing"]
+            was_playing = bool(state["playing"])
+            state["playing"] = not was_playing
+            if state["playing"] and not was_playing:
+                state["last_tick"] = time.time()
             return False
 
         def cb_next(_):
@@ -1737,8 +1674,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
     def _build_scene(
         self, vis, scene_data: SceneData, frame_idx: int = 0
-    ) -> LegacySceneHandles:
-        """Construct initial geometry for the legacy viewer."""
+    ) -> SceneHandles:
+        """Construct initial geometry for the viewer."""
         layout = scene_data.layout
         s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
         base_meshes: list = []
@@ -1746,7 +1683,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         if not self._warned_dynamic_geometry:
             warnings.warn(
-                "Open3D legacy viewer assumes cross_section_geometry is configuration-independent; "
+                "Open3D viewer assumes cross_section_geometry is configuration-independent; "
                 "geometry is frozen to the first frame.",
                 RuntimeWarning,
             )
@@ -1818,7 +1755,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 dynamic_trajs.append(centers_np)
                 vis.add_geometry(mesh0)
 
-        return LegacySceneHandles(
+        return SceneHandles(
             base_meshes=base_meshes,
             backbone_meshes=backbone_meshes,
             tendon_lines=tendon_lines,
@@ -1831,7 +1768,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         vis,
         scene_data: SceneData,
-        handles: LegacySceneHandles,
+        handles: SceneHandles,
         frame_idx: int,
     ) -> None:
         """Update geometry positions for a given frame."""
@@ -1862,7 +1799,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             vis.update_geometry(mesh)
 
     def _init_recorder(
-        self, record_path: str | None, dt_seq: np.ndarray
+        self,
+        record_path: str | None,
+        dt_seq: np.ndarray,
+        video_config: VideoEncodingConfig | None,
     ) -> tuple[_FFmpegVideoWriter | None, str | None, str | None]:
         """Initialize ffmpeg writer or frame directory based on path."""
         if record_path is None:
@@ -1879,7 +1819,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
             try:
                 video_writer = _FFmpegVideoWriter(
-                    video_path, int(self.width), int(self.height), fps_est
+                    video_path,
+                    int(self.width),
+                    int(self.height),
+                    fps_est,
+                    input_pix_fmt="rgb24",
+                    video_config=video_config,
                 )
                 print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")
             except FileNotFoundError:
@@ -1908,16 +1853,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         scene_data: SceneData,
         *,
         playback_speed: float,
+        autoplay: bool,
         loop: bool,
         record_cfg: RecordingConfig,
         window_name: str,
     ) -> None:
-        """Interactive legacy viewer with shared geometry and recording."""
+        """Interactive viewer with shared geometry and recording."""
         vis, ctrl = self._create_visualizer(window_name)
         handles = self._build_scene(vis, scene_data, frame_idx=0)
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
         video_writer, frame_dir, video_path = self._init_recorder(
-            record_cfg.path, dt_seq
+            record_cfg.path, dt_seq, record_cfg.video_config
         )
 
         initial_cam = ctrl.convert_to_pinhole_camera_parameters()
@@ -1925,7 +1871,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         state = {
             "idx": 0,
-            "playing": True,
+            "playing": bool(autoplay),
             "last_tick": time.time(),
             "dt_seq": dt_seq,
         }

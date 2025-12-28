@@ -10,6 +10,7 @@ This module provides various backends for visualizing robots:
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
+from soromox.rendering.video_encoding import VideoEncodingConfig
 
 # Open3D renderer is optional (requires open3d package)
 try:
@@ -27,6 +28,7 @@ __all__ = [
     # Generic renderers
     "MatplotlibRenderer",
     "Open3DRenderer",
+    "VideoEncodingConfig",
     # Specialized renderers
     "OpenCVPlanarHSARenderer",
     "OpenCVPlanarRenderer",
