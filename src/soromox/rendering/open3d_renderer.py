@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import os
-import subprocess
 import time
 import warnings
 from dataclasses import dataclass
@@ -43,6 +42,7 @@ except ImportError:
 DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 # ======================================================================================
@@ -461,102 +461,6 @@ def _normalize_color_palette(
 
     palette = palette[:count]
     return np.clip(palette, 0.0, 1.0)
-
-
-@dataclass
-class VideoEncodingConfig:
-    codec: str = "libx264"
-    pix_fmt: str = "yuv444p"
-    preset: str | None = "veryslow"
-    crf: int | None = 12
-    tune: str | None = "animation"
-    profile: str | None = None
-    bitrate: str | None = None
-    gop: int | None = None
-    extra_args: tuple[str, ...] = ()
-
-
-class _FFmpegVideoWriter:
-    """Minimal ffmpeg pipe for RGB frames."""
-
-    def __init__(
-        self,
-        path: str,
-        width: int,
-        height: int,
-        fps: float,
-        video_config: VideoEncodingConfig | None = None,
-    ):
-        self.path = path
-        self._stderr_log: str | None = None
-        cfg = video_config or VideoEncodingConfig()
-        args = [
-            "ffmpeg",
-            "-y",
-            "-f",
-            "rawvideo",
-            "-vcodec",
-            "rawvideo",
-            "-pix_fmt",
-            "rgb24",
-            "-s",
-            f"{width}x{height}",
-            "-r",
-            f"{fps}",
-            "-i",
-            "-",
-            "-an",
-            "-vcodec",
-            cfg.codec,
-        ]
-        if cfg.preset:
-            args += ["-preset", cfg.preset]
-        if cfg.crf is not None:
-            args += ["-crf", str(cfg.crf)]
-        if cfg.tune:
-            args += ["-tune", cfg.tune]
-        if cfg.profile:
-            args += ["-profile:v", cfg.profile]
-        if cfg.bitrate:
-            args += ["-b:v", cfg.bitrate]
-        if cfg.gop is not None:
-            args += ["-g", str(cfg.gop)]
-        if cfg.pix_fmt:
-            args += ["-pix_fmt", cfg.pix_fmt]
-        if cfg.extra_args:
-            args += [str(arg) for arg in cfg.extra_args]
-        args.append(path)
-        self.proc = subprocess.Popen(
-            args,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-
-    def write(self, frame: np.ndarray) -> None:
-        if self.proc is None or self.proc.stdin is None:
-            return
-        self.proc.stdin.write(frame.tobytes())
-
-    def close(self) -> None:
-        if self.proc is None:
-            return
-        try:
-            if self.proc.stdin:
-                self.proc.stdin.close()
-            if self.proc.stderr:
-                try:
-                    err = self.proc.stderr.read()
-                    if err:
-                        self._stderr_log = err.decode("utf-8", errors="ignore")
-                except Exception:
-                    pass
-        finally:
-            self.proc.wait()
-
-    @property
-    def stderr_log(self) -> str | None:
-        return self._stderr_log
 
 
 def _mesh_center(mesh: o3d.geometry.TriangleMesh) -> np.ndarray:
@@ -1929,6 +1833,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     int(self.width),
                     int(self.height),
                     fps_est,
+                    input_pix_fmt="rgb24",
                     video_config=video_config,
                 )
                 print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")

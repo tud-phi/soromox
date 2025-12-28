@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 import cv2
@@ -10,69 +9,7 @@ import numpy as np
 from jax import Array
 
 from soromox.rendering.base import BaseSoftRobotRenderer
-
-FFMPEG_VIDEO_CODEC = "libx264"
-FFMPEG_PIXEL_FORMAT = "yuv420p"
-
-
-class _BGRFFmpegVideoWriter:
-    """Minimal ffmpeg pipe for BGR frames."""
-
-    def __init__(self, path: str, width: int, height: int, fps: float):
-        self.path = path
-        self._stderr_log: str | None = None
-        self.proc = subprocess.Popen(
-            [
-                "ffmpeg",
-                "-y",
-                "-f",
-                "rawvideo",
-                "-vcodec",
-                "rawvideo",
-                "-pix_fmt",
-                "bgr24",
-                "-s",
-                f"{width}x{height}",
-                "-r",
-                f"{fps}",
-                "-i",
-                "-",
-                "-an",
-                "-vcodec",
-                FFMPEG_VIDEO_CODEC,
-                "-pix_fmt",
-                FFMPEG_PIXEL_FORMAT,
-                path,
-            ],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
-
-    def write(self, frame: np.ndarray) -> None:
-        if self.proc is None or self.proc.stdin is None:
-            return
-        self.proc.stdin.write(frame.tobytes())
-
-    def close(self) -> None:
-        if self.proc is None:
-            return
-        try:
-            if self.proc.stdin:
-                self.proc.stdin.close()
-            if self.proc.stderr:
-                try:
-                    err = self.proc.stderr.read()
-                    if err:
-                        self._stderr_log = err.decode("utf-8", errors="ignore")
-                except Exception:
-                    pass
-        finally:
-            self.proc.wait()
-
-    @property
-    def stderr_log(self) -> str | None:
-        return self._stderr_log
+from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
 
 
 class BaseOpenCVRenderer(BaseSoftRobotRenderer):
@@ -87,10 +24,18 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
         q_ts: Array,
         playback_speed: float = 1.0,
         record_path: str | None = None,
+        video_config: VideoEncodingConfig | None = None,
     ) -> None:
-        """Render animated sequence to video file using ffmpeg (H.264, yuv420p).
+        """Render animated sequence to video file using ffmpeg.
 
         Falls back to OpenCV VideoWriter if ffmpeg is unavailable.
+
+        Args:
+            ts: Time stamps of shape (T,)
+            q_ts: Configurations of shape (T, DOF)
+            playback_speed: Playback speed multiplier (>0)
+            record_path: Path to save video file
+            video_config: Optional ffmpeg encoding configuration
         """
         if record_path is None:
             raise ValueError("record_path is required for render_sequence")
@@ -108,11 +53,19 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
         print(f"{label} Rendering video with dt={video_dt:.4f} and {len(ts_np)} frames")
 
         width, height = int(self.width), int(self.height)
-        video_writer: _BGRFFmpegVideoWriter | None = None
+        video_writer: _FFmpegVideoWriter | None = None
         cv_video: cv2.VideoWriter | None = None
         try:
-            video_writer = _BGRFFmpegVideoWriter(
-                str(record_path), width, height, actual_fps
+            # Use default config with yuv420p for OpenCV (better compatibility)
+            if video_config is None:
+                video_config = VideoEncodingConfig(pix_fmt="yuv420p")
+            video_writer = _FFmpegVideoWriter(
+                str(record_path),
+                width,
+                height,
+                actual_fps,
+                input_pix_fmt="bgr24",
+                video_config=video_config,
             )
             print(
                 f"{label} Writing video via ffmpeg to: {record_path} (fps≈{actual_fps:.2f})"
