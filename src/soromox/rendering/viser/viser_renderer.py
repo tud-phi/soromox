@@ -1274,7 +1274,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                         now = time.time()
                         dt = state.dt_sequence
                         frame_dt = (
-                            dt[min(state.frame_idx, len(dt) - 1)] / state.playback_speed
+                            dt[min(state.frame_idx, len(dt) - 1)] / max(state.playback_speed, 0.01)
                         )
 
                         if now - state.last_tick >= frame_dt:
