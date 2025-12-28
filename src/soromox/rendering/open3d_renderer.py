@@ -1837,8 +1837,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     video_config=video_config,
                 )
                 print(f"[Open3D] Writing video to: {video_path} (fps≈{fps_est:.2f})")
-                video_writer = None
-                raise NotImplementedError  # to trigger fallback for testing
             except FileNotFoundError:
                 frame_dir = os.path.splitext(video_path)[0]
                 os.makedirs(frame_dir, exist_ok=True)
