@@ -525,7 +525,7 @@ class RecordingConfig:
 
 
 @dataclass
-class LegacySceneHandles:
+class SceneHandles:
     base_meshes: list
     backbone_meshes: list[list[list[CachedMesh]]]
     tendon_lines: list[list]
@@ -709,7 +709,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         | tuple[float, float, float, float]
         | np.ndarray,
     ) -> tuple[float, float, float]:
-        """Approximate transparency for the legacy visualizer by blending with the background."""
+        """Approximate transparency for the visualizer by blending with the background."""
         rgba = _ensure_rgba(np.asarray(color, dtype=np.float64))[0]
         alpha = float(rgba[3])
         rgb = rgba[:3]
@@ -1076,13 +1076,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         material_cache: dict[tuple[float, float, float], object] | None = None,
     ) -> None:
         """Add all geometries for a specific frame to an Open3DScene."""
-        try:
-            import open3d.visualization.rendering as rendering
-        except (
-            Exception
-        ) as exc:  # pragma: no cover - only used when rendering is available
-            raise RuntimeError("Open3D rendering backend unavailable") from exc
-
         if material_cache is None:
             material_cache = {}
 
@@ -1246,7 +1239,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     ls = _make_polyline_lineset(
                         robot_tendons[k], color=self.tendon_color
                     )
-                    mat_line = rendering.MaterialRecord()
+                    mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = self.tendon_line_width
                     scene.add_geometry(f"tendon_{robot_idx}_{k}", ls, mat_line)
@@ -1352,7 +1345,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         q: Array,
         *,
-        backend: str | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         static_spheres_positions: Array | None = None,
@@ -1366,7 +1358,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
-            backend: Viewer backend override ("legacy" or "auto").
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
@@ -1384,7 +1375,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.render_sequence(
             ts=ts,
             q_ts=q_ts,
-            backend=backend,
             playback_speed=1.0,
             loop=False,
             record_path=None,
@@ -1403,7 +1393,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         ts: Array,
         q_ts: Array,
         *,
-        backend: str | None = None,
         playback_speed: float = 1.0,
         loop: bool = False,
         record_path: str | None = None,
@@ -1425,7 +1414,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Args:
             ts: Time stamps of shape (T,).
             q_ts: Configurations of shape (T, DOF) or batched (N, T, DOF).
-            backend: Viewer backend override ("legacy" or "auto").
             playback_speed: Playback speed multiplier (>0).
             loop: Whether to loop the animation when it reaches the end.
             record_path: Optional path to save frames or video (extension determines mode).
@@ -1475,10 +1463,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             record_cfg=record_cfg,
             window_name=window_name,
         )
-
-    # -------------------------------------------------------------------------
-    # Legacy viewer backend
-    # -------------------------------------------------------------------------
 
     def _create_visualizer(self, window_name: str):
         """Create a visualizer with common options set."""
@@ -1684,8 +1668,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
     def _build_scene(
         self, vis, scene_data: SceneData, frame_idx: int = 0
-    ) -> LegacySceneHandles:
-        """Construct initial geometry for the legacy viewer."""
+    ) -> SceneHandles:
+        """Construct initial geometry for the viewer."""
         layout = scene_data.layout
         s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
         base_meshes: list = []
@@ -1693,7 +1677,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         if not self._warned_dynamic_geometry:
             warnings.warn(
-                "Open3D legacy viewer assumes cross_section_geometry is configuration-independent; "
+                "Open3D viewer assumes cross_section_geometry is configuration-independent; "
                 "geometry is frozen to the first frame.",
                 RuntimeWarning,
             )
@@ -1765,7 +1749,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 dynamic_trajs.append(centers_np)
                 vis.add_geometry(mesh0)
 
-        return LegacySceneHandles(
+        return SceneHandles(
             base_meshes=base_meshes,
             backbone_meshes=backbone_meshes,
             tendon_lines=tendon_lines,
@@ -1778,7 +1762,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         vis,
         scene_data: SceneData,
-        handles: LegacySceneHandles,
+        handles: SceneHandles,
         frame_idx: int,
     ) -> None:
         """Update geometry positions for a given frame."""
@@ -1867,7 +1851,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         record_cfg: RecordingConfig,
         window_name: str,
     ) -> None:
-        """Interactive legacy viewer with shared geometry and recording."""
+        """Interactive viewer with shared geometry and recording."""
         vis, ctrl = self._create_visualizer(window_name)
         handles = self._build_scene(vis, scene_data, frame_idx=0)
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
