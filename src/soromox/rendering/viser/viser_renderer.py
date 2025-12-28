@@ -365,6 +365,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
     @property
     def url(self) -> str:
         """URL to access the visualization."""
+        if self._server is not None:
+            # Use actual port (may differ from requested port if it was already in use)
+            actual_port = self._server.get_port()
+            return f"http://localhost:{actual_port}"
         return f"http://localhost:{self._port}"
 
     def _extract_positions(self, poses: Array) -> Array:
