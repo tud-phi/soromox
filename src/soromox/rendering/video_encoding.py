@@ -19,7 +19,7 @@ class VideoEncodingConfig:
     Attributes:
         codec: Video codec (e.g., "libx264", "libx265")
         pix_fmt: Output pixel format (e.g., "yuv444p", "yuv420p")
-        preset: Encoding preset (e.g., "veryslow", "medium", "fast")
+        preset: Encoding preset (e.g., "veryslow", "slow", "medium", "fast")
         crf: Constant Rate Factor (0-51, lower = higher quality)
         tune: Tuning preset (e.g., "animation", "film", "grain")
         profile: Codec profile (e.g., "high", "baseline")
