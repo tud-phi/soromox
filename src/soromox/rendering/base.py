@@ -416,6 +416,18 @@ class BaseSoftRobotRenderer(ABC):
         num_segments = int(starts.shape[0])
         backbone = cfg.backbone
 
+        segment_palette = backbone.segment_palette
+        if (
+            segment_palette == DEFAULT_SEGMENT_PALETTE
+            and backbone.segment_colors is None
+            and backbone.robot_segment_colors is None
+            and backbone.point_colors is None
+            and backbone.point_palette is None
+            and backbone.robot_point_colors is None
+            and (backbone.robot_colors is not None or num_robots > 1)
+        ):
+            segment_palette = None
+
         robot_colors_rgba, robot_has_alpha = normalize_palette(
             backbone.robot_colors,
             num_robots,
@@ -428,9 +440,9 @@ class BaseSoftRobotRenderer(ABC):
             (num_segments,),
             name="segment_colors",
         )
-        if segment_colors_rgba is None and backbone.segment_palette is not None:
+        if segment_colors_rgba is None and segment_palette is not None:
             segment_colors_rgba, segment_has_alpha = normalize_palette(
-                backbone.segment_palette,
+                segment_palette,
                 num_segments,
                 default_palette=DEFAULT_SEGMENT_PALETTE,
                 name="segment_palette",
