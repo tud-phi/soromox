@@ -27,7 +27,7 @@ def build_robot() -> TendonActuatedPCS:
     params = {
         "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
         "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 1e-2 * jnp.ones((num_segments,)),
+        "r": 2e-2 * jnp.ones((num_segments,)),
         "rho": rho,
         "g": jnp.array([0.0, 0.0, 9.81]),
         "E": 2e3 * jnp.ones((num_segments,)),
@@ -42,7 +42,7 @@ def build_robot() -> TendonActuatedPCS:
         ).flatten()
     )
     active_tendon_routing_params = {
-        "ry": jnp.array([1e-2, -1e-2, 5e-3, -5e-3]),
+        "ry": jnp.array([2e-2, -2e-2, 1e-2, -1e-2]),
         "rz": jnp.zeros((4,)),
         "my": jnp.array([0.0, 0.0, 0.0, 0.0]),
         "mz": jnp.array([0.0, 0.0, 0.0, 0.0]),
