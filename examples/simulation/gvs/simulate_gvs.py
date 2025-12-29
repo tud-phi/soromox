@@ -4,8 +4,11 @@ import jax
 import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)
-from soromox.rendering import Open3DRenderer  # double precision
-from soromox.systems import CrossSectionGeometry, GVS, SystemState
+
+import matplotlib.pyplot as plt
+
+from soromox.rendering import Open3DRenderer, ViserRenderer  # double precision
+from soromox.systems import GVS, CrossSectionGeometry, SystemState
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 jnp.set_printoptions(
@@ -125,7 +128,9 @@ if __name__ == "__main__":
     renderer.show(q0)
 
     # Actuation parameters
-    u = jnp.zeros_like(q0)
+    rng = jax.random.PRNGKey(0)
+    u = jax.random.uniform(rng, shape=q0.shape) * 1.0
+    print("u =\n", u)
 
     # Simulation time parameters
     t0 = 0.0
@@ -154,8 +159,6 @@ if __name__ == "__main__":
         partial(robot.forward_kinematics, s=robot.length)  # end-effector position
     )
     g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
-
-    import matplotlib.pyplot as plt
 
     plt.figure()
     plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
@@ -186,3 +189,30 @@ if __name__ == "__main__":
     # Plot the robot configuration upon time
     # =====================================================
     renderer.render_sequence(ts=ts, q_ts=q_ts, playback_speed=1.0)
+
+    # =====================================================
+    # Viser web-based visualization (trajectory + transparent q0 overlay)
+    # =====================================================
+    if ViserRenderer is None:
+        raise ImportError("ViserRenderer is unavailable. Install viser to run this.")
+
+    q0_ts = jnp.repeat(q0[None, :], len(ts), axis=0)
+    q_ts_overlay = jnp.stack([q_ts, q0_ts], axis=0)
+
+    # Use robot_colors alpha as the default opacity when seg_colors has no alpha.
+    robot_colors = jnp.array(
+        [
+            [1.0, 1.0, 1.0, 1.0],  # dynamic trajectory (opaque)
+            [0.2, 0.6, 0.9, 0.35],  # q0 overlay (transparent)
+        ]
+    )
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer.render_sequence(
+        ts=ts,
+        q_ts=q_ts_overlay,
+        overlay_mode="overlay",
+        playback_speed=1.0,
+        autoplay=True,
+        loop=True,
+        robot_colors=robot_colors,
+    )

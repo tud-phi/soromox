@@ -3,7 +3,7 @@
 Provides interactive 3D visualization accessible via web browser with:
 - Real-time animation playback with GUI controls
 - Live mode for streaming robot states
-- Multiple robot overlay with transparency
+- Multiple robot overlay
 - Dynamic spheres for setpoints/obstacles
 - Embedded plot panels
 - Video export via FFmpeg
@@ -103,7 +103,7 @@ class RobotRenderConfig:
     robot_idx: int
     base_offset: np.ndarray  # (3,)
     color_rgba: np.ndarray  # (4,) or (num_points, 4)
-    alpha: float = 1.0
+    default_alpha: float = 1.0
     visible: bool = True
 
 
@@ -165,10 +165,33 @@ def _normalize_color_palette(
     return _ensure_rgba(palette)
 
 
+def _color_spec_has_alpha(color_spec: str | Array | np.ndarray | None) -> bool:
+    """Check whether a color specification includes an explicit alpha channel."""
+    if color_spec is None or color_spec == "same":
+        return False
+    if isinstance(color_spec, str):
+        return False
+    palette = np.asarray(color_spec)
+    if palette.ndim == 1:
+        return palette.shape[0] == 4
+    return palette.shape[-1] == 4
+
+
 def _rgb_to_viser_color(rgb: np.ndarray) -> tuple[int, int, int]:
     """Convert RGB floats [0,1] to Viser color tuple (0-255)."""
     rgb = np.clip(rgb[:3], 0.0, 1.0)
     return (int(rgb[0] * 255), int(rgb[1] * 255), int(rgb[2] * 255))
+
+
+def _rgba_to_viser_color_and_opacity(
+    rgba: np.ndarray, *, opaque_threshold: float = 0.999
+) -> tuple[tuple[int, int, int], float | None]:
+    """Convert RGBA floats [0,1] to Viser color tuple and optional opacity."""
+    rgba = _ensure_rgba(np.asarray(rgba, dtype=np.float64))[0]
+    opacity = float(np.clip(rgba[3], 0.0, 1.0))
+    if opacity >= opaque_threshold:
+        opacity = None
+    return _rgb_to_viser_color(rgba), opacity
 
 
 def _direction_to_quaternion(
@@ -223,7 +246,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
     Provides interactive 3D visualization accessible via web browser with:
     - Real-time animation playback with GUI controls
     - Live mode for streaming robot states
-    - Multiple robot overlay with transparency
+    - Multiple robot overlay
     - Dynamic spheres for setpoints/obstacles
     - Embedded plot panels
     - Video export via FFmpeg
@@ -510,6 +533,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = curves.shape[0]
         num_points = curves.shape[1]
+        seg_colors_have_alpha = _color_spec_has_alpha(self._seg_colors)
 
         # Clear existing robot geometry
         self._scene_handles.backbone_points = []
@@ -518,6 +542,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         for robot_idx in range(num_robots):
             config = robot_configs[robot_idx]
             curve = curves[robot_idx]  # (num_points, 3)
+            default_alpha = config.default_alpha
 
             # Create backbone geometry
             robot_points = []
@@ -527,15 +552,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 for pt_idx in range(num_points):
                     pos = curve[pt_idx]
                     color_rgba = seg_colors[pt_idx]
-                    color = _rgb_to_viser_color(color_rgba)
-
-                    # Scale alpha by robot alpha
-                    opacity = float(color_rgba[3]) * config.alpha
+                    effective_alpha = (
+                        float(color_rgba[3]) if seg_colors_have_alpha else default_alpha
+                    )
+                    color, opacity = _rgba_to_viser_color_and_opacity(
+                        np.array(
+                            [color_rgba[0], color_rgba[1], color_rgba[2], effective_alpha]
+                        )
+                    )
 
                     handle = self._server.scene.add_icosphere(
                         name=f"/robots/robot_{robot_idx}/backbone/pt_{pt_idx}",
                         radius=self._robot_radius * 0.8,
                         color=color,
+                        opacity=opacity,
                         subdivisions=self._sphere_resolution,
                         position=tuple(pos),
                         material=self._material,
@@ -543,10 +573,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
                         wireframe=self._wireframe,
                         cast_shadow=self._backbone_cast_shadow,
                     )
-                    if opacity < 0.99:
-                        # Viser doesn't support per-mesh opacity directly,
-                        # but we can use RGBA colors in some contexts
-                        pass
                     robot_points.append(handle)
 
             else:  # "swept" style - cylinders between points
@@ -554,6 +580,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     p0 = curve[pt_idx]
                     p1 = curve[pt_idx + 1]
                     color_rgba = seg_colors[pt_idx]
+                    effective_alpha = (
+                        float(color_rgba[3]) if seg_colors_have_alpha else default_alpha
+                    )
+                    color, opacity = _rgba_to_viser_color_and_opacity(
+                        np.array(
+                            [color_rgba[0], color_rgba[1], color_rgba[2], effective_alpha]
+                        )
+                    )
 
                     # Compute cylinder parameters
                     direction = p1 - p0
@@ -566,14 +600,22 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     wxyz = _direction_to_quaternion(direction)
 
                     # Create Z-aligned cylinder mesh, apply rotation via handle
-                    handle = self._server.scene.add_mesh_trimesh(
+                    cylinder_mesh = self._make_cylinder_trimesh(
+                        length=length,
+                        radius=self._robot_radius,
+                        color=color_rgba[:3],
+                        direction=None,  # Keep Z-aligned for efficient updates
+                    )
+                    handle = self._server.scene.add_mesh_simple(
                         name=f"/robots/robot_{robot_idx}/backbone/seg_{pt_idx}",
-                        mesh=self._make_cylinder_trimesh(
-                            length=length,
-                            radius=self._robot_radius,
-                            color=color_rgba[:3],
-                            direction=None,  # Keep Z-aligned for efficient updates
-                        ),
+                        vertices=cylinder_mesh.vertices,
+                        faces=cylinder_mesh.faces,
+                        color=color,
+                        opacity=opacity,
+                        wireframe=self._wireframe,
+                        material=self._material,
+                        flat_shading=self._flat_shading,
+                        cast_shadow=self._backbone_cast_shadow,
                         position=tuple(center),
                         wxyz=wxyz,
                     )
@@ -582,11 +624,19 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 # Add sphere at tip
                 tip_pos = curve[-1]
                 color_rgba = seg_colors[-1]
-                color = _rgb_to_viser_color(color_rgba)
+                effective_alpha = (
+                    float(color_rgba[3]) if seg_colors_have_alpha else default_alpha
+                )
+                color, opacity = _rgba_to_viser_color_and_opacity(
+                    np.array(
+                        [color_rgba[0], color_rgba[1], color_rgba[2], effective_alpha]
+                    )
+                )
                 handle = self._server.scene.add_icosphere(
                     name=f"/robots/robot_{robot_idx}/backbone/tip",
                     radius=self._robot_radius,
                     color=color,
+                    opacity=opacity,
                     subdivisions=self._sphere_resolution,
                     position=tuple(tip_pos),
                     material=self._material,
@@ -812,10 +862,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
         colors = _ensure_rgba(colors)
 
         for i, (pos, radius, color) in enumerate(zip(positions, radii, colors)):
+            viser_color, opacity = _rgba_to_viser_color_and_opacity(color)
             handle = self._server.scene.add_icosphere(
                 name=f"/spheres/static/sphere_{i}",
                 radius=float(radius),
-                color=_rgb_to_viser_color(color),
+                color=viser_color,
+                opacity=opacity,
                 subdivisions=self._sphere_resolution,
                 position=tuple(pos),
                 material=self._material,
@@ -848,10 +900,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         for i, (traj, radius, color) in enumerate(zip(trajectories, radii, colors)):
             pos = traj[min(frame_idx, len(traj) - 1)]
+            viser_color, opacity = _rgba_to_viser_color_and_opacity(color)
             handle = self._server.scene.add_icosphere(
                 name=f"/spheres/dynamic/sphere_{i}",
                 radius=float(radius),
-                color=_rgb_to_viser_color(color),
+                color=viser_color,
+                opacity=opacity,
                 subdivisions=self._sphere_resolution,
                 position=tuple(pos),
                 material=self._material,
@@ -967,7 +1021,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
-        robot_alphas: list[float] | None = None,
         camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -982,7 +1035,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q: Robot configuration (DOF,) or batched (N, DOF)
             base_offsets: Base position offsets (N, 3)
             robot_colors: Per-robot color specification
-            robot_alphas: Per-robot alpha values
             camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
@@ -1020,9 +1072,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
 
         # Build robot configs
-        robot_configs = self._build_robot_configs(
-            num_robots, robot_colors, robot_alphas
-        )
+        robot_configs = self._build_robot_configs(num_robots, robot_colors)
 
         # Get segment colors
         seg_colors = _normalize_color_palette(
@@ -1068,19 +1118,17 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self,
         num_robots: int,
         robot_colors: str | Array | np.ndarray | None,
-        robot_alphas: list[float] | None,
     ) -> list[RobotRenderConfig]:
         """Build per-robot rendering configurations."""
+        color_spec = robot_colors if robot_colors is not None else self._robot_colors
+        robot_colors_have_alpha = _color_spec_has_alpha(color_spec)
+
         # Get colors
         colors = _normalize_color_palette(
-            robot_colors or self._robot_colors,
+            color_spec,
             num_robots,
             default_palette=DEFAULT_SEGMENT_COLORMAP,
         )
-
-        # Get alphas
-        if robot_alphas is None:
-            robot_alphas = [1.0] * num_robots
 
         configs = []
         for i in range(num_robots):
@@ -1089,7 +1137,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     robot_idx=i,
                     base_offset=np.zeros(3),  # Applied via curves
                     color_rgba=colors[i],
-                    alpha=robot_alphas[i] if i < len(robot_alphas) else 1.0,
+                    default_alpha=float(colors[i][3]) if robot_colors_have_alpha else 1.0,
                 )
             )
         return configs
@@ -1100,7 +1148,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
-        robot_alphas: list[float] | None = None,
         camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1116,7 +1163,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q: Robot configuration (DOF,) or batched (N, DOF)
             base_offsets: Base position offsets (N, 3)
             robot_colors: Per-robot color specification
-            robot_alphas: Per-robot alpha values
             camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
@@ -1152,9 +1198,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
 
         # Build robot configs
-        robot_configs = self._build_robot_configs(
-            num_robots, robot_colors, robot_alphas
-        )
+        robot_configs = self._build_robot_configs(num_robots, robot_colors)
 
         # Get segment colors
         seg_colors = _normalize_color_palette(
@@ -1215,8 +1259,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
         overlay_mode: Literal["grid", "overlay"] = "grid",
-        robot_alphas: list[float] | None = None,
-        segment_alphas: np.ndarray | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1245,8 +1287,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 2/3)
             robot_colors: Per-robot color specification
             overlay_mode: "grid" for side-by-side, "overlay" for same position
-            robot_alphas: Per-robot transparency [0, 1]
-            segment_alphas: Per-segment transparency (N, S)
             static_spheres_*: Static sphere configuration
             dynamic_spheres_*: Time-varying sphere configuration
             show_tendons: If True, render tendons (if available)
@@ -1282,11 +1322,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if overlay_mode == "overlay":
             # All robots at same position
             base_offsets = jnp.zeros((num_robots, 3))
-            # Set transparency gradient if not provided
-            if robot_alphas is None:
-                robot_alphas = [
-                    1.0 - i * 0.3 / max(1, num_robots - 1) for i in range(num_robots)
-                ]
         elif base_offsets is not None:
             base_offsets = jnp.asarray(base_offsets)
         elif self._base_offsets is not None:
@@ -1301,9 +1336,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             )
 
         # Build robot configs
-        robot_configs = self._build_robot_configs(
-            num_robots, robot_colors, robot_alphas
-        )
+        robot_configs = self._build_robot_configs(num_robots, robot_colors)
 
         # Get segment colors
         seg_colors = _normalize_color_palette(
@@ -2063,7 +2096,7 @@ class LiveModeController:
         )
 
         # Build configs
-        robot_configs = self._renderer._build_robot_configs(num_robots, None, None)
+        robot_configs = self._renderer._build_robot_configs(num_robots, None)
 
         # Check if we can use efficient updates
         scene_handles = self._renderer._scene_handles

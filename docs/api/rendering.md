@@ -112,11 +112,15 @@ BaseSoftRobotRenderer (abstract base)
     # Multiple robots in grid layout
     renderer.show(q_batch, robot_colors="viridis")
 
-    # Multiple robots overlayed with transparency
+    # Multiple robots overlayed (robot_colors alpha sets default opacity)
     renderer.render_sequence(
         ts, q_ts_batched,  # (N, T, DOF)
         overlay_mode="overlay",
-        robot_alphas=[1.0, 0.5, 0.3],
+        robot_colors=[
+            [0.2, 0.6, 0.9, 0.35],
+            [0.9, 0.3, 0.2, 0.5],
+            [0.2, 0.8, 0.4, 0.7],
+        ],
     )
 
     # Live mode - callback-based
@@ -164,7 +168,7 @@ BaseSoftRobotRenderer (abstract base)
 ### Colors
 
 - `seg_colors` (Open3D/Viser): optional colormap name or array of shape (N,3)/(N,4); defaults to the `coolwarm` colormap.
-- `robot_colors` (Matplotlib/Open3D/Viser): optional colormap name or array of shape (N,3)/(N,4) cycled across robots; `"same"` uses the first segment color. Alpha is honored where supported.
+- `robot_colors` (Matplotlib/Open3D/Viser): optional colormap name or array of shape (N,3)/(N,4) cycled across robots; `"same"` uses the first segment color. Alpha is honored where supported (Viser uses `robot_colors` alpha as a default opacity when `seg_colors` has no alpha).
 
 ### Visual Quality Settings (Viser)
 
