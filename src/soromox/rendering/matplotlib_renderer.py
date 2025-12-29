@@ -255,7 +255,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         else:
             ax = fig.add_subplot(111)
 
-        self._setup_axes(ax, width_m, center_origin=batched)
+        scene_center = None
+        scene_extent = None
+        if curves_np.size:
+            flat = curves_np.reshape(-1, curves_np.shape[-1])
+            scene_center = np.mean(flat, axis=0)
+            scene_extent = float(np.max(np.ptp(flat, axis=0)))
+
+        self._setup_axes(
+            ax,
+            width_m,
+            center_origin=batched,
+            camera_config=camera_config,
+            scene_center=scene_center,
+            scene_extent=scene_extent,
+        )
 
         self._plot_backbone(ax, curves_np, resolved_colors.per_robot_point_rgba)
 
@@ -389,6 +403,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 render_tendons=render_tendons,
                 record_path=record_path,
                 playback_speed=playback_speed,
+                camera_config=camera_config,
             )
         if q_ts_arr.ndim == 2:
             return self._animate_single(
@@ -402,6 +417,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 render_tendons=render_tendons,
                 record_path=record_path,
                 playback_speed=playback_speed,
+                camera_config=camera_config,
             )
 
         raise ValueError(
@@ -420,6 +436,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         render_tendons: bool,
         record_path: str | None,
         playback_speed: float,
+        camera_config: CameraConfig | None,
     ):
         """Animate a single robot (legacy behavior).
 
@@ -482,6 +499,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             record_path=record_path,
             tendon_color=cfg.tendon_color,
             playback_speed=playback_speed,
+            camera_config=camera_config,
         )
 
     def _animate_batched(
@@ -496,6 +514,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         render_tendons: bool,
         record_path: str | None,
         playback_speed: float,
+        camera_config: CameraConfig | None,
     ):
         """Animate multiple robots arranged in a grid layout.
 
@@ -579,6 +598,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             record_path=record_path,
             tendon_color=cfg.tendon_color,
             playback_speed=playback_speed,
+            camera_config=camera_config,
         )
 
     def _animate_backbone_curves(
@@ -594,6 +614,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         record_path: str | None = None,
         tendon_color: tuple[float, float, float] | None = None,
         playback_speed: float = 1.0,
+        camera_config: CameraConfig | None = None,
     ):
         """Shared Matplotlib animation for one or more robots."""
         num_robots, num_steps, _, _ = all_curves.shape
@@ -610,7 +631,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         else:
             ax = fig.add_subplot(111)
 
-        self._setup_axes(ax, width_m, center_origin=center_origin)
+        scene_center = None
+        scene_extent = None
+        if all_curves.size:
+            flat = all_curves.reshape(-1, all_curves.shape[-1])
+            scene_center = np.mean(flat, axis=0)
+            scene_extent = float(np.max(np.ptp(flat, axis=0)))
+
+        self._setup_axes(
+            ax,
+            width_m,
+            center_origin=center_origin,
+            camera_config=camera_config,
+            scene_center=scene_center,
+            scene_extent=scene_extent,
+        )
         title_text = ax.set_title("t = 0.00 s")
 
         segment_colors = [
@@ -838,7 +873,15 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             collections.append(lc)
         return collections
 
-    def _setup_axes(self, ax, width_m: float, center_origin: bool = False) -> None:
+    def _setup_axes(
+        self,
+        ax,
+        width_m: float,
+        center_origin: bool = False,
+        camera_config: CameraConfig | None = None,
+        scene_center: np.ndarray | None = None,
+        scene_extent: float | None = None,
+    ) -> None:
         """Set up axis limits and labels.
 
         Args:
@@ -852,6 +895,23 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_zlabel("Z [m]")
+            if camera_config is not None:
+                center = (
+                    np.array(scene_center, dtype=np.float64)
+                    if scene_center is not None
+                    else np.array([0.0, 0.0, width_m * 0.5], dtype=np.float64)
+                )
+                extent = float(scene_extent) if scene_extent is not None else width_m
+                camera_pos, look_at = camera_config.compute_auto_position(
+                    center, extent
+                )
+                view_vec = np.asarray(camera_pos, dtype=np.float64) - np.asarray(
+                    look_at, dtype=np.float64
+                )
+                r_xy = float(np.hypot(view_vec[0], view_vec[1]))
+                azim = np.degrees(np.arctan2(view_vec[1], view_vec[0]))
+                elev = np.degrees(np.arctan2(view_vec[2], r_xy))
+                ax.view_init(elev=elev, azim=azim)
         else:
             ax.set_xlim(-width_m / 2, width_m / 2)
             if center_origin:
