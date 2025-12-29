@@ -4,6 +4,11 @@ Provides unified FFmpeg video encoding configuration and writer classes
 that can be used by both Open3D and OpenCV renderers.
 """
 
+__all__ = [
+    "VideoEncodingConfig",
+    "FFmpegVideoWriter",
+]
+
 from __future__ import annotations
 
 import subprocess
@@ -39,7 +44,7 @@ class VideoEncodingConfig:
     extra_args: tuple[str, ...] = ()
 
 
-class _FFmpegVideoWriter:
+class FFmpegVideoWriter:
     """Minimal ffmpeg pipe for video frames.
 
     Supports both RGB and BGR input formats, making it suitable for

@@ -43,7 +43,7 @@ DEFAULT_SEGMENT_COLORMAP = "coolwarm"
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
+from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 # ======================================================================================
@@ -1896,7 +1896,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             video_path = record_path
             fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
             try:
-                video_writer = _FFmpegVideoWriter(
+                video_writer = FFmpegVideoWriter(
                     video_path,
                     int(self.width),
                     int(self.height),

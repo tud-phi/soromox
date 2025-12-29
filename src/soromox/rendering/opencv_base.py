@@ -9,7 +9,7 @@ import numpy as np
 from jax import Array
 
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
+from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 
 
 class BaseOpenCVRenderer(BaseSoftRobotRenderer):
@@ -53,13 +53,13 @@ class BaseOpenCVRenderer(BaseSoftRobotRenderer):
         print(f"{label} Rendering video with dt={video_dt:.4f} and {len(ts_np)} frames")
 
         width, height = int(self.width), int(self.height)
-        video_writer: _FFmpegVideoWriter | None = None
+        video_writer: FFmpegVideoWriter | None = None
         cv_video: cv2.VideoWriter | None = None
         try:
             # Use default config with yuv420p for OpenCV (better compatibility)
             if video_config is None:
                 video_config = VideoEncodingConfig(pix_fmt="yuv420p")
-            video_writer = _FFmpegVideoWriter(
+            video_writer = FFmpegVideoWriter(
                 str(record_path),
                 width,
                 height,

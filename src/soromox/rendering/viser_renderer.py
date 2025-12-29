@@ -39,7 +39,7 @@ except ImportError:
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
-from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
+from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import SoftRobot
 
 # Default colormap used for segment colors when none are provided
@@ -1447,7 +1447,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         video_writer = None
         if record_path is not None:
             fps = 1.0 / np.mean(np.diff(ts)) if len(ts) > 1 else 30.0
-            video_writer = _FFmpegVideoWriter(
+            video_writer = FFmpegVideoWriter(
                 record_path,
                 self.width,
                 self.height,
