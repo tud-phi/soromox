@@ -17,6 +17,10 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     using the Cosserat rod theory and piecewise constant strain assumption.
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
 
+    This class assumes parallel routing of the tendons to the backbone centerline.
+    For other kinds of tendon routings (e.g., out-of-plane, helicoidal, etc.),
+    the `TendonActuatedPCS` should be used.
+
     Attributes:
         num_segments: Number of segments (constant strain sections) along the robot.
         num_actuators: Number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar tendon-driven robots).
@@ -43,6 +47,9 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         Thus:   - kappa_z corresponds to bending around the z-axis,
                 - sigma_x corresponds to axial strain along the x-axis,
                 - sigma_y corresponds to shear along the y-axis.
+    - This class assumes parallel routing of the tendons to the backbone centerline.
+      For other kinds of tendon routings (e.g., out-of-plane, helicoidal, etc.),
+      the `TendonActuatedPCS` should be used.
 
     """
 
