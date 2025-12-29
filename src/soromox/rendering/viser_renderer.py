@@ -311,13 +311,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._backbone_cast_shadow = backbone_cast_shadow
         self._sphere_cast_shadow = sphere_cast_shadow
 
-        # Check for tendon support
-        self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
-        if self._has_tendons:
-            self._batched_fk_tendons = jax.vmap(
-                robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
-            )
-
         # Get robot radius for sizing
         self._robot_radius = self._get_robot_radius()
 
@@ -587,52 +580,50 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Clear existing tendon geometry
         self._scene_handles.tendon_lines = []
 
-        # Discretize along the robot length for tendon FK
-        num_tendon_points = 30
-        s_tendon = jnp.linspace(0.0, self.L_max, num_tendon_points)
+        # Compute tendon curves for all robots at once using batched method
+        # Returns shape (num_robots, num_tendons, num_points, 3) or None
+        tendon_curves = self.compute_tendon_curves_batched(q, jnp.asarray(base_offsets))
 
+        if tendon_curves is None:
+            return
+
+        tendon_curves = np.asarray(
+            tendon_curves
+        )  # (num_robots, num_tendons, num_points, 3)
+
+        color_arr = (
+            np.array(tendon_color)
+            if tendon_color is not None
+            else np.array(self.color_config.tendon_color)
+        )
+        color = _rgb_to_viser_color(color_arr)
+
+        # Process all robots and tendons
         for robot_idx in range(num_robots):
-            q_robot = q[robot_idx]
-            offset = base_offsets[robot_idx]
+            robot_tendon_curves = tendon_curves[
+                robot_idx
+            ]  # (num_tendons, num_points, 3)
+            num_tendons = robot_tendon_curves.shape[0]
 
-            try:
-                # Get tendon positions: (num_tendons, num_points, 3)
-                tendon_positions = self._batched_fk_tendons(q_robot, s_tendon)
-                tendon_positions = np.asarray(tendon_positions)
+            for tendon_idx in range(num_tendons):
+                tendon_curve = robot_tendon_curves[tendon_idx]  # (num_points, 3)
 
-                # Add offset to all points
-                tendon_positions = tendon_positions + offset[None, None, :]
-
-                num_tendons = tendon_positions.shape[0]
-
-                for tendon_idx in range(num_tendons):
-                    tendon_curve = tendon_positions[tendon_idx]  # (num_points, 3)
-
-                    # Create line segments for each tendon
-                    # Viser uses pairs of points for line segments
-                    points = []
-                    for i in range(len(tendon_curve) - 1):
-                        points.extend([tendon_curve[i], tendon_curve[i + 1]])
-                    points = np.array(points)
-
-                    color_arr = (
-                        np.array(tendon_color)
-                        if tendon_color is not None
-                        else np.array(self.color_config.tendon_color)
-                    )
-                    color = _rgb_to_viser_color(color_arr)
+                # Create line segments for each tendon
+                # Viser expects shape (N, 2, 3) for N line segments
+                num_segments = len(tendon_curve) - 1
+                if num_segments > 0:
+                    # Reshape to (N, 2, 3) where each segment has start and end points
+                    points = np.stack(
+                        [tendon_curve[:-1], tendon_curve[1:]], axis=1
+                    )  # (num_segments, 2, 3)
 
                     handle = self._server.scene.add_line_segments(
                         name=f"/robots/robot_{robot_idx}/tendons/tendon_{tendon_idx}",
                         points=points,
-                        colors=np.tile(color, (len(points), 1)).astype(np.uint8),
+                        colors=np.tile(color, (num_segments, 2, 1)).astype(np.uint8),
                         line_width=self._tendon_line_width,
                     )
                     self._scene_handles.tendon_lines.append(handle)
-
-            except Exception:
-                # Tendon FK may not be available for all robot types
-                pass
 
     def _make_cylinder_trimesh(
         self,

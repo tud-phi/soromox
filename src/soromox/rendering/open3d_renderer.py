@@ -25,6 +25,7 @@ import os
 import time
 import warnings
 from dataclasses import dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -524,13 +525,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             "elliptical_cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
         }
 
-        # Cache tendon FK if available
-        self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
-        if self._has_tendons:
-            self._batched_fk_tendons = jax.vmap(
-                robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
-            )
-
     @staticmethod
     def _resolve_backbone_mode(style: str) -> str:
         style_norm = str(style).strip().lower()
@@ -566,22 +560,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             Position array of shape (N, 3) with xyz coordinates.
         """
         return self._extract_positions_3d(poses)
-
-    def compute_tendon_curves(self, q: Array) -> Array | None:
-        """Compute tendon paths if the robot exposes tendon kinematics.
-
-        Args:
-            q: Robot configuration of shape (DOF,) for a single robot.
-
-        Returns:
-            curves (Optional[Array]): An array of shape (n_tendons, num_points, 3) with
-            tendon curves expressed in world coordinates, or None if tendons are
-            not supported by the robot.
-        """
-        if not self._has_tendons:
-            return None
-        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        return self._batched_fk_tendons(q, s_ps)
 
     # -------------------------------------------------------------------------
     # Shared helpers
@@ -907,9 +885,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         tendon_curves = None
         if self._has_tendons:
-
+            # Use batched computation for all robots at each timestep
+            # Since _has_tendons is True, compute_tendon_curves_batched will not return None
             def _compute_tendons_for_timestep(q_batch: jax.Array) -> jax.Array:
-                return jax.vmap(self.compute_tendon_curves)(q_batch)
+                result = self.compute_tendon_curves_batched(q_batch, offsets)
+                # Type cast: result cannot be None when _has_tendons is True
+                return cast(jax.Array, result)
 
             all_tendons_time_first = jax.vmap(_compute_tendons_for_timestep)(
                 q_ts_time_first
@@ -917,13 +898,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             tendon_curves = np.array(
                 all_tendons_time_first.transpose(1, 0, 2, 3, 4), dtype=np.float64
             )
-
-            offsets_np = np.asarray(offsets)
-            if offsets_np.shape[1] == 2:
-                offsets_np = np.concatenate(
-                    [offsets_np, np.zeros((offsets_np.shape[0], 1))], axis=1
-                )
-            tendon_curves = tendon_curves + offsets_np[:, None, None, None, :]
 
         static_spheres = self._prepare_static_spheres(
             static_spheres_positions, static_spheres_radii, static_spheres_colors
