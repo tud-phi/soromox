@@ -1,6 +1,7 @@
 __all__ = ["PlanarHSA"]
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import dill
 import equinox as eqx
@@ -201,7 +202,7 @@ class PlanarHSA(SoftRobot):
         consider_underactuation: bool = True,
         consider_hysteresis: bool = False,
         eps: float = 1e-6,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the PlanarHSA system.
@@ -540,13 +541,21 @@ class PlanarHSA(SoftRobot):
         self.alpha_lambda = alpha_lambda
 
     @property
+    def is_planar(self) -> bool:
+        """Planar HSA is a 2D model."""
+        return True
+
+    @property
     def length(self) -> Array:
         """Total backbone length."""
         return self.Lmax
 
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array]:
+    @property
+    def segment_length(self) -> Array:
+        """Per-segment backbone lengths."""
+        return jnp.asarray(self.L)
+
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Circular cross-section using max rod offset for the segment."""
         segment_idx, _ = self.classify_segment(s)
         roff = jnp.asarray(self.roff)

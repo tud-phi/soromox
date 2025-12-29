@@ -107,13 +107,8 @@ dependencies = [
   "diffrax",
   "dill",
   "equinox",
-  "ffmpeg-python",
   "jax",
-  "matplotlib",
   "numpy",
-  "opencv-python",
-  "quadax",
-  "peppercorn",
   "scipy",
   "sympy",
   "tqdm",
@@ -156,12 +151,18 @@ examples = [
     "jaxopt",
     "matplotlib",
     "open3d>=0.18",
+    "opencv-python",
+    "plotly",
     "seaborn",
+    "viser",
 ]
 rendering = [
+    "ffmpeg-python",
     "matplotlib",
     "open3d>=0.18",
-    "ffmpeg-python",
+    "opencv-python",
+    "plotly",
+    "viser",
 ]
 test = [
     "codecov",
@@ -188,6 +189,8 @@ all = [
     "mkdocs-section-index",
     "mkdocs-autorefs",
     "open3d>=0.18",
+    "opencv-python",
+    "plotly",
     "pre-commit",
     "pytest",
     "pytest-cov",
@@ -195,6 +198,7 @@ all = [
     "ruff",
     "seaborn",
     "tox",
+    "viser",
 ]
 
 # List URLs that are relevant to your project

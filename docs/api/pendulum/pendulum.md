@@ -42,7 +42,7 @@ yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
 
 ## API Reference
 
-::: soromox.systems.pendulum
+::: soromox.systems.pendulum.pendulum
     options:
       show_root_heading: true
       show_source: false

@@ -25,6 +25,7 @@ import os
 import time
 import warnings
 from dataclasses import dataclass
+from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -38,11 +39,10 @@ try:
 except ImportError:
     OPEN3D_AVAILABLE = False
 
-# Default colormap used for segment colors when none are provided
-DEFAULT_SEGMENT_COLORMAP = "coolwarm"
-
 from soromox.rendering.base import BaseSoftRobotRenderer
-from soromox.rendering.video_encoding import VideoEncodingConfig, _FFmpegVideoWriter
+from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
+from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 # ======================================================================================
@@ -362,107 +362,6 @@ def _make_obstacle_sphere(
     return _make_sphere(center_xyz, radius, color, resolution)
 
 
-def _split_counts_by_lengths(num_points: int, L: np.ndarray) -> list[int]:
-    """Split num_points across len(L) segments proportionally to lengths."""
-    L = np.asarray(L, dtype=np.float64).reshape(-1)
-    S = int(L.size)
-    if S == 0:
-        return [num_points]
-    if num_points < S:
-        base = [1] * S
-        base[-1] += num_points - S
-        return base
-
-    Ltot = float(L.sum())
-    if Ltot <= 0:
-        base = [num_points // S] * S
-        rem = num_points - sum(base)
-        for i in range(rem):
-            base[i] += 1
-        return base
-
-    raw = [num_points * (float(li) / Ltot) for li in L]
-    base = [max(1, int(round(x))) for x in raw]
-    diff = num_points - sum(base)
-    if diff != 0:
-        fracs = np.array([x - np.floor(x) for x in raw])
-        order = np.argsort(fracs)[::-1] if diff > 0 else np.argsort(fracs)
-        idxs = order.tolist()
-        k = abs(diff)
-        j = 0
-        while k > 0 and idxs:
-            i = idxs[j % len(idxs)]
-            if diff > 0:
-                base[i] += 1
-            else:
-                if base[i] > 1:
-                    base[i] -= 1
-                else:
-                    j += 1
-                    continue
-            k -= 1
-            j += 1
-    return base
-
-
-def _colormap_rgba(name: str, count: int) -> np.ndarray:
-    """Return RGBA colors from a Matplotlib colormap name."""
-    import matplotlib.cm as cm
-
-    cmap = cm.get_cmap(name)
-    return np.asarray(
-        [cmap(i / max(1, count - 1))[:4] for i in range(count)], dtype=np.float64
-    )
-
-
-def _ensure_rgba(arr: np.ndarray) -> np.ndarray:
-    """Ensure array has shape (N, 4) with alpha; accepts (N, 3/4)."""
-    arr = np.asarray(arr, dtype=np.float64)
-    if arr.ndim == 1:
-        if arr.shape[0] not in (3, 4):
-            raise ValueError(f"Color must have 3 or 4 channels; got shape {arr.shape}")
-        arr = arr.reshape(1, -1)
-    if arr.ndim != 2 or arr.shape[1] not in (3, 4):
-        raise ValueError(
-            f"Color array must have shape (N, 3) or (N, 4); got {arr.shape}"
-        )
-    if arr.shape[1] == 3:
-        alpha = np.ones((arr.shape[0], 1), dtype=np.float64)
-        arr = np.concatenate([arr, alpha], axis=1)
-    return np.clip(arr, 0.0, 1.0)
-
-
-def _normalize_color_palette(
-    color_spec: str | Array | np.ndarray | None,
-    count: int,
-    *,
-    default_palette: np.ndarray,
-) -> np.ndarray:
-    """Resolve a color specification to an RGBA palette of length `count`.
-
-    Supports:
-        - None: use default_palette
-        - str: Matplotlib colormap name
-        - array/list/tuple: shape (N, 3) or (N, 4), cycled if N < count
-    """
-    if color_spec is None or color_spec == "same":
-        palette = np.asarray(default_palette, dtype=np.float64)
-    elif isinstance(color_spec, str):
-        palette = _colormap_rgba(color_spec, count)
-    else:
-        palette = _ensure_rgba(np.asarray(color_spec, dtype=np.float64))
-
-    if palette.shape[0] == 0:
-        palette = np.asarray(default_palette, dtype=np.float64)
-
-    if palette.shape[0] < count:
-        reps = int(np.ceil(count / palette.shape[0]))
-        palette = np.tile(palette, (reps, 1))
-
-    palette = palette[:count]
-    return np.clip(palette, 0.0, 1.0)
-
-
 def _mesh_center(mesh: o3d.geometry.TriangleMesh) -> np.ndarray:
     """Approximate center: mean of vertices."""
     return np.asarray(mesh.vertices).mean(axis=0)
@@ -475,7 +374,6 @@ class SegmentLayout:
     starts: np.ndarray
     ends: np.ndarray
     radii: np.ndarray
-    colors_rgba: np.ndarray  # (S, 4)
 
     @property
     def segments(self) -> int:
@@ -502,7 +400,7 @@ class SceneData:
     q_ts: np.ndarray  # (N, T, DOF)
     ts: np.ndarray  # (T,)
     layout: SegmentLayout
-    robot_colors_rgba: np.ndarray | None  # (N, 4) or None for per-segment colors
+    segment_colors_rgba: np.ndarray  # (N, S, 4)
     tendon_curves: np.ndarray | None = None  # (N, T, n_tend, P, 3)
     static_spheres: SphereSet | None = None
     dynamic_spheres: DynamicSpheres | None = None
@@ -559,18 +457,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         height: int = 1200,
         num_points: int = 80,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
-        seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
         backbone_style: str = "discrete",
         recompute_normals: bool = True,
         tube_resolution: int = 20,
         sphere_resolution: int = 32,
-        base_plate_color: tuple[float, float, float] = (0.0, 0.0, 0.0),
         base_plate_radius_scale: float = 2.0,
-        base_plate_thickness: float = 5e-2 * 1.3,
+        base_plate_thickness: float = 0.06,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
-        tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
     ):
@@ -582,24 +477,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             height: Window height in pixels
             num_points: Number of points for backbone discretization
             background_color: RGB background color (0-1 range)
-            seg_colors: Optional colors for each segment. Defaults to a colormap
-                ("coolwarm"). Accepts a Matplotlib colormap name or an array of shape
-                (N, 3) or (N, 4) with optional alpha channel.
-            robot_colors: Color configuration when rendering multiple robots. Can be:
-                - None: Use per-segment colors for all robots
-                - "same": All robots use the first resolved segment color
-                - Colormap name (e.g., "viridis", "plasma"): Distinct colors per robot
-                - Array of RGB or RGBA colors of shape (N, 3/4); cycled if fewer than N
+            color_config: Shared renderer color configuration
             backbone_style: "discrete" or "swept"
             recompute_normals: Whether to recompute vertex normals per segment update
             tube_resolution: Radial resolution for tube segments
             sphere_resolution: Resolution for backbone spheres
-            base_plate_color: RGB color for the base plate geometry
             base_plate_radius_scale: Multiplier applied to the maximum cross-section radius to size the base plate
             base_plate_thickness: Absolute thickness of the base plate geometry
             grid_spacing: (x, y) spacing between robot bases for batched rendering
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
-            tendon_color: RGB color for tendon lines
             tendon_line_width: Width of tendon lines
             camera_margin_ratio: Margin ratio for camera bounding box
         """
@@ -608,11 +494,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 "Open3D is not installed. Install with: pip install open3d"
             )
 
-        super().__init__(robot, width, height, num_points, background_color)
+        super().__init__(
+            robot,
+            width,
+            height,
+            num_points,
+            background_color,
+            color_config=color_config,
+        )
 
-        self.seg_colors = seg_colors
-        self._seg_colors_config = seg_colors
-        self._robot_colors_config = robot_colors
         self.backbone_style = backbone_style
         self._backbone_mode = self._resolve_backbone_mode(backbone_style)
         self.recompute_normals = bool(recompute_normals)
@@ -621,10 +511,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.tube_resolution = int(tube_resolution)
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
-        self.tendon_color = tendon_color
         self.tendon_line_width = tendon_line_width
         self.camera_margin_ratio = camera_margin_ratio
-        self.base_plate_color = tuple(base_plate_color)
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
         self._warned_dynamic_geometry = False
@@ -636,13 +524,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             "cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
             "elliptical_cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
         }
-
-        # Cache tendon FK if available
-        self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
-        if self._has_tendons:
-            self._batched_fk_tendons = jax.vmap(
-                robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
-            )
 
     @staticmethod
     def _resolve_backbone_mode(style: str) -> str:
@@ -665,24 +546,20 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         return True
 
     def _extract_positions(self, poses: Array) -> Array:
-        """Extract xyz from SE(3) matrices."""
-        return poses[:, :3, 3]
+        """Extract 3D positions from SE(2) or SE(3) poses.
 
-    def compute_tendon_curves(self, q: Array) -> Array | None:
-        """Compute tendon paths if the robot exposes tendon kinematics.
+        Supports both planar (SE(2)) and 3D (SE(3)) robots by converting
+        SE(2) poses [theta, x, y] to 3D coordinates [x, y, 0].
 
         Args:
-            q: Robot configuration of shape (DOF,) for a single robot.
+            poses: Forward kinematics output - either:
+                - (N, 3) for SE(2) poses [theta, x, y]
+                - (N, 4, 4) for SE(3) transformation matrices
 
         Returns:
-            curves (Optional[Array]): An array of shape (n_tendons, num_points, 3) with
-            tendon curves expressed in world coordinates, or None if tendons are
-            not supported by the robot.
+            Position array of shape (N, 3) with xyz coordinates.
         """
-        if not self._has_tendons:
-            return None
-        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        return self._batched_fk_tendons(q, s_ps)
+        return self._extract_positions_3d(poses)
 
     # -------------------------------------------------------------------------
     # Shared helpers
@@ -692,7 +569,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self, color_rgba: tuple[float, float, float] | tuple[float, float, float, float]
     ) -> o3d.visualization.rendering.MaterialRecord:
         """Create an Open3D material honoring per-color alpha."""
-        rgba = _ensure_rgba(np.asarray(color_rgba, dtype=np.float64))[0]
+        rgba = ensure_rgba(np.asarray(color_rgba, dtype=np.float64))[0]
         mat = o3d.visualization.rendering.MaterialRecord()
         mat.shader = "defaultLitTransparency" if rgba[3] < 0.999 else "defaultLit"
         mat.base_color = (
@@ -710,7 +587,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         | np.ndarray,
     ) -> tuple[float, float, float]:
         """Approximate transparency for the visualizer by blending with the background."""
-        rgba = _ensure_rgba(np.asarray(color, dtype=np.float64))[0]
+        rgba = ensure_rgba(np.asarray(color, dtype=np.float64))[0]
         alpha = float(rgba[3])
         rgb = rgba[:3]
         if alpha >= 0.999:
@@ -784,30 +661,18 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
     def _compute_segment_layout(self, P: int) -> SegmentLayout:
         """Compute start/end indices, radii, and colors for backbone segments."""
-        if hasattr(self.robot, "L"):
-            L_np = np.asarray(self.robot.L, dtype=np.float64).reshape(-1)
-        elif hasattr(self.robot, "V_L"):
-            L_np = np.asarray(self.robot.V_L, dtype=np.float64).reshape(-1)
-        else:
-            L_np = np.array([self.L_max], dtype=np.float64)
-
+        lengths = np.asarray(self.robot.segment_length, dtype=np.float64).reshape(-1)
         if hasattr(self.robot, "r"):
             r_seg = np.asarray(self.robot.r, dtype=np.float64).reshape(-1)
         else:
-            r_seg = np.zeros_like(L_np, dtype=np.float64)
-        counts = _split_counts_by_lengths(P, L_np)
+            r_seg = np.zeros_like(lengths, dtype=np.float64)
+        counts = self._split_counts_by_lengths(P, lengths)
         starts = np.cumsum([0] + counts[:-1]).astype(int)
         ends = np.cumsum(counts).astype(int)
-        colors_rgba = _normalize_color_palette(
-            self._seg_colors_config,
-            len(counts),
-            default_palette=_colormap_rgba(DEFAULT_SEGMENT_COLORMAP, len(counts)),
-        )
         return SegmentLayout(
             starts=starts,
             ends=ends,
             radii=r_seg,
-            colors_rgba=colors_rgba,
         )
 
     @staticmethod
@@ -963,7 +828,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         q_ts: Array,
         *,
         base_offsets: Array | None,
-        robot_colors: str | Array | np.ndarray | None,
+        color_config: RendererColorConfig | None,
         static_spheres_positions: Array | None,
         static_spheres_radii: Array | None,
         static_spheres_colors: Array | None,
@@ -1014,20 +879,18 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         curves = np.array(all_curves_time_first.transpose(1, 0, 2, 3), dtype=np.float64)
 
         layout = self._compute_segment_layout(curves.shape[2])
-        robot_colors_cfg = (
-            self._robot_colors_config if robot_colors is None else robot_colors
+        resolved_colors = self.resolve_backbone_colors(
+            int(N), color_config=color_config
         )
-        robot_colors_rgba = None
-        if robot_colors_cfg is not None:
-            robot_colors_rgba = _get_robot_colors(
-                N, robot_colors_cfg, layout.colors_rgba[0]
-            )
 
         tendon_curves = None
         if self._has_tendons:
-
+            # Use batched computation for all robots at each timestep
+            # Since _has_tendons is True, compute_tendon_curves_batched will not return None
             def _compute_tendons_for_timestep(q_batch: jax.Array) -> jax.Array:
-                return jax.vmap(self.compute_tendon_curves)(q_batch)
+                result = self.compute_tendon_curves_batched(q_batch, offsets)
+                # Type cast: result cannot be None when _has_tendons is True
+                return cast(jax.Array, result)
 
             all_tendons_time_first = jax.vmap(_compute_tendons_for_timestep)(
                 q_ts_time_first
@@ -1035,13 +898,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             tendon_curves = np.array(
                 all_tendons_time_first.transpose(1, 0, 2, 3, 4), dtype=np.float64
             )
-
-            offsets_np = np.asarray(offsets)
-            if offsets_np.shape[1] == 2:
-                offsets_np = np.concatenate(
-                    [offsets_np, np.zeros((offsets_np.shape[0], 1))], axis=1
-                )
-            tendon_curves = tendon_curves + offsets_np[:, None, None, None, :]
 
         static_spheres = self._prepare_static_spheres(
             static_spheres_positions, static_spheres_radii, static_spheres_colors
@@ -1058,7 +914,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q_ts=q_ts_np,
             ts=ts_np,
             layout=layout,
-            robot_colors_rgba=robot_colors_rgba,
+            segment_colors_rgba=resolved_colors.per_robot_segment_rgba,
             tendon_curves=tendon_curves,
             static_spheres=static_spheres,
             dynamic_spheres=dynamic_spheres,
@@ -1074,10 +930,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         scene_data: SceneData,
         frame_idx: int,
         material_cache: dict[tuple[float, float, float], object] | None = None,
+        color_config: RendererColorConfig | None = None,
     ) -> None:
         """Add all geometries for a specific frame to an Open3DScene."""
         if material_cache is None:
             material_cache = {}
+        cfg = color_config or self.color_config
 
         def mat_for(color_rgba: np.ndarray | tuple[float, ...]):
             key = tuple(np.asarray(color_rgba, dtype=np.float64).reshape(-1))
@@ -1093,12 +951,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             curve = scene_data.curves[robot_idx, frame_idx]
             q_frame = scene_data.q_ts[robot_idx, frame_idx]
             sections, max_radius = self._cross_sections_for_points(q_frame, s_ps)
-            color_override = (
-                scene_data.robot_colors_rgba[robot_idx]
-                if scene_data.robot_colors_rgba is not None
-                else None
-            )
-            base_color_rgba = _ensure_rgba(np.asarray(self.base_plate_color))[0]
+            base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
             base_mesh = _make_base_plate(
                 curve[0],
                 radius=float(self.base_plate_radius_scale * max_radius),
@@ -1111,11 +964,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
             for s in range(layout.segments):
                 c0, c1 = int(layout.starts[s]), int(layout.ends[s])
-                raw_color_rgba = (
-                    color_override
-                    if color_override is not None
-                    else layout.colors_rgba[s]
-                )
+                raw_color_rgba = scene_data.segment_colors_rgba[robot_idx, s]
                 raw_color_rgb = tuple(np.asarray(raw_color_rgba).reshape(-1)[:3])
                 if self._backbone_mode == "swept" and c1 - c0 >= 1:
                     edge_end = min(c1, curve.shape[0] - 1)
@@ -1237,7 +1086,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
                 for k in range(robot_tendons.shape[0]):
                     ls = _make_polyline_lineset(
-                        robot_tendons[k], color=self.tendon_color
+                        robot_tendons[k], color=cfg.tendon_color
                     )
                     mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
@@ -1286,7 +1135,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
+        camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1299,7 +1149,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
-            robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            color_config: Optional shared renderer color configuration.
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1314,7 +1165,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             ts=np.array([0.0], dtype=np.float64),
             q_ts=jnp.asarray(q),
             base_offsets=base_offsets,
-            robot_colors=robot_colors,
+            color_config=color_config,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1326,12 +1177,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         render = o3d.visualization.rendering.OffscreenRenderer(self.width, self.height)
         render.scene.set_background(np.array([*self.background_color, 1.0]))
 
-        self._populate_rendering_scene(render.scene, scene_data, frame_idx=0)
+        self._populate_rendering_scene(
+            render.scene, scene_data, frame_idx=0, color_config=color_config
+        )
 
         bbox = render.scene.bounding_box
         center = bbox.get_center()
         extent = bbox.get_max_extent()
-        render.setup_camera(60.0, center, center + [0, 0, extent * 2], [0, 1, 0])
+
+        # Use camera config if provided, otherwise use defaults
+        config = camera_config or CameraConfig()
+        camera_pos, look_at = config.compute_auto_position(center, extent)
+
+        render.setup_camera(config.fov, look_at, camera_pos, list(config.up))
 
         img = render.render_to_image()
         frame = np.asarray(img)
@@ -1346,7 +1204,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
+        camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1359,7 +1218,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         Args:
             q: Robot configuration of shape (DOF,) or batched (N, DOF).
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
-            robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            color_config: Optional shared renderer color configuration.
+            camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1379,7 +1239,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             loop=False,
             record_path=None,
             base_offsets=base_offsets,
-            robot_colors=robot_colors,
+            color_config=color_config,
+            camera_config=camera_config,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1400,8 +1261,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         record_every_n: int = 1,
         record_prefix: str = "frame_",
         video_config: VideoEncodingConfig | None = None,
+        camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1422,8 +1284,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             record_every_n: Save every n-th frame when recording images.
             record_prefix: Filename prefix for recorded frames.
             video_config: Optional ffmpeg encoding configuration for video output.
+            camera_config: Camera configuration (fov, position, look_at, etc.).
+                Note: For interactive viewing, user can adjust camera with mouse.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
-            robot_colors: Optional per-robot color configuration (colormap name or RGBA array).
+            color_config: Optional shared renderer color configuration.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1444,7 +1308,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             ts=ts,
             q_ts=q_ts,
             base_offsets=base_offsets,
-            robot_colors=robot_colors,
+            color_config=color_config,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1465,6 +1329,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             loop=loop,
             record_cfg=record_cfg,
             window_name=window_name,
+            camera_config=camera_config,
+            color_config=color_config,
         )
 
     def _create_visualizer(self, window_name: str):
@@ -1480,6 +1346,57 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         opt.background_color = np.array(self.background_color, dtype=np.float64)
         opt.line_width = self.tendon_line_width
         return vis, vis.get_view_control()
+
+    def _setup_interactive_camera(
+        self,
+        vis,
+        ctrl,
+        scene_data: SceneData,
+        camera_config: CameraConfig | None = None,
+    ) -> None:
+        """Set up camera for interactive viewer using CameraConfig.
+
+        Args:
+            vis: Open3D visualizer
+            ctrl: View control from visualizer
+            scene_data: Scene data containing curves for bounding box computation
+            camera_config: Camera configuration, or None to use defaults
+        """
+        # First, let Open3D compute its default view to initialize internals
+        vis.reset_view_point(True)
+
+        # Compute scene bounds from all curves (shape: N, T, P, 3)
+        all_points = scene_data.curves.reshape(-1, 3)
+        center = np.mean(all_points, axis=0)
+        extent = np.max(all_points, axis=0) - np.min(all_points, axis=0)
+        max_extent = float(np.max(extent))
+
+        # Use provided config or defaults
+        config = camera_config or CameraConfig()
+        camera_pos, look_at = config.compute_auto_position(center, max_extent)
+        up = np.array(config.up, dtype=np.float64)
+
+        # Compute front direction (from camera toward look_at)
+        front = look_at - camera_pos
+        front_norm = np.linalg.norm(front)
+        if front_norm > 1e-9:
+            front = front / front_norm
+
+        # Use ViewControl API for orientation
+        ctrl.set_front(-front)  # Open3D front points away from scene
+        ctrl.set_lookat(look_at)
+        ctrl.set_up(up)
+
+        # Compute zoom empirically based on distance-to-extent ratio
+        # Open3D's zoom doesn't scale linearly with distance, but this formula
+        # provides consistent results: when camera is at ~10x scene extent, zoom≈1.0
+        # The constant 0.1 was determined empirically to match typical viewing distances.
+        desired_distance = float(np.linalg.norm(camera_pos - look_at))
+        zoom = 0.1 * (desired_distance / max_extent) if max_extent > 1e-9 else 0.7
+        ctrl.set_zoom(zoom)
+
+        vis.poll_events()
+        vis.update_renderer()
 
     def _register_key_callbacks(
         self,
@@ -1567,10 +1484,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         sections: list[tuple[int, np.ndarray]],
         max_radius: float,
         layout: SegmentLayout,
-        color_override: np.ndarray | None = None,
+        segment_colors: np.ndarray,
+        base_plate_color: tuple[float, float, float],
     ) -> tuple[object, list[list[CachedMesh]]]:
         """Add base and backbone meshes for one robot; return handles."""
-        base_color = self._blend_with_background(self.base_plate_color)
+        base_color = self._blend_with_background(base_plate_color)
         base_mesh = _make_base_plate(
             curve0[0],
             radius=float(self.base_plate_radius_scale * max_radius),
@@ -1583,9 +1501,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         for s in range(layout.segments):
             seg_meshes: list[CachedMesh] = []
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
-            raw_color_rgba = (
-                color_override if color_override is not None else layout.colors_rgba[s]
-            )
+            raw_color_rgba = segment_colors[s]
             seg_color = self._blend_with_background(raw_color_rgba)
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
                 edge_end = min(c1, curve0.shape[0] - 1)
@@ -1673,9 +1589,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     vis.update_geometry(cached.mesh)
 
     def _build_scene(
-        self, vis, scene_data: SceneData, frame_idx: int = 0
+        self,
+        vis,
+        scene_data: SceneData,
+        frame_idx: int = 0,
+        *,
+        color_config: RendererColorConfig | None = None,
     ) -> SceneHandles:
         """Construct initial geometry for the viewer."""
+        cfg = color_config or self.color_config
         layout = scene_data.layout
         s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
         base_meshes: list = []
@@ -1692,11 +1614,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         for robot_idx in range(scene_data.num_robots):
             curve0 = scene_data.curves[robot_idx, frame_idx]
             q0 = scene_data.q_ts[robot_idx, frame_idx]
-            color_override = (
-                scene_data.robot_colors_rgba[robot_idx]
-                if scene_data.robot_colors_rgba is not None
-                else None
-            )
             sections, max_radius = self._cross_sections_for_points(q0, s_ps)
             base_mesh, groups = self._build_robot_geometry(
                 vis,
@@ -1704,7 +1621,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 sections,
                 max_radius,
                 layout,
-                color_override=color_override,
+                segment_colors=scene_data.segment_colors_rgba[robot_idx],
+                base_plate_color=cfg.base_plate_color,
             )
             base_meshes.append(base_mesh)
             backbone_meshes.append(groups)
@@ -1716,7 +1634,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
                 for k in range(robot_tendons.shape[0]):
                     ls = _make_polyline_lineset(
-                        robot_tendons[k], color=self.tendon_color
+                        robot_tendons[k], color=cfg.tendon_color
                     )
                     robot_lines.append(ls)
                     vis.add_geometry(ls)
@@ -1803,13 +1721,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         record_path: str | None,
         dt_seq: np.ndarray,
         video_config: VideoEncodingConfig | None,
-    ) -> tuple[_FFmpegVideoWriter | None, str | None, str | None]:
+    ) -> tuple[FFmpegVideoWriter | None, str | None, str | None]:
         """Initialize ffmpeg writer or frame directory based on path."""
         if record_path is None:
             return None, None, None
 
         frame_dir: str | None = None
-        video_writer: _FFmpegVideoWriter | None = None
+        video_writer: FFmpegVideoWriter | None = None
         video_path: str | None = None
 
         ext = os.path.splitext(record_path)[1].lower()
@@ -1818,7 +1736,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             video_path = record_path
             fps_est = 1.0 / max(1e-6, float(np.median(dt_seq)))
             try:
-                video_writer = _FFmpegVideoWriter(
+                video_writer = FFmpegVideoWriter(
                     video_path,
                     int(self.width),
                     int(self.height),
@@ -1857,10 +1775,18 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         loop: bool,
         record_cfg: RecordingConfig,
         window_name: str,
+        camera_config: CameraConfig | None = None,
+        color_config: RendererColorConfig | None = None,
     ) -> None:
         """Interactive viewer with shared geometry and recording."""
         vis, ctrl = self._create_visualizer(window_name)
-        handles = self._build_scene(vis, scene_data, frame_idx=0)
+        handles = self._build_scene(
+            vis, scene_data, frame_idx=0, color_config=color_config
+        )
+
+        # Apply camera configuration
+        self._setup_interactive_camera(vis, ctrl, scene_data, camera_config)
+
         dt_seq = self._frame_intervals_from_ts(scene_data.ts, playback_speed)
         video_writer, frame_dir, video_path = self._init_recorder(
             record_cfg.path, dt_seq, record_cfg.video_config
@@ -1961,40 +1887,3 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             time.sleep(0.001)
         if video_writer is not None:
             video_writer.close()
-
-
-def _get_robot_colors(
-    num_robots: int,
-    robot_colors: str | Array | np.ndarray | None,
-    default_color: tuple[float, float, float] | tuple[float, float, float, float] = (
-        0.1,
-        0.45,
-        1.0,
-    ),
-) -> np.ndarray:
-    """Get colors for each robot.
-
-    Args:
-        num_robots: Number of robots
-        robot_colors: "same" (use default), colormap name, or explicit color array/list
-        default_color: Default color if robot_colors is None or "same". Can include alpha.
-
-    Returns:
-        Array of RGBA colors, one per robot
-    """
-    if isinstance(robot_colors, (list, tuple)):
-        raise TypeError(
-            "robot_colors must be a colormap string or an array of shape (N, 3) or (N, 4)."
-        )
-
-    default_palette = _ensure_rgba(np.asarray(default_color, dtype=np.float64))
-    if robot_colors is None or robot_colors == "same":
-        palette = np.tile(default_palette[:1], (num_robots, 1))
-        return palette[:num_robots]
-
-    palette = _normalize_color_palette(
-        robot_colors,
-        num_robots,
-        default_palette=default_palette,
-    )
-    return palette

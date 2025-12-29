@@ -8,7 +8,7 @@ The PCS model divides the continuum robot into segments, each with constant stra
 
 ## Main Implementation
 
-::: soromox.systems.planar_pcs
+::: soromox.systems.pcs.planar_pcs
     options:
       show_root_heading: true
       show_source: false

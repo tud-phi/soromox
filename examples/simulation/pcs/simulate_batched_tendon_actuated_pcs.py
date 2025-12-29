@@ -1,8 +1,8 @@
-"""Batched Open3D rendering demo for tendon-actuated PCS robots.
+"""Batched rendering demo for tendon-actuated PCS robots.
 
 This example vmaps `robot.rollout_to` over randomly sampled, constant tendon
 tensions to generate multiple trajectories from the same initial condition,
-and visualizes them in a grid using Open3DRenderer.
+and visualizes them in a grid using Matplotlib, Open3D, and Viser renderers.
 """
 
 import jax
@@ -10,7 +10,13 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from soromox.rendering import MatplotlibRenderer, Open3DRenderer
+from soromox.rendering import (
+    BackboneColorConfig,
+    MatplotlibRenderer,
+    Open3DRenderer,
+    RendererColorConfig,
+    ViserRenderer,
+)
 from soromox.systems import SystemState, TendonActuatedPCS
 
 
@@ -36,7 +42,7 @@ def build_robot() -> TendonActuatedPCS:
         ).flatten()
     )
     active_tendon_routing_params = {
-        "ry": jnp.array([1e-2, -1e-2, 5e-3, -5e-3]),
+        "ry": jnp.array([2e-2, -2e-2, 1e-2, -1e-2]),
         "rz": jnp.zeros((4,)),
         "my": jnp.array([0.0, 0.0, 0.0, 0.0]),
         "mz": jnp.array([0.0, 0.0, 0.0, 0.0]),
@@ -52,14 +58,17 @@ def build_robot() -> TendonActuatedPCS:
 
 def simulate_batched(robot: TendonActuatedPCS, num_robots: int, rng_key: jax.Array):
     """Roll out multiple trajectories with vmap and random constant tendon tensions."""
-    q0 = jnp.repeat(
-        jnp.array([0.0, 0.0, 5.0 * jnp.pi, 0.1, 0.2, 0.0])[None, :],
-        robot.num_segments,
-        axis=0,
-    ).flatten()
-    qd0 = jnp.zeros_like(q0)
+    q0 = jnp.zeros((num_robots, robot.num_dofs))
+    # # sample different configurations per robot in the batch
+    # q0 = q0 + jax.random.uniform(
+    #     rng_key, (num_robots, robot.num_dofs), minval=-0.2, maxval=0.2
+    # )
+    print("q0 batch:\n", q0)
 
-    initial_state = SystemState(t=jnp.array(0.0), y=jnp.concatenate([q0, qd0]))
+    qd0 = jnp.zeros_like(q0)
+    initial_states = SystemState(
+        t=jnp.zeros((num_robots,)), y=jnp.concatenate([q0, qd0], axis=1)
+    )
 
     # Sample constant tendon tensions per robot in [-1, 0]
     u_batch = jax.random.uniform(
@@ -70,17 +79,20 @@ def simulate_batched(robot: TendonActuatedPCS, num_robots: int, rng_key: jax.Arr
     )
     print("u_batch:\n", u_batch)
 
-    def rollout_single(u_const):
+    # specify save time steps
+    solver_dt = 1e-4
+    save_ts = robot._compute_save_times(0.0, 1.5, solver_dt=1e-4, save_dt=0.02)
+
+    def rollout_single(initial_state, u_const):
         return robot.rollout_to(
             initial_state=initial_state,
             u=u_const,
-            t1=1.5,
-            solver_dt=1e-4,
-            save_dt=0.02,
+            solver_dt=solver_dt,
+            save_ts=save_ts,
             max_steps=None,
         )
 
-    trajectories = jax.vmap(rollout_single)(u_batch)
+    trajectories = jax.vmap(rollout_single)(initial_states, u_batch)
 
     # All trajectories share the same time grid
     ts = trajectories.t[0]
@@ -107,9 +119,11 @@ def main():
         num_points=60,
         line_width=2.5,
         grid_spacing=grid_spacing,
-        robot_colors="plasma",
-        tendon_color=(0.9, 0.1, 0.1),
         tendon_line_width=2.0,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(robot_palette="plasma"),
+            tendon_color=(0.9, 0.1, 0.1),
+        ),
     )
     # q_ts_batched is (N, T, DOF); animate in slider mode for quick inspection
     matplotlib_renderer.animate(ts=ts, q_ts=q_ts_batched, mode="slider", show=True)
@@ -118,10 +132,36 @@ def main():
     renderer = Open3DRenderer(
         robot,
         grid_spacing=grid_spacing,
-        robot_colors="viridis",
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(robot_palette="viridis")
+        ),
     )
     renderer.render_sequence(
-        ts=ts, q_ts=q_ts_batched, record_path="videos/batched_tendon_actuated_pcs.mp4"
+        ts=ts,
+        q_ts=q_ts_batched,
+        record_path="videos/batched_tendon_actuated_pcs_open3d.mp4",
+    )
+
+    # render using the ViserRenderer
+    if ViserRenderer is None:
+        print("ViserRenderer is unavailable. Install with `pip install viser`.")
+        return
+
+    viser_renderer = ViserRenderer(
+        robot,
+        grid_spacing=grid_spacing,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(robot_palette="magma")
+        ),
+    )
+    viser_renderer.render_sequence(
+        ts=ts,
+        q_ts=q_ts_batched,
+        playback_speed=1.0,
+        autoplay=True,
+        loop=True,
+        show_tendons=True,
+        record_path="videos/batched_tendon_actuated_pcs_viser.mp4",
     )
 
 
