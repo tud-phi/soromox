@@ -15,20 +15,10 @@ theme:
   logo: assets/logo/soromox_logo_s.png
   favicon: assets/logo/favicon/favicon.ico
   palette:
-    # Palette toggle for light mode
+    # Light mode only
     - scheme: default
       primary: indigo
       accent: teal
-      toggle:
-        icon: material/brightness-7
-        name: Switch to dark mode
-    # Palette toggle for dark mode
-    - scheme: slate
-      primary: indigo
-      accent: teal
-      toggle:
-        icon: material/brightness-4
-        name: Switch to light mode
   features:
     - announce.dismiss
     - content.action.edit
@@ -74,34 +64,49 @@ nav:
     - Quick Start: user-guide/quick-start.md
     - Examples: user-guide/examples.md
   - API Reference:
-    - Overview: api/systems.md
-    - Systems:
-      - Pendulum Systems:
-        - Classical Pendulum: api/pendulum/pendulum.md
-        - Tendon Actuated Pendulum: api/pendulum/tendon-actuated-pendulum.md
-      - PCS Systems:
-        - Spatial PCS: api/pcs.md
-        - Planar PCS: api/planar-pcs.md
-        - Pneumatic Actuated Planar PCS: api/pneumatic-actuated-planar-pcs.md
-        - Tendon Actuated Planar PCS: api/tendon-actuated-planar-pcs.md
-      - Planar HSA: api/planar-hsa.md
-    - Control:
-        - Overview: api/control/index.md
-        - Configuration-Space Controllers: api/control/configuration-space.md
-        - Operational-Space Controllers: api/control/operational-space.md
-        - Actuation-Space Controllers: api/control/actuation-space.md
-        - Utilities: api/control/utilities.md
-    - Actuation: api/actuation.md
-    - Utilities:
-      - Overview: api/utils.md
-      - Parameters: api/parameters.md
-      - Rendering: api/rendering.md
-      - Symbolic Derivation: api/symbolic-derivation.md
-  - Authors & Maintainers: authors.md
+      - Overview: api/overview.md
+      - Systems:
+          - Overview: api/systems/index.md
+          - Pendulum Systems:
+            - Overview: api/systems/pendulum/index.md
+            - Pendulum: api/systems/pendulum/pendulum.md
+            - Tendon Actuated Pendulum: api/systems/pendulum/tendon-actuated-pendulum.md
+          - PCS Systems:
+            - Overview: api/systems/pcs/index.md
+            - PCS (Spatial): api/systems/pcs/pcs.md
+            - Planar PCS: api/systems/pcs/planar-pcs.md
+            - Tendon Actuated PCS: api/systems/pcs/tendon-actuated-pcs.md
+            - Tendon Actuated Planar PCS: api/systems/pcs/tendon-actuated-planar-pcs.md
+            - Pneumatic Actuated Planar PCS: api/systems/pcs/pneumatic-actuated-planar-pcs.md
+            - ISupport: api/systems/pcs/isupport.md
+          - GVS Systems:
+            - Overview: api/systems/gvs/index.md
+            - GVS: api/systems/gvs/gvs.md
+            - Tendon Actuated GVS: api/systems/gvs/tendon-actuated-gvs.md
+          - HSA Systems:
+            - Overview: api/systems/hsa/index.md
+            - Planar HSA: api/systems/hsa/planar-hsa.md
+      - Rendering:
+          - Overview: api/rendering/index.md
+          - Renderers: api/rendering/renderers.md
+          - Camera & Colors: api/rendering/configuration.md
+      - Control:
+          - Overview: api/control/index.md
+          - Configuration-Space Controllers: api/control/configuration-space.md
+          - Operational-Space Controllers: api/control/operational-space.md
+          - Actuation-Space Controllers: api/control/actuation-space.md
+          - Utilities: api/control/utilities.md
+      - Actuation: api/actuation.md
+      - Utilities:
+          - Overview: api/utilities/index.md
+          - Parameters: api/utilities/parameters.md
+          - Symbolic Derivation: api/utilities/symbolic-derivation.md
   - Development:
     - Contributing: development/contributing.md
+    - Extending SoRoMoX: development/extending.md
     - System Benchmarking: development/benchmarking.md
     - Changelog: development/changelog.md
+  - Authors & Maintainers: authors.md
 
 plugins:
   - search
@@ -127,7 +132,12 @@ plugins:
             show_signature: true
             signature_crossrefs: true
             show_bases: true
-            show_inheritance_diagram: false
+            inherited_members: true
+            show_inheritance_diagram: true
+            show_docstring_attributes: true
+            show_docstring_functions: true
+            show_docstring_classes: true
+            show_docstring_modules: true
           paths: [src]
   # Temporarily disable auto-generated API pages
   # - gen-files:

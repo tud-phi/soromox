@@ -1,4 +1,4 @@
-# PCS Systems (General)
+# Spatial PCS
 
 The general Piecewise Constant Strain (PCS) implementation provides the core modeling framework for continuum soft robots, based on the discrete Cosserat approach proposed by Renda et al. (2018).
 

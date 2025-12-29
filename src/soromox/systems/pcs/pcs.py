@@ -28,31 +28,19 @@ class PCS(SoftRobot):
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
 
     Attributes:
-    ----------
-    num_segments : int
-        Number of segments (constant strain sections) along the robot.
-    num_actuators : int
-        Number of actuators (control inputs) for the robot.
-    g0 : Array
-        Initial pose of the robot base as an SE(3) transformation matrix.
-    g : Array
-        Gravitational acceleration vector (embedded in a 6D vector).
-        [0, 0, 0, g_x, g_y, g_z]
-    L, r, E, G, rho, D : Array
-        Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
-    num_active_strains : int
-        Number of active strain components (based on strain_selector).
-    num_strains : int
-        Total number of strain components (6 * num_segments).
-    B_xi : Array
-        Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
-    xi_ref : Array
-        Reference strain (reference configuration) of the robot.
-    num_gauss_points : int
-        Number of points used for numerical integration.
-        Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
-    Xs, Ws : Array
-        Gauss-Legendre quadrature nodes and weights for numerical integration.
+        num_segments: Number of segments (constant strain sections) along the robot.
+        num_actuators: Number of actuators (control inputs) for the robot.
+        g0: Initial pose of the robot base as an SE(3) transformation matrix.
+        g: Gravitational acceleration vector (embedded in a 6D vector).
+            [0, 0, 0, g_x, g_y, g_z]
+        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        num_active_strains: Number of active strain components (based on strain_selector).
+        num_strains: Total number of strain components (6 * num_segments).
+        B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
+        xi_ref: Reference strain (reference configuration) of the robot.
+        num_gauss_points: Number of points used for numerical integration.
+            Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
+        Xs, Ws: Gauss-Legendre quadrature nodes and weights for numerical integration.
 
     Notes:
     -----
@@ -68,8 +56,9 @@ class PCS(SoftRobot):
                 - sigma_z corresponds to shear along the z-axis.
 
     References:
-    ----------
-    - Renda, Federico, Frédéric Boyer, Jorge Dias, and Lakmal Seneviratne. "Discrete cosserat approach for multisection soft manipulator dynamics." IEEE Transactions on Robotics 34, no. 6 (2018): 1518-1533.
+        Renda, F., Boyer, F., Dias, J., & Seneviratne, L. (2018). Discrete Cosserat
+        Approach for Multisection Soft Manipulator Dynamics. IEEE Transactions on
+        Robotics, 34(6), 1518-1533.
 
     """
 

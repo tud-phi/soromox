@@ -1,3 +1,5 @@
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
@@ -10,60 +12,40 @@ class ISupport(PCS):
     A kinematic and dynamic model for the (AM) I-Support robot based on the Piecewise Constant Strain shape parametrization.
 
     Attributes:
-    ----------
-    num_segments : int
-        Number of segments (constant strain sections) along the robot.
-    num_actuators : int
-        Number of actuators (control inputs) for the robot.
-    g0 : Array
-        Initial pose of the robot base as an SE(3) transformation matrix.
-    g : Array
-        Gravitational acceleration vector (embedded in a 6D vector).
-        [0, 0, 0, g_x, g_y, g_z]
-    L, r, E, G, rho, D : Array
-        Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
-    num_active_strains : int
-        Number of active strain components (based on strain_selector).
-    num_strains : int
-        Total number of strain components (6 * num_segments).
-    B_xi : Array
-        Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
-    xi_ref : Array
-        Reference strain (reference configuration) of the robot.
-    num_gauss_points : int
-        Number of points used for numerical integration.
-        Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
-    Xs, Ws : Array
-        Gauss-Legendre quadrature nodes and weights for numerical integration.
-    r_chamber_in : Array
-        Inner radius of each segment's actuator [m].
-    r_chamber_out : Array
-        Outer radius of each segment's actuator [m].
-    d_chamber : Array
-        Radial distance of the center of the actuators from the centerline of the backbone [m].
-    varphi_chamber_off : Array
-        Angular offset of the first actuator from the local segment frame [rad].
+        num_segments: Number of segments (constant strain sections) along the robot.
+        num_actuators: Number of actuators (control inputs) for the robot.
+        g0: Initial pose of the robot base as an SE(3) transformation matrix.
+        g: Gravitational acceleration vector (embedded in a 6D vector).
+            [0, 0, 0, g_x, g_y, g_z]
+        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        num_active_strains: Number of active strain components (based on strain_selector).
+        num_strains: Total number of strain components (6 * num_segments).
+        B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
+        xi_ref: Reference strain (reference configuration) of the robot.
+        num_gauss_points: Number of points used for numerical integration.
+            Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
+        Xs, Ws: Gauss-Legendre quadrature nodes and weights for numerical integration.
+        r_chamber_in: Inner radius of each segment's actuator [m].
+        r_chamber_out: Outer radius of each segment's actuator [m].
+        d_chamber: Radial distance of the center of the actuators from the centerline of the backbone [m].
+        varphi_chamber_off: Angular offset of the first actuator from the local segment frame [rad].
 
     References:
-    ----------
-    - Arleo et al. (2021): Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021).
-        I-support soft arm for assistance tasks: a new manufacturing approach based on 3D printing and characterization.
-        Progress in Additive Manufacturing, 6(2), 243-256.
-        https://link.springer.com/article/10.1007/s40964-020-00158-y
+        Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021). I-support soft
+        arm for assistance tasks: a new manufacturing approach based on 3D printing
+        and characterization. Progress in Additive Manufacturing, 6(2), 243-256.
+        https://doi.org/10.1007/s40964-020-00158-y
 
-    - Alessi et al. (2023): Alessi, C., Falotico, E., & Lucantonio, A. (2023).
-        Ablation study of a dynamic model for a 3d-printed pneumatic soft robotic arm. IEEE Access, 11, 37840-37853.
-        https://ieeexplore.ieee.org/abstract/document/10098800
+        Alessi, C., Falotico, E., & Lucantonio, A. (2023). Ablation study of a
+        dynamic model for a 3D-printed pneumatic soft robotic arm. IEEE Access, 11,
+        37840-37853. https://doi.org/10.1109/ACCESS.2023.3265261
 
-    - Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
-        Pushing with soft robotic arms via deep reinforcement learning. Advanced Intelligent Systems, 6(8), 2300899.
-        https://advanced.onlinelibrary.wiley.com/doi/full/10.1002/aisy.202300899
+        Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
+        Pushing with soft robotic arms via deep reinforcement learning. Advanced
+        Intelligent Systems, 6(8), 2300899. https://doi.org/10.1002/aisy.202300899
 
     """
 
-    num_chambers_per_segment: int = eqx.field(
-        static=True, default=3
-    )  # number of pneumatic chambers per segment
     actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
@@ -73,6 +55,10 @@ class ISupport(PCS):
     d_chamber: Array  # radial distance of the center of the chambers from the centerline of the backbone, shape (num_segments,)
     varphi_chamber_off: Array  # angular offset of the first actuator from the local
 
+    num_chambers_per_segment: int = eqx.field(
+        static=True, default=3
+    )  # number of pneumatic chambers per segment
+
     def __init__(
         self,
         num_segments: int,
@@ -80,10 +66,11 @@ class ISupport(PCS):
         *args,
         segment_actuation_selector: Array | None = None,
         num_chambers_per_segment: int = 3,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the ISupport class
+
         Args:
             num_segments (int):
                 Number of segments in the robot.
@@ -112,22 +99,19 @@ class ISupport(PCS):
                     Shear modulus of each segment [Pa]
                 - "D": List/Array of (num_segments x num_segments) floats
                     Damping matrix of each segment [Pa*s]
-            order_gauss (int, optional):
-                Order of the Gauss-Legendre quadrature for integration over each segment.
-                Defaults to 5.
-            strain_selector (Optional[Array], optional):
-                Boolean array of shape (6 * num_segments,) specifying which strain components are active.
-                Defaults to all strains active (i.e. all True).
-            xi_ref (Optional[Array], optional):
-                Reference strain of shape (6 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
             segment_actuation_selector (Optional[Array], optional):
                 Boolean array of shape (num_segments,) specifying which segments are actively controlled.
                 Defaults to all segments active (i.e. all True).
             num_chambers_per_segment (int, optional):
                 Number of pneumatic chambers per segment. Defaults to 3.
+            **kwargs: Additional keyword arguments.
         """
-        super().__init__(num_segments, params, *args, **kwargs)
+        super().__init__(
+            num_segments,
+            params,
+            *args,
+            **kwargs,
+        )
 
         if segment_actuation_selector is None:
             segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)

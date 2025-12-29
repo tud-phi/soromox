@@ -59,16 +59,19 @@ The symbolic expressions are then implemented in **JAX** and can be used for fas
 
 ## 🤖 Supported Robot Types
 
-We focus on planar settings and have implemented the following soft robot architectures:
+SoRoMoX supports both planar (2D) and spatial (3D) soft robot architectures:
 
-!!! note "🦾 **N-link Pendulum**"
-    Classical articulated robot perfect for benchmarking and comparison studies
+!!! note "🦾 **Pendulum Systems**"
+    Classical and tendon-actuated N-link articulated robots for benchmarking and cable-driven mechanisms
 
-!!! tip "🌊 **Planar Piecewise Constant Strain (PCS)**"
-    Advanced continuum soft robot with constant strain segments for precise modeling
+!!! tip "🌊 **PCS Systems (Piecewise Constant Strain)**"
+    Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pneumatic actuation
 
-!!! info "🔗 **Planar Handed Shearing Auxetics (HSA)**"
-    Novel soft robot with auxetic properties for unique deformation characteristics
+!!! abstract "🧬 **GVS Systems (Generalized Variable Strain)**"
+    Advanced continuum robots with flexible strain basis functions (Legendre, Chebyshev, Fourier, etc.)
+
+!!! info "🔗 **HSA Systems (Handed Shearing Auxetics)**"
+    Novel soft robots with auxetic material properties for unique deformation characteristics
 
 ---
 
@@ -156,7 +159,7 @@ Get up and running in minutes:
   </div>
   
   <div class="feature-card">
-    <h3><span class="icon">📋</span> [API Reference](api/systems.md)</h3>
+    <h3><span class="icon">📋</span> [API Reference](api/overview.md)</h3>
     <p>Complete documentation of all classes and functions</p>
   </div>
 </div>

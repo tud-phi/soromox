@@ -387,6 +387,7 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
       show_root_heading: true
       show_source: false
       heading_level: 3
+      docstring_section_style: table
       members_order: source
 
 ## Matplotlib Renderer
@@ -396,16 +397,31 @@ When using `Open3DRenderer.render_sequence()`, the following keyboard controls a
       show_root_heading: true
       show_source: false
       heading_level: 3
+      docstring_section_style: table
       members_order: source
 
 ## Open3D Renderer
+
+The `Open3DRenderer` provides high-quality 3D visualization using the [Open3D](http://www.open3d.org/) library. It offers:
+
+- **Interactive 3D viewer**: Mouse-based camera controls
+- **High-quality rendering**: Advanced shading and lighting
+- **Real-time updates**: Efficient geometry updates
+- **Screenshot export**: Save high-resolution images
 
 ::: soromox.rendering.open3d_renderer.Open3DRenderer
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
+      docstring_section_style: table
       members_order: source
+
+### References
+
+Zhou, Q. Y., Park, J., & Koltun, V. (2018). Open3D: A modern library for 3D data processing. *arXiv preprint arXiv:1801.09847*.
+
+[Open3D Documentation](http://www.open3d.org/docs/)
 
 ## Viser Renderer
 
@@ -424,7 +440,15 @@ The `ViserRenderer` provides web-based interactive 3D visualization using [Viser
       show_root_heading: true
       show_source: false
       heading_level: 3
+      docstring_section_style: table
       members_order: source
+
+### References
+
+Yi, B., Kim, C. M., Kerr, J., Wu, G., Feng, R., Zhang, A., Kulhanek, J., Choi, H., Ma, Y., Tancik, M., & Kanazawa, A. (2025). Viser: Imperative, Web-based 3D Visualization in Python. *arXiv preprint arXiv:2507.22885*.
+
+- [arXiv Paper](https://arxiv.org/abs/2507.22885)
+- [Viser GitHub Repository](https://github.com/nerfstudio-project/viser)
 
 ## OpenCV Planar Renderer
 
@@ -433,6 +457,7 @@ The `ViserRenderer` provides web-based interactive 3D visualization using [Viser
       show_root_heading: true
       show_source: false
       heading_level: 3
+      docstring_section_style: table
       members_order: source
 
 ## OpenCV Planar HSA Renderer
@@ -442,4 +467,5 @@ The `ViserRenderer` provides web-based interactive 3D visualization using [Viser
       show_root_heading: true
       show_source: false
       heading_level: 3
+      docstring_section_style: table
       members_order: source

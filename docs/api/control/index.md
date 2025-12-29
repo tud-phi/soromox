@@ -187,9 +187,9 @@ This clean separation means the two terms can be designed, tuned, and analyzed i
 
 ### Operational-Space Controllers
 
-| Controller | Type | Description |
-|------------|------|-------------|
-| [`ImpedanceControlTracker`](operational-space.md#impedancecontroltracker) | Tracker | Operational-space impedance control with partial feedback linearization |
+| Controller                                                                                                            | Type    | Description                                                              |
+|-----------------------------------------------------------------------------------------------------------------------|---------|--------------------------------------------------------------------------|
+| [`OperationalSpaceImpedanceControlTracker`](operational-space.md#operationalspaceimpedancecontroltracker)            | Tracker | Operational-space impedance control with partial feedback linearization |
 
 ### Actuation-Space Controllers
 

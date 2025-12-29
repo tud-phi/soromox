@@ -1,5 +1,7 @@
 __all__ = ["TendonActuatedPendulum"]
 
+from typing import Any
+
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
@@ -70,38 +72,25 @@ class TendonActuatedPendulum(Pendulum):
     - q ∈ R^N: joint angles (relative)
     - qd ∈ R^N: joint angular velocities
 
-    Attributes
-    ----------
-    num_links : int (static)
-        Number of links / DoFs.
-    m, I, L, Lc : Array (shape (N,))
-        Physical link properties.
-    g : Array (shape (2,))
-        Planar gravity vector [g_x, g_y].
-    K, D : Array (shape (N, N))
-        Optional joint stiffness and damping matrices (zeros if omitted).
-    R_at: Array (shape (Na, N))
-        Optional routing matrix of the active tendons, which entries represent the radius of the pulley
-        at each joint that route the cable (identity if omitted). If a tendon is attached at the i-th joint
-        with i < N, then the entries for that tendon at index > i must be equal to 0.
-    R_pt: Array (shape (Np, N))
-        Optional routing matrix of the passive tendons (zers if omitted).
-    A_at: Array (shape (N, Na))
-        Optional actuation matrix of the active tendons (identity if omitted).
-    A_pt: Array (shape (N, Np))
-        Optional actuation matrix of the passive tendons (zero if omitted).
-    K_pt: Array (shape (Np, Np))
-        Optional stiffness matrix of the passive tendons (zero if omitted).
-    D_pt: Array (shape (Np, Np))
-        Optional damping matrix of the passive tendons (zero if omitted).
-    l_pt0: Array (shape (Np,))
-        Optional vector of the initial displacement of the passive tendons (zero if omitted).
-    tau_pt0: Array (shape (Np,))
-        Vector of the elastic force due to the pre-stretch of the passive tendons (zero if l_pt0 is omitted).
+    Attributes:
+        num_links: Number of links / DoFs.
+        m, I, L, Lc: Physical link properties.
+        g: Planar gravity vector [g_x, g_y].
+        K, D: Optional joint stiffness and damping matrices (zeros if omitted).
+        R_at: Optional routing matrix of the active tendons, which entries represent the radius of the pulley
+            at each joint that route the cable (identity if omitted). If a tendon is attached at the i-th joint
+            with i < N, then the entries for that tendon at index > i must be equal to 0.
+        R_pt: Optional routing matrix of the passive tendons (zero if omitted).
+        A_at: Optional actuation matrix of the active tendons (identity if omitted).
+        A_pt: Optional actuation matrix of the passive tendons (zero if omitted).
+        K_pt: Optional stiffness matrix of the passive tendons (zero if omitted).
+        D_pt: Optional damping matrix of the passive tendons (zero if omitted).
+        l_pt0: Optional vector of the initial displacement of the passive tendons (zero if omitted).
+        tau_pt0: Vector of the elastic force due to the pre-stretch of the passive tendons (zero if l_pt0 is omitted).
 
     References:
-    ----------
-    - [Tendon-driven actuation of an articulated link system] Murray, Richard M., Zexiang Li, and S. Shankar Sastry. A mathematical introduction to robotic manipulation. CRC press, 2017. (Chapter 6)
+        Murray, R. M., Li, Z., & Sastry, S. S. (2017). A Mathematical Introduction
+        to Robotic Manipulation (Chapter 6: Tendon-driven actuation). CRC Press.
     """
 
     R_at: Array
@@ -120,7 +109,7 @@ class TendonActuatedPendulum(Pendulum):
         params: dict[str, Array],
         tendon_params: dict[str, Array] = {},
         *args,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the pendulum system with the given parameters.

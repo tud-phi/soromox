@@ -1,7 +1,7 @@
 __all__ = ["GVS"]
 import math
 import warnings
-from typing import cast
+from typing import Any, cast
 
 import equinox as eqx
 import jax
@@ -50,46 +50,26 @@ class GVS(SoftRobot):
     for robots with arbitrary combinations of link cross-sections, joint types, and
     strain basis functions.
 
-    Attributes
-    ----------
-    num_segments : int
-        Number of segments (links) in the robot.
-    max_dof : int
-        Maximum number of degrees of freedom (DOFs) per link or joint.
-    max_nGauss : int
-        Maximum number of Gauss points per link used for integration.
-    max_nip : int
-        Maximum number of integration points per link (= max_nGauss + 2).
-    dof_tot_system : int
-        Total number of DOFs for the robot (sum of joint + link DOFs).
-    dof_tot_max : int
-        Theoretical maximum number of DOFs (num_segments * 2 * max_dof).
-    B_select : Array
-        Strain basis selection matrix mapping active DOFs to the full strain space.
-    V_L, V_L_cum : Array
-        Length of each link, and cumulative link lengths.
-    V_nip : Array
-        Number of integration/evaluation points for each link.
-    V_dof : Array
-        Number of DOFs for each link/joint pair (shape: num_segments x 2).
-    V_Xs, V_Ws : Array
-        Gauss quadrature nodes and weights for each link.
-    V_Ms, V_Es, V_Gs : Array
-        Mass, stiffness, and damping matrices at integration points.
-    V_B_joint, V_B_Xs, V_B_Z1, V_B_Z2 : Array
-        Basis matrices for joints and links at quadrature points and intermediate points.
-    V_xi_ref_joint, V_xi_ref_Xs, V_xi_ref_Z1, V_xi_ref_Z2 : Array
-        Reference strain vectors for joints and links.
-    V_K_joint : Array
-        Joint stiffness matrices.
-    g : Array
-        Gravitational acceleration vector in 6D wrench form.
-    V_basistype_idx : Array
-        Index of the strain basis type used for each segment.
-    V_Bdof_params, V_Bodr_params : Array
-        Parameters controlling the strain basis DOFs and orders.
-    g0 : Array
-        Initial pose of the robot base as an SE(3) transformation matrix.
+    Attributes:
+        num_segments: Number of segments (links) in the robot.
+        max_dof: Maximum number of degrees of freedom (DOFs) per link or joint.
+        max_nGauss: Maximum number of Gauss points per link used for integration.
+        max_nip: Maximum number of integration points per link (= max_nGauss + 2).
+        dof_tot_system: Total number of DOFs for the robot (sum of joint + link DOFs).
+        dof_tot_max: Theoretical maximum number of DOFs (num_segments * 2 * max_dof).
+        B_select: Strain basis selection matrix mapping active DOFs to the full strain space.
+        V_L, V_L_cum: Length of each link, and cumulative link lengths.
+        V_nip: Number of integration/evaluation points for each link.
+        V_dof: Number of DOFs for each link/joint pair (shape: num_segments x 2).
+        V_Xs, V_Ws: Gauss quadrature nodes and weights for each link.
+        V_Ms, V_Es, V_Gs: Mass, stiffness, and damping matrices at integration points.
+        V_B_joint, V_B_Xs, V_B_Z1, V_B_Z2: Basis matrices for joints and links at quadrature points and intermediate points.
+        V_xi_ref_joint, V_xi_ref_Xs, V_xi_ref_Z1, V_xi_ref_Z2: Reference strain vectors for joints and links.
+        V_K_joint: Joint stiffness matrices.
+        g: Gravitational acceleration vector in 6D wrench form.
+        V_basistype_idx: Index of the strain basis type used for each segment.
+        V_Bdof_params, V_Bodr_params: Parameters controlling the strain basis DOFs and orders.
+        g0: Initial pose of the robot base as an SE(3) transformation matrix.
     Notes
     -----
     - The GVS model generalizes PCS by allowing the strain distribution in each segment
@@ -103,10 +83,19 @@ class GVS(SoftRobot):
       rectangular, and elliptical shapes.
 
     References:
-    ----------
-    - Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 5(3), 4006-4013.
-    - Boyer, F., Lebastard, V., Candelier, F., & Renda, F. (2020). Dynamics of continuum and soft robots: A strain parameterization based approach. IEEE Transactions on Robotics, 37(3), 847-863.
-    - Mathew, A. T., Feliu-Talegon, D., Alkayas, A. Y., Boyer, F., & Renda, F. (2025). Reduced order modeling of hybrid soft-rigid robots using global, local, and state-dependent strain parameterization. The International Journal of Robotics Research, 44(1), 129-154.
+        Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020).
+        A geometric variable-strain approach for static modeling of soft manipulators
+        with tendon and fluidic actuation. IEEE Robotics and Automation Letters,
+        5(3), 4006-4013.
+
+        Boyer, F., Lebastard, V., Candelier, F., & Renda, F. (2020). Dynamics of
+        continuum and soft robots: A strain parameterization based approach. IEEE
+        Transactions on Robotics, 37(3), 847-863.
+
+        Mathew, A. T., Feliu-Talegon, D., Alkayas, A. Y., Boyer, F., & Renda, F.
+        (2025). Reduced order modeling of hybrid soft-rigid robots using global,
+        local, and state-dependent strain parameterization. The International
+        Journal of Robotics Research, 44(1), 129-154.
     """
 
     # Static attributes
@@ -180,7 +169,7 @@ class GVS(SoftRobot):
         max_dof: int | None = None,
         max_nGauss: int | None = None,
         p0: Array | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the GVS class.

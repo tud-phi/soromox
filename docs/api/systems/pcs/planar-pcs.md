@@ -1,4 +1,4 @@
-# Planar PCS Systems
+# Planar PCS
 
 The planar Piecewise Constant Strain (PCS) systems provide implementations for 2D soft continuum robots using the Cosserat rod theory with piecewise constant strain assumptions, based on the discrete Cosserat approach by Renda et al. (2018).
 

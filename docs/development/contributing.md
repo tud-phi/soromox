@@ -23,12 +23,6 @@ pip install -e ".[dev,docs,examples]"
 pre-commit install
 ```
 
-### 4. Environment Variables
-
-```bash
-source 01-configure-env-vars.sh
-```
-
 ## Development Workflow
 
 ### 1. Create a Branch
@@ -140,58 +134,15 @@ Use conventional commit messages:
 - `test:` for test additions
 - `refactor:` for code refactoring
 
-## Adding New Robot Systems
+## Extending SoRoMoX
 
-### 1. System Structure
+For guidance on adding custom robot systems or renderers, see the [Extending SoRoMoX](extending.md) guide which covers:
 
-Create a new module in `src/soromox/systems/`:
-
-```
-src/soromox/systems/your_robot/
-├── __init__.py
-├── symbolic_derivation.py
-├── numerical_implementation.py
-└── factory.py
-```
-
-### 2. Factory Pattern
-
-Follow the established factory pattern:
-
-```python
-def factory(parameters):
-    """
-    Factory function for your robot system.
-    
-    Args:
-        parameters: System-specific parameters
-        
-    Returns:
-        tuple: (ode_fn, forward_kinematics, jacobian_fn, additional_fns)
-    """
-    pass
-```
-
-### 3. Testing
-
-Add comprehensive tests in `tests/`:
-
-```python
-def test_your_robot_forward_kinematics():
-    """Test forward kinematics computation."""
-    pass
-
-def test_your_robot_dynamics():
-    """Test dynamic simulation."""
-    pass
-```
-
-### 4. Documentation
-
-Add examples and documentation:
-- Example script in `examples/`
-- Documentation in `docs/`
-- Docstrings for all functions
+- Implementing custom soft robot systems
+- Adding new renderer backends
+- Contributing new controllers
+- Understanding the base class interfaces
+- Best practices for extensibility
 
 ## Code Style
 

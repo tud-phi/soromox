@@ -7,10 +7,12 @@ __all__ = [
     "PARAMS_EPU_SYSTEM_ID",
 ]
 
+
+from typing import Any
+
 import jax
-from jax import Array
 import jax.numpy as jnp
-from typing import Dict
+from jax import Array
 
 
 def generate_common_base_params(
@@ -18,7 +20,7 @@ def generate_common_base_params(
     num_rods_per_segment: int = 4,
     end_effector_attached: int = False,
     consider_hysteresis: bool = False,
-) -> Dict[str, Array]:
+) -> dict[str, Array]:
     assert num_rods_per_segment % 2 == 0, "num_rods_per_segment must be even"
 
     ones_rod = jnp.ones((num_segments, num_rods_per_segment))
@@ -117,7 +119,7 @@ def generate_base_params_for_fpu(
     num_rods_per_segment: int = 4,
     rod_multiplier: int = 1,
     **kwargs,
-) -> Dict[str, Array]:
+) -> dict[str, Array]:
     common_params = generate_common_base_params(
         num_segments, num_rods_per_segment, **kwargs
     )
@@ -244,8 +246,8 @@ def generate_base_params_for_epu(
     num_segments: int = 1,
     num_rods_per_segment: int = 4,
     rod_multiplier: int = 1,
-    **kwargs,
-) -> Dict[str, Array]:
+    **kwargs: Any,
+) -> dict[str, Array]:
     common_params = generate_common_base_params(
         num_segments, num_rods_per_segment, **kwargs
     )

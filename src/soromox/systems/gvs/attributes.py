@@ -16,36 +16,23 @@ class LinkAttributes:
     (index i) to a final value at the link tip (index f). Only the parameters
     relevant to the selected `cross_section_geometry` are used; the others are ignored.
 
-    Attributes
-    ----------
-    cross_section_geometry : CrossSectionGeometry
-        Cross-section family used for geometric and inertial properties.
-    E : float
-        Young's modulus [Pa].
-    nu : float
-        Poisson's ratio [-]; typical range (-1, 0.5).
-    rho : float
-        Mass density [kg/m^3].
-    eta : float
-        Material damping coefficient used to scale link damping matrices [N·s/m].
-    L : float
-        Link length [m].
-
-    r_i, r_f : float, optional
-        Initial and final radius for circular section [m]. Used only if
-        `cross_section_geometry == CrossSectionGeometry.CIRCULAR`.
-    h_i, h_f : float, optional
-        Initial and final height for rectangular section [m]. Used only if
-        `cross_section_geometry == CrossSectionGeometry.RECTANGULAR`.
-    w_i, w_f : float, optional
-        Initial and final width for rectangular section [m]. Used only if
-        `cross_section_geometry == CrossSectionGeometry.RECTANGULAR`.
-    a_i, a_f : float, optional
-        Initial and final semi-major axis for elliptical section [m]. Used only if
-        `cross_section_geometry == CrossSectionGeometry.ELLIPTICAL`.
-    b_i, b_f : float, optional
-        Initial and final semi-minor axis for elliptical section [m]. Used only if
-        `cross_section_geometry == CrossSectionGeometry.ELLIPTICAL`.
+    Attributes:
+        cross_section_geometry: Cross-section family used for geometric and inertial properties.
+        E: Young's modulus [Pa].
+        nu: Poisson's ratio [-]; typical range (-1, 0.5).
+        rho: Mass density [kg/m^3].
+        eta: Material damping coefficient used to scale link damping matrices [N·s/m].
+        L: Link length [m].
+        r_i, r_f: Initial and final radius for circular section [m]. Used only if
+            `cross_section_geometry == CrossSectionGeometry.CIRCULAR`.
+        h_i, h_f: Initial and final height for rectangular section [m]. Used only if
+            `cross_section_geometry == CrossSectionGeometry.RECTANGULAR`.
+        w_i, w_f: Initial and final width for rectangular section [m]. Used only if
+            `cross_section_geometry == CrossSectionGeometry.RECTANGULAR`.
+        a_i, a_f: Initial and final semi-major axis for elliptical section [m]. Used only if
+            `cross_section_geometry == CrossSectionGeometry.ELLIPTICAL`.
+        b_i, b_f: Initial and final semi-minor axis for elliptical section [m]. Used only if
+            `cross_section_geometry == CrossSectionGeometry.ELLIPTICAL`.
 
     Notes
     -----
@@ -79,22 +66,18 @@ class JointAttributes:
     """
     Kinematic and stiffness attributes of the joint preceding a link.
 
-    Attributes
-    ----------
-    jointtype : {"Revolute", "Prismatic", "Helical", "Cylindrical", "Planar", "Spherical", "Free", "Fixed"}
-        Joint family which determines the number and nature of DOFs.
-    axis : {"x", "y", "z"}, default "x"
-        Axis for joints that use a single axis: revolute, prismatic, helical,
-        cylindrical. Ignored for planar, spherical, free, fixed.
-    plane : {"xy", "yz", "xz"}, default "xy"
-        Motion plane for planar joints. Ignored for other joint types.
-    pitch : float, default 0.0
-        Helical joint pitch [m/rad]. Only used when `jointtype == "Helical"`.
-    K_joint : Array or list, shape (dof_joint, dof_joint), optional
-        Joint stiffness matrix in generalized joint coordinates. Units are
-        consistent with the active DOFs: rotational terms [N·m/rad], translational
-        terms [N/m]; off-diagonal couplings accordingly. If omitted or with
-        mismatching shape it defaults to zeros.
+    Attributes:
+        jointtype: Joint family which determines the number and nature of DOFs.
+            One of {"Revolute", "Prismatic", "Helical", "Cylindrical", "Planar", "Spherical", "Free", "Fixed"}.
+        axis: Axis for joints that use a single axis: revolute, prismatic, helical,
+            cylindrical. Ignored for planar, spherical, free, fixed. One of {"x", "y", "z"}, default "x".
+        plane: Motion plane for planar joints. Ignored for other joint types.
+            One of {"xy", "yz", "xz"}, default "xy".
+        pitch: Helical joint pitch [m/rad]. Only used when `jointtype == "Helical"`. Default 0.0.
+        K_joint: Joint stiffness matrix in generalized joint coordinates. Units are
+            consistent with the active DOFs: rotational terms [N·m/rad], translational
+            terms [N/m]; off-diagonal couplings accordingly. If omitted or with
+            mismatching shape it defaults to zeros. Shape (dof_joint, dof_joint), optional.
     """
 
     jointtype: Literal[
@@ -126,21 +109,20 @@ class BasisAttributes:
     `sigma_*` have units [1/m]. These are the components of the Cosserat strain
     twist per unit length used in the SE(3) integration.
 
-    Attributes
-    ----------
-    basistype : {"Monomial", "Legendre", "Chebychev", "Fourier", "Gaussian", "IMQ"}
-        Basis family used to expand each selected strain component along the link.
-    Bdof : ArrayLike of shape (6,) or (6, 1)
-        Selection mask for each strain component; 1 enables that family of
-        deformation, 0 disables it. Order is
-        [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]. Dimensionless.
-    Bodr : ArrayLike of shape (6,) or (6, 1)
-        Basis order for each strain component (non-negative integers). The exact
-        interpretation of the order depends on the chosen `basistype`.
-    xi_ref : ArrayLike of shape (6,) or (6, 1)
-        Reference (prestrain) vector for the 6 strain components. Units
-        [rad/m, rad/m, rad/m, 1/m, 1/m, 1/m]. Default is the prestrain
-        ([0, 0, 0, 1, 0, 0]) such that the soft robot backbone points along the local x-axis.
+    Attributes:
+        basistype: Basis family used to expand each selected strain component along the link.
+            One of {"Monomial", "Legendre", "Chebychev", "Fourier", "Gaussian", "IMQ"}.
+        Bdof: Selection mask for each strain component; 1 enables that family of
+            deformation, 0 disables it. Order is
+            [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]. Dimensionless.
+            ArrayLike of shape (6,) or (6, 1).
+        Bodr: Basis order for each strain component (non-negative integers). The exact
+            interpretation of the order depends on the chosen `basistype`.
+            ArrayLike of shape (6,) or (6, 1).
+        xi_ref: Reference (prestrain) vector for the 6 strain components. Units
+            [rad/m, rad/m, rad/m, 1/m, 1/m, 1/m]. Default is the prestrain
+            ([0, 0, 0, 1, 0, 0]) such that the soft robot backbone points along the local x-axis.
+            ArrayLike of shape (6,) or (6, 1).
 
     Notes
     -----

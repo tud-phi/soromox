@@ -1,5 +1,6 @@
 __all__ = ["TendonActuatedPCS"]
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 from jax import Array, vmap
@@ -28,55 +29,33 @@ class TendonActuatedPCS(PCS):
     below [Physical control]).
 
     Attributes:
-    ----------
-    num_segments : int
-        Number of segments (constant strain sections) along the robot.
-    num_actuators : int
-        Number of actuators (control inputs) for the robot.
-    n_p : int
-        Number of passive tendons in the robot.
-    g0 : Array
-        Initial pose of the robot base as an SE(3) transformation matrix.
-    g : Array
-        Gravitational acceleration vector (embedded in a 6D vector).
-        [0, 0, 0, g_x, g_y, g_z]
-    L, r, E, G, rho, D : Array
-        Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
-    num_active_strains : int
-        Number of active strain components (based on strain_selector).
-    num_strains : int
-        Total number of strain components (6 * num_segments).
-    B_xi : Array
-        Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
-    xi_ref : Array
-        Reference strain (reference configuration) of the robot.
-    num_gauss_points : int
-        Number of points used for numerical integration.
-        Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
-    Xs, Ws : Array
-        Gauss-Legendre quadrature nodes and weights for numerical integration.
-    active_tendon_routing_params : Dict[str, Array]
-        Dictionary of arrays of length n_actuators representing the tendon parameters.
-    active_d_s : Callable
-        Function that returns the vector [d_x, d_y, d_z] of the active tendon
-        position w.r.t. the central backbone within the cross-sectional plane at a given
-        abscissa point s. The three entries represent the coordinate of the tendon
-        position with respect to the local cross-sectional frame at s. For this reason,
-        d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
-    active_dd_s_ds : Callable
-        Function that returns the vector of the derivative over s of active_d_s.
-    passive_tendon_routing_params : Dict[str, Array]
-        Dictionary of arrays of length n_p representing the passive tendon parameters.
-    passive_d_s : Callable
-        As active_d_s for the passive tendons.
-    passive_dd_s_ds : Callable
-        As active_dd_s_ds for the passive tendons.
-    K_pt: Array
-        Stiffness matrix of the passive tendons (n_p, n_p).
-    D_pt: Array
-        Damping matrix of the passive tendons (n_p, n_p).
-    l_pt0: Array
-        Vector of the initial displacement of the passive tendons (n_p,).
+        num_segments: Number of segments (constant strain sections) along the robot.
+        num_actuators: Number of actuators (control inputs) for the robot.
+        n_p: Number of passive tendons in the robot.
+        g0: Initial pose of the robot base as an SE(3) transformation matrix.
+        g: Gravitational acceleration vector (embedded in a 6D vector).
+            [0, 0, 0, g_x, g_y, g_z]
+        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        num_active_strains: Number of active strain components (based on strain_selector).
+        num_strains: Total number of strain components (6 * num_segments).
+        B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
+        xi_ref: Reference strain (reference configuration) of the robot.
+        num_gauss_points: Number of points used for numerical integration.
+            Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
+        Xs, Ws: Gauss-Legendre quadrature nodes and weights for numerical integration.
+        active_tendon_routing_params: Dictionary of arrays of length n_actuators representing the tendon parameters.
+        active_d_s: Function that returns the vector [d_x, d_y, d_z] of the active tendon
+            position w.r.t. the central backbone within the cross-sectional plane at a given
+            abscissa point s. The three entries represent the coordinate of the tendon
+            position with respect to the local cross-sectional frame at s. For this reason,
+            d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
+        active_dd_s_ds: Function that returns the vector of the derivative over s of active_d_s.
+        passive_tendon_routing_params: Dictionary of arrays of length n_p representing the passive tendon parameters.
+        passive_d_s: As active_d_s for the passive tendons.
+        passive_dd_s_ds: As active_dd_s_ds for the passive tendons.
+        K_pt: Stiffness matrix of the passive tendons (n_p, n_p).
+        D_pt: Damping matrix of the passive tendons (n_p, n_p).
+        l_pt0: Vector of the initial displacement of the passive tendons (n_p,).
 
     Notes:
     -----
@@ -92,11 +71,23 @@ class TendonActuatedPCS(PCS):
                 - sigma_z corresponds to shear along the z-axis.
 
     References:
-    ----------
-    - [PCS model] Renda, Federico, Frédéric Boyer, Jorge Dias, and Lakmal Seneviratne. "Discrete cosserat approach for multisection soft manipulator dynamics." IEEE Transactions on Robotics 34, no. 6 (2018): 1518-1533.
-    - [Actuation matrix for tendon-actuated soft robots] Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. IEEE Robotics and Automation Letters, 5(3), 4006-4013.
-    - [Tendon lengths] Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024). Input decoupling of lagrangian systems via coordinate transformation: General characterization and its application to soft robotics. IEEE transactions on robotics, 40, 2098-2110.
-    - [Physical control] Milana, E., Santina, C. D., Gorissen, B., & Rothemund, P. (2025). Physical control: A new avenue to achieve intelligence in soft robotics. Science Robotics, 10(102), eadw7660.
+        Renda, F., Boyer, F., Dias, J., & Seneviratne, L. (2018). Discrete Cosserat
+        Approach for Multisection Soft Manipulator Dynamics. IEEE Transactions on
+        Robotics, 34(6), 1518-1533.
+
+        Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020).
+        A geometric variable-strain approach for static modeling of soft manipulators
+        with tendon and fluidic actuation. IEEE Robotics and Automation Letters,
+        5(3), 4006-4013.
+
+        Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024).
+        Input decoupling of Lagrangian systems via coordinate transformation: General
+        characterization and its application to soft robotics. IEEE Transactions on
+        Robotics, 40, 2098-2110.
+
+        Milana, E., Della Santina, C., Gorissen, B., & Rothemund, P. (2025). Physical
+        control: A new avenue to achieve intelligence in soft robotics. Science
+        Robotics, 10(102), eadw7660.
 
     """
 
@@ -121,7 +112,7 @@ class TendonActuatedPCS(PCS):
         passive_tendon_routing_basis: dict[str, Callable] | None = None,
         passive_tendon_routing_params: dict[str, Array] | None = None,
         passive_tendon_params: dict[str, Array] | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the TendonActuatedPCS class.
@@ -154,15 +145,6 @@ class TendonActuatedPCS(PCS):
                     Shear modulus of each segment [Pa]
                 - "D": Array of shape (6*num_segments, 6*num_segments)
                     Damping matrix [Pa·s]
-            order_gauss (int, optional):
-                Order of the Gauss-Legendre quadrature for integration over each segment.
-                Defaults to 5.
-            strain_selector (Optional[Array], optional):
-                Boolean array of shape (6 * num_segments,) specifying which strain components are active.
-                Defaults to all strains active (i.e. all True).
-            xi_ref (Optional[Array], optional):
-                Reference strain of shape (6 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
             active_tendon_routing_basis (Optional[Dict[str, Callable]]):
                 Dictionary with the active tendon routing functions. If None, a linear routing is used.
                 Expected keys and signatures:
@@ -198,7 +180,7 @@ class TendonActuatedPCS(PCS):
                     Damping coefficients of the dampers attached to the passive tendons (n_p,) [N s / m]
                 - "l_pt0": List/Array of n_p floats
                     Initial displacement of the passive tendons (pull is negative) (n_p,) [m]
-
+            **kwargs: Additional keyword arguments.
         """
         super().__init__(
             num_segments,

@@ -1,6 +1,8 @@
 __all__ = ["Pendulum"]
 
 
+from typing import Any
+
 import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
@@ -56,20 +58,13 @@ class Pendulum(SoftRobot):
     - q ∈ R^N: joint angles (relative)
     - qd ∈ R^N: joint angular velocities
 
-    Attributes
-    ----------
-    num_links : int (static)
-        Number of links / DoFs.
-    num_actuators: int (static)
-        Number of joint actuators. Equal to num_links.
-    m, I, L, Lc, r : Array (shape (N,))
-        Physical link properties (radius used for visualization).
-    g : Array (shape (2,))
-        Planar gravity vector [g_x, g_y].
-    K, D : Array (shape (N, N))
-        Optional joint stiffness and damping matrices (zeros if omitted).
-    q_ref_k :  Array (shape (N,))
-        Optional rest configuration of the torsional springs (defualt is the zero configuration)
+    Attributes:
+        num_links: Number of links / DoFs.
+        num_actuators: Number of joint actuators. Equal to num_links.
+        m, I, L, Lc, r: Physical link properties (radius used for visualization).
+        g: Planar gravity vector [g_x, g_y].
+        K, D: Optional joint stiffness and damping matrices (zeros if omitted).
+        q_ref_k: Optional rest configuration of the torsional springs (default is the zero configuration).
     """
 
     # Static field
@@ -91,7 +86,7 @@ class Pendulum(SoftRobot):
     def __init__(
         self,
         params: dict[str, Array],
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the pendulum system with the given parameters.

@@ -6,6 +6,7 @@ from soromox.systems.soft_robot import (
 from soromox.systems.system_state import SystemState
 
 from .gvs import GVS, TendonActuatedGVS
+from .hsa import PlanarHSA
 from .pcs import (
     PCS,
     ISupport,
@@ -15,7 +16,6 @@ from .pcs import (
     TendonActuatedPlanarPCS,
 )
 from .pendulum import Pendulum, TendonActuatedPendulum
-from .planar_hsa import PlanarHSA
 
 __all__ = [
     # base classes

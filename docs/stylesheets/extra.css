@@ -73,8 +73,20 @@ body {
   background-color: #ffffff !important;
 }
 
-/* Hero section styling */
+/* Default H1 styling for all pages */
 .md-content__inner > h1:first-child {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 1.5rem;
+  line-height: 1.3;
+  color: var(--md-primary-fg-color);
+}
+
+/* Hero section styling - only for homepage */
+/* Applied via body class or page-specific targeting */
+.md-content__inner > h1:first-child:has(+ .doc-summary),
+body[data-md-url="/"] .md-content__inner > h1:first-child,
+body[data-md-url="/index.html"] .md-content__inner > h1:first-child {
   background: var(--gradient-primary);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -242,30 +254,58 @@ body {
 }
 
 /* Enhanced method signatures - hierarchical styling with blue/purple background */
-/* Class headers (h4) - larger and more prominent */
-h2[id^="soromox"], h3[id^="soromox"], h4[id^="soromox"] {
+/* Class/module headers (h2) - largest */
+h2[id^="soromox"] {
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
   color: white !important;
   padding: 1.2rem 1.5rem;
-  margin: 2rem 0 1.2rem 0;
+  margin: 2.5rem 0 1.2rem 0;
   border-radius: 8px;
-  font-size: 1.5rem !important;
+  font-size: 1.6rem !important;
   font-weight: 700 !important;
   box-shadow: 0 4px 16px rgba(79, 70, 229, 0.25);
   border: none !important;
   position: relative;
 }
 
-/* Method headers (h5) - smaller than class headers */
-h5[id^="soromox"] {
+/* Subclass/submodule headers (h3) - medium */
+h3[id^="soromox"] {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: white !important;
+  padding: 1rem 1.25rem;
+  margin: 2rem 0 1rem 0;
+  border-radius: 7px;
+  font-size: 1.35rem !important;
+  font-weight: 600 !important;
+  box-shadow: 0 3px 12px rgba(79, 70, 229, 0.2);
+  border: none !important;
+  position: relative;
+}
+
+/* Property/attribute headers (h4) - smaller than h3 */
+h4[id^="soromox"] {
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
   color: white !important;
   padding: 0.8rem 1rem;
   margin: 1.5rem 0 0.8rem 0;
   border-radius: 6px;
-  font-size: 1.2rem !important;
+  font-size: 1.1rem !important;
   font-weight: 600 !important;
-  box-shadow: 0 3px 12px rgba(79, 70, 229, 0.2);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.15);
+  border: none !important;
+  position: relative;
+}
+
+/* Method headers (h5) - smaller than h4 */
+h5[id^="soromox"] {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+  color: white !important;
+  padding: 0.7rem 0.9rem;
+  margin: 1.2rem 0 0.7rem 0;
+  border-radius: 5px;
+  font-size: 0.95rem !important;
+  font-weight: 600 !important;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.15);
   border: none !important;
   position: relative;
 }
@@ -274,12 +314,12 @@ h5[id^="soromox"] {
 .doc.doc-heading {
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
   color: white !important;
-  padding: 0.8rem 1rem !important;
-  margin: 1.5rem 0 0.8rem 0 !important;
-  border-radius: 6px !important;
-  font-size: 1.2rem !important;
+  padding: 0.7rem 0.9rem !important;
+  margin: 1.2rem 0 0.7rem 0 !important;
+  border-radius: 5px !important;
+  font-size: 0.95rem !important;
   font-weight: 600 !important;
-  box-shadow: 0 3px 12px rgba(79, 70, 229, 0.2) !important;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.15) !important;
   border: none !important;
   position: relative;
 }
@@ -287,7 +327,7 @@ h5[id^="soromox"] {
 /* Method name styling within the heading */
 .doc-object-name.doc-function-name {
   color: white !important;
-  font-size: 1.2rem !important;
+  font-size: 0.95rem !important;
   font-weight: 600 !important;
 }
 
@@ -386,45 +426,53 @@ h3[id*="property"]:before, h4[id*="property"]:before {
   content: "📋";
 }
 
-/* Parameter and Return tables - reduced size and padding */
+/* Parameter and Return tables - improved readability */
 .md-typeset table:not([class]) {
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
   border: 1px solid rgba(var(--md-default-fg-color--rgb), 0.1);
-  margin: 0.5rem 0;
-  font-size: 0.78rem;
+  margin: 0.75rem 0;
+  font-size: 0.875rem;
 }
 
 .md-typeset table:not([class]) th {
   background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%);
   color: white;
   font-weight: 600;
-  font-size: 0.72rem;
-  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  padding: 0.5rem 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.4px;
 }
 
 .md-typeset table:not([class]) td {
-  padding: 0.3rem 0.5rem;
+  padding: 0.5rem 0.75rem;
   vertical-align: top;
-  font-size: 0.78rem;
-  line-height: 1.3;
+  font-size: 0.875rem;
+  line-height: 1.4;
 }
 
 .md-typeset table:not([class]) tr:nth-child(even) {
   background: rgba(var(--md-primary-fg-color--rgb), 0.02);
 }
 
-/* Code in table cells - smaller and more subtle */
+/* Code in table cells */
 .md-typeset table:not([class]) td code {
   background: rgba(var(--md-accent-fg-color--rgb), 0.08);
   color: var(--md-accent-fg-color);
   font-weight: 500;
-  padding: 0.1rem 0.25rem;
+  padding: 0.15rem 0.3rem;
   border-radius: 3px;
-  font-size: 0.72rem;
+  font-size: 0.8rem;
+}
+
+/* General heading hierarchy - ensure proper font size progression */
+.md-typeset h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 1.5rem 0 0.75rem 0;
+  color: var(--md-primary-fg-color);
 }
 
 /* Docstring sections - consistent with sidebar */
@@ -433,6 +481,13 @@ h3[id*="property"]:before, h4[id*="property"]:before {
   font-weight: 600;
   margin: 1rem 0 0.5rem 0;
   font-size: 1rem;
+}
+
+.md-typeset h5 {
+  font-size: 0.875rem;
+  font-weight: 600;
+  margin: 0.875rem 0 0.5rem 0;
+  color: var(--md-primary-fg-color);
 }
 
 /* Method separator - more subtle */
@@ -502,21 +557,6 @@ hr {
   }
 }
 
-/* Dark mode adjustments */
-[data-md-color-scheme="slate"] {
-  --gradient-primary: linear-gradient(135deg, #4a5568 0%, #2d3748 100%);
-  --gradient-accent: linear-gradient(135deg, #805ad5 0%, #553c9a 100%);
-}
-
-[data-md-color-scheme="slate"] .feature-card {
-  background: var(--md-default-bg-color);
-  border-color: rgba(255, 255, 255, 0.1);
-}
-
-[data-md-color-scheme="slate"] .doc-summary {
-  background: rgba(255, 255, 255, 0.05);
-}
-
 /* Animation for page load */
 @keyframes fadeInUp {
   from {
@@ -550,4 +590,17 @@ hr {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--gradient-accent);
+}
+
+/* Visual distinction for API auto-generated content */
+.doc-contents {
+  border-left: 3px solid var(--md-accent-fg-color);
+  padding-left: 1rem;
+  margin-left: 0.5rem;
+}
+
+/* Manual content sections - subtle underline */
+.md-typeset h2:not([id^="soromox"]):not([id*="class"]):not([id*="function"]):not([id*="method"]) {
+  border-bottom: 2px solid var(--md-primary-fg-color--light);
+  padding-bottom: 0.5rem;
 }

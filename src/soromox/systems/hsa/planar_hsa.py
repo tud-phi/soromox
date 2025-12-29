@@ -33,93 +33,45 @@ class PlanarHSA(SoftRobot):
         https://link.springer.com/chapter/10.1007/978-3-031-63596-0_14
 
     Attributes:
-    ----------
-    num_segments : int
-        Number of segments along the robot.
-    num_rods_per_segment : int
-        Number of physical rods per segment.
-    num_dofs : int
-        Number of degrees of freedom (active strain components).
-    num_actuators: int
-        Number of actuators in the robot.
-    consider_underactuation : bool
-        Whether to consider underactuation in the model.
-    consider_hysteresis : bool
-        Whether to consider hysteresis effects in the model.
-    num_hysteresis : int
-        Number of hysteresis state variables.
-
-    chiv_lambda_sms : List[Callable]
-        Lambda functions for virtual backbone forward kinematics per segment.
-    chir_lambda_sms : List[Callable]
-        Lambda functions for physical rod forward kinematics per segment.
-    chip_lambda_sms : List[Callable]
-        Lambda functions for platform forward kinematics per segment.
-
-    chiee_lambda : Callable
-        Lambda function for end-effector forward kinematics.
-    Jee_lambda : Callable
-        Lambda function for end-effector Jacobian.
-    Jeed_lambda : Callable
-        Lambda function for end-effector Jacobian time derivative.
-
-    B_lambda : Callable
-        Lambda function for inertia matrix computation.
-    C_lambda : Callable
-        Lambda function for Coriolis matrix computation.
-    G_lambda : Callable
-        Lambda function for gravitational force computation.
-    Shat_lambda : Callable
-        Lambda function for nominal stiffness matrix computation.
-    K_lambda : Callable
-        Lambda function for elastic force computation.
-    D_lambda : Callable
-        Lambda function for damping matrix computation.
-    alpha_lambda : Callable
-        Lambda function for actuation force computation.
-
-    B_xi : Array
-        Strain basis matrix for mapping active strain components.
-
-    kappa_b_ref : Array
-        Reference bending curvatures for each rod. Shape: (num_segments, num_rods_per_segment).
-    sigma_sh_ref : Array
-        Reference shear strains for each rod. Shape: (num_segments, num_rods_per_segment).
-    sigma_a_ref : Array
-        Reference axial strains for each rod. Shape: (num_segments, num_rods_per_segment).
-
-    L : Array
-        Segment lengths. Shape: (num_segments,).
-    L_cum : Array
-        Cumulative segment lengths. Shape: (num_segments + 1,).
-    Lmax : Array
-        Total robot length (sum of all segments).
-    roff : Array
-        Rod offset from centerline. Shape: (num_segments, num_rods_per_segment).
-    pcudim : Array
-        Platform dimensions (width, height, depth). Shape: (num_segments, 3).
-    lpc : Array
-        Length of rigid proximal rod caps. Shape: (num_segments,).
-    ldc : Array
-        Length of rigid distal rod caps. Shape: (num_segments,).
-    chiee_off : Array
-        End-effector offset transformation [theta, p_x, p_y]. Shape: (3,).
-
-    B_hyst : Array
-        Hysteresis basis matrix. Shape: (num_dofs, num_hysteresis).
-    hyst_alpha : Array
-        Bouc-Wen hysteresis parameter: ratio of post-yield to pre-yield stiffness.
-    hyst_A : Array
-        Bouc-Wen hysteresis parameter A.
-    hyst_n : Array
-        Bouc-Wen hysteresis parameter n.
-    hyst_beta : Array
-        Bouc-Wen hysteresis parameter beta.
-    hyst_gamma : Array
-        Bouc-Wen hysteresis parameter gamma.
-
-    params_for_lambdify : List[Array]
-        Flattened parameter list for symbolic function evaluation.
+        num_segments: Number of segments along the robot.
+        num_rods_per_segment: Number of physical rods per segment.
+        num_dofs: Number of degrees of freedom (active strain components).
+        num_actuators: Number of actuators in the robot.
+        consider_underactuation: Whether to consider underactuation in the model.
+        consider_hysteresis: Whether to consider hysteresis effects in the model.
+        num_hysteresis: Number of hysteresis state variables.
+        chiv_lambda_sms: Lambda functions for virtual backbone forward kinematics per segment.
+        chir_lambda_sms: Lambda functions for physical rod forward kinematics per segment.
+        chip_lambda_sms: Lambda functions for platform forward kinematics per segment.
+        chiee_lambda: Lambda function for end-effector forward kinematics.
+        Jee_lambda: Lambda function for end-effector Jacobian.
+        Jeed_lambda: Lambda function for end-effector Jacobian time derivative.
+        B_lambda: Lambda function for inertia matrix computation.
+        C_lambda: Lambda function for Coriolis matrix computation.
+        G_lambda: Lambda function for gravitational force computation.
+        Shat_lambda: Lambda function for nominal stiffness matrix computation.
+        K_lambda: Lambda function for elastic force computation.
+        D_lambda: Lambda function for damping matrix computation.
+        alpha_lambda: Lambda function for actuation force computation.
+        B_xi: Strain basis matrix for mapping active strain components.
+        kappa_b_ref: Reference bending curvatures for each rod. Shape: (num_segments, num_rods_per_segment).
+        sigma_sh_ref: Reference shear strains for each rod. Shape: (num_segments, num_rods_per_segment).
+        sigma_a_ref: Reference axial strains for each rod. Shape: (num_segments, num_rods_per_segment).
+        L: Segment lengths. Shape: (num_segments,).
+        L_cum: Cumulative segment lengths. Shape: (num_segments + 1,).
+        Lmax: Total robot length (sum of all segments).
+        roff: Rod offset from centerline. Shape: (num_segments, num_rods_per_segment).
+        pcudim: Platform dimensions (width, height, depth). Shape: (num_segments, 3).
+        lpc: Length of rigid proximal rod caps. Shape: (num_segments,).
+        ldc: Length of rigid distal rod caps. Shape: (num_segments,).
+        chiee_off: End-effector offset transformation [theta, p_x, p_y]. Shape: (3,).
+        B_hyst: Hysteresis basis matrix. Shape: (num_dofs, num_hysteresis).
+        hyst_alpha: Bouc-Wen hysteresis parameter: ratio of post-yield to pre-yield stiffness.
+        hyst_A: Bouc-Wen hysteresis parameter A.
+        hyst_n: Bouc-Wen hysteresis parameter n.
+        hyst_beta: Bouc-Wen hysteresis parameter beta.
+        hyst_gamma: Bouc-Wen hysteresis parameter gamma.
+        params_for_lambdify: Flattened parameter list for symbolic function evaluation.
 
     Notes:
     -----
@@ -132,8 +84,9 @@ class PlanarHSA(SoftRobot):
       when consider_hysteresis=True.
 
     References:
-    ----------
-        Stölzle, M., Rus, D., & Della Santina, C. (2023, November). An experimental study of model-based control for planar handed shearing auxetics robots. In International Symposium on Experimental Robotics (pp. 153-167). Cham: Springer Nature Switzerland.
+        Stölzle, M., Rus, D., & Della Santina, C. (2023). An experimental study of
+        model-based control for planar handed shearing auxetics robots. In
+        International Symposium on Experimental Robotics (pp. 153-167). Springer.
     """
 
     # static settings

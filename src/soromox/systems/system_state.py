@@ -12,16 +12,11 @@ class SystemState:
     """
     Container for the system state and optional controller state.
 
-    Attributes
-    ----------
-    t : Array
-        Current simulation time.
-    y : Array
-        Robot state vector, typically concatenated configuration and velocity.
-    u : Optional[Array]
-        Actuation input applied at the current time.
-    control_state : Optional[Any]
-        Additional controller state as a PyTree (e.g., integrator terms).
+    Attributes:
+        t: Current simulation time.
+        y: Robot state vector, typically concatenated configuration and velocity.
+        u: Actuation input applied at the current time.
+        control_state: Additional controller state as a PyTree (e.g., integrator terms).
     """
 
     t: Array

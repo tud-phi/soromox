@@ -212,3 +212,5 @@ The package includes a complete simulation example in `examples/simulate_tendon_
       show_source: false
       heading_level: 3
       group_by_category: true
+      docstring_section_style: table
+      members_order: source

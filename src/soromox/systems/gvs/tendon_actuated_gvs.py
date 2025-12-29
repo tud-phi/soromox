@@ -1,5 +1,6 @@
 __all__ = ["TendonActuatedGVS"]
 from collections.abc import Callable
+from typing import Any
 
 import equinox as eqx
 from jax import Array, lax, vmap
@@ -22,44 +23,25 @@ class TendonActuatedGVS(GVS):
       for robots with arbitrary combinations of link cross-sections, joint types, and
       strain basis functions. Additionally, it includes tendon actuation capabilities.
 
-    Attributes
-      ----------
-      num_segments : int
-          Number of segments (links) in the robot.
-      max_dof : int
-          Maximum number of degrees of freedom (DOFs) per link or joint.
-      max_nGauss : int
-          Maximum number of Gauss points per link used for integration.
-      max_nip : int
-          Maximum number of integration points per link (= max_nGauss + 2).
-      dof_tot_system : int
-          Total number of DOFs for the robot (sum of joint + link DOFs).
-      dof_tot_max : int
-          Theoretical maximum number of DOFs (num_segments * 2 * max_dof).
-      B_select : Array
-          Strain basis selection matrix mapping active DOFs to the full strain space.
-      V_L, V_L_cum : Array
-          Length of each link, and cumulative link lengths.
-      V_nip : Array
-          Number of integration/evaluation points for each link.
-      V_dof : Array
-          Number of DOFs for each link/joint pair (shape: num_segments x 2).
-      V_Xs, V_Ws : Array
-          Gauss quadrature nodes and weights for each link.
-      V_Ms, V_Es, V_Gs : Array
-          Mass, stiffness, and damping matrices at integration points.
-      V_B_joint, V_B_Xs, V_B_Z1, V_B_Z2 : Array
-          Basis matrices for joints and links at quadrature points and intermediate points.
-      V_xi_ref_joint, V_xi_ref_Xs, V_xi_ref_Z1, V_xi_ref_Z2 : Array
-          Reference strain vectors for joints and links.
-      V_K_joint : Array
-          Joint stiffness matrices.
-      g : Array
-          Gravitational acceleration vector in 6D wrench form.
-      V_basistype_idx : Array
-          Index of the strain basis type used for each segment.
-      V_Bdof_params, V_Bodr_params : Array
-          Parameters controlling the strain basis DOFs and orders.
+    Attributes:
+        num_segments: Number of segments (links) in the robot.
+        max_dof: Maximum number of degrees of freedom (DOFs) per link or joint.
+        max_nGauss: Maximum number of Gauss points per link used for integration.
+        max_nip: Maximum number of integration points per link (= max_nGauss + 2).
+        dof_tot_system: Total number of DOFs for the robot (sum of joint + link DOFs).
+        dof_tot_max: Theoretical maximum number of DOFs (num_segments * 2 * max_dof).
+        B_select: Strain basis selection matrix mapping active DOFs to the full strain space.
+        V_L, V_L_cum: Length of each link, and cumulative link lengths.
+        V_nip: Number of integration/evaluation points for each link.
+        V_dof: Number of DOFs for each link/joint pair (shape: num_segments x 2).
+        V_Xs, V_Ws: Gauss quadrature nodes and weights for each link.
+        V_Ms, V_Es, V_Gs: Mass, stiffness, and damping matrices at integration points.
+        V_B_joint, V_B_Xs, V_B_Z1, V_B_Z2: Basis matrices for joints and links at quadrature points and intermediate points.
+        V_xi_ref_joint, V_xi_ref_Xs, V_xi_ref_Z1, V_xi_ref_Z2: Reference strain vectors for joints and links.
+        V_K_joint: Joint stiffness matrices.
+        g: Gravitational acceleration vector in 6D wrench form.
+        V_basistype_idx: Index of the strain basis type used for each segment.
+        V_Bdof_params, V_Bodr_params: Parameters controlling the strain basis DOFs and orders.
 
       Notes
       -----
@@ -85,7 +67,7 @@ class TendonActuatedGVS(GVS):
         *args,
         tendon_routing_basis: dict[str, Callable] | None = None,
         tendon_routing_params: dict[str, Array],
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the TendonActuatedGVS class.

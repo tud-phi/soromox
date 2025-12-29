@@ -275,7 +275,7 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
   </div>
   
   <div class="feature-card">
-    <h3><span class="icon">📖</span> [API Reference](../api/systems.md)</h3>
+    <h3><span class="icon">📖</span> [API Reference](../api/overview.md)</h3>
     <p>Complete documentation of all classes and functions</p>
   </div>
   

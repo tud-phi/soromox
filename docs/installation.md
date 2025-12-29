@@ -28,9 +28,9 @@
 
 ## 🚀 Quick Install
 
-=== "🐍 PyPI (Recommended)"
+=== "🐍 pip (Recommended)"
 
-    The easiest way to install SoRoMoX is from PyPI:
+    The easiest way to install SoRoMoX is from PyPI using pip:
 
     ```bash
     pip install soromox
@@ -38,6 +38,21 @@
 
     !!! success "Ready to go!"
         This installs the core SoRoMoX package with all essential dependencies.
+
+=== "⚡ uv (Fast Alternative)"
+
+    For faster installation, use [uv](https://github.com/astral-sh/uv) - an extremely fast Python package installer:
+
+    ```bash
+    # Install uv if you haven't already
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install soromox
+    uv pip install soromox
+    ```
+
+    !!! tip "Speed Boost"
+        uv is 10-100x faster than pip and automatically handles virtual environments. Perfect for rapid prototyping!
 
 === "🔨 From Source"
 
@@ -65,6 +80,24 @@
 
 ## 🎯 Installation Options
 
+SoRoMoX provides several optional dependency groups for different use cases:
+
+### 🎨 Rendering Dependencies
+
+For 3D visualization and animation:
+
+```bash
+pip install soromox[rendering]
+```
+
+**Includes:**
+
+- `matplotlib` - For 2D plotting and simple rendering of the backbone shape
+- `open3d` - High-quality 3D visualization
+- `viser` - Web-based interactive rendering
+- `opencv-python` - 2D rendering for planar robots
+- ``ffmpeg`` - Video encoding and processing
+
 ### 📚 Examples Dependencies
 
 To run all examples and tutorials:
@@ -76,7 +109,7 @@ pip install soromox[examples]
 **Includes:**
 
 - `diffrax` - Advanced differential equation solving
-- `jaxopt` - High-performance optimization algorithms  
+- `jaxopt` - High-performance optimization algorithms
 - `matplotlib` - Publication-ready plotting and visualization
 - `opencv-python` - Computer vision and image processing
 - `scipy` - Scientific computing utilities
@@ -92,10 +125,9 @@ pip install soromox[dev]
 **Includes:**
 
 - `pytest` - Testing framework
-- `black` - Code formatting
-- `flake8` - Code linting
-- `mypy` - Type checking
-- `pre-commit` - Git hooks
+- `ruff` - Fast Python linter and formatter
+- `mypy` - Static type checking
+- `pre-commit` - Git hooks for code quality
 
 ### 📖 Documentation Dependencies
 
@@ -108,7 +140,7 @@ pip install soromox[docs]
 **Includes:**
 
 - `mkdocs-material` - Modern documentation theme
-- `mkdocstrings` - API documentation generation
+- `mkdocstrings[python]` - API documentation generation
 - `mkdocs-jupyter` - Jupyter notebook integration
 
 ### 🎉 Complete Installation
@@ -119,18 +151,13 @@ Get everything at once:
 pip install soromox[all]
 ```
 
----
+This installs all optional dependencies including rendering, examples, development tools, and documentation builders.
 
-## ⚙️ Environment Setup
-
-!!! warning "Important Step"
-    After installation, always source the environment variables when opening a new terminal:
-
+!!! tip "Using uv"
+    All these options work with uv as well:
     ```bash
-    source 01-configure-env-vars.sh
+    uv pip install soromox[rendering,examples]
     ```
-
-    This ensures SoRoMoX can find all necessary configuration files and paths.
 
 ---
 
@@ -215,18 +242,20 @@ Test your installation with this quick verification script:
         pip install jax[metal]
         ```
 
-    === "🔧 Environment Variables"
-        
-        **Problem:** Module not found errors
-        
-        **Solution:** Ensure environment is properly configured:
+    === "🔧 Import Errors"
+
+        **Problem:** `ModuleNotFoundError` for soromox modules
+
+        **Solution:** Ensure the package is installed in your current environment:
         ```bash
-        # Check if variables are set
-        echo $PYTHONPATH
-        
-        # Re-source the configuration
-        source 01-configure-env-vars.sh
-        ```
+        # Check installation
+        pip list | grep soromox
+
+        # Reinstall if needed
+        pip install --force-reinstall soromox
+
+        # For development installations
+        pip install -e .
 
 ---
 
@@ -234,7 +263,7 @@ Test your installation with this quick verification script:
 
 !!! info "Need assistance?"
 
-    - 📚 **Documentation**: Check our [API Reference](api/systems.md)
+    - 📚 **Documentation**: Check our [API Reference](api/overview.md)
     - 💬 **Discussions**: Join our [GitHub Discussions](https://github.com/tud-phi/soromox/discussions)  
     - 🐛 **Issues**: Report bugs on [GitHub Issues](https://github.com/tud-phi/soromox/issues)
     - 📧 **Email**: Contact us at `m.stolzle@tudelft.nl`

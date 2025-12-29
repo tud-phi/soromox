@@ -2,16 +2,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 import jax
+
+jax.config.update("jax_enable_x64", True)  # double precision
 import scipy as sp
 from jax import Array, jacrev, jit, random
 from jax import numpy as jnp
 
 import soromox
 from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL
-from soromox.utils.numerical_jacobian import approx_derivative
-
-jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.systems import PlanarHSA
+from soromox.utils.numerical_jacobian import approx_derivative
 
 
 def factory_fn(

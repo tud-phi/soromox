@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -255,7 +256,7 @@ class BaseSoftRobotRenderer(ABC):
         q_ts: Array,
         playback_speed: float = 1.0,
         record_path: str | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Render animated sequence to video file.
 
