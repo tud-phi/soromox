@@ -321,7 +321,7 @@ class SoftRobot(DynamicalSystem):
             q: Generalized coordinates of shape (num_dofs,).
 
         Returns:
-            U_G: Gravitational potential energy (scalar).
+            U_g: Gravitational potential energy (scalar).
         """
         ...
 
@@ -329,7 +329,7 @@ class SoftRobot(DynamicalSystem):
         """
         Compute the elastic potential energy stored in the system.
 
-        Default implementation: U_k = 0.5 * q^T * K * q
+        Default implementation: U_el = 0.5 * q^T * K * q
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
