@@ -269,4 +269,4 @@ Test your installation with this quick verification script:
     - 📚 **Documentation**: Check our [API Reference](api/overview.md)
     - 💬 **Discussions**: Join our [GitHub Discussions](https://github.com/tud-phi/soromox/discussions)  
     - 🐛 **Issues**: Report bugs on [GitHub Issues](https://github.com/tud-phi/soromox/issues)
-    - 📧 **Email**: Contact us at `m.stolzle@tudelft.nl`
+    - 📧 **Email**: Contact us at `mstolzle@mit.edu`
