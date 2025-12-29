@@ -88,12 +88,10 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
     ):
         """
         Initialize the PneumaticallyActuatedPlanarPCS class
+
         Args:
             num_segments (int): number of segments in the robot
             params (Dict[str, Array]): dictionary containing the robot parameters
-            order_gauss (int): order of the Gauss quadrature rule
-            strain_selector (Optional[Array]): array to select which strains are active. All six strains are active by default.
-            xi_ref (Optional[Array]): reference configuration for the robot
             segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
             chamber_cross_section_geometry: the cross sectional geometry of the chambers. Options:
                 - circular: assumes circular chamber cross sections with outside radius "r_chamber_out" and inside radius "r_chamber_in" with their center at a distance of "d_chamber" from the centerline of the backbone

@@ -59,6 +59,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     ):
         """
         Initialize the TendonActuatedPlanarPCS class
+
         Args:
             num_segments (int): number of segments in the robot
             params (Dict[str, Array]):
@@ -82,15 +83,6 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                     Damping matrix of each segment [Pa*s]
                 - "d": List/Array of num_segments floats
                     Distance of the tendons from the segment's backbone [m]
-            order_gauss (int, optional):
-                Order of the Gauss-Legendre quadrature for integration over each segment.
-                Defaults to 5.
-            strain_selector (Optional[Array], optional):
-                Boolean array of shape (3 * num_segments,) specifying which strain components are active.
-                Defaults to all strains active (i.e. all True).
-            xi_ref (Optional[Array], optional):
-                Reference strain of shape (3 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
             segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
         """
         super().__init__(num_segments, params, *args, **kwargs)
