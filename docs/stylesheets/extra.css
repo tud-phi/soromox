@@ -75,9 +75,9 @@ body {
 
 /* Default H1 styling for all pages */
 .md-content__inner > h1:first-child {
-  font-size: 2rem;
+  font-size: 1.75rem !important;
   font-weight: 700;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1.25rem;
   line-height: 1.3;
   color: var(--md-primary-fg-color);
 }
@@ -143,11 +143,15 @@ body[data-md-url="/index.html"] .md-content__inner > h1:first-child {
   border-radius: 12px;
 }
 
-.md-typeset code {
-  background: rgba(var(--md-accent-fg-color--rgb), 0.1);
-  border-radius: 6px;
-  padding: 0.2rem 0.4rem;
-  font-weight: 500;
+.md-content__inner .md-typeset code:not(pre code),
+article .md-typeset code:not(pre code),
+.md-typeset p code,
+.md-typeset li code {
+  background: rgba(var(--md-accent-fg-color--rgb), 0.1) !important;
+  border-radius: 6px !important;
+  padding: 0.2rem 0.4rem !important;
+  font-weight: 500 !important;
+  font-size: 0.75rem !important; /* 15px = 0.75rem (based on 20px root) */
 }
 
 /* Navigation enhancements */
@@ -191,21 +195,21 @@ body[data-md-url="/index.html"] .md-content__inner > h1:first-child {
   background: var(--gradient-accent);
 }
 
-/* Table styling */
-.md-typeset table:not([class]) {
+/* Table styling - general tables (overridden by more specific rules below) */
+.md-typeset table:not([class]):not(.doc-contents table) {
   border-radius: 12px;
   overflow: hidden;
   box-shadow: var(--shadow-light);
   border: none;
 }
 
-.md-typeset table:not([class]) th {
+.md-typeset table:not([class]):not(.doc-contents table) th {
   background: var(--gradient-primary);
   color: white;
   font-weight: 600;
 }
 
-.md-typeset table:not([class]) tr:nth-child(even) {
+.md-typeset table:not([class]):not(.doc-contents table) tr:nth-child(even) {
   background: rgba(var(--md-primary-fg-color--rgb), 0.05);
 }
 
@@ -255,133 +259,193 @@ body[data-md-url="/index.html"] .md-content__inner > h1:first-child {
 
 /* Enhanced method signatures - hierarchical styling with blue/purple background */
 /* Class/module headers (h2) - largest */
-h2[id^="soromox"] {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+.md-typeset h2[id^="soromox"],
+.md-content__inner h2[id^="soromox"] {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+  background-color: #4f46e5 !important;
   color: white !important;
-  padding: 1.2rem 1.5rem;
-  margin: 2.5rem 0 1.2rem 0;
-  border-radius: 8px;
-  font-size: 1.6rem !important;
+  padding: 1rem 1.25rem !important;
+  margin: 2rem 0 1rem 0 !important;
+  border-radius: 8px !important;
+  font-size: 1.4rem !important;
   font-weight: 700 !important;
-  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.25);
+  box-shadow: 0 4px 16px rgba(79, 70, 229, 0.25) !important;
   border: none !important;
   position: relative;
 }
 
 /* Subclass/submodule headers (h3) - medium */
-h3[id^="soromox"] {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+/* Target: 18.4px = 0.92rem (based on 20px root font size) */
+.md-typeset h3[id^="soromox"],
+.md-content__inner h3[id^="soromox"] {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+  background-color: #4f46e5 !important;
   color: white !important;
-  padding: 1rem 1.25rem;
-  margin: 2rem 0 1rem 0;
-  border-radius: 7px;
-  font-size: 1.35rem !important;
+  padding: 0.85rem 1.1rem !important;
+  margin: 1.75rem 0 0.85rem 0 !important;
+  border-radius: 7px !important;
+  font-size: 0.92rem !important;
   font-weight: 600 !important;
-  box-shadow: 0 3px 12px rgba(79, 70, 229, 0.2);
+  box-shadow: 0 3px 12px rgba(79, 70, 229, 0.2) !important;
   border: none !important;
   position: relative;
 }
 
 /* Property/attribute headers (h4) - smaller than h3 */
-h4[id^="soromox"] {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+/* Target: 16px = 0.8rem (based on 20px root font size) */
+.md-typeset h4[id^="soromox"],
+.md-content__inner h4[id^="soromox"] {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+  background-color: #4f46e5 !important;
   color: white !important;
-  padding: 0.8rem 1rem;
-  margin: 1.5rem 0 0.8rem 0;
-  border-radius: 6px;
-  font-size: 1.1rem !important;
+  padding: 0.7rem 0.95rem !important;
+  margin: 1.5rem 0 0.7rem 0 !important;
+  border-radius: 6px !important;
+  font-size: 0.8rem !important;
   font-weight: 600 !important;
-  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.15);
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.15) !important;
   border: none !important;
   position: relative;
 }
 
 /* Method headers (h5) - smaller than h4 */
-h5[id^="soromox"] {
-  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
-  color: white !important;
-  padding: 0.7rem 0.9rem;
-  margin: 1.2rem 0 0.7rem 0;
-  border-radius: 5px;
-  font-size: 0.95rem !important;
-  font-weight: 600 !important;
-  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.15);
-  border: none !important;
-  position: relative;
-}
-
-/* Target mkdocstrings method headings specifically */
-.doc.doc-heading {
+/* Target: 14.4px = 0.72rem (based on 20px root font size) */
+.md-typeset h5[id^="soromox"],
+.md-content__inner h5[id^="soromox"] {
   background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
+  background-color: #4f46e5 !important;
   color: white !important;
-  padding: 0.7rem 0.9rem !important;
-  margin: 1.2rem 0 0.7rem 0 !important;
+  padding: 0.6rem 0.85rem !important;
+  margin: 1.25rem 0 0.6rem 0 !important;
   border-radius: 5px !important;
-  font-size: 0.95rem !important;
+  font-size: 0.72rem !important;
   font-weight: 600 !important;
   box-shadow: 0 2px 6px rgba(79, 70, 229, 0.15) !important;
   border: none !important;
   position: relative;
 }
 
-/* Method name styling within the heading */
-.doc-object-name.doc-function-name {
+/* Target mkdocstrings method headings specifically */
+/* Target: 14.4px = 0.72rem (based on 20px root font size) */
+.doc.doc-heading {
+  background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%) !important;
   color: white !important;
-  font-size: 0.95rem !important;
+  padding: 0.6rem 0.85rem !important;
+  margin: 1.25rem 0 0.6rem 0 !important;
+  border-radius: 5px !important;
+  font-size: 0.72rem !important;
   font-weight: 600 !important;
+  box-shadow: 0 2px 6px rgba(79, 70, 229, 0.15) !important;
+  border: none !important;
+  position: relative;
 }
 
-/* Code symbols in method headings */
-.doc-heading .doc-symbol {
+
+/* Code symbols in method headings - scale with heading size using em units */
+.doc-heading .doc-symbol,
+h5[id^="soromox"] .doc-symbol,
+h4[id^="soromox"] .doc-symbol,
+h3[id^="soromox"] .doc-symbol,
+h2[id^="soromox"] .doc-symbol {
   color: white !important;
   background: rgba(255, 255, 255, 0.15) !important;
   padding: 0.2rem 0.4rem !important;
   border-radius: 4px !important;
+  font-size: 0.75em !important; /* 75% of parent heading size - scales with H2/H3/H4/H5 */
+  font-weight: 600 !important;
+}
+
+/* Doc-labels (property, attr, class, meth, mod) - scale with heading size using em units */
+/* These appear in headings and should scale proportionally like doc-symbol */
+.doc-heading .doc-label,
+h5[id^="soromox"] .doc-label,
+h4[id^="soromox"] .doc-label,
+h3[id^="soromox"] .doc-label,
+h2[id^="soromox"] .doc-label,
+.doc-heading small.doc-label,
+h5[id^="soromox"] small.doc-label,
+h4[id^="soromox"] small.doc-label,
+h3[id^="soromox"] small.doc-label,
+h2[id^="soromox"] small.doc-label {
+  font-size: 0.75em !important; /* 75% of parent heading size - same as doc-symbol */
+  font-weight: 600 !important;
+}
+
+/* Code elements inside doc-labels - also scale with heading */
+.doc-heading .doc-label code,
+h5[id^="soromox"] .doc-label code,
+h4[id^="soromox"] .doc-label code,
+h3[id^="soromox"] .doc-label code,
+h2[id^="soromox"] .doc-label code,
+.doc-heading small.doc-label code,
+h5[id^="soromox"] small.doc-label code,
+h4[id^="soromox"] small.doc-label code,
+h3[id^="soromox"] small.doc-label code,
+h2[id^="soromox"] small.doc-label code {
+  font-size: 1em !important; /* Same size as parent doc-label (which is 0.75em of heading) */
+  font-weight: 600 !important;
 }
 
 /* Icons for class headers (larger) */
-h2[id^="soromox"]:before, h3[id^="soromox"]:before, h4[id^="soromox"]:before {
+.md-typeset h2[id^="soromox"]:before,
+.md-content__inner h2[id^="soromox"]:before,
+.md-typeset h3[id^="soromox"]:before,
+.md-content__inner h3[id^="soromox"]:before,
+.md-typeset h4[id^="soromox"]:before,
+.md-content__inner h4[id^="soromox"]:before {
   content: "🏗️";
   position: absolute;
-  right: 1.2rem;
+  right: 1.1rem;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 1.2rem;
+  font-size: 1.1rem;
   opacity: 0.8;
 }
 
 /* Icons for method headers (smaller) */
-h5[id^="soromox"]:before {
+.md-typeset h5[id^="soromox"]:before,
+.md-content__inner h5[id^="soromox"]:before {
   content: "🔧";
   position: absolute;
-  right: 1rem;
+  right: 0.85rem;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 1rem;
+  font-size: 0.9rem;
   opacity: 0.8;
 }
 
 /* Code styling for class headers */
-h2[id^="soromox"] code, h3[id^="soromox"] code, h4[id^="soromox"] code {
+.md-typeset h2[id^="soromox"] code,
+.md-content__inner h2[id^="soromox"] code,
+.md-typeset h3[id^="soromox"] code,
+.md-content__inner h3[id^="soromox"] code,
+.md-typeset h4[id^="soromox"] code,
+.md-content__inner h4[id^="soromox"] code {
   background: rgba(255, 255, 255, 0.15) !important;
   color: white !important;
-  padding: 0.4rem 0.8rem;
-  border-radius: 5px;
-  font-size: 1.3rem !important;
+  padding: 0.35rem 0.7rem !important;
+  border-radius: 5px !important;
+  font-size: 1.15rem !important;
   font-weight: 700 !important;
 }
 
-/* Code styling for method headers */
-h5[id^="soromox"] code {
+/* Code styling for method headers - but exclude doc-symbol which has its own rule */
+.md-typeset h5[id^="soromox"] code:not(.doc-symbol),
+.md-content__inner h5[id^="soromox"] code:not(.doc-symbol) {
   background: rgba(255, 255, 255, 0.15) !important;
   color: white !important;
-  padding: 0.3rem 0.6rem;
-  border-radius: 4px;
-  font-size: 1.1rem !important;
+  padding: 0.25rem 0.5rem !important;
+  border-radius: 4px !important;
+  font-size: 0.95rem !important;
   font-weight: 600 !important;
 }
 
-h2[id^="soromox"] a, h3[id^="soromox"] a, h4[id^="soromox"] a {
+.md-typeset h2[id^="soromox"] a,
+.md-content__inner h2[id^="soromox"] a,
+.md-typeset h3[id^="soromox"] a,
+.md-content__inner h3[id^="soromox"] a,
+.md-typeset h4[id^="soromox"] a,
+.md-content__inner h4[id^="soromox"] a {
   color: white !important;
   text-decoration: none !important;
 }
@@ -426,69 +490,98 @@ h3[id*="property"]:before, h4[id*="property"]:before {
   content: "📋";
 }
 
-/* Parameter and Return tables - improved readability */
-.md-typeset table:not([class]) {
-  border-radius: 6px;
-  overflow: hidden;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
-  border: 1px solid rgba(var(--md-default-fg-color--rgb), 0.1);
-  margin: 0.75rem 0;
-  font-size: 0.875rem;
+/* Parameter and Return tables - improved readability - HIGHEST SPECIFICITY */
+.md-content__inner .md-typeset table:not([class]),
+.md-typeset .doc-contents table:not([class]),
+article .md-typeset table:not([class]) {
+  border-radius: 6px !important;
+  overflow: hidden !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08) !important;
+  border: 1px solid rgba(var(--md-default-fg-color--rgb), 0.1) !important;
+  margin: 0.75rem 0 !important;
+  font-size: 0.8125rem !important; /* 13px - reduced from 14px */
 }
 
-.md-typeset table:not([class]) th {
-  background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%);
-  color: white;
-  font-weight: 600;
-  font-size: 0.8rem;
-  padding: 0.5rem 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.4px;
+.md-content__inner .md-typeset table:not([class]) th,
+.md-typeset .doc-contents table:not([class]) th,
+article .md-typeset table:not([class]) th {
+  background: linear-gradient(135deg, #6b7280 0%, #9ca3af 100%) !important;
+  color: white !important;
+  font-weight: 600 !important;
+  font-size: 0.7rem !important; /* 14px = 0.7rem (based on 20px root) - larger than cell text */
+  padding: 0.5rem 0.75rem !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.4px !important;
 }
 
-.md-typeset table:not([class]) td {
-  padding: 0.5rem 0.75rem;
-  vertical-align: top;
-  font-size: 0.875rem;
-  line-height: 1.4;
+.md-content__inner .md-typeset table:not([class]) td,
+.md-typeset .doc-contents table:not([class]) td,
+article .md-typeset table:not([class]) td {
+  padding: 0.5rem 0.75rem !important;
+  vertical-align: top !important;
+  font-size: 0.65rem !important; /* 13px = 0.65rem (based on 20px root) - smaller than headers */
+  line-height: 1.4 !important;
 }
 
-.md-typeset table:not([class]) tr:nth-child(even) {
-  background: rgba(var(--md-primary-fg-color--rgb), 0.02);
+.md-content__inner .md-typeset table:not([class]) tr:nth-child(even),
+.md-typeset .doc-contents table:not([class]) tr:nth-child(even),
+article .md-typeset table:not([class]) tr:nth-child(even) {
+  background: rgba(var(--md-primary-fg-color--rgb), 0.02) !important;
 }
 
 /* Code in table cells */
 .md-typeset table:not([class]) td code {
-  background: rgba(var(--md-accent-fg-color--rgb), 0.08);
-  color: var(--md-accent-fg-color);
-  font-weight: 500;
-  padding: 0.15rem 0.3rem;
-  border-radius: 3px;
-  font-size: 0.8rem;
+  background: rgba(var(--md-accent-fg-color--rgb), 0.08) !important;
+  color: var(--md-accent-fg-color) !important;
+  font-weight: 500 !important;
+  padding: 0.15rem 0.3rem !important;
+  border-radius: 3px !important;
+  font-size: 0.75rem !important; /* 12px - slightly smaller than table text */
 }
 
 /* General heading hierarchy - ensure proper font size progression */
-.md-typeset h3 {
-  font-size: 1.25rem;
+/* H2: Target 24px = 1.2rem (based on 20px root font size) */
+.md-content__inner.md-typeset h2:not([id^="soromox"]):not([id*="class"]):not([id*="function"]):not([id*="method"]),
+.md-typeset h2:not([id^="soromox"]):not([id*="class"]):not([id*="function"]):not([id*="method"]) {
+  font-size: 1.2rem !important; /* 24px = 1.2rem (based on 20px root) */
+  font-weight: 600 !important;
+  margin: 1.5rem 0 0.75rem 0 !important;
+  color: var(--md-primary-fg-color) !important;
+}
+
+.md-typeset h3:not([id^="soromox"]) {
+  font-size: 1.125rem !important; /* 18px - reduced from 20px */
   font-weight: 600;
-  margin: 1.5rem 0 0.75rem 0;
+  margin: 1.25rem 0 0.65rem 0;
   color: var(--md-primary-fg-color);
 }
 
 /* Docstring sections - consistent with sidebar */
-.md-typeset h4 {
+.md-typeset h4:not([id^="soromox"]) {
   color: var(--md-primary-fg-color);
   font-weight: 600;
   margin: 1rem 0 0.5rem 0;
-  font-size: 1rem;
+  font-size: 0.95rem !important; /* 15.2px - reduced from 16px */
 }
 
-.md-typeset h5 {
-  font-size: 0.875rem;
+.md-typeset h5:not([id^="soromox"]) {
+  font-size: 0.85rem !important; /* 13.6px - reduced from 14px */
   font-weight: 600;
   margin: 0.875rem 0 0.5rem 0;
   color: var(--md-primary-fg-color);
 }
+
+/* Section headings like "Attributes:", "Parameters:" - make them more prominent */
+/* Target: 14px = 0.7rem (based on 20px root font size) */
+.md-typeset h6 {
+  font-size: 0.7rem !important; /* 14px = 0.7rem (based on 20px root) */
+  font-weight: 700 !important;
+  margin: 1rem 0 0.5rem 0 !important;
+  color: rgba(0, 0, 0, 0.7) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.5px !important;
+}
+
 
 /* Method separator - more subtle */
 hr {
@@ -603,4 +696,97 @@ hr {
 .md-typeset h2:not([id^="soromox"]):not([id*="class"]):not([id*="function"]):not([id*="method"]) {
   border-bottom: 2px solid var(--md-primary-fg-color--light);
   padding-bottom: 0.5rem;
+}
+
+/* Reduce body text size slightly */
+/* Target: 15px = 0.75rem (based on 20px root font size) */
+/* Material theme sets base font-size on .md-typeset, so we need to override it with maximum specificity */
+.md-main .md-content .md-content__inner .md-typeset,
+.md-content__inner .md-typeset,
+article .md-typeset,
+.md-main .md-content .md-typeset,
+main .md-content .md-typeset {
+  font-size: 0.75rem !important; /* 15px = 0.75rem (based on 20px root) */
+  line-height: 1.6 !important;
+}
+
+.md-content__inner .md-typeset p,
+article .md-typeset p,
+.md-content__inner article .md-typeset p,
+.md-typeset .doc-contents p,
+.md-main .md-content .md-typeset p {
+  font-size: 0.75rem !important; /* 15px = 0.75rem (based on 20px root) */
+  line-height: 1.6 !important;
+}
+
+/* Also target paragraphs in list items and other contexts */
+.md-content__inner .md-typeset li p,
+article .md-typeset li p,
+.md-content__inner .md-typeset dd p,
+article .md-typeset dd p,
+.md-main .md-content .md-typeset li p {
+  font-size: 0.75rem !important; /* 15px = 0.75rem (based on 20px root) */
+}
+
+/* Ensure API headings have proper background rendering - redundant, already in rules above */
+
+/* Final override font sizes, etc. */
+@media screen {
+  .md-content__inner.md-typeset h2:not([id^="soromox"]):not([id*="class"]):not([id*="function"]):not([id*="method"]),
+  .md-typeset h2:not([id^="soromox"]):not([id*="class"]):not([id*="function"]):not([id*="method"]) {
+    font-size: 1.2rem !important; /* 24px = 1.2rem (based on 20px root) */
+  }
+
+  /* Final override for doc-symbol elements (meth, attr, class, etc.) in headings */
+  /* Use em units so it scales proportionally with each heading level (H2/H3/H4/H5) */
+  /* Must override .md-typeset h5[id^="soromox"] code rule */
+  .md-typeset .doc-heading code.doc-symbol,
+  .md-typeset h5[id^="soromox"] code.doc-symbol,
+  .md-typeset h4[id^="soromox"] code.doc-symbol,
+  .md-typeset h3[id^="soromox"] code.doc-symbol,
+  .md-typeset h2[id^="soromox"] code.doc-symbol,
+  .md-content__inner h5[id^="soromox"] code.doc-symbol,
+  .md-content__inner h4[id^="soromox"] code.doc-symbol,
+  .md-content__inner h3[id^="soromox"] code.doc-symbol,
+  .md-content__inner h2[id^="soromox"] code.doc-symbol,
+  code.doc-symbol.doc-symbol-heading {
+    font-size: 0.75em !important; /* 75% of parent heading size - scales automatically */
+  }
+  
+  /* Final override for doc-label elements (property, attr, class, meth, mod) in headings */
+  /* Use em units so it scales proportionally with each heading level, same as doc-symbol */
+  .md-typeset .doc-heading .doc-label,
+  .md-typeset .doc-heading small.doc-label,
+  .md-typeset h5[id^="soromox"] .doc-label,
+  .md-typeset h5[id^="soromox"] small.doc-label,
+  .md-typeset h4[id^="soromox"] .doc-label,
+  .md-typeset h4[id^="soromox"] small.doc-label,
+  .md-typeset h3[id^="soromox"] .doc-label,
+  .md-typeset h3[id^="soromox"] small.doc-label,
+  .md-typeset h2[id^="soromox"] .doc-label,
+  .md-typeset h2[id^="soromox"] small.doc-label,
+  .md-content__inner h5[id^="soromox"] .doc-label,
+  .md-content__inner h5[id^="soromox"] small.doc-label,
+  .md-content__inner h4[id^="soromox"] .doc-label,
+  .md-content__inner h4[id^="soromox"] small.doc-label,
+  .md-content__inner h3[id^="soromox"] .doc-label,
+  .md-content__inner h3[id^="soromox"] small.doc-label,
+  .md-content__inner h2[id^="soromox"] .doc-label,
+  .md-content__inner h2[id^="soromox"] small.doc-label {
+    font-size: 0.75em !important; /* 75% of parent heading size - same as doc-symbol */
+  }
+  
+  /* Code elements inside doc-labels - inherit from parent doc-label */
+  .md-typeset .doc-heading .doc-label code,
+  .md-typeset .doc-heading small.doc-label code,
+  .md-typeset h5[id^="soromox"] .doc-label code,
+  .md-typeset h5[id^="soromox"] small.doc-label code,
+  .md-typeset h4[id^="soromox"] .doc-label code,
+  .md-typeset h4[id^="soromox"] small.doc-label code,
+  .md-typeset h3[id^="soromox"] .doc-label code,
+  .md-typeset h3[id^="soromox"] small.doc-label code,
+  .md-typeset h2[id^="soromox"] .doc-label code,
+  .md-typeset h2[id^="soromox"] small.doc-label code {
+    font-size: 1em !important; /* Same size as parent doc-label */
+  }
 }
