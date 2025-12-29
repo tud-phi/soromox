@@ -32,7 +32,7 @@ class DynamicalSystem(eqx.Module):
         t1: float | Array,
         solver_dt: float | Array,
         save_dt: float | Array | None,
-        save_ts: Array | None,
+        save_ts: Array | None = None,
     ) -> Array:
         """Build the array of time stamps to save during integration."""
         if save_ts is not None:
@@ -163,7 +163,7 @@ class DynamicalSystem(eqx.Module):
             base_u = jnp.zeros((self.num_actuators,))
 
         y0 = initial_state.y  # initial state vector
-        t0 = float(initial_state.t)
+        t0 = initial_state.t
         save_ts = self._compute_save_times(t0, t1, solver_dt, save_dt, save_ts)
 
         term = ODETerm(self._open_loop_forward_dynamics)
@@ -247,7 +247,7 @@ class DynamicalSystem(eqx.Module):
         track_control_state = controller_state0 is not None
         zero_control_state_dot = self._zero_like_control_state(controller_state0)
 
-        t0 = float(initial_state.t)
+        t0 = initial_state.t
         save_ts = self._compute_save_times(t0, t1, solver_dt, save_dt, save_ts)
 
         # Use class method to avoid closure overhead
