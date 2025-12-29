@@ -210,7 +210,7 @@ if __name__ == "__main__":
     viser_renderer.render_sequence(
         ts=ts,
         q_ts=q_ts_overlay,
-        overlay_mode="overlay",
+        multi_robot_layout="overlay",
         playback_speed=1.0,
         autoplay=True,
         loop=True,

@@ -115,7 +115,7 @@ BaseSoftRobotRenderer (abstract base)
     # Multiple robots overlayed (robot_colors alpha sets default opacity)
     renderer.render_sequence(
         ts, q_ts_batched,  # (N, T, DOF)
-        overlay_mode="overlay",
+        multi_robot_layout="overlay",
         robot_colors=[
             [0.2, 0.6, 0.9, 0.35],
             [0.9, 0.3, 0.2, 0.5],

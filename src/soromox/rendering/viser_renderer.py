@@ -557,7 +557,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     )
                     color, opacity = _rgba_to_viser_color_and_opacity(
                         np.array(
-                            [color_rgba[0], color_rgba[1], color_rgba[2], effective_alpha]
+                            [
+                                color_rgba[0],
+                                color_rgba[1],
+                                color_rgba[2],
+                                effective_alpha,
+                            ]
                         )
                     )
 
@@ -585,7 +590,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     )
                     color, opacity = _rgba_to_viser_color_and_opacity(
                         np.array(
-                            [color_rgba[0], color_rgba[1], color_rgba[2], effective_alpha]
+                            [
+                                color_rgba[0],
+                                color_rgba[1],
+                                color_rgba[2],
+                                effective_alpha,
+                            ]
                         )
                     )
 
@@ -1137,7 +1147,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     robot_idx=i,
                     base_offset=np.zeros(3),  # Applied via curves
                     color_rgba=colors[i],
-                    default_alpha=float(colors[i][3]) if robot_colors_have_alpha else 1.0,
+                    default_alpha=float(colors[i][3])
+                    if robot_colors_have_alpha
+                    else 1.0,
                 )
             )
         return configs
@@ -1258,7 +1270,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         robot_colors: str | Array | np.ndarray | None = None,
-        overlay_mode: Literal["grid", "overlay"] = "grid",
+        multi_robot_layout: Literal["grid", "overlay"] = "grid",
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1286,7 +1298,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
             robot_colors: Per-robot color specification
-            overlay_mode: "grid" for side-by-side, "overlay" for same position
+            multi_robot_layout: "grid" for side-by-side, "overlay" for same position
             static_spheres_*: Static sphere configuration
             dynamic_spheres_*: Time-varying sphere configuration
             show_tendons: If True, render tendons (if available)
@@ -1319,7 +1331,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         num_robots, num_frames, num_dofs = q_ts.shape
 
         # Compute base offsets
-        if overlay_mode == "overlay":
+        if multi_robot_layout == "overlay":
             # All robots at same position
             base_offsets = jnp.zeros((num_robots, 3))
         elif base_offsets is not None:
