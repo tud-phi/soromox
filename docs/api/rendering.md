@@ -17,6 +17,19 @@ BaseSoftRobotRenderer (abstract base)
 └── OpenCVPlanarRenderer       # Generic for planar robots
 ```
 
+### Choosing a renderer
+
+The renderers overlap in features, but each has a sweet spot. Use this table as a
+quick guide and then jump to the corresponding quick-start tab.
+
+| Renderer | Best for | Strengths | Limitations / notes |
+| --- | --- | --- | --- |
+| `MatplotlibRenderer` | Static plots, notebooks, quick debugging | Visualizes the backbone of any robot (2D/3D), easy to embed in notebooks | Limited interactivity; does not visualize the robot geometry; slower for long animations |
+| `Open3DRenderer` | Interactive 3D inspection, offline capture | Rich 3D camera controls, interactive playback, headless frame capture | Requires Open3D; 3D only; no Python 3.13+ wheels yet |
+| `ViserRenderer` | Live demos, web-based 3D, remote viewing | Browser UI, live streaming, multi-robot layouts, high-quality lighting | Requires running a local web server; 3D only |
+| `OpenCVPlanarRenderer` | Fast planar animations, video export | Lightweight, fast 2D output, simple video recording | Planar robots only; minimal interactivity |
+| `OpenCVPlanarHSARenderer` | PlanarHSA-specific visuals | Adds HSA-specific geometry and styling | PlanarHSA only |
+
 ### Quick Start
 
 === "Matplotlib (any robot)"
@@ -43,10 +56,14 @@ BaseSoftRobotRenderer (abstract base)
 
 === "Open3D (3D robots)"
 
+    !!! note
+        Open3D does not currently support Python 3.13+ (no wheels available yet).
+        Use Python 3.12 or earlier for the Open3D renderer.
+
     ```python
     from soromox.rendering import BackboneColorConfig, Open3DRenderer, RendererColorConfig
 
-    # Create renderer (defaults to legacy viewer backend)
+    # Create renderer
     color_config = RendererColorConfig(
         backbone=BackboneColorConfig(
             segment_palette="soromox:ember",  # colormap name or (S,3)/(S,4) array
@@ -56,15 +73,14 @@ BaseSoftRobotRenderer (abstract base)
     renderer = Open3DRenderer(
         robot,
         num_points=80,
-        viewer_backend="legacy",
         color_config=color_config,
     )
 
     # Single interactive frame (supports base offsets / spheres if provided)
-    renderer.show(q, backend="legacy")
+    renderer.show(q)
 
     # Animated playback with keyboard controls
-    renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True, backend="legacy")
+    renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True)
 
     # Save directly to a video or frame directory (requires ffmpeg for video)
     renderer.render_sequence(
@@ -72,7 +88,6 @@ BaseSoftRobotRenderer (abstract base)
         q_ts,
         playback_speed=1.0,
         record_path="trajectory.mp4",  # or a directory for PNG frames
-        backend="gui",  # optional: use GUI SceneWidget if installed
     )
 
     # Headless capture (returns uint8 image array)
@@ -191,7 +206,7 @@ using a consistent hierarchy. More specific inputs override less specific ones:
 - `robot_segment_colors` → `robot_point_colors`
 
 Alpha in per-robot colors is propagated to more specific colors when those omit alpha.
-Open3D's legacy viewer approximates alpha by blending with the background.
+Open3D's interactive viewer approximates alpha by blending with the background.
 Open3D backbone geometry is per-segment, so point palettes are averaged into segments.
 
 Pass `color_config=...` to renderer constructors or per-call methods (`show`,
@@ -226,6 +241,98 @@ Shape hints:
 Use `segment_palette` for lengthwise segment coloring and `point_palette` for
 per-point gradients along the backbone.
 Set `segment_palette=None` to fall back to solid per-robot colors.
+
+`RendererColorConfig` also provides renderer-specific colors:
+
+- `base_plate_color` (Open3D, Viser)
+- `tendon_color` (Matplotlib, Open3D, Viser)
+
+### Camera configuration
+
+Use `CameraConfig` with Open3D and Viser to control field of view and view
+placement. By default, the camera auto-positions based on the scene bounds.
+
+```python
+from soromox.rendering import CameraConfig
+
+camera = CameraConfig(
+    fov=60.0,
+    position=(0.6, -0.6, 0.4),
+    look_at=(0.0, 0.0, 0.1),
+)
+renderer.show(q, camera_config=camera)
+```
+
+Matplotlib uses `camera_config` to set 3D view angles; 2D views ignore it.
+
+### Recording and video encoding
+
+All renderers support `record_path` in `render_sequence`, but the backends differ:
+
+- Matplotlib relies on Matplotlib animation writers (ffmpeg required for mp4).
+- Open3D and Viser use ffmpeg and accept `video_config=VideoEncodingConfig(...)`.
+- Open3D also writes PNG frames when `record_path` is a directory, with
+  `record_every_n` and `record_prefix` (Viser also supports `record_every_n`).
+- OpenCV renderers require `record_path`, use ffmpeg when available, and fall back
+  to OpenCV VideoWriter.
+
+Example (Open3D/Viser):
+
+```python
+from soromox.rendering import VideoEncodingConfig
+
+renderer.render_sequence(
+    ts,
+    q_ts,
+    record_path="trajectory.mp4",
+    video_config=VideoEncodingConfig(crf=18, pix_fmt="yuv420p"),
+)
+```
+
+### Multi-robot layouts
+
+Matplotlib, Open3D, and Viser accept batched inputs:
+
+- `q` with shape `(N, DOF)` for `show()` and `render_frame()`
+- `q_ts` with shape `(N, T, DOF)` for `render_sequence()` or `animate()`
+
+Use `base_offsets` or `grid_spacing` to control placement. Viser additionally
+supports `multi_robot_layout="overlay"` to stack robots at the same base pose.
+
+### Tendons and helper geometry
+
+If the robot exposes `forward_kinematics_tendons`:
+
+- Matplotlib renders tendons with `render_tendons=True`
+- Viser renders tendons with `show_tendons=True`
+- Open3D renders tendons automatically (no toggle)
+
+Open3D and Viser also support helper spheres:
+
+- Static: `static_spheres_positions`, `static_spheres_radii`, `static_spheres_colors`
+- Dynamic: `dynamic_spheres_positions`, `dynamic_spheres_radii`,
+  `dynamic_spheres_colors` (Open3D uses `dynamics_spheres_colors`)
+
+### Geometry styles (Open3D and Viser)
+
+Set `backbone_style="discrete"` for per-point spheres or `"swept"` for
+cylinders/boxes/ellipses based on the robot cross-section geometry. Base plate
+sizing is controlled with `base_plate_radius_scale` and `base_plate_thickness`.
+
+### GUI plots (Viser)
+
+`ViserRenderer.render_sequence()` can add Plotly panels:
+
+- `plot_configurations=True`
+- `plot_tendon_positions=True`
+- `custom_plots={"My Plot": (figure, aspect)}`
+
+Plot panels require `plotly`. `ViserRenderer.render_frame()` also requires at
+least one connected client to capture images. Plot panels only support `q_ts`
+with shape `(T, DOF)` (no batched layouts).
+
+Viser also exposes `add_dynamic_sphere()`, `update_dynamic_sphere()`, and
+`remove_dynamic_sphere()` for custom markers.
 
 ### Visual Quality Settings (Viser)
 
@@ -308,6 +415,8 @@ The `ViserRenderer` provides web-based interactive 3D visualization using [Viser
 - **GUI controls**: Play/pause, timeline slider, speed control
 - **Multiple robots**: Grid layout or transparent overlay
 - **Dynamic spheres**: Visualize setpoints, obstacles, targets
+- **Plot panels**: Embed Plotly figures in the GUI
+- **Tendons**: Render tendon paths when available
 - **Video export**: Record animations to MP4
 
 ::: soromox.rendering.viser_renderer.ViserRenderer
