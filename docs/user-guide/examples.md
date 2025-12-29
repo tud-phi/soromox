@@ -1,113 +1,367 @@
 # Examples
 
-This page provides an overview of the example scripts included with SoRoMoX.
+This page provides a comprehensive overview of the example scripts included with SoRoMoX. Examples are organized by application area to help you find the right starting point for your use case.
 
-## Available Examples
+!!! tip "Getting Started"
+    New to SoRoMoX? Start with the [Quick Start guide](quick-start.md) for a step-by-step tutorial, then return here to explore more examples.
 
-### Pendulum Examples
+---
 
-#### Single Pendulum
+## Overview
+
+SoRoMoX examples are organized into four main categories:
+
+- **[Simulation Examples](#simulation-examples)** - Dynamic simulations of various robot systems
+- **[Control Examples](#control-examples)** - Control algorithms for different control spaces
+- **[System Identification Examples](#system-identification-examples)** - Parameter estimation from experimental data
+- **[Analysis Examples](#analysis-examples)** - Numerical analysis and stability studies
+
+---
+
+## Simulation Examples
+
+Simulation examples demonstrate how to model and simulate different types of robotic systems using SoRoMoX. These examples are located in `examples/simulation/` and are organized by robot type.
+
+### Pendulum Systems
+
+Pendulum systems are ideal for learning the basics of SoRoMoX. They're simple to understand yet demonstrate key concepts like dynamics, kinematics, and energy computation.
+
+#### N-Link Pendulum
 ```bash
-python examples/simulate_pendulum.py
+python examples/simulation/pendulum/simulate_pendulum.py
 ```
 
-Demonstrates:
-- Basic pendulum dynamics
-- Numerical integration with JAX
-- Visualization of results
+**What you'll learn:**
+- Basic pendulum dynamics and numerical integration with JAX
+- How to visualize results and compute energy (kinetic and potential)
+- Working with `SystemState` and the `rollout_to()` method
+- End-effector trajectory computation
 
-#### Double Pendulum
+**Key concepts:** Rigid-body dynamics, state-space representation, forward kinematics
+
+To simulate a double pendulum, modify the `num_links` variable in the script:
 ```python
-# Modify examples/simulate_pendulum.py
 num_links = 2  # Change this line
 ```
 
-### Soft Robot Examples
+#### Tendon-Actuated Pendulum
+```bash
+python examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py
+```
+
+**What you'll learn:**
+- Cable-driven actuation modeling
+- Tendon routing and tension mapping
+- Control applications with underactuated systems
+
+**Key concepts:** Actuation mapping, tendon kinematics, underactuation
+
+### PCS (Piecewise Constant Strain) Robots
+
+PCS robots are continuum robots modeled using the Piecewise Constant Strain approach, which discretizes the robot into segments with constant strain parameters.
 
 #### Planar PCS Robot
 ```bash
-python examples/simulate_planar_pcs.py
+python examples/simulation/pcs/simulate_planar_pcs.py
 ```
 
-Features:
-- Piecewise Constant Strain kinematics
-- Continuum robot dynamics
-- Parameter sensitivity analysis
+**What you'll learn:**
+- Piecewise Constant Strain (PCS) kinematics for 2D continuum robots
+- Continuum robot dynamics using Cosserat rod theory
+- Forward kinematics and Jacobian computation
+- Visualization with Matplotlib and OpenCV renderers
 
-#### HSA Robot
+**Key concepts:** PCS modeling, strain parameterization, planar kinematics
+
+#### Spatial PCS Robot
 ```bash
-python examples/simulate_planar_hsa.py
+python examples/simulation/pcs/simulate_pcs.py
 ```
 
-Demonstrates:
-- Handed Shearing Auxetics mechanics
-- Motor-to-end-effector Jacobians
-- Control applications
+**What you'll learn:**
+- 3D continuum robot modeling with full spatial kinematics
+- Six-degree-of-freedom strain representation (bending + extension + shear)
+- Spatial forward kinematics and workspace analysis
 
-### Analysis Examples
+**Key concepts:** Spatial PCS, 6-DOF strains, 3D kinematics
 
-#### Symbolic Derivation
+#### Tendon-Actuated PCS Robots
 ```bash
-python examples/derive_planar_pcs.py
+# Planar version
+python examples/simulation/pcs/simulate_tendon_actuated_planar_pcs.py
+
+# Spatial version
+python examples/simulation/pcs/simulate_tendon_actuated_pcs.py
+
+# Batched simulation for performance analysis
+python examples/simulation/pcs/simulate_batched_tendon_actuated_pcs.py
 ```
 
-Shows how to:
-- Generate symbolic expressions
-- Export for numerical use
-- Validate against numerical methods
+**What you'll learn:**
+- Tendon routing and actuation mapping for continuum robots
+- Cable-driven soft robot control
+- Batch processing for performance benchmarking
 
-#### Benchmarking
+**Key concepts:** Tendon kinematics, actuation space, batch simulation
+
+#### Pneumatic-Actuated Planar PCS
 ```bash
-python examples/benchmark_planar_pcs.py
+python examples/simulation/pcs/simulate_pneumatic_actuated_planar_pcs.py
 ```
 
-Compares:
-- Different integration methods
-- Symbolic vs numerical approaches
-- Performance characteristics
+**What you'll learn:**
+- Pneumatic actuation modeling
+- Pressure-to-strain mapping
+- Pneumatic soft robot dynamics
+
+**Key concepts:** Pneumatic actuation, pressure control
+
+#### I-SUPPORT Manipulator
+```bash
+python examples/simulation/pcs/simulate_isupport.py
+```
+
+**What you'll learn:**
+- Modeling of 3D-printed pneumatic soft robotic arms
+- Real-world system parameter adaptation
+- Multi-segment pneumatic continuum robots
+
+**Key concepts:** Additive manufacturing, pneumatic actuation, real-world applications
+
+### HSA (Handed Shearing Auxetics) Robots
+
+HSA robots use auxetic materials that exhibit unique deformation characteristics under actuation.
+
+#### Planar HSA Robot
+```bash
+# Basic simulation
+python examples/simulation/hsa/simulate_planar_hsa.py
+
+# Motor-to-end-effector Jacobian demonstration
+python examples/simulation/hsa/demo_planar_hsa_motor2ee_jacobian.py
+```
+
+**What you'll learn:**
+- Handed Shearing Auxetics (HSA) mechanics and unique deformation characteristics
+- Motor-to-end-effector Jacobian computation for control
+- Practical control applications with HSA robots
+
+**Key concepts:** HSA mechanics, auxetic materials, motor-space to task-space mapping
+
+### GVS (Generalized Variable Strain) Robots
+
+GVS robots use flexible strain basis functions for advanced continuum robot modeling.
+
+#### GVS Robots
+```bash
+# Basic GVS simulation
+python examples/simulation/gvs/simulate_gvs.py
+
+# Tendon-actuated GVS
+python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
+```
+
+**What you'll learn:**
+- Generalized Variable Strain modeling
+- Flexible strain basis functions
+- Advanced continuum robot dynamics
+
+**Key concepts:** GVS modeling, basis functions, advanced kinematics
+
+---
+
+## Control Examples
+
+Control examples demonstrate various control algorithms for different control spaces. These examples are located in `examples/control/` and are organized by control space type.
+
+### Configuration-Space Controllers
+
+Configuration-space controllers operate directly on the robot's configuration variables (e.g., joint angles, strain parameters).
+
+#### Setpoint Regulation
+```bash
+python examples/control/configuration_space/setpoint_regulation_comparison.py
+```
+
+**What you'll learn:**
+- Comparison of different configuration-space regulators:
+  - `PIDController` (model-free baseline)
+  - `PotentialCompensationRegulator` (feedforward: G(q_des) + τ_el(q_des))
+  - `PotentialCancellationRegulator` (feedforward: G(q) + τ_el(q))
+  - `GravityCancellationRegulator` (feedforward: G(q) + τ_el(q_des))
+- Model-based feedforward control design
+- Performance comparison of control strategies
+
+**Key concepts:** Configuration-space control, feedforward compensation, gravity cancellation
+
+#### Trajectory Tracking
+```bash
+python examples/control/configuration_space/trajectory_tracking_comparison.py
+```
+
+**What you'll learn:**
+- Trajectory tracking in configuration space
+- Comparison of different tracking controllers
+- Reference trajectory generation and tracking
+
+**Key concepts:** Trajectory tracking, configuration-space control, reference generation
+
+### Operational-Space Controllers
+
+Operational-space controllers operate on the robot's end-effector or task-space coordinates.
+
+#### Impedance Control
+```bash
+python examples/control/operational_space/control_pcs_with_impedance.py
+```
+
+**What you'll learn:**
+- Operational-space impedance control for PCS robots
+- Partial feedback linearization
+- End-effector position tracking
+- Impedance behavior design (stiffness and damping)
+
+**Key concepts:** Operational-space control, impedance control, feedback linearization, task-space control
+
+### Actuation-Space Controllers
+
+Actuation-space controllers operate directly on the actuator inputs (e.g., tendon tensions, pneumatic pressures).
+
+#### Setpoint Regulation
+```bash
+python examples/control/actuation_space/setpoint_regulation_comparison.py
+```
+
+**What you'll learn:**
+- Control in actuation space
+- Direct actuator command generation
+- Comparison of actuation-space control strategies
+
+**Key concepts:** Actuation-space control, actuator mapping, direct control
+
+---
+
+## System Identification Examples
+
+System identification examples demonstrate how to estimate model parameters from experimental data. These examples are located in `examples/system_identification/`.
+
+### Parameter Identification
+
+#### Soft Tentacle Parameter Identification
+```bash
+python examples/system_identification/identify_soft_tentacle_parameters.py
+```
+
+**What you'll learn:**
+- Parameter estimation from experimental data
+- Gradient-based optimization for system identification
+- Model fitting techniques using JAX and Optimistix
+- Validation against measurements
+- Working with motion capture (MoCap) data
+
+**Key concepts:** System identification, parameter estimation, optimization, experimental validation
+
+**Data:** The example uses experimental data from the `examples/system_identification/data/` directory, including various motion capture recordings with different actuation inputs.
+
+---
+
+## Analysis Examples
+
+Analysis examples demonstrate numerical analysis techniques and stability studies. These examples are located in `examples/analysis/`.
+
+### Singularities and Differentiability
+
+```bash
+# Located in examples/analysis/singularities_and_differentiability/
+```
+
+**What you'll learn:**
+- Singular configuration analysis
+- Differentiability properties of robot models
+- Numerical stability assessment
+- Workspace analysis
+
+**Key concepts:** Singularities, differentiability, numerical stability, workspace analysis
+
+---
 
 ## Running Examples
 
 ### Prerequisites
 
-Install example dependencies:
+Install SoRoMoX with example dependencies:
 ```bash
 pip install -e ".[examples]"
 ```
 
-### Environment Setup
-
-Always source environment variables first:
-```bash
-source 01-configure-env-vars.sh
-```
+This installs additional packages needed for visualization and analysis:
+- `matplotlib` - Plotting and visualization
+- `open3d` - 3D visualization
+- `opencv-python` - 2D rendering for planar robots
+- `optimistix` - Optimization (for system identification examples)
+- `plotly` - Interactive plotting and visualization
+- `seaborn` - Statistical data visualization
+- `viser` - Interactive 3D visualization
 
 ### Basic Workflow
 
-1. **Derive symbolic expressions** (if needed):
+Follow these steps to run any example:
+
+1. **Navigate to the project root** (if not already there):
    ```bash
-   python examples/derive_[robot_type].py
+   cd /path/to/soromox
    ```
 
-2. **Run simulation**:
+2. **Run the example**:
    ```bash
-   python examples/simulate_[robot_type].py
+   python examples/[category]/[subcategory]/[example_name].py
+   ```
+   
+   For example:
+   ```bash
+   python examples/simulation/pendulum/simulate_pendulum.py
+   python examples/control/configuration_space/setpoint_regulation_comparison.py
+   python examples/system_identification/identify_soft_tentacle_parameters.py
    ```
 
 3. **Analyze results** in generated plots and videos
 
+**Expected outputs:**
+- Interactive plots using Matplotlib (may require GUI backend)
+- Video files in the `videos/` directory (if video rendering is enabled)
+- Console output with simulation statistics and results
+- Analysis plots and comparison figures (for control examples)
+
+---
+
 ## Customizing Examples
+
+All examples are designed to be easily customizable. This section shows you how to modify parameters, outputs, and initial conditions.
 
 ### Parameter Modification
 
-Most examples allow easy parameter modification:
+Most examples allow easy parameter modification. Understanding parameter structure is key to adapting examples to your needs.
+
+**For PCS systems:**
 
 ```python
-# In any example file
+# Modify physical parameters
 params = {
-    "L": 0.2,  # Change length
-    "r": 0.01,  # Change radius  
-    "E": 1e6,  # Change Young's modulus
+    "L": 0.2 * jnp.ones((num_segments,)),  # Change segment lengths
+    "r": 0.01 * jnp.ones((num_segments,)),  # Change radii  
+    "E": 1e6 * jnp.ones((num_segments,)),  # Change Young's modulus
+    "G": 5e5 * jnp.ones((num_segments,)),  # Change shear modulus
+    # ... other parameters
+}
+```
+
+**For pendulum systems:**
+
+```python
+params = {
+    "L": jnp.array([0.5, 0.3]),      # Link lengths
+    "m": jnp.array([1.0, 0.5]),      # Masses
+    "I": jnp.array([0.1, 0.05]),     # Moments of inertia
     # ... other parameters
 }
 ```
@@ -117,83 +371,148 @@ params = {
 Control visualization and output:
 
 ```python
-# Enable/disable video recording
-create_video = True
-
 # Adjust simulation time
-t_span = (0.0, 10.0)  # 10 seconds
+t0 = 0.0
+t1 = 10.0  # 10 seconds
 
 # Change integration parameters
-dt = 0.001  # Smaller timestep for higher accuracy
+solver_dt = 0.001  # Smaller timestep for higher accuracy
+save_dt = 0.01     # Output frequency
+
+# Video settings (if using renderers)
+video_width, video_height = 800, 800
 ```
 
-## Advanced Examples
+### Initial Conditions
 
-### GUI Testing Tools
+Modify initial configurations and velocities:
 
-Interactive parameter exploration:
-```bash
-python tests/gui_test_fwd_kine_eps_planar_pcs.py
+```python
+# For pendulum systems
+q0 = jnp.array([jnp.pi/4, jnp.pi/6])  # Initial joint angles
+qd0 = jnp.zeros_like(q0)                # Initial velocities
+
+# For PCS systems
+q0 = jnp.array([0.1, 0.0, 0.0,  # Segment 1 strains
+                0.2, 0.0, 0.0]) # Segment 2 strains
+qd0 = jnp.zeros_like(q0)
 ```
 
-Features:
-- Real-time parameter adjustment
-- Multiple Jacobian method comparison
-- Strain visualization
+### Control Parameters
 
-### Segment Fusion Analysis
-```bash
-python examples/analyze_segment_fusion.py
+For control examples, you can modify controller gains:
+
+```python
+# PID controller gains
+kp = 100.0  # Proportional gain
+ki = 10.0   # Integral gain
+kd = 5.0    # Derivative gain
+
+# Impedance controller parameters
+K_x = 100.0 * jnp.eye(3)  # Stiffness matrix
+D_x = 10.0 * jnp.eye(3)   # Damping matrix
 ```
 
-Investigates:
-- Multi-segment behavior
-- Coupling effects
-- Performance optimization
+---
 
 ## Troubleshooting
 
 ### Common Issues
 
-1. **Import errors**: Ensure SoRoMoX is installed with `pip install -e .`
-2. **Missing dependencies**: Install examples group with `pip install -e ".[examples]"`
-3. **Environment variables**: Always run `source 01-configure-env-vars.sh`
+| Issue | Solution |
+|-------|----------|
+| **Import errors** | Ensure SoRoMoX is installed with `pip install -e .` |
+| **Missing example dependencies** | Install examples group with `pip install -e ".[examples]"` |
+| **Missing renderers** | Ensure SoRoMoX is installed with `pip install -e ".[rendering]"` or `pip install -e ".[all]"` |
+| **JAX precision warnings or simulation instability** | Most simulations require double precision. Enable with `jax.config.update("jax_enable_x64", True)` at the beginning of the script |
+| **Video codec issues** | Ensure FFmpeg is properly installed: `pip install ffmpeg-python` |
+| **Matplotlib backend errors** | Try setting backend: `export MPLBACKEND=Agg` for headless systems |
+| **Out of memory errors** | Reduce batch sizes or use smaller simulation parameters |
+| **Optimization convergence issues** | Check initial parameter guesses and optimization settings in system identification examples |
 
 ### Performance Tips
 
-- Use smaller `dt` for accuracy vs speed tradeoffs
-- Enable JAX JIT compilation for repeated runs
-- Consider using GPU acceleration for large-scale studies
+- **Accuracy vs. Speed**: Use smaller `solver_dt` for higher accuracy and improved simulation stability, larger for faster simulation
+- **JIT Compilation**: JAX JIT compilation is automatically used in most examples for optimal performance
+- **GPU Acceleration**: Consider using GPU acceleration for large-scale batch simulations
+- **Batched Simulations**: For batched simulations, see `simulate_batched_tendon_actuated_pcs.py` as a reference
+- **Memory Management**: Be mindful of array sizes in batch operations to avoid memory issues
+- **System Identification**: For parameter identification, start with reasonable initial guesses and use appropriate optimization algorithms. Gradient descent will often only work locally.
+
+---
 
 ## Creating New Examples
 
 To create a new example:
 
-1. **Choose a base example** similar to your use case
+1. **Choose a base example** similar to your use case from the appropriate category:
+   - `examples/simulation/` for new robot systems
+   - `examples/control/` for new control algorithms
+   - `examples/system_identification/` for parameter estimation methods
+   - `examples/analysis/` for numerical analysis studies
+
 2. **Copy and modify** parameters and logic
 3. **Test thoroughly** with different configurations
-4. **Add documentation** explaining the new features
+4. **Follow the existing structure** and naming conventions
 
-Example template:
+### Example Template
+
+Here's a minimal working example you can use as a starting point:
+
 ```python
 #!/usr/bin/env python3
 """
 New Example: Description of what this example demonstrates
 """
 
+import jax
 import jax.numpy as jnp
-from soromox.systems import YourSystem
+from soromox.systems import YourSystem, SystemState
+
+# Configure JAX (if needed)
+jax.config.update("jax_enable_x64", True)  # double precision
 
 # Parameters
 params = {
     # Your parameters here
 }
 
-# Main simulation logic
-def main():
-    # Your code here
-    pass
-
 if __name__ == "__main__":
-    main()
+    # Initialize system
+    robot = YourSystem(params=params)
+    
+    # Set initial conditions
+    q0 = jnp.array([...])  # Initial configuration
+    qd0 = jnp.zeros_like(q0)  # Initial velocities
+    
+    # Simulation parameters
+    t0, t1 = 0.0, 5.0
+    solver_dt = 1e-4
+    save_dt = 0.01
+    
+    # Run simulation
+    initial_state = SystemState(t=t0, y=jnp.concatenate([q0, qd0]))
+    trajectory = robot.rollout_to(
+        initial_state=initial_state,
+        u=jnp.zeros_like(q0),  # Control inputs
+        t1=t1,
+        solver_dt=solver_dt,
+        save_dt=save_dt,
+    )
+    
+    # Analyze and visualize results
+    # ...
 ```
+
+---
+
+## Next Steps
+
+After exploring the examples:
+
+- **Read the API documentation** to understand the full capabilities of SoRoMoX
+- **Check the development guide** for contributing new examples or features
+- **Explore the source code** to understand implementation details
+- **Join the community** to share your examples and get help
+
+For more detailed information about specific systems or control methods, refer to the [API documentation](../api/overview.md).

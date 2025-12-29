@@ -109,10 +109,10 @@ pip install soromox[examples]
 
 - `ffmpeg-python` - Video encoding and processing
 - `ipython` - Enhanced interactive Python shell
-- `jaxopt` - High-performance optimization algorithms
 - `matplotlib` - Publication-ready plotting and visualization
 - `open3d` - High-quality 3D visualization
 - `opencv-python` - Computer vision and image processing
+- `optimistix` - Nonlinear solvers for root finding, minimization, fixed points, and least squares optimization in JAX
 - `plotly` - Interactive plotting and visualization
 - `seaborn` - Statistical data visualization
 - `viser` - Web-based interactive rendering
