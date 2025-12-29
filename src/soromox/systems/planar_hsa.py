@@ -1,6 +1,7 @@
 __all__ = ["PlanarHSA"]
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import dill
 import equinox as eqx
@@ -201,7 +202,7 @@ class PlanarHSA(SoftRobot):
         consider_underactuation: bool = True,
         consider_hysteresis: bool = False,
         eps: float = 1e-6,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the PlanarHSA system.

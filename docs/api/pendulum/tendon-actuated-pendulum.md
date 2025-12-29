@@ -206,7 +206,7 @@ The package includes a complete simulation example in `examples/simulate_tendon_
 
 ## API Reference
 
-::: soromox.systems.tendon_actuated_pendulum
+::: soromox.systems.pendulum.tendon_actuated_pendulum
     options:
       show_root_heading: true
       show_source: false

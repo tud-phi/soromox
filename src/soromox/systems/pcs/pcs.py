@@ -3,6 +3,7 @@ __all__ = ["PCS"]
 
 import equinox as eqx
 import numpy as onp
+from typing import Any
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
@@ -102,7 +103,7 @@ class PCS(SoftRobot):
         order_gauss: int = 5,
         strain_selector: Array | None = None,
         xi_ref: Array | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the PCS class.

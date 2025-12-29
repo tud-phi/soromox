@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -11,6 +13,13 @@ from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection
 from matplotlib.widgets import Slider
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
+
+if TYPE_CHECKING:
+    from IPython.display import HTML
+
+    AnimateReturn = HTML | FuncAnimation | None
+else:
+    AnimateReturn = Any | FuncAnimation | None
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
@@ -200,9 +209,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             )
 
             curves = self.compute_backbone_curves_batched(q_arr, base_offsets_arr)
-            resolved_colors = self.resolve_backbone_colors(
-                num_robots, color_config=cfg
-            )
+            resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
             max_extent = float(np.max(np.abs(curves))) if curves.size else 0.0
             width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
         else:
@@ -340,7 +347,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
         render_tendons: bool = True,
-    ):
+    ) -> AnimateReturn:
         """Interactive matplotlib animation with slider or auto-play.
 
         Args:

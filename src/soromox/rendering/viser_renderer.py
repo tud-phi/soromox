@@ -19,7 +19,12 @@ import time
 import webbrowser
 from collections.abc import Callable, Generator
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
+
+if TYPE_CHECKING:
+    from plotly.graph_objects import Figure as PlotlyFigure
+else:
+    PlotlyFigure = Any
 
 import jax
 import jax.numpy as jnp
@@ -970,9 +975,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
 
         cfg = color_config or self.color_config
-        resolved_colors = self.resolve_backbone_colors(
-            num_robots, color_config=cfg
-        )
+        resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Build scene
         self._clear_scene()
@@ -1069,9 +1072,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
 
         cfg = color_config or self.color_config
-        resolved_colors = self.resolve_backbone_colors(
-            num_robots, color_config=cfg
-        )
+        resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Build scene
         self._clear_scene()
@@ -1161,8 +1162,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 2/3)
             color_config: Shared renderer color configuration
             multi_robot_layout: "grid" for side-by-side, "overlay" for same position
-            static_spheres_*: Static sphere configuration
-            dynamic_spheres_*: Time-varying sphere configuration
+            static_spheres_positions: Static sphere positions
+            static_spheres_radii: Static sphere radii
+            static_spheres_colors: Static sphere colors
+            dynamic_spheres_positions: Time-varying sphere positions
+            dynamic_spheres_radii: Time-varying sphere radii
+            dynamic_spheres_colors: Time-varying sphere colors
             show_tendons: If True, render tendons (if available)
             blocking: If True, block until viewer closes
             plot_configurations: If True, add configuration vs time plot to GUI
@@ -1210,9 +1215,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             )
 
         cfg = color_config or self.color_config
-        resolved_colors = self.resolve_backbone_colors(
-            num_robots, color_config=cfg
-        )
+        resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Precompute all backbone curves for first frame
         curves_0 = np.asarray(
@@ -1515,7 +1518,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
     # Plot panels
     # =========================================================================
 
-    def add_gui_plotly(self, name: str, figure, aspect: float = 1.0):
+    def add_gui_plotly(
+        self, name: str, figure: PlotlyFigure, aspect: float = 1.0
+    ) -> Any:
         """Add a plotly figure to the GUI.
 
         Args:
@@ -1543,7 +1548,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         ts: Array | np.ndarray,
         q_ts: Array | np.ndarray,
         robot_name: str = "Robot",
-    ):
+    ) -> PlotlyFigure:
         """Create a plotly figure showing configurations over time.
 
         Args:
@@ -1587,9 +1592,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self,
         ts: Array | np.ndarray,
         q_ts: Array | np.ndarray,
-        robot,
+        robot: SoftRobot,
         robot_name: str = "Robot",
-    ):
+    ) -> PlotlyFigure:
         """Create a plotly figure showing tendon positions over time.
 
         Args:
@@ -1692,7 +1697,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         radius: float,
         color: tuple[float, float, float] = (0.2, 0.2, 0.8),
         opacity: float = 1.0,
-    ):
+    ) -> Any:
         """Add a dynamic sphere to the scene.
 
         Args:
@@ -1754,8 +1759,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self,
         name: str,
         primitive_type: Literal["sphere", "box", "cylinder", "mesh"],
-        **kwargs,
-    ):
+        **kwargs: Any,
+    ) -> Any:
         """Add a custom primitive to the scene for extensibility.
 
         Args:
@@ -1801,7 +1806,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         video_config: VideoEncodingConfig | None = None,
         camera_position: tuple[float, float, float] | None = None,
         camera_target: tuple[float, float, float] | None = None,
-        **render_kwargs,
+        **render_kwargs: Any,
     ) -> None:
         """Render sequence directly to video file.
 
