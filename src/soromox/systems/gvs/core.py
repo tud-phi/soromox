@@ -493,9 +493,12 @@ class GVS(SoftRobot):
         """Total backbone length."""
         return jnp.sum(self.V_L)
 
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array]:
+    @property
+    def segment_length(self) -> Array:
+        """Per-segment backbone lengths."""
+        return jnp.asarray(self.V_L)
+
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Cross-section geometry evaluated from stored link parameters."""
         segment_idx, s_local = self.classify_segment(s)
         length_i = self.V_L[segment_idx]

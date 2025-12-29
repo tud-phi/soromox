@@ -544,9 +544,12 @@ class PlanarHSA(SoftRobot):
         """Total backbone length."""
         return self.Lmax
 
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array]:
+    @property
+    def segment_length(self) -> Array:
+        """Per-segment backbone lengths."""
+        return jnp.asarray(self.L)
+
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Circular cross-section using max rod offset for the segment."""
         segment_idx, _ = self.classify_segment(s)
         roff = jnp.asarray(self.roff)

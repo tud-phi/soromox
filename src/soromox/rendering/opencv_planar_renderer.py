@@ -79,12 +79,10 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             f"Expected planar poses with shape (N, 3) or (N, 2), got {poses.shape}"
         )
 
-    def _segment_lengths(self) -> np.ndarray | None:
-        if hasattr(self.robot, "L"):
-            return np.atleast_1d(np.asarray(self.robot.L, dtype=float))
-        if hasattr(self.robot, "V_L"):
-            return np.atleast_1d(np.asarray(self.robot.V_L, dtype=float))
-        return None
+    def _segment_lengths(self) -> np.ndarray:
+        return np.atleast_1d(
+            np.asarray(self.robot.segment_length, dtype=float).reshape(-1)
+        )
 
     def _cross_section_span(self, q: Array, s: float) -> float:
         geom_tag, geom_params = self.robot.cross_section_geometry(q, s)

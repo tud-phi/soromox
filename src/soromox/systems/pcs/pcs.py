@@ -228,9 +228,12 @@ class PCS(SoftRobot):
         """Total backbone length."""
         return jnp.sum(self.L)
 
-    def cross_section_geometry(
-        self, q: Array, s: Array
-    ) -> tuple[Array, Array]:
+    @property
+    def segment_length(self) -> Array:
+        """Per-segment backbone lengths."""
+        return jnp.asarray(self.L)
+
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Circular cross-section with segment radius."""
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]

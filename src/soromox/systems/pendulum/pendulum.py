@@ -146,6 +146,11 @@ class Pendulum(SoftRobot):
         """Total chain length."""
         return jnp.sum(self.L)
 
+    @property
+    def segment_length(self) -> Array:
+        """Per-link lengths."""
+        return jnp.asarray(self.L)
+
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Circular cross-section using per-link radius."""
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
