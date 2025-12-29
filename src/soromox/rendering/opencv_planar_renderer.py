@@ -79,11 +79,6 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             f"Expected planar poses with shape (N, 3) or (N, 2), got {poses.shape}"
         )
 
-    def _segment_lengths(self) -> np.ndarray:
-        return np.atleast_1d(
-            np.asarray(self.robot.segment_length, dtype=float).reshape(-1)
-        )
-
     def _cross_section_span(self, q: Array, s: float) -> float:
         geom_tag, geom_params = self.robot.cross_section_geometry(q, s)
         tag = int(np.asarray(geom_tag).item())
@@ -160,7 +155,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         curve_px = (curve * ppm).astype(np.int32)
         curve_px[:, 1] = -curve_px[:, 1]  # Invert y for image coordinates
 
-        lengths = self._segment_lengths()
+        lengths = self.robot.segment_length
         thicknesses, uniform_thickness = self._auto_backbone_thickness(ppm, lengths, q)
 
         if thicknesses is not None and lengths is not None:
