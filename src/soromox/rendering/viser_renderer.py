@@ -9,6 +9,8 @@ Provides interactive 3D visualization accessible via web browser with:
 - Video export via FFmpeg
 """
 
+__all__ = ["ViserRenderer"]
+
 from __future__ import annotations
 
 import atexit
