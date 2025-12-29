@@ -567,7 +567,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         title_text = ax.set_title("t = 0.00 s")
 
         segment_colors = [
-            self._segment_colors_from_points(point_colors[idx])
+            self._segment_colors_from_point_pairs(point_colors[idx])
             for idx in range(num_robots)
         ]
         lines = []
@@ -759,7 +759,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         return np.stack([curve[:-1], curve[1:]], axis=1)
 
     @staticmethod
-    def _segment_colors_from_points(point_colors: np.ndarray) -> np.ndarray:
+    def _segment_colors_from_point_pairs(point_colors: np.ndarray) -> np.ndarray:
         if point_colors.shape[0] < 2:
             return np.zeros((0, point_colors.shape[1]), dtype=point_colors.dtype)
         return 0.5 * (point_colors[:-1] + point_colors[1:])
@@ -773,7 +773,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         collections = []
         for idx, curve in enumerate(curves):
             segments = self._curve_to_segments(curve)
-            seg_colors = self._segment_colors_from_points(point_colors[idx])
+            seg_colors = self._segment_colors_from_point_pairs(point_colors[idx])
             if self.is_3d:
                 lc = Line3DCollection(
                     segments,

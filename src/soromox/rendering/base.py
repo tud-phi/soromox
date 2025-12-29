@@ -519,22 +519,14 @@ class BaseSoftRobotRenderer(ABC):
             if not robot_segment_has_alpha and robot_alpha is not None:
                 per_robot_segment = per_robot_segment.copy()
                 per_robot_segment[..., 3] = robot_alpha[:, None]
-        elif segment_colors_rgba is not None:
-            per_robot_segment = np.tile(
-                segment_colors_rgba[None, ...], (num_robots, 1, 1)
-            )
-            if not segment_has_alpha and robot_alpha is not None:
-                per_robot_segment = per_robot_segment.copy()
-                per_robot_segment[..., 3] = robot_alpha[:, None]
-        elif point_colors_rgba is not None:
-            base_seg = self._segment_colors_from_points(point_colors_rgba, starts, ends)
-            per_robot_segment = np.tile(base_seg[None, ...], (num_robots, 1, 1))
-            if not point_has_alpha and robot_alpha is not None:
-                per_robot_segment[..., 3] = robot_alpha[:, None]
         else:
-            per_robot_segment = np.tile(
-                robot_colors_rgba[:, None, :], (1, num_segments, 1)
+            per_robot_segment = np.zeros(
+                (num_robots, num_segments, 4), dtype=np.float64
             )
+            for r in range(num_robots):
+                per_robot_segment[r] = self._segment_colors_from_points(
+                    per_robot_point[r], starts, ends
+                )
 
         legend_segment = per_robot_segment[0]
         legend_point = per_robot_point[0]
