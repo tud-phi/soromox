@@ -4,12 +4,12 @@ Provides unified FFmpeg video encoding configuration and writer classes
 that can be used by both Open3D and OpenCV renderers.
 """
 
+from __future__ import annotations
+
 __all__ = [
     "VideoEncodingConfig",
     "FFmpegVideoWriter",
 ]
-
-from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass
