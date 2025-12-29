@@ -11,9 +11,10 @@
     - **Package Name**: `import jsrm` → `import soromox`
     - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
     - **Performance**: Symbolic derivations → Numerical implementations
-    - **New Features**: Support for Spatial PCS and GVS systems
-    
-    See the [User Guide](user-guide/quick-start.md) for migration examples.
+    - **New Soft Robot Models**: Support for Spatial PCS and GVS systems
+    - **Actuation**: Popular soft robot actuation modalities such as tendon-actuation and pneumatic-actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
+    - **Renderers**: SoRoMoX includes built-in renderers for visualization
+    - **Control**: Model-based control implementations are included
 
 ---
 
@@ -23,6 +24,10 @@
     - **Python** >= 3.10
     - **JAX** >= 0.4.0
     - **NumPy** >= 1.21.0
+
+!!! warning "Python Version Compatibility"
+    - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
+    - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
 
 ---
 
@@ -67,15 +72,6 @@
     !!! tip "Development Mode"
         The `-e` flag installs in "editable" mode, so changes to the source code are immediately available.
 
-=== "🐋 Docker"
-
-    Use our pre-built Docker container:
-
-    ```bash
-    docker pull ghcr.io/tud-phi/soromox:latest
-    docker run -it --rm ghcr.io/tud-phi/soromox:latest
-    ```
-
 ---
 
 ## 🎯 Installation Options
@@ -98,6 +94,9 @@ pip install soromox[rendering]
 - `opencv-python` - 2D rendering for planar robots
 - ``ffmpeg`` - Video encoding and processing
 
+!!! note "Open3D Compatibility"
+    Open3D rendering is currently not compatible with Python 3.13+. If you need 3D visualization, please use Python 3.12 or earlier, or use the `viser` renderer instead.
+
 ### 📚 Examples Dependencies
 
 To run all examples and tutorials:
@@ -108,11 +107,15 @@ pip install soromox[examples]
 
 **Includes:**
 
-- `diffrax` - Advanced differential equation solving
+- `ffmpeg-python` - Video encoding and processing
+- `ipython` - Enhanced interactive Python shell
 - `jaxopt` - High-performance optimization algorithms
 - `matplotlib` - Publication-ready plotting and visualization
+- `open3d` - High-quality 3D visualization
 - `opencv-python` - Computer vision and image processing
-- `scipy` - Scientific computing utilities
+- `plotly` - Interactive plotting and visualization
+- `seaborn` - Statistical data visualization
+- `viser` - Web-based interactive rendering
 
 ### 🛠️ Development Dependencies
 
