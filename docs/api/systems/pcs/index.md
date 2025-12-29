@@ -59,7 +59,7 @@ Core 3D PCS implementation for spatial continuum robots.
 - Pressure-based control
 - Configurable chamber geometry
 
-#### [ISupport](isupport.md)
+#### [I-Support](isupport.md)
 
 3D pneumatic soft robot with specific chamber configuration.
 

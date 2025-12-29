@@ -91,7 +91,7 @@ Continuum soft robots using piecewise constant strain modeling.
 | [Tendon Actuated PCS](pcs/tendon-actuated-pcs.md) | 3D | Tendons | 3D cable-driven |
 | [Tendon Actuated Planar PCS](pcs/tendon-actuated-planar-pcs.md) | 2D | Tendons | 2D cable-driven |
 | [Pneumatic Actuated Planar PCS](pcs/pneumatic-actuated-planar-pcs.md) | 2D | Pneumatic | Soft pneumatic |
-| [ISupport](pcs/isupport.md) | 3D | Pneumatic | I-Support platform |
+| [I-Support](pcs/isupport.md) | 3D | Pneumatic | I-Support platform |
 
 ### GVS Systems
 
