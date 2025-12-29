@@ -142,6 +142,11 @@ class Pendulum(SoftRobot):
         self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
 
     @property
+    def is_planar(self) -> bool:
+        """Pendulum is a planar (2D) model."""
+        return True
+
+    @property
     def length(self) -> Array:
         """Total chain length."""
         return jnp.sum(self.L)

@@ -541,6 +541,11 @@ class PlanarHSA(SoftRobot):
         self.alpha_lambda = alpha_lambda
 
     @property
+    def is_planar(self) -> bool:
+        """Planar HSA is a 2D model."""
+        return True
+
+    @property
     def length(self) -> Array:
         """Total backbone length."""
         return self.Lmax

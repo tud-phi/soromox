@@ -28,9 +28,13 @@ class BaseSoftRobotRenderer(ABC):
     soft robots across different backends (Matplotlib, Open3D, OpenCV).
 
     Subclasses must implement:
-        - is_3d: Property indicating 2D (planar) or 3D robot
-        - _extract_positions: Extract xyz/xy from FK poses
         - render_frame: Render single configuration to RGB image array
+        - render_sequence: Render animated sequence
+        - show: Display a single frame interactively
+
+    Subclasses may override:
+        - is_3d: Default uses robot.is_planar
+        - _extract_positions: Extract xyz/xy from FK poses
 
     Attributes:
         robot: SoftRobot system object with forward_kinematics method
@@ -67,6 +71,7 @@ class BaseSoftRobotRenderer(ABC):
         self.num_points = num_points
         self.background_color = background_color
         self.color_config = color_config or RendererColorConfig()
+        self._is_planar = bool(robot.is_planar)
 
         self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
         self._segment_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -74,11 +79,22 @@ class BaseSoftRobotRenderer(ABC):
         # Total robot length
         self.L_max = float(jnp.asarray(robot.length))
 
+        # Cache tendon FK if available
+        self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
+        if self._has_tendons:
+            self._batched_fk_tendons = jax.vmap(
+                robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
+            )
+
     @property
-    @abstractmethod
+    def is_planar(self) -> bool:
+        """Return True for planar (SE(2)) robots."""
+        return self._is_planar
+
+    @property
     def is_3d(self) -> bool:
-        """Return True for 3D robots, False for 2D/planar robots."""
-        pass
+        """Return True for 3D rendering, False for planar rendering."""
+        return not self.is_planar
 
     def compute_backbone_curve(self, q: Array) -> Array:
         """Compute backbone points from configuration.
@@ -101,7 +117,53 @@ class BaseSoftRobotRenderer(ABC):
 
         return curve
 
-    @abstractmethod
+    def compute_tendon_curves(self, q: Array) -> Array | None:
+        """Compute tendon paths if the robot supports tendon kinematics."""
+        if not self._has_tendons:
+            return None
+        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        return self._batched_fk_tendons(q, s_ps)
+
+    def compute_tendon_curves_batched(
+        self, q_batch: Array, base_offsets: Array
+    ) -> Array | None:
+        """Compute tendon paths for multiple robots with base offsets."""
+        if not self._has_tendons:
+            return None
+
+        q_batch = jnp.asarray(q_batch)
+        base_offsets = jnp.asarray(base_offsets)
+
+        if q_batch.ndim != 2:
+            raise ValueError(
+                f"q_batch must have shape (N, DOF), got {q_batch.shape} with ndim={q_batch.ndim}"
+            )
+        if base_offsets.ndim != 2:
+            raise ValueError(
+                f"base_offsets must have shape (N, dim), got {base_offsets.shape}"
+            )
+        if base_offsets.shape[0] != q_batch.shape[0]:
+            raise ValueError(
+                f"base_offsets first dimension ({base_offsets.shape[0]}) must "
+                f"match batch size ({q_batch.shape[0]})"
+            )
+
+        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        tendon_curves = jax.vmap(lambda q: self._batched_fk_tendons(q, s_ps))(q_batch)
+
+        if base_offsets.shape[1] == tendon_curves.shape[-1]:
+            offsets = base_offsets
+        elif base_offsets.shape[1] + 1 == tendon_curves.shape[-1]:
+            pad = jnp.zeros((base_offsets.shape[0], 1), dtype=tendon_curves.dtype)
+            offsets = jnp.concatenate([base_offsets, pad], axis=1)
+        else:
+            raise ValueError(
+                f"base_offsets must have shape (N, {tendon_curves.shape[-1]}) or "
+                f"(N, {tendon_curves.shape[-1] - 1}), got {base_offsets.shape}"
+            )
+
+        return tendon_curves + offsets[:, None, None, :]
+
     def _extract_positions(self, poses: Array) -> Array:
         """Extract xyz or xy positions from FK poses.
 
@@ -111,7 +173,36 @@ class BaseSoftRobotRenderer(ABC):
         Returns:
             Position array of shape (N, 3) for 3D or (N, 2) for 2D
         """
-        pass
+        if self.is_3d:
+            return self._extract_positions_3d(poses)
+        return self._extract_positions_2d(poses)
+
+    def _extract_positions_2d(self, poses: Array) -> Array:
+        """Extract 2D positions from SE(2) or SE(3) poses.
+
+        Args:
+            poses: Forward kinematics output - either:
+                - (N, 3) for SE(2) poses [theta, x, y]
+                - (N, 4, 4) for SE(3) transformation matrices
+                - (N, 2) for planar xy positions
+
+        Returns:
+            Position array of shape (N, 2) with xy coordinates.
+        """
+        poses = jnp.asarray(poses)
+
+        if poses.ndim == 3 and poses.shape[-2:] == (4, 4):
+            return poses[:, :2, 3]
+        if poses.ndim == 2 and poses.shape[-1] == 3:
+            return poses[:, 1:3]
+        if poses.ndim == 2 and poses.shape[-1] == 2:
+            return poses
+
+        raise ValueError(
+            "Unsupported pose format for planar extraction: expected "
+            "SE(2) (N, 3), SE(3) (N, 4, 4), or planar (N, 2), "
+            f"got shape {poses.shape}"
+        )
 
     def _extract_positions_3d(self, poses: Array) -> Array:
         """Extract 3D positions from SE(2) or SE(3) poses.

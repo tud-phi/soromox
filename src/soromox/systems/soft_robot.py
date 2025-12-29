@@ -81,6 +81,12 @@ class SoftRobot(DynamicalSystem):
         """Per-segment backbone lengths (1D array)."""
         ...
 
+    @property
+    @abstractmethod
+    def is_planar(self) -> bool:
+        """Return True for planar (SE(2)) robots, False for spatial (SE(3))."""
+        ...
+
     @abstractmethod
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
         """Return integer cross-section tag and geometry parameters at position s.

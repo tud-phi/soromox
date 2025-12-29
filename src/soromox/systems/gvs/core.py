@@ -489,6 +489,11 @@ class GVS(SoftRobot):
         self.g0 = lie.exp_SE3(p0_arr)
 
     @property
+    def is_planar(self) -> bool:
+        """GVS is a spatial (3D) model."""
+        return False
+
+    @property
     def length(self) -> Array:
         """Total backbone length."""
         return jnp.sum(self.V_L)

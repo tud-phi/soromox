@@ -215,6 +215,11 @@ class PlanarPCS(SoftRobot):
         self.num_actuators = int(self.num_active_strains.item())
 
     @property
+    def is_planar(self) -> bool:
+        """Planar PCS is a 2D model."""
+        return True
+
+    @property
     def length(self) -> Array:
         """Total backbone length."""
         return jnp.sum(self.L)
