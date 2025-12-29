@@ -22,33 +22,42 @@ BaseSoftRobotRenderer (abstract base)
 === "Matplotlib (any robot)"
 
     ```python
-    from soromox.rendering import MatplotlibRenderer
+    from soromox.rendering import BackboneColorConfig, MatplotlibRenderer, RendererColorConfig
+
+    color_config = RendererColorConfig(
+        backbone=BackboneColorConfig(robot_palette="plasma")
+    )
 
     # Create renderer
-    renderer = MatplotlibRenderer(robot, num_points=50, robot_colors="plasma")
+    renderer = MatplotlibRenderer(robot, num_points=50, color_config=color_config)
 
     # Single frame
-    renderer.show(q, robot_colors="plasma")
+    renderer.show(q, color_config=color_config)
 
     # Interactive animation with slider
-    renderer.animate(ts, q_ts, mode="slider", robot_colors="plasma")
+    renderer.animate(ts, q_ts, mode="slider", color_config=color_config)
 
     # Auto-playing animation
-    renderer.animate(ts, q_ts, mode="animation", interval=50, robot_colors="plasma")
+    renderer.animate(ts, q_ts, mode="animation", interval=50, color_config=color_config)
     ```
 
 === "Open3D (3D robots)"
 
     ```python
-    from soromox.rendering import Open3DRenderer
+    from soromox.rendering import BackboneColorConfig, Open3DRenderer, RendererColorConfig
 
     # Create renderer (defaults to legacy viewer backend)
+    color_config = RendererColorConfig(
+        backbone=BackboneColorConfig(
+            segment_palette="soromox:ember",  # colormap name or (S,3)/(S,4) array
+            robot_palette="soromox:okabe-ito",  # per-robot palette for batched layouts
+        )
+    )
     renderer = Open3DRenderer(
         robot,
         num_points=80,
         viewer_backend="legacy",
-        seg_colors="coolwarm",    # colormap or (N,3)/(N,4) array with optional alpha
-        robot_colors="viridis",   # colormap or (N,3)/(N,4) array for batched robots
+        color_config=color_config,
     )
 
     # Single interactive frame (supports base offsets / spheres if provided)
@@ -71,7 +80,7 @@ BaseSoftRobotRenderer (abstract base)
         q,
         static_spheres_positions=targets_xyz,  # optional features
         static_spheres_radii=targets_r,
-        robot_colors="plasma",
+        color_config=color_config,
     )
     ```
 
@@ -93,7 +102,7 @@ BaseSoftRobotRenderer (abstract base)
 === "Viser (web-based 3D)"
 
     ```python
-    from soromox.rendering import ViserRenderer
+    from soromox.rendering import BackboneColorConfig, RendererColorConfig, ViserRenderer
 
     # Create renderer - opens browser at localhost:8080
     renderer = ViserRenderer(robot, port=8080, num_points=80)
@@ -110,17 +119,24 @@ BaseSoftRobotRenderer (abstract base)
     )
 
     # Multiple robots in grid layout
-    renderer.show(q_batch, robot_colors="viridis")
+    color_config = RendererColorConfig(
+        backbone=BackboneColorConfig(robot_palette="viridis")
+    )
+    renderer.show(q_batch, color_config=color_config)
 
-    # Multiple robots overlayed (robot_colors alpha sets default opacity)
+    # Multiple robots overlayed (robot color alpha sets default opacity)
     renderer.render_sequence(
         ts, q_ts_batched,  # (N, T, DOF)
         multi_robot_layout="overlay",
-        robot_colors=[
-            [0.2, 0.6, 0.9, 0.35],
-            [0.9, 0.3, 0.2, 0.5],
-            [0.2, 0.8, 0.4, 0.7],
-        ],
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(
+                robot_colors=[
+                    [0.2, 0.6, 0.9, 0.35],
+                    [0.9, 0.3, 0.2, 0.5],
+                    [0.2, 0.8, 0.4, 0.7],
+                ]
+            )
+        ),
     )
 
     # Live mode - callback-based
@@ -167,8 +183,49 @@ BaseSoftRobotRenderer (abstract base)
 
 ### Colors
 
-- `seg_colors` (Open3D/Viser): optional colormap name or array of shape (N,3)/(N,4); defaults to the `coolwarm` colormap.
-- `robot_colors` (Matplotlib/Open3D/Viser): optional colormap name or array of shape (N,3)/(N,4) cycled across robots; `"same"` uses the first segment color. Alpha is honored where supported (Viser uses `robot_colors` alpha as a default opacity when `seg_colors` has no alpha).
+Colors are configured via `RendererColorConfig` + `BackboneColorConfig` and resolved
+using a consistent hierarchy. More specific inputs override less specific ones:
+
+- `robot_palette` → `segment_palette` → `point_palette`
+- `robot_colors` → `segment_colors` → `point_colors`
+- `robot_segment_colors` → `robot_point_colors`
+
+Alpha in per-robot colors is propagated to more specific colors when those omit alpha.
+Open3D's legacy viewer approximates alpha by blending with the background.
+Open3D backbone geometry is per-segment, so point palettes are averaged into segments.
+
+Pass `color_config=...` to renderer constructors or per-call methods (`show`,
+`render_frame`, `render_sequence`, `animate`) to override styles.
+
+Built-in publication-friendly palettes and themes are available:
+
+- `list_builtin_palettes()` includes `soromox:okabe-ito`, `soromox:tol-bright`,
+  `soromox:tol-muted`, `soromox:ember`, `soromox:glacier`, `soromox:slate`
+- `get_color_theme("soromox:paper")` and `list_builtin_themes()` return presets
+
+Example:
+
+```python
+from soromox.rendering import ViserRenderer, get_color_theme
+
+renderer = ViserRenderer(robot, color_config=get_color_theme("soromox:paper"))
+```
+
+For legend data, use the tiny helper:
+
+- `renderer.get_color_legend(num_robots=..., color_config=...)`
+
+Shape hints:
+
+- `robot_colors`: `(N, 3/4)` or broadcastable
+- `segment_colors`: `(S, 3/4)` (segments)
+- `point_colors`: `(P, 3/4)` (backbone points)
+- `robot_segment_colors`: `(N, S, 3/4)`
+- `robot_point_colors`: `(N, P, 3/4)`
+
+Use `segment_palette` for lengthwise segment coloring and `point_palette` for
+per-point gradients along the backbone.
+Set `segment_palette=None` to fall back to solid per-robot colors.
 
 ### Visual Quality Settings (Viser)
 

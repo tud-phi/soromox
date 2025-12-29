@@ -25,7 +25,6 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
-from matplotlib import colormaps
 
 try:
     import plotly.graph_objects as go
@@ -39,12 +38,9 @@ except ImportError:
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 from soromox.systems.soft_robot import SoftRobot
-
-# Default colormap used for segment colors when none are provided
-DEFAULT_SEGMENT_COLORMAP = "coolwarm"
-
 
 # =============================================================================
 # Data structures
@@ -98,87 +94,9 @@ class SceneHandles:
     custom_primitives: dict = field(default_factory=dict)
 
 
-@dataclass
-class RobotRenderConfig:
-    """Per-robot rendering configuration."""
-
-    robot_idx: int
-    base_offset: np.ndarray  # (3,)
-    color_rgba: np.ndarray  # (4,) or (num_points, 4)
-    default_alpha: float = 1.0
-    visible: bool = True
-
-
 # =============================================================================
 # Color utilities
 # =============================================================================
-
-
-def _ensure_rgba(arr: np.ndarray) -> np.ndarray:
-    """Ensure array has RGBA format (N, 4)."""
-    arr = np.atleast_2d(arr)
-    if arr.shape[1] == 3:
-        alpha = np.ones((arr.shape[0], 1), dtype=np.float64)
-        arr = np.concatenate([arr, alpha], axis=1)
-    return np.clip(arr, 0.0, 1.0)
-
-
-def _normalize_color_palette(
-    color_spec: str | Array | np.ndarray | None,
-    count: int,
-    *,
-    default_palette: str = DEFAULT_SEGMENT_COLORMAP,
-) -> np.ndarray:
-    """Normalize color specification to (count, 4) RGBA array.
-
-    Args:
-        color_spec: None, "same", colormap name, or explicit (N, 3/4) array
-        count: Number of colors needed
-        default_palette: Fallback colormap name
-
-    Returns:
-        Array of shape (count, 4) with RGBA values in [0, 1]
-    """
-    if color_spec is None or color_spec == "same":
-        # Use default colormap
-        cmap = colormaps.get_cmap(default_palette)
-        if count == 1:
-            palette = np.array([cmap(0.5)[:3]])
-        else:
-            palette = np.array([cmap(i / (count - 1))[:3] for i in range(count)])
-    elif isinstance(color_spec, str):
-        # Colormap name
-        cmap = colormaps.get_cmap(color_spec)
-        if count == 1:
-            palette = np.array([cmap(0.5)[:3]])
-        else:
-            palette = np.array([cmap(i / (count - 1))[:3] for i in range(count)])
-    else:
-        # Explicit array
-        palette = np.asarray(color_spec, dtype=np.float64)
-        if palette.ndim == 1:
-            palette = palette[None, :]
-        # Cycle if fewer colors than needed
-        if palette.shape[0] < count:
-            reps = int(np.ceil(count / palette.shape[0]))
-            palette = np.tile(palette, (reps, 1))
-        palette = palette[:count]
-
-    return _ensure_rgba(palette)
-
-
-def _color_spec_has_alpha(color_spec: str | Array | np.ndarray | None) -> bool:
-    """Check whether a color specification includes an explicit alpha channel."""
-    if color_spec is None or color_spec == "same":
-        return False
-    if isinstance(color_spec, str):
-        return False
-    palette = np.asarray(color_spec)
-    if palette.ndim == 1:
-        return palette.shape[0] == 4
-    return palette.shape[-1] == 4
-
-
 def _rgb_to_viser_color(rgb: np.ndarray) -> tuple[int, int, int]:
     """Convert RGB floats [0,1] to Viser color tuple (0-255)."""
     rgb = np.clip(rgb[:3], 0.0, 1.0)
@@ -189,7 +107,7 @@ def _rgba_to_viser_color_and_opacity(
     rgba: np.ndarray, *, opaque_threshold: float = 0.999
 ) -> tuple[tuple[int, int, int], float | None]:
     """Convert RGBA floats [0,1] to Viser color tuple and optional opacity."""
-    rgba = _ensure_rgba(np.asarray(rgba, dtype=np.float64))[0]
+    rgba = ensure_rgba(np.asarray(rgba, dtype=np.float64))[0]
     opacity = float(np.clip(rgba[3], 0.0, 1.0))
     if opacity >= opaque_threshold:
         opacity = None
@@ -271,19 +189,16 @@ class ViserRenderer(BaseSoftRobotRenderer):
         height: int = 1200,
         num_points: int = 80,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        color_config: RendererColorConfig | None = None,
         host: str = "0.0.0.0",
         port: int = 8080,
-        seg_colors: str | Array | np.ndarray | None = DEFAULT_SEGMENT_COLORMAP,
-        robot_colors: str | Array | np.ndarray | None = None,
         backbone_style: Literal["discrete", "swept"] = "discrete",
         sphere_resolution: int = 3,
         cylinder_sections: int = 48,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
-        base_plate_color: tuple[float, float, float] = (0.2, 0.2, 0.2),
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 0.06,
-        tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15),
         tendon_line_width: float = 3.0,
         camera_fov: float = 75.0,
         # Lighting parameters
@@ -314,19 +229,16 @@ class ViserRenderer(BaseSoftRobotRenderer):
             height: Default render height in pixels
             num_points: Number of points for backbone curve discretization
             background_color: RGB background color (0-1 range)
+            color_config: Shared renderer color configuration
             host: Server bind address (0.0.0.0 for all interfaces)
             port: Server port number
-            seg_colors: Segment color configuration (colormap name or array)
-            robot_colors: Per-robot color configuration (colormap name or array)
             backbone_style: "discrete" (spheres) or "swept" (cylinders)
             sphere_resolution: Icosphere subdivision level (1=low, 2=medium, 3=good, 4=high)
             cylinder_sections: Number of cylinder cross-section segments (higher=smoother)
             grid_spacing: (x, y) spacing for multi-robot grid layout
             base_offsets: Explicit base position offsets (N, 3)
-            base_plate_color: RGB color for base plate
             base_plate_radius_scale: Base plate radius relative to robot radius
             base_plate_thickness: Base plate thickness in meters
-            tendon_color: RGB color for tendon lines
             tendon_line_width: Line width for tendon visualization
             camera_fov: Camera field of view in degrees
             enable_default_lights: Enable Viser's default lighting
@@ -352,21 +264,24 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 "Install it with: pip install viser"
             )
 
-        super().__init__(robot, width, height, num_points, background_color)
+        super().__init__(
+            robot,
+            width,
+            height,
+            num_points,
+            background_color,
+            color_config=color_config,
+        )
 
         self._host = host
         self._port = port
-        self._seg_colors = seg_colors
-        self._robot_colors = robot_colors
         self._backbone_style = backbone_style
         self._sphere_resolution = sphere_resolution
         self._cylinder_sections = cylinder_sections
         self._grid_spacing = grid_spacing
         self._base_offsets = base_offsets
-        self._base_plate_color = base_plate_color
         self._base_plate_radius_scale = base_plate_radius_scale
         self._base_plate_thickness = base_plate_thickness
-        self._tendon_color = tendon_color
         self._tendon_line_width = tendon_line_width
         self._camera_fov = camera_fov
         self._open_browser = open_browser
@@ -520,31 +435,28 @@ class ViserRenderer(BaseSoftRobotRenderer):
     def _build_robot_geometry(
         self,
         curves: np.ndarray,
-        robot_configs: list[RobotRenderConfig],
-        seg_colors: np.ndarray,
+        point_colors: np.ndarray,
+        *,
+        base_plate_color: tuple[float, float, float],
     ) -> None:
         """Build robot backbone geometry in the scene.
 
         Args:
             curves: Backbone curves of shape (num_robots, num_points, 3)
-            robot_configs: Per-robot rendering configuration
-            seg_colors: Segment colors of shape (num_points, 4) RGBA
+            point_colors: Per-robot colors of shape (num_robots, num_points, 4)
         """
         if self._server is None or self._scene_handles is None:
             return
 
         num_robots = curves.shape[0]
         num_points = curves.shape[1]
-        seg_colors_have_alpha = _color_spec_has_alpha(self._seg_colors)
 
         # Clear existing robot geometry
         self._scene_handles.backbone_points = []
         self._scene_handles.base_plates = []
 
         for robot_idx in range(num_robots):
-            config = robot_configs[robot_idx]
             curve = curves[robot_idx]  # (num_points, 3)
-            default_alpha = config.default_alpha
 
             # Create backbone geometry
             robot_points = []
@@ -553,20 +465,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 # Render as spheres at each backbone point
                 for pt_idx in range(num_points):
                     pos = curve[pt_idx]
-                    color_rgba = seg_colors[pt_idx]
-                    effective_alpha = (
-                        float(color_rgba[3]) if seg_colors_have_alpha else default_alpha
-                    )
-                    color, opacity = _rgba_to_viser_color_and_opacity(
-                        np.array(
-                            [
-                                color_rgba[0],
-                                color_rgba[1],
-                                color_rgba[2],
-                                effective_alpha,
-                            ]
-                        )
-                    )
+                    color_rgba = point_colors[robot_idx, pt_idx]
+                    color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
 
                     handle = self._server.scene.add_icosphere(
                         name=f"/robots/robot_{robot_idx}/backbone/pt_{pt_idx}",
@@ -586,20 +486,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 for pt_idx in range(num_points - 1):
                     p0 = curve[pt_idx]
                     p1 = curve[pt_idx + 1]
-                    color_rgba = seg_colors[pt_idx]
-                    effective_alpha = (
-                        float(color_rgba[3]) if seg_colors_have_alpha else default_alpha
-                    )
-                    color, opacity = _rgba_to_viser_color_and_opacity(
-                        np.array(
-                            [
-                                color_rgba[0],
-                                color_rgba[1],
-                                color_rgba[2],
-                                effective_alpha,
-                            ]
-                        )
-                    )
+                    color_rgba = point_colors[robot_idx, pt_idx]
+                    color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
 
                     # Compute cylinder parameters
                     direction = p1 - p0
@@ -635,15 +523,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
                 # Add sphere at tip
                 tip_pos = curve[-1]
-                color_rgba = seg_colors[-1]
-                effective_alpha = (
-                    float(color_rgba[3]) if seg_colors_have_alpha else default_alpha
-                )
-                color, opacity = _rgba_to_viser_color_and_opacity(
-                    np.array(
-                        [color_rgba[0], color_rgba[1], color_rgba[2], effective_alpha]
-                    )
-                )
+                color_rgba = point_colors[robot_idx, -1]
+                color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
                 handle = self._server.scene.add_icosphere(
                     name=f"/robots/robot_{robot_idx}/backbone/tip",
                     radius=self._robot_radius,
@@ -668,7 +549,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 mesh=self._make_cylinder_trimesh(
                     length=self._base_plate_thickness,
                     radius=self._robot_radius * self._base_plate_radius_scale,
-                    color=self._base_plate_color,
+                    color=base_plate_color,
                     direction=None,  # Already Z-aligned
                 ),
                 position=tuple(base_pos),
@@ -685,6 +566,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         q: Array,
         base_offsets: np.ndarray,
         num_robots: int,
+        *,
+        tendon_color: tuple[float, float, float] | None = None,
     ) -> None:
         """Build tendon line geometry in the scene.
 
@@ -727,7 +610,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
                         points.extend([tendon_curve[i], tendon_curve[i + 1]])
                     points = np.array(points)
 
-                    color = _rgb_to_viser_color(np.array(self._tendon_color))
+                    color_arr = (
+                        np.array(tendon_color)
+                        if tendon_color is not None
+                        else np.array(self.color_config.tendon_color)
+                    )
+                    color = _rgb_to_viser_color(color_arr)
 
                     handle = self._server.scene.add_line_segments(
                         name=f"/robots/robot_{robot_idx}/tendons/tendon_{tendon_idx}",
@@ -801,7 +689,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
     def _update_robot_geometry(
         self,
         curves: np.ndarray,
-        robot_configs: list[RobotRenderConfig],
     ) -> None:
         """Update existing robot geometry positions (and orientations for swept mode).
 
@@ -811,7 +698,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         Args:
             curves: Backbone curves of shape (num_robots, num_points, 3)
-            robot_configs: Per-robot rendering configuration
         """
         if self._scene_handles is None:
             return
@@ -871,7 +757,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if self._server is None or self._scene_handles is None:
             return
 
-        colors = _ensure_rgba(colors)
+        colors = ensure_rgba(colors)
 
         for i, (pos, radius, color) in enumerate(zip(positions, radii, colors)):
             viser_color, opacity = _rgba_to_viser_color_and_opacity(color)
@@ -907,7 +793,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if self._server is None or self._scene_handles is None:
             return
 
-        colors = _ensure_rgba(colors)
+        colors = ensure_rgba(colors)
         self._scene_handles.dynamic_trajectories = list(trajectories)
 
         for i, (traj, radius, color) in enumerate(zip(trajectories, radii, colors)):
@@ -1032,7 +918,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1046,7 +932,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Args:
             q: Robot configuration (DOF,) or batched (N, DOF)
             base_offsets: Base position offsets (N, 3)
-            robot_colors: Per-robot color specification
+            color_config: Shared renderer color configuration
             camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
@@ -1083,17 +969,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Compute backbone curves
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
 
-        # Build robot configs
-        robot_configs = self._build_robot_configs(num_robots, robot_colors)
-
-        # Get segment colors
-        seg_colors = _normalize_color_palette(
-            self._seg_colors, self.num_points, default_palette=DEFAULT_SEGMENT_COLORMAP
+        cfg = color_config or self.color_config
+        resolved_colors = self.resolve_backbone_colors(
+            num_robots, color_config=cfg
         )
 
         # Build scene
         self._clear_scene()
-        self._build_robot_geometry(curves, robot_configs, seg_colors)
+        self._build_robot_geometry(
+            curves,
+            resolved_colors.per_robot_point_rgba,
+            base_plate_color=cfg.base_plate_color,
+        )
 
         # Add static spheres if provided
         if static_spheres_positions is not None:
@@ -1126,42 +1013,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Return blank image if no client
         return np.ones((self.height, self.width, 3), dtype=np.uint8) * 255
 
-    def _build_robot_configs(
-        self,
-        num_robots: int,
-        robot_colors: str | Array | np.ndarray | None,
-    ) -> list[RobotRenderConfig]:
-        """Build per-robot rendering configurations."""
-        color_spec = robot_colors if robot_colors is not None else self._robot_colors
-        robot_colors_have_alpha = _color_spec_has_alpha(color_spec)
-
-        # Get colors
-        colors = _normalize_color_palette(
-            color_spec,
-            num_robots,
-            default_palette=DEFAULT_SEGMENT_COLORMAP,
-        )
-
-        configs = []
-        for i in range(num_robots):
-            configs.append(
-                RobotRenderConfig(
-                    robot_idx=i,
-                    base_offset=np.zeros(3),  # Applied via curves
-                    color_rgba=colors[i],
-                    default_alpha=float(colors[i][3])
-                    if robot_colors_have_alpha
-                    else 1.0,
-                )
-            )
-        return configs
-
     def show(
         self,
         q: Array,
         *,
         base_offsets: Array | None = None,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1176,7 +1033,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Args:
             q: Robot configuration (DOF,) or batched (N, DOF)
             base_offsets: Base position offsets (N, 3)
-            robot_colors: Per-robot color specification
+            color_config: Shared renderer color configuration
             camera_config: Camera configuration (fov, position, look_at, etc.)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
@@ -1211,21 +1068,24 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Compute backbone curves
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
 
-        # Build robot configs
-        robot_configs = self._build_robot_configs(num_robots, robot_colors)
-
-        # Get segment colors
-        seg_colors = _normalize_color_palette(
-            self._seg_colors, self.num_points, default_palette=DEFAULT_SEGMENT_COLORMAP
+        cfg = color_config or self.color_config
+        resolved_colors = self.resolve_backbone_colors(
+            num_robots, color_config=cfg
         )
 
         # Build scene
         self._clear_scene()
-        self._build_robot_geometry(curves, robot_configs, seg_colors)
+        self._build_robot_geometry(
+            curves,
+            resolved_colors.per_robot_point_rgba,
+            base_plate_color=cfg.base_plate_color,
+        )
 
         # Add tendon visualization if available and requested
         if show_tendons and self._has_tendons:
-            self._build_tendon_geometry(q, np.asarray(base_offsets), num_robots)
+            self._build_tendon_geometry(
+                q, np.asarray(base_offsets), num_robots, tendon_color=cfg.tendon_color
+            )
 
         # Add static spheres if provided
         if static_spheres_positions is not None:
@@ -1271,7 +1131,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         video_config: VideoEncodingConfig | None = None,
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
-        robot_colors: str | Array | np.ndarray | None = None,
+        color_config: RendererColorConfig | None = None,
         multi_robot_layout: Literal["grid", "overlay"] = "grid",
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1299,7 +1159,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             video_config: FFmpeg encoding settings
             camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
-            robot_colors: Per-robot color specification
+            color_config: Shared renderer color configuration
             multi_robot_layout: "grid" for side-by-side, "overlay" for same position
             static_spheres_*: Static sphere configuration
             dynamic_spheres_*: Time-varying sphere configuration
@@ -1349,12 +1209,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 [base_offsets, jnp.zeros((num_robots, 1))], axis=1
             )
 
-        # Build robot configs
-        robot_configs = self._build_robot_configs(num_robots, robot_colors)
-
-        # Get segment colors
-        seg_colors = _normalize_color_palette(
-            self._seg_colors, self.num_points, default_palette=DEFAULT_SEGMENT_COLORMAP
+        cfg = color_config or self.color_config
+        resolved_colors = self.resolve_backbone_colors(
+            num_robots, color_config=cfg
         )
 
         # Precompute all backbone curves for first frame
@@ -1364,12 +1221,19 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Build initial scene
         self._clear_scene()
-        self._build_robot_geometry(curves_0, robot_configs, seg_colors)
+        self._build_robot_geometry(
+            curves_0,
+            resolved_colors.per_robot_point_rgba,
+            base_plate_color=cfg.base_plate_color,
+        )
 
         # Add tendon visualization if available and requested
         if show_tendons and self._has_tendons:
             self._build_tendon_geometry(
-                q_ts[:, 0, :], np.asarray(base_offsets), num_robots
+                q_ts[:, 0, :],
+                np.asarray(base_offsets),
+                num_robots,
+                tendon_color=cfg.tendon_color,
             )
 
         # Add static spheres
@@ -1489,8 +1353,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                     next_idx,
                                     q_ts,
                                     base_offsets,
-                                    robot_configs,
-                                    seg_colors,
+                                    resolved_colors.per_robot_point_rgba,
+                                    base_plate_color=cfg.base_plate_color,
+                                    tendon_color=cfg.tendon_color,
                                     show_tendons=show_tendons,
                                 )
 
@@ -1529,8 +1394,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         frame_idx: int,
         q_ts: Array,
         base_offsets: Array,
-        robot_configs: list[RobotRenderConfig],
-        seg_colors: np.ndarray,
+        point_colors: np.ndarray,
+        *,
+        base_plate_color: tuple[float, float, float],
+        tendon_color: tuple[float, float, float],
         show_tendons: bool = True,
     ) -> None:
         """Update scene for given frame index.
@@ -1555,14 +1422,21 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         if can_update:
             # Efficient update: only modify position/orientation properties
-            self._update_robot_geometry(curves, robot_configs)
+            self._update_robot_geometry(curves)
         else:
             # Full rebuild needed (first frame or configuration changed)
-            self._build_robot_geometry(curves, robot_configs, seg_colors)
+            self._build_robot_geometry(
+                curves, point_colors, base_plate_color=base_plate_color
+            )
 
         # Update tendon geometry if available and requested
         if show_tendons and self._has_tendons:
-            self._build_tendon_geometry(q_frame, np.asarray(base_offsets), num_robots)
+            self._build_tendon_geometry(
+                q_frame,
+                np.asarray(base_offsets),
+                num_robots,
+                tendon_color=tendon_color,
+            )
 
         # Update dynamic spheres
         self._update_dynamic_spheres(frame_idx)
@@ -1989,6 +1863,8 @@ class LiveModeController:
         self._lock = threading.Lock()
         self._state_queue: list[np.ndarray] = []
         self._start_time = 0.0
+        self._resolved_colors = None
+        self._resolved_colors_num_robots = None
 
     def start(self) -> None:
         """Start the live mode."""
@@ -2109,8 +1985,12 @@ class LiveModeController:
             self._renderer.compute_backbone_curves_batched(q, base_offsets)
         )
 
-        # Build configs
-        robot_configs = self._renderer._build_robot_configs(num_robots, None)
+        if (
+            self._resolved_colors is None
+            or self._resolved_colors_num_robots != num_robots
+        ):
+            self._resolved_colors = self._renderer.resolve_backbone_colors(num_robots)
+            self._resolved_colors_num_robots = num_robots
 
         # Check if we can use efficient updates
         scene_handles = self._renderer._scene_handles
@@ -2123,12 +2003,11 @@ class LiveModeController:
 
         if can_update:
             # Efficient update: only modify position/orientation properties
-            self._renderer._update_robot_geometry(curves, robot_configs)
+            self._renderer._update_robot_geometry(curves)
         else:
             # Full rebuild needed (first frame or configuration changed)
-            seg_colors = _normalize_color_palette(
-                self._renderer._seg_colors,
-                self._renderer.num_points,
-                default_palette=DEFAULT_SEGMENT_COLORMAP,
+            self._renderer._build_robot_geometry(
+                curves,
+                self._resolved_colors.per_robot_point_rgba,
+                base_plate_color=self._renderer.color_config.base_plate_color,
             )
-            self._renderer._build_robot_geometry(curves, robot_configs, seg_colors)

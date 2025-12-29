@@ -7,7 +7,12 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from diffrax import Tsit5
 
-from soromox.rendering import MatplotlibRenderer, Open3DRenderer, ViserRenderer
+from soromox.rendering import (
+    MatplotlibRenderer,
+    Open3DRenderer,
+    RendererColorConfig,
+    ViserRenderer,
+)
 from soromox.systems import SystemState, TendonActuatedPCS
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -217,8 +222,8 @@ if __name__ == "__main__":
         robot,
         num_points=60,
         line_width=2.5,
-        tendon_color=(0.9, 0.1, 0.1),
         tendon_line_width=2.0,
+        color_config=RendererColorConfig(tendon_color=(0.9, 0.1, 0.1)),
     )
     # q_ts is (T, DOF); animate in slider mode for quick inspection
     matplotlib_renderer.animate(

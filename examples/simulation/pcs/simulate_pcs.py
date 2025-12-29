@@ -7,7 +7,14 @@ import plotly.graph_objects as go
 from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import MatplotlibRenderer, Open3DRenderer, ViserRenderer
+from soromox.rendering import (
+    BackboneColorConfig,
+    MatplotlibRenderer,
+    Open3DRenderer,
+    RendererColorConfig,
+    ViserRenderer,
+    get_color_theme,
+)
 from soromox.systems import PCS, SystemState
 
 jnp.set_printoptions(
@@ -144,6 +151,26 @@ if __name__ == "__main__":
     # =====================================================
     # Animate the robot motion
     # =====================================================
+    q_demo = q_ts[len(ts) // 2]
+
+    # Color scheme demos (built-in palettes + themes)
+    demo_renderer = MatplotlibRenderer(robot, num_points=50)
+    demo_renderer.show(
+        q_demo,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(segment_palette="viridis")
+        ),
+    )
+    demo_renderer.show(q_demo, color_config=get_color_theme("soromox:paper"))
+    demo_renderer.show(
+        q_demo,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(point_palette="soromox:glacier"),
+            tendon_color=(0.2, 0.4, 0.8),
+            base_plate_color=(0.15, 0.15, 0.15),
+        ),
+    )
+
     renderer = MatplotlibRenderer(robot, num_points=50)
     renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
     renderer = Open3DRenderer(robot, num_points=50)

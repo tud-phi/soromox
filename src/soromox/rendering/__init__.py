@@ -11,6 +11,14 @@ This module provides various backends for visualizing robots:
 
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.color_config import (
+    BackboneColorConfig,
+    ColorLegend,
+    RendererColorConfig,
+    get_color_theme,
+    list_builtin_palettes,
+    list_builtin_themes,
+)
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.video_encoding import VideoEncodingConfig
 
@@ -35,6 +43,12 @@ __all__ = [
     "BaseSoftRobotRenderer",
     # Configuration
     "CameraConfig",
+    "BackboneColorConfig",
+    "RendererColorConfig",
+    "ColorLegend",
+    "list_builtin_palettes",
+    "list_builtin_themes",
+    "get_color_theme",
     "VideoEncodingConfig",
     # Generic renderers
     "MatplotlibRenderer",

@@ -9,6 +9,15 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.rendering.color_config import (
+    DEFAULT_ROBOT_PALETTE,
+    DEFAULT_SEGMENT_PALETTE,
+    ColorLegend,
+    RendererColorConfig,
+    ResolvedBackboneColors,
+    normalize_color_array,
+    normalize_palette,
+)
 from soromox.systems.soft_robot import SoftRobot
 
 
@@ -29,6 +38,7 @@ class BaseSoftRobotRenderer(ABC):
         height: Image height in pixels
         num_points: Number of points for discretizing backbone curve
         background_color: RGB tuple for background color (0-1 range)
+        color_config: Shared color configuration for renderers
         L_max: Total length of the robot backbone
     """
 
@@ -39,6 +49,7 @@ class BaseSoftRobotRenderer(ABC):
         height: int = 600,
         num_points: int = 50,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
+        color_config: RendererColorConfig | None = None,
     ):
         """Initialize the renderer with a robot and visualization parameters.
 
@@ -48,12 +59,17 @@ class BaseSoftRobotRenderer(ABC):
             height: Image height in pixels
             num_points: Number of points for backbone curve discretization
             background_color: RGB background color tuple (values 0-1)
+            color_config: Shared renderer color configuration
         """
         self.robot: SoftRobot = robot
         self.width = width
         self.height = height
         self.num_points = num_points
         self.background_color = background_color
+        self.color_config = color_config or RendererColorConfig()
+
+        self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
+        self._segment_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
 
         # Total robot length
         self.L_max = float(jnp.asarray(robot.length))
@@ -207,6 +223,260 @@ class BaseSoftRobotRenderer(ABC):
             else:
                 offsets.append([x, y])
         return jnp.array(offsets)
+
+    @staticmethod
+    def _split_counts_by_lengths(num_points: int, lengths: Array) -> list[int]:
+        """Split num_points across segments proportionally to lengths."""
+        L = np.asarray(lengths, dtype=np.float64).reshape(-1)
+        S = int(L.size)
+        if S == 0:
+            return [num_points]
+        if num_points < S:
+            base = [1] * S
+            base[-1] += num_points - S
+            return base
+
+        Ltot = float(L.sum())
+        if Ltot <= 0:
+            base = [num_points // S] * S
+            rem = num_points - sum(base)
+            for i in range(rem):
+                base[i] += 1
+            return base
+
+        raw = [num_points * (float(li) / Ltot) for li in L]
+        base = [max(1, int(round(x))) for x in raw]
+        diff = num_points - sum(base)
+        if diff != 0:
+            fracs = np.array([x - np.floor(x) for x in raw])
+            order = np.argsort(fracs)[::-1] if diff > 0 else np.argsort(fracs)
+            idxs = order.tolist()
+            k = abs(diff)
+            j = 0
+            while k > 0 and idxs:
+                i = idxs[j % len(idxs)]
+                if diff > 0:
+                    base[i] += 1
+                else:
+                    if base[i] > 1:
+                        base[i] -= 1
+                    else:
+                        j += 1
+                        continue
+                k -= 1
+                j += 1
+        return base
+
+    def _segment_bounds(self, num_points: int) -> tuple[np.ndarray, np.ndarray]:
+        """Compute segment start/end indices for num_points."""
+        if num_points in self._segment_cache:
+            return self._segment_cache[num_points]
+        lengths = np.asarray(self.robot.segment_length, dtype=np.float64).reshape(-1)
+        counts = self._split_counts_by_lengths(num_points, lengths)
+        starts = np.cumsum([0] + counts[:-1]).astype(int)
+        ends = np.cumsum(counts).astype(int)
+        self._segment_cache[num_points] = (starts, ends)
+        return starts, ends
+
+    @staticmethod
+    def _segment_colors_from_points(
+        point_colors: np.ndarray,
+        starts: np.ndarray,
+        ends: np.ndarray,
+    ) -> np.ndarray:
+        """Aggregate per-point colors into per-segment colors."""
+        seg_colors = []
+        for c0, c1 in zip(starts, ends):
+            if c1 <= c0 or c0 >= point_colors.shape[0]:
+                seg_colors.append(point_colors[min(c0, point_colors.shape[0] - 1)])
+            else:
+                seg_colors.append(np.mean(point_colors[c0:c1], axis=0))
+        return np.asarray(seg_colors, dtype=np.float64)
+
+    @staticmethod
+    def _expand_segment_colors(
+        segment_colors: np.ndarray,
+        starts: np.ndarray,
+        ends: np.ndarray,
+        num_points: int,
+    ) -> np.ndarray:
+        """Expand per-segment colors into per-point colors."""
+        out = np.zeros((num_points, 4), dtype=np.float64)
+        for idx, (c0, c1) in enumerate(zip(starts, ends)):
+            if c1 <= c0 or c0 >= num_points:
+                continue
+            out[c0:c1] = segment_colors[idx]
+        return out
+
+    def resolve_backbone_colors(
+        self,
+        num_robots: int,
+        *,
+        color_config: RendererColorConfig | None = None,
+        cache: bool = True,
+    ) -> ResolvedBackboneColors:
+        """Resolve backbone colors using the shared config hierarchy."""
+        cfg = color_config or self.color_config
+        cache_key = (id(cfg), int(num_robots), int(self.num_points))
+        if cache and cache_key in self._color_cache:
+            return self._color_cache[cache_key]
+
+        starts, ends = self._segment_bounds(self.num_points)
+        num_segments = int(starts.shape[0])
+        backbone = cfg.backbone
+
+        robot_colors_rgba, robot_has_alpha = normalize_palette(
+            backbone.robot_colors,
+            num_robots,
+            default_palette=backbone.robot_palette or DEFAULT_ROBOT_PALETTE,
+            name="robot_colors",
+        )
+
+        segment_colors_rgba, segment_has_alpha = normalize_color_array(
+            backbone.segment_colors,
+            (num_segments,),
+            name="segment_colors",
+        )
+        if segment_colors_rgba is None and backbone.segment_palette is not None:
+            segment_colors_rgba, segment_has_alpha = normalize_palette(
+                backbone.segment_palette,
+                num_segments,
+                default_palette=DEFAULT_SEGMENT_PALETTE,
+                name="segment_palette",
+            )
+
+        point_colors_rgba, point_has_alpha = normalize_color_array(
+            backbone.point_colors,
+            (self.num_points,),
+            name="point_colors",
+        )
+        if point_colors_rgba is None and backbone.point_palette is not None:
+            point_colors_rgba, point_has_alpha = normalize_palette(
+                backbone.point_palette,
+                self.num_points,
+                default_palette=DEFAULT_SEGMENT_PALETTE,
+                name="point_palette",
+            )
+
+        robot_segment_rgba, robot_segment_has_alpha = normalize_color_array(
+            backbone.robot_segment_colors,
+            (num_robots, num_segments),
+            name="robot_segment_colors",
+        )
+        robot_point_rgba, robot_point_has_alpha = normalize_color_array(
+            backbone.robot_point_colors,
+            (num_robots, self.num_points),
+            name="robot_point_colors",
+        )
+
+        robot_alpha = robot_colors_rgba[:, 3] if robot_has_alpha else None
+
+        if robot_point_rgba is not None:
+            per_robot_point = robot_point_rgba
+            if not robot_point_has_alpha and robot_alpha is not None:
+                per_robot_point = per_robot_point.copy()
+                per_robot_point[..., 3] = robot_alpha[:, None]
+            legend_level = "point"
+        elif point_colors_rgba is not None:
+            per_robot_point = np.tile(point_colors_rgba[None, ...], (num_robots, 1, 1))
+            if not point_has_alpha and robot_alpha is not None:
+                per_robot_point = per_robot_point.copy()
+                per_robot_point[..., 3] = robot_alpha[:, None]
+            legend_level = "point"
+        elif robot_segment_rgba is not None:
+            per_robot_point = np.zeros(
+                (num_robots, self.num_points, 4), dtype=np.float64
+            )
+            for r in range(num_robots):
+                per_robot_point[r] = self._expand_segment_colors(
+                    robot_segment_rgba[r], starts, ends, self.num_points
+                )
+            if not robot_segment_has_alpha and robot_alpha is not None:
+                per_robot_point[..., 3] = robot_alpha[:, None]
+            legend_level = "segment"
+        elif segment_colors_rgba is not None:
+            per_robot_point = np.zeros(
+                (num_robots, self.num_points, 4), dtype=np.float64
+            )
+            expanded = self._expand_segment_colors(
+                segment_colors_rgba, starts, ends, self.num_points
+            )
+            per_robot_point[:] = expanded[None, ...]
+            if not segment_has_alpha and robot_alpha is not None:
+                per_robot_point[..., 3] = robot_alpha[:, None]
+            legend_level = "segment"
+        else:
+            per_robot_point = np.tile(
+                robot_colors_rgba[:, None, :], (1, self.num_points, 1)
+            )
+            legend_level = "robot"
+
+        if robot_segment_rgba is not None:
+            per_robot_segment = robot_segment_rgba
+            if not robot_segment_has_alpha and robot_alpha is not None:
+                per_robot_segment = per_robot_segment.copy()
+                per_robot_segment[..., 3] = robot_alpha[:, None]
+        elif segment_colors_rgba is not None:
+            per_robot_segment = np.tile(
+                segment_colors_rgba[None, ...], (num_robots, 1, 1)
+            )
+            if not segment_has_alpha and robot_alpha is not None:
+                per_robot_segment = per_robot_segment.copy()
+                per_robot_segment[..., 3] = robot_alpha[:, None]
+        elif point_colors_rgba is not None:
+            base_seg = self._segment_colors_from_points(point_colors_rgba, starts, ends)
+            per_robot_segment = np.tile(base_seg[None, ...], (num_robots, 1, 1))
+            if not point_has_alpha and robot_alpha is not None:
+                per_robot_segment[..., 3] = robot_alpha[:, None]
+        else:
+            per_robot_segment = np.tile(
+                robot_colors_rgba[:, None, :], (1, num_segments, 1)
+            )
+
+        legend_segment = per_robot_segment[0]
+        legend_point = per_robot_point[0]
+
+        resolved = ResolvedBackboneColors(
+            per_robot_point_rgba=per_robot_point,
+            per_robot_segment_rgba=per_robot_segment,
+            robot_colors_rgba=robot_colors_rgba,
+            segment_colors_rgba=legend_segment,
+            point_colors_rgba=legend_point,
+            legend_level=legend_level,
+        )
+
+        if cache:
+            self._color_cache[cache_key] = resolved
+        return resolved
+
+    def get_color_legend(
+        self,
+        *,
+        num_robots: int = 1,
+        color_config: RendererColorConfig | None = None,
+    ) -> ColorLegend:
+        """Return a lightweight color legend for the current configuration."""
+        resolved = self.resolve_backbone_colors(
+            num_robots, color_config=color_config, cache=False
+        )
+
+        if resolved.legend_level == "point":
+            colors = resolved.point_colors_rgba
+            labels = [f"point_{i}" for i in range(colors.shape[0])]
+        elif resolved.legend_level == "segment":
+            colors = resolved.segment_colors_rgba
+            labels = [f"segment_{i}" for i in range(colors.shape[0])]
+        else:
+            colors = resolved.robot_colors_rgba
+            labels = [f"robot_{i}" for i in range(colors.shape[0])]
+
+        return ColorLegend(
+            level=resolved.legend_level, colors_rgba=colors, labels=labels
+        )
+
+    def clear_color_cache(self) -> None:
+        """Clear cached color resolutions."""
+        self._color_cache.clear()
 
     def compute_backbone_curves_batched(
         self, q_batch: Array, base_offsets: Array

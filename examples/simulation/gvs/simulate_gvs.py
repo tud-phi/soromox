@@ -7,7 +7,12 @@ jax.config.update("jax_enable_x64", True)
 
 import matplotlib.pyplot as plt
 
-from soromox.rendering import Open3DRenderer, ViserRenderer  # double precision
+from soromox.rendering import (
+    BackboneColorConfig,
+    Open3DRenderer,
+    RendererColorConfig,
+    ViserRenderer,
+)
 from soromox.systems import GVS, CrossSectionGeometry, SystemState
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
@@ -199,12 +204,14 @@ if __name__ == "__main__":
     q0_ts = jnp.repeat(q0[None, :], len(ts), axis=0)
     q_ts_overlay = jnp.stack([q_ts, q0_ts], axis=0)
 
-    # Use robot_colors alpha as the default opacity when seg_colors has no alpha.
-    robot_colors = jnp.array(
-        [
-            [1.0, 1.0, 1.0, 1.0],  # dynamic trajectory (opaque)
-            [0.2, 0.6, 0.9, 0.35],  # q0 overlay (transparent)
-        ]
+    # Use robot alpha as the default opacity when point/segment colors omit alpha.
+    color_config = RendererColorConfig(
+        backbone=BackboneColorConfig(
+            robot_colors=[
+                [1.0, 1.0, 1.0, 1.0],  # dynamic trajectory (opaque)
+                [0.2, 0.6, 0.9, 0.35],  # q0 overlay (transparent)
+            ]
+        )
     )
     viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
     viser_renderer.render_sequence(
@@ -214,5 +221,5 @@ if __name__ == "__main__":
         playback_speed=1.0,
         autoplay=True,
         loop=True,
-        robot_colors=robot_colors,
+        color_config=color_config,
     )

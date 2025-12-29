@@ -10,7 +10,12 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
-from soromox.rendering import MatplotlibRenderer, Open3DRenderer
+from soromox.rendering import (
+    BackboneColorConfig,
+    MatplotlibRenderer,
+    Open3DRenderer,
+    RendererColorConfig,
+)
 from soromox.systems import SystemState, TendonActuatedPCS
 
 
@@ -107,9 +112,11 @@ def main():
         num_points=60,
         line_width=2.5,
         grid_spacing=grid_spacing,
-        robot_colors="plasma",
-        tendon_color=(0.9, 0.1, 0.1),
         tendon_line_width=2.0,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(robot_palette="plasma"),
+            tendon_color=(0.9, 0.1, 0.1),
+        ),
     )
     # q_ts_batched is (N, T, DOF); animate in slider mode for quick inspection
     matplotlib_renderer.animate(ts=ts, q_ts=q_ts_batched, mode="slider", show=True)
@@ -118,7 +125,9 @@ def main():
     renderer = Open3DRenderer(
         robot,
         grid_spacing=grid_spacing,
-        robot_colors="viridis",
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(robot_palette="viridis")
+        ),
     )
     renderer.render_sequence(
         ts=ts, q_ts=q_ts_batched, record_path="videos/batched_tendon_actuated_pcs.mp4"
