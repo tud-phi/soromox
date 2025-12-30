@@ -1014,10 +1014,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
+        render_tendons: bool = True,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
-        show_tendons: bool = True,
         blocking: bool = True,
     ) -> None:
         """Display single frame interactively.
@@ -1029,10 +1029,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 3)
             color_config: Shared renderer color configuration
             camera_config: Camera configuration (fov, position, look_at, etc.)
+            render_tendons: If True, render tendons (if available)
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
-            show_tendons: If True, render tendons (if available)
             blocking: If True, block until user closes browser
         """
         if self._server is None:
@@ -1074,7 +1074,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
 
         # Add tendon visualization if available and requested
-        if show_tendons and self._has_tendons:
+        if render_tendons and self._has_tendons:
             self._build_tendon_geometry(
                 q, np.asarray(base_offsets), num_robots, tendon_color=cfg.tendon_color
             )
@@ -1124,6 +1124,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
+        render_tendons: bool = True,
         multi_robot_layout: Literal["grid", "overlay"] = "grid",
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1131,7 +1132,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_positions: Array | None = None,
         dynamic_spheres_radii: Array | None = None,
         dynamic_spheres_colors: Array | None = None,
-        show_tendons: bool = True,
         blocking: bool = True,
         plot_configurations: bool = False,
         plot_tendon_positions: bool = False,
@@ -1152,6 +1152,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
             color_config: Shared renderer color configuration
+            render_tendons: If True, render tendons (if available)
             multi_robot_layout: "grid" for side-by-side, "overlay" for same position
             static_spheres_positions: Static sphere positions
             static_spheres_radii: Static sphere radii
@@ -1159,7 +1160,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
             dynamic_spheres_positions: Time-varying sphere positions
             dynamic_spheres_radii: Time-varying sphere radii
             dynamic_spheres_colors: Time-varying sphere colors
-            show_tendons: If True, render tendons (if available)
             blocking: If True, block until viewer closes
             plot_configurations: If True, add configuration vs time plot to GUI
             plot_tendon_positions: If True, add tendon position plot to GUI
@@ -1222,7 +1222,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
 
         # Add tendon visualization if available and requested
-        if show_tendons and self._has_tendons:
+        if render_tendons and self._has_tendons:
             self._build_tendon_geometry(
                 q_ts[:, 0, :],
                 np.asarray(base_offsets),
@@ -1350,7 +1350,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                     resolved_colors.per_robot_point_rgba,
                                     base_plate_color=cfg.base_plate_color,
                                     tendon_color=cfg.tendon_color,
-                                    show_tendons=show_tendons,
+                                    render_tendons=render_tendons,
                                 )
 
                                 # Record frame
@@ -1392,7 +1392,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         *,
         base_plate_color: tuple[float, float, float],
         tendon_color: tuple[float, float, float],
-        show_tendons: bool = True,
+        render_tendons: bool = True,
     ) -> None:
         """Update scene for given frame index.
 
@@ -1424,7 +1424,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             )
 
         # Update tendon geometry if available and requested
-        if show_tendons and self._has_tendons:
+        if render_tendons and self._has_tendons:
             self._build_tendon_geometry(
                 q_frame,
                 np.asarray(base_offsets),

@@ -80,7 +80,6 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         self._base_offsets = base_offsets
         self.tendon_line_width = tendon_line_width
 
-
     def render_frame(
         self,
         q: Array,
@@ -88,7 +87,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        show_tendons: bool = True,
+        render_tendons: bool = True,
     ) -> np.ndarray:
         """Render configuration(s) to an RGB image array.
 
@@ -101,7 +100,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             camera_config: Camera configuration. Note: For Matplotlib, only position
                 and look_at are used to set view angle for 3D plots.
-            show_tendons: Whether to render tendons if available.
+            render_tendons: Whether to render tendons if available.
 
         Returns:
             img (np.ndarray): RGB image of shape (height, width, 3), dtype uint8.
@@ -153,7 +152,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
 
         curves_np = np.array(curves)
         tendon_curves_np = None
-        if show_tendons and self._has_tendons:
+        if render_tendons and self._has_tendons:
             if batched:
                 tendon_curves_np = np.array(
                     self.compute_tendon_curves_batched(q_arr, base_offsets_arr)
@@ -258,7 +257,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             base_offsets=base_offsets,
             color_config=color_config,
             camera_config=camera_config,
-            show_tendons=render_tendons,
+            render_tendons=render_tendons,
         )
         plt.figure(figsize=(self.width / 100, self.height / 100))
         plt.imshow(img)

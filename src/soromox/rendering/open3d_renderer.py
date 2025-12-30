@@ -731,7 +731,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         dynamic_spheres_positions: Array | None,
         dynamic_spheres_radii: Array | None,
-        dynamics_spheres_colors: Array | None,
+        dynamic_spheres_colors: Array | None,
         expected_T: int | None,
         default_color: tuple[float, float, float] = (0.2, 0.2, 0.8),
     ) -> DynamicSpheres | None:
@@ -760,7 +760,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 f"dynamic_spheres_radii must have length {N}; got length {radii.shape[0]}"
             )
 
-        colors = self._normalize_color_array(dynamics_spheres_colors, N, default_color)
+        colors = self._normalize_color_array(dynamic_spheres_colors, N, default_color)
         return DynamicSpheres(trajectories=centers, radii=radii, colors=colors)
 
     @staticmethod
@@ -829,6 +829,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None,
         color_config: RendererColorConfig | None,
+        render_tendons: bool = True,
         static_spheres_positions: Array | None,
         static_spheres_radii: Array | None,
         static_spheres_colors: Array | None,
@@ -884,7 +885,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         )
 
         tendon_curves = None
-        if self._has_tendons:
+        if render_tendons and self._has_tendons:
             # Use batched computation for all robots at each timestep
             # Since _has_tendons is True, compute_tendon_curves_batched will not return None
             def _compute_tendons_for_timestep(q_batch: jax.Array) -> jax.Array:
@@ -1137,6 +1138,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
+        render_tendons: bool = True,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1151,6 +1153,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Optional shared renderer color configuration.
             camera_config: Camera configuration (fov, position, look_at, etc.)
+            render_tendons: Whether to render tendons if available.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1166,6 +1169,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q_ts=jnp.asarray(q),
             base_offsets=base_offsets,
             color_config=color_config,
+            render_tendons=render_tendons,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1206,6 +1210,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
+        render_tendons: bool = True,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1220,6 +1225,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Optional shared renderer color configuration.
             camera_config: Camera configuration (fov, position, look_at, etc.)
+            render_tendons: Whether to render tendons if available.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1241,6 +1247,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets=base_offsets,
             color_config=color_config,
             camera_config=camera_config,
+            render_tendons=render_tendons,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1264,6 +1271,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
+        render_tendons: bool = True,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1288,6 +1296,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 Note: For interactive viewing, user can adjust camera with mouse.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Optional shared renderer color configuration.
+            render_tendons: Whether to render tendons if available.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1309,6 +1318,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q_ts=q_ts,
             base_offsets=base_offsets,
             color_config=color_config,
+            render_tendons=render_tendons,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,

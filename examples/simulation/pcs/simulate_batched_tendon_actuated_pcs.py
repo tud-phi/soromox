@@ -160,7 +160,7 @@ def main():
         playback_speed=1.0,
         autoplay=True,
         loop=True,
-        show_tendons=True,
+        render_tendons=True,
         record_path="videos/batched_tendon_actuated_pcs_viser.mp4",
     )
 
