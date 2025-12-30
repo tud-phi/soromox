@@ -301,17 +301,13 @@ supports `multi_robot_layout="overlay"` to stack robots at the same base pose.
 
 ### Tendons and helper geometry
 
-If the robot exposes `forward_kinematics_tendons`:
-
-- Matplotlib renders tendons with `render_tendons=True`
-- Viser renders tendons with `show_tendons=True`
-- Open3D renders tendons automatically (no toggle)
+If the robot exposes `forward_kinematics_tendons`, tendon rendering can be enabled with `render_tendons=True`.
 
 Open3D and Viser also support helper spheres:
 
 - Static: `static_spheres_positions`, `static_spheres_radii`, `static_spheres_colors`
 - Dynamic: `dynamic_spheres_positions`, `dynamic_spheres_radii`,
-  `dynamic_spheres_colors` (Open3D uses `dynamics_spheres_colors`)
+  `dynamic_spheres_colors`
 
 ### Geometry styles (Open3D and Viser)
 

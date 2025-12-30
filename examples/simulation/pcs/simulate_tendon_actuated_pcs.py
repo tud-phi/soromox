@@ -294,7 +294,7 @@ if __name__ == "__main__":
         playback_speed=1.0,
         loop=True,
         autoplay=True,
-        show_tendons=True,
+        render_tendons=True,
         plot_configurations=False,
         plot_tendon_positions=True,
         custom_plots={
