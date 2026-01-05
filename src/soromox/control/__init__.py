@@ -46,6 +46,9 @@ from .operational_space import (
     ImpedanceControlTracker as OperationalSpaceImpedanceControlTracker,
 )
 from .operational_space import OperationalSpaceBaseController
+from .operational_space import (
+    SynergisticController as OperationalSpaceSynergisticController,
+)
 from .pid_control import PIDControl, PIDControllerState
 from .reference_trajectory import ReferenceTrajectory
 
@@ -72,6 +75,7 @@ __all__ = [
     # Operational space controllers
     "OperationalSpaceBaseController",
     "OperationalSpaceImpedanceControlTracker",
+    "OperationalSpaceSynergisticController",
     # Utilities
     "PIDControl",
     "PIDControllerState",
