@@ -10,6 +10,7 @@ from soromox.systems import CrossSectionGeometry, TendonActuatedGVS, TendonActua
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 from soromox.utils.tolerance import Tolerance
 
+import optimistix as optx
 
 def test_actuation_matrix_gvs():
     """
@@ -435,9 +436,9 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
         print("[Valid test]\n")
 
 
-def test_tendon_actatuated_gvs_vs_pcs():
+def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
     """
-    Compares the results of the tendon actuated GVS class with the tendon actuated
+    Compares the actuation matrices of the tendon actuated GVS class with the tendon actuated
     Piecewise Constant Strain class.
     """
 
@@ -511,6 +512,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
                 n_gauss_list=n_gauss_list,
                 gravity_vector=gravity_vector,
                 tendon_routing_params=tendon_params,
+                scale_rotational_strain_basis=False,
             )
 
         else:  # segment_lengths.shape[0] == 2
@@ -554,6 +556,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
                 n_gauss_list=n_gauss_list,
                 gravity_vector=gravity_vector,
                 tendon_routing_params=tendon_params,
+                scale_rotational_strain_basis=False,
             )
 
         num_segments = int(segment_lengths.shape[0])
@@ -612,18 +615,13 @@ def test_tendon_actatuated_gvs_vs_pcs():
         print("GVS Actuation matrix A:\n", A_GVS)
 
         if segment_lengths.shape[0] == 1:
-            A_PCS = A_PCS.at[:3, :].multiply(1.0 / segment_lengths[0])
             print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
             print("No contributions along the y axis.")
         elif tendon_params["idx_seg_att"][0] == 1:
-            A_PCS = A_PCS.at[:3, :].multiply(1.0 / segment_lengths[0])
-            A_PCS = A_PCS.at[4:7, :].multiply(1.0 / segment_lengths[1])
             print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
 
             print("Mixed contributions along y and z axes.")
         else:
-            A_PCS = A_PCS.at[:3, :].multiply(1.0 / segment_lengths[0])
-            A_PCS = A_PCS.at[4:7, :].multiply(1.0 / segment_lengths[1])
             print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
             print("No contributions from the second segment.")
         assert not jnp.isnan(A_GVS).any(), "Actuation matrix contains NaN!"
@@ -635,6 +633,243 @@ def test_tendon_actatuated_gvs_vs_pcs():
         )
         print("[Valid test]\n")
 
+def test_tendon_actatuated_gvs_vs_pcs():
+    """
+    Compares the results of the tendon actuated GVS class with the tendon actuated
+    Piecewise Constant Strain class.
+    """
+
+    # ========================================
+    # Test of the functions
+    # ========================================
+
+    # test forward kinematics GVS vs PCS
+    print("\nTesting Forward Kinematics GVS vs PCS... ------------------------")
+
+    link1 = LinkAttributes(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3e5,
+        nu=0.45,
+        rho=1300.0,
+        eta=1e4,
+        L=0.2,
+        r_i=0.015,
+        r_f=0.015,
+    )
+    joint1 = JointAttributes(jointtype="Fixed")
+    basis1 = BasisAttributes(
+                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
+    )
+
+    n_gauss_list = [10]
+    gravity_vector = [0.0, 0.0, -9.81]
+    tendon_params =  {
+                "ry": jnp.array([-0.002]),
+                "rz": jnp.array([-0.002]),
+                "my": jnp.array([0.001]),
+                "mz": jnp.array([-0.001]),
+                "idx_seg_att": jnp.array([0]),
+    }
+    
+    robotGVS = TendonActuatedGVS(
+        links_list=[link1],
+        joints_list=[joint1],
+        basis_list=[basis1],
+        n_gauss_list=n_gauss_list,
+        gravity_vector=gravity_vector,
+        tendon_routing_params=tendon_params,
+        p0 = jnp.zeros((6,)),
+        scale_rotational_strain_basis=False,
+    )
+
+    segment_lengths = jnp.array([0.2])
+    num_segments = int(segment_lengths.shape[0])
+    E_val = 3e5
+    nu = 0.45
+    G_val = E_val / (2.0 * (1.0 + nu))
+    params_pcs = {
+        "p0": jnp.zeros((6,)),
+        "L": jnp.asarray(segment_lengths),
+        "r": jnp.full((num_segments,), 0.015),
+        "rho": 1300.0 * jnp.ones((num_segments,)),
+        "g": jnp.array([0.0, 0.0, 9.81]),
+        "E": E_val * jnp.ones((num_segments,)),
+        "G": G_val * jnp.ones((num_segments,)),
+    }
+
+    params_pcs["D"] = 1e4 * jnp.diag(
+        (
+            jnp.repeat(
+                jnp.array(
+                    [
+                        [
+                           jnp.pi / 2 * (0.015**4),
+                            3 * jnp.pi / 4 * (0.015**4),
+                            3 * jnp.pi / 4 * (0.015**4),
+                            3 * jnp.pi * (0.015**2),
+                            jnp.pi * (0.015**2),
+                            jnp.pi * (0.015**2),
+                        ]
+                    ]
+                ),
+                num_segments,
+                axis=0,
+            )
+            * params_pcs["L"][:, None]
+        ).flatten()
+    )
+    per_segment = jnp.array([1, 1, 1, 1, 0, 0], dtype=bool)
+    strain_selector = jnp.tile(per_segment, num_segments)
+
+    robotPCS = TendonActuatedPCS(
+        num_segments=num_segments,
+        params=params_pcs,
+        active_tendon_routing_params=tendon_params,
+        strain_selector=strain_selector,
+    )
+
+    dof = sum(robotGVS.V_dof.reshape(-1))
+    q0 = jnp.zeros((dof,))
+
+    s_end_GVS = robotGVS.V_L_cum[-1]
+    g_in_L_GVS = robotGVS.forward_kinematics(q0, s_end_GVS)
+    p_in_L_GVS = g_in_L_GVS[:3, 3]
+    s_end_PCS = robotPCS.L
+    g_in_L_PCS = robotPCS.forward_kinematics(q0, s_end_PCS)
+    p_in_L_PCS = g_in_L_PCS[:3, 3]
+    print("GVS End-effector initial position:\n", p_in_L_GVS)
+    print("PCS End-effector initial position:\n", p_in_L_PCS)
+    assert_allclose(p_in_L_GVS, p_in_L_PCS, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    u = jnp.asarray([ -1], dtype=q0.dtype)
+    def solve_equilibrium_GVS(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+        def statics_eq(q, args):
+            u = args
+            K = robot.stiffness_matrix()
+            B = robot.actuation_matrix(q)
+            G = robot.gravitational_force(q)
+            return K @ q + G - B @ u
+        solver = optx.Newton(rtol=1e-6, atol=1e-6)
+        statics_eq_jit = jax.jit(statics_eq)
+        return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+
+    res_GVS = solve_equilibrium_GVS(robotGVS, u, q0)
+    q_GVS = res_GVS.value  # equilibrium generalized coordinates (GVS)
+
+    def solve_equilibrium_PCS(robot: TendonActuatedPCS, u: jnp.ndarray, q0: jnp.ndarray):
+        def statics_eq(q, args):
+            u = args
+            K = robot.stiffness_matrix()
+            B = robot.actuation_matrix(q)
+            G = robot.gravitational_force(q)
+            return K @ q - G - B @ u
+        solver = optx.Newton(rtol=1e-6, atol=1e-6)
+        statics_eq_jit = jax.jit(statics_eq)
+        return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+    res_PCS = solve_equilibrium_PCS(robotPCS, u, q0)
+    q_PCS = res_PCS.value  # equilibrium generalized coordinates (PCS)
+
+    g_end_L_GVS = robotGVS.forward_kinematics(q_GVS, s_end_GVS)
+    p_end_L_GVS = g_end_L_GVS[:3, 3]
+    g_end_L_PCS = robotPCS.forward_kinematics(q_PCS, s_end_PCS)
+    p_end_L_PCS = g_end_L_PCS[:3, 3]
+    print("GVS End-effector final position:\n", p_end_L_GVS)
+    print("PCS End-effector final position:\n", p_end_L_PCS)
+    assert_allclose(p_end_L_GVS, p_end_L_PCS, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    print("[Valid test]\n")
+
+
+def test_angular_strain_basis_scaling_gvs():
+    """
+    Test the scaling procedure for the angular component of the strain basis in the
+    (Tendon actuated) GVS class.
+    """
+
+    # ========================================
+    # Test of the functions
+    # ========================================
+
+    # test tendon length
+    print("\nTesting angular strain basis scaling procedure... ------------------------")
+            
+    link1 = LinkAttributes(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3e5,
+        nu=0.45,
+        rho=1300.0,
+        eta=1e4,
+        L=0.2,
+        r_i=0.015,
+        r_f=0.015,
+    )
+    joint1 = JointAttributes(jointtype="Fixed")
+    basis1 = BasisAttributes(
+        basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[1, 1, 1, 1, 0, 0]
+    )
+
+    n_gauss_list = [10]
+    gravity_vector = [0.0, 0.0, -9.81]
+    tendon_params =  {
+                "ry": jnp.array([-0.002]),
+                "rz": jnp.array([-0.002]),
+                "my": jnp.array([0.001]),
+                "mz": jnp.array([-0.001]),
+                "idx_seg_att": jnp.array([0]),
+    }
+    robot_noScale = TendonActuatedGVS(
+            links_list=[link1],
+            joints_list=[joint1],
+            basis_list=[basis1],
+            n_gauss_list=n_gauss_list,
+            gravity_vector=gravity_vector,
+            tendon_routing_params=tendon_params,
+            scale_rotational_strain_basis=False,
+    )
+    robot_Scale = TendonActuatedGVS(
+            links_list=[link1],
+            joints_list=[joint1],
+            basis_list=[basis1],
+            n_gauss_list=n_gauss_list,
+            gravity_vector=gravity_vector,
+            tendon_routing_params=tendon_params,
+            scale_rotational_strain_basis=True,
+    )
+
+    #both robots have the same characteristics except for the scaling of the angular strain basis
+    dof = sum(robot_noScale.V_dof.reshape(-1))
+    L_cum = jax.device_get(robot_noScale.V_L_cum)
+    total_length = float(L_cum[-1])
+    
+    q0 = jnp.zeros((dof,))
+    u = jnp.asarray([-1], dtype=q0.dtype)
+    s_end = float(total_length)
+
+    def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+        def statics_eq(q, args):
+            u = args
+            K = robot.stiffness_matrix()
+            B = robot.actuation_matrix(q)
+            G = robot.gravitational_force(q)
+            return K @ q + G - B @ u
+
+        solver = optx.Newton(rtol=1e-6, atol=1e-6)
+        statics_eq_jit = jax.jit(statics_eq)
+        return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+    
+    res_stat_noScale = solve_equilibrium(robot_noScale, u, q0)
+    q_stat_noScale = res_stat_noScale.value  # equilibrium generalized coordinates (no Scaling)
+    res_stat_Scale = solve_equilibrium(robot_Scale, u, q0)
+    q_stat_Scale = res_stat_Scale.value  # equilibrium generalized coordinates (with Scaling)
+    g_end_noScale = robot_noScale.forward_kinematics(q_stat_noScale, s_end)
+    g_end_Scale = robot_Scale.forward_kinematics(q_stat_Scale, s_end)
+    p_end_noScale = g_end_noScale[:3, 3]
+    p_end_Scale = g_end_Scale[:3, 3]
+
+    print("End-effector position without scaling:\n", p_end_noScale)
+    print("End-effector position with scaling:\n", p_end_Scale)
+    assert_allclose(p_end_noScale, p_end_Scale, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    print("[Valid test]\n")    
 
 if __name__ == "__main__":
     # run pytest with activated stdout

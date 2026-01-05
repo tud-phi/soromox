@@ -1,5 +1,3 @@
-# E e nu IDENTIFICATION BASED ON GRADIENT-BASED OPTIMIZATION -> CHANGE g0 in vertical position
-
 import jax
 import pandas as pd
 import jax.numpy as jnp
@@ -10,9 +8,7 @@ import matplotlib.pyplot as plt
 import optimistix as optx
 import equinox as eqx
 import optax
-from jax import Array, lax
 import numpy as onp
-from dataclasses import replace
 
 jax.config.update("jax_enable_x64", True)
 
@@ -22,8 +18,6 @@ print("JAX default backend:", jax.default_backend())
 print("JAX devices:", jax.devices())
 
 ### MOCAP DATA TRANSFORMATION FUNCTIONS ###
-
-
 def _transform_points(
     pb: jnp.ndarray,
     p1: jnp.ndarray,
@@ -328,34 +322,14 @@ def make_loss_fn(
 
     return loss_fn
 
-
-def draw_robot_curve(
-    robot: TendonActuatedGVS,
-    q: Array,
-    num_points: int = 50,
-):
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = jnp.sum(robot.V_L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
-
 ### BODY DEFINITION OF THE SOFT ROBOT ###
 
 # 2 link version
 # Link 1
 link1 = LinkAttributes(
     cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    # E=3.04e5,
-    # E=4.00e5,
     E=5.05e5,
     nu=0.45,
-    # rho=1310.0,
-    # rho=1300.0,
     rho=1500.0,
     eta=1e4,
     L=0.0250 + 0.2550 + 0.0250,
@@ -366,12 +340,8 @@ link1 = LinkAttributes(
 # Link 2
 link2 = LinkAttributes(
     cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    # E=3.04e5,
-    # E=4.00e5,
     E=5.05e5,
     nu=0.45,
-    # rho=1310.0,
-    # rho=1300.0,
     rho=1500.0,
     eta=1e4,
     L=0.0550,
@@ -415,6 +385,7 @@ robot = TendonActuatedGVS(
     gravity_vector=gravity_vector,
     tendon_routing_params=tendon_routing_params,
     p0=p0,
+    scale_rotational_strain_basis=True,
 )
 
 # Initialize parameters

@@ -108,6 +108,7 @@ robot = TendonActuatedGVS(
     gravity_vector=gravity_vector,
     tendon_routing_params=tendon_routing_params,
     p0=p0,
+    scale_rotational_strain_basis=True,
 )
 # debug: check g0
 # g0_test = lie.exp_SE3(p0)
@@ -163,6 +164,7 @@ u = jnp.asarray([-1, -0.00], dtype=q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 
+print("body lengths per segment:", robot.V_L)
 # print("L_cum:", L_cum)
 # print("total length:", total_length)
 print("s_end:", s_end)
@@ -180,11 +182,8 @@ print("g(s_end) SE(3):\n", g_end)
 # print("Actuation force (tau):", tau)
 # print("Actuation force shape:", tau.shape)
 
-
 # y = jnp.concatenate([q0, q0dot])
 tau_ext = 0 * jnp.ones((dof,))
-# ydot = robot.forward_dynamics(0.0, y, actuation_args=(u, tau_ext))
-# print("ydot (q0dot, q0ddot):", ydot)
 
 l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
 print("tendon lengths (m):", jax.device_get(l_tendons))
