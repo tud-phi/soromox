@@ -39,7 +39,7 @@ class SynergisticController(OperationalSpaceBaseController):
 
     Assumptions:
         (a) Under-actuation: The actuation space has lower dimensionality than
-            the configuration space (m < n)
+            the configuration space (m < n). If full actuation, consider using, for example, the impedance control tracker.
         (b) The operational space has equal dimensionality of the actuation
             space (o = m)
         (c) The matrix J(q) M^{-1}(q) A(q) ∈ ℝ^{m×m} is full-rank
@@ -52,8 +52,8 @@ class SynergisticController(OperationalSpaceBaseController):
 
     References:
         Della Santina, C., Pallottino, L., Rus, D., & Bicchi, A. (2019). Exact
-        task execution in highly under-actuated soft limbs: an operational 
-        space based approach. IEEE Robotics and Automation Letters, 4(3), 
+        task execution in highly under-actuated soft limbs: an operational
+        space based approach. IEEE Robotics and Automation Letters, 4(3),
         2508-2515.
     """
 
@@ -151,7 +151,7 @@ class SynergisticController(OperationalSpaceBaseController):
         """
         Compute the synergistic control action.
 
-        This method implements the synergistic control law to track 
+        This method implements the synergistic control law to track
         the desired trajectory.
 
         Args:
