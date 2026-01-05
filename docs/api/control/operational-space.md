@@ -37,6 +37,9 @@ All operational-space controllers inherit from `OperationalSpaceBaseController`:
 
 ### OperationalSpaceImpedanceControlTracker
 
+!!! note "Full Actuation Required"
+    This controller requires the system to be **fully actuated** (number of actuators equals number of DOFs, \(n = m\)). For under-actuated systems, consider using `OperationalSpaceSynergisticController`.
+
 Operational-space impedance control implements partial feedback linearization to cancel the original task dynamics and replace them with desired linear impedance behavior.
 
 The closed-loop dynamics in operational space become:
@@ -78,7 +81,55 @@ The control law implements five key terms:
 
 ---
 
-## Usage Example
+### OperationalSpaceSynergisticController
+
+Synergistic control enables exact task execution in highly under-actuated soft robots by exploiting the dynamic coupling between actuation and operational spaces.
+
+The control law is:
+
+$$
+\tau = (J(q) M^{-1}(q) A(q))^{-1} J(q) M^{-1}(q) J^T(q) (K_x (x^d - x) - D_x \dot{x})
+$$
+
+where:
+- \(A(q)\) is the actuation matrix
+- \(M(q)\) is the inertia matrix
+- \(J(q)\) is the operational space Jacobian
+- \(K_x\) is the operational space proportional gain matrix
+- \(D_x\) is the operational space derivative gain matrix
+- \(x^d\) is the desired operational space position
+- \(x\) is the current operational space position
+- \(\dot{x}\) is the current operational space velocity
+
+The key insight is the use of a dynamically-consistent synergistic projector \(P_{AM} = (J M^{-1} A)^{-1} J M^{-1}\) that maps operational-space PD control forces to actuator inputs while respecting the system's dynamic structure.
+
+!!! info "Assumptions"
+    The synergistic controller assumes:
+    
+    - **Under-actuation**: The actuation space has lower dimensionality than the configuration space (\(m < n\)). For fully actuated systems, consider using the impedance control tracker.
+    - **Equal dimensions**: The operational space dimension equals the actuation space dimension (\(o = m\))
+    - **Full-rank matrix**: The matrix \(J(q) M^{-1}(q) A(q) \in \mathbb{R}^{m \times m}\) must be full-rank (invertible)
+
+!!! tip "When to Use Synergistic Control"
+    Synergistic control is ideal for:
+    
+    - **Under-actuated soft robots** where the number of actuators is less than the number of DOFs
+    - **Exact task execution** when the task dimension matches the actuation dimension
+
+::: soromox.control.OperationalSpaceSynergisticController
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 4
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+---
+
+## Usage Examples
+
+### Impedance Control (Fully Actuated Systems)
 
 ```python
 import jax.numpy as jnp
@@ -98,8 +149,42 @@ x_des = jnp.zeros((len(ts), osd.n_operational_space))
 
 ref_traj = ReferenceTrajectory(ts=ts, x_des_ts=x_des)
 
-# Create impedance controller
+# Create impedance controller (requires full actuation: n = m)
 controller = OperationalSpaceImpedanceControlTracker(
+    operational_space_dynamics=osd,
+    reference_trajectory=ref_traj,
+    K_x=100.0,  # Stiffness (scalar, vector, or matrix)
+    D_x=10.0,   # Damping (scalar, vector, or matrix)
+)
+```
+
+### Synergistic Control (Under-Actuated Systems)
+
+```python
+import jax.numpy as jnp
+from soromox.control import OperationalSpaceSynergisticController, ReferenceTrajectory
+from soromox.coordinate_transformations import OperationalSpaceDynamics
+
+# Create operational space dynamics (defines the task space)
+# IMPORTANT: n_operational_space must equal n_actuators (o = m)
+osd = OperationalSpaceDynamics(
+    robot=robot,
+    forward_kinematics_fn=lambda q: robot.end_effector_position(q),
+)
+
+# Verify that operational space dimension matches actuation dimension
+assert osd.n_operational_space == robot.num_actuators, \
+    "SynergisticController requires o = m (operational space = actuation space)"
+
+# Define reference trajectory in operational space
+ts = jnp.linspace(0, 10, 1000)
+x_des = jnp.zeros((len(ts), osd.n_operational_space))
+# ... fill in desired trajectory ...
+
+ref_traj = ReferenceTrajectory(ts=ts, x_des_ts=x_des)
+
+# Create synergistic controller (for under-actuated systems: m < n, o = m)
+controller = OperationalSpaceSynergisticController(
     operational_space_dynamics=osd,
     reference_trajectory=ref_traj,
     K_x=100.0,  # Stiffness (scalar, vector, or matrix)
@@ -118,4 +203,8 @@ The operational-space formulation for robot control was developed in the followi
 For soft robot applications:
 
 - Della Santina, C., Katzschmann, R. K., Bicchi, A., & Rus, D. (2020). Model-based dynamic feedback control of a planar soft robot: trajectory tracking and interaction with the environment. *The International Journal of Robotics Research*, 39(4-5), 490-513.
+
+For synergistic control of under-actuated soft robots:
+
+- Della Santina, C., Pallottino, L., Rus, D., & Bicchi, A. (2019). Exact task execution in highly under-actuated soft limbs: an operational space based approach. *IEEE Robotics and Automation Letters*, 4(3), 2508-2515.
 
