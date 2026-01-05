@@ -1,141 +1,19 @@
-from diffrax import Tsit5
 from functools import partial
-from IPython.display import HTML
+
 import jax
 import jax.numpy as jnp
-from jax import Array
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-from matplotlib.widgets import Slider
-import numpy as onp
+from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.planar_pcs import PlanarPCS
-from soromox.systems.system_state import SystemState
+from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
+from soromox.systems import PlanarPCS, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
-
-def draw_robot(
-    robot: PlanarPCS,
-    q: Array,
-    num_points: int = 50,
-):
-    L_max = jnp.sum(robot.L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    chi_ps = robot.forward_kinematics_batched(q, s_ps)
-
-    curve = onp.array(chi_ps[:, 1:], dtype=onp.float64)
-
-    return curve  # (N, 2)
-
-
-def animate_robot_matplotlib(
-    robot: PlanarPCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    num_points: int = 50,
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    width = jnp.linalg.norm(robot.L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    # Base
-    def draw_base(ax, robot, L=robot.L[0] / 2):
-        angle1 = robot.th0 - jnp.pi / 2
-        angle2 = robot.th0 + jnp.pi / 2
-        x1, y1 = L * jnp.cos(angle1), L * jnp.sin(angle1)
-        x2, y2 = L * jnp.cos(angle2), L * jnp.sin(angle2)
-        ax.plot([x1, x2], [y1, y2], color="black", linestyle="-", linewidth=2)
-
-    if animation:
-        (line,) = ax.plot([], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            draw_base(ax, robot, L=0.1)
-            curve = draw_robot(robot, q, num_points)
-            line.set_data(curve[:, 0], curve[:, 1])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            draw_base(ax, robot, L=0.1)
-            q = q_list[frame_idx]
-            curve = draw_robot(robot, q, num_points)
-            ax.plot(curve[:, 0], curve[:, 1], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
 
 
 if __name__ == "__main__":
@@ -257,7 +135,11 @@ if __name__ == "__main__":
 
     # end effector orientation vs. time
     plt.figure()
-    plt.plot(ts, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.plot(
+        ts,
+        chi_ee_ts[:, 0] / jnp.pi * 180,
+        label=r"End-effector Orientation $\theta$ [deg]",
+    )
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector Orientation [deg]")
     plt.legend()
@@ -298,11 +180,15 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    animate_robot_matplotlib(
-        robot=robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
-        num_points=50,
-        interval=100,  # ms
-        slider=True,
+    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
+
+    # =====================================================
+    # OpenCV-based rendering example
+    # =====================================================
+    opencv_renderer = OpenCVPlanarRenderer(
+        robot, num_points=50, width=700, height=700, length_scale=3.0
+    )
+    opencv_renderer.render_sequence(
+        ts, q_ts, record_path="videos/planar_pcs_opencv.mp4"
     )

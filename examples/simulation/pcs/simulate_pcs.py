@@ -1,138 +1,27 @@
-from diffrax import Tsit5
 from functools import partial
 
-from IPython.display import HTML
 import jax
-from jax import Array
 import jax.numpy as jnp
-from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
-import numpy as onp
-from typing import Callable
+import plotly.graph_objects as go
+from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pcs import PCS
-from soromox.systems.system_state import SystemState
+from soromox.rendering import (
+    BackboneColorConfig,
+    MatplotlibRenderer,
+    Open3DRenderer,
+    RendererColorConfig,
+    ViserRenderer,
+    get_color_theme,
+)
+from soromox.systems import PCS, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
-
-def draw_robot_curve(
-    robot: PCS,
-    q: Array,
-    num_points: int = 50,
-):
-    L_max = jnp.sum(robot.L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = robot.forward_kinematics_batched(q, s_ps)[:, :3, 3]
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
-
-def animate_robot_matplotlib(
-    robot: PCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    num_points: int = 50,
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    width = jnp.linalg.norm(robot.L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection="3d")
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    if animation:
-        (line,) = ax.plot([], [], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(-width / 2, width / 2)
-        ax.set_zlim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            line.set_3d_properties([])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            curve = draw_robot_curve(robot, q, num_points)
-            line.set_data(curve[:, 0], curve[:, 1])
-            line.set_3d_properties(curve[:, 2])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(-width / 2, width / 2)
-            ax.set_zlim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_zlabel("Z [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            q = q_list[frame_idx]
-            curve = draw_robot_curve(robot, q, num_points)
-            ax.plot(curve[:, 0], curve[:, 1], curve[:, 2], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
 
 
 if __name__ == "__main__":
@@ -260,13 +149,95 @@ if __name__ == "__main__":
     plt.show()
 
     # =====================================================
-    # Plot the robot configuration upon time
+    # Animate the robot motion
     # =====================================================
-    animate_robot_matplotlib(
-        robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
-        num_points=50,
-        interval=100,  # ms
-        slider=True,
+    q_demo = q_ts[len(ts) // 2]
+
+    # Color scheme demos (built-in palettes + themes)
+    demo_renderer = MatplotlibRenderer(robot, num_points=50)
+    demo_renderer.show(
+        q_demo,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(segment_palette="viridis")
+        ),
+    )
+    demo_renderer.show(q_demo, color_config=get_color_theme("soromox:paper"))
+    demo_renderer.show(
+        q_demo,
+        color_config=RendererColorConfig(
+            backbone=BackboneColorConfig(point_palette="soromox:glacier"),
+            tendon_color=(0.2, 0.4, 0.8),
+            base_plate_color=(0.15, 0.15, 0.15),
+        ),
+    )
+
+    renderer = MatplotlibRenderer(robot, num_points=50)
+    renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")
+    renderer = Open3DRenderer(robot, num_points=50)
+    renderer.render_sequence(ts, q_ts)
+
+    # =====================================================
+    # Viser web-based visualization (opens in browser)
+    # =====================================================
+    # ViserRenderer provides interactive 3D visualization in the browser
+    # with GUI controls for playback, speed, and looping.
+    # Plotly plots are automatically added to the GUI at the end of the sidebar
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+
+    # Create custom strain plots for PCS
+    # Reshape to (T, num_segments, 6)
+    q_reshaped = q_ts.reshape(len(ts), num_segments, 6)
+
+    # Rotational strains (first 3 components)
+    fig_rot = go.Figure()
+    for seg in range(num_segments):
+        for i, label in enumerate(["κx", "κy", "κz"]):
+            fig_rot.add_trace(
+                go.Scatter(
+                    x=ts,
+                    y=q_reshaped[:, seg, i],
+                    mode="lines",
+                    name=f"Seg {seg} - {label}",
+                )
+            )
+    fig_rot.update_layout(
+        title="PCS - Rotational Strains vs Time",
+        xaxis_title="Time [s]",
+        yaxis_title="Rotational Strain [rad/m]",
+        height=400,
+        margin={"l": 50, "r": 50, "t": 50, "b": 50},
+    )
+
+    # Linear strains (last 3 components)
+    fig_lin = go.Figure()
+    for seg in range(num_segments):
+        for i, label in enumerate(["σx", "σy", "σz"]):
+            fig_lin.add_trace(
+                go.Scatter(
+                    x=ts,
+                    y=q_reshaped[:, seg, i + 3],
+                    mode="lines",
+                    name=f"Seg {seg} - {label}",
+                )
+            )
+    fig_lin.update_layout(
+        title="PCS - Linear Strains vs Time",
+        xaxis_title="Time [s]",
+        yaxis_title="Linear Strain [-]",
+        height=400,
+        margin={"l": 50, "r": 50, "t": 50, "b": 50},
+    )
+
+    viser_renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+        plot_configurations=False,
+        custom_plots={
+            "Rotational Strains": (fig_rot, 2.0),
+            "Linear Strains": (fig_lin, 2.0),
+        },
+        robot_name="PCS",
     )

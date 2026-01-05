@@ -61,22 +61,60 @@ The model of the kinematics and dynamics of the planar HSA robot are part of the
 
 ## Installation
 
-The plugin can be installed from PyPI:
+The package can be installed from PyPI using pip:
 
 ```bash
 pip install soromox
 ```
 
-or locally from the source code:
+or using [uv](https://docs.astral.sh/uv/) (recommended for faster installation):
 
 ```bash
-pip install -e .
+uv pip install soromox
 ```
 
-If you want to run the examples, you will also need to install the following dependencies:
+### Development Installation
+
+For local development from the source code:
 
 ```bash
-pip install -e ".[examples]"
+# Using pip
+pip install -e .
+
+# Using uv
+uv pip install -e .
+```
+
+### Optional Dependencies (extras)
+
+The extras in `pyproject.toml` bundle optional tooling:
+
+- `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
+- `docs`: MkDocs stack for building the documentation site.
+- `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
+- `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
+- `test`: minimal test stack (pytest, coverage, tox, html report).
+- `all`: installs everything above.
+
+Install with pip or uv, e.g.:
+
+```bash
+pip install -e ".[dev,docs,examples]"
+# or
+uv pip install -e ".[rendering]"
+```
+
+### Using uv for Project Management
+
+You can also use `uv` to manage the project with a virtual environment:
+
+```bash
+# Create a virtual environment and install the package
+uv venv
+uv pip install -e ".[dev,examples]"
+
+# Or use uv sync for reproducible installs (creates uv.lock)
+uv sync --extra dev --extra examples
 ```
 
 ## Usage
@@ -228,4 +266,3 @@ When you use the `release-*` commands, the following happens automatically:
 6. The package is published to PyPI
 
 For more detailed information, see `VERSION_BUMP_README.md`.
-

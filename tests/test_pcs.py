@@ -6,7 +6,7 @@ import numpy as onp
 import pytest
 from typing import List, Optional
 
-from soromox.systems.pcs import PCS
+from soromox.systems import PCS
 from soromox.utils.lie_algebra.se3 import Adjoint_g_SE3, log_SE3
 from soromox.utils.tolerance import Tolerance
 

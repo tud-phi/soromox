@@ -1,18 +1,14 @@
-import cv2  # importing cv2
 from functools import partial
+from pathlib import Path
+
 import jax
+import matplotlib.pyplot as plt
+from jax import numpy as jnp
+
+from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
+from soromox.systems import Pendulum, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from jax import Array, lax, vmap
-from jax import numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as onp
-from pathlib import Path
-from typing import Callable, Dict
-
-import soromox
-from soromox.systems import pendulum
-from soromox.systems.system_state import SystemState
 
 num_links = 2
 params = {
@@ -38,39 +34,9 @@ video_width, video_height = 700, 700  # img height and width
 video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
 
 
-def draw_robot(
-    robot: pendulum.Pendulum,
-    q: Array,
-    width: int,
-    height: int,
-) -> onp.ndarray:
-    # plotting in OpenCV
-    h, w = height, width  # img height and width
-    ppm = h / (2.5 * jnp.sum(robot.L))  # pixel per meter
-    robot_color = (0, 0, 0)  # black robot_color in BGR
-
-    # poses along the robot of shape (num_links, 3)
-    chi_ls = robot.forward_kinematics_tips(q)
-    # add zeros
-    chi_ls = jnp.vstack([jnp.zeros((1, 3)), chi_ls])  # add origin
-
-    img = 255 * onp.ones((w, h, 3), dtype=jnp.uint8)  # initialize background to white
-    curve_origin = onp.array(
-        [w // 2, h // 2], dtype=onp.int32
-    )  # in x-y pixel coordinates
-    # transform robot poses to pixel coordinates
-    # extract (px, py) which are now columns 1 and 2
-    curve = onp.array((curve_origin + chi_ls[:, 1:] * ppm), dtype=onp.int32)
-    # invert the v pixel coordinate
-    curve[:, 1] = h - curve[:, 1]
-    cv2.polylines(img, [curve], isClosed=False, color=robot_color, thickness=10)
-
-    return img
-
-
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = pendulum.Pendulum(params)
+    robot = Pendulum(params)
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
@@ -103,7 +69,9 @@ if __name__ == "__main__":
     # =====================================================
     # End-effector position upon time
     # =====================================================
-    chi_ee_ts = jax.vmap(robot.forward_kinematics_tips,)(q_ts)[:, -1, :]
+    chi_ee_ts = jax.vmap(
+        robot.forward_kinematics_tips,
+    )(q_ts)[:, -1, :]
 
     plt.figure()
     for link_idx in range(num_links):
@@ -133,7 +101,11 @@ if __name__ == "__main__":
 
     # end effector orientation vs. time
     plt.figure()
-    plt.plot(ts, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.plot(
+        ts,
+        chi_ee_ts[:, 0] / jnp.pi * 180,
+        label=r"End-effector Orientation $\theta$ [deg]",
+    )
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector Orientation [deg]")
     plt.legend()
@@ -172,23 +144,31 @@ if __name__ == "__main__":
     plt.show()
 
     # create video
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_path.parent.mkdir(parents=True, exist_ok=True)
-    video = cv2.VideoWriter(
-        str(video_path),
-        fourcc,
-        1 / (save_dt * solver_dt),  # fps
-        (video_width, video_height),
+    renderer = OpenCVPlanarRenderer(
+        robot,
+        width=video_width,
+        height=video_height,
+        backbone_color=(0, 0, 0),
+        length_scale=2.5,
     )
-
-    for time_idx, t in enumerate(video_ts):
-        img = draw_robot(
-            robot,
-            q_ts[time_idx],
-            video_width,
-            video_height,
-        )
-        video.write(img)
-
-    video.release()
+    renderer.render_sequence(video_ts, q_ts, record_path=str(video_path))
     print(f"Video saved to {video_path}")
+
+    # =====================================================
+    # Viser web-based visualization with plotly plots
+    # =====================================================
+    # Note: ViserRenderer is designed for 3D soft robots, so 3D visualization
+    # may not work well for this planar pendulum system. However, we can still
+    # use it to display plotly plots in the GUI.
+    # Plotly plots are automatically added to the GUI at the end of the sidebar
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+        plot_configurations=True,
+        robot_name="Pendulum",
+    )

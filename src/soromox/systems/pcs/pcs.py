@@ -1,12 +1,14 @@
 __all__ = ["PCS"]
+
+
 import equinox as eqx
-import jax
+import numpy as onp
+from typing import Any
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-import numpy as onp
-from typing import Callable, ClassVar, Dict, Tuple, Optional
 
-from soromox.systems.dynamical_system import DynamicalSystem
+import soromox.utils.lie_algebra as lie
+from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
@@ -15,10 +17,9 @@ from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
 )
-import soromox.utils.lie_algebra as lie
 
 
-class PCS(DynamicalSystem):
+class PCS(SoftRobot):
     """
     Piecewise Constant Strain (PCS) model for 3D soft continuum robots.
 
@@ -84,9 +85,6 @@ class PCS(DynamicalSystem):
     G: Array  # Shear modulus of the segments
     D: Array  # Damping coefficient of the segments
 
-    # Not a dataclass field: avoid default/non-default ordering issues in subclasses
-    global_eps: ClassVar[float] = float(jnp.finfo(jnp.float64).eps)
-
     num_segments: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True)  #
     num_strains: int = eqx.field(static=True)  # Number of strains (6 * num_segments)
@@ -101,10 +99,11 @@ class PCS(DynamicalSystem):
     def __init__(
         self,
         num_segments: int,
-        params: Dict[str, Array],
+        params: dict[str, Array],
         order_gauss: int = 5,
-        strain_selector: Optional[Array] = None,
-        xi_ref: Optional[Array] = None,
+        strain_selector: Array | None = None,
+        xi_ref: Array | None = None,
+        **kwargs: Any,
     ):
         """
         Initialize the PCS class.
@@ -146,8 +145,10 @@ class PCS(DynamicalSystem):
             xi_ref (Optional[Array], optional):
                 Reference strain of shape (6 * num_segments,).
                 Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-
+            **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
+        super().__init__(**kwargs)
+
         # Number of segments
         if not isinstance(num_segments, int):
             raise TypeError(
@@ -199,6 +200,7 @@ class PCS(DynamicalSystem):
         self.B_xi = compute_strain_basis(strain_selector)
 
         self.num_active_strains = jnp.sum(strain_selector)
+        self.num_dofs = int(self.num_active_strains.item())
 
         # Reference configuration strain
         if xi_ref is None:
@@ -222,7 +224,29 @@ class PCS(DynamicalSystem):
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
 
-    def _set_params(self, params: Dict[str, Array]) -> None:
+    @property
+    def is_planar(self) -> bool:
+        """PCS is a spatial (3D) model."""
+        return False
+
+    @property
+    def length(self) -> Array:
+        """Total backbone length."""
+        return jnp.sum(self.L)
+
+    @property
+    def segment_length(self) -> Array:
+        """Per-segment backbone lengths."""
+        return jnp.asarray(self.L)
+
+    def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
+        """Circular cross-section with segment radius."""
+        segment_idx, _ = self.classify_segment(s)
+        radius = jnp.asarray(self.r)[segment_idx]
+        tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
+        return tag, jnp.array([radius])
+
+    def _set_params(self, params: dict[str, Array]) -> None:
         """
         Set the robot parameters from a dictionary.
         Args:
@@ -353,7 +377,7 @@ class PCS(DynamicalSystem):
             raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
         self.D = D
 
-    def update_params(self, params: Dict[str, Array]) -> "PCS":
+    def update_params(self, params: dict[str, Array]) -> "PCS":
         """
         Update the parameters of the PCS model.
 
@@ -479,7 +503,7 @@ class PCS(DynamicalSystem):
         return updated_self
 
     @eqx.filter_jit
-    def classify_segment(self, s: Array) -> Tuple[Array, Array]:
+    def classify_segment(self, s: Array) -> tuple[Array, Array]:
         """
         Classify the point along the robot to the corresponding segment.
 
@@ -535,7 +559,7 @@ class PCS(DynamicalSystem):
         # Compute the point coordinate along the segment in the interval [0, L_i]
         segment_idx, s_local = self.classify_segment(s)
 
-        def body_segment_i(g_base_i: Array, i: Array) -> Tuple[Array, Array]:
+        def body_segment_i(g_base_i: Array, i: Array) -> tuple[Array, Array]:
             """
             Compute the forward kinematics of the robot for the i-th segment. Either until the tip of the segment or until the point s_local.
             Args:
@@ -592,7 +616,7 @@ class PCS(DynamicalSystem):
         """
         xi = self.strain(q).reshape(self.num_segments, 6)
 
-        def body_segment_i(g_base_i: Array, i: Array) -> Tuple[Array, Array]:
+        def body_segment_i(g_base_i: Array, i: Array) -> tuple[Array, Array]:
             # Magnus expansion
             Magnus_Li = self.L[i] * xi[i]
 
@@ -782,7 +806,7 @@ class PCS(DynamicalSystem):
             arc_len: Array,
         ) -> Array:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -790,12 +814,12 @@ class PCS(DynamicalSystem):
             return J_next
 
         def scan_body(
-            carry: Tuple[Array, Array, Array],
+            carry: tuple[Array, Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array, Array], Array]:
             J_prev, J_local, done = carry
 
-            def compute_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
+            def compute_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
                 xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
@@ -808,7 +832,7 @@ class PCS(DynamicalSystem):
 
                 return (J_next, J_target_next, done_next), zero_slice
 
-            def skip_branch(_: None) -> Tuple[Tuple[Array, Array, Array], Array]:
+            def skip_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
                 return (J_prev, J_local, done), zero_slice
 
             return lax.cond(done, skip_branch, compute_branch, operand=None)
@@ -844,12 +868,12 @@ class PCS(DynamicalSystem):
         def scan_body(
             J_prev: Array,
             i: Array,
-        ) -> Tuple[Array, Array]:
+        ) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, L_i, eps=self.global_eps)
+            T = lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -907,7 +931,7 @@ class PCS(DynamicalSystem):
             J_base: Array,
         ) -> Array:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.global_eps)
+            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.tangent_eps)
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
             J_next = J_rot.at[i].set(Ad_inv @ T)
@@ -966,7 +990,7 @@ class PCS(DynamicalSystem):
         return J_global
 
     @eqx.filter_jit
-    def _J_Jd_local(self, q: Array, qd: Array, s: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local(self, q: Array, qd: Array, s: Array) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot.
 
@@ -994,11 +1018,11 @@ class PCS(DynamicalSystem):
             xi_i: Array,
             xid_i: Array,
             arc_len: Array,
-        ) -> Tuple[Array, Array]:
+        ) -> tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se3(
-                xi_i, xid_i, arc_len, eps=self.global_eps
+                xi_i, xid_i, arc_len, eps=self.tangent_eps
             )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
@@ -1017,14 +1041,14 @@ class PCS(DynamicalSystem):
             return J_next, Jd_next
 
         def scan_body(
-            carry: Tuple[Array, Array, Array, Array, Array],
+            carry: tuple[Array, Array, Array, Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
             J_prev, Jd_prev, J_target, Jd_target, done = carry
 
             def compute_branch(
                 _: None,
-            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
                 xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
                 xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
@@ -1054,7 +1078,7 @@ class PCS(DynamicalSystem):
 
             def skip_branch(
                 _: None,
-            ) -> Tuple[Tuple[Array, Array, Array, Array, Array], Array]:
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], Array]:
                 return (J_prev, Jd_prev, J_target, Jd_target, done), zero_slice
 
             return lax.cond(done, skip_branch, compute_branch, operand=None)
@@ -1076,7 +1100,7 @@ class PCS(DynamicalSystem):
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def _J_Jd_local_tips(self, q: Array, qd: Array) -> Tuple[Array, Array]:
+    def _J_Jd_local_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at all segment tips.
 
@@ -1097,11 +1121,11 @@ class PCS(DynamicalSystem):
             lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
         )(xi, self.L)
         Td_tips = vmap(
             lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
-                xi_i, xid_i, L_i, eps=self.global_eps
+                xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
 
@@ -1109,9 +1133,9 @@ class PCS(DynamicalSystem):
         zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
 
         def scan_body(
-            carry: Tuple[Array, Array],
+            carry: tuple[Array, Array],
             i: Array,
-        ) -> Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
             J_prev, Jd_prev = carry
 
             # extract the current segment variables
@@ -1149,7 +1173,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def _J_Jd_local_batched(
         self, q: Array, qd: Array, s_ps: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a batch of points s_ps along the robot.
 
@@ -1202,11 +1226,11 @@ class PCS(DynamicalSystem):
             s_local: Array,
             J_base: Array,
             Jd_base: Array,
-        ) -> Tuple[Array, Array]:
+        ) -> tuple[Array, Array]:
             Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.global_eps)
+            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.tangent_eps)
             Td = lie.Tangent_derivative_gi_se3(
-                xi_i, xid_i, s_local, eps=self.global_eps
+                xi_i, xid_i, s_local, eps=self.tangent_eps
             )
 
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
@@ -1238,7 +1262,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def jacobian_and_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the body frame.
 
@@ -1261,7 +1285,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def jacobian_and_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
 
@@ -1321,7 +1345,7 @@ class PCS(DynamicalSystem):
     @eqx.filter_jit
     def jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
-    ) -> Tuple[Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its time-derivative for the forward kinematics at a point s along the robot in the inertial frame.
 
@@ -1368,11 +1392,13 @@ class PCS(DynamicalSystem):
             I_i (Array): local second moment of area of the i-th segment as array of shape (3, ) where the entries correspond to [I_xx, I_yy, I_zz]
         """
         # Second moment of area for a circular cross-section
-        I_i = jnp.array([
-            jnp.pi * self.r[i] ** 4 / 2,  # I_xx
-            jnp.pi * self.r[i] ** 4 / 4,  # I_yy
-            jnp.pi * self.r[i] ** 4 / 4,  # I_zz
-        ])
+        I_i = jnp.array(
+            [
+                jnp.pi * self.r[i] ** 4 / 2,  # I_xx
+                jnp.pi * self.r[i] ** 4 / 4,  # I_yy
+                jnp.pi * self.r[i] ** 4 / 4,  # I_zz
+            ]
+        )
         return I_i
 
     @eqx.filter_jit
@@ -1387,7 +1413,9 @@ class PCS(DynamicalSystem):
         """
         rho_i = self.rho[i]
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area as array of shape (3, )
+        I_i = self._local_second_moment_of_area(
+            i
+        )  # Second moment of area as array of shape (3, )
 
         M_i = rho_i * jnp.diag(jnp.array([I_i[0], I_i[1], I_i[2], A_i, A_i, A_i]))
         return M_i
@@ -1652,7 +1680,9 @@ class PCS(DynamicalSystem):
         Returns:
             S_i (Array): Local stiffness matrix of shape (6, 6) for the i-th segment.
         """
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area as array of shape (3, )
+        I_i = self._local_second_moment_of_area(
+            i
+        )  # Second moment of area as array of shape (3, )
         A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
 
         S_i = self.L[i] * jnp.diag(
@@ -1790,39 +1820,6 @@ class PCS(DynamicalSystem):
         return tau_u
 
     @eqx.filter_jit
-    def kinetic_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the kinetic energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            T (float): Kinetic energy of the robot.
-        """
-        B = self.inertia_matrix(q)
-        T = 0.5 * qd.T @ B @ qd
-
-        return T
-
-    @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
-        """
-        Compute the elastic energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            U_K (float): Elastic energy of the robot.
-        """
-        K_full = self._stiffness_full_matrix()
-        U_K = 0.5 * (self.B_xi @ q).T @ K_full @ (self.B_xi @ q)
-
-        return U_K
-
-    @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational energy of the robot.
@@ -1888,46 +1885,13 @@ class PCS(DynamicalSystem):
         return U_G
 
     @eqx.filter_jit
-    def potential_energy(self, q: Array) -> Array:
-        """
-        Compute the potential energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            U (float): Potential energy of the robot.
-        """
-        U_K = self.elastic_energy(q)
-        U_G = self.gravitational_energy(q)
-
-        return U_K + U_G
-
-    @eqx.filter_jit
-    def total_energy(self, q: Array, qd: Array) -> Array:
-        """
-        Compute the total energy of the robot, which is the sum of kinetic and potential energy.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            E (float): Total energy of the robot.
-        """
-        T = self.kinetic_energy(q, qd)
-        U = self.potential_energy(q)
-        E = T + U
-        return E
-
-    @eqx.filter_jit
     def operational_space_dynamical_matrices(
         self,
         q: Array,
         qd: Array,
         s: Array,
-        operational_space_selector: Tuple = (True, True, True),
-    ) -> Tuple[Array, Array, Array, Array, Array]:
+        operational_space_selector: tuple = (True, True, True),
+    ) -> tuple[Array, Array, Array, Array, Array]:
         """
         Compute the operational space dynamical matrices for the robot at a point s along the robot.
 
@@ -1935,7 +1899,7 @@ class PCS(DynamicalSystem):
             q (Array): generalized coordinates of shape (num_active_strains,).
             qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
             s (Array): point coordinate along the robot in the interval [0, L].
-            operational_space_selector (Tuple): Selector for the operational space dimensions.
+            operational_space_selector (tuple): Selector for the operational space dimensions.
                 Default is (True, True, True, True, True, True) for all dimensions.
 
         Returns:
@@ -1974,7 +1938,7 @@ class PCS(DynamicalSystem):
 
     @eqx.filter_jit
     def forward_dynamics(
-        self, t: Array, y: Array, actuation_args: Optional[Tuple] = None
+        self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
         """
         Forward dynamics function.
@@ -1983,7 +1947,7 @@ class PCS(DynamicalSystem):
             t (Array): Current time.
             y (Array): State vector containing configuration and velocity.
                 Shape is (2 * num_strains,).
-            actuation_args (Tuple, optional): Additional arguments for the actuation mapping function.
+            actuation_args (tuple, optional): Additional arguments for the actuation mapping function.
                 Default is None.
         Returns:
             yd: Time derivative of the state vector.
@@ -2033,23 +1997,23 @@ class PCS(DynamicalSystem):
             self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
         )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
 
-        def dynamical_matrices_i(i: Array) -> Tuple[Array, Array, Array]:
+        def dynamical_matrices_i(i: Array) -> tuple[Array, Array, Array]:
             """
             Compute the integrand for the dynamical matrices at the i-th segment.
             Args:
                 i (Array): index of the segment
             Returns:
-                Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
+                tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
             """
             M_i = self._local_mass_matrix(i)
 
-            def dynamical_matrices_ij(j: Array) -> Tuple[Array, Array, Array]:
+            def dynamical_matrices_ij(j: Array) -> tuple[Array, Array, Array]:
                 """
                 Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
                 Args:
                     j (Array): index of the quadrature point
                 Returns:
-                    Tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
+                    tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
                 """
                 # select the j-th quadrature weight
                 Ws_ij = Ws_scaled[i][j]

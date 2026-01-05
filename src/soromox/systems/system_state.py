@@ -1,6 +1,6 @@
 __all__ = ["SystemState"]
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 import jax
 from jax import Array
@@ -26,8 +26,8 @@ class SystemState:
 
     t: Array
     y: Array
-    u: Optional[Array] = None
-    control_state: Optional[Any] = None
+    u: Array | None = None
+    control_state: Any | None = None
 
     def tree_flatten(self):
         children = [self.t, self.y]

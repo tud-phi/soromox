@@ -5,12 +5,11 @@ jax.config.update("jax_enable_x64", True)  # use double precision in tests
 import jax.numpy as jnp
 import numpy as onp
 import pytest
-
 from numpy.testing import assert_allclose
 
-from soromox.systems.gvs import GVS, LinkAttributes, JointAttributes, BasisAttributes
-from soromox.systems.pcs import PCS
 import soromox.utils.lie_algebra as lie
+from soromox.systems import GVS, PCS, CrossSectionGeometry
+from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 from soromox.utils.tolerance import Tolerance
 
 pytestmark = pytest.mark.skip(reason="GVS testing temporarily deactivated")
@@ -39,7 +38,7 @@ def build_matched_gvs_pcs(num_segments: int = 1):
     # GVS definition: constant strain along each link, all 6 strain components enabled
     links = [
         LinkAttributes(
-            section="Circular",
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
             E=float(E[i]),
             nu=float(nu[i]),
             rho=float(rhos[i]),

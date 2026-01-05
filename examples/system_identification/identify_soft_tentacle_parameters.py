@@ -1,19 +1,10 @@
 import jax
 import pandas as pd
 import jax.numpy as jnp
-from soromox.systems.gvs.attributes import (
-    LinkAttributes,
-    JointAttributes,
-    BasisAttributes,
-)
-
-# from soromox.systems.gvs.core import GVS
-from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
+from soromox.systems import CrossSectionGeometry, TendonActuatedGVS
+from soromox.systems.gvs import LinkAttributes, JointAttributes, BasisAttributes
 from functools import partial
-from IPython.display import HTML
-from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
-from matplotlib.widgets import Slider
 import optimistix as optx
 import equinox as eqx
 import optax
@@ -354,8 +345,8 @@ def draw_robot_curve(
 # 2 link version
 # Link 1
 link1 = LinkAttributes(
-    section="Circular",
-    E=5.05e5, 
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+    E=5.05e5,
     nu=0.45,
     rho=1500.0,
     eta=1e4,
@@ -366,8 +357,8 @@ link1 = LinkAttributes(
 
 # Link 2
 link2 = LinkAttributes(
-    section="Circular",
-    E=5.05e5, 
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+    E=5.05e5,
     nu=0.45,
     rho=1500.0,
     eta=1e4,

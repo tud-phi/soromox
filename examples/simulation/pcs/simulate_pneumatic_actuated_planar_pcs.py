@@ -1,140 +1,15 @@
 from functools import partial
-import jax
 
+import jax
+import matplotlib.pyplot as plt
+import numpy as np
 from diffrax import Tsit5
-from jax import Array
 from jax import numpy as jnp
 from jax import vmap
-import matplotlib.pyplot as plt
-import numpy as onp
-
-from matplotlib.animation import FuncAnimation
-from IPython.display import HTML
-from matplotlib.widgets import Slider
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.pneumatic_actuated_planar_pcs import (
-    PneumaticActuatedPlanarPCS,
-)
-from soromox.systems.system_state import SystemState
-
-
-def draw_robot(
-    robot: PneumaticActuatedPlanarPCS,
-    q: Array,
-    num_points: int = 50,
-):
-    L_max = jnp.sum(robot.L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    chi_ps = robot.forward_kinematics_batched(q, s_ps)
-
-    curve = onp.array(chi_ps[:, 1:], dtype=onp.float64)
-
-    return curve  # (N, 2)
-
-
-def animate_robot_matplotlib(
-    robot: PneumaticActuatedPlanarPCS,
-    t_list: Array,  # shape (T,)
-    q_list: Array,  # shape (T, DOF)
-    num_points: int = 50,
-    interval: int = 50,
-    slider: bool = None,
-    animation: bool = None,
-    show: bool = True,
-):
-    if slider is None and animation is None:
-        raise ValueError("Either 'slider' or 'animation' must be set to True.")
-    if animation and slider:
-        raise ValueError(
-            "Cannot use both animation and slider at the same time. Choose one."
-        )
-
-    width = jnp.linalg.norm(robot.L) * 3
-    height = width
-
-    fig = plt.figure()
-    ax = fig.add_subplot(111)
-    ax_slider = fig.add_axes([0.2, 0.05, 0.6, 0.03])  # [left, bottom, width, height]
-
-    # Base
-    def draw_base(ax, robot, L=robot.L[0] / 2):
-        angle1 = robot.th0 - jnp.pi / 2
-        angle2 = robot.th0 + jnp.pi / 2
-        x1, y1 = L * jnp.cos(angle1), L * jnp.sin(angle1)
-        x2, y2 = L * jnp.cos(angle2), L * jnp.sin(angle2)
-        ax.plot([x1, x2], [y1, y2], color="black", linestyle="-", linewidth=2)
-
-    if animation:
-        (line,) = ax.plot([], [], lw=4, color="blue")
-        ax.set_xlim(-width / 2, width / 2)
-        ax.set_ylim(0, height)
-        title_text = ax.set_title("t = 0.00 s")
-
-        def init():
-            line.set_data([], [])
-            title_text.set_text("t = 0.00 s")
-            return line, title_text
-
-        def update(frame_idx):
-            q = q_list[frame_idx]
-            t = t_list[frame_idx]
-            draw_base(ax, robot, L=0.1)
-            curve = draw_robot(robot, q, num_points)
-            line.set_data(curve[:, 0], curve[:, 1])
-            title_text.set_text(f"t = {t:.2f} s")
-            return line, title_text
-
-        ani = FuncAnimation(
-            fig,
-            update,
-            frames=len(q_list),
-            init_func=init,
-            blit=False,
-            interval=interval,
-        )
-
-        if show:
-            plt.show()
-        plt.close(fig)
-        return HTML(ani.to_jshtml())
-
-    elif slider:
-
-        def update_plot(frame_idx):
-            ax.cla()  # Clear current axes
-            ax.set_xlim(-width / 2, width / 2)
-            ax.set_ylim(0, height)
-            ax.set_xlabel("X [m]")
-            ax.set_ylabel("Y [m]")
-            ax.set_title(f"t = {t_list[frame_idx]:.2f} s")
-            draw_base(ax, robot, L=0.1)
-            q = q_list[frame_idx]
-            curve = draw_robot(robot, q, num_points)
-            ax.plot(curve[:, 0], curve[:, 1], lw=4, color="blue")
-            fig.canvas.draw_idle()
-
-        # Create slider
-        slider = Slider(
-            ax=ax_slider,
-            label="Frame",
-            valmin=0,
-            valmax=len(t_list) - 1,
-            valinit=0,
-            valstep=1,
-        )
-        slider.on_changed(update_plot)
-
-        update_plot(0)  # Initial plot
-
-        if show:
-            plt.show()
-
-        plt.close(fig)
-        return HTML(
-            "Slider animation not implemented in HTML format. Use matplotlib directly to view the slider."
-        )  # Slider cannot be converted to HTML
+from soromox.rendering import MatplotlibRenderer
+from soromox.systems import PneumaticActuatedPlanarPCS, SystemState
 
 
 def sweep_actuation_mapping(
@@ -299,7 +174,7 @@ if __name__ == "__main__":
         num_segments=num_segments,
         params=params,
         strain_selector=strain_selector,
-        chamber_cross_section_geometry="concentric"
+        chamber_cross_section_geometry="concentric",
     )
 
     print("A=", robot.actuation_matrix(q=jnp.zeros(robot.num_active_strains)))
@@ -318,8 +193,9 @@ if __name__ == "__main__":
         jnp.array([-5.0 * jnp.pi, -0.2])[None, :], robot.num_segments, axis=0
     ).flatten()
 
-    # Dessiner la configuration initiale
-    curve = draw_robot(robot, q0, num_points=100)
+    # Draw the initial configuration
+    renderer = MatplotlibRenderer(robot, num_points=100)
+    curve = np.array(renderer.compute_backbone_curve(q0))
     plt.figure()
     plt.plot(curve[:, 0], curve[:, 1], lw=4, color="blue")
     plt.plot(curve[0, 0], curve[0, 1], "o", color="blue", label="Proximal end")
@@ -455,11 +331,4 @@ if __name__ == "__main__":
     # =====================================================
     # Plot the robot configuration upon time
     # =====================================================
-    animate_robot_matplotlib(
-        robot=robot,
-        t_list=ts,  # shape (T,)
-        q_list=q_ts,  # shape (T, DOF)
-        num_points=50,
-        interval=100,  # ms
-        slider=True,
-    )
+    renderer.animate(ts=ts, q_ts=q_ts, interval=100, mode="slider")

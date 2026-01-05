@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Mapping, MutableMapping, Sequence
+from typing import Any
 
 import jax
 import jax.numpy as jnp
 
-from soromox.systems.gvs import BasisAttributes, GVS, JointAttributes, LinkAttributes
-from soromox.systems.pcs import PCS
-from soromox.systems.pendulum import Pendulum
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.systems import GVS, PCS, CrossSectionGeometry, Pendulum, PlanarPCS
+from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 Array = jax.Array
 
@@ -62,7 +61,7 @@ def _planar_pcs_factory(num_segments: int) -> PlanarPCS:
     lengths = jnp.full((num_segments,), 0.12)
     radii = jnp.full((num_segments,), 0.015)
     rho = 1070.0 * jnp.ones((num_segments,))
-    params: Dict[str, Array] = {
+    params: dict[str, Array] = {
         "th0": jnp.array(jnp.pi / 2),
         "L": lengths,
         "r": radii,
@@ -84,8 +83,10 @@ def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
     q = jnp.linspace(-0.2, 0.2, dof)
     qd = jnp.linspace(0.25, -0.25, dof)
     s_vals = system.L_cum[1:]
+
     def _forward_kinematics_at_s(s):
         return system.forward_kinematics(q, s)
+
     chi_tips = jax.vmap(_forward_kinematics_at_s)(s_vals)
     ctx: MutableMapping[str, Array] = {
         "q": q,
@@ -104,7 +105,7 @@ def _pcs_factory(num_segments: int) -> PCS:
     lengths = jnp.full((num_segments,), 0.1)
     radii = jnp.full((num_segments,), 0.02)
     rho = 1050.0 * jnp.ones((num_segments,))
-    params: Dict[str, Array] = {
+    params: dict[str, Array] = {
         "p0": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         "L": lengths,
         "r": radii,
@@ -114,7 +115,9 @@ def _pcs_factory(num_segments: int) -> PCS:
         "G": 2.5e5 * jnp.ones((num_segments,)),
     }
     diag_entries = (
-        jnp.repeat(jnp.array([[1.0, 1.0, 1.0, 300.0, 300.0, 300.0]]), num_segments, axis=0)
+        jnp.repeat(
+            jnp.array([[1.0, 1.0, 1.0, 300.0, 300.0, 300.0]]), num_segments, axis=0
+        )
         * lengths[:, None]
     ).reshape(-1)
     params["D"] = 5.0e-4 * jnp.diag(diag_entries)
@@ -153,7 +156,7 @@ def _gvs_factory(num_segments: int) -> GVS:
     for _ in range(num_segments):
         links.append(
             LinkAttributes(
-                section="Circular",
+                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
                 E=1.0e6,
                 nu=0.45,
                 rho=980.0,

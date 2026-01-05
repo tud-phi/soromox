@@ -4,8 +4,7 @@ from numpy.testing import assert_allclose
 import pytest
 from typing import List, Tuple
 
-from soromox.systems.planar_pcs import PlanarPCS
-from soromox.systems.pcs import PCS
+from soromox.systems import PlanarPCS, PCS
 from soromox.utils.tolerance import Tolerance
 
 

@@ -94,7 +94,7 @@ nav:
   - Authors & Maintainers: authors.md
   - Development:
     - Contributing: development/contributing.md
-    - System Benchmarking: development/system-benchmarking.md
+    - System Benchmarking: development/benchmarking.md
     - Changelog: development/changelog.md
 
 plugins:

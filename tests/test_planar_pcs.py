@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose
 import pytest
 from typing import List, Optional
 
-from soromox.systems.planar_pcs import PlanarPCS
+from soromox.systems import PlanarPCS
 from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2, exp_SE2
 from soromox.utils.tolerance import Tolerance
 

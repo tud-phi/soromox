@@ -142,7 +142,7 @@ Test your installation with this quick verification script:
 
     ```python
     import jax.numpy as jnp
-    from soromox.systems import planar_pcs_num
+    from soromox.systems import PlanarPCS
 
     # Create a simple 1-segment PCS robot
     num_segments = 1
@@ -162,7 +162,7 @@ Test your installation with this quick verification script:
     ```python
     import jax
     import jax.numpy as jnp
-    from soromox.systems.planar_pcs import PlanarPCS
+    from soromox.systems import PlanarPCS
     from soromox.parameters import Params
 
     # Test JAX compilation and differentiation

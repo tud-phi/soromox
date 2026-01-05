@@ -103,15 +103,12 @@ classifiers = [  # Optional
 #
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
-dependencies = [ # Optional
+dependencies = [
   "diffrax",
   "dill",
   "equinox",
   "jax",
   "numpy",
-  "opencv-python",
-  "quadax",
-  "peppercorn",
   "scipy",
   "sympy",
   "tqdm",
@@ -131,7 +128,6 @@ dev = [
     "check-manifest",
     "codecov",
     "coverage",
-    "matplotlib",
     "pre-commit",
     "pytest",
     "pytest-cov",
@@ -150,10 +146,23 @@ docs = [
     "mkdocs-autorefs",
 ]
 examples = [
+    "ffmpeg-python",
     "ipython",
     "jaxopt",
     "matplotlib",
+    "open3d>=0.18",
+    "opencv-python",
+    "plotly",
     "seaborn",
+    "viser",
+]
+rendering = [
+    "ffmpeg-python",
+    "matplotlib",
+    "open3d>=0.18",
+    "opencv-python",
+    "plotly",
+    "viser",
 ]
 test = [
     "codecov",
@@ -162,6 +171,34 @@ test = [
     "pytest-cov",
     "pytest-html",
     "tox",
+]
+all = [
+    "bump2version",
+    "check-manifest",
+    "codecov",
+    "coverage",
+    "ffmpeg-python",
+    "ipython",
+    "jaxopt",
+    "matplotlib",
+    "mkdocs",
+    "mkdocs-material",
+    "mkdocstrings[python]",
+    "mkdocs-gen-files",
+    "mkdocs-literate-nav",
+    "mkdocs-section-index",
+    "mkdocs-autorefs",
+    "open3d>=0.18",
+    "opencv-python",
+    "plotly",
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "pytest-html",
+    "ruff",
+    "seaborn",
+    "tox",
+    "viser",
 ]
 
 # List URLs that are relevant to your project
@@ -202,3 +239,63 @@ soromox = ["symbolic_expressions/*.dill"]
 # https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
 requires = ["pip>=23.1", "setuptools>=68.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# ==================== Ruff Configuration ====================
+[tool.ruff]
+# Target Python version
+target-version = "py310"
+
+# Line length (same as Black)
+line-length = 88
+
+# Exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+# Enable recommended rules
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # Pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "SIM",    # flake8-simplify
+]
+
+# Ignore specific rules
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "B008",   # do not perform function calls in argument defaults
+    "B905",   # zip without strict= (Python 3.10+ only)
+    "SIM108", # use ternary operator instead of if-else
+]
+
+# Allow autofix for all enabled rules
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["soromox"]
+
+[tool.ruff.format]
+# Use double quotes for strings
+quote-style = "double"
+
+# Indent with spaces
+indent-style = "space"
+
+# Respect magic trailing commas
+skip-magic-trailing-comma = false
+
+# Auto-detect line ending
+line-ending = "auto"
