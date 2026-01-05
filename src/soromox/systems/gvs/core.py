@@ -236,13 +236,10 @@ class GVS(SoftRobot):
         p0: (optional) List/Array of shape (6,)
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
-<<<<<<< HEAD
         scale_rotational_strain_basis : bool, optional
             If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
-=======
         **kwargs: Additional keyword arguments for SoftRobot.__init__.
 
->>>>>>> origin/main
         Raises
         ------
         ValueError
