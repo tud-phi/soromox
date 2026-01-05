@@ -436,9 +436,9 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
         print("[Valid test]\n")
 
 
-def test_tendon_actatuated_gvs_vs_pcs():
+def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
     """
-    Compares the results of the tendon actuated GVS class with the tendon actuated
+    Compares the actuation matrices of the tendon actuated GVS class with the tendon actuated
     Piecewise Constant Strain class.
     """
 
@@ -633,6 +633,152 @@ def test_tendon_actatuated_gvs_vs_pcs():
         )
         print("[Valid test]\n")
 
+def test_tendon_actatuated_gvs_vs_pcs():
+    """
+    Compares the results of the tendon actuated GVS class with the tendon actuated
+    Piecewise Constant Strain class.
+    """
+
+    # ========================================
+    # Test of the functions
+    # ========================================
+
+    # test forward kinematics GVS vs PCS
+    print("\nTesting Forward Kinematics GVS vs PCS... ------------------------")
+
+    link1 = LinkAttributes(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3e5,
+        nu=0.45,
+        rho=1300.0,
+        eta=1e4,
+        L=0.2,
+        r_i=0.015,
+        r_f=0.015,
+    )
+    joint1 = JointAttributes(jointtype="Fixed")
+    basis1 = BasisAttributes(
+                basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
+    )
+
+    n_gauss_list = [10]
+    gravity_vector = [0.0, 0.0, -9.81]
+    tendon_params =  {
+                "ry": jnp.array([-0.002]),
+                "rz": jnp.array([-0.002]),
+                "my": jnp.array([0.001]),
+                "mz": jnp.array([-0.001]),
+                "idx_seg_att": jnp.array([0]),
+    }
+    
+    robotGVS = TendonActuatedGVS(
+        links_list=[link1],
+        joints_list=[joint1],
+        basis_list=[basis1],
+        n_gauss_list=n_gauss_list,
+        gravity_vector=gravity_vector,
+        tendon_routing_params=tendon_params,
+        p0 = jnp.zeros((6,)),
+        scale_rotational_strain_basis=False,
+    )
+
+    segment_lengths = jnp.array([0.2])
+    num_segments = int(segment_lengths.shape[0])
+    E_val = 3e5
+    nu = 0.45
+    G_val = E_val / (2.0 * (1.0 + nu))
+    params_pcs = {
+        "p0": jnp.zeros((6,)),
+        "L": jnp.asarray(segment_lengths),
+        "r": jnp.full((num_segments,), 0.015),
+        "rho": 1300.0 * jnp.ones((num_segments,)),
+        "g": jnp.array([0.0, 0.0, 9.81]),
+        "E": E_val * jnp.ones((num_segments,)),
+        "G": G_val * jnp.ones((num_segments,)),
+    }
+
+    params_pcs["D"] = 1e4 * jnp.diag(
+        (
+            jnp.repeat(
+                jnp.array(
+                    [
+                        [
+                           jnp.pi / 2 * (0.015**4),
+                            3 * jnp.pi / 4 * (0.015**4),
+                            3 * jnp.pi / 4 * (0.015**4),
+                            3 * jnp.pi * (0.015**2),
+                            jnp.pi * (0.015**2),
+                            jnp.pi * (0.015**2),
+                        ]
+                    ]
+                ),
+                num_segments,
+                axis=0,
+            )
+            * params_pcs["L"][:, None]
+        ).flatten()
+    )
+    per_segment = jnp.array([1, 1, 1, 1, 0, 0], dtype=bool)
+    strain_selector = jnp.tile(per_segment, num_segments)
+
+    robotPCS = TendonActuatedPCS(
+        num_segments=num_segments,
+        params=params_pcs,
+        active_tendon_routing_params=tendon_params,
+        strain_selector=strain_selector,
+    )
+
+    dof = sum(robotGVS.V_dof.reshape(-1))
+    q0 = jnp.zeros((dof,))
+
+    s_end_GVS = robotGVS.V_L_cum[-1]
+    g_in_L_GVS = robotGVS.forward_kinematics(q0, s_end_GVS)
+    p_in_L_GVS = g_in_L_GVS[:3, 3]
+    s_end_PCS = robotPCS.L
+    g_in_L_PCS = robotPCS.forward_kinematics(q0, s_end_PCS)
+    p_in_L_PCS = g_in_L_PCS[:3, 3]
+    print("GVS End-effector initial position:\n", p_in_L_GVS)
+    print("PCS End-effector initial position:\n", p_in_L_PCS)
+    assert_allclose(p_in_L_GVS, p_in_L_PCS, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    u = jnp.asarray([ -1], dtype=q0.dtype)
+    def solve_equilibrium_GVS(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+        def statics_eq(q, args):
+            u = args
+            K = robot.stiffness_matrix()
+            B = robot.actuation_matrix(q)
+            G = robot.gravitational_force(q)
+            return K @ q + G - B @ u
+        solver = optx.Newton(rtol=1e-6, atol=1e-6)
+        statics_eq_jit = jax.jit(statics_eq)
+        return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+
+    res_GVS = solve_equilibrium_GVS(robotGVS, u, q0)
+    q_GVS = res_GVS.value  # equilibrium generalized coordinates (GVS)
+
+    def solve_equilibrium_PCS(robot: TendonActuatedPCS, u: jnp.ndarray, q0: jnp.ndarray):
+        def statics_eq(q, args):
+            u = args
+            K = robot.stiffness_matrix()
+            B = robot.actuation_matrix(q)
+            G = robot.gravitational_force(q)
+            return K @ q - G - B @ u
+        solver = optx.Newton(rtol=1e-6, atol=1e-6)
+        statics_eq_jit = jax.jit(statics_eq)
+        return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+    res_PCS = solve_equilibrium_PCS(robotPCS, u, q0)
+    q_PCS = res_PCS.value  # equilibrium generalized coordinates (PCS)
+
+    g_end_L_GVS = robotGVS.forward_kinematics(q_GVS, s_end_GVS)
+    p_end_L_GVS = g_end_L_GVS[:3, 3]
+    g_end_L_PCS = robotPCS.forward_kinematics(q_PCS, s_end_PCS)
+    p_end_L_PCS = g_end_L_PCS[:3, 3]
+    print("GVS End-effector final position:\n", p_end_L_GVS)
+    print("PCS End-effector final position:\n", p_end_L_PCS)
+    assert_allclose(p_end_L_GVS, p_end_L_PCS, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    print("[Valid test]\n")
+
 
 def test_angular_strain_basis_scaling_gvs():
     """
@@ -648,7 +794,7 @@ def test_angular_strain_basis_scaling_gvs():
     print("\nTesting angular strain basis scaling procedure... ------------------------")
             
     link1 = LinkAttributes(
-        section="Circular",
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
         E=3e5,
         nu=0.45,
         rho=1300.0,

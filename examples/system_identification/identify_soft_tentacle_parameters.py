@@ -8,9 +8,7 @@ import matplotlib.pyplot as plt
 import optimistix as optx
 import equinox as eqx
 import optax
-from jax import Array, lax
 import numpy as onp
-from dataclasses import replace
 
 jax.config.update("jax_enable_x64", True)
 
@@ -323,22 +321,6 @@ def make_loss_fn(
         # return err_sum
 
     return loss_fn
-
-
-def draw_robot_curve(
-    robot: TendonActuatedGVS,
-    q: Array,
-    num_points: int = 50,
-):
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = jnp.sum(robot.V_L)
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
 
 ### BODY DEFINITION OF THE SOFT ROBOT ###
 

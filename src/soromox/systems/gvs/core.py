@@ -90,7 +90,9 @@ class GVS(SoftRobot):
         Parameters controlling the strain basis DOFs and orders.
     g0 : Array
         Initial pose of the robot base as an SE(3) transformation matrix.
-
+    scale_rotational_strain_basis : bool
+        If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
+       
     Notes
     -----
     - The GVS model generalizes PCS by allowing the strain distribution in each segment
