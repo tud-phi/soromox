@@ -42,7 +42,7 @@ from soromox.utils.integration import gauss_quadrature
 
 class GVS(SoftRobot):
     """
-    Generalized Variable Strain (GVS) model for 3D soft continuum robots.
+    Geometric Variable Strain (GVS) model for 3D soft continuum robots.
 
     This class implements the geometric and dynamic modeling of a 3D soft robot
     using the Cosserat rod theory with generalized variable strain parametrizations.
@@ -90,6 +90,9 @@ class GVS(SoftRobot):
         Parameters controlling the strain basis DOFs and orders.
     g0 : Array
         Initial pose of the robot base as an SE(3) transformation matrix.
+    scale_rotational_strain_basis : bool
+        If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
+       
     Notes
     -----
     - The GVS model generalizes PCS by allowing the strain distribution in each segment
@@ -158,6 +161,7 @@ class GVS(SoftRobot):
     g: Array  # Gravity vector (6,)
     p0: Array
     g0: Array
+    scale_rotational_strain_basis: bool  # If True, apply length scaling to angular strain contributions
 
     # Addition to compute forward kinematics at s
     V_basistype_idx: Array  # Index of the basis type for each segment (num_segments,)
@@ -180,6 +184,7 @@ class GVS(SoftRobot):
         max_dof: int | None = None,
         max_nGauss: int | None = None,
         p0: Array | None = None,
+        scale_rotational_strain_basis: bool | None = False,
         **kwargs,
     ) -> None:
         """
@@ -233,6 +238,8 @@ class GVS(SoftRobot):
         p0: (optional) List/Array of shape (6,)
                 Initial orientation angle and position in the inertial frame [rad, m]
                 [ψ, θ, φ, x0, y0, z0]
+        scale_rotational_strain_basis : bool, optional
+            If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
         **kwargs: Additional keyword arguments for SoftRobot.__init__.
 
         Raises
@@ -280,6 +287,8 @@ class GVS(SoftRobot):
             )
         self.max_nGauss = max_nGauss
         self.max_nip = max_nGauss + 2  # +2 for the boundary points
+
+        self.scale_rotational_strain_basis = scale_rotational_strain_basis
 
         dofs_joint = [Joint.DICT_JOINT_TYPE_DOF[j.jointtype] for j in joints_list]
         dofs_link = [
@@ -971,22 +980,24 @@ class GVS(SoftRobot):
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
-
+                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
+                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
+
+                if self.scale_rotational_strain_basis:
+                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
 
                 xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * (length_i**2) * H**2 / 12) * (
                     ad_xi_Z1_j @ xi_Z2_j
                 )
 
-                Magnus_j = Magnus_j.at[3:6].multiply(length_i)
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
 
                 g_j = g_j_prev @ g_step
@@ -1121,16 +1132,20 @@ class GVS(SoftRobot):
 
                 H = Xs_i[j + 1] - Xs_i[j]
 
-                xi_Z1_j = (B_Z1_i[j] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
-                xi_Z2_j = (B_Z2_i[j] @ q_i) + xi_ref_Z2_i[j].at[:3].multiply(length_i)
+                B_Z1_j = B_Z1_i[j]
+                B_Z2_j = B_Z2_i[j]
+                if self.scale_rotational_strain_basis:
+                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
+
+                xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j]
+                xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j]
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = (H / 2) * length_i * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * (length_i**2) * H**2 / 12) * (
                     ad_xi_Z1_j @ xi_Z2_j
                 )
-
-                Magnus_j = Magnus_j.at[3:6].multiply(length_i)
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
 
                 return g_prev @ g_step, None
@@ -1184,20 +1199,21 @@ class GVS(SoftRobot):
                 )  # length-2, static
 
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2, 6, max_dof)
+                Bp_Z1 = Bp[0]
+                Bp_Z2 = Bp[1]
 
-                xi_Z1_j = (Bp[0] @ q_i) + self.V_xi_ref_Z1[i_segment][j].at[
-                    :3
-                ].multiply(length_i)
-                xi_Z2_j = (Bp[1] @ q_i) + self.V_xi_ref_Z2[i_segment][j].at[
-                    :3
-                ].multiply(length_i)
+                if self.scale_rotational_strain_basis:
+                    Bp_Z1 = Bp_Z1.at[:3, :].divide(length_i)
+                    Bp_Z2 = Bp_Z2.at[:3, :].divide(length_i)
+
+                xi_Z1_j = (Bp_Z1 @ q_i) + self.V_xi_ref_Z1[i_segment][j]
+                xi_Z2_j = (Bp_Z2 @ q_i) + self.V_xi_ref_Z2[i_segment][j]
 
                 # Magnus expansion
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                Magnus_p = (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * Hp**2 / 12
+                Magnus_p = (Hp / 2) * length_i * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * (length_i**2) * Hp**2 / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
-                Magnus_p = Magnus_p.at[3:6].multiply(length_i)
 
                 g_p = lie.exp_gn_SE3(Magnus_p, self.global_eps)
 
@@ -1269,7 +1285,7 @@ class GVS(SoftRobot):
 
             Returns:
                 Tuple[Tuple[Array, Array], Array]:
-                    - (g_tip_link_scaled, J_tip_link_scaled): scaled tip state with
+                    - (g_tip_link, J_tip_link): tip state with
                       shapes (4, 4) and (num_segments, 2, 6, max_dof).
                     - J_link: per-point Jacobians for this segment, shape
                       (max_nip, num_segments, 2, 6, max_dof).
@@ -1296,10 +1312,10 @@ class GVS(SoftRobot):
 
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # shape (6, 6)
 
-            g_j_scaled = g_tip @ g_joint_i
-            J_j_scaled = jnp.einsum(
+            g_j = g_tip @ g_joint_i  # shape (4, 4)
+            J_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_i_B_joint_i)
-            )
+            )  # shape (num_segments, 6, max_dof)
 
             # Link ========================
             Xs_i = self.V_Xs[i_segment]  # shape (max_nip,)
@@ -1308,11 +1324,6 @@ class GVS(SoftRobot):
             length_i = self.V_L[i_segment]  # shape (1,)
             B_Z1_i = self.V_B_Z1[i_segment]  # shape (max_nip - 1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # shape (max_nip - 1, 6, max_dof)
-
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)  # shape (4, 4)
-            J_j = J_j_scaled.at[:, :, 3:6, :].divide(
-                length_i
-            )  # shape (num_segments, 6, max_dof)
 
             q_i = q_gathered[i_segment, 1]
 
@@ -1329,18 +1340,22 @@ class GVS(SoftRobot):
                 Returns:
                     Tuple[Tuple[Array, Array], Array]:
                         - (g_next, J_next): updated carry with same shapes as input.
-                        - J_next_scaled: scaled Jacobian, shape
+                        - J_next: Jacobian, shape
                           (num_segments, 2, 6, max_dof).
                 """
                 g_prev, J_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
+                
+                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
+                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
+
+                if self.scale_rotational_strain_basis:
+                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
 
                 xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
@@ -1348,11 +1363,11 @@ class GVS(SoftRobot):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * (length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ xi_Z2_j
                 )
 
-                B_Magnus_j = (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * (length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j
                 )
 
@@ -1374,9 +1389,7 @@ class GVS(SoftRobot):
                     "ij,nmjk->nmik", Ad_g_step_inv, (J_prev + T_step_B_step)
                 )  # shape (num_segments, 6, max_dof)
 
-                J_next_scaled = J_next.at[:, :, 3:6, :].multiply(length_i)
-
-                return (g_next, J_next), J_next_scaled
+                return (g_next, J_next), J_next
 
             indices_eval_points = jnp.arange(self.max_nip - 1)
 
@@ -1388,20 +1401,16 @@ class GVS(SoftRobot):
             # carry = (g_j, J_j)
             # J_link = []
             # for x in indices_eval_points:
-            #     (g_j, J_j), J_j_scaled_here = body_eval_points(carry, x)
+            #     (g_j, J_j), J_j_here = body_eval_points(carry, x)
             #     carry = (g_j, J_j)
-            #     J_link.append(J_j_scaled_here)
+            #     J_link.append(J_j_here)
             # (g_tip_link, J_tip_link) = carry
             # J_link = jnp.array(J_link)  # shape (max_nip - 1, num_segments, 6, max_dof)
 
             J_link = jnp.concatenate(
-                (jnp.expand_dims(J_j_scaled, axis=0), J_link), axis=0
+                (jnp.expand_dims(J_j, axis=0), J_link), axis=0
             )
-
-            g_tip_link_scaled = g_tip_link.at[0:3, 3].multiply(length_i)
-            J_tip_link_scaled = J_tip_link.at[:, :, 3:6, :].multiply(length_i)
-
-            return (g_tip_link_scaled, J_tip_link_scaled), J_link
+            return (g_tip_link, J_tip_link), J_link
 
         indices_link = jnp.arange(0, self.num_segments)
 
@@ -1457,7 +1466,7 @@ class GVS(SoftRobot):
 
             Returns:
                 Tuple[Tuple[Array, Array], Tuple[Array, Array]]:
-                    - (g_pass, J_pass): scaled tip state to pass forward.
+                    - (g_pass, J_pass): tip state to pass forward.
                     - (g_pass, J_pass): same as scan output.
             """
             g_tip, J_tip = carry
@@ -1482,8 +1491,9 @@ class GVS(SoftRobot):
             # propagate Jacobian through this joint (left-trivialized, body-frame)
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # shape (6, 6)
 
-            g_j_scaled = g_tip @ g_joint_i
-            J_j_scaled = jnp.einsum(
+            # Work directly in physical coordinates (consistent with FK scaling)
+            g_j = g_tip @ g_joint_i
+            J_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_i_B_joint_i)
             )
 
@@ -1494,11 +1504,7 @@ class GVS(SoftRobot):
             length_i = self.V_L[i_segment]
             B_Z1_i = self.V_B_Z1[i_segment]  # (max_nip-1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # (max_nip-1, 6, max_dof)
-
-            # scale like in _jacobian_gauss (work in normalized coordinate, then rescale)
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)
-            J_j = J_j_scaled.at[:, :, 3:6, :].divide(length_i)
-
+            
             q_i = q_gathered[i_segment, 1]
 
             def full_cell(
@@ -1521,17 +1527,21 @@ class GVS(SoftRobot):
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
 
-                xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
+                if self.scale_rotational_strain_basis:
+                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
+
+                xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval]
+                xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval]
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * (length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ xi_Z2_j
                 )
 
-                B_Magnus_j = (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) *(length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j
                 )
 
@@ -1607,18 +1617,25 @@ class GVS(SoftRobot):
 
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
-                xi_Z1_j = (Bp[0] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
-                xi_Z2_j = (Bp[1] @ q_i) + xi_ref_Z2_i[j].at[:3].multiply(length_i)
+                Bp_Z1 = Bp[0]
+                Bp_Z2 = Bp[1]
+
+                if self.scale_rotational_strain_basis:
+                    Bp_Z1 = Bp_Z1.at[:3, :].divide(length_i)
+                    Bp_Z2 = Bp_Z2.at[:3, :].divide(length_i)
+
+                xi_Z1_j = (Bp_Z1 @ q_i) + xi_ref_Z1_i[j]
+                xi_Z2_j = (Bp_Z2 @ q_i) + xi_ref_Z2_i[j]
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_p = (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * Hp * Hp / 12
+                Magnus_p = length_i * (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
+                    jnp.sqrt(3) * (length_i ** 2) * Hp * Hp / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
-                B_Magnus_p = (Hp / 2) * (Bp[0] + Bp[1]) + (
-                    jnp.sqrt(3) * Hp * Hp / 12
-                ) * (ad_xi_Z1_j @ Bp[1] - ad_xi_Z2_j @ Bp[0])
+                B_Magnus_p = length_i * (Hp / 2) * (Bp_Z1 + Bp_Z2) + (
+                    jnp.sqrt(3) * (length_i ** 2) * Hp * Hp / 12
+                ) * (ad_xi_Z1_j @ Bp_Z2 - ad_xi_Z2_j @ Bp_Z1)
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
                 T_step = lie.Tangent_gi_se3(Magnus_p, 1, eps=self.tangent_eps)
@@ -1640,11 +1657,8 @@ class GVS(SoftRobot):
                 lambda _: do_partial_link(),
                 operand=None,
             )
-
-            # rescale back like in _jacobian_gauss for the state we pass forward
-            g_pass = g_out.at[0:3, 3].multiply(length_i)
-            J_pass = J_out.at[:, :, 3:6, :].multiply(length_i)
-            return (g_pass, J_pass), (g_pass, J_pass)
+            
+            return (g_out, J_out), (g_out, J_out)
 
         # walk the chain, but freeze state after we pass the segment that contains s
         def step(carry: Array, i: Array) -> tuple[tuple[Array, Array], None]:
@@ -1724,7 +1738,7 @@ class GVS(SoftRobot):
 
             Returns:
                 Tuple[Tuple[Array, Array, Array], Array]:
-                    - (g_tip_link_scaled, Jd_tip_link_scaled, eta_tip_link_scaled)
+                    - (g_tip_link, Jd_tip_link, eta_tip_link)
                       with shapes (4, 4), (num_segments, 2, 6, max_dof), (6,).
                     - Jd_link: per-point Jdot blocks, shape
                       (max_nip, num_segments, 2, 6, max_dof).
@@ -1759,11 +1773,11 @@ class GVS(SoftRobot):
 
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)
 
-            g_j_scaled = g_tip @ g_joint_i
-            Jd_j_scaled = jnp.einsum(
+            g_j = g_tip @ g_joint_i
+            Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
             )
-            eta_j_scaled = Ad_g_joint_inv @ (
+            eta_j = Ad_g_joint_inv @ (
                 eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
             )
 
@@ -1774,10 +1788,6 @@ class GVS(SoftRobot):
             length_i = self.V_L[i_segment]  # shape (1,)
             B_Z1_i = self.V_B_Z1[i_segment]  # shape (max_nip - 1, 6, max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # shape (max_nip - 1, 6, max_dof)
-
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)
-            Jd_j = Jd_j_scaled.at[:, :, 3:6, :].divide(length_i)
-            eta_j = eta_j_scaled.at[3:6].divide(length_i)
 
             q_i = q_gathered[i_segment, 1]
             qd_i = qd_gathered[i_segment, 1]
@@ -1793,17 +1803,21 @@ class GVS(SoftRobot):
 
                 Returns:
                     Tuple[Tuple[Array, Array, Array], Array]: Updated carry and
-                    scaled Jdot block.
+                    Jdot block.
                 """
                 # g_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval].at[:3].multiply(length_i)
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval].at[:3].multiply(length_i)
+                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
+                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
+
+                if self.scale_rotational_strain_basis:
+                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
 
                 xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
@@ -1812,18 +1826,18 @@ class GVS(SoftRobot):
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
-                Magnus_j = (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (jnp.sqrt(3) * (length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ xi_Z2_j
                 )
 
-                B_Magnus_j = (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * H**2 / 12) * (
+                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (jnp.sqrt(3) * (length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j
                 )
 
                 Magnusd_j = B_Magnus_j @ qd_i
 
                 Magnusdd_dq_j = (
-                    ((jnp.sqrt(3) * H**2) / 6) * lie.adjoint_se3(xid_Z1_j) @ B_Z2_j
+                    ((jnp.sqrt(3) * (length_i ** 2) * H**2) / 6) * lie.adjoint_se3(xid_Z1_j) @ B_Z2_j
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)  # shape (4, 4)
@@ -1854,9 +1868,7 @@ class GVS(SoftRobot):
                 )
                 _eta_j = Ad_g_step_inv @ (eta_j + T_B_Magnus_step @ qd_i)
 
-                Jd_j_scaled = _Jd_j.at[:, :, 3:6, :].multiply(length_i)
-
-                return (_g_j, _Jd_j, _eta_j), Jd_j_scaled
+                return (_g_j, _Jd_j, _eta_j), _Jd_j
 
             indices_eval_points = jnp.arange(self.max_nip - 1)
 
@@ -1868,21 +1880,16 @@ class GVS(SoftRobot):
             # carry = (g_j, Jd_j, eta_j)
             # Jd_link = []
             # for x in indices_eval_points:
-            #     (g_j, Jd_j, eta_j), Jd_j_scaled_here = body_eval_points(carry, x)
+            #     (g_j, Jd_j, eta_j), Jd_j_here = body_eval_points(carry, x)
             #     carry = (g_j, Jd_j, eta_j)
-            #     Jd_link.append(Jd_j_scaled_here)
+            #     Jd_link.append(Jd_j_here)
             # (g_tip_link, Jd_tip_link, eta_tip_link) = carry
             # Jd_link = jnp.array(Jd_link)
 
             Jd_link = jnp.concatenate(
-                (jnp.expand_dims(Jd_j_scaled, axis=0), Jd_link), axis=0
+                (jnp.expand_dims(Jd_j, axis=0), Jd_link), axis=0
             )
-
-            g_tip_link_scaled = g_tip_link.at[0:3, 3].multiply(length_i)
-            Jd_tip_link_scaled = Jd_tip_link.at[:, :, 3:6, :].multiply(length_i)
-            eta_tip_link_scaled = eta_tip_link.at[3:6].multiply(length_i)
-
-            return (g_tip_link_scaled, Jd_tip_link_scaled, eta_tip_link_scaled), Jd_link
+            return (g_tip_link, Jd_tip_link, eta_tip_link), Jd_link
 
         indices_link = jnp.arange(0, self.num_segments)
 
@@ -1941,7 +1948,7 @@ class GVS(SoftRobot):
 
             Returns:
                 Tuple[Tuple[Array, Array, Array], Tuple[Array, Array, Array]]:
-                    - (g_pass, Jd_pass, eta_pass): scaled tip state to pass forward.
+                    - (g_pass, Jd_pass, eta_pass):  tip state to pass forward.
                     - (g_pass, Jd_pass, eta_pass): same as scan output.
             """
             g_tip, Jd_tip, eta_tip = carry
@@ -1973,11 +1980,11 @@ class GVS(SoftRobot):
 
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # (6,6)
 
-            g_j_scaled = g_tip @ g_joint_i
-            Jd_j_scaled = jnp.einsum(
+            g_j = g_tip @ g_joint_i
+            Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
             )
-            eta_j_scaled = Ad_g_joint_inv @ (
+            eta_j = Ad_g_joint_inv @ (
                 eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
             )
 
@@ -1988,10 +1995,6 @@ class GVS(SoftRobot):
             length_i = self.V_L[i_segment]
             B_Z1_i = self.V_B_Z1[i_segment]  # (max_nip-1,6,max_dof)
             B_Z2_i = self.V_B_Z2[i_segment]  # (max_nip-1,6,max_dof)
-
-            g_j = g_j_scaled.at[0:3, 3].divide(length_i)
-            Jd_j = Jd_j_scaled.at[:, :, 3:6, :].divide(length_i)
-            eta_j = eta_j_scaled.at[3:6].divide(length_i)
 
             q_i = q_gathered[i_segment, 1]
             qd_i = qd_gathered[i_segment, 1]
@@ -2012,31 +2015,33 @@ class GVS(SoftRobot):
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
-                xi_Z1 = (B_Z1_i[j_eval] @ q_i) + xi_ref_Z1_i[j_eval].at[:3].multiply(
-                    length_i
-                )
-                xi_Z2 = (B_Z2_i[j_eval] @ q_i) + xi_ref_Z2_i[j_eval].at[:3].multiply(
-                    length_i
-                )
-                xid_Z1 = B_Z1_i[j_eval] @ qd_i
+                B_Z1_j = B_Z1_i[j_eval]
+                B_Z2_j = B_Z2_i[j_eval]
+                if self.scale_rotational_strain_basis:
+                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
+                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
+
+                xi_Z1 = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval]
+                xi_Z2 = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval]
+                xid_Z1 = B_Z1_j @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
 
-                Magnus_j = (H / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * H**2 / 12) * (
+                Magnus_j = length_i * (H / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * (length_i ** 2) * H**2 / 12) * (
                     ad_xi_Z1_j @ xi_Z2
                 )
 
-                B_Magnus_j = (H / 2) * (B_Z1_i[j_eval] + B_Z2_i[j_eval]) + (
-                    jnp.sqrt(3) * H**2 / 12
-                ) * (ad_xi_Z1_j @ B_Z2_i[j_eval] - ad_xi_Z2_j @ B_Z1_i[j_eval])
+                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (
+                    jnp.sqrt(3)* (length_i ** 2) * H**2 / 12
+                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
 
                 Magnusd_j = B_Magnus_j @ qd_i
 
                 Magnusdd_dq = (
-                    ((jnp.sqrt(3) * H**2) / 6)
+                    ((jnp.sqrt(3) * (length_i ** 2) * H**2) / 6)
                     * lie.adjoint_se3(xid_Z1)
-                    @ B_Z2_i[j_eval]
+                    @ B_Z2_j
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
@@ -2120,23 +2125,29 @@ class GVS(SoftRobot):
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
                 )  # two partial Gauss points
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
+                Bp_Z1 = Bp[0]
+                Bp_Z2 = Bp[1]
 
-                xi_Z1 = (Bp[0] @ q_i) + xi_ref_Z1_i[j].at[:3].multiply(length_i)
-                xi_Z2 = (Bp[1] @ q_i) + xi_ref_Z2_i[j].at[:3].multiply(length_i)
-                xid_Z1 = Bp[0] @ qd_i
+                if self.scale_rotational_strain_basis:
+                    Bp_Z1 = Bp_Z1.at[:3, :].divide(length_i)
+                    Bp_Z2 = Bp_Z2.at[:3, :].divide(length_i)
+
+                xi_Z1 = (Bp_Z1 @ q_i) + xi_ref_Z1_i[j]
+                xi_Z2 = (Bp_Z2 @ q_i) + xi_ref_Z2_i[j]
+                xid_Z1 = Bp_Z1 @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
 
-                Magnus_p = (Hp / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * Hp * Hp / 12) * (
+                Magnus_p = length_i * (Hp / 2) * (xi_Z1 + xi_Z2) + (jnp.sqrt(3) * (length_i ** 2) * Hp * Hp / 12) * (
                     ad_xi_Z1_j @ xi_Z2
                 )
-                B_Magnus_p = (Hp / 2) * (Bp[0] + Bp[1]) + (
-                    jnp.sqrt(3) * Hp * Hp / 12
-                ) * (ad_xi_Z1_j @ Bp[1] - ad_xi_Z2_j @ Bp[0])
+                B_Magnus_p = length_i * (Hp / 2) * (Bp_Z1 + Bp_Z2) + (
+                    jnp.sqrt(3) * (length_i ** 2) * Hp * Hp / 12
+                ) * (ad_xi_Z1_j @ Bp_Z2 - ad_xi_Z2_j @ Bp_Z1)
                 Magnusd_p = B_Magnus_p @ qd_i
                 Magnusdd_dq_p = (
-                    ((jnp.sqrt(3) * Hp * Hp) / 6) * lie.adjoint_se3(xid_Z1) @ Bp[1]
+                    ((jnp.sqrt(3) * (length_i ** 2) * Hp * Hp) / 6) * lie.adjoint_se3(xid_Z1) @ Bp_Z2
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
@@ -2172,12 +2183,7 @@ class GVS(SoftRobot):
                 operand=None,
             )
 
-            # rescale the state passed to the next segment (same as the other functions)
-            g_pass = g_out.at[0:3, 3].multiply(length_i)
-            Jd_pass = Jd_out.at[:, :, 3:6, :].multiply(length_i)
-            eta_pass = eta_out.at[3:6].multiply(length_i)
-
-            return (g_pass, Jd_pass, eta_pass), (g_pass, Jd_pass, eta_pass)
+            return (g_out, Jd_out, eta_out), (g_out, Jd_out, eta_out)
 
         # Traverse the chain; freeze the state after the segment containing s
         def step(carry: Array, i: Array) -> tuple[tuple[Array, Array, Array], None]:
@@ -2584,17 +2590,17 @@ class GVS(SoftRobot):
                 Ws_j = Ws_i[i_eval]
                 Es_j = Es_i[i_eval]  # (6, 6)
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
+                
 
-                Es_j_scaled = (
-                    Es_j.at[:3, :].divide(length_i**3).at[3:, :].divide(length_i)
-                )
+                if self.scale_rotational_strain_basis:
+                    B_Xs_j = B_Xs_j.at[:3, :].divide(length_i)
 
-                return Ws_j * (B_Xs_j.T @ Es_j_scaled @ B_Xs_j)
-
+                return Ws_j * (B_Xs_j.T @ Es_j @ B_Xs_j)
+            
             # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
                 jnp.sum(vmap(K_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
-                * length_i**2
+                * length_i
             )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with K_joint_i and K_segment_i
@@ -2690,16 +2696,15 @@ class GVS(SoftRobot):
                 Gs_j = Gs_i[i_eval]  # (6, 6)
                 B_Xs_j = B_Xs_i[i_eval]  # (6, max_dof)
 
-                Gs_j_scaled = (
-                    Gs_j.at[:3, :].divide(length_i**3).at[3:, :].divide(length_i)
-                )
+                if self.scale_rotational_strain_basis:
+                    B_Xs_j = B_Xs_j.at[:3, :].divide(length_i)
 
-                return Ws_j * (B_Xs_j.T @ Gs_j_scaled @ B_Xs_j)
+                return Ws_j * (B_Xs_j.T @ Gs_j @ B_Xs_j)
 
             # we can skip the first and last quadrature points since their weight is zero
             D_link_i = (
                 jnp.sum(vmap(D_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
-                * length_i**2
+                * length_i
             )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with D_joint_i and D_segment_i
