@@ -233,7 +233,7 @@ robot = TendonActuatedGVS(
     gravity_vector=gravity_vector,
     tendon_routing_params=tendon_routing_params,
     p0=p0,
-    scale_strain=False,
+    scale_rotational_strain_basis=True,
 )
 # debug: check g0
 # g0_test = lie.exp_SE3(p0)
@@ -309,8 +309,6 @@ print("g(s_end) SE(3):\n", g_end)
 
 # y = jnp.concatenate([q0, q0dot])
 tau_ext = 0 * jnp.ones((dof,))
-# ydot = robot.forward_dynamics(0.0, y, actuation_args=(u, tau_ext))
-# print("ydot (q0dot, q0ddot):", ydot)
 
 l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
 print("tendon lengths (m):", jax.device_get(l_tendons))
@@ -323,6 +321,23 @@ print("tendon lengths (m):", jax.device_get(l_tendons))
 res_stat = solve_equilibrium(robot, u, q0)
 q_stat = res_stat.value  # equilibrium generalized coordinates
 print("q* =", q_stat)
+
+g_end = robot.forward_kinematics(q_stat, s_end)
+# J_end = robot.jacobian_bodyframe(q_stat, s_end)
+# M_end = robot.inertia_matrix(q_stat)
+# K_end = robot.stiffness_matrix()
+# F_end = robot.gravitational_force(q_stat)
+# D_end = robot.damping_matrix(q_stat)
+# B_end = robot.actuation_matrix(q_stat)
+# C_end = robot.coriolis_matrix(q_stat, q0dot)
+# print("Jacobian at end (6 x dof):\n", J_end)
+print("g(s_end) SE(3):\n", g_end)
+# print("Inertia matrix:", M_end)
+# print("Stiffness matrix:", K_end)
+# print("Gravitational force:", F_end)
+# print("Damping matrix:", D_end)
+# print("Actuation matrix:", B_end)
+# print("Coriolis matrix:", C_end)
 
 # Draw static equilibrium curve
 curve_stat = draw_robot_curve(robot, q_stat)

@@ -1,5 +1,3 @@
-# E e nu IDENTIFICATION BASED ON GRADIENT-BASED OPTIMIZATION -> CHANGE g0 in vertical position
-
 import jax
 import pandas as pd
 import jax.numpy as jnp
@@ -31,8 +29,6 @@ print("JAX default backend:", jax.default_backend())
 print("JAX devices:", jax.devices())
 
 ### MOCAP DATA TRANSFORMATION FUNCTIONS ###
-
-
 def _transform_points(
     pb: jnp.ndarray,
     p1: jnp.ndarray,
@@ -359,12 +355,8 @@ def draw_robot_curve(
 # Link 1
 link1 = LinkAttributes(
     section="Circular",
-    # E=3.04e5,
-    # E=4.00e5,
-    E=5.05e5,
+    E=5.05e5, 
     nu=0.45,
-    # rho=1310.0,
-    # rho=1300.0,
     rho=1500.0,
     eta=1e4,
     L=0.0250 + 0.2550 + 0.0250,
@@ -375,12 +367,8 @@ link1 = LinkAttributes(
 # Link 2
 link2 = LinkAttributes(
     section="Circular",
-    # E=3.04e5,
-    # E=4.00e5,
-    E=5.05e5,
+    E=5.05e5, 
     nu=0.45,
-    # rho=1310.0,
-    # rho=1300.0,
     rho=1500.0,
     eta=1e4,
     L=0.0550,
@@ -424,6 +412,7 @@ robot = TendonActuatedGVS(
     gravity_vector=gravity_vector,
     tendon_routing_params=tendon_routing_params,
     p0=p0,
+    scale_rotational_strain_basis=True,
 )
 
 # Initialize parameters

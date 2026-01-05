@@ -17,6 +17,7 @@ from soromox.systems.gvs.attributes import (
     BasisAttributes,
 )
 from soromox.systems.gvs.tendon_actuated_gvs import TendonActuatedGVS
+import optimistix as optx
 
 def test_actuation_matrix_gvs():
     """
@@ -518,7 +519,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
                 n_gauss_list=n_gauss_list,
                 gravity_vector=gravity_vector,
                 tendon_routing_params=tendon_params,
-                scale_strain=False,
+                scale_rotational_strain_basis=False,
             )
 
         else:  # segment_lengths.shape[0] == 2
@@ -562,7 +563,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
                 n_gauss_list=n_gauss_list,
                 gravity_vector=gravity_vector,
                 tendon_routing_params=tendon_params,
-                scale_strain=False,
+                scale_rotational_strain_basis=False,
             )
 
         num_segments = int(segment_lengths.shape[0])
@@ -639,6 +640,97 @@ def test_tendon_actatuated_gvs_vs_pcs():
         )
         print("[Valid test]\n")
 
+
+def test_angular_strain_basis_scaling_gvs():
+    """
+    Test the scaling procedure for the angular component of the strain basis in the
+    (Tendon actuated) GVS class.
+    """
+
+    # ========================================
+    # Test of the functions
+    # ========================================
+
+    # test tendon length
+    print("\nTesting angular strain basis scaling procedure... ------------------------")
+            
+    link1 = LinkAttributes(
+        section="Circular",
+        E=3e5,
+        nu=0.45,
+        rho=1300.0,
+        eta=1e4,
+        L=0.2,
+        r_i=0.015,
+        r_f=0.015,
+    )
+    joint1 = JointAttributes(jointtype="Fixed")
+    basis1 = BasisAttributes(
+        basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[1, 1, 1, 1, 0, 0]
+    )
+
+    n_gauss_list = [10]
+    gravity_vector = [0.0, 0.0, -9.81]
+    tendon_params =  {
+                "ry": jnp.array([-0.002]),
+                "rz": jnp.array([-0.002]),
+                "my": jnp.array([0.001]),
+                "mz": jnp.array([-0.001]),
+                "idx_seg_att": jnp.array([0]),
+    }
+    robot_noScale = TendonActuatedGVS(
+            links_list=[link1],
+            joints_list=[joint1],
+            basis_list=[basis1],
+            n_gauss_list=n_gauss_list,
+            gravity_vector=gravity_vector,
+            tendon_routing_params=tendon_params,
+            scale_rotational_strain_basis=False,
+    )
+    robot_Scale = TendonActuatedGVS(
+            links_list=[link1],
+            joints_list=[joint1],
+            basis_list=[basis1],
+            n_gauss_list=n_gauss_list,
+            gravity_vector=gravity_vector,
+            tendon_routing_params=tendon_params,
+            scale_rotational_strain_basis=True,
+    )
+
+    #both robots have the same characteristics except for the scaling of the angular strain basis
+    dof = sum(robot_noScale.V_dof.reshape(-1))
+    L_cum = jax.device_get(robot_noScale.V_L_cum)
+    total_length = float(L_cum[-1])
+    
+    q0 = jnp.zeros((dof,))
+    u = jnp.asarray([-1], dtype=q0.dtype)
+    s_end = float(total_length)
+
+    def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+        def statics_eq(q, args):
+            u = args
+            K = robot.stiffness_matrix()
+            B = robot.actuation_matrix(q)
+            G = robot.gravitational_force(q)
+            return K @ q + G - B @ u
+
+        solver = optx.Newton(rtol=1e-6, atol=1e-6)
+        statics_eq_jit = jax.jit(statics_eq)
+        return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+    
+    res_stat_noScale = solve_equilibrium(robot_noScale, u, q0)
+    q_stat_noScale = res_stat_noScale.value  # equilibrium generalized coordinates (no Scaling)
+    res_stat_Scale = solve_equilibrium(robot_Scale, u, q0)
+    q_stat_Scale = res_stat_Scale.value  # equilibrium generalized coordinates (with Scaling)
+    g_end_noScale = robot_noScale.forward_kinematics(q_stat_noScale, s_end)
+    g_end_Scale = robot_Scale.forward_kinematics(q_stat_Scale, s_end)
+    p_end_noScale = g_end_noScale[:3, 3]
+    p_end_Scale = g_end_Scale[:3, 3]
+
+    print("End-effector position without scaling:\n", p_end_noScale)
+    print("End-effector position with scaling:\n", p_end_Scale)
+    assert_allclose(p_end_noScale, p_end_Scale, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    print("[Valid test]\n")    
 
 if __name__ == "__main__":
     # run pytest with activated stdout
