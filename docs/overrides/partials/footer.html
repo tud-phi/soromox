@@ -5,30 +5,21 @@
     {% if page.previous_page or page.next_page %}
       <nav class="md-footer__inner md-grid" aria-label="{{ lang.t('footer') }}">
         {% if page.previous_page %}
-          <a href="{{ page.previous_page.url | url }}" class="md-footer__link md-footer__link--prev" aria-label="{{ lang.t('footer.previous') }}: {{ page.previous_page.title | e }}" rel="prev">
+          <a href="{{ page.previous_page.url | url }}" class="md-footer__link md-footer__link--prev" rel="prev">
             <div class="md-footer__button md-icon">
               {% include ".icons/material/arrow-left.svg" %}
             </div>
             <div class="md-footer__title">
-              <span class="md-footer__direction">
-                {{ lang.t("footer.previous") }}
-              </span>
-              <div class="md-ellipsis">
-                {{ page.previous_page.title }}
-              </div>
+              <span class="md-footer__direction">{{ lang.t("footer.previous") }}</span>
+              <div class="md-ellipsis">{{ page.previous_page.title }}</div>
             </div>
           </a>
         {% endif %}
-        
         {% if page.next_page %}
-          <a href="{{ page.next_page.url | url }}" class="md-footer__link md-footer__link--next" aria-label="{{ lang.t('footer.next') }}: {{ page.next_page.title | e }}" rel="next">
+          <a href="{{ page.next_page.url | url }}" class="md-footer__link md-footer__link--next" rel="next">
             <div class="md-footer__title">
-              <span class="md-footer__direction">
-                {{ lang.t("footer.next") }}
-              </span>
-              <div class="md-ellipsis">
-                {{ page.next_page.title }}
-              </div>
+              <span class="md-footer__direction">{{ lang.t("footer.next") }}</span>
+              <div class="md-ellipsis">{{ page.next_page.title }}</div>
             </div>
             <div class="md-footer__button md-icon">
               {% include ".icons/material/arrow-right.svg" %}
@@ -38,35 +29,19 @@
       </nav>
     {% endif %}
   {% endif %}
-  
+
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
+      {% include "partials/social.html" %}
       <div class="md-copyright">
         {% if config.copyright %}
-          <div class="md-copyright__highlight">
-            {{ config.copyright }}
-          </div>
+          <div class="md-copyright__highlight">{{ config.copyright }}</div>
         {% endif %}
-        
-        <div class="md-footer__social">
-          {% for social in config.extra.social %}
-            <a href="{{ social.link }}" target="_blank" rel="noopener" title="{{ social.name }}" class="md-footer__social-link">
-              {% include ".icons/" ~ social.icon ~ ".svg" %}
-            </a>
-          {% endfor %}
-        </div>
-        
-        <div class="md-footer__credits">
-          <div class="md-footer__project">
-            Made with ❤️ for the soft robotics community
-          </div>
-          
-          <div class="md-footer__tech">
-            Powered by 
-            <a href="https://jax.readthedocs.io/" target="_blank" rel="noopener">JAX</a> and
-            <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>
-          </div>
-        </div>
+        Made with ❤️ for the soft robotics community
+        &middot;
+        Powered by
+        <a href="https://jax.readthedocs.io/" target="_blank" rel="noopener">JAX</a> &amp;
+        <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">Material for MkDocs</a>
       </div>
     </div>
   </div>

@@ -3,10 +3,10 @@ __all__ = [
     "GeometricOperand",
 ]
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
 import jax
 from jax import Array
-from typing import List, Literal, Optional, Tuple, Union
 
 
 @jax.tree_util.register_pytree_node_class
@@ -26,6 +26,7 @@ class JointOperand:
         Joint plane index for planar joints. Mapping: 0:'xy', 1:'yz', 2:'xz'.
         Dimensionless; ignored for non-planar joints.
     """
+
     axis_idx: int
     pitch: float
     plane_idx: int
@@ -66,12 +67,13 @@ class GeometricOperand:
     The geometric parameters are interpolated linearly along `Xs` to obtain the
     local cross-section A and second moments of area I_x, I_y, I_z.
     """
+
     Xs: Array
-    r_params: Tuple[Array, Array]
-    h_params: Tuple[Array, Array]
-    w_params: Tuple[Array, Array]
-    a_params: Tuple[Array, Array]
-    b_params: Tuple[Array, Array]
+    r_params: tuple[Array, Array]
+    h_params: tuple[Array, Array]
+    w_params: tuple[Array, Array]
+    a_params: tuple[Array, Array]
+    b_params: tuple[Array, Array]
 
     def tree_flatten(self):
         children = (

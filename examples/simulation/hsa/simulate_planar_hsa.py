@@ -1,17 +1,22 @@
+from pathlib import Path
+
 import cv2  # importing cv2
 import jax
-import jax.numpy as jnp
+
 jax.config.update("jax_enable_x64", True)  # double precision
-from pathlib import Path
+
+
+import jax.numpy as jnp
 
 import soromox
 from soromox.parameters.hsa_params import (
     PARAMS_FPU_CONTROL,
     PARAMS_FPU_HYSTERESIS_CONTROL,
 )
-from soromox.systems.planar_hsa import PlanarHSA
-from soromox.rendering.planar_hsa.opencv_renderer import draw_robot, animate_robot
-
+from soromox.rendering.planar_hsa.opencv_renderer import (
+    OpenCVPlanarHSARenderer,
+)
+from soromox.systems import PlanarHSA, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -56,6 +61,7 @@ if __name__ == "__main__":
     print(
         f"Planar HSA with {num_segments} segments and {num_rods_per_segment} rods per segment initialized."
     )
+    renderer = OpenCVPlanarHSARenderer(robot, width=700, height=700)
 
     # =====================================================
     # Simulation upon time
@@ -66,14 +72,16 @@ if __name__ == "__main__":
     qd0 = jnp.zeros_like(q0)
     # Motor actuation angles
     phi = jnp.array([jnp.pi, jnp.pi / 2])
+    # initial hysteresis state
+    if consider_hysteresis:
+        z0 = jnp.zeros((robot.num_hysteresis,))
+    else:
+        z0 = jnp.array([])
+    y0 = jnp.concatenate([q0, qd0, z0])
 
     # Displaying the image
     window_name = f"Planar HSA with {num_segments} segments"
-    img = draw_robot(
-        robot,
-        q=q0,
-        show=False,
-    )
+    img = renderer.render_frame(q0)
 
     win = "Planar HSA"
     cv2.namedWindow(win, cv2.WINDOW_NORMAL)
@@ -85,32 +93,31 @@ if __name__ == "__main__":
     # Simulation time parameters
     t0 = 0.0
     t1 = 5.0
-    dt = 5e-5  # time step
+    solver_dt = 5e-5  # time step
     save_dt = 0.01
 
-    ts, q_ts, qd_ts = robot.resolve_upon_time(
-        q0=q0,
-        qd0=qd0,
-        u0=phi,
-        t0=t0,
+    initial_state = SystemState(t=t0, y=y0)
+    trajectory = robot.rollout_to(
+        initial_state=initial_state,
+        u=phi,
         t1=t1,
-        dt=dt,
+        solver_dt=solver_dt,
         save_dt=save_dt,
         max_steps=None,
     )
+    ts = trajectory.t
+    q_ts, qd_ts, _ = jnp.split(
+        trajectory.y, [robot.num_dofs, 2 * robot.num_dofs], axis=1
+    )
 
     # create video
-    video_width, video_height = 700, 700  # img height and width
     video_path = Path("videos") / "planar_hsa.mp4"
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
-    animate_robot(
-        robot,
-        video_path,
-        video_ts=ts,
+    renderer.render_sequence(
+        ts=ts,
         q_ts=q_ts,
-        video_width=video_width,
-        video_height=video_height,
+        record_path=str(video_path),
     )
     print(f"Video saved at {video_path}")
 
@@ -124,7 +131,7 @@ if __name__ == "__main__":
             if not ret:
                 break
             cv2.imshow("Animation Planar HSA", frame)
-            key = cv2.waitKey(int(1000 / (1 / dt / skip_step)))
+            key = cv2.waitKey(int(1000 / (1 / save_dt)))
             if key in (27, ord("q")):
                 break
         cap.release()

@@ -1,17 +1,14 @@
-import cv2  # importing cv2
 from functools import partial
+from pathlib import Path
+
 import jax
+import matplotlib.pyplot as plt
+from jax import numpy as jnp
+
+from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
+from soromox.systems import Pendulum, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from jax import Array, lax, vmap
-from jax import numpy as jnp
-import matplotlib.pyplot as plt
-import numpy as onp
-from pathlib import Path
-from typing import Callable, Dict
-
-import soromox
-from soromox.systems import pendulum
 
 num_links = 2
 params = {
@@ -27,85 +24,53 @@ q0 = jnp.zeros((num_links,))
 q0 = jnp.array([jnp.pi / 8, -jnp.pi / 4])
 
 # set simulation parameters
-dt = 1e-4  # time step
-ts = jnp.arange(0.0, 5, dt)  # time steps
-save_dt = 0.01
+solver_dt = 1e-4  # time step
+t0 = jnp.array(0.0)
+t1 = jnp.array(5.0)
+save_dt = jnp.array(0.01)
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
 video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
 
 
-def draw_robot(
-    robot: pendulum.Pendulum,
-    q: Array,
-    width: int,
-    height: int,
-) -> onp.ndarray:
-    # plotting in OpenCV
-    h, w = height, width  # img height and width
-    ppm = h / (2.5 * jnp.sum(robot.L))  # pixel per meter
-    robot_color = (0, 0, 0)  # black robot_color in BGR
-
-    # poses along the robot of shape (num_links, 3)
-    chi_ls = robot.forward_kinematics_tips(q)
-    # add zeros
-    chi_ls = jnp.vstack([jnp.zeros((1, 3)), chi_ls])  # add origin
-
-    img = 255 * onp.ones((w, h, 3), dtype=jnp.uint8)  # initialize background to white
-    curve_origin = onp.array(
-        [w // 2, h // 2], dtype=onp.int32
-    )  # in x-y pixel coordinates
-    # transform robot poses to pixel coordinates
-    # extract (px, py) which are now columns 1 and 2
-    curve = onp.array((curve_origin + chi_ls[:, 1:] * ppm), dtype=onp.int32)
-    # invert the v pixel coordinate
-    curve[:, 1] = h - curve[:, 1]
-    cv2.polylines(img, [curve], isClosed=False, color=robot_color, thickness=10)
-
-    return img
-
-
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = pendulum.Pendulum(params)
+    robot = Pendulum(params)
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
     u = jnp.zeros_like(q0)  # torques (actuation)
 
-    # compute the operational space matrices
-    Lambda, mu, J, Jd, JB_inv = robot.operational_space_dynamical_matrices(
-        q0, qd0, link_idx=1
-    )
-    print("Lambda:\n", Lambda)
-
     # call the forward dynamics
-    yd = robot.forward_dynamics(ts[0], jnp.concatenate([q0, qd0]), (u,))
+    yd = robot.forward_dynamics(t0, jnp.concatenate([q0, qd0]), (u,))
     print("yd0:\n", yd)
 
     # Integrate using the model's built-in solver
-    ts_out, q_ts, qd_ts = robot.resolve_upon_time(
-        q0=q0,
-        qd0=qd0,
+    initial_state = SystemState(t=t0, y=jnp.concatenate([q0, qd0]))
+    trajectory = robot.rollout_to(
+        initial_state=initial_state,
         u=u,
-        t0=ts[0],
-        t1=ts[-1],
-        dt=dt,
+        t1=t1,
+        solver_dt=solver_dt,
         save_dt=save_dt,
     )
-    video_ts = ts_out
+    ts = trajectory.t
+    q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
+    video_ts = ts
     print("Final configuration:\n", q_ts[-1])
 
     # =====================================================
     # End-effector position upon time
     # =====================================================
-    chi_ee_ts = jax.vmap(robot.forward_kinematics_tips,)(q_ts)[:, -1, :]
+    chi_ee_ts = jax.vmap(
+        robot.forward_kinematics_tips,
+    )(q_ts)[:, -1, :]
 
     plt.figure()
     for link_idx in range(num_links):
         plt.plot(
-            ts_out,
+            ts,
             q_ts[:, link_idx] / jnp.pi * 180,
             label=r"$q_{" + str(link_idx + 1) + "}$ [deg]",
         )
@@ -118,8 +83,8 @@ if __name__ == "__main__":
 
     # plot end-effector position vs time
     plt.figure()
-    plt.plot(ts_out, chi_ee_ts[:, 1], label="End-effector x [m]")
-    plt.plot(ts_out, chi_ee_ts[:, 2], label="End-effector y [m]")
+    plt.plot(ts, chi_ee_ts[:, 1], label="End-effector x [m]")
+    plt.plot(ts, chi_ee_ts[:, 2], label="End-effector y [m]")
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector position [m]")
     plt.legend()
@@ -130,7 +95,11 @@ if __name__ == "__main__":
 
     # end effector orientation vs. time
     plt.figure()
-    plt.plot(ts_out, chi_ee_ts[:, 0] / jnp.pi * 180, label=r"End-effector Orientation $\theta$ [deg]")
+    plt.plot(
+        ts,
+        chi_ee_ts[:, 0] / jnp.pi * 180,
+        label=r"End-effector Orientation $\theta$ [deg]",
+    )
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector Orientation [deg]")
     plt.legend()
@@ -141,7 +110,7 @@ if __name__ == "__main__":
 
     # plot the end-effector position in the x-y plane as a scatter plot with the time as the color
     plt.figure()
-    plt.scatter(chi_ee_ts[:, 1], chi_ee_ts[:, 2], c=ts_out, cmap="viridis")
+    plt.scatter(chi_ee_ts[:, 1], chi_ee_ts[:, 2], c=ts, cmap="viridis")
     plt.axis("equal")
     plt.grid(True)
     plt.xlabel("End-effector x [m]")
@@ -157,8 +126,8 @@ if __name__ == "__main__":
     T_ts = jax.vmap(jax.jit(partial(robot.kinetic_energy)))(q_ts, qd_ts)
 
     plt.figure()
-    plt.plot(ts_out, U_ts, label="Potential Energy")
-    plt.plot(ts_out, T_ts, label="Kinetic Energy")
+    plt.plot(ts, U_ts, label="Potential Energy")
+    plt.plot(ts, T_ts, label="Kinetic Energy")
     plt.xlabel("Time (s)")
     plt.ylabel("Energy (J)")
     plt.legend()
@@ -169,23 +138,31 @@ if __name__ == "__main__":
     plt.show()
 
     # create video
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     video_path.parent.mkdir(parents=True, exist_ok=True)
-    video = cv2.VideoWriter(
-        str(video_path),
-        fourcc,
-        1 / (save_dt * dt),  # fps
-        (video_width, video_height),
+    renderer = OpenCVPlanarRenderer(
+        robot,
+        width=video_width,
+        height=video_height,
+        backbone_color=(0, 0, 0),
+        length_scale=2.5,
     )
-
-    for time_idx, t in enumerate(video_ts):
-        img = draw_robot(
-            robot,
-            q_ts[time_idx],
-            video_width,
-            video_height,
-        )
-        video.write(img)
-
-    video.release()
+    renderer.render_sequence(video_ts, q_ts, record_path=str(video_path))
     print(f"Video saved to {video_path}")
+
+    # =====================================================
+    # Viser web-based visualization with plotly plots
+    # =====================================================
+    # Note: ViserRenderer is designed for 3D soft robots, so 3D visualization
+    # may not work well for this planar pendulum system. However, we can still
+    # use it to display plotly plots in the GUI.
+    # Plotly plots are automatically added to the GUI at the end of the sidebar
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+        plot_configurations=True,
+        robot_name="Pendulum",
+    )

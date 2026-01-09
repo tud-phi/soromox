@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Implemented systems:
   - N-link pendulum
   - Planar Piecewise Constant Strain (PCS) continuum soft robot
-  - General/3D Piecewise Constant Strain (PCS) continuum soft robot
+  - Spatial Piecewise Constant Strain (PCS) continuum soft robot
   - Planar Handed Shearing Auxetics (HSA) robot
 
 ---

@@ -15,14 +15,14 @@
 
 </div>
 
-> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (General/3D PCS and GVS), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
+> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS and GVS), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
 
 We provide implementations of several popular and expressive soft robot models in JAX for fast, parallelizable, and differentiable simulations. Specifically, we focus on strain-based models that are suitable for modeling slender structures like soft robots (i.e., robots with a large length compared to their diameter often referred to as Cosserat rods).
 So far, we have implemented the following systems:
 
 - [N-link pendulum](examples/simulate_pendulum.py)
-- [General/3D Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_pcs.py)
 - [Planar Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_planar_pcs.py)
+- [Spatial Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_pcs.py)
 - [Planar Handed Shearing Auxetics (HSA) robot](examples/simulate_planar_hsa.py)
 
 We are happy to receive contributions for other soft robot models. See the [Contributing Guide](development/contributing.md) for more details.
@@ -59,24 +59,82 @@ The model of the kinematics and dynamics of the planar HSA robot are part of the
 }
 ```
 
+### Model-Based Controllers Citation
+
+If you found the implementation of the model-based controllers (e.g., PID, gravity cancellation, potential shaping regulators) useful, please consider also citing the following PhD thesis:
+
+```bibtex
+@phdthesis{stolzle2025phdthesis,
+  title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
+  keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
+  author = "Maximilian St{\"o}lzle",
+  year = "2025",
+  month = "9",
+  day = "15",
+  language = "English",
+  type = "Dissertation (TU Delft)",
+  school = "Mechanical Engineering, Delft University of Technology",
+  doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
+  isbn = "978-94-6384-836-7",
+}
+```
+
 ## Installation
 
-The plugin can be installed from PyPI:
+The package can be installed from PyPI using pip:
 
 ```bash
 pip install soromox
 ```
 
-or locally from the source code:
+or using [uv](https://docs.astral.sh/uv/) (recommended for faster installation):
 
 ```bash
-pip install -e .
+uv pip install soromox
 ```
 
-If you want to run the examples, you will also need to install the following dependencies:
+### Development Installation
+
+For local development from the source code:
 
 ```bash
-pip install -e ".[examples]"
+# Using pip
+pip install -e .
+
+# Using uv
+uv pip install -e .
+```
+
+### Optional Dependencies (extras)
+
+The extras in `pyproject.toml` bundle optional tooling:
+
+- `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
+- `docs`: MkDocs stack for building the documentation site.
+- `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
+- `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
+- `test`: minimal test stack (pytest, coverage, tox, html report).
+- `all`: installs everything above.
+
+Install with pip or uv, e.g.:
+
+```bash
+pip install -e ".[dev,docs,examples]"
+# or
+uv pip install -e ".[rendering]"
+```
+
+### Using uv for Project Management
+
+You can also use `uv` to manage the project with a virtual environment:
+
+```bash
+# Create a virtual environment and install the package
+uv venv
+uv pip install -e ".[dev,examples]"
+
+# Or use uv sync for reproducible installs (creates uv.lock)
+uv sync --extra dev --extra examples
 ```
 
 ## Usage
@@ -228,4 +286,3 @@ When you use the `release-*` commands, the following happens automatically:
 6. The package is published to PyPI
 
 For more detailed information, see `VERSION_BUMP_README.md`.
-

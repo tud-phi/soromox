@@ -13,12 +13,12 @@ __all__ = [
     "Tangent_gi_se3",
     "Tangent_derivative_gi_se3",
 ]
-import jax
+
 import jax.numpy as jnp
 from jax import Array, lax
 
 
-def _rotational_strain_magnitude(xi: Array, eps: float) -> Array:
+def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
     """
     Computes the magnitude of the rotational strain component of a 6D vector.
 
@@ -130,14 +130,14 @@ def exp_SE3(vec6: Array) -> Array:
     return g
 
 
-def log_SE3(g: Array, eps: float) -> Array:
+def log_SE3(g: Array, eps: float | Array) -> Array:
     """
     Computes the logarithm map from SE(3) to se(3), i.e., extracts the twist from a transformation matrix.
 
     Args:
         g (Array): shape (4, 4)
             Homogeneous transform in SE(3).
-        eps (float): tolerance to avoid division by zero in small angle approximations.
+        eps (Union[float, Array]): tolerance to avoid division by zero in small angle approximations.
 
     Returns:
         log: shape (6,)
@@ -218,14 +218,14 @@ def log_SE3(g: Array, eps: float) -> Array:
     return log
 
 
-def exp_gn_SE3(vec6: Array, eps: float) -> Array:
+def exp_gn_SE3(vec6: Array, eps: float | Array) -> Array:
     """
     Function to compute the exponential map of the Magnus expansion.
 
     Args:
         vec6 (Array): shape (6,) or (6, 1)
             Screw coordinates used in the Magnus expansion.
-
+        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
     Returns:
         g (Array): shape (4, 4)
             Homogeneous transform obtained from the Magnus expansion.
@@ -365,7 +365,7 @@ def Adjoint_g_inv_SE3(mat4: Array) -> Array:
 def Adjoint_gi_se3(
     xi_i: Array,
     s_i: Array,
-    eps: float,
+    eps: float | Array,
 ) -> Array:
     """
     Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
@@ -375,7 +375,7 @@ def Adjoint_gi_se3(
         xi_i (Array): shape (6,) or (6, 1)
             Constant strain vector in the segment, [omega, v].
         s_i (Array): scalar arclength position along the segment.
-        eps (float): small value to avoid division by zero in the series expansion.
+        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
 
     Returns:
         Array: shape (6, 6)
@@ -431,7 +431,7 @@ def Adjoint_gi_se3(
 def Adjoint_gi_se3_inv(
     xi_i: Array,
     s_i: Array,
-    eps: float,
+    eps: float | Array,
 ) -> Array:
     """
     Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
@@ -441,7 +441,7 @@ def Adjoint_gi_se3_inv(
         xi_i (Array): shape (6,) or (6, 1)
             Constant strain vector in the segment, [omega, v].
         s_i (Array): scalar arclength position along the segment.
-        eps (float): small value to avoid division by zero in the series expansion.
+        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
 
     Returns:
         Array: shape (6, 6)
@@ -467,7 +467,7 @@ def Adjoint_gi_se3_inv(
 def Tangent_gi_se3(
     xi_i: Array,
     s_i: Array,
-    eps: float,
+    eps: float | Array,
 ) -> Array:
     """
     Computes the tangent representation of a position of a points at s_i (local curvilinear coordinate)
@@ -477,7 +477,7 @@ def Tangent_gi_se3(
         xi_i (Array): shape (6,) or (6, 1)
             Constant strain vector in the segment, [omega, v].
         s_i (Array): scalar arclength position along the segment.
-        eps (float): small value to avoid division by zero in the series expansion.
+        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
 
     Returns:
         T (Array): shape (6, 6)
@@ -534,7 +534,7 @@ def Tangent_derivative_gi_se3(
     xi_i: Array,
     xid_i: Array,
     s_i: Array,
-    eps: float,
+    eps: float | Array,
 ) -> Array:
     """
     Computes the tangent derivative representation of a position of a points at s_i (local curvilinear coordinate)
@@ -546,7 +546,7 @@ def Tangent_derivative_gi_se3(
         xid_i (Array): shape (6,) or (6, 1)
             Time derivative of the strain vector.
         s_i (Array): scalar arclength position along the segment.
-        eps (float): small value to avoid division by zero in the series expansion.
+        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
 
     Returns:
         Td (Array): shape (6, 6)

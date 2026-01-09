@@ -12,7 +12,7 @@
     
     SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). The main improvements include:
     
-    - **🎯 Extended System Support**: General/3D PCS and GVS systems
+    - **🎯 Extended System Support**: Spatial PCS and GVS systems
     - **⚡ Numerical Implementation**: Replaced symbolic derivations with numerical implementations for better scalability and significantly reduced JIT compilation times
     - **🏗️ Object-Oriented Architecture**: Migration from functional to Equinox dataclasses-based design enabling easy extendability and modification of methods (e.g., changing actuation mapping)
 
@@ -59,19 +59,19 @@ The symbolic expressions are then implemented in **JAX** and can be used for fas
 
 ## 🤖 Supported Robot Types
 
-We focus on planar settings and have implemented the following soft robot architectures:
+SoRoMoX supports both planar (2D) and spatial (3D) soft robot architectures:
 
-!!! note "🦾 **N-link Pendulum**"
-    Classical articulated robot perfect for benchmarking and comparison studies
+!!! note "🦾 **Pendulum Systems**"
+    Classical and tendon-actuated N-link articulated robots for benchmarking and cable-driven mechanisms
 
-!!! tip "🌊 **Planar Piecewise Constant Strain (PCS)**"
-    Advanced continuum soft robot with constant strain segments for precise modeling
+!!! tip "🌊 **PCS Systems (Piecewise Constant Strain)**"
+    Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pneumatic actuation
 
-!!! tip "🌐 **Geometric Variable Strain (GVS)**"
-    3D continuum robot model with spatially varying strain bases and mixed joint types
+!!! abstract "🧬 **GVS Systems (Geometric Variable Strain)**"
+    Advanced continuum robots with flexible strain basis functions (Legendre, Chebyshev, Fourier, etc.)
 
-!!! info "🔗 **Planar Handed Shearing Auxetics (HSA)**"
-    Novel soft robot with auxetic properties for unique deformation characteristics
+!!! info "🔗 **HSA Systems (Handed Shearing Auxetics)**"
+    Novel soft robots with auxetic material properties for unique deformation characteristics
 
 ---
 
@@ -159,7 +159,7 @@ Get up and running in minutes:
   </div>
   
   <div class="feature-card">
-    <h3><span class="icon">📋</span> [API Reference](api/systems.md)</h3>
+    <h3><span class="icon">📋</span> [API Reference](api/overview.md)</h3>
     <p>Complete documentation of all classes and functions</p>
   </div>
 </div>
@@ -195,6 +195,26 @@ Get up and running in minutes:
       pages={153--167},
       year={2023},
       organization={Springer}
+    }
+    ```
+
+    ### Model-Based Controllers Citation
+
+    If you found the implementation of the model-based controllers (e.g., PID, gravity cancellation, potential shaping regulators) useful, please consider also citing the following PhD thesis:
+
+    ```bibtex
+    @phdthesis{stolzle2025phdthesis,
+      title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
+      keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
+      author = "Maximilian St{\"o}lzle",
+      year = "2025",
+      month = "9",
+      day = "15",
+      language = "English",
+      type = "Dissertation (TU Delft)",
+      school = "Mechanical Engineering, Delft University of Technology",
+      doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
+      isbn = "978-94-6384-836-7",
     }
     ```
 

@@ -9,7 +9,7 @@ This project is developed and maintained by researchers from the Physical Intell
 Postdoctoral Researcher  
 Physical Intelligence (PhI) Lab, TU Delft
 
-**Contact:** <M.W.Stolzle@tudelft.nl> | <maximilian@stoelzle.ch>
+**Contact:** <mstolzle@mit.edu> | <maximilian@stoelzle.ch>
 
 **Links:**
 

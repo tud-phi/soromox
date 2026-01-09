@@ -142,3 +142,10 @@ dmypy.json
 
 # Documentation build
 site/
+
+# ignore .claude settings
+.claude/
+
+# camera params saved during rendering
+DepthCamera_*.json
+DepthCapture_*.png

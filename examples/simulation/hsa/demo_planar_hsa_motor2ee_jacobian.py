@@ -1,26 +1,25 @@
+from collections.abc import Callable
+from pathlib import Path
+
 import jax
 
-from jax import Array, jacfwd, jacrev, jit, random
-from jax import numpy as jnp
-from pathlib import Path
+jax.config.update("jax_enable_x64", True)  # double precision
 import scipy as sp
-from typing import Callable, Dict, Tuple
-
-from soromox.utils.numerical_jacobian import approx_derivative
+from jax import Array, jacrev, jit, random
+from jax import numpy as jnp
 
 import soromox
 from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL
-
-jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.systems.planar_hsa import PlanarHSA
+from soromox.systems import PlanarHSA
+from soromox.utils.numerical_jacobian import approx_derivative
 
 
 def factory_fn(
     sym_exp_filepath: Path,
-    params: Dict[str, Array],
+    params: dict[str, Array],
     strain_selector: Array,
     verbose: bool = False,
-) -> Tuple[Callable, Callable]:
+) -> tuple[Callable, Callable]:
     """
     Factory function for the planar HSA.
     Args:
@@ -58,7 +57,7 @@ def factory_fn(
 
     def phi2q_static_model_fn(
         phi: Array, q0: Array = jnp.zeros((3,))
-    ) -> Tuple[Array, Dict[str, Array]]:
+    ) -> tuple[Array, dict[str, Array]]:
         """
         A static model mapping the motor angles to the planar HSA configuration using scipy.optimize.minimize.
         Arguments:
@@ -97,7 +96,7 @@ def factory_fn(
 
     def phi2chi_static_model_fn(
         phi: Array, q0: Array = jnp.zeros((3,))
-    ) -> Tuple[Array, Dict[str, Array]]:
+    ) -> tuple[Array, dict[str, Array]]:
         """
         A static model mapping the motor angles to the planar end-effector pose.
         Arguments:
@@ -109,13 +108,13 @@ def factory_fn(
             aux: dictionary with auxiliary data
         """
         q, aux = phi2q_static_model_fn(phi, q0=q0)
-        chi = robot.forward_kinematics_end_effector_fn(q)
+        chi = robot.forward_kinematics_end_effector(q)
         aux["chi"] = chi
         return chi, aux
 
     def jac_phi2chi_static_model_fn(
         phi: Array, q0: Array = jnp.zeros((3,))
-    ) -> Tuple[Array, Dict[str, Array]]:
+    ) -> tuple[Array, dict[str, Array]]:
         """
         Compute the Jacobian between the actuation space and the task-space.
         Arguments:
@@ -131,7 +130,7 @@ def factory_fn(
         )
 
         # evaluate the closed-form, analytical jacobian of the forward kinematics
-        J_q2chi = robot.jacobian_end_effector_fn(q)
+        J_q2chi = robot.jacobian_end_effector(q)
 
         # evaluate the Jacobian between the actuation and the task-space
         J_phi2chi = J_q2chi @ J_phi2q

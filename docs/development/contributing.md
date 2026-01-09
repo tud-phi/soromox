@@ -23,12 +23,6 @@ pip install -e ".[dev,docs,examples]"
 pre-commit install
 ```
 
-### 4. Environment Variables
-
-```bash
-source 01-configure-env-vars.sh
-```
-
 ## Development Workflow
 
 ### 1. Create a Branch
@@ -58,15 +52,63 @@ pytest tests/test_planar_pcs_num.py
 pytest --cov=soromox
 ```
 
-### 4. Format Code
+### 4. Format and Lint Code
+
+We use [Ruff](https://docs.astral.sh/ruff/) for both code formatting and linting. Ruff is configured in `pyproject.toml` and follows our project's style guidelines.
+
+#### Command Line Usage
 
 ```bash
-# Auto-format with ruff
+# Auto-format code
 ruff format .
 
-# Check for issues
+# Format specific directories
+ruff format src tests examples
+
+# Check formatting without making changes
+ruff format --check .
+
+# Run linting checks
 ruff check .
+
+# Auto-fix linting issues
+ruff check --fix .
+
+# Run both formatting and linting
+ruff format . && ruff check .
 ```
+
+You can also use the Makefile targets:
+
+```bash
+# Format code
+make format
+
+# Check formatting (for CI)
+make format-check
+```
+
+#### VS Code Integration
+
+For automated formatting on file save, install the [Ruff VS Code extension](https://marketplace.visualstudio.com/items?itemName=charliermarsh.ruff). The project includes VS Code settings (see `.vscode/settings.json`) that configure:
+
+- Ruff as the default formatter for Python files
+- Format on save enabled
+- Automatic import organization on save
+- Automatic linting fixes on save
+
+After installing the Ruff extension, your code will be automatically formatted and linted whenever you save a Python file.
+
+#### Ruff Configuration
+
+Ruff is configured in `pyproject.toml` with the following key settings:
+- Line length: 88 characters
+- Target Python version: 3.10+
+- Enabled lint rules: pycodestyle, Pyflakes, isort, flake8-bugbear, and more
+- Quote style: double quotes
+- Import organization: first-party imports from `soromox`
+
+For more details, see the `[tool.ruff]` section in `pyproject.toml`.
 
 ### 5. Build Documentation
 
@@ -92,58 +134,15 @@ Use conventional commit messages:
 - `test:` for test additions
 - `refactor:` for code refactoring
 
-## Adding New Robot Systems
+## Extending SoRoMoX
 
-### 1. System Structure
+For guidance on adding custom robot systems or renderers, see the [Extending SoRoMoX](extending.md) guide which covers:
 
-Create a new module in `src/soromox/systems/`:
-
-```
-src/soromox/systems/your_robot/
-├── __init__.py
-├── symbolic_derivation.py
-├── numerical_implementation.py
-└── factory.py
-```
-
-### 2. Factory Pattern
-
-Follow the established factory pattern:
-
-```python
-def factory(parameters):
-    """
-    Factory function for your robot system.
-    
-    Args:
-        parameters: System-specific parameters
-        
-    Returns:
-        tuple: (ode_fn, forward_kinematics, jacobian_fn, additional_fns)
-    """
-    pass
-```
-
-### 3. Testing
-
-Add comprehensive tests in `tests/`:
-
-```python
-def test_your_robot_forward_kinematics():
-    """Test forward kinematics computation."""
-    pass
-
-def test_your_robot_dynamics():
-    """Test dynamic simulation."""
-    pass
-```
-
-### 4. Documentation
-
-Add examples and documentation:
-- Example script in `examples/`
-- Documentation in `docs/`
-- Docstrings for all functions
+- Implementing custom soft robot systems
+- Adding new renderer backends
+- Contributing new controllers
+- Understanding the base class interfaces
+- Best practices for extensibility
 
 ## Code Style
 
@@ -197,7 +196,7 @@ def forward_kinematics(params: Dict, q: Array) -> Array:
 ```python
 import pytest
 import jax.numpy as jnp
-from soromox.systems import your_system
+from soromox.systems import YourSystem
 
 class TestYourSystem:
     def setup_method(self):
