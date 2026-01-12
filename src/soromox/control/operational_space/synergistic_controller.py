@@ -1,14 +1,8 @@
 __all__ = ["SynergisticController"]
 
-from typing import Any, Optional, Tuple
 
 import jax.numpy as jnp
 from jax import Array
-
-from soromox.control.pid_control import (
-    PIDControl,
-    PIDControllerState,
-)
 
 from soromox.control.actuation_matrix_utils import (
     ActuationScenario,
@@ -16,6 +10,10 @@ from soromox.control.actuation_matrix_utils import (
 )
 from soromox.control.operational_space.base_controller import (
     OperationalSpaceBaseController,
+)
+from soromox.control.pid_control import (
+    PIDControl,
+    PIDControllerState,
 )
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations.operational_space_dynamics import (
@@ -45,7 +43,7 @@ class SynergisticController(OperationalSpaceBaseController):
 
     Assumptions:
         (a) Under-actuation: The actuation space has lower dimensionality than
-            the configuration space (m < n). If full actuation, consider using, 
+            the configuration space (m < n). If full actuation, consider using,
             for example, the impedance control tracker.
         (b) The operational space has equal dimensionality of the actuation
             space (o = m)
@@ -123,7 +121,9 @@ class SynergisticController(OperationalSpaceBaseController):
                 f"have the same dimension (o = m). Got m = {n_actuators}, o = {n_op}."
             )
 
-    def __call__(self, system_state: SystemState) -> Tuple[Array, Optional[PIDControllerState]]:
+    def __call__(
+        self, system_state: SystemState
+    ) -> tuple[Array, PIDControllerState | None]:
         """
         Compute the synergistic control action.
 
@@ -197,7 +197,7 @@ class SynergisticController(OperationalSpaceBaseController):
         ed_x = xd_des - xd
 
         # Get integral error from control state (or zeros if not tracking)
-        control_state: Optional[PIDControllerState] = system_state.control_state
+        control_state: PIDControllerState | None = system_state.control_state
         if control_state is None:
             integral_error = jnp.zeros_like(osd.n_operational_space)
         else:

@@ -18,10 +18,14 @@ import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # Double precision
 
-from soromox.control import OperationalSpaceSynergisticController, ReferenceTrajectory, PIDControl, PIDControllerState
+from soromox.control import (
+    OperationalSpaceSynergisticController,
+    PIDControl,
+    ReferenceTrajectory,
+)
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import Open3DRenderer
-from soromox.systems import TendonActuatedPCS, SystemState
+from soromox.systems import SystemState, TendonActuatedPCS
 
 
 def main():
@@ -59,8 +63,10 @@ def main():
     theta = jnp.pi / 32
     dtheta = jnp.pi / 3
     active_tendon_routing_params = {
-        "ry": 1.8e-2 * jnp.cos(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
-        "rz": 1.8e-2 * jnp.sin(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
+        "ry": 1.8e-2
+        * jnp.cos(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
+        "rz": 1.8e-2
+        * jnp.sin(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
         "my": jnp.array([0.0, 0.0, 0.0]),
         "mz": jnp.array([0.0, 0.0, 0.0]),
         "idx_seg_att": jnp.array([1, 1, 1]),
@@ -155,7 +161,7 @@ def main():
     # =========================================================================
     # Impedance Controller Setup
     # =========================================================================
-    # Define operational space gains    
+    # Define operational space gains
     Kp = 30.0 * jnp.ones((osd.n_operational_space,))
     Ki = 10.0 * jnp.ones((osd.n_operational_space,))
     Kd = 2.0 * jnp.ones((osd.n_operational_space,))
@@ -347,7 +353,7 @@ def main():
             dynamic_spheres_radii=jnp.array([target_radius]),
             dynamics_spheres_colors=jnp.array([[0.1, 0.6, 0.9]]),
             window_name="Operational-Space Tracking (Open3D)",
-        ) # '''
+        )  # '''
 
 
 if __name__ == "__main__":
