@@ -28,7 +28,12 @@ class SynergisticController(OperationalSpaceBaseController):
 
     The control law is:
 
-        τ = (J(q) M^{-1}(q) A(q))^{-1} J(q) M^{-1}(q) J^T(q) (Kp (x^d - x) + Ki integral(x^d - x) - Kd ẋ)
+        tau = P_AM @ J(q).T @ (Kp e_x + Ki integral_e_x + Kd e_dx)
+
+        P_AM = (J(q) M(q)^{-1} A(q))^{-1} J(q) M(q)^{-1}
+        e_x = x_des - x
+        e_dx = xd_des - xd
+        integral_e_x = integral of e_x dt
 
     where:
         - A(q) is the actuation matrix
@@ -37,9 +42,12 @@ class SynergisticController(OperationalSpaceBaseController):
         - Kp is the operational space proportional gain matrix
         - Ki is the operational space integral gain matrix
         - Kd is the operational space derivative gain matrix
-        - x^d is the desired operational space position
-        - x is the current operational space position
-        - ẋ is the current operational space velocity
+        - e_x is the operational space pose error (geometric error for orientation)
+        - e_dx is the operational space velocity error
+        - x is the current operational space pose
+        - x_des is the desired operational space pose
+        - xd is the current operational space velocity
+        - xd_des is the desired operational space velocity
 
     Assumptions:
         (a) Under-actuation: The actuation space has lower dimensionality than
@@ -52,8 +60,7 @@ class SynergisticController(OperationalSpaceBaseController):
     Attributes:
         operational_space_dynamics: The OperationalSpaceDynamics instance.
         reference_trajectory: The desired trajectory in operational space.
-        pid_control: The task-space PIDControl instance containing the gains
-        and saturation.
+        pid_control: The task-space PIDControl instance containing the gains and saturation.
 
     References:
         Della Santina, C., Pallottino, L., Rus, D., & Bicchi, A. (2019). Exact
@@ -137,7 +144,8 @@ class SynergisticController(OperationalSpaceBaseController):
 
         Returns:
             tau_control: The control input, shape (num_actuators,).
-            control_state_dot: None (this controller is stateless).
+            control_state_dot: PIDControllerState derivative if tracking integral
+                error, otherwise None.
         """
         t = system_state.t
         y = system_state.y

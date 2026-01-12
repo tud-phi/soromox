@@ -21,6 +21,7 @@ jax.config.update("jax_enable_x64", True)  # Double precision
 from soromox.control import (
     OperationalSpaceSynergisticController,
     PIDControl,
+    PIDControllerState,
     ReferenceTrajectory,
 )
 from soromox.coordinate_transformations import OperationalSpaceDynamics
@@ -159,7 +160,7 @@ def main():
     )
 
     # =========================================================================
-    # Impedance Controller Setup
+    # PID Controller Setup
     # =========================================================================
     # Define operational space gains
     Kp = 30.0 * jnp.ones((osd.n_operational_space,))
@@ -177,8 +178,8 @@ def main():
     )
 
     print(f"Operational space proportional gain Kp: {Kp}")
-    print(f"Operational space integral gain Kp: {Ki}")
-    print(f"Operational space derivative gain Ki: {Kd}")
+    print(f"Operational space integral gain Ki: {Ki}")
+    print(f"Operational space derivative gain Kd: {Kd}")
 
     # =========================================================================
     # Simulation Setup
@@ -192,7 +193,7 @@ def main():
         t=jnp.array(t0),
         y=y0,
         u=jnp.zeros((robot.num_actuators,)),
-        control_state=None,  # Impedance controller is stateless
+        control_state=PIDControllerState.zero(osd.n_operational_space),
     )
 
     # Simulation parameters
