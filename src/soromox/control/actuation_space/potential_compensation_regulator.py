@@ -181,11 +181,6 @@ class PotentialCompensationRegulator(PIDController):
         """
         updated_pid_control = self.pid_control.update_gains(gains)
 
-        updated_self = eqx.tree_at(
-            lambda x: x.pid_control,
-            self, 
-            updated_pid_control
-        )
-        
+        updated_self = eqx.tree_at(lambda x: x.pid_control, self, updated_pid_control)
+
         return updated_self
-    

@@ -251,7 +251,9 @@ class PIDControl(eqx.Module):
         updated_Kd = gains.get("Kd", self.Kd)
 
         updated_self = eqx.tree_at(
-            lambda x: (x.Kp, x.Ki, x.Kd), updated_self, (updated_Kp, updated_Ki, updated_Kd)
+            lambda x: (x.Kp, x.Ki, x.Kd),
+            updated_self,
+            (updated_Kp, updated_Ki, updated_Kd),
         )
 
         return updated_self
