@@ -4,6 +4,8 @@ from typing import Any
 
 from jax import Array
 
+import equinox as eqx
+
 from soromox.control.actuation_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
 from soromox.control.reference_trajectory import ReferenceTrajectory
@@ -164,3 +166,26 @@ class PotentialCompensationRegulator(PIDController):
         tau_model = tau_model_y[:n_a]
 
         return tau_model, None
+
+    def update_gains(self, gains: dict[str, Array]) -> "PotentialCompensationRegulator":
+        """
+        This function updates the gains of the PIDControl attribute of the class
+        PotentialCompensationRegulator.
+
+        Args:
+            gains (dict[str, Array]): proportional, integral, and derivative gains
+
+        Returns:
+            updated_self (PotentialCompensationRegulator): self object with updated
+            parameters
+        """
+        updated_pid_control = self.pid_control.update_gains(gains)
+
+        updated_self = eqx.tree_at(
+            lambda x: x.pid_control,
+            self, 
+            updated_pid_control
+        )
+        
+        return updated_self
+    
