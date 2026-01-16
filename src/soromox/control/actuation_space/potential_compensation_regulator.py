@@ -2,9 +2,8 @@ __all__ = ["PotentialCompensationRegulator"]
 
 from typing import Any
 
-from jax import Array
-
 import equinox as eqx
+from jax import Array
 
 from soromox.control.actuation_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
@@ -167,19 +166,21 @@ class PotentialCompensationRegulator(PIDController):
 
         return tau_model, None
 
-    def update_gains(self, gains: dict[str, Array]) -> "PotentialCompensationRegulator":
+    def update_feedback_parameters(
+        self, feedback_parameters: dict[str, Array]
+    ) -> "PotentialCompensationRegulator":
         """
-        This function updates the gains of the PIDControl attribute of the class
-        PotentialCompensationRegulator.
+        This function updates the feedback parameters of this controller, which in this case
+        are the gains of a PID controller.
 
         Args:
-            gains (dict[str, Array]): proportional, integral, and derivative gains
+            feedback_parameters (dict[str, Array]): proportional, integral, and derivative
+            gains
 
         Returns:
-            updated_self (PotentialCompensationRegulator): self object with updated
-            parameters
+            updated_self (PotentialCompensationRegulator): self object with updated parameters
         """
-        updated_pid_control = self.pid_control.update_gains(gains)
+        updated_pid_control = self.pid_control.update_gains(feedback_parameters)
 
         updated_self = eqx.tree_at(lambda x: x.pid_control, self, updated_pid_control)
 

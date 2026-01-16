@@ -1,6 +1,7 @@
 __all__ = ["SynergisticController"]
 
 
+import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
@@ -222,3 +223,23 @@ class SynergisticController(OperationalSpaceBaseController):
         tau_control = P_AM @ J.T @ tau_pid
 
         return tau_control, control_state_dot
+
+    def update_feedback_parameters(
+        self, feedback_parameters: dict[str, Array]
+    ) -> "SynergisticController":
+        """
+        This function updates the feedback parameters of this controller, which in this case
+        are the gains of a PID controller.
+
+        Args:
+            feedback_parameters (dict[str, Array]): proportional, integral, and derivative
+            gains
+
+        Returns:
+            updated_self (SynergisticController): self object with updated parameters
+        """
+        updated_pid_control = self.pid_control.update_gains(feedback_parameters)
+
+        updated_self = eqx.tree_at(lambda x: x.pid_control, self, updated_pid_control)
+
+        return updated_self
