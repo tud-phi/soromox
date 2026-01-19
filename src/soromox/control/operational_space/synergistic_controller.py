@@ -1,7 +1,6 @@
 __all__ = ["SynergisticController"]
 
 
-import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
@@ -9,8 +8,8 @@ from soromox.control.actuation_matrix_utils import (
     ActuationScenario,
     analyze_actuation_matrix,
 )
-from soromox.control.operational_space.base_controller import (
-    OperationalSpaceBaseController,
+from soromox.control.operational_space.pid_controller import (
+    PIDController,
 )
 from soromox.control.pid_control import (
     PIDControl,
@@ -23,7 +22,7 @@ from soromox.coordinate_transformations.operational_space_dynamics import (
 from soromox.systems.system_state import SystemState
 
 
-class SynergisticController(OperationalSpaceBaseController):
+class SynergisticController(PIDController):
     """
     Synergistic controller for soft robots.
 
@@ -70,8 +69,6 @@ class SynergisticController(OperationalSpaceBaseController):
         2508-2515.
     """
 
-    pid_control: PIDControl
-
     def __init__(
         self,
         operational_space_dynamics: OperationalSpaceDynamics,
@@ -95,10 +92,11 @@ class SynergisticController(OperationalSpaceBaseController):
         Raises:
             ValueError: If either assumption (a) or (b) is not met.
         """
-        self.operational_space_dynamics = operational_space_dynamics
-        self.reference_trajectory = reference_trajectory
-        self.robot = operational_space_dynamics.robot
-        self.pid_control = pid_control
+        super().__init__(
+            operational_space_dynamics=operational_space_dynamics,
+            reference_trajectory=reference_trajectory,
+            pid_control=pid_control,
+        )
 
         # Check that the actuation matrix is square and invertible
         self._check_assumptions()
@@ -148,36 +146,17 @@ class SynergisticController(OperationalSpaceBaseController):
             control_state_dot: PIDControllerState derivative if tracking integral
                 error, otherwise None.
         """
-        t = system_state.t
         y = system_state.y
 
         # Extract configuration and velocity
-        q, qd = jnp.split(y, 2)
+        q, _ = jnp.split(y, 2)
 
-        # Get operational space dynamics instance and robot
+        # Get operational space dynamics instance and quantities
         osd = self.operational_space_dynamics
-
-        # Get reference trajectory at current time
-        # IMPORTANT: The reference trajectory should provide FULL poses (all points,
-        # all dimensions), not task-selected pose components. Some components may be ignored
-        # by the controller based on task selection.
-        # - x_des_full: shape (n_points * n_pose_dim,) - full pose
-        # - xd_des_full: shape (n_points * n_velocity_dim,) - full velocity
-        assert self.reference_trajectory.x_des_fn is not None
-        assert self.reference_trajectory.xd_des_fn is not None
-        x_des_full = self.reference_trajectory.x_des_fn(t)
-        xd_des_full = self.reference_trajectory.xd_des_fn(t)
-
-        # Apply task selection to velocity trajectory
-        # (velocity space is where the Jacobian and dynamics operate)
-        xd_des = osd.B_task.T @ xd_des_full
-
-        # Compute operational space quantities
         J = osd.jacobian(q)
 
-        # Current operational space FULL pose (for error computation) and task-selected velocity
-        x_full = osd.operational_space_poses(q)
-        xd = J @ qd  # Task-selected velocity
+        # Compute PID output
+        tau_pid, control_state_dot = self.error_based_feedback_term(system_state)
 
         # Compute configuration-space quantities
         A = self.robot.actuation_matrix(q)
@@ -186,60 +165,7 @@ class SynergisticController(OperationalSpaceBaseController):
         # Dynamically-consisted synergistic projector
         P_AM = jnp.linalg.inv(J @ M_inv @ A) @ J @ M_inv
 
-        # PID control in operational space
-        # tau_pid = J^T @ (Kp @ e_x + Ki integral(e_x) + Kd @ ed_x)
-        #
-        # IMPORTANT: For orientation, we use the geometric error (shortest path)
-        # computed via osd.compute_pose_error(), not naive subtraction (x_des - x).
-        # This ensures:
-        #   - Proper angle wrapping for planar systems
-        #   - Geodesic (shortest path) error for 3D orientations
-        #   - Correct behavior near angle wrap-around points
-        #
-        # The velocity error (xd_des - xd) uses naive subtraction because
-        # angular velocities live in the tangent space where subtraction is valid.
-
-        # Position/orientation error in operational space (geometric error)
-        # Note: compute_task_pose_error takes FULL poses and returns task-selected error
-        e_x = osd.compute_task_pose_error(x_full, x_des_full)
-        # Velocity error in operational space (tangent space, naive subtraction is OK)
-        ed_x = xd_des - xd
-
-        # Get integral error from control state (or zeros if not tracking)
-        control_state: PIDControllerState | None = system_state.control_state
-        if control_state is None:
-            control_state = PIDControllerState.zero(osd.n_operational_space)
-
-        integral_error = control_state.integral_error
-        tau_pid, integral_error_dot = self.pid_control(e_x, ed_x, integral_error)
-
-        # Build control state derivative
-        if control_state is not None:
-            control_state_dot = PIDControllerState(integral_error=integral_error_dot)
-        else:
-            control_state_dot = None
-
         # Total generalized torque
         tau_control = P_AM @ J.T @ tau_pid
 
         return tau_control, control_state_dot
-
-    def update_feedback_parameters(
-        self, feedback_parameters: dict[str, Array]
-    ) -> "SynergisticController":
-        """
-        This function updates the feedback parameters of this controller, which in this case
-        are the gains of a PID controller.
-
-        Args:
-            feedback_parameters (dict[str, Array]): proportional, integral, and derivative
-            gains
-
-        Returns:
-            updated_self (SynergisticController): self object with updated parameters
-        """
-        updated_pid_control = self.pid_control.update_gains(feedback_parameters)
-
-        updated_self = eqx.tree_at(lambda x: x.pid_control, self, updated_pid_control)
-
-        return updated_self

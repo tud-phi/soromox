@@ -29,7 +29,7 @@ def evaluate_closed_loop_system(
 ) -> tuple[Array, dict[str, Array]]:
     # Update optimization parameters
     ctr_params = opt_vars["opt_ctr_params"]
-    controller = controller.update_feedback_parameters(ctr_params)
+    controller = controller.update_gains(ctr_params)
 
     # Run simulation
     trajectory = robot.rollout_closed_loop_to(
