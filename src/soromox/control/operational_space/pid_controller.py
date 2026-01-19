@@ -23,21 +23,22 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
     PID controller in operational space for soft robots.
 
     This controller implements PID control in the robot's operational space, computing
-    control inputs based on tracking errors in the selected operational coordinates only.
+    the force in operational space required to reach x_des, based on tracking errors
+    in the selected operational coordinates only.
 
     Control Law
     -----------
 
     The control law is:
 
-        tau = Kp @ e_x + Ki @ integral_error_x + Kd @ ed_x
+        f_x = Kp @ e_x + Ki @ integral_error_x + Kd @ ed_x
 
     where:
-        - e_x = x_des - x is the operational coordinate error (shape: n_x)
-        - ed_x = xd_des - xd is the operational velocity error (shape: n_x)
+        - e_x = x_des - x is the operational coordinate error (shape: n_o)
+        - ed_x = xd_des - xd is the operational velocity error (shape: n_o)
         - integral_error_x = integral of sat(e_x) over time
         - sat() is an optional saturation function for anti-windup
-        - tau is the actuator input (shape: num_actuators)
+        - f_x is the operational space force (shape: n_o)
 
     Usage
     -----
@@ -92,7 +93,7 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
                     of shape (n_o,), or None if not using integral control.
 
         Returns:
-            tau: The actuator control input, shape (num_actuators,).
+            f_x: The operational space forcing action, shape (n_o,).
             control_state_dot: Time derivative of the PIDControllerState, or None
                 if no control state is being tracked.
         """
@@ -151,7 +152,7 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
         integral_error = control_state.integral_error
 
         # Compute PID output
-        tau, integral_error_dot = self.pid_control(e_x, ed_x, integral_error)
+        f_x, integral_error_dot = self.pid_control(e_x, ed_x, integral_error)
 
         # Build control state derivative
         if control_state is not None:
@@ -159,14 +160,14 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
         else:
             control_state_dot = None
 
-        return tau, control_state_dot
+        return f_x, control_state_dot
 
     def update_gains(self, gains: dict[str, Array]) -> "PIDController":
         """
         This function updates the gains of the PID controller.
 
         Args:
-            feedback_parameters (dict[str, Array]): proportional, integral, and derivative
+            gains (dict[str, Array]): proportional, integral, and derivative
             gains
 
         Returns:

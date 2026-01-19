@@ -12,12 +12,7 @@ from soromox.control.operational_space.pid_controller import (
     PIDController,
 )
 from soromox.control.pid_control import (
-    PIDControl,
     PIDControllerState,
-)
-from soromox.control.reference_trajectory import ReferenceTrajectory
-from soromox.coordinate_transformations.operational_space_dynamics import (
-    OperationalSpaceDynamics,
 )
 from soromox.systems.system_state import SystemState
 
@@ -69,36 +64,16 @@ class SynergisticController(PIDController):
         2508-2515.
     """
 
-    def __init__(
-        self,
-        operational_space_dynamics: OperationalSpaceDynamics,
-        reference_trajectory: ReferenceTrajectory,
-        pid_control: PIDControl,
-    ):
+    def __init__(self, *args, **kwargs):
         """
         Initialize the synergistic controller.
-
-        Args:
-            operational_space_dynamics: The OperationalSpaceDynamics instance that
-                defines the task space and provides transformations between
-                configuration and operational space.
-            reference_trajectory: The desired trajectory in operational space.
-                Must provide x_des_fn (desired position) and xd_des_fn (desired
-                velocity) as functions of time. The trajectory dimension must match
-                the operational space dimension (n_operational_space).
-            pid_control: A task-space PIDControl instance containing the control gains
-                (Kp, Ki, Kd of dimensions o) and optional saturation function.
 
         Raises:
             ValueError: If either assumption (a) or (b) is not met.
         """
-        super().__init__(
-            operational_space_dynamics=operational_space_dynamics,
-            reference_trajectory=reference_trajectory,
-            pid_control=pid_control,
-        )
+        super().__init__(*args, **kwargs)
 
-        # Check that the actuation matrix is square and invertible
+        # Check wheter the assumptions are met
         self._check_assumptions()
 
     def _check_assumptions(self) -> None:
