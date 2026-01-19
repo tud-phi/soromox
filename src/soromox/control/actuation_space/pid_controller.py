@@ -222,8 +222,7 @@ class PIDController(ActuationSpaceBaseController, ClosedFormModelBasedController
         This function updates the gains of the PID controller.
 
         Args:
-            gains (dict[str, Array]): proportional, integral, and derivative
-            gains
+            gains (dict[str, Array]): proportional, integral, and derivative gains
 
         Returns:
             updated_self (PIDController): self object with updated gains
