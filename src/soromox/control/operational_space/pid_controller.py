@@ -45,9 +45,6 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
     Attributes:
         robot: The soft robot system to be controlled.
         reference_trajectory: The desired trajectory in actuation space.
-        reference_trajectory_config_space: The original configuration-space trajectory,
-            or None if trajectory was provided in actuation space. Used by subclasses
-            for model-based control terms that need to evaluate dynamics at q_des.
         actuation_space_dynamics: The ActuationSpaceDynamics instance for
             coordinate transformations.
         pid_control: The PIDControl instance containing gains and saturation.
