@@ -147,9 +147,9 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
         # Get integral error from control state (or zeros if not tracking)
         control_state: PIDControllerState | None = system_state.control_state
         if control_state is None:
-            control_state = PIDControllerState.zero(osd.n_operational_space)
-
-        integral_error = control_state.integral_error
+            integral_error = jnp.zeros(osd.n_operational_space)
+        else:
+            integral_error = control_state.integral_error
 
         # Compute PID output
         f_x, integral_error_dot = self.pid_control(e_x, ed_x, integral_error)

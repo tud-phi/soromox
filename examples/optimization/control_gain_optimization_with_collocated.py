@@ -339,8 +339,8 @@ while i < num_iters:
     eta = time.localtime(time.time() + t_left)
     print(
         f"Completion: {100 * (i + 1) / num_iters:3.1f} %  |  iteration {i + 1:>4d} of "
-        + "{num_iters:<4d}  |  iter time = {iter_duration:>.2f} s  |  ETA = {eta.tm_mday:02d}"
-        + "/{eta.tm_mon:02d}/{eta.tm_year} {eta.tm_hour:02d}:{eta.tm_min:02d}",
+        + f"{num_iters:<4d}  |  iter time = {iter_duration:>.2f} s  |  ETA = {eta.tm_mday:02d}"
+        + f"/{eta.tm_mon:02d}/{eta.tm_year} {eta.tm_hour:02d}:{eta.tm_min:02d}",
         end="\r",
     )
 
@@ -481,7 +481,7 @@ for idx, (strain_idx, strain_name) in enumerate(
         color=color,
         linestyle="-",
         linewidth=1.2,
-        label="Initial",
+        label="Optimized",
     )
 
     ax.set_ylabel(f"{strain_name}")

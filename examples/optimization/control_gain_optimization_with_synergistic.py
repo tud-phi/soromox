@@ -206,7 +206,7 @@ num_ts = save_ts.shape[0]
 
 reference_trajectory = ReferenceTrajectory(
     ts=save_ts,
-    x_des_fn=lambda t: q_des,
+    x_des_fn=lambda t: x_des_full,
     rotation_representation=osd.rotation_representation,
     n_points=osd.n_points,
     is_planar=osd.is_planar,
@@ -373,8 +373,8 @@ while i < num_iters:
     eta = time.localtime(time.time() + t_left)
     print(
         f"Completion: {100 * (i + 1) / num_iters:3.1f} %  |  iteration {i + 1:>4d} of "
-        + "{num_iters:<4d}  |  iter time = {iter_duration:>.2f} s  |  ETA = {eta.tm_mday:02d}"
-        + "/{eta.tm_mon:02d}/{eta.tm_year} {eta.tm_hour:02d}:{eta.tm_min:02d}",
+        + f"{num_iters:<4d}  |  iter time = {iter_duration:>.2f} s  |  ETA = {eta.tm_mday:02d}"
+        + f"/{eta.tm_mon:02d}/{eta.tm_year} {eta.tm_hour:02d}:{eta.tm_min:02d}",
         end="\r",
     )
 
@@ -416,7 +416,8 @@ x_ts_best = vmap(osd.operational_space_poses)(q_ts_best)
 
 # Extract position components for plotting (indices 3, 4, 5 for 3D PCS)
 # For 3D robots with ROTATION_VECTOR: full pose = [rot_x, rot_y, rot_z, p_x, p_y, p_z]
-pos_indices = jnp.array([3, 4, 5])  # Position components
+pos_indices = jnp.arange(6)  # All components
+
 pos_ts_init = x_ts_init[:, pos_indices]
 pos_ts_best = x_ts_best[:, pos_indices]
 
@@ -515,7 +516,7 @@ for idx, (task_idx, task_name) in enumerate(zip(plot_task_indices, plot_task_nam
         color=color,
         linestyle="-",
         linewidth=1.2,
-        label="Initial",
+        label="Optimized",
     )
 
     ax.set_ylabel(f"{task_name}")
@@ -641,7 +642,7 @@ names = ["Initial", "Best"]
 x = jnp.arange(len(names))
 width = 0.25
 
-for _, (task_idx, task_name) in enumerate(zip(plot_task_indices, plot_task_names)):
+for i, (task_idx, task_name) in enumerate(zip(plot_task_indices, plot_task_names)):
     rmse_values = [metrics_init["rmse"][task_idx], metrics_best["rmse"][task_idx]]
     bars = ax.bar(x + i * width, rmse_values, width, label=task_name)
 
