@@ -45,12 +45,12 @@ class SynergisticController(PIDController):
         - xd_des is the desired operational space velocity
 
     Assumptions:
-        (a) Under-actuation: The actuation space has lower dimensionality than
+        (A) Under-actuation: The actuation space has lower dimensionality than
             the configuration space (m < n). If full actuation, consider using,
             for example, the impedance control tracker.
-        (b) The operational space has equal dimensionality of the actuation
-            space (o = m)
-        (c) The matrix J(q) M^{-1}(q) A(q) ∈ ℝ^{m×m} is full-rank
+        (B) The operational space has equal dimensionality of the actuation
+            space (o = m).
+        (C) The matrix J(q) M^{-1}(q) A(q) ∈ ℝ^{m×m} is full-rank.
 
     Attributes:
         operational_space_dynamics: The OperationalSpaceDynamics instance.
@@ -69,7 +69,7 @@ class SynergisticController(PIDController):
         Initialize the synergistic controller.
 
         Raises:
-            ValueError: If either assumption (a) or (b) is not met.
+            ValueError: If either assumption (A) or (B) is not met.
         """
         super().__init__(*args, **kwargs)
 
@@ -78,10 +78,10 @@ class SynergisticController(PIDController):
 
     def _check_assumptions(self) -> None:
         """
-        Check that assumptions (a) and (b) hold.
+        Check that assumptions (A) and (B) hold.
 
         Raises:
-            ValueError: If either (a) or (b) is not met.
+            ValueError: If either (A) or (B) is not met.
         """
         robot = self.operational_space_dynamics.robot
         scenario, shape, _ = analyze_actuation_matrix(robot)
