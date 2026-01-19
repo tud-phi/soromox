@@ -53,9 +53,12 @@ class SynergisticController(PIDController):
         (C) The matrix J(q) M^{-1}(q) A(q) ∈ ℝ^{m×m} is full-rank.
 
     Attributes:
+        robot: The soft robot system to be controlled (inherited from BaseController,
+            should be set to operational_space_dynamics.robot).
         operational_space_dynamics: The OperationalSpaceDynamics instance.
         reference_trajectory: The desired trajectory in operational space.
-        pid_control: The task-space PIDControl instance containing the gains and saturation.
+        pid_control: The PIDControl instance containing gains and saturation.
+            Note: Gains should be sized for the operational coordinates (n_o).
 
     References:
         Della Santina, C., Pallottino, L., Rus, D., & Bicchi, A. (2019). Exact
