@@ -259,6 +259,8 @@ def test_rollout_discrete_control_and_save_steps():
     assert trajectory.u.shape[0] == expected_total_saves
 
     # Verify time steps are correct
+    # Use half of save_dt as tolerance to ensure we capture all expected time points
+    # while accounting for floating-point precision
     expected_times = jnp.arange(0, duration + save_dt / 2, save_dt)
     assert jnp.allclose(trajectory.t, expected_times, atol=1e-10), (
         f"Time steps don't match expected values.\n"
