@@ -197,3 +197,93 @@ def test_rollout_discrete_closed_loop_to_reverse_mode_grad_works():
 
     dloss_dkp = jax.grad(loss_fn)(jnp.array(8.0))
     assert jnp.isfinite(dloss_dkp)
+
+
+def test_rollout_discrete_control_and_save_steps():
+    """Test that control steps and save steps are correct in discrete rollout."""
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.array([0.1, -0.05])
+    qd0 = jnp.zeros_like(q0)
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.concatenate([q0, qd0]),
+        u=jnp.zeros_like(q0),
+        control_state=jnp.zeros_like(q0),
+    )
+
+    class CountingController(eqx.Module):
+        kp: float
+        target: jnp.ndarray
+
+        def __call__(self, state: SystemState):
+            q_len = self.target.shape[0]
+            q, qd = jnp.split(state.y, [q_len], axis=0)
+
+            error = self.target - q
+            u = self.kp * error
+            control_state_dot = error
+            return u, control_state_dot
+
+    controller = CountingController(kp=5.0, target=jnp.zeros_like(q0))
+
+    # Test with explicit parameters
+    duration = 0.3  # 300 ms
+    control_dt = 0.05  # 50 ms control interval
+    save_dt = 0.01  # 10 ms save interval
+
+    # Expected values:
+    # - control_steps = duration / control_dt = 0.3 / 0.05 = 6
+    # - saves_per_control = control_dt / save_dt = 0.05 / 0.01 = 5
+    # - total_saves = saves_per_control * control_steps + 1 = 5 * 6 + 1 = 31
+    # Note: Implementation creates (saves_per_control + 1) samples per interval
+    # and drops first sample from all but the first interval
+    expected_control_steps = int(round(duration / control_dt))
+    saves_per_control = int(round(control_dt / save_dt))
+    expected_total_saves = saves_per_control * expected_control_steps + 1
+
+    trajectory = robot.rollout_discrete_closed_loop_to(
+        initial_state=initial_state,
+        controller=controller,
+        duration=duration,
+        solver_dt=1e-3,
+        control_dt=control_dt,
+        save_dt=save_dt,
+    )
+
+    # Verify save steps
+    assert trajectory.t.shape[0] == expected_total_saves, (
+        f"Expected {expected_total_saves} save steps, got {trajectory.t.shape[0]}"
+    )
+    assert trajectory.y.shape[0] == expected_total_saves
+    assert trajectory.u.shape[0] == expected_total_saves
+
+    # Verify time steps are correct
+    expected_times = jnp.arange(0, duration + save_dt / 2, save_dt)
+    assert jnp.allclose(trajectory.t, expected_times, atol=1e-10), (
+        f"Time steps don't match expected values.\n"
+        f"Expected: {expected_times}\n"
+        f"Got: {trajectory.t}"
+    )
+
+    # Verify that control changes happen at the right intervals
+    # The control input should be constant within each control interval
+    # First interval: indices 0 to saves_per_control (inclusive)
+    # Subsequent intervals: each has saves_per_control entries
+    control_boundaries = [0]  # Start of each control interval
+    control_boundaries.append(saves_per_control + 1)  # End of first interval
+    for i in range(1, expected_control_steps):
+        control_boundaries.append(control_boundaries[-1] + saves_per_control)
+
+    for i in range(expected_control_steps):
+        start_idx = control_boundaries[i]
+        end_idx = control_boundaries[i + 1]
+        # Within each control interval, all u values should be the same
+        control_segment = trajectory.u[start_idx:end_idx]
+        for j in range(1, control_segment.shape[0]):
+            assert jnp.allclose(control_segment[j], control_segment[0], atol=1e-6), (
+                f"Control should be constant within interval {i} "
+                f"(indices {start_idx}:{end_idx}), "
+                f"but differs at index {start_idx + j}: "
+                f"{control_segment[0]} vs {control_segment[j]}"
+            )
