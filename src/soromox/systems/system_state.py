@@ -10,7 +10,12 @@ from jax import Array
 @dataclass
 class SystemState:
     """
-    Container for the system state and optional controller/environment state.
+    Simulation snapshot of the robot and optional coupled controller/environment state.
+
+    `SystemState` is the public state object passed to controllers and environment
+    models, and returned by rollout methods. The robot dynamics state is stored in
+    `y`; `control_state` and `environment_state` store optional auxiliary dynamics
+    that are coupled to the robot during simulation.
 
     Attributes:
         t: Current simulation time.
