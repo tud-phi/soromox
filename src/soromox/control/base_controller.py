@@ -73,6 +73,7 @@ class BaseController(eqx.Module, ABC):
                 - y (Array): Robot state vector (typically, configuration and velocity)
                 - u (Optional[Array]): Previous actuation input (optional)
                 - control_state (Optional[Any]): Internal controller state (optional)
+                - environment_state (Optional[Any]): Environment state (optional)
 
         Returns:
             u_control (Array): The control input to apply, shape (num_actuators,).

@@ -35,6 +35,30 @@ class PIDController(eqx.Module):
         return u, control_state_dot
 
 
+class ZeroController(eqx.Module):
+    num_actuators: int
+
+    def __call__(self, state: SystemState):
+        return jnp.zeros((self.num_actuators,)), None
+
+
+class ConstantTorqueEnvironment(eqx.Module):
+    tau: jnp.ndarray
+
+    def __call__(self, state: SystemState):
+        return self.tau, None
+
+
+class ClockEnvironment(eqx.Module):
+    def __call__(self, state: SystemState):
+        q_len = state.y.shape[0] // 2
+        tau_environment = jnp.zeros((q_len,))
+        environment_state_dot = {
+            "clock": jnp.ones_like(state.environment_state["clock"])
+        }
+        return tau_environment, environment_state_dot
+
+
 def test_rollout_to_keeps_equilibrium():
     robot = Pendulum(_pendulum_params())
 
@@ -52,6 +76,64 @@ def test_rollout_to_keeps_equilibrium():
 
     assert trajectory.control_state is None
     assert jnp.allclose(trajectory.y, 0.0, atol=1e-6)
+
+
+def test_rollout_to_environment_model_matches_tau_ext():
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.zeros((2,))
+    qd0 = jnp.zeros_like(q0)
+    tau_ext = jnp.array([0.2, -0.1])
+    initial_state = SystemState(t=0.0, y=jnp.concatenate([q0, qd0]))
+
+    trajectory_with_tau = robot.rollout_to(
+        initial_state=initial_state,
+        u=jnp.zeros_like(q0),
+        tau_ext=tau_ext,
+        t1=0.1,
+        solver_dt=1e-3,
+        save_dt=0.02,
+    )
+    trajectory_with_environment = robot.rollout_to(
+        initial_state=initial_state,
+        u=jnp.zeros_like(q0),
+        environment_model=ConstantTorqueEnvironment(tau=tau_ext),
+        t1=0.1,
+        solver_dt=1e-3,
+        save_dt=0.02,
+    )
+
+    assert trajectory_with_environment.environment_state is None
+    assert jnp.allclose(trajectory_with_environment.y, trajectory_with_tau.y, atol=1e-6)
+
+
+def test_rollout_to_tracks_environment_state():
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.zeros((2,))
+    qd0 = jnp.zeros_like(q0)
+    initial_clock = jnp.array(2.0)
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.concatenate([q0, qd0]),
+        environment_state={"clock": initial_clock},
+    )
+
+    trajectory = robot.rollout_to(
+        initial_state=initial_state,
+        u=jnp.zeros_like(q0),
+        environment_model=ClockEnvironment(),
+        t1=0.1,
+        solver_dt=1e-3,
+        save_dt=0.02,
+    )
+
+    assert trajectory.environment_state is not None
+    assert jnp.allclose(
+        trajectory.environment_state["clock"],
+        initial_clock + trajectory.t,
+        atol=1e-5,
+    )
 
 
 def test_rollout_closed_loop_to_tracks_target():
@@ -81,6 +163,40 @@ def test_rollout_closed_loop_to_tracks_target():
     assert trajectory.control_state is not None
 
 
+def test_rollout_closed_loop_to_environment_model_matches_tau_ext():
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.zeros((2,))
+    qd0 = jnp.zeros_like(q0)
+    tau_ext = jnp.array([0.15, -0.05])
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.concatenate([q0, qd0]),
+        u=jnp.zeros_like(q0),
+    )
+    controller = ZeroController(num_actuators=q0.shape[0])
+
+    trajectory_with_tau = robot.rollout_closed_loop_to(
+        initial_state=initial_state,
+        controller=controller,
+        tau_ext=tau_ext,
+        t1=0.1,
+        solver_dt=1e-3,
+        save_dt=0.02,
+    )
+    trajectory_with_environment = robot.rollout_closed_loop_to(
+        initial_state=initial_state,
+        controller=controller,
+        environment_model=ConstantTorqueEnvironment(tau=tau_ext),
+        t1=0.1,
+        solver_dt=1e-3,
+        save_dt=0.02,
+    )
+
+    assert trajectory_with_environment.environment_state is None
+    assert jnp.allclose(trajectory_with_environment.y, trajectory_with_tau.y, atol=1e-6)
+
+
 def test_rollout_discrete_closed_loop_to_tracks_target():
     robot = Pendulum(_pendulum_params())
 
@@ -107,6 +223,38 @@ def test_rollout_discrete_closed_loop_to_tracks_target():
     q_final = trajectory.y[-1, : q0.shape[0]]
     assert jnp.linalg.norm(q_final) < 7e-2
     assert trajectory.control_state is not None
+
+
+def test_rollout_discrete_closed_loop_to_tracks_environment_state():
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.zeros((2,))
+    qd0 = jnp.zeros_like(q0)
+    initial_clock = jnp.array(-1.0)
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.concatenate([q0, qd0]),
+        u=jnp.zeros_like(q0),
+        environment_state={"clock": initial_clock},
+    )
+    controller = ZeroController(num_actuators=q0.shape[0])
+
+    trajectory = robot.rollout_discrete_closed_loop_to(
+        initial_state=initial_state,
+        controller=controller,
+        environment_model=ClockEnvironment(),
+        duration=0.1,
+        solver_dt=1e-3,
+        control_dt=0.02,
+        save_dt=0.01,
+    )
+
+    assert trajectory.environment_state is not None
+    assert jnp.allclose(
+        trajectory.environment_state["clock"],
+        initial_clock + trajectory.t,
+        atol=1e-5,
+    )
 
 
 def test_rollout_discrete_closed_loop_to_is_jittable():
@@ -274,7 +422,7 @@ def test_rollout_discrete_control_and_save_steps():
     # Subsequent intervals: each has saves_per_control entries
     control_boundaries = [0]  # Start of each control interval
     control_boundaries.append(saves_per_control + 1)  # End of first interval
-    for i in range(1, expected_control_steps):
+    for _ in range(1, expected_control_steps):
         control_boundaries.append(control_boundaries[-1] + saves_per_control)
 
     for i in range(expected_control_steps):
