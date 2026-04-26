@@ -37,8 +37,7 @@ except ImportError as exc:  # pragma: no cover - this is a runtime guard
 
 import matplotlib.pyplot as plt
 
-from soromox.systems import GVS, CrossSectionGeometry, SystemState
-from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
+from soromox.systems import SystemState
 from tools.benchmarks._benchmark_common import (
     add_integration_args,
     add_system_selection_args,
@@ -80,61 +79,6 @@ class SystemBenchmark:
     size_label: str
     build_context: Callable[[Any], MutableMapping[str, Array]]
     cases: Sequence[BenchmarkCase]
-
-
-def _gvs_factory(num_segments: int) -> GVS:
-    links: list[LinkAttributes] = []
-    joints: list[JointAttributes] = []
-    bases: list[BasisAttributes] = []
-    n_gauss: list[int] = []
-
-    for _ in range(num_segments):
-        links.append(
-            LinkAttributes(
-                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                E=1.0e6,
-                nu=0.45,
-                rho=980.0,
-                eta=2.5e3,
-                L=0.25,
-                r_i=0.02,
-                r_f=0.02,
-            )
-        )
-        joints.append(JointAttributes(jointtype="Fixed"))
-        bases.append(
-            BasisAttributes(
-                basistype="Monomial",
-                Bdof=[1, 1, 1, 1, 1, 1],
-                Bodr=[1, 1, 1, 1, 1, 1],
-                xi_ref=[0, 0, 0, 1, 0, 0],
-            )
-        )
-        n_gauss.append(5)
-
-    return GVS(
-        links_list=links,
-        joints_list=joints,
-        basis_list=bases,
-        n_gauss_list=n_gauss,
-        gravity_vector=[0.0, 0.0, 9.81],
-    )
-
-
-def _gvs_context(system: GVS) -> MutableMapping[str, Array]:
-    dof = system.dof_tot_system
-    q = jnp.linspace(-0.12, 0.12, dof)
-    qd = jnp.linspace(0.16, -0.16, dof)
-    ctx: MutableMapping[str, Array] = {
-        "q": q,
-        "qd": qd,
-        "u": jnp.zeros((system.num_actuators,)),
-        "tau_ext": jnp.zeros((dof,)),
-        "y": jnp.concatenate([q, qd]),
-        "t": jnp.array(0.0),
-        "s_tip": jnp.sum(system.V_L),
-    }
-    return ctx
 
 
 def _measure_jitted_call(
@@ -456,9 +400,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             cases=pcs_cases,
         ),
         "gvs": SystemBenchmark(
-            factory=_gvs_factory,
-            size_label="num_segments",
-            build_context=_gvs_context,
+            factory=shared["gvs"].factory,
+            size_label=shared["gvs"].size_label,
+            build_context=shared["gvs"].build_context,
             cases=gvs_cases,
         ),
     }

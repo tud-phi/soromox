@@ -149,10 +149,10 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
 
 
 def _gvs_factory(num_segments: int) -> GVS:
-    links: Sequence[LinkAttributes] = []
-    joints: Sequence[JointAttributes] = []
-    bases: Sequence[BasisAttributes] = []
-    n_gauss: Sequence[int] = []
+    links: list[LinkAttributes] = []
+    joints: list[JointAttributes] = []
+    bases: list[BasisAttributes] = []
+    n_gauss: list[int] = []
     for _ in range(num_segments):
         links.append(
             LinkAttributes(
@@ -171,17 +171,17 @@ def _gvs_factory(num_segments: int) -> GVS:
             BasisAttributes(
                 basistype="Monomial",
                 Bdof=[1, 1, 1, 1, 1, 1],
-                Bodr=[0, 0, 0, 0, 0, 0],
+                Bodr=[1, 1, 1, 1, 1, 1],
                 xi_ref=[0, 0, 0, 1, 0, 0],
             )
         )
         n_gauss.append(5)
 
     return GVS(
-        links_list=list(links),
-        joints_list=list(joints),
-        basis_list=list(bases),
-        n_gauss_list=list(n_gauss),
+        links_list=links,
+        joints_list=joints,
+        basis_list=bases,
+        n_gauss_list=n_gauss,
         gravity_vector=[0.0, 0.0, 9.81],
     )
 
@@ -197,6 +197,7 @@ def _gvs_context(system: GVS) -> MutableMapping[str, Array]:
         "tau_ext": jnp.zeros((dof,)),
         "y": jnp.concatenate([q, qd]),
         "t": jnp.array(0.0),
+        "s_tip": jnp.sum(system.V_L),
     }
     return ctx
 
