@@ -66,6 +66,8 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
             K(q) = S q with S ≻ 0 and D ≻ 0 (positive definite stiffness and damping)
 
     Attributes:
+        robot: The soft robot system to be controlled (inherited from BaseController,
+            should be set to operational_space_dynamics.robot).
         operational_space_dynamics: The OperationalSpaceDynamics instance.
         reference_trajectory: The desired trajectory in operational space.
         K_x: Operational space stiffness gain matrix, shape (o, o) or (o,).

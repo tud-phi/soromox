@@ -5,102 +5,97 @@
 # 🤖 Soft Robot Models in jaX (SoRoMoX)
 
 <div class="doc-summary">
-  <strong>Welcome to Soft Robot Models in jaX (SoRoMoX)!</strong> A cutting-edge library for fast, parallelizable, and differentiable simulations of soft robots using JAX and symbolic mathematics.
+  <strong>Welcome to SoRoMoX!</strong> A comprehensive library for soft robot modeling, model-based control, and visualization. Built on JAX for fast, parallelizable, and differentiable executation of soft robot models.
 </div>
 
-!!! info "📢 Successor to JSRM"
-    
-    SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). The main improvements include:
-    
-    - **🎯 Extended System Support**: Spatial PCS and GVS systems
-    - **⚡ Numerical Implementation**: Replaced symbolic derivations with numerical implementations for better scalability and significantly reduced JIT compilation times
-    - **🏗️ Object-Oriented Architecture**: Migration from functional to Equinox dataclasses-based design enabling easy extendability and modification of methods (e.g., changing actuation mapping)
+!!! info "Successor to JSRM"
+
+    SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). Key improvements include:
+
+    - **Extended System Support**: Spatial PCS and GVS systems
+    - **Numerical Implementation**: Replaced symbolic derivations with numerical implementations for better scalability and significantly reduced JIT compilation times
+    - **Object-Oriented Architecture**: Migration from functional to Equinox dataclasses-based design enabling easy extendability and modification of methods
+    - **Model-Based Control**: Comprehensive suite of model-based controllers for soft robots
+    - **Visualization**: Multiple rendering backends for 2D and 3D visualization
 
 ---
 
-## 🎯 Overview
+## Overview
 
-This repository contains symbolic derivations of the kinematics and dynamics of various soft robots using **SymPy**.
-The symbolic expressions are then implemented in **JAX** and can be used for fast, parallelizable, and differentiable simulations.
+SoRoMoX provides three core capabilities for soft robotics research and development:
 
 <div class="feature-grid">
   <div class="feature-card">
-    <h3><span class="icon">⚡</span> JAX-Powered</h3>
-    <p>Leverage JAX for lightning-fast computations with automatic differentiation and JIT compilation</p>
+    <h3><span class="icon">🤖</span> Soft Robot Models</h3>
+    <p>Kinematic and dynamic models of continuum and articulated soft robots with symbolic foundations and JAX implementation</p>
   </div>
-  
+
   <div class="feature-card">
-    <h3><span class="icon">🧮</span> Symbolic Foundation</h3>
-    <p>Mathematically rigorous models derived from first principles using symbolic computation</p>
+    <h3><span class="icon">🎮</span> Model-Based Control</h3>
+    <p>Comprehensive suite of controllers: PID, gravity cancellation, potential shaping, impedance control, and computed torque</p>
   </div>
-  
+
   <div class="feature-card">
-    <h3><span class="icon">🔧</span> Modular Design</h3>
-    <p>Extensible architecture that makes it easy to add new robot types and configurations</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">📊</span> Differentiable</h3>
-    <p>Full gradient support for optimization, control, and machine learning applications</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">🚀</span> High Performance</h3>
-    <p>Parallelizable computations that scale efficiently across multiple devices</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">🔬</span> Research-Ready</h3>
-    <p>Validated implementations used in peer-reviewed robotics research</p>
+    <h3><span class="icon">🎨</span> Visualization</h3>
+    <p>Multiple rendering backends including Matplotlib, Open3D, Viser (web-based 3D), and OpenCV for 2D visualization</p>
   </div>
 </div>
 
 ---
 
-## 🤖 Supported Robot Types
+## Key Features
+
+=== "JAX-Powered Performance"
+
+    - **JIT Compilation**: Optimized machine code generation for maximum speed
+    - **Automatic Differentiation**: Full gradient support for all operations
+    - **GPU/TPU Support**: Seamless acceleration on modern hardware
+    - **Parallel Processing**: Batch simulations across multiple devices with `vmap`
+
+=== "Soft Robot Models"
+
+    - **PCS (Piecewise Constant Strain)**: Continuum robots with constant strain segments
+    - **GVS (Generalized Variable Strain)**: Flexible strain basis functions (Legendre, Chebyshev, Fourier)
+    - **HSA (Handed Shearing Auxetics)**: Robots with auxetic material properties
+    - **Pendulum Systems**: Classical and tendon-actuated N-link articulated robots
+    - **Multiple Actuators**: Support for tendon and pneumatic actuation
+
+=== "Model-Based Controllers"
+
+    - **Configuration-Space**: PID, gravity cancellation, potential compensation/cancellation regulators, computed torque
+    - **Operational-Space**: Impedance control, synergistic controllers
+    - **Actuation-Space**: Direct control of actuator inputs (tendons, pressures)
+    - **Trajectory Tracking**: Feedforward compensation and mixed state feedback trackers
+
+=== "Visualization"
+
+    - **MatplotlibRenderer**: Generic 2D/3D plotting with Matplotlib
+    - **ViserRenderer**: Interactive web-based 3D visualization in your browser
+    - **Open3DRenderer**: High-quality 3D rendering with Open3D
+    - **OpenCVPlanarRenderer**: Fast 2D rendering for planar robots
+    - **Video Export**: Generate MP4 videos of simulations
+
+---
+
+## Supported Soft Robot Types
 
 SoRoMoX supports both planar (2D) and spatial (3D) soft robot architectures:
 
-!!! note "🦾 **Pendulum Systems**"
+!!! note "Pendulum Systems"
     Classical and tendon-actuated N-link articulated robots for benchmarking and cable-driven mechanisms
 
-!!! tip "🌊 **PCS Systems (Piecewise Constant Strain)**"
+!!! tip "PCS Systems (Piecewise Constant Strain)"
     Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pneumatic actuation
 
-!!! abstract "🧬 **GVS Systems (Geometric Variable Strain)**"
-    Advanced continuum robots with flexible strain basis functions (Legendre, Chebyshev, Fourier, etc.)
+!!! abstract "GVS Systems (Geometric Variable Strain)"
+    Advanced continuum robots with flexible strain basis functions (Legendre, Chebyshev, Fourier, etc.) and optional tendon actuation
 
-!!! info "🔗 **HSA Systems (Handed Shearing Auxetics)**"
+!!! info "HSA Systems (Handed Shearing Auxetics)"
     Novel soft robots with auxetic material properties for unique deformation characteristics
 
 ---
 
-## ✨ Key Features
-
-=== "🚀 Performance"
-
-    - **JAX Backend**: Ultra-fast computations with automatic vectorization
-    - **JIT Compilation**: Optimized machine code generation for maximum speed  
-    - **GPU/TPU Support**: Seamless acceleration on modern hardware
-    - **Parallel Processing**: Scale across multiple devices effortlessly
-
-=== "🧠 Intelligence"
-
-    - **Automatic Differentiation**: Full gradient support for all operations
-    - **Symbolic Derivation**: Mathematically rigorous kinematic and dynamic models
-    - **Optimization Ready**: Perfect for control and learning applications
-    - **Numerical Stability**: Robust implementations that handle edge cases
-
-=== "🔧 Usability"
-
-    - **Clean API**: Intuitive interfaces that are easy to learn and use
-    - **Comprehensive Documentation**: Detailed guides, examples, and API reference
-    - **Extensible Design**: Add new robot types and configurations with ease
-    - **Research Proven**: Validated in real-world robotics applications
-
----
-
-## 🚀 Quick Start
+## Quick Start
 
 Get up and running in minutes:
 
@@ -110,63 +105,173 @@ Get up and running in minutes:
     pip install soromox
     ```
 
-=== "Basic Usage"
+    For visualization support:
+    ```bash
+    pip install soromox[rendering]
+    ```
+
+    For running examples:
+    ```bash
+    pip install soromox[examples]
+    ```
+
+    For all optional dependencies:
+    ```bash
+    pip install soromox[all]
+    ```
+
+=== "Simulation"
 
     ```python
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS
+    from soromox.systems import PlanarPCS, SystemState
 
-    # Create a planar PCS robot
+    # Create a planar PCS soft robot
     robot = PlanarPCS(num_segments=3, params=params)
-    
-    # Compute forward kinematics
-    q = jnp.array([0.1, 0.2, 0.3])  # Configuration
-    chi = robot.forward_kinematics(q, s=1.0)  # End-effector pose
+
+    # Initialize state
+    q0 = jnp.zeros(robot.n_q)
+    qd0 = jnp.zeros(robot.n_q)
+    initial_state = SystemState(t=0.0, y=jnp.concatenate([q0, qd0]))
+
+    # Simulate
+    trajectory = robot.rollout_to(
+        initial_state=initial_state,
+        u=jnp.zeros(robot.n_q),
+        t1=5.0,
+        solver_dt=1e-4,
+        save_dt=0.01,
+    )
     ```
 
-=== "Advanced Features"
+=== "Model-Based Control"
 
     ```python
-    # Compute Jacobians for control
-    J = robot.jacobian(q, s=1.0)
-    
-    # Dynamic simulation
-    B, C, G, K, D, A = robot.dynamical_matrices(q, qd)
-    
-    # Differentiable operations
-    loss_fn = lambda q: jnp.sum(robot.forward_kinematics(q, s=1.0)**2)
-    grad_fn = jax.grad(loss_fn)
+    from soromox.control import (
+        PIDControl,
+        PIDControllerState,
+        ReferenceTrajectory,
+    )
+    from soromox.control.configuration_space import (
+        PotentialCancellationRegulator,
+    )
+
+    # Define PID gains
+    pid_control = PIDControl(
+        Kp=1e-2 * jnp.ones(robot.n_q),
+        Ki=1e-3 * jnp.ones(robot.n_q),
+        Kd=1e-4 * jnp.ones(robot.n_q),
+    )
+
+    # Define desired setpoint
+    q_des = jnp.array([0.1, 0.0, 0.0, 0.2, 0.0, 0.0, 0.3, 0.0, 0.0])
+    reference = ReferenceTrajectory(q=q_des)
+
+    # Create model-based controller (gravity + elastic compensation)
+    controller = PotentialCancellationRegulator(
+        robot=robot,
+        reference_trajectory=reference,
+        pid_control=pid_control,
+    )
+
+    # Run closed-loop simulation
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.concatenate([q0, qd0]),
+        control_state=PIDControllerState.zero(robot.n_q),
+    )
+
+    trajectory = robot.rollout_closed_loop_to(
+        initial_state=initial_state,
+        controller=controller,
+        t1=5.0,
+        solver_dt=1e-4,
+        save_dt=0.01,
+    )
+    ```
+
+=== "Visualization"
+
+    ```python
+    from soromox.rendering import ViserRenderer
+
+    # Create interactive 3D visualization
+    renderer = ViserRenderer(robot, num_points=50)
+
+    # Render a trajectory (opens in browser)
+    renderer.render_sequence(
+        ts=trajectory.t,
+        q_ts=trajectory.y[:, :robot.n_q],
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+    )
     ```
 
 ---
 
-## 📚 Quick Links
+## Model-Based Control
+
+SoRoMoX provides a comprehensive suite of model-based controllers organized by control space:
+
+!!! note "Configuration-Space Controllers"
+    Control in generalized coordinates (strains, joint angles). Includes PID, gravity cancellation, potential shaping regulators, computed torque, and trajectory trackers.
+
+!!! tip "Operational-Space Controllers"
+    Control in task/end-effector space. Includes impedance control and synergistic task/null-space controllers.
+
+!!! abstract "Actuation-Space Controllers"
+    Direct control of actuator inputs (tendon forces, pressures). Includes PID and potential-based regulators mapped to actuator space.
+
+---
+
+## Rendering Backends
+
+SoRoMoX supports multiple visualization backends for different use cases:
+
+| Renderer | Use Case | Features |
+|----------|----------|----------|
+| `ViserRenderer` | Interactive exploration | Web-based 3D, playback controls, browser interface |
+| `Open3DRenderer` | High-quality 3D | Point clouds, meshes, camera control |
+| `MatplotlibRenderer` | Publication figures | 2D/3D plots, customizable styling |
+| `OpenCVPlanarRenderer` | Fast 2D visualization | Real-time rendering, video export |
+
+All renderers support:
+
+- Single frame rendering
+- Trajectory playback
+- Video export (MP4)
+- Customizable color themes and camera configurations
+
+---
+
+## Quick Links
 
 <div class="feature-grid">
   <div class="feature-card">
-    <h3><span class="icon">📦</span> [Installation Guide](installation.md)</h3>
+    <h3><span class="icon">📦</span> <a href="installation/">Installation Guide</a></h3>
     <p>Get SoRoMoX installed and configured on your system</p>
   </div>
-  
+
   <div class="feature-card">
-    <h3><span class="icon">🚀</span> [Quick Start](user-guide/quick-start.md)</h3>
+    <h3><span class="icon">🚀</span> <a href="user-guide/quick-start/">Quick Start</a></h3>
     <p>Jump right in with hands-on tutorials and examples</p>
   </div>
-  
+
   <div class="feature-card">
-    <h3><span class="icon">📖</span> [Examples](user-guide/examples.md)</h3>
-    <p>Explore comprehensive examples and use cases</p>
+    <h3><span class="icon">📖</span> <a href="user-guide/examples/">Examples</a></h3>
+    <p>Explore comprehensive examples for simulation, control, and visualization</p>
   </div>
-  
+
   <div class="feature-card">
-    <h3><span class="icon">📋</span> [API Reference](api/overview.md)</h3>
+    <h3><span class="icon">📋</span> <a href="api/overview/">API Reference</a></h3>
     <p>Complete documentation of all classes and functions</p>
   </div>
 </div>
 
 ---
 
-## 📄 Citation
+## Citation
 
 !!! quote "If you use our software in your research, please cite:"
 
@@ -220,7 +325,7 @@ Get up and running in minutes:
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please see our [Contributing Guide](development/contributing.md) for details on how to get started.
 

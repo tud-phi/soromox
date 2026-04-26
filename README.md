@@ -17,15 +17,22 @@
 
 > **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS and GVS), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
 
-We provide implementations of several popular and expressive soft robot models in JAX for fast, parallelizable, and differentiable simulations. Specifically, we focus on strain-based models that are suitable for modeling slender structures like soft robots (i.e., robots with a large length compared to their diameter often referred to as Cosserat rods).
-So far, we have implemented the following systems:
+SoRoMoX provides three core capabilities for soft robotics research:
 
-- [N-link pendulum](examples/simulate_pendulum.py)
-- [Planar Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_planar_pcs.py)
-- [Spatial Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_pcs.py)
-- [Planar Handed Shearing Auxetics (HSA) robot](examples/simulate_planar_hsa.py)
+- **Soft Robot Models**: Kinematic and dynamic models of continuum and articulated soft robots with JAX implementation
+- **Model-Based Control**: Comprehensive suite of controllers including PID, gravity cancellation, potential shaping, impedance control, and computed torque
+- **Visualization**: Multiple rendering backends (Matplotlib, Open3D, Viser, OpenCV) for 2D and 3D visualization
 
-We are happy to receive contributions for other soft robot models. See the [Contributing Guide](development/contributing.md) for more details.
+We focus on strain-based models suitable for modeling slender structures (Cosserat rods). The following systems are implemented:
+
+| System Type | Variants |
+|-------------|----------|
+| Pendulum | [N-link](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py) |
+| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Tendon-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [Pneumatic-Actuated](examples/simulation/pcs/simulate_pneumatic_actuated_planar_pcs.py) |
+| GVS (Geometric Variable Strain) | [Spatial](examples/simulation/gvs/simulate_gvs.py), [Tendon-Actuated](examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
+| HSA (Handed Shearing Auxetics) | [Planar](examples/simulation/hsa/simulate_planar_hsa.py) |
+
+We are happy to receive contributions for other soft robot models. See the [Contributing Guide](docs/development/contributing.md) for more details.
 
 ## Citation
 
@@ -139,16 +146,22 @@ uv sync --extra dev --extra examples
 
 ## Usage
 
-Simply, call one of the example scripts to simulate a system. For example, to simulate the N-link pendulum:
+Simply call one of the example scripts to simulate a system. For example, to simulate the N-link pendulum:
 
 ```bash
-python examples/simulate_pendulum.py
+python examples/simulation/pendulum/simulate_pendulum.py
 ```
 
 or to simulate the planar PCS robot:
 
 ```bash
-python examples/simulate_planar_pcs.py
+python examples/simulation/pcs/simulate_planar_pcs.py
+```
+
+For model-based control examples:
+
+```bash
+python examples/control/configuration_space/setpoint_regulation_comparison.py
 ```
 
 ## Documentation

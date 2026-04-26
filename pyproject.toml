@@ -151,6 +151,7 @@ examples = [
     "matplotlib",
     "open3d>=0.18",
     "opencv-python",
+    "optax",
     "optimistix",
     "plotly",
     "seaborn",

@@ -226,3 +226,34 @@ class PIDControl(eqx.Module):
         integral_error_dot = self._apply_saturation(e)
 
         return u, integral_error_dot
+
+    def update_gains(self, gains: dict[str, Array]) -> "PIDControl":
+        """
+        This function updates the gains of the PIDControl object.
+
+        Args:
+            gains (dict[str, Array]): proportional, integral, and derivative gains
+
+        Returns:
+            updated_self (PIDControl): self object with updated parameters
+        """
+        updated_self = self
+        valid_keys = {"Kp", "Ki", "Kd"}
+
+        for key in gains:
+            if key not in valid_keys:
+                raise KeyError(
+                    f"Attempted to update unknown gain parameter '{key}'. "
+                    f"Valid keys are: {list(valid_keys)}"
+                )
+        updated_Kp = gains.get("Kp", self.Kp)
+        updated_Ki = gains.get("Ki", self.Ki)
+        updated_Kd = gains.get("Kd", self.Kd)
+
+        updated_self = eqx.tree_at(
+            lambda x: (x.Kp, x.Ki, x.Kd),
+            updated_self,
+            (updated_Kp, updated_Ki, updated_Kd),
+        )
+
+        return updated_self

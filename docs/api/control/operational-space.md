@@ -88,20 +88,31 @@ Synergistic control enables exact task execution in highly under-actuated soft r
 The control law is:
 
 $$
-\tau = (J(q) M^{-1}(q) A(q))^{-1} J(q) M^{-1}(q) J^T(q) (K_x (x^d - x) - D_x \dot{x})
+\tau = P_{AM}(q) J^T(q) \left(K_p e_x + K_i \int e_x \, dt + K_d e_{\dot{x}}\right)
+$$
+
+with:
+
+$$
+P_{AM}(q) = (J(q) M^{-1}(q) A(q))^{-1} J(q) M^{-1}(q),
+\quad e_x = x^d - x,
+\quad e_{\dot{x}} = \dot{x}^d - \dot{x}
 $$
 
 where:
 - \(A(q)\) is the actuation matrix
 - \(M(q)\) is the inertia matrix
 - \(J(q)\) is the operational space Jacobian
-- \(K_x\) is the operational space proportional gain matrix
-- \(D_x\) is the operational space derivative gain matrix
-- \(x^d\) is the desired operational space position
-- \(x\) is the current operational space position
+- \(K_p\) is the operational space proportional gain matrix
+- \(K_i\) is the operational space integral gain matrix
+- \(K_d\) is the operational space derivative gain matrix
+- \(e_x\) is the operational space pose error (geometric error for orientation)
+- \(x^d\) is the desired operational space pose
+- \(x\) is the current operational space pose
+- \(\dot{x}^d\) is the desired operational space velocity
 - \(\dot{x}\) is the current operational space velocity
 
-The key insight is the use of a dynamically-consistent synergistic projector \(P_{AM} = (J M^{-1} A)^{-1} J M^{-1}\) that maps operational-space PD control forces to actuator inputs while respecting the system's dynamic structure.
+The key insight is the use of a dynamically-consistent synergistic projector \(P_{AM}\) that maps operational-space PID control forces to actuator inputs while respecting the system's dynamic structure.
 
 !!! info "Assumptions"
     The synergistic controller assumes:
@@ -162,7 +173,11 @@ controller = OperationalSpaceImpedanceControlTracker(
 
 ```python
 import jax.numpy as jnp
-from soromox.control import OperationalSpaceSynergisticController, ReferenceTrajectory
+from soromox.control import (
+    OperationalSpaceSynergisticController,
+    PIDControl,
+    ReferenceTrajectory,
+)
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 
 # Create operational space dynamics (defines the task space)
@@ -183,12 +198,17 @@ x_des = jnp.zeros((len(ts), osd.n_operational_space))
 
 ref_traj = ReferenceTrajectory(ts=ts, x_des_ts=x_des)
 
+# Define PID gains in operational space
+Kp = 100.0 * jnp.ones((osd.n_operational_space,))
+Ki = 10.0 * jnp.ones((osd.n_operational_space,))
+Kd = 5.0 * jnp.ones((osd.n_operational_space,))
+pid_control = PIDControl(Kp, Ki, Kd)
+
 # Create synergistic controller (for under-actuated systems: m < n, o = m)
 controller = OperationalSpaceSynergisticController(
     operational_space_dynamics=osd,
     reference_trajectory=ref_traj,
-    K_x=100.0,  # Stiffness (scalar, vector, or matrix)
-    D_x=10.0,   # Damping (scalar, vector, or matrix)
+    pid_control=pid_control,
 )
 ```
 
@@ -207,4 +227,3 @@ For soft robot applications:
 For synergistic control of under-actuated soft robots:
 
 - Della Santina, C., Pallottino, L., Rus, D., & Bicchi, A. (2019). Exact task execution in highly under-actuated soft limbs: an operational space based approach. *IEEE Robotics and Automation Letters*, 4(3), 2508-2515.
-

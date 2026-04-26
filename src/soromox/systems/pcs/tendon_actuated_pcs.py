@@ -107,6 +107,8 @@ class TendonActuatedPCS(PCS):
         num_segments: int,
         params: dict[str, Array],
         *args,
+        tendon_routing_basis: dict[str, Callable] | None = None,
+        tendon_routing_params: dict[str, Array] | None = None,
         active_tendon_routing_basis: dict[str, Callable] | None = None,
         active_tendon_routing_params: dict[str, Array] | None = None,
         passive_tendon_routing_basis: dict[str, Callable] | None = None,
@@ -145,6 +147,10 @@ class TendonActuatedPCS(PCS):
                     Shear modulus of each segment [Pa]
                 - "D": Array of shape (6*num_segments, 6*num_segments)
                     Damping matrix [Pa·s]
+            tendon_routing_basis (Optional[Dict[str, Callable]]):
+                Alias for active_tendon_routing_basis. If active_tendon_routing_basis is provided, this argument is ignored.
+            tendon_routing_params (Optional[Dict[str, Array]]):
+                Alias for active_tendon_routing_params. If active_tendon_routing_params is provided, this argument is ignored.
             active_tendon_routing_basis (Optional[Dict[str, Callable]]):
                 Dictionary with the active tendon routing functions. If None, a linear routing is used.
                 Expected keys and signatures:
@@ -188,6 +194,12 @@ class TendonActuatedPCS(PCS):
             *args,
             **kwargs,
         )
+
+        # if active tendon routing basis/params are not provided, default to the alias (tendon_routing_basis and tendon_routing_params)
+        if active_tendon_routing_basis is None:
+            active_tendon_routing_basis = tendon_routing_basis
+        if active_tendon_routing_params is None:
+            active_tendon_routing_params = tendon_routing_params
 
         # Set default active tendon routing basis to linear routing if not provided
         if active_tendon_routing_basis is None:

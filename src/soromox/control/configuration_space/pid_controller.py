@@ -1,8 +1,8 @@
 __all__ = ["PIDController"]
 
 import warnings
-from typing import Any, Optional, Tuple
 
+import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
@@ -120,7 +120,7 @@ class PIDController(ClosedFormModelBasedController):
 
     def error_based_feedback_term(
         self, system_state: SystemState
-    ) -> Tuple[Array, Optional[PIDControllerState]]:
+    ) -> tuple[Array, PIDControllerState | None]:
         """
         Compute the PID feedback control term.
 
@@ -156,7 +156,7 @@ class PIDController(ClosedFormModelBasedController):
         ed = qd_des - qd  # Velocity error
 
         # Get integral error from control state (or zeros if not tracking)
-        control_state: Optional[PIDControllerState] = system_state.control_state
+        control_state: PIDControllerState | None = system_state.control_state
         if control_state is None:
             integral_error = jnp.zeros_like(q)
         else:
@@ -177,3 +177,18 @@ class PIDController(ClosedFormModelBasedController):
 
         return u_feedback, control_state_dot
 
+    def update_gains(self, gains: dict[str, Array]) -> "PIDController":
+        """
+        This function updates the gains of the PID controller.
+
+        Args:
+            gains (dict[str, Array]): proportional, integral, and derivative gains
+
+        Returns:
+            updated_self (PIDController): self object with updated gains
+        """
+        updated_pid_control = self.pid_control.update_gains(gains)
+
+        updated_self = eqx.tree_at(lambda x: x.pid_control, self, updated_pid_control)
+
+        return updated_self

@@ -177,30 +177,31 @@ This clean separation means the two terms can be designed, tuned, and analyzed i
 
 | Controller | Type | Model-Based Term | Description |
 |------------|------|------------------|-------------|
-| [`PIDController`](configuration-space.md#pidcontroller) | Tracker | None | Pure PID control in configuration space |
-| [`ComputedTorqueTracker`](configuration-space.md#computedtorquetracker) | Tracker | Full inverse dynamics | Exact feedback linearization |
-| [`FeedforwardCompensationTracker`](configuration-space.md#feedforwardcompensationtracker) | Tracker | Inverse dynamics at desired state | Open-loop feedforward + feedback |
-| [`MixedStateFeedbackTracker`](configuration-space.md#mixedstatefeedbacktracker) | Tracker | Mixed state evaluation | Hybrid feedforward strategy |
+| [`PIDController`](configuration-space.md#pidcontroller) | Regulator/Tracker | None | Pure PID control in configuration space |
 | [`GravityCancellationRegulator`](configuration-space.md#gravitycancellationregulator) | Regulator | $G(q) + \tau_\mathrm{el}(q_\mathrm{des})$ | Real-time gravity compensation |
 | [`PotentialCancellationRegulator`](configuration-space.md#potentialcancellationregulator) | Regulator | $G(q) + \tau_\mathrm{el}(q)$ | Full potential cancellation |
 | [`PotentialCompensationRegulator`](configuration-space.md#potentialcompensationregulator) | Regulator | $G(q_\mathrm{des}) + \tau_\mathrm{el}(q_\mathrm{des})$ | Potential shaping |
+| [`ComputedTorqueTracker`](configuration-space.md#computedtorquetracker) | Tracker | Full inverse dynamics | Exact feedback linearization |
+| [`FeedforwardCompensationTracker`](configuration-space.md#feedforwardcompensationtracker) | Tracker | Inverse dynamics at desired state | Open-loop feedforward + feedback |
+| [`MixedStateFeedbackTracker`](configuration-space.md#mixedstatefeedbacktracker) | Tracker | Mixed state evaluation | Hybrid feedforward strategy |
 
 ### Operational-Space Controllers
 
 | Controller                                                                                                            | Type    | Description                                                              |
 |-----------------------------------------------------------------------------------------------------------------------|---------|--------------------------------------------------------------------------|
+| [`OperationalSpaceSynergisticController`](operational-space.md#operationalspacesynergisticcontroller)                | Regulator | Synergistic control for under-actuated systems (requires $o = m$)       |
 | [`OperationalSpaceImpedanceControlTracker`](operational-space.md#operationalspaceimpedancecontroltracker)            | Tracker | Operational-space impedance control with partial feedback linearization |
 
 ### Actuation-Space Controllers
 
 | Controller | Type | Model-Based Term | Description |
 |------------|------|------------------|-------------|
-| [`PIDController`](actuation-space.md#pidcontroller) | Tracker | None | Pure PID control in actuation space |
-| [`FeedforwardCompensationTracker`](actuation-space.md#feedforwardcompensationtracker) | Tracker | Full dynamics at $q_\mathrm{des}$ | Open-loop feedforward + feedback |
-| [`MixedStateFeedbackTracker`](actuation-space.md#mixedstatefeedbacktracker) | Tracker | Mixed state evaluation | Hybrid feedforward strategy |
+| [`PIDController`](actuation-space.md#pidcontroller) | Regulator/Tracker | None | Pure PID control in actuation space |
 | [`GravityCancellationRegulator`](actuation-space.md#gravitycancellationregulator) | Regulator | $G_y(q) + \tau_{\mathrm{el},y}(q_\mathrm{des})$ | Real-time gravity compensation |
 | [`PotentialCancellationRegulator`](actuation-space.md#potentialcancellationregulator) | Regulator | $G_y(q) + \tau_{\mathrm{el},y}(q)$ | Full potential cancellation |
 | [`PotentialCompensationRegulator`](actuation-space.md#potentialcompensationregulator) | Regulator | $G_y(q_\mathrm{des}) + \tau_{\mathrm{el},y}(q_\mathrm{des})$ | Potential shaping |
+| [`FeedforwardCompensationTracker`](actuation-space.md#feedforwardcompensationtracker) | Tracker | Full dynamics at $q_\mathrm{des}$ | Open-loop feedforward + feedback |
+| [`MixedStateFeedbackTracker`](actuation-space.md#mixedstatefeedbacktracker) | Tracker | Mixed state evaluation | Hybrid feedforward strategy |
 
 ---
 

@@ -1,4 +1,5 @@
 __all__ = ["DynamicalSystem"]
+import math
 import warnings
 from abc import abstractmethod
 from collections.abc import Callable
@@ -329,11 +330,10 @@ class DynamicalSystem(eqx.Module):
         initial_state: SystemState,
         controller: Callable[[SystemState], tuple[Array, Any | None]],
         tau_ext: Array | None = None,
-        t1: float | Array = 10.0,
+        duration: float = 10.0,
         solver_dt: float | Array = 1e-4,
-        control_dt: float | Array = 1e-2,
-        save_dt: float | Array = 0.01,
-        save_ts: Array | None = None,
+        control_dt: float = 0.01,
+        save_dt: float = 0.01,
         solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
@@ -351,31 +351,70 @@ class DynamicalSystem(eqx.Module):
         control state is advanced with a forward-Euler step over the control period;
         otherwise the control state is held constant between controller calls.
 
+        The rollout uses a regular time grid. For static tracing/compilation the
+        following constraints are enforced:
+        - ``duration`` is an integer multiple of ``control_dt``.
+        - ``control_dt`` is an integer multiple of ``save_dt``.
+
         Args:
             initial_state: initial time/state (and optional feedforward actuation/control state).
             controller: callable returning ``(u_control, control_state_dot)``.
             tau_ext: constant external wrench/force applied during the rollout.
-            t1: final time of the simulation.
+            duration: simulation duration in seconds.
             solver_dt: initial step size for the solver.
             control_dt: sampling period for the controller. Must be positive.
-            save_dt: save interval if ``save_ts`` is not provided.
-            save_ts: explicit times to save; falls back to ``save_dt``.
+            save_dt: save interval. Must be positive and evenly divide ``control_dt``.
             solver: Diffrax solver.
             stepsize_controller: Diffrax stepsize controller.
             max_steps: maximum solver steps.
         """
-        if control_dt <= 0.0:
-            raise ValueError("control_dt must be positive.")
-
         if controller is None:
             raise ValueError("A controller must be provided for closed-loop rollouts.")
-        if save_ts is None:
-            save_ts = self._compute_save_times(
-                float(initial_state.t), t1, solver_dt, save_dt, save_ts
-            )
+
+        if not isinstance(duration, (float, int)):
+            raise TypeError("duration must be a float.")
+        if not isinstance(control_dt, (float, int)):
+            raise TypeError("control_dt must be a float.")
+        if not isinstance(save_dt, (float, int)):
+            raise TypeError("save_dt must be a float.")
+
+        duration = float(duration)
+        control_dt = float(control_dt)
+        save_dt = float(save_dt)
+
+        if duration <= 0.0:
+            raise ValueError("duration must be positive.")
+        if control_dt <= 0.0:
+            raise ValueError("control_dt must be positive.")
+        if save_dt <= 0.0:
+            raise ValueError("save_dt must be positive.")
+        if save_dt > control_dt:
+            raise ValueError("save_dt must be less than or equal to control_dt.")
+
+        # Require commensurate, regular control/save grids so the (control, save) sequence
+        # is static and can be traced/compiled without runtime masking.
+        saves_per_control = int(round(control_dt / save_dt))
+        if saves_per_control < 1 or not math.isclose(
+            saves_per_control * save_dt,
+            control_dt,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("control_dt must be an integer multiple of save_dt.")
+
+        num_control_steps = int(round(duration / control_dt))
+        if num_control_steps < 1 or not math.isclose(
+            num_control_steps * control_dt,
+            duration,
+            rel_tol=1e-12,
+            abs_tol=1e-12,
+        ):
+            raise ValueError("duration must be an integer multiple of control_dt.")
 
         if solver is None:
             solver = Tsit5()
+
+        term = ODETerm(self._open_loop_forward_dynamics)
 
         base_u = initial_state.u
         if base_u is None:
@@ -386,32 +425,27 @@ class DynamicalSystem(eqx.Module):
         track_control_state = control_state is not None
         zero_control_state_dot = self._zero_like_control_state(control_state)
 
-        t_curr = float(initial_state.t)
-        total_horizon = t1 - t_curr
-        num_control_steps = int(jnp.ceil(total_horizon / control_dt))
-        t_starts = t_curr + control_dt * jnp.arange(num_control_steps)
-        t_ends = jnp.minimum(t_starts + control_dt, t1)
-
-        max_saves = save_ts.shape[0]
-        max_save_slots = max_saves + 1  # include control interval end time
+        t0 = initial_state.t
+        t0_dtype = jnp.asarray(t0).dtype
+        save_offsets = save_dt * jnp.arange(saves_per_control + 1, dtype=t0_dtype)
+        control_offsets = control_dt * jnp.arange(num_control_steps, dtype=t0_dtype)
+        t_starts = t0 + control_offsets
+        t_ends = t_starts + control_dt
 
         def body(
             carry: tuple[Array, Any | None],
             t_bounds: tuple[Array, Array],
-        ) -> tuple[
-            tuple[Array, Any | None], tuple[Array, Array, Array, Any | None, Array]
-        ]:
+        ) -> tuple[tuple[Array, Any | None], tuple[Array, Array, Array, Any | None]]:
             """
             Advance one control interval: evaluate controller at ``t_start``, hold actuation
-            for the interval, integrate dynamics, and return padded saved trajectories.
+            for the interval, integrate dynamics, and return saved trajectories.
 
             Args:
                 carry: tuple of current state ``y_in`` and current control state ``ctrl_state_in``.
                 t_bounds: tuple of start and end times for this control interval.
             Returns:
                 next_carry: tuple of next state and next control state.
-                outputs: tuple of padded saved times, states, actuations, control states, and count
-                    of valid saved steps.
+                outputs: tuple of saved times, states, actuations, and control states.
             """
             y_in, ctrl_state_in = carry
             t_start, t_end = t_bounds
@@ -432,18 +466,12 @@ class DynamicalSystem(eqx.Module):
 
             u_total = base_u + u_control
 
-            mask = (save_ts >= t_start) & (save_ts <= t_end)
-            count = jnp.sum(mask, dtype=jnp.int32)
-            idxs = jnp.nonzero(mask, size=max_saves, fill_value=0)[0]
-            valid_mask = jnp.arange(max_save_slots - 1) < count
-            ts_control_interval = jnp.where(valid_mask, save_ts[idxs], t_end)
-            ts_control_interval = jnp.concatenate(
-                (ts_control_interval, jnp.array([t_end]))
-            )
-
-            # Use class method to avoid closure overhead
-            term = ODETerm(self._open_loop_forward_dynamics)
-            saveat = SaveAt(ts=ts_control_interval, t1=False)
+            ts_control_interval = t_start + save_offsets
+            # Protect against tiny floating-point drift (especially visible during the
+            # backward pass) that can push the final save time slightly outside
+            # [t_start, t_end].
+            ts_control_interval = jnp.clip(ts_control_interval, t_start, t_end)
+            saveat = SaveAt(ts=ts_control_interval, t0=False, t1=False)
             sol = diffeqsolve(
                 terms=term,
                 solver=solver,
@@ -457,37 +485,6 @@ class DynamicalSystem(eqx.Module):
                 max_steps=max_steps,
             )
 
-            valid_mask = (jnp.arange(max_save_slots) < (count + 1)).astype(sol.ts.dtype)
-            ts_out = sol.ts * valid_mask
-
-            ys_out = jnp.where(
-                valid_mask[:, None] > 0,
-                sol.ys,
-                jnp.zeros_like(sol.ys),
-            )
-
-            us_out = jnp.where(
-                valid_mask[:, None] > 0,
-                jnp.broadcast_to(u_total, (max_save_slots, u_total.shape[0])),
-                jnp.zeros((max_save_slots, u_total.shape[0]), dtype=u_total.dtype),
-            )
-
-            if track_control_state:
-                cs_segment = jax.tree_util.tree_map(
-                    lambda c: jnp.zeros((max_save_slots,) + c.shape, dtype=c.dtype),
-                    ctrl_state_in,
-                )
-                mask = (jnp.arange(max_save_slots) < (count + 1)).astype(jnp.int32)
-                cs_out = jax.tree_util.tree_map(
-                    lambda arr, c: arr
-                    + mask.reshape((max_save_slots,) + (1,) * c.ndim) * c,
-                    cs_segment,
-                    ctrl_state_in,
-                )
-            else:
-                cs_out = None
-
-            y_next = sol.ys[-1]
             ctrl_state_next = (
                 jax.tree_util.tree_map(
                     lambda c, cdot: c + cdot * (t_end - t_start),
@@ -498,28 +495,57 @@ class DynamicalSystem(eqx.Module):
                 else None
             )
 
-            outputs = (ts_out, ys_out, us_out, cs_out, count + 1)
+            us_out = jnp.broadcast_to(u_total, (sol.ts.shape[0], u_total.shape[0]))
+
+            if track_control_state:
+                # Controller state is held constant over the interval, then advanced at the end.
+                cs_out = jax.tree_util.tree_map(
+                    lambda c, c_next: jnp.concatenate(
+                        [
+                            jnp.broadcast_to(
+                                c, (sol.ts.shape[0] - 1,) + c.shape  # type: ignore[misc]
+                            ),
+                            c_next[None, ...],
+                        ],
+                        axis=0,
+                    ),
+                    ctrl_state_in,
+                    ctrl_state_next,
+                )
+            else:
+                cs_out = None
+
+            y_next = sol.ys[-1]
+
+            outputs = (sol.ts, sol.ys, us_out, cs_out)
             next_carry = (y_next, ctrl_state_next)
             return next_carry, outputs
 
         _, scan_outputs = lax.scan(body, (y_curr, control_state), (t_starts, t_ends))
-        ts_padded, ys_padded, us_padded, cs_padded, counts = scan_outputs
+        ts_segments, ys_segments, us_segments, cs_segments = scan_outputs
 
-        idxs = jnp.arange(max_save_slots)
-        valid_mask = idxs[None, :] < counts[:, None]
-        flat_mask = valid_mask.reshape(-1)
-
-        ts_all = ts_padded.reshape(-1)[flat_mask]
-        ys_all = ys_padded.reshape((-1,) + ys_padded.shape[2:])[flat_mask]
-        us_all = us_padded.reshape((-1, self.num_actuators))[flat_mask]
-
-        if track_control_state and cs_padded is not None:
-            control_state_out = jax.tree_util.tree_map(
-                lambda arr: arr.reshape((-1,) + arr.shape[2:])[flat_mask],
-                cs_padded,
-            )
+        # Drop the first (duplicate) sample of every interval except the first.
+        if num_control_steps == 1:
+            ts_all = ts_segments[0]
+            ys_all = ys_segments[0]
+            us_all = us_segments[0]
+            control_state_out = cs_segments[0] if track_control_state else None
         else:
-            control_state_out = None
+            ts_tail = ts_segments[1:, 1:].reshape(-1)
+            ys_tail = ys_segments[1:, 1:].reshape((-1,) + ys_segments.shape[2:])
+            us_tail = us_segments[1:, 1:].reshape((-1, self.num_actuators))
+            ts_all = jnp.concatenate([ts_segments[0], ts_tail], axis=0)
+            ys_all = jnp.concatenate([ys_segments[0], ys_tail], axis=0)
+            us_all = jnp.concatenate([us_segments[0], us_tail], axis=0)
+            if track_control_state and cs_segments is not None:
+                control_state_out = jax.tree_util.tree_map(
+                    lambda arr: jnp.concatenate(
+                        [arr[0], arr[1:, 1:].reshape((-1,) + arr.shape[2:])], axis=0
+                    ),
+                    cs_segments,
+                )
+            else:
+                control_state_out = None
 
         return SystemState(
             t=ts_all, y=ys_all, u=us_all, control_state=control_state_out
