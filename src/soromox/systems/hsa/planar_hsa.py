@@ -822,7 +822,7 @@ class PlanarHSA(SoftRobot):
         Map the generalized coordinates to the strains in the virtual backbone
         Args:
             q: generalized coordinates of shape (num_dofs, )
-        
+
         Returns:
             xi: strains of the virtual backbone of shape (num_dofs, )
         """
@@ -840,7 +840,7 @@ class PlanarHSA(SoftRobot):
         Map the generalized coordinates to the strains in the physical rods
         Args:
             vxi: strains of the virtual backbone of shape (num_dofs, )
-        
+
         Returns:
             pxi: strains in the physical rods of shape (num_segments, num_rods_per_segment, 3)
         """
@@ -862,7 +862,7 @@ class PlanarHSA(SoftRobot):
         Map the strains in the physical rods to the strains of the virtual backbone
         Args:
             pxi: strains in the physical rods of shape (num_segments, num_rods_per_segment, 3)
-        
+
         Returns:
             vxi: strains of the virtual backbone of shape (num_dofs, )
         """
@@ -934,7 +934,7 @@ class PlanarHSA(SoftRobot):
         Args:
             q: generalized coordinates of shape (num_dofs, )
             s: point coordinate along the rod in the interval [0, L].
-        
+
         Returns:
             chi: pose of the backbone point in Cartesian-space with shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -994,7 +994,7 @@ class PlanarHSA(SoftRobot):
             q: generalized coordinates of shape (num_dofs, )
             s: point coordinate along the rod in the interval [0, L].
             rod_idx: index of the rod. If there are two rods per segment, then rod_idx can be 0 or 1.
-        
+
         Returns:
             chir: pose of the rod centerline point in Cartesian-space with shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -1032,7 +1032,7 @@ class PlanarHSA(SoftRobot):
         Args:
             q: generalized coordinates of shape (num_dofs, )
             segment_idx: index of the segment
-        
+
         Returns:
             chip: pose of the CoG of the platform in Cartesian-space with shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -1061,7 +1061,7 @@ class PlanarHSA(SoftRobot):
         Evaluate the forward kinematics of the end-effector
         Args:
             q: generalized coordinates of shape (num_dofs, )
-        
+
         Returns:
             chiee: pose of the end-effector in Cartesian-space of shape (3, )
                 Consists of [theta, p_x, p_y]
@@ -1088,7 +1088,7 @@ class PlanarHSA(SoftRobot):
         Evaluate the Jacobian of the end-effector
         Args:
             q: generalized coordinates of shape (num_dofs, )
-        
+
         Returns:
             Jee: the Jacobian of the end-effector pose with respect to the generalized coordinates.
                 Jee is an array of shape (3, num_dofs).
@@ -1208,7 +1208,7 @@ class PlanarHSA(SoftRobot):
             params: Dictionary of robot parameters
             chiee: pose of the end-effector in Cartesian-space of shape (3, )
             eps: small number to avoid singularities (e.g., division by zero)
-        
+
         Returns:
             q: generalized coordinates of shape (num_dofs, )
         """
@@ -1669,11 +1669,9 @@ class PlanarHSA(SoftRobot):
 
             alpha = u
 
-        # Inverse of the inertia matrix
-        B_inv = jnp.linalg.inv(B)
-
-        # Compute the acceleration
-        qdd = B_inv @ (-C @ qd - G - tau_el - D @ qd + alpha + tau_ext)
+        qdd = jnp.linalg.solve(
+            B, -C @ qd - G - tau_el - D @ qd + alpha + tau_ext
+        )  # Compute the acceleration
 
         if self.consider_hysteresis:
             yd = jnp.concatenate([qd, qdd, zd])

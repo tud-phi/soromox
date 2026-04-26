@@ -3363,9 +3363,8 @@ class GVS(SoftRobot):
         # evaluate the actuation force
         tau_u = self.actuation_force(q, u)
 
-        B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
-        qdd = B_inv @ (
-            tau_u + tau_ext - C @ qd - G - tau_el - tau_d
+        qdd = jnp.linalg.solve(
+            B, tau_u + tau_ext - C @ qd - G - tau_el - tau_d
         )  # Compute the acceleration
 
         yd = jnp.concatenate([qd, qdd])
