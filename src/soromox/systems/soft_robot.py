@@ -7,6 +7,7 @@ from abc import abstractmethod
 from enum import IntEnum
 from typing import Any
 
+import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
