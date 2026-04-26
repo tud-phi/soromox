@@ -291,7 +291,7 @@ def test_forward_kinematics_tips_matches_pointwise_evaluation(
 
     for q in (zero_cfg, random_cfg):
         g_tips_expected = segment_tip_transforms(model, q)
-        g_tips_actual = model._forward_kinematics_tips(q)
+        g_tips_actual = model.forward_kinematics_tips(q)
 
         assert_allclose(g_tips_actual, g_tips_expected, rtol=RTOL, atol=ATOL)
 
@@ -615,6 +615,21 @@ def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(
         for idx, s_val in enumerate(s_points):
             J_single = model.jacobian_inertialframe(q, s_val)
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_tips_matches_pointwise_inertialframe_evaluation(
+    num_segments: int,
+) -> None:
+    model, _ = make_pcs(num_segments=num_segments)
+    q = random_q(model, jax.random.PRNGKey(7891), scale=0.05)
+
+    s_tips = model.L_cum[1:]
+    J_tips = model.jacobian_tips(q)
+    J_expected = jax.vmap(lambda s: model.jacobian_inertialframe(q, s))(s_tips)
+
+    assert J_tips.shape == (num_segments, 6, int(model.num_active_strains.item()))
+    assert_allclose(J_tips, J_expected, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
@@ -1031,6 +1046,22 @@ def test_strain_basis_consistency_jacobians_and_derivatives(num_segments: int):
         assert Jd_full.shape == (6, int(full.num_active_strains.item()))
         assert_allclose(J_full @ B, J_small, rtol=RTOL, atol=ATOL)
         assert_allclose(Jd_full @ B, Jd_small, rtol=RTOL, atol=ATOL)
+
+    # Tips inertial-frame Jacobian
+    Ji_tips_small = reduced.jacobian_tips(q_small)
+    Ji_tips_full = full.jacobian_tips(q_full)
+    assert Ji_tips_small.shape == (num_segments, 6, n_small_act)
+    assert Ji_tips_full.shape == (
+        num_segments,
+        6,
+        int(full.num_active_strains.item()),
+    )
+    assert_allclose(
+        jnp.einsum("ijk,kl->ijl", Ji_tips_full, B),
+        Ji_tips_small,
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
     # Batched body-frame Jacobian (internal helper, returns full-strain size)
     Jb_batch_small = reduced._J_local_batched(q_small, s_points)

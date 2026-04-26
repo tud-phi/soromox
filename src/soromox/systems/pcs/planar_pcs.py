@@ -604,7 +604,7 @@ class PlanarPCS(SoftRobot):
         return chi
 
     @eqx.filter_jit
-    def _forward_kinematics_tips(self, q: Array) -> Array:
+    def forward_kinematics_tips(self, q: Array) -> Array:
         """
         Compute the forward kinematics of the robot at the tips of all segments.
 
@@ -687,7 +687,7 @@ class PlanarPCS(SoftRobot):
         """
         xi = self.strain(q).reshape(self.num_segments, 3)
 
-        chi_tips = self._forward_kinematics_tips(q)
+        chi_tips = self.forward_kinematics_tips(q)
         chi_base = jnp.concatenate(
             [
                 jnp.asarray(self.th0, dtype=xi.dtype)[None],
@@ -1098,6 +1098,29 @@ class PlanarPCS(SoftRobot):
         J_global_ps = jnp.einsum("nij, njk->nik", Ad_g_ps, J_local_ps)
 
         return J_global_ps
+
+    @eqx.filter_jit
+    def jacobian_tips(self, q: Array) -> Array:
+        """
+        Compute inertial-frame Jacobians at all segment tips.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            J_tips (Array): inertial-frame Jacobians at each segment tip, shape
+                (num_segments, 3, num_active_strains).
+        """
+        J_local_tips = jnp.einsum("ijk,kl->ijl", self._J_local_tips(q), self.B_xi)
+        chi_tips = self.forward_kinematics_tips(q)
+
+        def rotate_pair(chi_i: Array, J_i: Array) -> Array:
+            theta = chi_i[0]
+            zeros = jnp.zeros((), dtype=theta.dtype)
+            g_rot = lie.exp_SE2(jnp.stack([theta, zeros, zeros]))
+            return lie.Adjoint_g_SE2(g_rot) @ J_i
+
+        return vmap(rotate_pair)(chi_tips, J_local_tips)
 
     @eqx.filter_jit
     def _J_Jd_local_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:

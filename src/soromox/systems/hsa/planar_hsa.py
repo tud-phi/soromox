@@ -967,6 +967,20 @@ class PlanarHSA(SoftRobot):
     forward_kinematics = forward_kinematics_virtual_backbone
 
     @eqx.filter_jit
+    def forward_kinematics_tips(self, q: Array) -> Array:
+        """
+        Compute virtual-backbone forward kinematics at all segment tips.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            chi_tips (Array): virtual-backbone poses at each segment tip, shape
+                (num_segments, 3).
+        """
+        return self.forward_kinematics_batched(q, self.L_cum[1:])
+
+    @eqx.filter_jit
     def forward_kinematics_rod(
         self,
         q: Array,
@@ -1135,6 +1149,20 @@ class PlanarHSA(SoftRobot):
 
     # Alias for consistency: jacobian is the same as jacobian_virtual_backbone
     jacobian = jacobian_virtual_backbone
+
+    @eqx.filter_jit
+    def jacobian_tips(self, q: Array) -> Array:
+        """
+        Compute inertial-frame virtual-backbone Jacobians at all segment tips.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            J_tips (Array): Jacobians at each segment tip, shape
+                (num_segments, 3, num_dofs).
+        """
+        return self.jacobian_batched(q, self.L_cum[1:])
 
     @eqx.filter_jit
     def jacobian_and_derivative_virtual_backbone(

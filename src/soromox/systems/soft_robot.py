@@ -123,6 +123,22 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
+    @abstractmethod
+    def forward_kinematics_tips(self, q: Array) -> Array:
+        """
+        Compute the forward kinematics at all segment or link tips.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            chi_tips: Poses at the robot tips. The shape and meaning depend on
+                the robot type:
+                - For 3D robots (PCS, GVS): shape (num_segments, 4, 4)
+                - For planar robots (PlanarPCS, Pendulum): shape (num_segments, 3)
+        """
+        ...
+
     def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the forward kinematics at multiple points along the robot.
@@ -156,6 +172,20 @@ class SoftRobot(DynamicalSystem):
                 depends on the robot type:
                 - For 3D robots (PCS): 6 (angular velocity + linear velocity)
                 - For planar robots (PlanarPCS, Pendulum): 3 (omega_z, v_x, v_y)
+        """
+        ...
+
+    @abstractmethod
+    def jacobian_tips(self, q: Array) -> Array:
+        """
+        Compute inertial-frame Jacobians at all segment or link tips.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            J_tips: Inertial-frame Jacobians at the robot tips, with shape
+                (num_tips, n_pose_dim, num_dofs).
         """
         ...
 

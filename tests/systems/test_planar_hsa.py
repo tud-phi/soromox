@@ -116,6 +116,25 @@ def test_jacobian_alias(seed: int = 0):
     assert jnp.allclose(J1, J2, atol=1e-12), "jacobian should be alias of jacobian_virtual_backbone"
 
 
+def test_jacobian_tips(seed: int = 0):
+    """
+    Test that jacobian_tips matches virtual-backbone Jacobians at segment tips.
+    """
+    print("Testing jacobian_tips...")
+    robot = _create_robot()
+
+    rng = random.PRNGKey(seed)
+    rng, q = _sample_configuration(rng, num_segments)
+
+    s_tips = robot.L_cum[1:]
+    J_tips = robot.jacobian_tips(q)
+    J_expected = robot.jacobian_batched(q, s_tips)
+
+    assert jnp.allclose(J_tips, J_expected, atol=1e-12), (
+        "jacobian_tips should match jacobian_batched at segment tips"
+    )
+
+
 def test_jacobian_and_derivative_virtual_backbone(seed: int = 0):
     """
     Test the Jacobian and its time derivative.

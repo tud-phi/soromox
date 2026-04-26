@@ -1259,6 +1259,21 @@ class GVS(SoftRobot):
         return g_s
 
     @eqx.filter_jit
+    def forward_kinematics_tips(self, q: Array) -> Array:
+        """
+        Compute the forward kinematics at all link tips.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            g_tips (Array): forward kinematics at each link tip, shape
+                (num_segments, 4, 4).
+        """
+        q_gathered = self._min_size_gathered(q)
+        return self._forward_kinematics_gauss(q_gathered)[:, -1]
+
+    @eqx.filter_jit
     def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a batch of points along the backbone.
@@ -1910,6 +1925,44 @@ class GVS(SoftRobot):
         J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
 
         return J_global
+
+    @eqx.filter_jit
+    def jacobian(self, q: Array, s: Array) -> Array:
+        """
+        Compute the inertial-frame Jacobian at a point along the robot.
+
+        This public adapter satisfies the SoftRobot interface while preserving
+        the explicit body-frame and inertial-frame GVS Jacobian methods.
+        """
+        return self.jacobian_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def jacobian_tips(self, q: Array) -> Array:
+        """
+        Compute inertial-frame Jacobians at all link tips.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+
+        Returns:
+            J_tips (Array): inertial-frame Jacobians at each link tip, shape
+                (num_segments, 6, num_dofs).
+        """
+        q_gathered = self._min_size_gathered(q)
+        J_local_tips = self._jacobian_gauss(q_gathered)[:, -1] @ self.B_select
+        g_tips = self.forward_kinematics_tips(q)
+
+        def rotate_pair(g_i: Array, J_i: Array) -> Array:
+            R = g_i[:3, :3]
+            g_rot = jnp.block(
+                [
+                    [R, jnp.zeros((3, 1), dtype=R.dtype)],
+                    [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
+                ]
+            )
+            return lie.Adjoint_g_SE3(g_rot) @ J_i
+
+        return vmap(rotate_pair)(g_tips, J_local_tips)
 
     @eqx.filter_jit
     def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
