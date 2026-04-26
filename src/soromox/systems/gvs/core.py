@@ -2007,91 +2007,77 @@ class GVS(SoftRobot):
             Jd_list (Array): shape (num_segments, max_nip, 6, num_segments*2*max_dof) JAX array
                 Jacobian derivative matrices at all significant points
         """
-
         def body_segment_i(
-            carry: Array, i_segment: Array
-        ) -> tuple[tuple[Array, Array, Array], Array]:
-            """Accumulate transforms/Jacobian derivatives for a segment.
-
-            Args:
-                carry: Tuple (g_tip, Jd_tip, eta_tip) with shapes (4, 4),
-                    (num_segments, 2, 6, max_dof), and (6,).
-                i_segment: Segment index (int).
-
-            Returns:
-                Tuple[Tuple[Array, Array, Array], Array]:
-                    - (g_tip_link, Jd_tip_link, eta_tip_link)
-                      with shapes (4, 4), (num_segments, 2, 6, max_dof), (6,).
-                    - Jd_link: per-point Jdot blocks, shape
-                      (max_nip, num_segments, 2, 6, max_dof).
-            """
-            g_tip, Jd_tip, eta_tip = carry
+            carry: tuple[Array, Array, Array, Array], i_segment: Array
+        ) -> tuple[tuple[Array, Array, Array, Array], Array]:
+            """Accumulate transforms/Jacobians/Jdot for one segment."""
+            g_tip, J_tip, Jd_tip, eta_tip = carry
 
             # Joint ============================
-            B_joint_i = self.V_B_joint[i_segment]  # shape (6, max_dof)
-            xi_ref_joint_i = self.V_xi_ref_joint[i_segment]  # shape (6,)
-            q_joint_i = q_gathered[i_segment, 0]  # shape (max_dof,)
-            qd_joint_i = qd_gathered[i_segment, 0]  # shape (max_dof,)
+            B_joint_i = self.V_B_joint[i_segment]
+            xi_ref_joint_i = self.V_xi_ref_joint[i_segment]
+            q_joint_i = q_gathered[i_segment, 0]
+            qd_joint_i = qd_gathered[i_segment, 0]
 
-            xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i  # shape (6,)
-            xid_joint_i = B_joint_i @ qd_joint_i  # shape (6,)
+            xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i
+            xid_joint_i = B_joint_i @ qd_joint_i
 
-            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # shape (4, 4)
+            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)
             T_g_joint = lie.Tangent_gi_se3(
-                xi_joint_i, 1, eps=self.tangent_eps
-            )  # shape (6, 6)
+                xi_joint_i, jnp.array(1.0), eps=self.tangent_eps
+            )
             Td_g_joint = lie.Tangent_derivative_gi_se3(
-                xi_joint_i, xid_joint_i, 1, eps=self.tangent_eps
-            )  # shape (6, 6)
+                xi_joint_i, xid_joint_i, jnp.array(1.0), eps=self.tangent_eps
+            )
 
+            T_g_joint_B_joint_i = (
+                jnp.zeros((self.num_segments, 2, 6, self.max_dof))
+                .at[i_segment, 0]
+                .set(T_g_joint @ B_joint_i)
+            )
             Td_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(
-                    lie.adjoint_se3(eta_tip) @ (T_g_joint @ B_joint_i)
-                    + Td_g_joint @ B_joint_i
-                )
-            )  # shape (num_segments, 2, 6, max_dof)
+                .set(Td_g_joint @ B_joint_i)
+            )
 
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)
+            eta_joint_step = Ad_g_joint_inv @ (T_g_joint @ B_joint_i @ qd_joint_i)
+            eta_j = Ad_g_joint_inv @ (
+                eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
+            )
+            Ad_g_joint_inv_dot = -lie.adjoint_se3(eta_joint_step) @ Ad_g_joint_inv
 
             g_j = g_tip @ g_joint_i
+            J_j = jnp.einsum(
+                "ij,nmjk->nmik", Ad_g_joint_inv, J_tip + T_g_joint_B_joint_i
+            )
             Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
+            ) + jnp.einsum(
+                "ij,nmjk->nmik",
+                Ad_g_joint_inv_dot,
+                J_tip + T_g_joint_B_joint_i,
             )
-            eta_j = Ad_g_joint_inv @ (eta_tip + T_g_joint @ B_joint_i @ qd_joint_i)
 
             # Link ========================
-            Xs_i = self.V_Xs[i_segment]  # shape (max_nip,)
-            xi_ref_Z1_i = self.V_xi_ref_Z1[i_segment]  # shape (max_nip - 1, 6)
-            xi_ref_Z2_i = self.V_xi_ref_Z2[i_segment]  # shape (max_nip - 1, 6)
-            length_i = self.V_L[i_segment]  # shape (1,)
-            B_Z1_i = self.V_B_Z1[i_segment]  # shape (max_nip - 1, 6, max_dof)
-            B_Z2_i = self.V_B_Z2[i_segment]  # shape (max_nip - 1, 6, max_dof)
+            Xs_i = self.V_Xs[i_segment]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[i_segment]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[i_segment]
+            length_i = self.V_L[i_segment]
+            B_Z1_i = self.V_B_Z1[i_segment]
+            B_Z2_i = self.V_B_Z2[i_segment]
 
             q_i = q_gathered[i_segment, 1]
             qd_i = qd_gathered[i_segment, 1]
 
             def body_eval_points(
-                carry: Array, j_eval: Array
-            ) -> tuple[tuple[Array, Array, Array], Array]:
-                """Advance one cell; update Jdot using Magnus/Tangent terms.
-
-                Args:
-                    carry: Tuple (g_prev, Jd_prev, eta_prev).
-                    j_eval: Cell index (int).
-
-                Returns:
-                    Tuple[Tuple[Array, Array, Array], Array]: Updated carry and
-                    Jdot block.
-                """
-                # g_prev, Jd_prev, eta_prev = carry
+                carry: tuple[Array, Array, Array, Array], j_eval: Array
+            ) -> tuple[tuple[Array, Array, Array, Array], Array]:
+                """Advance one integration cell and update Jdot analytically."""
+                g_prev, J_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
-
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
 
@@ -2099,108 +2085,91 @@ class GVS(SoftRobot):
                     B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
                     B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
 
-                xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
-                xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
+                xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_i[j_eval]
+                xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_i[j_eval]
                 xid_Z1_j = B_Z1_j @ qd_i
+                xid_Z2_j = B_Z2_j @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
 
+                comm_coeff = jnp.sqrt(3) * (length_i**2) * H**2 / 12
                 Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ xi_Z2_j)
-
+                    comm_coeff * (ad_xi_Z1_j @ xi_Z2_j)
+                )
                 B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
-
+                    comm_coeff * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
+                )
+                B_Magnus_dot_j = comm_coeff * (
+                    lie.adjoint_se3(xid_Z1_j) @ B_Z2_j
+                    - lie.adjoint_se3(xid_Z2_j) @ B_Z1_j
+                )
                 Magnusd_j = B_Magnus_j @ qd_i
 
-                Magnusdd_dq_j = (
-                    ((jnp.sqrt(3) * (length_i**2) * H**2) / 6)
-                    * lie.adjoint_se3(xid_Z1_j)
-                    @ B_Z2_j
+                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
+                T_step = lie.Tangent_gi_se3(
+                    Magnus_j, jnp.array(1.0), eps=self.tangent_eps
+                )
+                Td_step = lie.Tangent_derivative_gi_se3(
+                    Magnus_j, Magnusd_j, jnp.array(1.0), eps=self.tangent_eps
                 )
 
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)  # shape (4, 4)
-                T_Magnus_j = lie.Tangent_gi_se3(
-                    Magnus_j, jnp.array(1.0), eps=self.tangent_eps
-                )  # shape (6, 6)
-                Td_Magnus_j = lie.Tangent_derivative_gi_se3(
-                    Magnus_j, Magnusd_j, jnp.array(1.0), eps=self.tangent_eps
-                )  # shape (6, 6)
-
-                T_B_Magnus_step = T_Magnus_j @ B_Magnus_j  # shape (6, max_dof)
-                T_B_Magnusd_step = (
+                T_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
-                    .set(
-                        lie.adjoint_se3(eta_j) @ T_Magnus_j @ B_Magnus_j
-                        + Td_Magnus_j @ B_Magnus_j
-                        + T_Magnus_j @ Magnusdd_dq_j
-                    )
-                )  # shape (num_segments, 2, 6, max_dof)
-
-                Ad_g_step_inv = lie.Adjoint_g_inv_SE3(
-                    g_step
-                )  # shape (num_segments, 6, 6)
-                _g_j = g_j @ g_step
-                _Jd_j = jnp.einsum(
-                    "ij,nmjk->nmik", Ad_g_step_inv, Jd_j + T_B_Magnusd_step
+                    .set(T_step @ B_Magnus_j)
                 )
-                _eta_j = Ad_g_step_inv @ (eta_j + T_B_Magnus_step @ qd_i)
+                Td_block = (
+                    jnp.zeros((self.num_segments, 2, 6, self.max_dof))
+                    .at[i_segment, 1]
+                    .set(Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j)
+                )
 
-                return (_g_j, _Jd_j, _eta_j), _Jd_j
+                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+                eta_step = Ad_step_inv @ (T_step @ B_Magnus_j @ qd_i)
+                eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
 
-            indices_eval_points = jnp.arange(self.max_nip - 1)
+                g_next = g_prev @ g_step
+                J_next = jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv, J_prev + T_block
+                )
+                Jd_next = jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv, Jd_prev + Td_block
+                ) + jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv_dot, J_prev + T_block
+                )
 
-            (g_tip_link, Jd_tip_link, eta_tip_link), Jd_link = lax.scan(
-                f=body_eval_points, init=(g_j, Jd_j, eta_j), xs=indices_eval_points
+                return (g_next, J_next, Jd_next, eta_next), Jd_next
+
+            (g_tip_link, J_tip_link, Jd_tip_link, eta_tip_link), Jd_link = lax.scan(
+                f=body_eval_points,
+                init=(g_j, J_j, Jd_j, eta_j),
+                xs=jnp.arange(self.max_nip - 1),
             )
 
-            # For debugging purposes, you can uncomment the following lines to see the step-by-step computation
-            # carry = (g_j, Jd_j, eta_j)
-            # Jd_link = []
-            # for x in indices_eval_points:
-            #     (g_j, Jd_j, eta_j), Jd_j_here = body_eval_points(carry, x)
-            #     carry = (g_j, Jd_j, eta_j)
-            #     Jd_link.append(Jd_j_here)
-            # (g_tip_link, Jd_tip_link, eta_tip_link) = carry
-            # Jd_link = jnp.array(Jd_link)
-
             Jd_link = jnp.concatenate((jnp.expand_dims(Jd_j, axis=0), Jd_link), axis=0)
-            return (g_tip_link, Jd_tip_link, eta_tip_link), Jd_link
+            return (g_tip_link, J_tip_link, Jd_tip_link, eta_tip_link), Jd_link
 
-        indices_link = jnp.arange(0, self.num_segments)
-
-        g_init = self.g0
-
+        J_init = jnp.zeros((self.num_segments, 2, 6, self.max_dof))
         Jd_init = jnp.zeros((self.num_segments, 2, 6, self.max_dof))
         eta_init = jnp.zeros((6,))
 
         _, Jd_list = lax.scan(
-            f=body_segment_i, init=(g_init, Jd_init, eta_init), xs=indices_link
+            f=body_segment_i,
+            init=(self.g0, J_init, Jd_init, eta_init),
+            xs=jnp.arange(self.num_segments),
         )
 
-        # For debugging purposes, you can uncomment the following lines to see the step-by-step computation
-        # carry = (g_init, Jd_init, eta_init)
-        # Jd_list = []
-        # for x in indices_link:
-        #     (g_tip_link, Jd_tip_link, eta_tip_link), Jd_j = body_segment_i(carry, x)
-        #     carry = (g_tip_link, Jd_tip_link, eta_tip_link)
-        #     Jd_list.append(Jd_j)
-        # Jd_list = jnp.array(Jd_list)
-
-        # (num_segments, max_nip, num_segments, 2, 6, max_dof) => (num_segments, max_nip, 6, num_segments*2*max_dof)
         Jd_reordered = jnp.transpose(Jd_list, (0, 1, 4, 2, 3, 5))
-        Jd = Jd_reordered.reshape(
+        return Jd_reordered.reshape(
             self.num_segments, self.max_nip, 6, self.num_segments * 2 * self.max_dof
         )
 
-        return Jd
-
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe(self, q: Array, qd: Array, s: Array) -> Array:
+    def jacobian_and_derivative_bodyframe(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
         """
         Compute the Jacobian derivative of the forward kinematics at a point s along the robot in the body frame.
         Args:
@@ -2215,7 +2184,7 @@ class GVS(SoftRobot):
         q_gathered = self._min_size_gathered(q)
         qd_gathered = self._min_size_gathered(qd)
 
-        # Segment contenant s et abscisse locale
+        # Segment containing s and its local arclength.
         segment_idx, s_local = self.classify_segment(s)
 
         def body_segment_i(
@@ -2262,13 +2231,9 @@ class GVS(SoftRobot):
             Td_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(
-                    lie.adjoint_se3(eta_tip) @ T_g_joint @ B_joint_i
-                    + Td_g_joint @ B_joint_i
-                )
+                .set(Td_g_joint @ B_joint_i)
             )
             Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # (6,6)
-            print("Ad_g_joint_inv", Ad_g_joint_inv.shape)
 
             # forward kinematics of joint
             g_j = g_tip @ g_joint_i
@@ -2276,20 +2241,22 @@ class GVS(SoftRobot):
             J_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_B_joint_i)
             )  # (num_segments, 2, 6, 6)
-            print("J_j", J_j.shape)
 
             # compute the bodyframe velocity
+            eta_joint_step = Ad_g_joint_inv @ (T_g_joint @ B_joint_i @ qd_joint_i)
             eta_j = Ad_g_joint_inv @ (
                 eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
             )  # (6,)
-            print("eta_j", eta_j.shape)
 
             # compute the bodyframe Jacobian derivative
-            Ad_g_joint_inv_dot = -lie.adjoint_se3(eta_j) @ Ad_g_joint_inv
-            print("Ad_g_joint_inv_dot", Ad_g_joint_inv_dot.shape)
+            Ad_g_joint_inv_dot = -lie.adjoint_se3(eta_joint_step) @ Ad_g_joint_inv
             Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
-            ) + jnp.einsum("ij,nmjk->nmik", Ad_g_joint_inv_dot, T_g_joint_B_joint_i)
+            ) + jnp.einsum(
+                "ij,nmjk->nmik",
+                Ad_g_joint_inv_dot,
+                J_tip + T_g_joint_B_joint_i,
+            )
 
             # Link ========================
             Xs_i = self.V_Xs[i_segment]  # (max_nip,)
@@ -2314,12 +2281,9 @@ class GVS(SoftRobot):
                 Returns:
                     Tuple[Tuple[Array, Array, Array, Array], None]: Updated carry and dummy output.
                 """
-                jax.debug.print("do full cell")
                 g_prev, J_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-                ds = H * length_i
-                ds_sq = ds * ds
 
                 B_Z1_j = B_Z1_i[j_eval]
                 B_Z2_j = B_Z2_i[j_eval]
@@ -2330,6 +2294,7 @@ class GVS(SoftRobot):
                 xi_Z1 = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval]
                 xi_Z2 = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval]
                 xid_Z1 = B_Z1_j @ qd_i
+                xid_Z2 = B_Z2_j @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
@@ -2344,10 +2309,11 @@ class GVS(SoftRobot):
 
                 Magnusd_j = B_Magnus_j @ qd_i
 
-                Magnusdd_dq = (
-                    ((jnp.sqrt(3) * (length_i**2) * H**2) / 6)
-                    * lie.adjoint_se3(xid_Z1)
-                    @ B_Z2_j
+                B_Magnus_dot_j = (
+                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
+                ) * (
+                    lie.adjoint_se3(xid_Z1) @ B_Z2_j
+                    - lie.adjoint_se3(xid_Z2) @ B_Z1_j
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
@@ -2365,26 +2331,23 @@ class GVS(SoftRobot):
                 Td_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
-                    .set(
-                        lie.adjoint_se3(eta_prev) @ T_step @ B_Magnus_j
-                        + Td_step @ B_Magnus_j
-                        + T_step @ Magnusdd_dq
-                    )
+                    .set(Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j)
                 )
 
                 Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_next = g_prev @ g_step
                 J_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_prev + T_block))
-                Jd_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block))
+                eta_step = Ad_step_inv @ (T_step @ B_Magnus_j @ qd_i)
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
 
                 # compute the bodyframe Jacobian derivative
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_next) @ Ad_step_inv
-                print("Ad_step_inv_dot", Ad_step_inv_dot.shape)
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
                 Jd_next = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block)
-                ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv_dot, T_block)
+                ) + jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv_dot, J_prev + T_block
+                )
 
                 return (g_next, J_next, Jd_next, eta_next), None
 
@@ -2407,7 +2370,6 @@ class GVS(SoftRobot):
                 Returns:
                     Tuple[Array, Array, Array, Array]: (g_out, J_out, Jd_out, eta_out) at `s`.
                 """
-                jax.debug.print("do partial link")
                 x = s_local / length_i
                 j = jnp.clip(jnp.searchsorted(Xs_i, x) - 1, 0, self.max_nip - 2)
 
@@ -2442,8 +2404,6 @@ class GVS(SoftRobot):
                 # partial cell j of size Hp
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
-                ds = Hp * length_i
-                ds_sq = ds * ds
 
                 Xp = jnp.array(
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
@@ -2459,6 +2419,7 @@ class GVS(SoftRobot):
                 xi_Z1 = (Bp_Z1 @ q_i) + xi_ref_Z1_i[j]
                 xi_Z2 = (Bp_Z2 @ q_i) + xi_ref_Z2_i[j]
                 xid_Z1 = Bp_Z1 @ qd_i
+                xid_Z2 = Bp_Z2 @ qd_i
 
                 ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
                 ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
@@ -2470,10 +2431,11 @@ class GVS(SoftRobot):
                     jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
                 ) * (ad_xi_Z1_j @ Bp_Z2 - ad_xi_Z2_j @ Bp_Z1)
                 Magnusd_p = B_Magnus_p @ qd_i
-                Magnusdd_dq_p = (
-                    ((jnp.sqrt(3) * (length_i**2) * Hp * Hp) / 6)
-                    * lie.adjoint_se3(xid_Z1)
-                    @ Bp_Z2
+                B_Magnus_dot_p = (
+                    jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
+                ) * (
+                    lie.adjoint_se3(xid_Z1) @ Bp_Z2
+                    - lie.adjoint_se3(xid_Z2) @ Bp_Z1
                 )
 
                 g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
@@ -2492,25 +2454,23 @@ class GVS(SoftRobot):
                 Td_block = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
-                    .set(
-                        lie.adjoint_se3(eta_in) @ T_step @ B_Magnus_p
-                        + Td_step @ B_Magnus_p
-                        + T_step @ Magnusdd_dq_p
-                    )
+                    .set(Td_step @ B_Magnus_p + T_step @ B_Magnus_dot_p)
                 )
 
                 Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_out = g_in @ g_step
                 J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_in + T_block))
+                eta_step = Ad_step_inv @ (T_step @ B_Magnus_p @ qd_i)
                 eta_out = Ad_step_inv @ (eta_in + T_step @ B_Magnus_p @ qd_i)
-                jax.debug.print("eta_out = \n{e}", e=eta_out)
 
                 # compute the bodyframe Jacobian derivative
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_out) @ Ad_step_inv
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
                 Jd_out = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_in + Td_block)
-                ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv_dot, T_block)
+                ) + jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv_dot, J_in + T_block
+                )
 
                 return g_out, J_out, Jd_out, eta_out
 
