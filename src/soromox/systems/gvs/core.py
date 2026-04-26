@@ -2995,14 +2995,13 @@ class GVS(SoftRobot):
                 B_Xs_ij = B_Xs_i[j]  # (6, max_dof)
 
                 if self.scale_rotational_strain_basis:
-                    B_Xs_j = B_Xs_j.at[:3, :].divide(length_i)
+                    B_Xs_ij = B_Xs_ij.at[:3, :].divide(length_i)
 
-                return Ws_j * (B_Xs_j.T @ Es_j @ B_Xs_j)
+                return Ws_ij * (B_Xs_ij.T @ Es_ij @ B_Xs_ij)
 
             # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
-                jnp.sum(vmap(K_eval_points)(jnp.arange(1, self.max_nip - 1)), axis=0)
-                * length_i
+                jnp.sum(vmap(K_ij)(jnp.arange(1, self.max_nip - 1)), axis=0) * length_i
             )  # (max_nip - 2, max_dof, max_dof)
 
             # Create a (2, max_dof, max_dof) array with K_joint_i and K_segment_i
