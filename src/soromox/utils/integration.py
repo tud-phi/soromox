@@ -1,4 +1,8 @@
-__all__ = ["gauss_quadrature", "scale_gaussian_quadrature"]
+__all__ = [
+    "gauss_quadrature",
+    "scale_gaussian_quadrature",
+    "scale_interior_gaussian_quadrature",
+]
 
 # For documentation purposes
 from jax import Array, lax
@@ -124,3 +128,26 @@ def scale_gaussian_quadrature(
     Xs_scaled = a + (b - a) * Xs
     Ws_scaled = Ws * (b - a)
     return Xs_scaled, Ws_scaled
+
+
+def scale_interior_gaussian_quadrature(
+    Xs: Array, Ws: Array, a: Array = jnp.zeros(()), b: Array = jnp.ones(())
+) -> tuple[Array, Array]:
+    """
+    Scale only the non-zero weighted Gauss nodes and weights to ``[a, b]``.
+
+    The PCS quadrature convention includes the interval endpoints with zero
+    weights. Dynamics integrals do not need those nodes, so this helper drops
+    them before scaling.
+
+    Args:
+        Xs (Array): Gauss nodes including zero-weight endpoints.
+        Ws (Array): Gauss weights including zero-weight endpoints.
+        a (Array): The lower bound of the interval.
+        b (Array): The upper bound of the interval.
+
+    Returns:
+        Xs_scaled (Array): Scaled interior Gauss nodes on ``[a, b]``.
+        Ws_scaled (Array): Scaled interior Gauss weights on ``[a, b]``.
+    """
+    return scale_gaussian_quadrature(Xs[1:-1], Ws[1:-1], a, b)

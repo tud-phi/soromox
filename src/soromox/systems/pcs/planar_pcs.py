@@ -16,6 +16,7 @@ from soromox.utils.basic import (
 from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
+    scale_interior_gaussian_quadrature,
 )
 
 
@@ -1889,6 +1890,73 @@ class PlanarPCS(SoftRobot):
         return U_G
 
     @eqx.filter_jit
+    def _active_quadrature_dynamics_terms(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble active-coordinate dynamics terms from quadrature samples.
+
+        Returns:
+            B (Array): Inertia matrix of shape
+                (num_active_strains, num_active_strains).
+            C (Array): Coriolis matrix of shape
+                (num_active_strains, num_active_strains).
+            G (Array): Gravitational force of shape (num_active_strains,).
+        """
+        Xs_scaled, Ws_scaled = vmap(
+            scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
+        num_quad = self.num_gauss_points - 2
+
+        s_ps = Xs_scaled.reshape(-1)
+
+        chi_ps = self.forward_kinematics_batched(q, s_ps)
+        g_ps = vmap(lie.exp_SE2)(chi_ps.reshape(-1, 3))
+        g_ps = g_ps.reshape(self.num_segments, num_quad, 3, 3)
+
+        J_ps_full, Jd_ps_full = self._J_Jd_local_batched(q, qd, s_ps)
+        J_ps = jnp.einsum("ijk, kl->ijl", J_ps_full, self.B_xi)
+        Jd_ps = jnp.einsum("ijk, kl->ijl", Jd_ps_full, self.B_xi)
+        J_ps = J_ps.reshape(self.num_segments, num_quad, *J_ps.shape[1:])
+        Jd_ps = Jd_ps.reshape(self.num_segments, num_quad, *Jd_ps.shape[1:])
+
+        def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:
+            M_i = self._local_mass_matrix(i)
+
+            def dynamical_terms_ij(j: Array) -> tuple[Array, Array, Array]:
+                Ws_ij = Ws_scaled[i, j]
+                g_ij = g_ps[i, j]
+                J_ij = J_ps[i, j]
+                Jd_ij = Jd_ps[i, j]
+
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE2(g_ij)
+                eta_ij = J_ij @ qd
+
+                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
+                C_ij = Ws_ij * (
+                    J_ij.T
+                    @ (
+                        M_i @ Jd_ij
+                        + lie.coadjoint_se2(eta_ij) @ M_i @ J_ij
+                    )
+                )
+                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
+
+                return B_ij, C_ij, G_ij
+
+            return vmap(dynamical_terms_ij)(jnp.arange(num_quad))
+
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
+            jnp.arange(self.num_segments)
+        )
+
+        B = jnp.sum(B_blocks_tot, axis=(0, 1))
+        C = jnp.sum(C_blocks_tot, axis=(0, 1))
+        G = jnp.sum(G_blocks_tot, axis=(0, 1))
+
+        return B, C, G
+
+    @eqx.filter_jit
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
@@ -1924,64 +1992,13 @@ class PlanarPCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        Xs_scaled, Ws_scaled = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
-
-        chi_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())
-        g_ps = vmap(lie.exp_SE2)(chi_ps.reshape(-1, 3))
-        g_ps = g_ps.reshape(self.num_segments, self.num_gauss_points, 3, 3)
-
-        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, Xs_scaled.flatten())
-        J_ps = J_ps.reshape(self.num_segments, self.num_gauss_points, *J_ps.shape[1:])
-        Jd_ps = Jd_ps.reshape(
-            self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
-        )
-
-        def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:
-            M_i = self._local_mass_matrix(i)
-
-            def dynamical_terms_ij(j: Array) -> tuple[Array, Array, Array]:
-                Ws_ij = Ws_scaled[i][j]
-                g_ij = g_ps[i, j]
-                J_ij = J_ps[i, j]
-                Jd_ij = Jd_ps[i, j]
-
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE2(g_ij)
-
-                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
-                C_ij = Ws_ij * (
-                    J_ij.T
-                    @ (
-                        M_i @ Jd_ij
-                        + lie.coadjoint_se2(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
-                    )
-                )
-                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
-
-                return B_ij, C_ij, G_ij
-
-            return vmap(dynamical_terms_ij)(jnp.arange(1, self.num_gauss_points - 1))
-
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
-            jnp.arange(self.num_segments)
-        )
-
-        B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
-        C_full = jnp.sum(C_blocks_tot, axis=(0, 1))
-        G_full = jnp.sum(G_blocks_tot, axis=(0, 1))
-
-        B = self.B_xi.T @ B_full @ self.B_xi
-        C = self.B_xi.T @ C_full @ self.B_xi
-        G = self.B_xi.T @ G_full
+        B, C, G = self._active_quadrature_dynamics_terms(q, qd)
         D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 
-        B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
-        qdd = B_inv @ (
-            tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
-        )  # Compute the acceleration
+        rhs = tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
+        qdd = jnp.linalg.solve(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])
 
