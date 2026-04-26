@@ -85,6 +85,11 @@ class PCS(SoftRobot):
 
     Xs: Array  # Gauss nodes
     Ws: Array  # Gauss weights
+    M_segments: Array  # Cached per-segment mass matrices
+    K_full: Array  # Cached full stiffness matrix
+    K: Array  # Cached active-coordinate stiffness matrix
+    D_full: Array  # Cached full damping matrix
+    D_active: Array  # Cached active-coordinate damping matrix
 
     def __init__(
         self,
@@ -213,6 +218,14 @@ class PCS(SoftRobot):
 
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
+
+        (
+            self.M_segments,
+            self.K_full,
+            self.K,
+            self.D_full,
+            self.D_active,
+        ) = self._compute_constant_matrices()
 
     @property
     def is_planar(self) -> bool:
@@ -490,7 +503,26 @@ class PCS(SoftRobot):
                 raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
             updated_self = eqx.tree_at(lambda m: m.D, updated_self, D)
 
-        return updated_self
+        return updated_self._with_refreshed_constant_matrices()
+
+    def _compute_constant_matrices(self) -> tuple[Array, Array, Array, Array, Array]:
+        """Compute state-independent matrices cached by the model."""
+        M_segments = vmap(self._compute_local_mass_matrix)(
+            jnp.arange(self.num_segments)
+        )
+        K_full = self._compute_stiffness_full_matrix()
+        K = self.B_xi.T @ K_full @ self.B_xi
+        D_full = self.D
+        D_active = self.B_xi.T @ D_full @ self.B_xi
+        return M_segments, K_full, K, D_full, D_active
+
+    def _with_refreshed_constant_matrices(self) -> "PCS":
+        """Return a copy with cached state-independent matrices refreshed."""
+        return eqx.tree_at(
+            lambda m: (m.M_segments, m.K_full, m.K, m.D_full, m.D_active),
+            self,
+            self._compute_constant_matrices(),
+        )
 
     @eqx.filter_jit
     def classify_segment(self, s: Array) -> tuple[Array, Array]:
@@ -1129,7 +1161,6 @@ class PCS(SoftRobot):
             J_prev, Jd_prev = carry
 
             # extract the current segment variables
-            xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
             Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
             T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
@@ -1391,8 +1422,7 @@ class PCS(SoftRobot):
         )
         return I_i
 
-    @eqx.filter_jit
-    def _local_mass_matrix(self, i: Array) -> Array:
+    def _compute_local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
 
@@ -1409,6 +1439,19 @@ class PCS(SoftRobot):
 
         M_i = rho_i * jnp.diag(jnp.array([I_i[0], I_i[1], I_i[2], A_i, A_i, A_i]))
         return M_i
+
+    @eqx.filter_jit
+    def _local_mass_matrix(self, i: Array) -> Array:
+        """
+        Return the cached local mass matrix for the i-th segment.
+
+        Args:
+            i (Array): index of the segment as array of shape ()
+
+        Returns:
+            M_i (Array): local mass matrix of shape (6, 6) for the i-th segment
+        """
+        return self.M_segments[i]
 
     # ===========================================
     # Dynamical matrices computation
@@ -1691,17 +1734,19 @@ class PCS(SoftRobot):
 
         return S_i
 
-    @eqx.filter_jit
-    def _stiffness(self, formulate_in_strain_space: bool = False) -> Array:
+    def _compute_stiffness_full_matrix(self) -> Array:
+        """Compute the uncached full stiffness matrix from current parameters."""
         # stiffness matrix of shape (num_segments, 6, 6)
         S_sms = vmap(self._local_stiffness_matrix)(jnp.arange(self.num_segments))
         # we define the elastic matrix of shape (num_strains, num_strains) as K(xi) = K @ xi where K is equal to
-        S = blk_diag(S_sms)
+        return blk_diag(S_sms)
 
-        if not formulate_in_strain_space:
-            S = self.B_xi.T @ S @ self.B_xi
+    @eqx.filter_jit
+    def _stiffness(self, formulate_in_strain_space: bool = False) -> Array:
+        if formulate_in_strain_space:
+            return self.K_full
 
-        return S
+        return self.K
 
     @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
@@ -1711,9 +1756,7 @@ class PCS(SoftRobot):
         Returns:
             K_full (Array): Full stiffness matrix of shape (num_strains, num_strains).
         """
-        K_full = self._stiffness(formulate_in_strain_space=True)
-
-        return K_full
+        return self.K_full
 
     @eqx.filter_jit
     def stiffness_matrix(self) -> Array:
@@ -1723,9 +1766,7 @@ class PCS(SoftRobot):
         Returns:
             K (Array): Stiffness matrix of shape (num_active_strains, num_active_strains).
         """
-        K = self._stiffness(formulate_in_strain_space=False)
-
-        return K
+        return self.K
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
@@ -1738,10 +1779,7 @@ class PCS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (num_active_strains,).
         """
-        K = self.stiffness_matrix()
-        tau_el = K @ q
-
-        return tau_el
+        return self.K @ q
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:
@@ -1754,9 +1792,7 @@ class PCS(SoftRobot):
         Returns:
             D (Array): Full damping matrix of shape (num_strains, num_strains).
         """
-        D_full = self.D
-
-        return D_full
+        return self.D_full
 
     @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:
@@ -1769,11 +1805,7 @@ class PCS(SoftRobot):
         Returns:
             D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
         """
-        D_full = self._damping_full_matrix()
-
-        D = self.B_xi.T @ D_full @ self.B_xi
-
-        return D
+        return self.D_active
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
@@ -1875,33 +1907,139 @@ class PCS(SoftRobot):
         return U_G
 
     @eqx.filter_jit
-    def _active_quadrature_dynamics_terms(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
-        """
-        Assemble active-coordinate inertia, Coriolis, and gravity terms over quadrature.
+    def _active_J_Jd_local_tips_from_strain(
+        self, xi: Array, xid: Array, B_segments: Array
+    ) -> tuple[Array, Array]:
+        """Compute active-coordinate local Jacobians at all segment tips."""
+        Ad_inv_tips = vmap(
+            lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
+        )(xi, self.L)
+        T_tips = vmap(
+            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+        )(xi, self.L)
+        Td_tips = vmap(
+            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
+                xi_i, xid_i, L_i, eps=self.tangent_eps
+            )
+        )(xi, xid, self.L)
 
-        The endpoint quadrature nodes have zero weight and are dropped before the
-        kinematics/Jacobian batch evaluation. Jacobians are projected to the active
-        strain coordinates before forming the matrix/vector integrands.
-        """
+        zeros = jnp.zeros((6, self.num_dofs), dtype=xi.dtype)
+
+        def scan_body(
+            carry: tuple[Array, Array], i: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
+            J_prev, Jd_prev = carry
+
+            xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
+            B_i = lax.dynamic_index_in_dim(B_segments, i, axis=0, keepdims=False)
+            Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
+            T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
+            Td_i = lax.dynamic_index_in_dim(Td_tips, i, axis=0, keepdims=False)
+
+            Ad_inv_T_i = Ad_inv_i @ T_i
+            J_segment = Ad_inv_T_i @ B_i
+            J_next = Ad_inv_i @ J_prev + J_segment
+
+            eta = Ad_inv_T_i @ xid_i
+            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv_i
+
+            Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_i
+            Jd_next = Ad_inv_i @ Jd_prev + Ad_inv_dot @ J_prev + Jd_segment
+
+            return (J_next, Jd_next), (J_next, Jd_next)
+
+        indices = jnp.arange(self.num_segments, dtype=jnp.int32)
+        (_, _), (J_tips, Jd_tips) = lax.scan(scan_body, (zeros, zeros), indices)
+
+        return J_tips, Jd_tips
+
+    @eqx.filter_jit
+    def _active_quadrature_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        """Return weights, poses, active Jacobians, and derivatives at quadrature points."""
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
+        B_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
+
         Xs_inner, Ws_inner = vmap(
             scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
         )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
+        s_local = Xs_inner - self.L_cum[:-1, None]
+
+        def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
+            xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+            L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+            g_tip = g_base @ lie.exp_gn_SE3(L_i * xi_i, eps=self.global_eps)
+            return g_tip, g_base
+
+        indices = jnp.arange(self.num_segments, dtype=jnp.int32)
+        _, g_bases = lax.scan(scan_fk, self.g0, indices)
+
+        def segment_poses(g_base_i: Array, xi_i: Array, s_local_i: Array) -> Array:
+            def pose_at_s(s_local_ij: Array) -> Array:
+                g_rel = lie.exp_gn_SE3(s_local_ij * xi_i, eps=self.global_eps)
+                return g_base_i @ g_rel
+
+            return vmap(pose_at_s)(s_local_i)
+
+        g_ps = vmap(segment_poses)(g_bases, xi, s_local)
+
+        J_tips, Jd_tips = self._active_J_Jd_local_tips_from_strain(xi, xid, B_segments)
+        zeros_tip = jnp.zeros_like(J_tips[:1])
+        J_bases = jnp.concatenate([zeros_tip, J_tips[:-1]], axis=0)
+        Jd_bases = jnp.concatenate([zeros_tip, Jd_tips[:-1]], axis=0)
+
+        def segment_jacobians(
+            xi_i: Array,
+            xid_i: Array,
+            B_i: Array,
+            J_base_i: Array,
+            Jd_base_i: Array,
+            s_local_i: Array,
+        ) -> tuple[Array, Array]:
+            def jacobian_at_s(s_local_ij: Array) -> tuple[Array, Array]:
+                Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local_ij, eps=self.global_eps)
+                T = lie.Tangent_gi_se3(xi_i, s_local_ij, eps=self.tangent_eps)
+                Td = lie.Tangent_derivative_gi_se3(
+                    xi_i, xid_i, s_local_ij, eps=self.tangent_eps
+                )
+
+                Ad_inv_T = Ad_inv @ T
+                J_segment = Ad_inv_T @ B_i
+                J_next = Ad_inv @ J_base_i + J_segment
+
+                eta = Ad_inv_T @ xid_i
+                Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
+
+                Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_i
+                Jd_next = Ad_inv @ Jd_base_i + Ad_inv_dot @ J_base_i + Jd_segment
+
+                return J_next, Jd_next
+
+            return vmap(jacobian_at_s)(s_local_i)
+
+        J_ps, Jd_ps = vmap(segment_jacobians)(
+            xi, xid, B_segments, J_bases, Jd_bases, s_local
+        )
+
+        return Ws_inner, g_ps, J_ps, Jd_ps
+
+    @eqx.filter_jit
+    def _active_quadrature_forward_dynamics_terms(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble active-coordinate inertia, Coriolis-vector, and gravity terms.
+
+        The endpoint quadrature nodes have zero weight and are dropped before the
+        kinematics/Jacobian batch evaluation.
+        """
+        Ws_inner, g_ps, J_ps, Jd_ps = self._active_quadrature_kinematics(q, qd)
         num_inner_points = self.num_gauss_points - 2
-        s_inner = Xs_inner.reshape(-1)
-
-        g_ps = self.forward_kinematics_batched(q, s_inner)
-        g_ps = g_ps.reshape(self.num_segments, num_inner_points, 4, 4)
-
-        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, s_inner)
-        J_ps = jnp.einsum("ijk,kl->ijl", J_ps, self.B_xi)
-        Jd_ps = jnp.einsum("ijk,kl->ijl", Jd_ps, self.B_xi)
-        J_ps = J_ps.reshape(self.num_segments, num_inner_points, *J_ps.shape[1:])
-        Jd_ps = Jd_ps.reshape(self.num_segments, num_inner_points, *Jd_ps.shape[1:])
 
         def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:
-            M_i = self._local_mass_matrix(i)
+            M_i = self.M_segments[i]
 
             def dynamical_terms_ij(j: Array) -> tuple[Array, Array, Array]:
                 Ws_ij = Ws_inner[i][j]
@@ -1913,24 +2051,25 @@ class PCS(SoftRobot):
                 Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
 
                 B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
-                C_ij = Ws_ij * (
-                    J_ij.T @ (M_i @ Jd_ij + lie.coadjoint_se3(eta_ij) @ M_i @ J_ij)
+                Cqd_ij = Ws_ij * (
+                    J_ij.T
+                    @ (M_i @ (Jd_ij @ qd) + lie.coadjoint_se3(eta_ij) @ M_i @ eta_ij)
                 )
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 
-                return B_ij, C_ij, G_ij
+                return B_ij, Cqd_ij, G_ij
 
             return vmap(dynamical_terms_ij)(jnp.arange(num_inner_points))
 
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
+        B_blocks_tot, Cqd_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
             jnp.arange(self.num_segments)
         )
 
         B = jnp.sum(B_blocks_tot, axis=(0, 1))
-        C = jnp.sum(C_blocks_tot, axis=(0, 1))
+        Cqd = jnp.sum(Cqd_blocks_tot, axis=(0, 1))
         G = jnp.sum(G_blocks_tot, axis=(0, 1))
 
-        return B, C, G
+        return B, Cqd, G
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -1967,12 +2106,11 @@ class PCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        B, C, G = self._active_quadrature_dynamics_terms(q, qd)
-        D = self.damping_matrix(q)
+        B, Cqd, G = self._active_quadrature_forward_dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 
-        rhs = tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
+        rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         qdd = jnp.linalg.solve(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])

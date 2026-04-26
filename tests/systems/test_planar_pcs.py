@@ -7,6 +7,7 @@ import pytest
 from typing import List, Optional
 
 from soromox.systems import PlanarPCS
+from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2, exp_SE2
 from soromox.utils.tolerance import Tolerance
 
@@ -934,8 +935,6 @@ def test_coriolis_force_with_christoffel_symbols(num_segments):
         def B_of_q(q_):
             return robot.inertia_matrix(q_)
 
-        B = B_of_q(q)
-
         # dB_dq[i, j, k] = ∂B_{ij}/∂q_k
         dB_dq = jax.jacfwd(B_of_q)(q)
 
@@ -1032,11 +1031,154 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         tau_el = model.elastic_force(q)
         tau_u = model.actuation_force(q, u)
 
-        B_inv = jnp.linalg.inv(B)
-        qdd_expected = B_inv @ (tau_u + tau_ext - C @ qd - G - tau_el - D @ qd)
+        qdd_expected = jnp.linalg.solve(
+            B, tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
+        )
         yd_expected = jnp.concatenate([qd, qdd_expected])
 
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 3])
+@pytest.mark.parametrize(
+    "selector_per_segment",
+    [
+        None,
+        (True, True, False),
+        (False, True, False),
+    ],
+)
+def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
+    num_segments: int, selector_per_segment: tuple[bool, ...] | None
+):
+    base_model, params = make_planar_pcs(num_segments=num_segments)
+    strain_selector = (
+        None
+        if selector_per_segment is None
+        else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
+    )
+    model = PlanarPCS(
+        num_segments=num_segments,
+        params=params,
+        xi_ref=base_model.xi_ref,
+        strain_selector=strain_selector,
+    )
+    dof = int(model.num_active_strains.item())
+
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(7123))
+    q = random_q(model, key_q, scale=0.05)
+    qd = random_q(model, key_qd, scale=0.1)
+
+    weights, g_quads, J_quads, Jd_quads = model._active_quadrature_kinematics(q, qd)
+    Xs_scaled, weights_expected = jax.vmap(
+        scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
+    )(model.Xs, model.Ws, model.L_cum[:-1], model.L_cum[1:])
+    s_points = Xs_scaled.reshape(-1)
+    num_inner = model.num_gauss_points - 2
+
+    chi_expected = model.forward_kinematics_batched(q, s_points)
+    g_expected = jax.vmap(exp_SE2)(chi_expected).reshape(num_segments, num_inner, 3, 3)
+    J_full, Jd_full = model._J_Jd_local_batched(q, qd, s_points)
+    J_expected = (J_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
+    Jd_expected = (Jd_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
+
+    assert_allclose(weights, weights_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(g_quads, g_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_quads, J_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd_quads, Jd_expected, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 3])
+@pytest.mark.parametrize(
+    "selector_per_segment",
+    [
+        None,
+        (True, True, False),
+        (False, True, False),
+    ],
+)
+def test_active_quadrature_forward_dynamics_terms_match_public_matrices_planar(
+    num_segments: int, selector_per_segment: tuple[bool, ...] | None
+):
+    base_model, params = make_planar_pcs(num_segments=num_segments)
+    strain_selector = (
+        None
+        if selector_per_segment is None
+        else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
+    )
+    model = PlanarPCS(
+        num_segments=num_segments,
+        params=params,
+        xi_ref=base_model.xi_ref,
+        strain_selector=strain_selector,
+    )
+    dof = int(model.num_active_strains.item())
+
+    zero_q = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_qd = jnp.zeros((dof,), dtype=jnp.float64)
+    key_q, key_qd, key_u, key_tau = jax.random.split(jax.random.PRNGKey(7124), 4)
+    random_q_ = random_q(model, key_q, scale=0.05)
+    random_qd = random_q(model, key_qd, scale=0.1)
+    u = random_q(model, key_u, scale=0.2)
+    tau_ext = random_q(model, key_tau, scale=0.03)
+
+    for q, qd in ((zero_q, zero_qd), (random_q_, random_qd)):
+        B, Cqd, G = model._active_quadrature_forward_dynamics_terms(q, qd)
+        C = model.coriolis_matrix(q, qd)
+
+        assert_allclose(B, model.inertia_matrix(q), rtol=RTOL, atol=ATOL)
+        assert_allclose(Cqd, C @ qd, rtol=RTOL, atol=ATOL)
+        assert_allclose(G, model.gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+        y = jnp.concatenate([q, qd])
+        yd = model.forward_dynamics(0.0, y, (u, tau_ext))
+        tau_el = model.elastic_force(q)
+        tau_u = model.actuation_force(q, u)
+        D = model.damping_matrix(q)
+        qdd_expected = jnp.linalg.solve(
+            B, tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
+        )
+        assert_allclose(yd, jnp.concatenate([qd, qdd_expected]), rtol=RTOL, atol=ATOL)
+
+
+def test_cached_constant_matrices_refresh_after_update_params_planar():
+    selector_per_segment = jnp.array([True, True, False], dtype=bool)
+    base_model, params = make_planar_pcs(num_segments=2)
+    model = PlanarPCS(
+        num_segments=2,
+        params=params,
+        xi_ref=base_model.xi_ref,
+        strain_selector=jnp.tile(selector_per_segment, 2),
+    )
+
+    updated = model.update_params(
+        {
+            "r": 1.1 * model.r,
+            "rho": 0.9 * model.rho,
+            "E": 1.25 * model.E,
+            "G": 0.75 * model.G,
+            "D": 2.0 * model.D,
+        }
+    )
+    segment_ids = jnp.arange(updated.num_segments)
+    expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
+    expected_K_full = updated._compute_stiffness_full_matrix()
+    expected_K = updated.B_xi.T @ expected_K_full @ updated.B_xi
+    expected_D_full = updated.D
+    expected_D = updated.B_xi.T @ expected_D_full @ updated.B_xi
+
+    assert_allclose(updated.M_segments, expected_M, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.K_full, expected_K_full, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.K, expected_K, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.D_full, expected_D_full, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.D_active, expected_D, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.stiffness_matrix(), expected_K, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        updated.damping_matrix(jnp.zeros(updated.num_dofs)),
+        expected_D,
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
