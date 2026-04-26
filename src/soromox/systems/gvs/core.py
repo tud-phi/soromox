@@ -254,6 +254,8 @@ class GVS(SoftRobot):
         """
         super().__init__(**kwargs)
 
+        self.scale_rotational_strain_basis = bool(scale_rotational_strain_basis)
+
         warnings.warn(
             "GVS is not fully validated yet and might not match the behavior of PlanarPCS and PCS."
         )
