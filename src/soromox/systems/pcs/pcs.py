@@ -16,6 +16,7 @@ from soromox.utils.basic import (
 from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
+    scale_interior_gaussian_quadrature,
 )
 
 
@@ -1874,6 +1875,64 @@ class PCS(SoftRobot):
         return U_G
 
     @eqx.filter_jit
+    def _active_quadrature_dynamics_terms(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble active-coordinate inertia, Coriolis, and gravity terms over quadrature.
+
+        The endpoint quadrature nodes have zero weight and are dropped before the
+        kinematics/Jacobian batch evaluation. Jacobians are projected to the active
+        strain coordinates before forming the matrix/vector integrands.
+        """
+        Xs_inner, Ws_inner = vmap(
+            scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:])
+        num_inner_points = self.num_gauss_points - 2
+        s_inner = Xs_inner.reshape(-1)
+
+        g_ps = self.forward_kinematics_batched(q, s_inner)
+        g_ps = g_ps.reshape(self.num_segments, num_inner_points, 4, 4)
+
+        J_ps, Jd_ps = self._J_Jd_local_batched(q, qd, s_inner)
+        J_ps = jnp.einsum("ijk,kl->ijl", J_ps, self.B_xi)
+        Jd_ps = jnp.einsum("ijk,kl->ijl", Jd_ps, self.B_xi)
+        J_ps = J_ps.reshape(self.num_segments, num_inner_points, *J_ps.shape[1:])
+        Jd_ps = Jd_ps.reshape(self.num_segments, num_inner_points, *Jd_ps.shape[1:])
+
+        def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:
+            M_i = self._local_mass_matrix(i)
+
+            def dynamical_terms_ij(j: Array) -> tuple[Array, Array, Array]:
+                Ws_ij = Ws_inner[i][j]
+                g_ij = g_ps[i, j]
+                J_ij = J_ps[i, j]
+                Jd_ij = Jd_ps[i, j]
+
+                eta_ij = J_ij @ qd
+                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+
+                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
+                C_ij = Ws_ij * (
+                    J_ij.T @ (M_i @ Jd_ij + lie.coadjoint_se3(eta_ij) @ M_i @ J_ij)
+                )
+                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
+
+                return B_ij, C_ij, G_ij
+
+            return vmap(dynamical_terms_ij)(jnp.arange(num_inner_points))
+
+        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
+            jnp.arange(self.num_segments)
+        )
+
+        B = jnp.sum(B_blocks_tot, axis=(0, 1))
+        C = jnp.sum(C_blocks_tot, axis=(0, 1))
+        G = jnp.sum(G_blocks_tot, axis=(0, 1))
+
+        return B, C, G
+
+    @eqx.filter_jit
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
@@ -1908,107 +1967,13 @@ class PCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        # compute the gauss quadrature points and weights for each segment
-        Xs_scaled, Ws_scaled = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.Xs, self.Ws, self.L_cum[:-1], self.L_cum[1:]
-        )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
-
-        # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(
-            q, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 4, 4)
-        g_ps = g_ps.reshape(
-            self.num_segments, self.num_gauss_points, 4, 4
-        )  # shape (num_segments, num_gauss_points, 4, 4)
-
-        # compute the jacobian and its time-derivative for each quadrature point
-        J_ps, Jd_ps = self._J_Jd_local_batched(
-            q, qd, Xs_scaled.flatten()
-        )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
-        J_ps = J_ps.reshape(
-            self.num_segments, self.num_gauss_points, *J_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
-        Jd_ps = Jd_ps.reshape(
-            self.num_segments, self.num_gauss_points, *Jd_ps.shape[1:]
-        )  # shape (num_segments, num_gauss_points, 6, num_active_strains)
-
-        def dynamical_matrices_i(i: Array) -> tuple[Array, Array, Array]:
-            """
-            Compute the integrand for the dynamical matrices at the i-th segment.
-            Args:
-                i (Array): index of the segment
-            Returns:
-                tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
-            """
-            M_i = self._local_mass_matrix(i)
-
-            def dynamical_matrices_ij(j: Array) -> tuple[Array, Array, Array]:
-                """
-                Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
-                Args:
-                    j (Array): index of the quadrature point
-                Returns:
-                    tuple[Array, Array, Array]: The inertia matrix, Coriolis matrix, and gravitational force integrands.
-                """
-                # select the j-th quadrature weight
-                Ws_ij = Ws_scaled[i][j]
-                # select the j-th Cartesian pose
-                g_ij = g_ps[i, j]
-                # select the j-th jacobian and its time-derivative
-                J_ij = J_ps[i, j]
-                Jd_ij = Jd_ps[i, j]
-
-                # compute the lie algebra expressions.
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
-
-                # compute the inertia matrix integrand
-                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
-
-                # compute the coriolis matrix integrand
-                C_ij = Ws_ij * (
-                    J_ij.T
-                    @ (
-                        M_i @ Jd_ij
-                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
-                    )
-                )
-
-                # compute the gravitational force integrand
-                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
-
-                return B_ij, C_ij, G_ij
-
-            # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_matrices_ij)(
-                jnp.arange(1, self.num_gauss_points - 1)
-            )
-
-            return B_blocks_i, C_blocks_i, G_blocks_i
-
-        # compute the dynamical matrices for each segment
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_matrices_i)(
-            jnp.arange(self.num_segments)
-        )
-
-        # sum over segments and Gauss points
-        B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
-        C_full = jnp.sum(C_blocks_tot, axis=(0, 1))
-        G_full = jnp.sum(G_blocks_tot, axis=(0, 1))
-
-        # construct the dynamical matrices
-        B = self.B_xi.T @ B_full @ self.B_xi
-        C = self.B_xi.T @ C_full @ self.B_xi
-        G = self.B_xi.T @ G_full
+        B, C, G = self._active_quadrature_dynamics_terms(q, qd)
         D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 
-        B_inv = jnp.linalg.inv(B)  # Inverse of the inertia matrix
-        qdd = B_inv @ (
-            tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
-        )  # Compute the acceleration
+        rhs = tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
+        qdd = jnp.linalg.solve(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])
 
