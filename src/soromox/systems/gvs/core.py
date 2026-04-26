@@ -1597,7 +1597,7 @@ class GVS(SoftRobot):
             # Work directly in physical coordinates (consistent with FK scaling)
             g_j = g_tip @ g_joint_i
             J_j = jnp.einsum(
-                "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_i_B_joint_i)
+                "ij,nmjk->nmik", Ad_g_joint_inv, (J_tip + T_g_joint_B_joint_i)
             )
 
             # Link ========================
