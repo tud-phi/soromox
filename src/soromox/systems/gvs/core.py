@@ -918,6 +918,254 @@ class GVS(SoftRobot):
             basistype_idx, B_branches, (X, Bdof, Bodr)
         )  # (len(X), 6, max_dof)
 
+    def _scaled_link_basis_pair(
+        self, length: Array, B_Z1: Array, B_Z2: Array
+    ) -> tuple[Array, Array]:
+        """
+        Apply optional rotational scaling to one pair of link strain bases.
+
+        The GVS link integrator evaluates the strain basis at two internal points
+        of each integration cell, denoted ``Z1`` and ``Z2``. Each basis maps the
+        padded link coordinates ``q_i`` to a six-dimensional strain contribution:
+
+        ``xi_Zk = B_Zk @ q_i + xi_ref_Zk`` for ``k in {1, 2}``.
+
+        If ``scale_rotational_strain_basis`` is enabled, the first three rows of
+        each basis matrix, corresponding to rotational strain coordinates, are
+        divided by the physical link length. The translational rows are left
+        unchanged. This helper centralizes that scaling so every Jacobian path
+        uses the same convention.
+
+        Args:
+            length: Physical length of the current link. Shape ``()``.
+            B_Z1: Link strain basis at the first Magnus quadrature point, shape
+                ``(6, self.max_dof)``.
+            B_Z2: Link strain basis at the second Magnus quadrature point, shape
+                ``(6, self.max_dof)``.
+
+        Returns:
+            A tuple ``(B_Z1_scaled, B_Z2_scaled)``. Each entry has shape
+            ``(6, self.max_dof)``. If rotational scaling is disabled, these are
+            the input basis matrices unchanged. If it is enabled, rows ``0:3`` are
+            divided by ``length``.
+        """
+        if self.scale_rotational_strain_basis:
+            B_Z1 = B_Z1.at[:3, :].divide(length)
+            B_Z2 = B_Z2.at[:3, :].divide(length)
+        return B_Z1, B_Z2
+
+    def _magnus_and_basis_from_strains(
+        self,
+        length: Array,
+        H: Array,
+        xi_Z1: Array,
+        xi_Z2: Array,
+        B_Z1: Array,
+        B_Z2: Array,
+    ) -> tuple[Array, Array, Array]:
+        """
+        Compute one second-order GVS Magnus increment and its basis Jacobian.
+
+        This helper is the shared algebraic core for the GVS Jacobian and Jdot
+        paths. It expects the strains and basis matrices for the two internal
+        cell quadrature points to have already been assembled. If rotational
+        basis scaling is active, callers must pass already-scaled bases and the
+        corresponding strains.
+
+        For normalized cell width ``H`` and physical link length ``length``, the
+        two-point Magnus approximation used here is:
+
+        ``c = sqrt(3) * length**2 * H**2 / 12``
+
+        ``Magnus = length * H / 2 * (xi_Z1 + xi_Z2) + c * ad(xi_Z1) @ xi_Z2``
+
+        Its coordinate Jacobian with respect to the padded link coordinate
+        vector ``q_i`` is:
+
+        ``B_Magnus = length * H / 2 * (B_Z1 + B_Z2)``
+        ``+ c * (ad(xi_Z1) @ B_Z2 - ad(xi_Z2) @ B_Z1)``
+
+        The returned ``B_Magnus`` maps padded link coordinate rates to the
+        Magnus increment rate: ``Magnusd = B_Magnus @ qd_i``.
+
+        Args:
+            length: Physical length of the current link. Shape ``()``.
+            H: Normalized cell width. This is either a full-cell width
+                ``Xs[j + 1] - Xs[j]`` or a partial-cell width ``Hp``. Shape
+                ``()``.
+            xi_Z1: Strain vector at the first Magnus quadrature point, shape
+                ``(6,)``.
+            xi_Z2: Strain vector at the second Magnus quadrature point, shape
+                ``(6,)``.
+            B_Z1: Link strain basis at the first quadrature point, shape
+                ``(6, self.max_dof)``.
+            B_Z2: Link strain basis at the second quadrature point, shape
+                ``(6, self.max_dof)``.
+
+        Returns:
+            Tuple ``(Magnus, B_Magnus, comm_coeff)``:
+            ``Magnus`` is the se(3) increment for the cell, shape ``(6,)``.
+            ``B_Magnus`` is ``d(Magnus) / d(q_i)``, shape
+            ``(6, self.max_dof)``.
+            ``comm_coeff`` is the scalar coefficient ``c`` above, shape ``()``.
+        """
+        ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
+        ad_xi_Z2 = lie.adjoint_se3(xi_Z2)
+        comm_coeff = jnp.sqrt(3) * (length**2) * H**2 / 12
+
+        Magnus = length * (H / 2) * (xi_Z1 + xi_Z2) + (
+            comm_coeff * (ad_xi_Z1 @ xi_Z2)
+        )
+        B_Magnus = length * (H / 2) * (B_Z1 + B_Z2) + (
+            comm_coeff * (ad_xi_Z1 @ B_Z2 - ad_xi_Z2 @ B_Z1)
+        )
+        return Magnus, B_Magnus, comm_coeff
+
+    def _magnus_jacobian_step_terms(
+        self,
+        length: Array,
+        H: Array,
+        q_i: Array,
+        B_Z1: Array,
+        B_Z2: Array,
+        xi_ref_Z1: Array,
+        xi_ref_Z2: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Compute local terms for propagating a body-frame Jacobian through a cell.
+
+        This is the Jacobian-only helper for a full or partial GVS link cell. It
+        assembles the two quadrature-point strains from the current link
+        coordinates, computes the two-point Magnus increment, and returns the
+        relative transform/tangent terms required by the recurrence:
+
+        ``J_next = Ad_step_inv @ (J_prev + T_block)``
+
+        where ``T_block`` is zero except for the current link block, which is
+        ``T_step @ B_Magnus``. The helper deliberately does not compute
+        Jdot-only quantities such as ``Td_step`` or ``B_Magnus_dot``; callers in
+        J-only paths avoid that extra work.
+
+        Args:
+            length: Physical length of the current link. Shape ``()``.
+            H: Normalized cell width. This may be a full cell width or a partial
+                cell width. Shape ``()``.
+            q_i: Padded generalized coordinates for the current link strain
+                basis, shape ``(self.max_dof,)``.
+            B_Z1: Link strain basis at the first Magnus quadrature point, shape
+                ``(6, self.max_dof)``.
+            B_Z2: Link strain basis at the second Magnus quadrature point, shape
+                ``(6, self.max_dof)``.
+            xi_ref_Z1: Reference strain at the first quadrature point, shape
+                ``(6,)``.
+            xi_ref_Z2: Reference strain at the second quadrature point, shape
+                ``(6,)``.
+
+        Returns:
+            Tuple ``(g_step, T_step, Ad_step_inv, B_Magnus)``:
+            ``g_step`` is the relative SE(3) transform for the cell, shape
+            ``(4, 4)``; ``T_step`` is the tangent map of the Magnus increment,
+            shape ``(6, 6)``; ``Ad_step_inv`` is ``Ad(g_step)^(-1)``, shape
+            ``(6, 6)``; ``B_Magnus`` is ``d(Magnus) / d(q_i)``, shape
+            ``(6, self.max_dof)``.
+        """
+        B_Z1, B_Z2 = self._scaled_link_basis_pair(length, B_Z1, B_Z2)
+        xi_Z1 = B_Z1 @ q_i + xi_ref_Z1
+        xi_Z2 = B_Z2 @ q_i + xi_ref_Z2
+
+        Magnus, B_Magnus, _ = self._magnus_and_basis_from_strains(
+            length, H, xi_Z1, xi_Z2, B_Z1, B_Z2
+        )
+        g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
+        T_step = lie.Tangent_gi_se3(
+            Magnus, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+        return g_step, T_step, Ad_step_inv, B_Magnus
+
+    def _magnus_jacobian_derivative_step_terms(
+        self,
+        length: Array,
+        H: Array,
+        q_i: Array,
+        qd_i: Array,
+        B_Z1: Array,
+        B_Z2: Array,
+        xi_ref_Z1: Array,
+        xi_ref_Z2: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """
+        Compute local terms for propagating ``J`` and ``Jdot`` through a cell.
+
+        This is the analytical derivative helper for a full or partial GVS link
+        cell. It shares the same Magnus and ``B_Magnus`` algebra as
+        ``_magnus_jacobian_step_terms`` and additionally computes the tangent-map
+        derivative and the time derivative of the Magnus basis Jacobian.
+
+        With ``xid_Zk = B_Zk @ qd_i`` and
+        ``c = sqrt(3) * length**2 * H**2 / 12``, the basis-Jacobian derivative is:
+
+        ``B_Magnus_dot = c * (ad(xid_Z1) @ B_Z2 - ad(xid_Z2) @ B_Z1)``
+
+        The returned terms are sufficient for the local product-rule recurrence:
+
+        ``J_next = Ad_step_inv @ (J_prev + T_block)``
+
+        ``Jdot_next = Ad_step_inv @ (Jdot_prev + Tdot_block)``
+        ``+ Ad_step_inv_dot @ (J_prev + T_block)``
+
+        where ``T_block = T_step @ B_Magnus`` and
+        ``Tdot_block = Td_step @ B_Magnus + T_step @ B_Magnus_dot``. No runtime
+        autodiff is used in this helper.
+
+        Args:
+            length: Physical length of the current link. Shape ``()``.
+            H: Normalized cell width. This may be a full cell width or a partial
+                cell width. Shape ``()``.
+            q_i: Padded generalized coordinates for the current link strain
+                basis, shape ``(self.max_dof,)``.
+            qd_i: Padded generalized velocities for the current link strain
+                basis, shape ``(self.max_dof,)``.
+            B_Z1: Link strain basis at the first Magnus quadrature point, shape
+                ``(6, self.max_dof)``.
+            B_Z2: Link strain basis at the second Magnus quadrature point, shape
+                ``(6, self.max_dof)``.
+            xi_ref_Z1: Reference strain at the first quadrature point, shape
+                ``(6,)``.
+            xi_ref_Z2: Reference strain at the second quadrature point, shape
+                ``(6,)``.
+
+        Returns:
+            Tuple ``(g_step, T_step, Td_step, Ad_step_inv, B_Magnus,
+            B_Magnus_dot)``. ``g_step`` has shape ``(4, 4)``; ``T_step``,
+            ``Td_step``, and ``Ad_step_inv`` have shape ``(6, 6)``;
+            ``B_Magnus`` and ``B_Magnus_dot`` have shape
+            ``(6, self.max_dof)``.
+        """
+        B_Z1, B_Z2 = self._scaled_link_basis_pair(length, B_Z1, B_Z2)
+        xi_Z1 = B_Z1 @ q_i + xi_ref_Z1
+        xi_Z2 = B_Z2 @ q_i + xi_ref_Z2
+        xid_Z1 = B_Z1 @ qd_i
+        xid_Z2 = B_Z2 @ qd_i
+
+        Magnus, B_Magnus, comm_coeff = self._magnus_and_basis_from_strains(
+            length, H, xi_Z1, xi_Z2, B_Z1, B_Z2
+        )
+        B_Magnus_dot = comm_coeff * (
+            lie.adjoint_se3(xid_Z1) @ B_Z2 - lie.adjoint_se3(xid_Z2) @ B_Z1
+        )
+        Magnusd = B_Magnus @ qd_i
+
+        g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
+        T_step = lie.Tangent_gi_se3(
+            Magnus, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Td_step = lie.Tangent_derivative_gi_se3(
+            Magnus, Magnusd, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+        return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
+
     # =========================================================================
     @eqx.filter_jit
     def _forward_kinematics_gauss(self, q_gathered: Array) -> Array:
@@ -1444,45 +1692,23 @@ class GVS(SoftRobot):
                 g_prev, J_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-                ds = H * length_i
-                ds_sq = ds * ds
-
-                xi_ref_Z1_j = xi_ref_Z1_i[j_eval]
-                xi_ref_Z2_j = xi_ref_Z2_i[j_eval]
-
-                B_Z1_j = B_Z1_i[j_eval]
-                B_Z2_j = B_Z2_i[j_eval]
-
-                if self.scale_rotational_strain_basis:
-                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
-                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
-
-                xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_j
-                xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
-
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
-
-                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ xi_Z2_j)
-
-                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
-
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)  # shape (4, 4)
-                T_step = lie.Tangent_gi_se3(
-                    Magnus_j, 1, eps=self.tangent_eps
-                )  # shape (6, 6)
+                g_step, T_step, Ad_g_step_inv, B_Magnus_j = (
+                    self._magnus_jacobian_step_terms(
+                        length_i,
+                        H,
+                        q_i,
+                        B_Z1_i[j_eval],
+                        B_Z2_i[j_eval],
+                        xi_ref_Z1_i[j_eval],
+                        xi_ref_Z2_i[j_eval],
+                    )
+                )
 
                 T_step_B_step = (
                     jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                     .at[i_segment, 1]
                     .set(T_step @ B_Magnus_j)
                 )
-
-                Ad_g_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_next = g_prev @ g_step
                 J_next = jnp.einsum(
@@ -1621,32 +1847,17 @@ class GVS(SoftRobot):
                 g_prev, J_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-                ds = H * length_i
-                ds_sq = ds * ds
-
-                B_Z1_j = B_Z1_i[j_eval]
-                B_Z2_j = B_Z2_i[j_eval]
-
-                if self.scale_rotational_strain_basis:
-                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
-                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
-
-                xi_Z1_j = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval]
-                xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval]
-
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
-
-                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ xi_Z2_j)
-
-                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
-
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus_j, 1, eps=self.tangent_eps)
+                g_step, T_step, Ad_step_inv, B_Magnus_j = (
+                    self._magnus_jacobian_step_terms(
+                        length_i,
+                        H,
+                        q_i,
+                        B_Z1_i[j_eval],
+                        B_Z2_i[j_eval],
+                        xi_ref_Z1_i[j_eval],
+                        xi_ref_Z2_i[j_eval],
+                    )
+                )
 
                 # add contribution for this link block
                 T_block = (
@@ -1654,8 +1865,6 @@ class GVS(SoftRobot):
                     .at[i_segment, 1]
                     .set(T_step @ B_Magnus_j)
                 )
-
-                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_next = g_prev @ g_step
                 J_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_prev + T_block))
@@ -1712,34 +1921,19 @@ class GVS(SoftRobot):
                 # partial cell j with Hp
                 H = Xs_i[j + 1] - Xs_i[j]
                 Hp = jnp.clip(x - Xs_i[j], 0.0, H)
-                ds = Hp * length_i
-                ds_sq = ds * ds
 
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
-                Bp_Z1 = Bp[0]
-                Bp_Z2 = Bp[1]
-
-                if self.scale_rotational_strain_basis:
-                    Bp_Z1 = Bp_Z1.at[:3, :].divide(length_i)
-                    Bp_Z2 = Bp_Z2.at[:3, :].divide(length_i)
-
-                xi_Z1_j = (Bp_Z1 @ q_i) + xi_ref_Z1_i[j]
-                xi_Z2_j = (Bp_Z2 @ q_i) + xi_ref_Z2_i[j]
-
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
-
-                Magnus_p = length_i * (Hp / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
-                ) * (ad_xi_Z1_j @ xi_Z2_j)
-                B_Magnus_p = length_i * (Hp / 2) * (Bp_Z1 + Bp_Z2) + (
-                    jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
-                ) * (ad_xi_Z1_j @ Bp_Z2 - ad_xi_Z2_j @ Bp_Z1)
-
-                g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
-                T_step = lie.Tangent_gi_se3(
-                    Magnus_p, jnp.array(1.0), eps=self.tangent_eps
+                g_step, T_step, Ad_step_inv, B_Magnus_p = (
+                    self._magnus_jacobian_step_terms(
+                        length_i,
+                        Hp,
+                        q_i,
+                        Bp[0],
+                        Bp[1],
+                        xi_ref_Z1_i[j],
+                        xi_ref_Z2_i[j],
+                    )
                 )
 
                 T_block = (
@@ -1747,7 +1941,6 @@ class GVS(SoftRobot):
                     .at[i_segment, 1]
                     .set(T_step @ B_Magnus_p)
                 )
-                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_out = g_in @ g_step
                 J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_in + T_block))
@@ -1850,34 +2043,26 @@ class GVS(SoftRobot):
             x_base = Xs_i[base_idx]
 
             Hp = x_norm - x_base
-            ds = Hp * length_i
 
             def integrate_partial(_) -> Array:
                 Xp = jnp.array(
                     [x_base + self.Z1 * Hp, x_base + self.Z2 * Hp], dtype=x_norm.dtype
                 )
                 Bp = self._eval_B_segment(i, Xp)
-
-                xi_Z1 = Bp[0] @ q_link + xi_ref_Z1_i[cell_idx]
-                xi_Z2 = Bp[1] @ q_link + xi_ref_Z2_i[cell_idx]
-
-                ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
-                ad_xi_Z2 = lie.adjoint_se3(xi_Z2)
-
-                ds_sq = ds * ds
-                Magnus = (ds / 2.0) * (xi_Z1 + xi_Z2) + (
-                    jnp.sqrt(3.0) * ds_sq / 12.0
-                ) * (ad_xi_Z1 @ xi_Z2)
-                B_Magnus = (ds / 2.0) * (Bp[0] + Bp[1]) + (
-                    jnp.sqrt(3.0) * ds_sq / 12.0
-                ) * (ad_xi_Z1 @ Bp[1] - ad_xi_Z2 @ Bp[0])
-
-                g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus, jnp.array(1.0), self.global_eps)
+                _g_step, T_step, Ad_step_inv, B_Magnus = (
+                    self._magnus_jacobian_step_terms(
+                        length_i,
+                        Hp,
+                        q_link,
+                        Bp[0],
+                        Bp[1],
+                        xi_ref_Z1_i[cell_idx],
+                        xi_ref_Z2_i[cell_idx],
+                    )
+                )
 
                 T_block = jnp.zeros_like(J_blocks_base).at[i, 1].set(T_step @ B_Magnus)
 
-                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
                 return jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (J_blocks_base + T_block)
                 )
@@ -1894,6 +2079,134 @@ class GVS(SoftRobot):
 
             J_flat = blocks_to_flat(J_blocks)
             return J_flat @ self.B_select
+
+        return vmap(body_single)(s_flat)
+
+    @eqx.filter_jit
+    def jacobian_and_derivative_bodyframe_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute body-frame Jacobians and time derivatives at multiple arclength locations.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            qd (Array): generalized velocities of shape (num_active_strains,).
+            s_ps (Array): points along the backbone in [0, L], shape (N,).
+
+        Returns:
+            Tuple[Array, Array]: Jacobians and derivatives with shape
+            (N, 6, num_active_strains).
+        """
+        q_gathered = self._min_size_gathered(q)
+        qd_gathered = self._min_size_gathered(qd)
+        J_gauss_full = self._jacobian_gauss(q_gathered)
+        Jd_gauss_full = self._jacobian_derivative_gauss(q_gathered, qd_gathered)
+
+        s_flat = jnp.asarray(s_ps).reshape(-1)
+        tot_dof = self.num_segments * 2 * self.max_dof
+
+        def flatten_to_blocks(J_flat: Array) -> Array:
+            return jnp.transpose(
+                J_flat.reshape(6, self.num_segments, 2, self.max_dof), (1, 2, 0, 3)
+            )
+
+        def blocks_to_flat(J_blocks: Array) -> Array:
+            return jnp.transpose(J_blocks, (2, 0, 1, 3)).reshape(6, tot_dof)
+
+        def body_single(s_val: Array) -> tuple[Array, Array]:
+            i, s_local = self.classify_segment(s_val)
+
+            length_i = self.V_L[i]
+            length_safe = jnp.where(jnp.abs(length_i) < self.global_eps, 1.0, length_i)
+            x_norm = jnp.where(
+                jnp.abs(length_i) < self.global_eps,
+                0.0,
+                jnp.clip(s_local / length_safe, 0.0, 1.0),
+            )
+
+            Xs_i = self.V_Xs[i]
+            J_nodes = J_gauss_full[i]
+            Jd_nodes = Jd_gauss_full[i]
+            q_link = q_gathered[i, 1]
+            qd_link = qd_gathered[i, 1]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[i]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[i]
+
+            cell_idx = jnp.clip(
+                jnp.searchsorted(Xs_i, x_norm, side="right") - 1,
+                0,
+                self.max_nip - 2,
+            )
+
+            distances = jnp.abs(Xs_i - x_norm)
+            closest_idx = jnp.argmin(distances)
+            base_idx = jnp.minimum(closest_idx, cell_idx)
+
+            J_base_flat = J_nodes[base_idx]
+            Jd_base_flat = Jd_nodes[base_idx]
+            J_blocks_base = flatten_to_blocks(J_base_flat)
+            Jd_blocks_base = flatten_to_blocks(Jd_base_flat)
+            x_base = Xs_i[base_idx]
+
+            Hp = x_norm - x_base
+
+            def integrate_partial(_) -> tuple[Array, Array]:
+                Xp = jnp.array(
+                    [x_base + self.Z1 * Hp, x_base + self.Z2 * Hp], dtype=x_norm.dtype
+                )
+                Bp = self._eval_B_segment(i, Xp)
+                (
+                    _g_step,
+                    T_step,
+                    Td_step,
+                    Ad_step_inv,
+                    B_Magnus,
+                    B_Magnus_dot,
+                ) = self._magnus_jacobian_derivative_step_terms(
+                    length_i,
+                    Hp,
+                    q_link,
+                    qd_link,
+                    Bp[0],
+                    Bp[1],
+                    xi_ref_Z1_i[cell_idx],
+                    xi_ref_Z2_i[cell_idx],
+                )
+
+                T_block = jnp.zeros_like(J_blocks_base).at[i, 1].set(
+                    T_step @ B_Magnus
+                )
+                Td_block = jnp.zeros_like(Jd_blocks_base).at[i, 1].set(
+                    Td_step @ B_Magnus + T_step @ B_Magnus_dot
+                )
+
+                eta_step = Ad_step_inv @ (T_step @ B_Magnus @ qd_link)
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+
+                J_blocks = jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv, J_blocks_base + T_block
+                )
+                Jd_blocks = jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv, Jd_blocks_base + Td_block
+                ) + jnp.einsum(
+                    "ij,nmjk->nmik", Ad_step_inv_dot, J_blocks_base + T_block
+                )
+                return J_blocks, Jd_blocks
+
+            J_blocks, Jd_blocks = lax.cond(
+                jnp.logical_or(
+                    jnp.abs(Hp) <= self.global_eps,
+                    jnp.abs(length_i) < self.global_eps,
+                ),
+                lambda _: (J_blocks_base, Jd_blocks_base),
+                integrate_partial,
+                operand=None,
+            )
+
+            J_flat = blocks_to_flat(J_blocks)
+            Jd_flat = blocks_to_flat(Jd_blocks)
+            return J_flat @ self.B_select, Jd_flat @ self.B_select
 
         return vmap(body_single)(s_flat)
 
@@ -2078,40 +2391,22 @@ class GVS(SoftRobot):
                 g_prev, J_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-                B_Z1_j = B_Z1_i[j_eval]
-                B_Z2_j = B_Z2_i[j_eval]
-
-                if self.scale_rotational_strain_basis:
-                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
-                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
-
-                xi_Z1_j = B_Z1_j @ q_i + xi_ref_Z1_i[j_eval]
-                xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_i[j_eval]
-                xid_Z1_j = B_Z1_j @ qd_i
-                xid_Z2_j = B_Z2_j @ qd_i
-
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
-                ad_xi_Z2_j = lie.adjoint_se3(xi_Z2_j)
-
-                comm_coeff = jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (
-                    comm_coeff * (ad_xi_Z1_j @ xi_Z2_j)
-                )
-                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (
-                    comm_coeff * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
-                )
-                B_Magnus_dot_j = comm_coeff * (
-                    lie.adjoint_se3(xid_Z1_j) @ B_Z2_j
-                    - lie.adjoint_se3(xid_Z2_j) @ B_Z1_j
-                )
-                Magnusd_j = B_Magnus_j @ qd_i
-
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
-                T_step = lie.Tangent_gi_se3(
-                    Magnus_j, jnp.array(1.0), eps=self.tangent_eps
-                )
-                Td_step = lie.Tangent_derivative_gi_se3(
-                    Magnus_j, Magnusd_j, jnp.array(1.0), eps=self.tangent_eps
+                (
+                    g_step,
+                    T_step,
+                    Td_step,
+                    Ad_step_inv,
+                    B_Magnus_j,
+                    B_Magnus_dot_j,
+                ) = self._magnus_jacobian_derivative_step_terms(
+                    length_i,
+                    H,
+                    q_i,
+                    qd_i,
+                    B_Z1_i[j_eval],
+                    B_Z2_i[j_eval],
+                    xi_ref_Z1_i[j_eval],
+                    xi_ref_Z2_i[j_eval],
                 )
 
                 T_block = (
@@ -2125,7 +2420,6 @@ class GVS(SoftRobot):
                     .set(Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j)
                 )
 
-                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
                 eta_step = Ad_step_inv @ (T_step @ B_Magnus_j @ qd_i)
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
                 Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
@@ -2284,42 +2578,22 @@ class GVS(SoftRobot):
                 g_prev, J_prev, Jd_prev, eta_prev = carry
 
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
-
-                B_Z1_j = B_Z1_i[j_eval]
-                B_Z2_j = B_Z2_i[j_eval]
-                if self.scale_rotational_strain_basis:
-                    B_Z1_j = B_Z1_j.at[:3, :].divide(length_i)
-                    B_Z2_j = B_Z2_j.at[:3, :].divide(length_i)
-
-                xi_Z1 = (B_Z1_j @ q_i) + xi_ref_Z1_i[j_eval]
-                xi_Z2 = (B_Z2_j @ q_i) + xi_ref_Z2_i[j_eval]
-                xid_Z1 = B_Z1_j @ qd_i
-                xid_Z2 = B_Z2_j @ qd_i
-
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
-                ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
-
-                Magnus_j = length_i * (H / 2) * (xi_Z1 + xi_Z2) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ xi_Z2)
-
-                B_Magnus_j = length_i * (H / 2) * (B_Z1_j + B_Z2_j) + (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (ad_xi_Z1_j @ B_Z2_j - ad_xi_Z2_j @ B_Z1_j)
-
-                Magnusd_j = B_Magnus_j @ qd_i
-
-                B_Magnus_dot_j = (
-                    jnp.sqrt(3) * (length_i**2) * H**2 / 12
-                ) * (
-                    lie.adjoint_se3(xid_Z1) @ B_Z2_j
-                    - lie.adjoint_se3(xid_Z2) @ B_Z1_j
-                )
-
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
-                T_step = lie.Tangent_gi_se3(Magnus_j, 1, eps=self.tangent_eps)
-                Td_step = lie.Tangent_derivative_gi_se3(
-                    Magnus_j, Magnusd_j, 1, eps=self.tangent_eps
+                (
+                    g_step,
+                    T_step,
+                    Td_step,
+                    Ad_step_inv,
+                    B_Magnus_j,
+                    B_Magnus_dot_j,
+                ) = self._magnus_jacobian_derivative_step_terms(
+                    length_i,
+                    H,
+                    q_i,
+                    qd_i,
+                    B_Z1_i[j_eval],
+                    B_Z2_i[j_eval],
+                    xi_ref_Z1_i[j_eval],
+                    xi_ref_Z2_i[j_eval],
                 )
 
                 # contribution of this link cell to its own block
@@ -2333,8 +2607,6 @@ class GVS(SoftRobot):
                     .at[i_segment, 1]
                     .set(Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j)
                 )
-
-                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_next = g_prev @ g_step
                 J_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_prev + T_block))
@@ -2409,41 +2681,22 @@ class GVS(SoftRobot):
                     [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
                 )  # two partial Gauss points
                 Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
-                Bp_Z1 = Bp[0]
-                Bp_Z2 = Bp[1]
-
-                if self.scale_rotational_strain_basis:
-                    Bp_Z1 = Bp_Z1.at[:3, :].divide(length_i)
-                    Bp_Z2 = Bp_Z2.at[:3, :].divide(length_i)
-
-                xi_Z1 = (Bp_Z1 @ q_i) + xi_ref_Z1_i[j]
-                xi_Z2 = (Bp_Z2 @ q_i) + xi_ref_Z2_i[j]
-                xid_Z1 = Bp_Z1 @ qd_i
-                xid_Z2 = Bp_Z2 @ qd_i
-
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1)
-                ad_xi_Z2_j = lie.adjoint_se3(xi_Z2)
-
-                Magnus_p = length_i * (Hp / 2) * (xi_Z1 + xi_Z2) + (
-                    jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
-                ) * (ad_xi_Z1_j @ xi_Z2)
-                B_Magnus_p = length_i * (Hp / 2) * (Bp_Z1 + Bp_Z2) + (
-                    jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
-                ) * (ad_xi_Z1_j @ Bp_Z2 - ad_xi_Z2_j @ Bp_Z1)
-                Magnusd_p = B_Magnus_p @ qd_i
-                B_Magnus_dot_p = (
-                    jnp.sqrt(3) * (length_i**2) * Hp * Hp / 12
-                ) * (
-                    lie.adjoint_se3(xid_Z1) @ Bp_Z2
-                    - lie.adjoint_se3(xid_Z2) @ Bp_Z1
-                )
-
-                g_step = lie.exp_gn_SE3(Magnus_p, self.global_eps)
-                T_step = lie.Tangent_gi_se3(
-                    Magnus_p, jnp.array(1.0), eps=self.tangent_eps
-                )
-                Td_step = lie.Tangent_derivative_gi_se3(
-                    Magnus_p, Magnusd_p, jnp.array(1.0), eps=self.tangent_eps
+                (
+                    g_step,
+                    T_step,
+                    Td_step,
+                    Ad_step_inv,
+                    B_Magnus_p,
+                    B_Magnus_dot_p,
+                ) = self._magnus_jacobian_derivative_step_terms(
+                    length_i,
+                    Hp,
+                    q_i,
+                    qd_i,
+                    Bp[0],
+                    Bp[1],
+                    xi_ref_Z1_i[j],
+                    xi_ref_Z2_i[j],
                 )
 
                 T_block = (
@@ -2456,8 +2709,6 @@ class GVS(SoftRobot):
                     .at[i_segment, 1]
                     .set(Td_step @ B_Magnus_p + T_step @ B_Magnus_dot_p)
                 )
-
-                Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
 
                 g_out = g_in @ g_step
                 J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, (J_in + T_block))
@@ -2566,6 +2817,47 @@ class GVS(SoftRobot):
         )
 
         return J_global, Jd_global
+
+    @eqx.filter_jit
+    def jacobian_and_derivative_inertialframe_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute inertial-frame Jacobians and time derivatives at multiple arclengths.
+
+        Args:
+            q (Array): generalized coordinates of shape (num_active_strains,).
+            qd (Array): generalized velocities of shape (num_active_strains,).
+            s_ps (Array): points along the backbone in [0, L], shape (N,).
+
+        Returns:
+            Tuple[Array, Array]: Jacobians and derivatives with shape
+            (N, 6, num_active_strains).
+        """
+        J_body, Jd_body = self.jacobian_and_derivative_bodyframe_batched(q, qd, s_ps)
+        g_ps = self.forward_kinematics_batched(q, s_ps)
+
+        def rotate_pair(g_i: Array, J_i: Array, Jd_i: Array) -> tuple[Array, Array]:
+            R = g_i[:3, :3]
+            g_rot = jnp.block(
+                [
+                    [R, jnp.zeros((3, 1), dtype=R.dtype)],
+                    [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
+                ]
+            )
+            Ad_g = lie.Adjoint_g_SE3(g_rot)
+
+            eta_body = J_i @ qd
+            eta_rot = jnp.concatenate(
+                [eta_body[:3], jnp.zeros(3, dtype=eta_body.dtype)]
+            )
+            Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+
+            J_global = Ad_g @ J_i
+            Jd_global = Ad_g @ Jd_i + Ad_g_dot @ J_i
+            return J_global, Jd_global
+
+        return vmap(rotate_pair)(g_ps, J_body, Jd_body)
 
     @eqx.filter_jit
     def jacobian_and_derivative(
