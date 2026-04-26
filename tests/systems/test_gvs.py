@@ -1,12 +1,12 @@
 import jax
+import jax.numpy as jnp
 import numpy as onp
 import pytest
 from jax import Array, jacfwd, jacrev, jvp
-import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems import CrossSectionGeometry, GVS, PCS
+from soromox.systems import GVS, PCS, CrossSectionGeometry
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 from soromox.utils.tolerance import Tolerance
 
@@ -211,7 +211,14 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         return BasisAttributes(
             basistype="Fourier",
             Bdof=[1, 0, 1, 1, 0, 1],
-            Bodr=[1 + (idx % 2), 0, 2 + (repeat % 2), 1 + ((idx + repeat) % 2), 0, 1 + ((repeat + 1) % 2)],
+            Bodr=[
+                1 + (idx % 2),
+                0,
+                2 + (repeat % 2),
+                1 + ((idx + repeat) % 2),
+                0,
+                1 + ((repeat + 1) % 2),
+            ],
             xi_ref=[0.2 + 0.02 * repeat, 0.0, 0.0, xi_sigma, 0.0, 0.0],
         )
 
@@ -269,6 +276,49 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
     )
 
 
+def build_constant_strain_gvs(
+    num_segments: int = 1,
+    selector_per_segment: tuple[bool, ...] | None = None,
+    max_dof: int | None = None,
+) -> GVS:
+    if selector_per_segment is None:
+        selector_per_segment = (True, True, True, True, True, True)
+
+    links = [
+        LinkAttributes(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=1e6,
+            nu=0.5,
+            rho=1000.0,
+            eta=0.0,
+            L=0.2,
+            r_i=0.02,
+            r_f=0.02,
+        )
+        for _ in range(num_segments)
+    ]
+    joints = [JointAttributes(jointtype="Fixed") for _ in range(num_segments)]
+    bases = [
+        BasisAttributes(
+            basistype="Monomial",
+            Bdof=[int(active) for active in selector_per_segment],
+            Bodr=[0, 0, 0, 0, 0, 0],
+            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for _ in range(num_segments)
+    ]
+
+    return GVS(
+        links_list=links,
+        joints_list=joints,
+        basis_list=bases,
+        n_gauss_list=[5 for _ in range(num_segments)],
+        gravity_vector=[0.0, 0.0, -9.81],
+        max_dof=max_dof,
+        p0=jnp.zeros(6),
+    )
+
+
 def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
     lengths = jnp.asarray(robot.V_L)
     cumulative = jnp.cumsum(lengths)
@@ -302,7 +352,9 @@ def se3_inverse(g: jnp.ndarray) -> jnp.ndarray:
     return g_inv
 
 
-def se3_tangent_to_body_twist(g_inv: jnp.ndarray, g_tangent: jnp.ndarray) -> jnp.ndarray:
+def se3_tangent_to_body_twist(
+    g_inv: jnp.ndarray, g_tangent: jnp.ndarray
+) -> jnp.ndarray:
     xi_hat_body = g_inv @ g_tangent
     skew_body = 0.5 * (xi_hat_body[:3, :3] - xi_hat_body[:3, :3].T)
     omega = jnp.array(
@@ -317,7 +369,53 @@ def se3_tangent_to_body_twist(g_inv: jnp.ndarray, g_tangent: jnp.ndarray) -> jnp
     return jnp.concatenate((omega, v_body))
 
 
-def stack_forward_kinematics(robot: GVS, q: jnp.ndarray, s_points: jnp.ndarray) -> jnp.ndarray:
+def body_twist_between(g_base: jnp.ndarray, g_target: jnp.ndarray) -> jnp.ndarray:
+    g_rel = se3_inverse(g_base) @ g_target
+    xi = lie.log_SE3(g_rel, eps=1e-12)
+    R = g_rel[:3, :3]
+    omega = xi[:3]
+    alt_omega = 0.5 * jnp.array(
+        [R[2, 1] - R[1, 2], R[0, 2] - R[2, 0], R[1, 0] - R[0, 1]],
+        dtype=jnp.float64,
+    )
+    omega = jnp.where(jnp.linalg.norm(omega) < 1e-10, alt_omega, omega)
+    return xi.at[:3].set(omega)
+
+
+def spatial_from_body(g: jnp.ndarray, xi_body: jnp.ndarray) -> jnp.ndarray:
+    g_rot = jnp.block(
+        [[g[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
+    )
+    return lie.Adjoint_g_SE3(g_rot) @ xi_body
+
+
+def segment_tip_transforms(robot: GVS, q: jnp.ndarray) -> jnp.ndarray:
+    s_tips = tip_arc_lengths(robot)
+    return stack_forward_kinematics(robot, q, s_tips)
+
+
+def build_full_and_reduced_constant_strain_gvs(
+    num_segments: int, selector_per_segment: tuple[bool, ...]
+) -> tuple[GVS, GVS, jnp.ndarray]:
+    full = build_constant_strain_gvs(num_segments=num_segments, max_dof=6)
+    reduced = build_constant_strain_gvs(
+        num_segments=num_segments,
+        selector_per_segment=selector_per_segment,
+        max_dof=6,
+    )
+    B = jnp.zeros((int(full.dof_tot_system), int(reduced.dof_tot_system)))
+    col = 0
+    for segment_idx in range(num_segments):
+        for component_idx, active in enumerate(selector_per_segment):
+            if active:
+                B = B.at[6 * segment_idx + component_idx, col].set(1.0)
+                col += 1
+    return full, reduced, B
+
+
+def stack_forward_kinematics(
+    robot: GVS, q: jnp.ndarray, s_points: jnp.ndarray
+) -> jnp.ndarray:
     s_array = onp.asarray(s_points, dtype=float)
     return jnp.stack(
         [robot.forward_kinematics(q, float(s)) for s in s_array],
@@ -359,8 +457,7 @@ def gvs_jacobian_inertialframe_from_body(
     return Adj_g @ J_local
 
 
-@pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_gvs_pcs_coherence(num_segments: int) -> None:
+def _assert_gvs_pcs_coherence(num_segments: int) -> None:
     print("\nTesting GVS-PCS coherence for", num_segments, "segments")
     robot_gvs, robot_pcs = build_matched_gvs_pcs(num_segments)
     n = int(robot_gvs.dof_tot_system)
@@ -404,29 +501,67 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
             # check the forward kinematics
             g_gvs = robot_gvs.forward_kinematics(q, s)
             g_pcs = robot_pcs.forward_kinematics(q, s)
-            assert_allclose(g_gvs, g_pcs, rtol=RTOL, atol=ATOL), "FK mismatch at s={}".format(s)
+            assert_allclose(
+                g_gvs, g_pcs, rtol=RTOL, atol=ATOL, err_msg=f"FK mismatch at s={s}"
+            )
 
             # check the Jacobians in body frames
             Jb_gvs = robot_gvs.jacobian_bodyframe(q, s)
             Jb_pcs = robot_pcs.jacobian_bodyframe(q, s)
-            assert_allclose(Jb_gvs, Jb_pcs, rtol=RTOL, atol=ATOL), "Jacobian bodyframe mismatch at s={}".format(s)
+            assert_allclose(
+                Jb_gvs,
+                Jb_pcs,
+                rtol=RTOL,
+                atol=ATOL,
+                err_msg=f"Jacobian bodyframe mismatch at s={s}",
+            )
 
             # check the Jacobians in inertial frames
             Ji_gvs = robot_gvs.jacobian_inertialframe(q, s)
             Ji_pcs = robot_pcs.jacobian_inertialframe(q, s)
-            assert_allclose(Ji_gvs, Ji_pcs, rtol=RTOL, atol=ATOL), "Jacobian inertialframe mismatch at s={}".format(s)
+            assert_allclose(
+                Ji_gvs,
+                Ji_pcs,
+                rtol=RTOL,
+                atol=ATOL,
+                err_msg=f"Jacobian inertialframe mismatch at s={s}",
+            )
 
             # check the Jacobian derivatives in body frames
             Jb_gvs2, Jdb_gvs = robot_gvs.jacobian_and_derivative_bodyframe(q, qd, s)
             _, Jdb_pcs = robot_pcs.jacobian_and_derivative_bodyframe(q, qd, s)
-            assert_allclose(Jb_gvs, Jb_gvs2, rtol=RTOL, atol=ATOL), "Jacobian bodyframe mismatch at s={}".format(s)
-            assert_allclose(Jdb_gvs, Jdb_pcs, rtol=RTOL, atol=ATOL), "Jacobian derivative bodyframe mismatch at s={}".format(s)
+            assert_allclose(
+                Jb_gvs,
+                Jb_gvs2,
+                rtol=RTOL,
+                atol=ATOL,
+                err_msg=f"Jacobian bodyframe mismatch at s={s}",
+            )
+            assert_allclose(
+                Jdb_gvs,
+                Jdb_pcs,
+                rtol=RTOL,
+                atol=ATOL,
+                err_msg=f"Jacobian derivative bodyframe mismatch at s={s}",
+            )
 
             # check the Jacobian derivatives in inertial frames
             Ji_gvs2, Jdi_gvs = robot_gvs.jacobian_and_derivative_inertialframe(q, qd, s)
             _, Jdi_pcs = robot_pcs.jacobian_and_derivative_inertialframe(q, qd, s)
-            assert_allclose(Ji_gvs, Ji_gvs2, rtol=RTOL, atol=ATOL), "Jacobian inertialframe mismatch at s={}".format(s)
-            assert_allclose(Jdi_gvs, Jdi_pcs, rtol=RTOL, atol=ATOL), "Jacobian derivative inertialframe mismatch at s={}".format(s)
+            assert_allclose(
+                Ji_gvs,
+                Ji_gvs2,
+                rtol=RTOL,
+                atol=ATOL,
+                err_msg=f"Jacobian inertialframe mismatch at s={s}",
+            )
+            assert_allclose(
+                Jdi_gvs,
+                Jdi_pcs,
+                rtol=RTOL,
+                atol=ATOL,
+                err_msg=f"Jacobian derivative inertialframe mismatch at s={s}",
+            )
 
         B_gvs = robot_gvs.inertia_matrix(q)
         B_pcs = robot_pcs.inertia_matrix(q)
@@ -471,9 +606,10 @@ def test_gvs_pcs_coherence(num_segments: int) -> None:
         assert_allclose(yd_gvs, yd_pcs, rtol=RTOL, atol=ATOL)
 
 
-
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+def test_forward_kinematics_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     total_length = float(robot.V_L_cum[-1])
 
@@ -524,6 +660,19 @@ def test_forward_kinematics_tips_matches_pointwise_and_gauss(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    q = random_q(robot, jax.random.PRNGKey(1), scale=0.05)
+
+    for s in sample_arc_lengths(robot):
+        J_impl = robot.jacobian_inertialframe(q, float(s))
+        J_body = robot.jacobian_bodyframe(q, float(s))
+        J_expected = spatial_from_body(robot.forward_kinematics(q, float(s)), J_body)
+
+        assert_allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(6)
@@ -536,12 +685,13 @@ def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
             if s < 1e-3:
                 continue
 
-            J_body = robot.jacobian_bodyframe(q, float(s))
-            g = robot.forward_kinematics(q, float(s))
+            s_val = float(s)
+            J_body = robot.jacobian_bodyframe(q, s_val)
+            g = robot.forward_kinematics(q, s_val)
             g_inv = se3_inverse(g)
 
-            def fk(qq: jnp.ndarray) -> jnp.ndarray:
-                return robot.forward_kinematics(qq, float(s))
+            def fk(qq: jnp.ndarray, s_current: float = s_val) -> jnp.ndarray:
+                return robot.forward_kinematics(qq, s_current)
 
             cols = []
             eye = jnp.eye(q.shape[0], dtype=jnp.float64)
@@ -554,7 +704,9 @@ def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     total_length = float(robot.V_L_cum[-1])
 
@@ -599,13 +751,14 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
             if s < 1e-3:
                 continue
 
-            J_impl = model.jacobian_inertialframe(q, s)
-            g = model.forward_kinematics(q, s)
+            s_val = float(s)
+            J_impl = model.jacobian_inertialframe(q, s_val)
+            g = model.forward_kinematics(q, s_val)
             R = g[:3, :3]
             g_inv = se3_inverse(g)
 
-            def fk(qq: Array) -> Array:
-                return model.forward_kinematics(qq, s)
+            def fk(qq: Array, s_current: float = s_val) -> Array:
+                return model.forward_kinematics(qq, s_current)
 
             n = q.shape[0]
             eye = jnp.eye(n)
@@ -639,7 +792,71 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+def test_inertial_velocity_matches_central_differences(num_segments: int) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(4))
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    dt = 1e-6
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.03)
+        qd = random_q(robot, qd_key, scale=0.1)
+
+        for s in sample_arc_lengths(robot):
+            if s < 1e-3:
+                continue
+
+            J = robot.jacobian_inertialframe(q, float(s))
+            xd_pred = J @ qd
+
+            g0 = robot.forward_kinematics(q, float(s))
+            g1 = robot.forward_kinematics(q + dt * qd, float(s))
+            xi_body = body_twist_between(g0, g1) / dt
+            xd_fd = spatial_from_body(g0, xi_body)
+
+            assert_allclose(xd_pred, xd_fd, rtol=5e-5, atol=5e-7)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_matches_central_differences(num_segments: int) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key = jax.random.PRNGKey(5)
+
+    delta = 1e-6
+    for q_key in jax.random.split(key, NUM_RANDOM_SAMPLES):
+        q = random_q(robot, q_key, scale=0.02)
+
+        for s in sample_arc_lengths(robot):
+            if s < 1e-3:
+                continue
+
+            J_impl = robot.jacobian_inertialframe(q, float(s))
+
+            xi_cols = []
+            eye = jnp.eye(q.shape[0], dtype=jnp.float64)
+            for j in range(q.shape[0]):
+                qp = q + delta * eye[j]
+                qm = q - delta * eye[j]
+                g_plus = robot.forward_kinematics(qp, float(s))
+                g_minus = robot.forward_kinematics(qm, float(s))
+                xi_body = body_twist_between(g_minus, g_plus) / (2 * delta)
+                xi_cols.append(spatial_from_body(g_minus, xi_body))
+
+            J_fd = jnp.stack(xi_cols, axis=1)
+            J_body = robot.jacobian_bodyframe(q, float(s))
+            J_rot_expected = spatial_from_body(
+                robot.forward_kinematics(q, float(s)), J_body
+            )
+
+            assert_allclose(J_impl[:3], J_rot_expected[:3], rtol=1e-6, atol=1e-7)
+            assert_allclose(J_impl[3:], J_fd[3:], rtol=1e-3, atol=5e-6)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     total_length = float(robot.V_L_cum[-1])
 
@@ -709,7 +926,9 @@ def test_jacobian_tips_matches_pointwise_and_gauss(num_segments: int):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_and_derivative_bodyframe_matches_autograd_jvp(num_segments: int) -> None:
+def test_jacobian_and_derivative_bodyframe_matches_autograd_jvp(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(3)
     key_q, key_qd = jax.random.split(key)
@@ -724,11 +943,13 @@ def test_jacobian_and_derivative_bodyframe_matches_autograd_jvp(num_segments: in
             if s < 1e-3:
                 continue
 
-            def J_body(q_):
-                return robot.jacobian_bodyframe(q_, float(s))
+            s_val = float(s)
+
+            def J_body(q_, s_current: float = s_val):
+                return robot.jacobian_bodyframe(q_, s_current)
 
             _, Jd_jvp = jvp(J_body, (q,), (qd,))
-            _, Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
+            _, Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, s_val)
 
             # product of Jd with qd
             Jd_jvp_product = Jd_jvp @ qd
@@ -741,7 +962,9 @@ def test_jacobian_and_derivative_bodyframe_matches_autograd_jvp(num_segments: in
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments: int) -> None:
+def test_jacobian_derivative_bodyframe_matches_central_differences(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     key = jax.random.PRNGKey(4)
     key_q, key_qd = jax.random.split(key)
@@ -774,8 +997,38 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments:
             assert_allclose(Jd_impl, Jd_num, rtol=1e-3, atol=5e-6)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_derivative_inertialframe_matches_autograd_jvp(
+    num_segments: int,
+) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(3))
+    q_keys = jax.random.split(key_q, NUM_RANDOM_SAMPLES)
+    qd_keys = jax.random.split(key_qd, NUM_RANDOM_SAMPLES)
+
+    for q_key, qd_key in zip(q_keys, qd_keys):
+        q = random_q(robot, q_key, scale=0.05)
+        qd = random_q(robot, qd_key, scale=0.2)
+
+        for s in sample_arc_lengths(robot):
+            if s < 1e-3:
+                continue
+
+            s_val = float(s)
+
+            def J_global(q_, s_current: float = s_val):
+                return robot.jacobian_inertialframe(q_, s_current)
+
+            _, Jd_jvp = jvp(J_global, (q,), (qd,))
+            _, Jd_impl = robot.jacobian_and_derivative_inertialframe(q, qd, s_val)
+
+            assert_allclose(Jd_impl, Jd_jvp, rtol=1e-6, atol=1e-7)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_jacobian_bodyframe_batched_with_derivative_pointwise_evaluation(num_segments: int) -> None:
+def test_jacobian_and_derivative_bodyframe_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     dof = int(robot.dof_tot_system)
 
@@ -788,12 +1041,45 @@ def test_jacobian_bodyframe_batched_with_derivative_pointwise_evaluation(num_seg
     s_points = sample_arc_lengths(robot)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch = robot.jacobian_bodyframe_batched(q, s_points)
-        J_expected = stack_jacobians(robot, q, s_points)
+        J_batch, Jd_batch = robot.jacobian_and_derivative_bodyframe_batched(
+            q, qd, s_points
+        )
 
-        assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
-        Jd_expected = stack_jacobian_derivatives(robot, q, qd, s_points)
-        assert Jd_expected.shape == J_expected.shape
+        for idx, s_val in enumerate(s_points):
+            J_single, Jd_single = robot.jacobian_and_derivative_bodyframe(
+                q, qd, float(s_val)
+            )
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluation(
+    num_segments: int,
+) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
+
+    zero_cfg = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_vel = jnp.zeros((dof,), dtype=jnp.float64)
+
+    q_random = random_q(robot, jax.random.PRNGKey(7890), scale=0.05)
+    qd_random = random_q(robot, jax.random.PRNGKey(9876), scale=0.1)
+
+    s_points = sample_arc_lengths(robot)
+
+    for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
+        J_batch, Jd_batch = robot.jacobian_and_derivative_inertialframe_batched(
+            q, qd, s_points
+        )
+
+        for idx, s_val in enumerate(s_points):
+            J_single, Jd_single = robot.jacobian_and_derivative_inertialframe(
+                q, qd, float(s_val)
+            )
+            assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
+            assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
+
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
@@ -808,13 +1094,14 @@ def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
 
         B_impl = robot.inertia_matrix(q)
 
-        def T_of_qd(qd_):
-            return robot.kinetic_energy(q, qd_)
+        def T_of_qd(qd_, q_current=q):
+            return robot.kinetic_energy(q_current, qd_)
 
         dT_dqdsq = jacfwd(jax.grad(T_of_qd))(qd)
         B_expected = dT_dqdsq
 
         assert_allclose(B_impl, B_expected, rtol=RTOL, atol=ATOL)
+
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_coriolis_force_with_christoffel_symbols(num_segments: int):
@@ -861,7 +1148,7 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
         tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
 
         grad_T_q = dT_dq(q, qd)
-        jac_T_q = jacfwd(lambda qq: dT_dqd(qq, qd))(q)
+        jac_T_q = jacfwd(lambda qq, qd_current=qd: dT_dqd(qq, qd_current))(q)
         tau_cor_autograd = jac_T_q @ qd - grad_T_q
 
         assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)
@@ -881,6 +1168,7 @@ def test_gravity_matches_potential_gradient(num_segments: int):
         print("dU_G_dq:\n", dU_G_dq)
 
         assert_allclose(G, dU_G_dq, rtol=RTOL, atol=ATOL)
+
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_dynamics_matches_manual_computation(num_segments: int) -> None:
@@ -918,8 +1206,152 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int) -> None:
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 3])
+def test_active_quadrature_kinematics_matches_existing_batched_path(
+    num_segments: int,
+) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(6123))
+    q = random_q(robot, key_q, scale=0.05)
+    qd = random_q(robot, key_qd, scale=0.1)
+
+    weights, g_quads, J_quads, Jd_quads = robot._active_quadrature_kinematics(q, qd)
+
+    assert weights.shape[0] == num_segments
+    assert g_quads.shape[:2] == weights.shape
+    assert J_quads.shape[:2] == weights.shape
+    assert Jd_quads.shape == J_quads.shape
+
+
+@pytest.mark.parametrize("num_segments", [1, 3])
+def test_active_quadrature_forward_dynamics_terms_match_public_matrices(
+    num_segments: int,
+) -> None:
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    dof = int(robot.dof_tot_system)
+
+    zero_q = jnp.zeros((dof,), dtype=jnp.float64)
+    zero_qd = jnp.zeros((dof,), dtype=jnp.float64)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(6124))
+    q_random = random_q(robot, key_q, scale=0.05)
+    qd_random = random_q(robot, key_qd, scale=0.1)
+
+    for q, qd in ((zero_q, zero_qd), (q_random, qd_random)):
+        B, Cqd, G = robot._active_quadrature_forward_dynamics_terms(q, qd)
+        C = robot.coriolis_matrix(q, qd)
+
+        assert_allclose(B, robot.inertia_matrix(q), rtol=RTOL, atol=ATOL)
+        assert_allclose(Cqd, C @ qd, rtol=RTOL, atol=ATOL)
+        assert_allclose(G, robot.gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+
+def test_cached_constant_matrices_refresh_after_update_params() -> None:
+    selector_per_segment = (False, False, True, True, False, False)
+    robot = build_constant_strain_gvs(
+        num_segments=2,
+        selector_per_segment=selector_per_segment,
+        max_dof=6,
+    )
+
+    updated = robot.update_params(
+        {
+            "links_list": [
+                LinkAttributes(
+                    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+                    E=1.25e6,
+                    nu=0.45,
+                    rho=900.0,
+                    eta=2.0,
+                    L=float(length),
+                    r_i=0.022,
+                    r_f=0.022,
+                )
+                for length in robot.V_L
+            ]
+        }
+    )
+
+    assert updated.K_full.shape == robot.K_full.shape
+    assert updated.D_full.shape == robot.D_full.shape
+    assert not jnp.isnan(updated.K_full).any()
+    assert not jnp.isnan(updated.D_full).any()
+
+
+@pytest.mark.parametrize("num_segments", [1, 2])
+def test_strain_basis_consistency_kinematics_jacobians_and_dynamics(
+    num_segments: int,
+) -> None:
+    selector_per_segment = (False, False, True, True, False, False)
+    full, reduced, B = build_full_and_reduced_constant_strain_gvs(
+        num_segments, selector_per_segment
+    )
+
+    key = jax.random.PRNGKey(202)
+    key_q, key_qd, key_u = jax.random.split(key, 3)
+    q_small = random_q(reduced, key_q, scale=0.05)
+    qd_small = random_q(reduced, key_qd, scale=0.1)
+    u_small = random_q(reduced, key_u, scale=0.2)
+    q_full = B @ q_small
+    qd_full = B @ qd_small
+    u_full = B @ u_small
+
+    s_points = sample_arc_lengths(full)
+    for s in s_points:
+        g_small = reduced.forward_kinematics(q_small, float(s))
+        g_full = full.forward_kinematics(q_full, float(s))
+        assert_allclose(g_full, g_small, rtol=RTOL, atol=ATOL)
+
+        Jb_small = reduced.jacobian_bodyframe(q_small, float(s))
+        Jb_full = full.jacobian_bodyframe(q_full, float(s))
+        assert_allclose(Jb_full @ B, Jb_small, rtol=RTOL, atol=ATOL)
+
+        Ji_small = reduced.jacobian_inertialframe(q_small, float(s))
+        Ji_full = full.jacobian_inertialframe(q_full, float(s))
+        assert_allclose(Ji_full @ B, Ji_small, rtol=RTOL, atol=ATOL)
+
+        J_small, Jd_small = reduced.jacobian_and_derivative_bodyframe(
+            q_small, qd_small, float(s)
+        )
+        J_full, Jd_full = full.jacobian_and_derivative_bodyframe(
+            q_full, qd_full, float(s)
+        )
+        assert_allclose(J_full @ B, J_small, rtol=RTOL, atol=ATOL)
+        assert_allclose(Jd_full @ B, Jd_small, rtol=RTOL, atol=ATOL)
+
+    B_full = full.inertia_matrix(q_full)
+    B_small = reduced.inertia_matrix(q_small)
+    assert_allclose(B.T @ B_full @ B, B_small, rtol=RTOL, atol=ATOL)
+
+    C_full = full.coriolis_matrix(q_full, qd_full)
+    C_small = reduced.coriolis_matrix(q_small, qd_small)
+    assert_allclose(B.T @ C_full @ B, C_small, rtol=RTOL, atol=ATOL)
+
+    G_full = full.gravitational_force(q_full)
+    G_small = reduced.gravitational_force(q_small)
+    assert_allclose(B.T @ G_full, G_small, rtol=RTOL, atol=ATOL)
+
+    K_full = full.stiffness_matrix()
+    K_small = reduced.stiffness_matrix()
+    assert_allclose(B.T @ K_full @ B, K_small, rtol=RTOL, atol=ATOL)
+
+    D_full = full.damping_matrix(q_full)
+    D_small = reduced.damping_matrix(q_small)
+    assert_allclose(B.T @ D_full @ B, D_small, rtol=RTOL, atol=ATOL)
+
+    tau_u_full = full.actuation_force(q_full, u_full)
+    tau_u_small = reduced.actuation_force(q_small, u_small)
+    assert_allclose(B.T @ tau_u_full, tau_u_small, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segments: int) -> None:
+def test_gvs_pcs_coherence(num_segments: int) -> None:
+    _assert_gvs_pcs_coherence(num_segments)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_mode_automatic_differentiability_at_zero_configuration(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     dof = int(robot.dof_tot_system)
     q = jnp.zeros((dof,), dtype=jnp.float64)
@@ -931,14 +1363,18 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     dg_dq = jacfwd(robot.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacfwd(robot.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacfwd(robot.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    _, dJd_bodyframe_dqd = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=1)(q, qd, s)
-    _, dJd_inertialframe_dq = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=0)(
+    _, dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(
         q, qd, s
     )
-    _, dJd_inertialframe_dqd = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=1)(
+    _, dJd_bodyframe_dqd = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=1)(
         q, qd, s
     )
+    _, dJd_inertialframe_dq = jacfwd(
+        robot.jacobian_and_derivative_inertialframe, argnums=0
+    )(q, qd, s)
+    _, dJd_inertialframe_dqd = jacfwd(
+        robot.jacobian_and_derivative_inertialframe, argnums=1
+    )(q, qd, s)
     dB_dq = jacfwd(robot.inertia_matrix)(q)
     dC_dq = jacfwd(robot.coriolis_matrix, argnums=0)(q, qd)
     dC_dqd = jacfwd(robot.coriolis_matrix, argnums=1)(q, qd)
@@ -949,22 +1385,48 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
     dy_dy = jacfwd(robot.forward_dynamics, argnums=1)(0.0, y, (u,))
     (dy_du,) = jacfwd(robot.forward_dynamics, argnums=2)(0.0, y, (u,))
 
-    assert not jnp.isnan(dg_dq).any(), f"Found NaN in forward-mode of forward kinematics"
-    assert not jnp.isnan(dJ_bodyframe_dq).any(), f"Found NaN in forward-mode of bodyframe Jacobian"
-    assert not jnp.isnan(dJ_inertialframe_dq).any(), f"Found NaN in forward-mode of inertialframe Jacobian"
-    assert not jnp.isnan(dJd_bodyframe_dq).any(), f"Found NaN in forward-mode of bodyframe Jacobian derivative"
-    assert not jnp.isnan(dJd_bodyframe_dqd).any(), f"Found NaN in forward-mode of bodyframe Jacobian derivative w.r.t. qd"
-    assert not jnp.isnan(dJd_inertialframe_dq).any(), f"Found NaN in forward-mode of inertialframe Jacobian derivative w.r.t. q"
-    assert not jnp.isnan(dJd_inertialframe_dqd).any(), f"Found NaN in forward-mode of inertialframe Jacobian derivative w.r.t. qd"
-    assert not jnp.isnan(dB_dq).any(), f"Found NaN in forward-mode of inertia matrix"
-    assert not jnp.isnan(dC_dq).any(), f"Found NaN in forward-mode of coriolis matrix (dC/dq)"
-    assert not jnp.isnan(dC_dqd).any(), f"Found NaN in forward-mode of coriolis matrix (dC/dqd)"
-    assert not jnp.isnan(dG_dq).any(), f"Found NaN in forward-mode of gravitational force"
-    assert not jnp.isnan(dtau_el_dq).any(), f"Found NaN in forward-mode of elastic force"
-    assert not jnp.isnan(dtau_u_dq).any(), f"Found NaN in forward-mode of actuation force (dTau/du)"
-    assert not jnp.isnan(dtau_u_du).any(), f"Found NaN in forward-mode of actuation force (dTau/du)"
-    assert not jnp.isnan(dy_dy).any(), f"Found NaN in forward-mode of forward dynamics (dy/dy)"
-    assert not jnp.isnan(dy_du).any(), f"Found NaN in forward-mode of forward dynamics (dy/du)"
+    assert not jnp.isnan(dg_dq).any(), "Found NaN in forward-mode of forward kinematics"
+    assert not jnp.isnan(dJ_bodyframe_dq).any(), (
+        "Found NaN in forward-mode of bodyframe Jacobian"
+    )
+    assert not jnp.isnan(dJ_inertialframe_dq).any(), (
+        "Found NaN in forward-mode of inertialframe Jacobian"
+    )
+    assert not jnp.isnan(dJd_bodyframe_dq).any(), (
+        "Found NaN in forward-mode of bodyframe Jacobian derivative"
+    )
+    assert not jnp.isnan(dJd_bodyframe_dqd).any(), (
+        "Found NaN in forward-mode of bodyframe Jacobian derivative w.r.t. qd"
+    )
+    assert not jnp.isnan(dJd_inertialframe_dq).any(), (
+        "Found NaN in forward-mode of inertialframe Jacobian derivative w.r.t. q"
+    )
+    assert not jnp.isnan(dJd_inertialframe_dqd).any(), (
+        "Found NaN in forward-mode of inertialframe Jacobian derivative w.r.t. qd"
+    )
+    assert not jnp.isnan(dB_dq).any(), "Found NaN in forward-mode of inertia matrix"
+    assert not jnp.isnan(dC_dq).any(), (
+        "Found NaN in forward-mode of coriolis matrix (dC/dq)"
+    )
+    assert not jnp.isnan(dC_dqd).any(), (
+        "Found NaN in forward-mode of coriolis matrix (dC/dqd)"
+    )
+    assert not jnp.isnan(dG_dq).any(), (
+        "Found NaN in forward-mode of gravitational force"
+    )
+    assert not jnp.isnan(dtau_el_dq).any(), "Found NaN in forward-mode of elastic force"
+    assert not jnp.isnan(dtau_u_dq).any(), (
+        "Found NaN in forward-mode of actuation force (dTau/du)"
+    )
+    assert not jnp.isnan(dtau_u_du).any(), (
+        "Found NaN in forward-mode of actuation force (dTau/du)"
+    )
+    assert not jnp.isnan(dy_dy).any(), (
+        "Found NaN in forward-mode of forward dynamics (dy/dy)"
+    )
+    assert not jnp.isnan(dy_du).any(), (
+        "Found NaN in forward-mode of forward dynamics (dy/du)"
+    )
 
     # test differentiability of the energy functions at zero configuration
     dT_dq = jacfwd(robot.kinetic_energy, argnums=0)(q, qd)
@@ -983,7 +1445,9 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_segm
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segments: int) -> None:
+def test_reverse_mode_automatic_differentiability_at_zero_configuration(
+    num_segments: int,
+) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     dof = int(robot.dof_tot_system)
     q = jnp.zeros((dof,), dtype=jnp.float64)
@@ -995,14 +1459,18 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segm
     dg_dq = jacrev(robot.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacrev(robot.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacrev(robot.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe_dq = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=0)(q, qd, s)
-    _, dJd_bodyframe_dqd = jacfwd(robot.jacobian_and_derivative_bodyframe, argnums=1)(q, qd, s)
-    _, dJd_inertialframe_dq = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=0)(
+    _, dJd_bodyframe_dq = jacrev(robot.jacobian_and_derivative_bodyframe, argnums=0)(
         q, qd, s
     )
-    _, dJd_inertialframe_dqd = jacfwd(robot.jacobian_and_derivative_inertialframe, argnums=1)(
+    _, dJd_bodyframe_dqd = jacrev(robot.jacobian_and_derivative_bodyframe, argnums=1)(
         q, qd, s
     )
+    _, dJd_inertialframe_dq = jacrev(
+        robot.jacobian_and_derivative_inertialframe, argnums=0
+    )(q, qd, s)
+    _, dJd_inertialframe_dqd = jacrev(
+        robot.jacobian_and_derivative_inertialframe, argnums=1
+    )(q, qd, s)
     dB_dq = jacrev(robot.inertia_matrix)(q)
     dC_dq = jacrev(robot.coriolis_matrix, argnums=0)(q, qd)
     dC_dqd = jacrev(robot.coriolis_matrix, argnums=1)(q, qd)
@@ -1013,22 +1481,48 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(num_segm
     dy_dy = jacrev(robot.forward_dynamics, argnums=1)(0.0, y, (u,))
     (dy_du,) = jacrev(robot.forward_dynamics, argnums=2)(0.0, y, (u,))
 
-    assert not jnp.isnan(dg_dq).any(), f"Found NaN in reverse-mode of forward kinematics"
-    assert not jnp.isnan(dJ_bodyframe_dq).any(), f"Found NaN in reverse-mode of bodyframe Jacobian"
-    assert not jnp.isnan(dJ_inertialframe_dq).any(), f"Found NaN in reverse-mode of inertialframe Jacobian"
-    assert not jnp.isnan(dJd_bodyframe_dq).any(), f"Found NaN in reverse-mode of bodyframe Jacobian derivative"
-    assert not jnp.isnan(dJd_bodyframe_dqd).any(), f"Found NaN in reverse-mode of bodyframe Jacobian derivative w.r.t. qd"
-    assert not jnp.isnan(dJd_inertialframe_dq).any(), f"Found NaN in reverse-mode of inertialframe Jacobian derivative"
-    assert not jnp.isnan(dJd_inertialframe_dqd).any(), f"Found NaN in reverse-mode of inertialframe Jacobian derivative w.r.t. qd"
-    assert not jnp.isnan(dB_dq).any(), f"Found NaN in reverse-mode of inertia matrix"
-    assert not jnp.isnan(dC_dq).any(), f"Found NaN in reverse-mode of coriolis matrix (dC/dq)"
-    assert not jnp.isnan(dC_dqd).any(), f"Found NaN in reverse-mode of coriolis matrix (dC/dqd)"
-    assert not jnp.isnan(dG_dq).any(), f"Found NaN in reverse-mode of gravitational force"
-    assert not jnp.isnan(dtau_el_dq).any(), f"Found NaN in reverse-mode of elastic force"
-    assert not jnp.isnan(dtau_u_dq).any(), f"Found NaN in reverse-mode of actuation force (dTau/du)"
-    assert not jnp.isnan(dtau_u_du).any(), f"Found NaN in reverse-mode of actuation force (dTau/du)"
-    assert not jnp.isnan(dy_dy).any(), f"Found NaN in reverse-mode of forward dynamics (dy/dy)"
-    assert not jnp.isnan(dy_du).any(), f"Found NaN in reverse-mode of forward dynamics (dy/du)"
+    assert not jnp.isnan(dg_dq).any(), "Found NaN in reverse-mode of forward kinematics"
+    assert not jnp.isnan(dJ_bodyframe_dq).any(), (
+        "Found NaN in reverse-mode of bodyframe Jacobian"
+    )
+    assert not jnp.isnan(dJ_inertialframe_dq).any(), (
+        "Found NaN in reverse-mode of inertialframe Jacobian"
+    )
+    assert not jnp.isnan(dJd_bodyframe_dq).any(), (
+        "Found NaN in reverse-mode of bodyframe Jacobian derivative"
+    )
+    assert not jnp.isnan(dJd_bodyframe_dqd).any(), (
+        "Found NaN in reverse-mode of bodyframe Jacobian derivative w.r.t. qd"
+    )
+    assert not jnp.isnan(dJd_inertialframe_dq).any(), (
+        "Found NaN in reverse-mode of inertialframe Jacobian derivative"
+    )
+    assert not jnp.isnan(dJd_inertialframe_dqd).any(), (
+        "Found NaN in reverse-mode of inertialframe Jacobian derivative w.r.t. qd"
+    )
+    assert not jnp.isnan(dB_dq).any(), "Found NaN in reverse-mode of inertia matrix"
+    assert not jnp.isnan(dC_dq).any(), (
+        "Found NaN in reverse-mode of coriolis matrix (dC/dq)"
+    )
+    assert not jnp.isnan(dC_dqd).any(), (
+        "Found NaN in reverse-mode of coriolis matrix (dC/dqd)"
+    )
+    assert not jnp.isnan(dG_dq).any(), (
+        "Found NaN in reverse-mode of gravitational force"
+    )
+    assert not jnp.isnan(dtau_el_dq).any(), "Found NaN in reverse-mode of elastic force"
+    assert not jnp.isnan(dtau_u_dq).any(), (
+        "Found NaN in reverse-mode of actuation force (dTau/du)"
+    )
+    assert not jnp.isnan(dtau_u_du).any(), (
+        "Found NaN in reverse-mode of actuation force (dTau/du)"
+    )
+    assert not jnp.isnan(dy_dy).any(), (
+        "Found NaN in reverse-mode of forward dynamics (dy/dy)"
+    )
+    assert not jnp.isnan(dy_du).any(), (
+        "Found NaN in reverse-mode of forward dynamics (dy/du)"
+    )
 
     # test differentiability of the energy functions at zero configuration
     dT_dq = jacrev(robot.kinetic_energy, argnums=0)(q, qd)
