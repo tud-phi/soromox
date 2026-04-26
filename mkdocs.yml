@@ -7,11 +7,11 @@ repo_name: tud-phi/soromox
 repo_url: https://github.com/tud-phi/soromox
 edit_uri: edit/main/docs/
 
-copyright: Copyright &copy; 2020-2025 Physical Intelligence (PhI) Lab @ TU Delft
+copyright: Copyright &copy; 2020-2026 Physical Intelligence (PhI) Lab @ TU Delft
 
 theme:
   name: material
-  custom_dir: docs/overrides
+  custom_dir: overrides
   logo: assets/logo/soromox_logo_s.png
   favicon: assets/logo/favicon/favicon.ico
   palette:
@@ -140,12 +140,6 @@ plugins:
             show_docstring_classes: true
             show_docstring_modules: true
           paths: [src]
-  # Temporarily disable auto-generated API pages
-  # - gen-files:
-  #     scripts:
-  #       - docs/gen_ref_pages.py
-  # - literate-nav:
-  #     nav_file: SUMMARY.md
   - section-index
 
 markdown_extensions:
@@ -178,7 +172,7 @@ markdown_extensions:
   - pymdownx.smartsymbols
   - pymdownx.snippets:
       auto_append:
-        - includes/mkdocs.md
+        - includes/abbreviations.txt
   - pymdownx.superfences:
       custom_fences:
         - name: mermaid

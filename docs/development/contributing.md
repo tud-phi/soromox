@@ -114,10 +114,10 @@ For more details, see the `[tool.ruff]` section in `pyproject.toml`.
 
 ```bash
 # Serve documentation locally
-mkdocs serve
+uv run --extra docs zensical serve
 
 # Build documentation
-mkdocs build
+uv run --extra docs zensical build --clean
 ```
 
 ### 6. Commit Changes

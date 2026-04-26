@@ -117,7 +117,7 @@ uv pip install -e .
 The extras in `pyproject.toml` bundle optional tooling:
 
 - `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
-- `docs`: MkDocs stack for building the documentation site.
+- `docs`: Zensical stack for building the documentation site.
 - `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
 - `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
 - `test`: minimal test stack (pytest, coverage, tox, html report).
@@ -174,13 +174,10 @@ To build and serve the documentation locally:
 
 ```bash
 # Install documentation dependencies
-pip install -e ".[docs]"
+uv sync --extra docs
 
-# Serve documentation with live reload (if mkdocs is in PATH)
-mkdocs serve
-
-# OR using conda environment
-conda run --live-stream --name soromox mkdocs serve
+# Serve documentation with live reload
+uv run --extra docs zensical serve
 ```
 
 The documentation will be available at `http://127.0.0.1:8000`.
@@ -188,19 +185,11 @@ The documentation will be available at `http://127.0.0.1:8000`.
 ### Building Documentation for Production
 
 ```bash
-# Build static documentation (if mkdocs is in PATH)
-mkdocs build
+# Build static documentation
+uv run --extra docs zensical build --clean
 
-# OR using conda environment
-conda run --live-stream --name soromox mkdocs build
-
-# Build with strict mode (for CI/development)
-mkdocs build --strict
-# OR: conda run --live-stream --name soromox mkdocs build --strict
-
-# Deploy to GitHub Pages (maintainers only)
-mkdocs gh-deploy
-# OR: conda run --live-stream --name soromox mkdocs gh-deploy
+# Zensical does not currently support MkDocs-style strict mode.
+# The CI workflow runs the same build command.
 ```
 
 You can also use the Makefile targets:
@@ -214,9 +203,6 @@ make docs-build
 
 # Build with strict mode checking
 make docs-build-strict
-
-# Deploy to GitHub Pages
-make docs-deploy
 ```
 
 ## Version Management and Releases

@@ -142,9 +142,8 @@ pip install soromox[docs]
 
 **Includes:**
 
-- `mkdocs-material` - Modern documentation theme
-- `mkdocstrings[python]` - API documentation generation
-- `mkdocs-jupyter` - Jupyter notebook integration
+- `zensical` - Documentation site generator
+- `mkdocstrings-python` - API documentation generation
 
 ### 🎉 Complete Installation
 

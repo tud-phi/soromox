@@ -137,13 +137,8 @@ dev = [
     "tox",
 ]
 docs = [
-    "mkdocs",
-    "mkdocs-material",
-    "mkdocstrings[python]",
-    "mkdocs-gen-files",
-    "mkdocs-literate-nav",
-    "mkdocs-section-index",
-    "mkdocs-autorefs",
+    "zensical",
+    "mkdocstrings-python",
 ]
 examples = [
     "ffmpeg-python",
@@ -181,13 +176,8 @@ all = [
     "ffmpeg-python",
     "ipython",
     "matplotlib",
-    "mkdocs",
-    "mkdocs-material",
-    "mkdocstrings[python]",
-    "mkdocs-gen-files",
-    "mkdocs-literate-nav",
-    "mkdocs-section-index",
-    "mkdocs-autorefs",
+    "zensical",
+    "mkdocstrings-python",
     "open3d>=0.18",
     "opencv-python",
     "optimistix",
