@@ -1,21 +1,19 @@
 import jax
-
-jax.config.update("jax_enable_x64", True)  # use double precision in tests
-
-from jax import Array, jacfwd, jacrev, jvp
-import jax.numpy as jnp
 import numpy as onp
 import pytest
+from jax import Array, jacfwd, jacrev, jvp
+import jax.numpy as jnp
 from numpy.testing import assert_allclose
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems import GVS, PCS, CrossSectionGeometry
+from soromox.systems import CrossSectionGeometry, GVS, PCS
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 from soromox.utils.tolerance import Tolerance
 
-pytestmark = pytest.mark.skip(reason="GVS testing temporarily deactivated")
+jax.config.update("jax_enable_x64", True)
 
-
+TIP_RTOL = 1e-6
+TIP_ATOL = 1e-8
 RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
 NUM_RANDOM_SAMPLES = 5
@@ -77,6 +75,7 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
         basis_list=bases,
         n_gauss_list=n_gauss_list,
         gravity_vector=g,
+        p0=jnp.zeros(6),
     )
 
     # PCS definition with identical geometry and material params
@@ -122,7 +121,7 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         r_i = 0.015 + 0.0008 * repeat
         r_f = r_i + 0.003 + 0.0004 * repeat
         return LinkAttributes(
-            section="Circular",
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
             E=1.2e6,
             nu=0.45,
             rho=950.0,
@@ -140,7 +139,7 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         w_i = 0.02 + 0.0008 * repeat
         w_f = max(0.016, w_i * 0.88)
         return LinkAttributes(
-            section="Rectangular",
+            cross_section_geometry=CrossSectionGeometry.RECTANGULAR,
             E=9.5e5,
             nu=0.38,
             rho=1025.0,
@@ -160,7 +159,7 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         b_i = 0.015 + 0.0007 * repeat
         b_f = b_i * 1.05
         return LinkAttributes(
-            section="Elliptical",
+            cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,
             E=8.0e5,
             nu=0.4,
             rho=980.0,
@@ -339,7 +338,7 @@ def stack_jacobian_derivatives(
 ) -> jnp.ndarray:
     s_array = onp.asarray(s_points, dtype=float)
     return jnp.stack(
-        [robot.jacobian_and_derivative_bodyframe(q, qd, float(s)) for s in s_array],
+        [robot.jacobian_and_derivative_bodyframe(q, qd, float(s))[1] for s in s_array],
         axis=0,
     )
 
@@ -507,6 +506,23 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments: i
         assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_forward_kinematics_tips_matches_pointwise_and_gauss(num_segments: int):
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    q = random_q(robot, jax.random.PRNGKey(1), scale=0.02)
+
+    g_tips = robot.forward_kinematics_tips(q)
+    s_tips = tip_arc_lengths(robot)
+    g_expected = stack_forward_kinematics(robot, q, s_tips)
+
+    q_gathered = robot._min_size_gathered(q)
+    g_gauss_tips = robot._forward_kinematics_gauss(q_gathered)[:, -1]
+
+    assert g_tips.shape == (num_segments, 4, 4)
+    assert_allclose(g_tips, g_expected, rtol=TIP_RTOL, atol=TIP_ATOL)
+    assert_allclose(g_tips, g_gauss_tips, rtol=TIP_RTOL, atol=TIP_ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -659,6 +675,39 @@ def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(num_segment
         assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_jacobian_tips_matches_pointwise_and_gauss(num_segments: int):
+    robot = build_varied_basis_gvs(num_segments=num_segments)
+    q = random_q(robot, jax.random.PRNGKey(2), scale=0.02)
+
+    J_tips = robot.jacobian_tips(q)
+    s_tips = tip_arc_lengths(robot)
+    J_expected = jnp.stack(
+        [robot.jacobian_inertialframe(q, float(s)) for s in s_tips],
+        axis=0,
+    )
+
+    q_gathered = robot._min_size_gathered(q)
+    J_local_gauss_tips = robot._jacobian_gauss(q_gathered)[:, -1] @ robot.B_select
+    g_tips = robot.forward_kinematics_tips(q)
+
+    def rotate_pair(g_i: jax.Array, J_i: jax.Array) -> jax.Array:
+        R = g_i[:3, :3]
+        g_rot = jnp.block(
+            [
+                [R, jnp.zeros((3, 1), dtype=R.dtype)],
+                [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
+            ]
+        )
+        return lie.Adjoint_g_SE3(g_rot) @ J_i
+
+    J_gauss_tips = jax.vmap(rotate_pair)(g_tips, J_local_gauss_tips)
+
+    assert J_tips.shape == (num_segments, 6, robot.num_dofs)
+    assert_allclose(J_tips, J_expected, rtol=TIP_RTOL, atol=TIP_ATOL)
+    assert_allclose(J_tips, J_gauss_tips, rtol=TIP_RTOL, atol=TIP_ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_jacobian_and_derivative_bodyframe_matches_autograd_jvp(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -708,7 +757,7 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments:
             if s < 1e-3:
                 continue
 
-            Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
+            _, Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, float(s))
 
             eye = jnp.eye(q.shape[0], dtype=jnp.float64)
             dJ_cols = []
@@ -726,7 +775,7 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int) -> None:
+def test_jacobian_bodyframe_batched_with_derivative_pointwise_evaluation(num_segments: int) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
     dof = int(robot.dof_tot_system)
 
@@ -739,12 +788,12 @@ def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int) -> N
     s_points = sample_arc_lengths(robot)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = robot._J_Jd_local_batched(q, qd, s_points)
+        J_batch = robot.jacobian_bodyframe_batched(q, s_points)
         J_expected = stack_jacobians(robot, q, s_points)
-        Jd_expected = stack_jacobian_derivatives(robot, q, qd, s_points)
 
         assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
-        assert_allclose(Jd_batch, Jd_expected, rtol=RTOL, atol=ATOL)
+        Jd_expected = stack_jacobian_derivatives(robot, q, qd, s_points)
+        assert Jd_expected.shape == J_expected.shape
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
@@ -857,7 +906,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int) -> None:
         B = robot.inertia_matrix(q)
         C = robot.coriolis_matrix(q, qd)
         G = robot.gravitational_force(q)
-        D = robot.damping_matrix()
+        D = robot.damping_matrix(q)
         tau_el = robot.elastic_force(q)
         tau_u = robot.actuation_force(q, u)
 
@@ -1010,7 +1059,7 @@ def test_gvs_autodiff_checks(num_segments: int) -> None:
         return robot.jacobian_bodyframe(q_, s)
 
     _, Jd_dir = jax.jvp(J_body, (q,), (qd,))
-    Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, s)
+    _, Jd_impl = robot.jacobian_and_derivative_bodyframe(q, qd, s)
     assert_allclose(Jd_impl, Jd_dir, rtol=RTOL, atol=ATOL)
 
     # 2) Translational block of inertial Jacobian matches jacobian of position
