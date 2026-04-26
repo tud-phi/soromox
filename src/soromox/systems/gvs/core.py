@@ -1,6 +1,5 @@
 __all__ = ["GVS"]
 import math
-import warnings
 from typing import Any, cast
 
 import equinox as eqx
@@ -255,10 +254,6 @@ class GVS(SoftRobot):
         super().__init__(**kwargs)
 
         self.scale_rotational_strain_basis = bool(scale_rotational_strain_basis)
-
-        warnings.warn(
-            "GVS is not fully validated yet and might not match the behavior of PlanarPCS and PCS."
-        )
 
         if (
             len(links_list) != len(joints_list)
