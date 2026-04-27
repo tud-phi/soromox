@@ -58,31 +58,33 @@ def _adjust_scheme_to_bounds(x0, h, num_steps, scheme, lb, ub):
         x = x0 + h_total
         violated = (x < lb) | (x > ub)
         fitting = jnp.abs(h_total) <= jnp.maximum(lower_dist, upper_dist)
-        h_adjusted[violated & fitting] *= -1
+        h_adjusted = jnp.where(violated & fitting, -h_adjusted, h_adjusted)
 
         forward = (upper_dist >= lower_dist) & ~fitting
-        h_adjusted[forward] = upper_dist[forward] / num_steps
+        h_adjusted = jnp.where(forward, upper_dist / num_steps, h_adjusted)
         backward = (upper_dist < lower_dist) & ~fitting
-        h_adjusted[backward] = -lower_dist[backward] / num_steps
+        h_adjusted = jnp.where(backward, -lower_dist / num_steps, h_adjusted)
     elif scheme == "2-sided":
         central = (lower_dist >= h_total) & (upper_dist >= h_total)
 
         forward = (upper_dist >= lower_dist) & ~central
-        h_adjusted[forward] = jnp.minimum(
-            h[forward], 0.5 * upper_dist[forward] / num_steps
+        h_adjusted = jnp.where(
+            forward, jnp.minimum(h, 0.5 * upper_dist / num_steps), h_adjusted
         )
-        use_one_sided[forward] = True
+        use_one_sided = jnp.where(forward, True, use_one_sided)
 
         backward = (upper_dist < lower_dist) & ~central
-        h_adjusted[backward] = -jnp.minimum(
-            h[backward], 0.5 * lower_dist[backward] / num_steps
+        h_adjusted = jnp.where(
+            backward,
+            -jnp.minimum(h, 0.5 * lower_dist / num_steps),
+            h_adjusted,
         )
-        use_one_sided[backward] = True
+        use_one_sided = jnp.where(backward, True, use_one_sided)
 
         min_dist = jnp.minimum(upper_dist, lower_dist) / num_steps
         adjusted_central = ~central & (jnp.abs(h_adjusted) <= min_dist)
-        h_adjusted[adjusted_central] = min_dist[adjusted_central]
-        use_one_sided[adjusted_central] = False
+        h_adjusted = jnp.where(adjusted_central, min_dist, h_adjusted)
+        use_one_sided = jnp.where(adjusted_central, False, use_one_sided)
 
     return h_adjusted, use_one_sided
 
@@ -409,13 +411,6 @@ def _dense_difference(fun, x0, f0, h, use_one_sided, method):
             dx = h[i]
             df = fun(x1) - f0
         elif method == "3-point" and use_one_sided[i]:
-            x1[i] += h[i]
-            x2[i] += 2 * h[i]
-            dx = x2[i] - x0[i]
-            f1 = fun(x1)
-            f2 = fun(x2)
-            df = -3.0 * f0 + 4 * f1 - f2
-
             dx01 = jnp.concat(
                 [
                     jnp.zeros((i,)),

@@ -37,6 +37,19 @@ def test_finite_differences(method="2-point"):
             raise ValueError("Jacobian mismatch!")
 
 
+def test_one_sided_scheme():
+    def f(x: Array):
+        return x**2
+
+    jac = approx_derivative(
+        f,
+        jnp.array([0.0]),
+        method="3-point",
+        bounds=(jnp.array([0.0]), jnp.array([1.0])),
+    )
+    assert jnp.allclose(jac, jnp.array([0.0]))
+
+
 if __name__ == "__main__":
     test_finite_differences(method="2-point")
     test_finite_differences(method="3-point")
