@@ -138,7 +138,10 @@ dev = [
 ]
 docs = [
     "zensical",
+    "mkdocstrings",
     "mkdocstrings-python",
+    # The configured section-index plugin is handled by Zensical's compatibility layer.
+    # Do not add mkdocs-section-index unless we intentionally reintroduce the MkDocs plugin runtime.
 ]
 examples = [
     "ffmpeg-python",
@@ -177,6 +180,7 @@ all = [
     "ipython",
     "matplotlib",
     "zensical",
+    "mkdocstrings",
     "mkdocstrings-python",
     "open3d>=0.18",
     "opencv-python",
