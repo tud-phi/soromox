@@ -5,7 +5,7 @@ from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
-from soromox.systems import PCS
+from soromox.systems import PCS, CrossSectionGeometry
 from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra.se3 import Adjoint_g_SE3, log_SE3
 from soromox.utils.tolerance import Tolerance
@@ -279,6 +279,24 @@ def test_constant_strain_call():
     assert_allclose(qdd, jnp.zeros((6,)), rtol=RTOL, atol=ATOL)
     assert_allclose(qdres, qd, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
+
+
+def test_public_pcs_accessors_and_geometry_helpers() -> None:
+    model, params = make_pcs(num_segments=2)
+    q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
+
+    assert model.is_planar is False
+    assert_allclose(model.length, jnp.sum(params["L"]), rtol=RTOL, atol=ATOL)
+    assert_allclose(model.segment_length, params["L"], rtol=RTOL, atol=ATOL)
+
+    s_second = params["L"][0] + 0.25 * params["L"][1]
+    segment_idx, s_local = model.classify_segment(s_second)
+    assert int(segment_idx) == 1
+    assert_allclose(s_local, 0.25 * params["L"][1], rtol=RTOL, atol=ATOL)
+
+    tag, geom = model.cross_section_geometry(q, s_second)
+    assert int(tag) == CrossSectionGeometry.CIRCULAR
+    assert_allclose(geom, jnp.array([params["r"][1]]), rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -799,6 +817,40 @@ def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluat
             assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
 
+def test_public_pcs_jacobian_aliases_match_inertialframe_methods() -> None:
+    model, _ = make_pcs(num_segments=2)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(2027))
+    q = random_q(model, key_q, scale=0.03)
+    qd = random_q(model, key_qd, scale=0.04)
+    s = 0.6 * model.length
+    s_ps = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
+
+    assert_allclose(
+        model.jacobian(q, s),
+        model.jacobian_inertialframe(q, s),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        model.jacobian_batched(q, s_ps),
+        model.jacobian_inertialframe_batched(q, s_ps),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+    J, Jd = model.jacobian_and_derivative(q, qd, s)
+    J_expected, Jd_expected = model.jacobian_and_derivative_inertialframe(q, qd, s)
+    assert_allclose(J, J_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd, Jd_expected, rtol=RTOL, atol=ATOL)
+
+    J_batch, Jd_batch = model.jacobian_and_derivative_batched(q, qd, s_ps)
+    J_batch_expected, Jd_batch_expected = (
+        model.jacobian_and_derivative_inertialframe_batched(q, qd, s_ps)
+    )
+    assert_allclose(J_batch, J_batch_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
@@ -886,6 +938,15 @@ def test_gravity_matches_potential_gradient(num_segments: int):
         print("dU_G_dq:\n", dU_G_dq)
 
         assert_allclose(G, dU_G_dq, rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_gravitational_energy_gradient_matches_force() -> None:
+    model, _ = make_pcs(num_segments=1)
+    q = random_q(model, jax.random.PRNGKey(314), scale=0.02)
+
+    dU_dq = jax.grad(lambda q_: model.gravitational_energy(q_))(q)
+
+    assert_allclose(dU_dq, model.gravitational_force(q), rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])

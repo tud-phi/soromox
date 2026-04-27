@@ -606,6 +606,58 @@ def _assert_gvs_pcs_coherence(num_segments: int) -> None:
         assert_allclose(yd_gvs, yd_pcs, rtol=RTOL, atol=ATOL)
 
 
+def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
+    robot = build_varied_basis_gvs(num_segments=3)
+    q = jnp.zeros((int(robot.dof_tot_system),), dtype=jnp.float64)
+
+    assert robot.is_planar is False
+    assert_allclose(robot.length, jnp.sum(robot.V_L), rtol=RTOL, atol=ATOL)
+    assert_allclose(robot.segment_length, robot.V_L, rtol=RTOL, atol=ATOL)
+
+    s_second = robot.V_L[0] + 0.25 * robot.V_L[1]
+    segment_idx, s_local = robot.classify_segment(s_second)
+    assert int(segment_idx) == 1
+    assert_allclose(s_local, 0.25 * robot.V_L[1], rtol=RTOL, atol=ATOL)
+
+    tag, geom = robot.cross_section_geometry(q, 0.5 * robot.V_L[0])
+    expected_radius = robot.V_r_params[0, 0] + 0.5 * (
+        robot.V_r_params[0, 1] - robot.V_r_params[0, 0]
+    )
+    assert int(tag) == CrossSectionGeometry.CIRCULAR
+    assert_allclose(geom, jnp.array([expected_radius]), rtol=RTOL, atol=ATOL)
+
+    tag, geom = robot.cross_section_geometry(q, s_second)
+    expected_width = robot.V_w_params[1, 0] + 0.25 * (
+        robot.V_w_params[1, 1] - robot.V_w_params[1, 0]
+    )
+    expected_height = robot.V_h_params[1, 0] + 0.25 * (
+        robot.V_h_params[1, 1] - robot.V_h_params[1, 0]
+    )
+    assert int(tag) == CrossSectionGeometry.RECTANGULAR
+    assert_allclose(
+        geom, jnp.array([expected_width, expected_height]), rtol=RTOL, atol=ATOL
+    )
+
+    s_third = robot.V_L[0] + robot.V_L[1] + 0.75 * robot.V_L[2]
+    tag, geom = robot.cross_section_geometry(q, s_third)
+    expected_a = robot.V_a_params[2, 0] + 0.75 * (
+        robot.V_a_params[2, 1] - robot.V_a_params[2, 0]
+    )
+    expected_b = robot.V_b_params[2, 0] + 0.75 * (
+        robot.V_b_params[2, 1] - robot.V_b_params[2, 0]
+    )
+    assert int(tag) == CrossSectionGeometry.ELLIPTICAL
+    assert_allclose(geom, jnp.array([expected_a, expected_b]), rtol=RTOL, atol=ATOL)
+
+    robot.precompute()
+    assert_allclose(robot.K_full, robot._stiffness_full_matrix(), rtol=RTOL, atol=ATOL)
+    assert_allclose(robot.D_full, robot._damping_full_matrix(), rtol=RTOL, atol=ATOL)
+
+    A = robot.actuation_matrix(q)
+    assert A.shape == (robot.num_dofs, robot.num_actuators)
+    assert_allclose(A, jnp.eye(robot.num_actuators), rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_batched_matches_pointwise_evaluation(
     num_segments: int,
@@ -1081,6 +1133,40 @@ def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluat
             assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
 
+def test_public_gvs_jacobian_adapters_match_inertialframe_methods() -> None:
+    robot = build_varied_basis_gvs(num_segments=2)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(2026))
+    q = random_q(robot, key_q, scale=0.03)
+    qd = random_q(robot, key_qd, scale=0.04)
+    s = 0.6 * robot.length
+    s_ps = sample_arc_lengths(robot)
+
+    assert_allclose(
+        robot.jacobian(q, s),
+        robot.jacobian_inertialframe(q, s),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        robot.jacobian_batched(q, s_ps),
+        robot.jacobian_inertialframe_batched(q, s_ps),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+    J, Jd = robot.jacobian_and_derivative(q, qd, s)
+    J_expected, Jd_expected = robot.jacobian_and_derivative_inertialframe(q, qd, s)
+    assert_allclose(J, J_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd, Jd_expected, rtol=RTOL, atol=ATOL)
+
+    J_batch, Jd_batch = robot.jacobian_and_derivative_batched(q, qd, s_ps)
+    J_batch_expected, Jd_batch_expected = (
+        robot.jacobian_and_derivative_inertialframe_batched(q, qd, s_ps)
+    )
+    assert_allclose(J_batch, J_batch_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1168,6 +1254,15 @@ def test_gravity_matches_potential_gradient(num_segments: int):
         print("dU_G_dq:\n", dU_G_dq)
 
         assert_allclose(G, dU_G_dq, rtol=RTOL, atol=ATOL)
+
+
+def test_gvs_gravitational_energy_gradient_matches_force() -> None:
+    robot = build_varied_basis_gvs(num_segments=1)
+    q = random_q(robot, jax.random.PRNGKey(313), scale=0.02)
+
+    dU_dq = jax.grad(lambda q_: robot.gravitational_energy(q_))(q)
+
+    assert_allclose(dU_dq, robot.gravitational_force(q), rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])

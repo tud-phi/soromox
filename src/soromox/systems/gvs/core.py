@@ -796,8 +796,260 @@ class GVS(SoftRobot):
 
         This method can be expanded to include additional precomputations as needed.
         """
-        self.K_full = self._stiffness_full_matrix()
-        self.D_full = self._damping_full_matrix()
+        object.__setattr__(self, "K_full", self._stiffness_full_matrix())
+        object.__setattr__(self, "D_full", self._damping_full_matrix())
+
+    def _link_parameter_arrays(
+        self, links_list: list[LinkAttributes] | tuple[LinkAttributes, ...]
+    ) -> tuple[
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ]:
+        """
+        Build the link-derived GVS arrays for an updated set of link attributes.
+
+        This helper recomputes only quantities that depend on the physical link
+        parameters: length, cross-section geometry, local mass matrices, local
+        stiffness matrices, and local damping matrices. It deliberately leaves the
+        joint basis, link strain basis, reference strain, and active coordinate
+        layout unchanged. That makes it suitable for parameter updates that keep
+        the GVS discretization and generalized coordinates fixed.
+
+        Args:
+            links_list: Updated link attributes, one per segment. Length must be
+                ``self.num_segments``. Each ``LinkAttributes`` entry provides the
+                segment length, material constants, damping coefficient, density,
+                cross-section family, and the relevant linearly interpolated
+                cross-section parameters.
+
+        Returns:
+            A tuple containing:
+
+            - ``V_L``: segment lengths, shape ``(self.num_segments,)``.
+            - ``V_L_cum``: cumulative segment endpoints including zero, shape
+              ``(self.num_segments + 1,)``.
+            - ``V_Ms``: local mass matrices at stored quadrature nodes, shape
+              ``(self.num_segments, self.max_nip, 6, 6)``.
+            - ``V_Es``: local stiffness matrices at stored quadrature nodes,
+              shape ``(self.num_segments, self.max_nip, 6, 6)``.
+            - ``V_Gs``: local damping matrices at stored quadrature nodes, shape
+              ``(self.num_segments, self.max_nip, 6, 6)``.
+            - ``V_cross_section_geometry``: cross-section enum indices, shape
+              ``(self.num_segments,)``.
+            - ``V_r_params``: circular radius interpolation parameters, shape
+              ``(self.num_segments, 2)``.
+            - ``V_h_params``: rectangular height interpolation parameters, shape
+              ``(self.num_segments, 2)``.
+            - ``V_w_params``: rectangular width interpolation parameters, shape
+              ``(self.num_segments, 2)``.
+            - ``V_a_params``: elliptical semi-major-axis interpolation
+              parameters, shape ``(self.num_segments, 2)``.
+            - ``V_b_params``: elliptical semi-minor-axis interpolation
+              parameters, shape ``(self.num_segments, 2)``.
+
+        Raises:
+            ValueError: If ``links_list`` does not contain exactly one entry per
+                segment.
+        """
+        if len(links_list) != self.num_segments:
+            raise ValueError(
+                "links_list must contain one LinkAttributes entry per segment, "
+                f"got {len(links_list)} for {self.num_segments} segments."
+            )
+
+        V_L_items = []
+        V_Ms_items = []
+        V_Es_items = []
+        V_Gs_items = []
+        V_cross_section_geometry_items = []
+        V_r_params_items = []
+        V_h_params_items = []
+        V_w_params_items = []
+        V_a_params_items = []
+        V_b_params_items = []
+
+        for i_segment, link_attrs in enumerate(links_list):
+            cross_section_geometry_idx = int(link_attrs.cross_section_geometry)
+
+            E = jnp.asarray(link_attrs.E, dtype=jnp.float64)
+            nu = jnp.asarray(link_attrs.nu, dtype=jnp.float64)
+            rho = jnp.asarray(link_attrs.rho, dtype=jnp.float64)
+            eta = jnp.asarray(link_attrs.eta, dtype=jnp.float64)
+            L = jnp.asarray(link_attrs.L, dtype=jnp.float64)
+
+            r_params = (
+                jnp.asarray(link_attrs.r_i, dtype=jnp.float64),
+                jnp.asarray(link_attrs.r_f, dtype=jnp.float64),
+            )
+            h_params = (
+                jnp.asarray(link_attrs.h_i, dtype=jnp.float64),
+                jnp.asarray(link_attrs.h_f, dtype=jnp.float64),
+            )
+            w_params = (
+                jnp.asarray(link_attrs.w_i, dtype=jnp.float64),
+                jnp.asarray(link_attrs.w_f, dtype=jnp.float64),
+            )
+            a_params = (
+                jnp.asarray(link_attrs.a_i, dtype=jnp.float64),
+                jnp.asarray(link_attrs.a_f, dtype=jnp.float64),
+            )
+            b_params = (
+                jnp.asarray(link_attrs.b_i, dtype=jnp.float64),
+                jnp.asarray(link_attrs.b_f, dtype=jnp.float64),
+            )
+
+            geometric_operand = GeometricOperand(
+                Xs=self.V_Xs[i_segment],
+                r_params=r_params,
+                h_params=h_params,
+                w_params=w_params,
+                a_params=a_params,
+                b_params=b_params,
+            )
+            Ix_p, Iy_p, Iz_p, A_p = lax.switch(
+                index=cross_section_geometry_idx,
+                branches=Link.geometric_branches(),
+                operand=geometric_operand,
+            )
+
+            G = E / (2 * (1 + nu))
+            Ms_diag = jnp.stack([Ix_p, Iy_p, Iz_p, A_p, A_p, A_p], axis=1)
+            Es_diag = jnp.stack(
+                [G * Ix_p, E * Iy_p, E * Iz_p, E * A_p, G * A_p, G * A_p],
+                axis=1,
+            )
+            Gs_diag = jnp.stack(
+                [Ix_p, 3 * Iy_p, 3 * Iz_p, 3 * A_p, A_p, A_p], axis=1
+            )
+
+            V_L_items.append(L)
+            V_Ms_items.append(rho * vmap(jnp.diag)(Ms_diag))
+            V_Es_items.append(vmap(jnp.diag)(Es_diag))
+            V_Gs_items.append(eta * vmap(jnp.diag)(Gs_diag))
+            V_cross_section_geometry_items.append(cross_section_geometry_idx)
+            V_r_params_items.append(jnp.stack(r_params))
+            V_h_params_items.append(jnp.stack(h_params))
+            V_w_params_items.append(jnp.stack(w_params))
+            V_a_params_items.append(jnp.stack(a_params))
+            V_b_params_items.append(jnp.stack(b_params))
+
+        V_L = jnp.stack(V_L_items)
+        V_L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1, dtype=V_L.dtype), V_L]))
+
+        return (
+            V_L,
+            V_L_cum,
+            jnp.stack(V_Ms_items),
+            jnp.stack(V_Es_items),
+            jnp.stack(V_Gs_items),
+            jnp.asarray(V_cross_section_geometry_items, dtype=jnp.int32),
+            jnp.stack(V_r_params_items),
+            jnp.stack(V_h_params_items),
+            jnp.stack(V_w_params_items),
+            jnp.stack(V_a_params_items),
+            jnp.stack(V_b_params_items),
+        )
+
+    def update_params(self, params: dict[str, Any]) -> "GVS":
+        """
+        Return a copy of the GVS model with selected parameters updated.
+
+        The supported updates are intentionally limited to parameters that do
+        not change the generalized-coordinate layout:
+
+        - ``"links_list"`` refreshes segment lengths, cross-section geometry,
+          local mass/stiffness/damping arrays, and cached full stiffness and
+          damping matrices.
+        - ``"gravity_vector"`` or ``"g"`` refreshes the inertial gravity vector.
+        - ``"p0"`` refreshes the base pose from a 6D SE(3) exponential
+          coordinate.
+
+        Changing joint families, basis families, basis orders, or quadrature
+        orders can change the active coordinate layout and should be done by
+        constructing a new ``GVS`` instance.
+
+        Args:
+            params: Dictionary of parameter updates. Supported keys are
+                ``"links_list"``, ``"gravity_vector"``, ``"g"``, and ``"p0"``.
+                ``"links_list"`` must have length ``self.num_segments``.
+                ``"gravity_vector"``/``"g"`` must have shape ``(3,)``.
+                ``"p0"`` must have shape ``(6,)``.
+
+        Returns:
+            updated_self: A new ``GVS`` instance with the requested parameters
+                updated. The original instance is left unchanged.
+
+        Raises:
+            KeyError: If an unsupported update key is provided.
+            ValueError: If an update has an incompatible shape.
+        """
+        supported_keys = {"links_list", "gravity_vector", "g", "p0"}
+        unknown_keys = set(params) - supported_keys
+        if unknown_keys:
+            unknown = ", ".join(sorted(unknown_keys))
+            raise KeyError(f"Unsupported GVS update_params keys: {unknown}")
+
+        updated_self = self
+
+        if "links_list" in params:
+            link_arrays = self._link_parameter_arrays(params["links_list"])
+            updated_self = eqx.tree_at(
+                lambda model: (
+                    model.V_L,
+                    model.V_L_cum,
+                    model.V_Ms,
+                    model.V_Es,
+                    model.V_Gs,
+                    model.V_cross_section_geometry,
+                    model.V_r_params,
+                    model.V_h_params,
+                    model.V_w_params,
+                    model.V_a_params,
+                    model.V_b_params,
+                ),
+                updated_self,
+                link_arrays,
+            )
+            updated_self = eqx.tree_at(
+                lambda model: (model.K_full, model.D_full),
+                updated_self,
+                (
+                    updated_self._stiffness_full_matrix(),
+                    updated_self._damping_full_matrix(),
+                ),
+            )
+
+        if "gravity_vector" in params or "g" in params:
+            gravity_vector = params.get("gravity_vector", params.get("g"))
+            gravity_vector = jnp.asarray(gravity_vector, dtype=jnp.float64)
+            if gravity_vector.shape != (3,):
+                raise ValueError(
+                    f"gravity_vector must have shape (3,), got {gravity_vector.shape}"
+                )
+            updated_self = eqx.tree_at(
+                lambda model: model.g,
+                updated_self,
+                jnp.concatenate([jnp.zeros(3, dtype=gravity_vector.dtype), gravity_vector]),
+            )
+
+        if "p0" in params:
+            p0 = jnp.asarray(params["p0"], dtype=jnp.float64)
+            if p0.shape != (6,):
+                raise ValueError(f"p0 must have shape (6,), got {p0.shape}")
+            updated_self = eqx.tree_at(
+                lambda model: model.g0, updated_self, lie.exp_SE3(p0)
+            )
+
+        return updated_self
 
     # Gathering functions =========================================================
     @eqx.filter_jit
@@ -2303,6 +2555,26 @@ class GVS(SoftRobot):
         return vmap(rotate_pair)(g_ps, J_body)
 
     @eqx.filter_jit
+    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute inertial-frame Jacobians at multiple arclength locations.
+
+        This public adapter satisfies the batched SoftRobot interface while
+        preserving the explicit GVS body-frame and inertial-frame methods.
+
+        Args:
+            q (Array): generalized coordinates of shape
+                ``(num_active_strains,)``.
+            s_ps (Array): arclength locations in ``[0, self.length]``, shape
+                ``(N,)``.
+
+        Returns:
+            J_global (Array): inertial-frame Jacobians with shape
+                ``(N, 6, num_active_strains)``.
+        """
+        return self.jacobian_inertialframe_batched(q, s_ps)
+
+    @eqx.filter_jit
     def _jacobian_derivative_gauss(
         self, q_gathered: Array, qd_gathered: Array
     ) -> Array:
@@ -2876,6 +3148,30 @@ class GVS(SoftRobot):
             Jd (Array): Time derivative of the Jacobian, shape (6, num_dofs).
         """
         return self.jacobian_and_derivative_inertialframe(q, qd, s)
+
+    @eqx.filter_jit
+    def jacobian_and_derivative_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute inertial-frame Jacobians and time derivatives at multiple points.
+
+        This public adapter satisfies the batched SoftRobot interface while
+        preserving the explicit GVS body-frame and inertial-frame methods.
+
+        Args:
+            q (Array): generalized coordinates of shape
+                ``(num_active_strains,)``.
+            qd (Array): generalized velocities of shape
+                ``(num_active_strains,)``.
+            s_ps (Array): arclength locations in ``[0, self.length]``, shape
+                ``(N,)``.
+
+        Returns:
+            Tuple[Array, Array]: inertial-frame Jacobians and time derivatives.
+            Each array has shape ``(N, 6, num_active_strains)``.
+        """
+        return self.jacobian_and_derivative_inertialframe_batched(q, qd, s_ps)
 
     # ===========================================
     # Dynamical matrices computation
