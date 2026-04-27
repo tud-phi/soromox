@@ -26,7 +26,7 @@ averages a number of warm calls to estimate steady-state latency.
 
 ```bash
 python tools/benchmarks/benchmark_system_methods.py \
-  --systems pendulum planar_pcs pcs \
+  --systems articulated_soft_robot pendulum planar_pcs pcs \
   --segment-counts 1 3 5 7 \
   --duration 2.0 \
   --solver-dt 5e-4 \
@@ -58,6 +58,11 @@ For each system/function pair the script prints:
 The plots group results by system, highlighting how complexity evolves with segment
 count for each tracked method.
 
+For `articulated_soft_robot`, the method benchmark includes both the default
+articulated-body forward dynamics path and a dense Jacobian-energy forward
+dynamics solve (`forward_dynamics_dense`). Comparing these two cases is useful
+for tracking ABA performance against the controller-facing dense dynamics API.
+
 ## Benchmarking simulation batch scaling
 
 `benchmark_simulation_batch_scaling.py` runs full simulations in parallel batches
@@ -69,7 +74,7 @@ second. Each configuration can export tables and plots spanning multiple segment
 
 ```bash
 python tools/benchmarks/benchmark_simulation_batch_scaling.py \
-  --systems pcs planar_pcs \
+  --systems articulated_soft_robot pcs planar_pcs \
   --segment-counts 1 3 5 \
   --batch-sizes 1 2 4 8 16 32 64 \
   --duration 2.0 \
@@ -129,5 +134,5 @@ Both CLIs share `tools/benchmarks/_benchmark_common.py`. To add a new system:
 3. Register the new entry in the shared registry so it automatically becomes available
    to every benchmarking tool.
 
-Following this pattern keeps benchmarks for future robot models (e.g., GVS variants)
-consistent and easy to maintain.
+Following this pattern keeps benchmarks for future robot models (e.g., new
+articulated variants or GVS variants) consistent and easy to maintain.

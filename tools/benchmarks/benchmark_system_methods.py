@@ -4,8 +4,8 @@
 
 This script measures both the ahead-of-time JIT compilation cost and the steady-state
 execution time (after compilation) for selected systems and core methods. It supports
-benchmarking the Pendulum, PlanarPCS, PCS, and GVS implementations over a sweep of link
-or segment counts, and can optionally visualise the results.
+benchmarking articulated, Pendulum, PlanarPCS, PCS, and GVS implementations over a sweep
+of link or segment counts, and can optionally visualise the results.
 """
 
 from __future__ import annotations
@@ -17,9 +17,7 @@ import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import (
-    Any,
-)
+from typing import Any
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -93,6 +91,42 @@ class SystemBenchmark:
         return self.gauss_factory is not None
 
 
+def _dense_forward_dynamics(
+    system: Any, t: Array, y: Array, actuation_args: tuple | None
+) -> Array:
+    """Compute forward dynamics by explicitly assembling dense matrix terms."""
+    del t
+    q, qd = jnp.split(y, 2)
+    if actuation_args is None:
+        u, tau_ext = None, None
+    elif len(actuation_args) == 1:
+        u, tau_ext = actuation_args[0], None
+    elif len(actuation_args) == 2:
+        u, tau_ext = actuation_args
+    else:
+        raise ValueError("actuation_args must be None, (u,), or (u, tau_ext).")
+
+    if u is None:
+        u = jnp.zeros((system.num_actuators,), dtype=y.dtype)
+    if tau_ext is None:
+        tau_ext = jnp.zeros((system.num_dofs,), dtype=y.dtype)
+
+    M = system.inertia_matrix(q)
+    C = system.coriolis_matrix(q, qd)
+    G = system.gravitational_force(q)
+    D = system.damping_matrix(q)
+    rhs = (
+        system.actuation_force(q, u)
+        + tau_ext
+        - C @ qd
+        - G
+        - system.elastic_force(q)
+        - D @ qd
+    )
+    qdd = jnp.linalg.solve(M, rhs)
+    return jnp.concatenate([qd, qdd])
+
+
 def _measure_jitted_call(
     fn: Callable[..., Tree],
     args: tuple[Any, ...],
@@ -149,6 +183,70 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             name="forward_dynamics",
             builder=lambda sys, ctx, _: (
                 lambda t, y, args: sys.forward_dynamics(t, y, args),
+                (ctx["t"], ctx["y"], (ctx["u"], ctx["tau_ext"])),
+            ),
+        ),
+        BenchmarkCase(
+            name="total_energy",
+            builder=lambda sys, ctx, _: (sys.total_energy, (ctx["q"], ctx["qd"])),
+        ),
+        BenchmarkCase(
+            name="rollout_to",
+            builder=lambda sys, ctx, runtime: (
+                lambda q0, qd0, u, tau, t0, t1, solver_dt, save_dt: sys.rollout_to(
+                    initial_state=SystemState(t=t0, y=jnp.concatenate([q0, qd0])),
+                    u=u,
+                    tau_ext=tau,
+                    t1=t1,
+                    solver_dt=solver_dt,
+                    save_dt=save_dt,
+                ),
+                (
+                    ctx["q"],
+                    ctx["qd"],
+                    ctx["u"],
+                    ctx["tau_ext"],
+                    jnp.array(0.0),
+                    jnp.array(runtime.duration),
+                    jnp.array(runtime.solver_dt),
+                    runtime.save_dt,
+                ),
+            ),
+        ),
+    )
+
+    articulated_cases = (
+        BenchmarkCase(
+            name="forward_kinematics",
+            description="Tip pose forward kinematics",
+            builder=lambda sys, ctx, _: (sys.forward_kinematics_tips, (ctx["q"],)),
+        ),
+        BenchmarkCase(
+            name="jacobian",
+            description="Tip Jacobians",
+            builder=lambda sys, ctx, _: (sys.jacobians_tips, (ctx["q"],)),
+        ),
+        BenchmarkCase(
+            name="jacobian_and_derivative",
+            description="Tip Jacobians and their derivatives",
+            builder=lambda sys, ctx, _: (
+                sys.jacobians_and_derivatives_tips,
+                (ctx["q"], ctx["qd"]),
+            ),
+        ),
+        BenchmarkCase(
+            name="forward_dynamics",
+            description="ABA-backed forward dynamics",
+            builder=lambda sys, ctx, _: (
+                lambda t, y, args: sys.forward_dynamics(t, y, args),
+                (ctx["t"], ctx["y"], (ctx["u"], ctx["tau_ext"])),
+            ),
+        ),
+        BenchmarkCase(
+            name="forward_dynamics_dense",
+            description="Dense Jacobian-energy matrix solve",
+            builder=lambda sys, ctx, _: (
+                lambda t, y, args: _dense_forward_dynamics(sys, t, y, args),
                 (ctx["t"], ctx["y"], (ctx["u"], ctx["tau_ext"])),
             ),
         ),
@@ -398,6 +496,12 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             size_label=shared["pendulum"].size_label,
             build_context=shared["pendulum"].build_context,
             cases=pendulum_cases,
+        ),
+        "articulated_soft_robot": SystemBenchmark(
+            factory=shared["articulated_soft_robot"].factory,
+            size_label=shared["articulated_soft_robot"].size_label,
+            build_context=shared["articulated_soft_robot"].build_context,
+            cases=articulated_cases,
         ),
         "planar_pcs": SystemBenchmark(
             factory=shared["planar_pcs"].factory,

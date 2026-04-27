@@ -10,7 +10,14 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from soromox.systems import GVS, PCS, CrossSectionGeometry, Pendulum, PlanarPCS
+from soromox.systems import (
+    GVS,
+    PCS,
+    ArticulatedSoftRobot,
+    CrossSectionGeometry,
+    Pendulum,
+    PlanarPCS,
+)
 from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
 
 Array = jax.Array
@@ -60,6 +67,69 @@ def _pendulum_context(system: Pendulum) -> MutableMapping[str, Array]:
         "tau_ext": jnp.zeros((n,)),
         "y": jnp.concatenate([q, qd]),
         "t": jnp.array(0.0),
+    }
+    return ctx
+
+
+def _articulated_soft_robot_factory(
+    num_links: int, gauss_points: int = 5
+) -> ArticulatedSoftRobot:
+    axes = jnp.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ]
+    )
+    axis_indices = jnp.arange(num_links) % axes.shape[0]
+    omega = axes[axis_indices]
+    joint_screws = jnp.concatenate([omega, jnp.zeros((num_links, 3))], axis=1)
+
+    lengths = jnp.linspace(0.15, 0.25, num_links)
+    lateral = 0.03 * jnp.sin(jnp.arange(num_links, dtype=lengths.dtype))
+    vertical = 0.04 * jnp.cos(jnp.arange(num_links, dtype=lengths.dtype))
+    p_tip = jnp.stack([lengths, lateral, vertical], axis=1)
+    p_com = 0.5 * p_tip
+
+    masses = jnp.linspace(0.8, 1.2, num_links)
+    I_diag = jnp.stack(
+        [
+            0.03 * masses * lengths**2,
+            0.04 * masses * lengths**2,
+            0.05 * masses * lengths**2,
+        ],
+        axis=1,
+    )
+    I_com = jax.vmap(jnp.diag)(I_diag)
+
+    params = {
+        "joint_screws": joint_screws,
+        "p_tip": p_tip,
+        "p_com": p_com,
+        "m": masses,
+        "I_com": I_com,
+        "g": jnp.array([0.0, 0.0, -9.81]),
+        "K": 5.0 * jnp.eye(num_links),
+        "D": 0.1 * jnp.eye(num_links),
+    }
+    return ArticulatedSoftRobot(params)
+
+
+def _articulated_soft_robot_context(
+    system: ArticulatedSoftRobot,
+) -> MutableMapping[str, Array]:
+    n = system.num_links
+    q = jnp.linspace(-0.15, 0.15, n)
+    qd = jnp.linspace(0.2, -0.2, n)
+    ctx: MutableMapping[str, Array] = {
+        "q": q,
+        "qd": qd,
+        "u": jnp.zeros((system.num_actuators,)),
+        "tau_ext": jnp.zeros((n,)),
+        "y": jnp.concatenate([q, qd]),
+        "t": jnp.array(0.0),
+        "s_tip": system.total_length,
+        "g_tips": system.forward_kinematics_tips(q),
     }
     return ctx
 
@@ -225,6 +295,11 @@ def get_system_registry() -> Mapping[str, SystemConfig]:
             factory=_pendulum_factory,
             size_label="num_links",
             build_context=_pendulum_context,
+        ),
+        "articulated_soft_robot": SystemConfig(
+            factory=_articulated_soft_robot_factory,
+            size_label="num_links",
+            build_context=_articulated_soft_robot_context,
         ),
         "planar_pcs": SystemConfig(
             factory=_planar_pcs_factory,

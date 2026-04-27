@@ -5,6 +5,7 @@ from soromox.systems.soft_robot import (
 )
 from soromox.systems.system_state import SystemState
 
+from .articulated import ArticulatedSoftRobot
 from .gvs import GVS, TendonActuatedGVS
 from .hsa import PlanarHSA
 from .pcs import (
@@ -23,6 +24,8 @@ __all__ = [
     "SoftRobot",
     "CrossSectionGeometry",
     "SystemState",
+    # articulated systems
+    "ArticulatedSoftRobot",
     # gvs systems
     "GVS",
     "TendonActuatedGVS",

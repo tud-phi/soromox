@@ -34,9 +34,16 @@ try:
 except ImportError:
     ViserRenderer = None
 
-# Specialized OpenCV renderers
-from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
-from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
+# Specialized OpenCV renderers are optional (require opencv-python)
+try:
+    from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
+except ImportError:
+    OpenCVPlanarRenderer = None
+
+try:
+    from soromox.rendering.planar_hsa.opencv_renderer import OpenCVPlanarHSARenderer
+except ImportError:
+    OpenCVPlanarHSARenderer = None
 
 __all__ = [
     # Base class

@@ -1,6 +1,8 @@
-# Tendon Actuated Pendulum Systems
+# Tendon Actuated Pendulum
 
-The tendon actuated pendulum module provides implementations for N-link pendulum systems with both active and passive tendon actuation, extending the basic pendulum model with cable-driven control mechanisms.
+The `TendonActuatedPendulum` system is the cable-driven planar entry in the
+articulated systems family. It extends the basic pendulum model with active and
+passive tendon actuation.
 
 ## Overview
 

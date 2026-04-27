@@ -22,9 +22,11 @@ SoRoMoX examples are organized into four main categories:
 
 Simulation examples demonstrate how to model and simulate different types of robotic systems using SoRoMoX. These examples are located in `examples/simulation/` and are organized by robot type.
 
-### Pendulum Systems
+### Articulated Systems
 
-Pendulum systems are ideal for learning the basics of SoRoMoX. They're simple to understand yet demonstrate key concepts like dynamics, kinematics, and energy computation.
+Articulated systems model serial rigid-link chains. They include planar
+pendulum benchmarks, tendon-actuated pendulums, and spatial articulated soft
+robots with optional joint stiffness and damping.
 
 #### N-Link Pendulum
 ```bash
@@ -55,6 +57,21 @@ python examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py
 - Control applications with underactuated systems
 
 **Key concepts:** Actuation mapping, tendon kinematics, underactuation
+
+#### Spatial Articulated Soft Robot
+```bash
+python examples/simulation/articulated/simulate_articulated_soft_robot.py
+```
+
+The example simulates a four-link spatial chain, plots joint states, end-effector motion, and energies, then launches a Matplotlib animation by default. Use `--render open3d`, `--render viser`, or `--render all` to try the optional interactive renderers.
+
+**What you'll learn:**
+- Building a spatial serial chain with screw-axis joints
+- Adding passive joint stiffness and damping
+- Simulating with ABA-based forward dynamics through the standard `rollout_to()` API
+- Rendering with Matplotlib, Open3D, or Viser backends
+
+**Key concepts:** Spatial articulated dynamics, compliant joints, ABA forward dynamics
 
 ### PCS (Piecewise Constant Strain) Robots
 
@@ -366,6 +383,21 @@ params = {
 }
 ```
 
+**For articulated soft robot systems:**
+
+```python
+params = {
+    "joint_screws": joint_screws,  # Shape (N, 6), screw axes [omega, v]
+    "p_tip": p_tip,                # Shape (N, 3), link tip vectors
+    "p_com": p_com,                # Shape (N, 3), link COM vectors
+    "m": masses,                   # Shape (N,), link masses
+    "I_com": I_com,                # Shape (N, 3, 3), COM inertias
+    "g": jnp.array([0.0, 0.0, -9.81]),
+    "K": jnp.diag(joint_stiffness),  # Optional joint stiffness
+    "D": jnp.diag(joint_damping),    # Optional joint damping
+}
+```
+
 ### Output Customization
 
 Control visualization and output:
@@ -391,6 +423,10 @@ Modify initial configurations and velocities:
 # For pendulum systems
 q0 = jnp.array([jnp.pi/4, jnp.pi/6])  # Initial joint angles
 qd0 = jnp.zeros_like(q0)                # Initial velocities
+
+# For articulated soft robot systems
+q0 = jnp.array([0.35, -0.45, 0.28, -0.20])  # Initial joint coordinates
+qd0 = jnp.zeros_like(q0)
 
 # For PCS systems
 q0 = jnp.array([0.1, 0.0, 0.0,  # Segment 1 strains

@@ -1,8 +1,6 @@
 # 📦 Installation
 
-<div class="doc-summary">
-  <strong>Get started with SoRoMoX in minutes!</strong> Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
-</div>
+**Get started with SoRoMoX in minutes!** Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
 
 !!! warning "📢 Migration from JSRM"
     
@@ -11,7 +9,7 @@
     - **Package Name**: `import jsrm` → `import soromox`
     - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
     - **Performance**: Symbolic derivations → Numerical implementations
-    - **New Soft Robot Models**: Support for Spatial PCS and GVS systems
+    - **New Soft Robot Models**: Support for Spatial PCS, GVS, and articulated soft robot systems
     - **Actuation**: Popular soft robot actuation modalities such as tendon-actuation and pneumatic-actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
     - **Renderers**: SoRoMoX includes built-in renderers for visualization
     - **Control**: Model-based control implementations are included
@@ -142,9 +140,8 @@ pip install soromox[docs]
 
 **Includes:**
 
-- `mkdocs-material` - Modern documentation theme
-- `mkdocstrings[python]` - API documentation generation
-- `mkdocs-jupyter` - Jupyter notebook integration
+- `zensical` - Documentation site generator
+- `mkdocstrings-python` - API documentation generation
 
 ### 🎉 Complete Installation
 

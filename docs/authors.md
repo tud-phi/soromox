@@ -1,13 +1,14 @@
 # Authors & Maintainers
 
-This project is developed and maintained by researchers from the Physical Intelligence (PhI) Lab at TU Delft.
+This project is developed and maintained by researchers working on soft robotics, continuum mechanics, and model-based control.
 
 ## Authors
 
 ### Maximilian Stölzle
 
-Postdoctoral Researcher  
-Physical Intelligence (PhI) Lab, TU Delft
+Postdoctoral Associate  
+Distributed Robotics Lab (DRL), MIT CSAIL  
+Cambridge, USA
 
 **Contact:** <mstolzle@mit.edu> | <maximilian@stoelzle.ch>
 
@@ -77,7 +78,7 @@ We welcome contributions from the community! If you're interested in contributin
 
 ## Acknowledgments
 
-This work is supported by the Physical Intelligence (PhI) Lab at TU Delft and benefits from collaborations with researchers worldwide working on soft robotics and continuum mechanics.
+This work benefits from collaborations with researchers worldwide working on soft robotics and continuum mechanics, including contributors from the Physical Intelligence (PhI) Lab at TU Delft and the Distributed Robotics Lab (DRL) at MIT CSAIL.
 
 ### Theoretical Foundations
 

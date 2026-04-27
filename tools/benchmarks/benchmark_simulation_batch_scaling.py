@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Benchmark how simulation throughput scales with batched environments."""
+"""Benchmark how simulation throughput scales with batched environments.
+
+The available systems are provided by `_benchmark_common.get_system_registry`,
+including articulated soft robots, pendulums, PCS, planar PCS, and GVS models.
+"""
 
 from __future__ import annotations
 

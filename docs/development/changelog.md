@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `ArticulatedSoftRobot` spatial serial-chain system with optional joint
+  stiffness and damping, dense matrix dynamics, ABA forward dynamics, examples,
+  documentation, and benchmark coverage.
+
 ### Changed
 
 ### Fixed

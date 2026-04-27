@@ -1,6 +1,8 @@
-# Pendulum Systems
+# Pendulum
 
-The pendulum module provides implementations for N-link pendulum systems, which are useful for benchmarking and comparison with soft robot systems.
+The `Pendulum` system is the planar benchmark entry in the articulated systems
+family. It provides N-link rigid-body chain dynamics for benchmarking and
+comparison with soft robot systems.
 
 ## Overview
 

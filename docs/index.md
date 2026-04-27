@@ -1,18 +1,16 @@
 <div align="center">
-  <img src="assets/logo/soromox_logo.png" alt="SoRoMoX Logo" width="400" style="margin-bottom: 20px;"/>
+  <img src="assets/logo/soromox_logo.png" alt="SoRoMoX Logo" width="280"/>
 </div>
 
 # 🤖 Soft Robot Models in jaX (SoRoMoX)
 
-<div class="doc-summary">
-  <strong>Welcome to SoRoMoX!</strong> A comprehensive library for soft robot modeling, model-based control, and visualization. Built on JAX for fast, parallelizable, and differentiable executation of soft robot models.
-</div>
+**Welcome to SoRoMoX!** A comprehensive library for soft robot modeling, model-based control, and visualization. Built on JAX for fast, parallelizable, and differentiable execution of soft robot models.
 
 !!! info "Successor to JSRM"
 
     SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). Key improvements include:
 
-    - **Extended System Support**: Spatial PCS and GVS systems
+    - **Extended System Support**: Spatial PCS, GVS, and articulated soft robot systems
     - **Numerical Implementation**: Replaced symbolic derivations with numerical implementations for better scalability and significantly reduced JIT compilation times
     - **Object-Oriented Architecture**: Migration from functional to Equinox dataclasses-based design enabling easy extendability and modification of methods
     - **Model-Based Control**: Comprehensive suite of model-based controllers for soft robots
@@ -24,22 +22,9 @@
 
 SoRoMoX provides three core capabilities for soft robotics research and development:
 
-<div class="feature-grid">
-  <div class="feature-card">
-    <h3><span class="icon">🤖</span> Soft Robot Models</h3>
-    <p>Kinematic and dynamic models of continuum and articulated soft robots with symbolic foundations and JAX implementation</p>
-  </div>
-
-  <div class="feature-card">
-    <h3><span class="icon">🎮</span> Model-Based Control</h3>
-    <p>Comprehensive suite of controllers: PID, gravity cancellation, potential shaping, impedance control, and computed torque</p>
-  </div>
-
-  <div class="feature-card">
-    <h3><span class="icon">🎨</span> Visualization</h3>
-    <p>Multiple rendering backends including Matplotlib, Open3D, Viser (web-based 3D), and OpenCV for 2D visualization</p>
-  </div>
-</div>
+- **🤖 Soft Robot Models**: Kinematic and dynamic models of continuum and articulated soft robots with symbolic foundations and JAX implementation.
+- **🎮 Model-Based Control**: Controllers for PID, gravity cancellation, potential shaping, impedance control, and computed torque.
+- **🎨 Visualization**: Rendering backends including Matplotlib, Open3D, Viser, and OpenCV.
 
 ---
 
@@ -54,10 +39,10 @@ SoRoMoX provides three core capabilities for soft robotics research and developm
 
 === "Soft Robot Models"
 
+    - **Articulated Systems**: Planar pendulums, tendon-actuated pendulums, and spatial articulated soft robots
     - **PCS (Piecewise Constant Strain)**: Continuum robots with constant strain segments
     - **GVS (Generalized Variable Strain)**: Flexible strain basis functions (Legendre, Chebyshev, Fourier)
     - **HSA (Handed Shearing Auxetics)**: Robots with auxetic material properties
-    - **Pendulum Systems**: Classical and tendon-actuated N-link articulated robots
     - **Multiple Actuators**: Support for tendon and pneumatic actuation
 
 === "Model-Based Controllers"
@@ -81,8 +66,8 @@ SoRoMoX provides three core capabilities for soft robotics research and developm
 
 SoRoMoX supports both planar (2D) and spatial (3D) soft robot architectures:
 
-!!! note "Pendulum Systems"
-    Classical and tendon-actuated N-link articulated robots for benchmarking and cable-driven mechanisms
+!!! success "Articulated Systems"
+    Planar and spatial rigid-link chains. Includes `Pendulum` for planar benchmark dynamics, `TendonActuatedPendulum` for cable-driven articulated mechanisms, and `ArticulatedSoftRobot` for spatial screw-axis chains with optional joint stiffness and damping.
 
 !!! tip "PCS Systems (Piecewise Constant Strain)"
     Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pneumatic actuation
@@ -247,27 +232,10 @@ All renderers support:
 
 ## Quick Links
 
-<div class="feature-grid">
-  <div class="feature-card">
-    <h3><span class="icon">📦</span> <a href="installation/">Installation Guide</a></h3>
-    <p>Get SoRoMoX installed and configured on your system</p>
-  </div>
-
-  <div class="feature-card">
-    <h3><span class="icon">🚀</span> <a href="user-guide/quick-start/">Quick Start</a></h3>
-    <p>Jump right in with hands-on tutorials and examples</p>
-  </div>
-
-  <div class="feature-card">
-    <h3><span class="icon">📖</span> <a href="user-guide/examples/">Examples</a></h3>
-    <p>Explore comprehensive examples for simulation, control, and visualization</p>
-  </div>
-
-  <div class="feature-card">
-    <h3><span class="icon">📋</span> <a href="api/overview/">API Reference</a></h3>
-    <p>Complete documentation of all classes and functions</p>
-  </div>
-</div>
+- **📦 [Installation Guide](installation/)**: Get SoRoMoX installed and configured on your system.
+- **🚀 [Quick Start](user-guide/quick-start/)**: Jump right in with hands-on tutorials and examples.
+- **📖 [Examples](user-guide/examples/)**: Explore examples for simulation, control, and visualization.
+- **📋 [API Reference](api/overview/)**: Complete documentation of all classes and functions.
 
 ---
 

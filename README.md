@@ -15,7 +15,7 @@
 
 </div>
 
-> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS and GVS), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
+> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS, GVS, and articulated soft robots), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
 
 SoRoMoX provides three core capabilities for soft robotics research:
 
@@ -23,11 +23,11 @@ SoRoMoX provides three core capabilities for soft robotics research:
 - **Model-Based Control**: Comprehensive suite of controllers including PID, gravity cancellation, potential shaping, impedance control, and computed torque
 - **Visualization**: Multiple rendering backends (Matplotlib, Open3D, Viser, OpenCV) for 2D and 3D visualization
 
-We focus on strain-based models suitable for modeling slender structures (Cosserat rods). The following systems are implemented:
+SoRoMoX includes strain-based continuum models for slender structures (Cosserat rods), planar benchmarks, and spatial articulated soft robot systems. The following systems are implemented:
 
 | System Type | Variants |
 |-------------|----------|
-| Pendulum | [N-link](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py) |
+| Articulated Systems | [Pendulum](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated Pendulum](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py), [Articulated Soft Robot](examples/simulation/articulated/simulate_articulated_soft_robot.py) |
 | PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Tendon-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [Pneumatic-Actuated](examples/simulation/pcs/simulate_pneumatic_actuated_planar_pcs.py) |
 | GVS (Geometric Variable Strain) | [Spatial](examples/simulation/gvs/simulate_gvs.py), [Tendon-Actuated](examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
 | HSA (Handed Shearing Auxetics) | [Planar](examples/simulation/hsa/simulate_planar_hsa.py) |
@@ -117,7 +117,7 @@ uv pip install -e .
 The extras in `pyproject.toml` bundle optional tooling:
 
 - `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
-- `docs`: MkDocs stack for building the documentation site.
+- `docs`: Zensical stack for building the documentation site.
 - `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
 - `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
 - `test`: minimal test stack (pytest, coverage, tox, html report).
@@ -174,13 +174,10 @@ To build and serve the documentation locally:
 
 ```bash
 # Install documentation dependencies
-pip install -e ".[docs]"
+uv sync --extra docs
 
-# Serve documentation with live reload (if mkdocs is in PATH)
-mkdocs serve
-
-# OR using conda environment
-conda run --live-stream --name soromox mkdocs serve
+# Serve documentation with live reload
+uv run --extra docs zensical serve
 ```
 
 The documentation will be available at `http://127.0.0.1:8000`.
@@ -188,19 +185,11 @@ The documentation will be available at `http://127.0.0.1:8000`.
 ### Building Documentation for Production
 
 ```bash
-# Build static documentation (if mkdocs is in PATH)
-mkdocs build
+# Build static documentation
+uv run --extra docs zensical build --clean
 
-# OR using conda environment
-conda run --live-stream --name soromox mkdocs build
-
-# Build with strict mode (for CI/development)
-mkdocs build --strict
-# OR: conda run --live-stream --name soromox mkdocs build --strict
-
-# Deploy to GitHub Pages (maintainers only)
-mkdocs gh-deploy
-# OR: conda run --live-stream --name soromox mkdocs gh-deploy
+# Zensical does not currently support MkDocs-style strict mode.
+# The CI workflow runs the same build command.
 ```
 
 You can also use the Makefile targets:
@@ -214,9 +203,6 @@ make docs-build
 
 # Build with strict mode checking
 make docs-build-strict
-
-# Deploy to GitHub Pages
-make docs-deploy
 ```
 
 ## Version Management and Releases
