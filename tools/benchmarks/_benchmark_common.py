@@ -23,6 +23,13 @@ class SystemConfig:
     factory: Callable[[int], Any]
     size_label: str
     build_context: Callable[[Any], MutableMapping[str, Array]]
+    gauss_factory: Callable[[int, int], Any] | None = None
+    default_gauss_points: int | None = None
+    min_gauss_points: int = 1
+
+    @property
+    def supports_gauss_points(self) -> bool:
+        return self.gauss_factory is not None
 
 
 def _pendulum_factory(num_links: int) -> Pendulum:
@@ -57,7 +64,7 @@ def _pendulum_context(system: Pendulum) -> MutableMapping[str, Array]:
     return ctx
 
 
-def _planar_pcs_factory(num_segments: int) -> PlanarPCS:
+def _planar_pcs_factory(num_segments: int, gauss_points: int = 5) -> PlanarPCS:
     lengths = jnp.full((num_segments,), 0.12)
     radii = jnp.full((num_segments,), 0.015)
     rho = 1070.0 * jnp.ones((num_segments,))
@@ -75,7 +82,11 @@ def _planar_pcs_factory(num_segments: int) -> PlanarPCS:
         * lengths[:, None]
     ).reshape(-1)
     params["D"] = 5.0e-4 * jnp.diag(diag_entries)
-    return PlanarPCS(num_segments=num_segments, params=params)
+    return PlanarPCS(
+        num_segments=num_segments,
+        params=params,
+        order_gauss=gauss_points,
+    )
 
 
 def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
@@ -101,7 +112,7 @@ def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
     return ctx
 
 
-def _pcs_factory(num_segments: int) -> PCS:
+def _pcs_factory(num_segments: int, gauss_points: int = 5) -> PCS:
     lengths = jnp.full((num_segments,), 0.1)
     radii = jnp.full((num_segments,), 0.02)
     rho = 1050.0 * jnp.ones((num_segments,))
@@ -121,7 +132,11 @@ def _pcs_factory(num_segments: int) -> PCS:
         * lengths[:, None]
     ).reshape(-1)
     params["D"] = 5.0e-4 * jnp.diag(diag_entries)
-    return PCS(num_segments=num_segments, params=params)
+    return PCS(
+        num_segments=num_segments,
+        params=params,
+        order_gauss=gauss_points,
+    )
 
 
 def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
@@ -148,7 +163,7 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
     return ctx
 
 
-def _gvs_factory(num_segments: int) -> GVS:
+def _gvs_factory(num_segments: int, gauss_points: int = 5) -> GVS:
     links: list[LinkAttributes] = []
     joints: list[JointAttributes] = []
     bases: list[BasisAttributes] = []
@@ -175,7 +190,7 @@ def _gvs_factory(num_segments: int) -> GVS:
                 xi_ref=[0, 0, 0, 1, 0, 0],
             )
         )
-        n_gauss.append(5)
+        n_gauss.append(gauss_points)
 
     return GVS(
         links_list=links,
@@ -215,16 +230,23 @@ def get_system_registry() -> Mapping[str, SystemConfig]:
             factory=_planar_pcs_factory,
             size_label="num_segments",
             build_context=_planar_pcs_context,
+            gauss_factory=_planar_pcs_factory,
+            default_gauss_points=5,
         ),
         "pcs": SystemConfig(
             factory=_pcs_factory,
             size_label="num_segments",
             build_context=_pcs_context,
+            gauss_factory=_pcs_factory,
+            default_gauss_points=5,
         ),
         "gvs": SystemConfig(
             factory=_gvs_factory,
             size_label="num_segments",
             build_context=_gvs_context,
+            gauss_factory=_gvs_factory,
+            default_gauss_points=5,
+            min_gauss_points=5,
         ),
     }
 
@@ -252,6 +274,82 @@ def add_system_selection_args(
         default=list(default_segment_counts),
         help="Sequence of link/segment counts to benchmark",
     )
+
+
+def add_gauss_point_args(parser: argparse.ArgumentParser) -> None:
+    """Attach shared Gaussian quadrature sweep arguments to a parser."""
+
+    parser.add_argument(
+        "--gauss-points",
+        nargs="+",
+        type=int,
+        default=None,
+        help=(
+            "Optional sweep of Gauss-Legendre quadrature orders/interior point "
+            "counts. Applies only to systems with quadrature-driven dynamics; "
+            "PCS/GVS include two zero-weight endpoints internally."
+        ),
+    )
+
+
+def normalize_gauss_point_values(
+    values: Sequence[int] | None,
+) -> list[int] | None:
+    """Return a sorted, de-duplicated Gauss-point sweep."""
+
+    if values is None:
+        return None
+    return sorted(dict.fromkeys(values))
+
+
+def gauss_point_sweep_values(
+    config: Any,
+    requested_values: Sequence[int] | None,
+) -> list[int | None]:
+    """Return the Gauss-point values that should be evaluated for a system."""
+
+    if requested_values is None:
+        return [None]
+    if not getattr(config, "supports_gauss_points", False):
+        return []
+
+    min_value = int(getattr(config, "min_gauss_points", 1))
+    return [int(value) for value in requested_values if value >= min_value]
+
+
+def build_system_with_gauss_points(
+    config: Any,
+    size: int,
+    gauss_points: int | None,
+) -> Any:
+    """Build a configured benchmark system, optionally overriding quadrature."""
+
+    if gauss_points is None:
+        return config.factory(size)
+    if not getattr(config, "supports_gauss_points", False):
+        raise ValueError(
+            f"{getattr(config, 'size_label', 'system')} does not support "
+            "Gaussian quadrature point sweeps."
+        )
+    return config.gauss_factory(size, gauss_points)
+
+
+def system_gauss_point_metadata(system: Any) -> tuple[int | None, int | None]:
+    """Return ``(gauss_points, integration_points)`` for quadrature systems.
+
+    ``gauss_points`` is the requested Gauss-Legendre order/interior count used
+    by constructors. ``integration_points`` includes Soromox's zero-weight
+    boundary nodes where the implementation stores them.
+    """
+
+    if hasattr(system, "max_nGauss"):
+        gauss_points = int(system.max_nGauss)
+        integration_points = int(getattr(system, "max_nip", gauss_points + 2))
+        return gauss_points, integration_points
+    if hasattr(system, "num_gauss_points"):
+        integration_points = int(system.num_gauss_points)
+        return integration_points - 2, integration_points
+    return None, None
 
 
 def add_integration_args(

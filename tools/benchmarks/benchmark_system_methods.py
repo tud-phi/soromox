@@ -39,10 +39,15 @@ import matplotlib.pyplot as plt
 
 from soromox.systems import SystemState
 from tools.benchmarks._benchmark_common import (
+    add_gauss_point_args,
     add_integration_args,
     add_system_selection_args,
     block_until_ready,
+    build_system_with_gauss_points,
+    gauss_point_sweep_values,
     get_system_registry,
+    normalize_gauss_point_values,
+    system_gauss_point_metadata,
 )
 
 Array = jax.Array
@@ -79,6 +84,13 @@ class SystemBenchmark:
     size_label: str
     build_context: Callable[[Any], MutableMapping[str, Array]]
     cases: Sequence[BenchmarkCase]
+    gauss_factory: Callable[[int, int], Any] | None = None
+    default_gauss_points: int | None = None
+    min_gauss_points: int = 1
+
+    @property
+    def supports_gauss_points(self) -> bool:
+        return self.gauss_factory is not None
 
 
 def _measure_jitted_call(
@@ -392,18 +404,27 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             size_label=shared["planar_pcs"].size_label,
             build_context=shared["planar_pcs"].build_context,
             cases=planar_cases,
+            gauss_factory=shared["planar_pcs"].gauss_factory,
+            default_gauss_points=shared["planar_pcs"].default_gauss_points,
+            min_gauss_points=shared["planar_pcs"].min_gauss_points,
         ),
         "pcs": SystemBenchmark(
             factory=shared["pcs"].factory,
             size_label=shared["pcs"].size_label,
             build_context=shared["pcs"].build_context,
             cases=pcs_cases,
+            gauss_factory=shared["pcs"].gauss_factory,
+            default_gauss_points=shared["pcs"].default_gauss_points,
+            min_gauss_points=shared["pcs"].min_gauss_points,
         ),
         "gvs": SystemBenchmark(
             factory=shared["gvs"].factory,
             size_label=shared["gvs"].size_label,
             build_context=shared["gvs"].build_context,
             cases=gvs_cases,
+            gauss_factory=shared["gvs"].gauss_factory,
+            default_gauss_points=shared["gvs"].default_gauss_points,
+            min_gauss_points=shared["gvs"].min_gauss_points,
         ),
     }
 
@@ -426,24 +447,57 @@ def _plot_results(
         functions = sorted({res["function"] for res in subset})
         ax_compile = axes[row, 0]
         ax_exec = axes[row, 1]
-        for fn_name in functions:
-            fn_results = sorted(
-                (res for res in subset if res["function"] == fn_name),
-                key=lambda item: item["size_value"],
-            )
-            sizes = [item["size_value"] for item in fn_results]
-            compile_times = [item["jit_compile_time_s"] for item in fn_results]
-            exec_times = [item["jit_execution_time_s"] for item in fn_results]
+        gauss_values = {
+            res.get("gauss_points")
+            for res in subset
+            if res.get("gauss_points") not in (None, "")
+        }
+        plot_gauss_axis = len(gauss_values) > 1
 
-            ax_compile.plot(sizes, compile_times, marker="o", label=fn_name)
-            ax_exec.plot(sizes, exec_times, marker="o", label=fn_name)
+        if plot_gauss_axis:
+            sizes = sorted({res["size_value"] for res in subset})
+            for fn_name in functions:
+                for size in sizes:
+                    fn_results = sorted(
+                        (
+                            res
+                            for res in subset
+                            if res["function"] == fn_name
+                            and res["size_value"] == size
+                            and res.get("gauss_points") not in (None, "")
+                        ),
+                        key=lambda item: item["gauss_points"],
+                    )
+                    if not fn_results:
+                        continue
+                    x_values = [item["gauss_points"] for item in fn_results]
+                    compile_times = [item["jit_compile_time_s"] for item in fn_results]
+                    exec_times = [item["jit_execution_time_s"] for item in fn_results]
+                    label = (
+                        f"{fn_name}, {size_label}={size}" if len(sizes) > 1 else fn_name
+                    )
+                    ax_compile.plot(x_values, compile_times, marker="o", label=label)
+                    ax_exec.plot(x_values, exec_times, marker="o", label=label)
+        else:
+            for fn_name in functions:
+                fn_results = sorted(
+                    (res for res in subset if res["function"] == fn_name),
+                    key=lambda item: item["size_value"],
+                )
+                sizes = [item["size_value"] for item in fn_results]
+                compile_times = [item["jit_compile_time_s"] for item in fn_results]
+                exec_times = [item["jit_execution_time_s"] for item in fn_results]
+
+                ax_compile.plot(sizes, compile_times, marker="o", label=fn_name)
+                ax_exec.plot(sizes, exec_times, marker="o", label=fn_name)
 
         ax_compile.set_title(f"{system} – compile")
         ax_exec.set_title(f"{system} – execution")
         ax_compile.set_ylabel("time [s]")
         ax_exec.set_ylabel("time [s]")
-        ax_compile.set_xlabel(size_label)
-        ax_exec.set_xlabel(size_label)
+        x_label = "Gauss-Legendre points" if plot_gauss_axis else size_label
+        ax_compile.set_xlabel(x_label)
+        ax_exec.set_xlabel(x_label)
         ax_compile.grid(True, linestyle=":", linewidth=0.5)
         ax_exec.grid(True, linestyle=":", linewidth=0.5)
         ax_exec.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0))
@@ -472,6 +526,8 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
         "function",
         "size_label",
         "size_value",
+        "gauss_points",
+        "integration_points",
         "jit_compile_time_s",
         "jit_execution_time_s",
         "duration",
@@ -492,6 +548,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         description="Benchmark Soromox system implementations"
     )
     add_system_selection_args(parser, registry, default_segment_counts=[1, 2, 4, 8])
+    add_gauss_point_args(parser)
     add_integration_args(parser)
     # Collect all unique method names across all systems
     all_methods = sorted({case.name for cfg in registry.values() for case in cfg.cases})
@@ -536,7 +593,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="Display the plot window after benchmarking",
     )
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.gauss_points is not None:
+        if any(value < 1 for value in args.gauss_points):
+            parser.error("All --gauss-points entries must be >= 1.")
+        args.gauss_points = normalize_gauss_point_values(args.gauss_points)
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -554,6 +616,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     for system_name in args.systems:
         system_cfg = registry[system_name]
+        gauss_values = gauss_point_sweep_values(system_cfg, args.gauss_points)
+        if not gauss_values:
+            print(
+                f"\n[!] Skipping {system_name}: --gauss-points is not applicable "
+                "or all requested values are below the system minimum."
+            )
+            continue
         # Filter cases if --methods is specified
         cases_to_run = (
             [c for c in system_cfg.cases if c.name in args.methods]
@@ -561,51 +630,69 @@ def main(argv: Sequence[str] | None = None) -> int:
             else system_cfg.cases
         )
         for size in args.segment_counts:
-            print(
-                f"\n=== Benchmarking {system_name} with {system_cfg.size_label}={size} ==="
-            )
-            system = system_cfg.factory(size)
-            ctx = system_cfg.build_context(system)
-            for case in cases_to_run:
-                fn, call_args = case.builder(system, ctx, runtime)
-                print(f"  -> {case.name} ...", end=" ", flush=True)
-                compile_time, exec_time = _measure_jitted_call(
-                    fn, call_args, runtime.execution_repeats
+            for requested_gauss_points in gauss_values:
+                system = build_system_with_gauss_points(
+                    system_cfg, size, requested_gauss_points
                 )
-
-                per_point_note = ""
-                if case.name == "forward_kinematics_batched" and len(call_args) >= 2:
-                    s_arg = call_args[1]
-                    num_points = None
-                    if hasattr(s_arg, "shape") and s_arg.shape:
-                        num_points = int(s_arg.shape[0])
-                    else:
-                        try:
-                            num_points = int(len(s_arg))
-                        except TypeError:
-                            num_points = None
-                    if num_points and num_points > 0:
-                        compile_time /= num_points
-                        exec_time /= num_points
-                        per_point_note = f" (per point over {num_points})"
+                gauss_points, integration_points = system_gauss_point_metadata(system)
+                gauss_note = ""
+                if requested_gauss_points is not None:
+                    gauss_note = (
+                        f", gauss_points={gauss_points}, "
+                        f"integration_points={integration_points}"
+                    )
 
                 print(
-                    f"compile {compile_time:.4f}s | exec {exec_time:.4f}s{per_point_note}"
+                    f"\n=== Benchmarking {system_name} with "
+                    f"{system_cfg.size_label}={size}{gauss_note} ==="
                 )
-                results.append(
-                    {
-                        "system": system_name,
-                        "function": case.name,
-                        "size_label": system_cfg.size_label,
-                        "size_value": size,
-                        "jit_compile_time_s": compile_time,
-                        "jit_execution_time_s": exec_time,
-                        "duration": runtime.duration,
-                        "solver_dt": runtime.solver_dt,
-                        "save_dt": runtime.save_dt,
-                        "execution_repeats": runtime.execution_repeats,
-                    }
-                )
+                ctx = system_cfg.build_context(system)
+                for case in cases_to_run:
+                    fn, call_args = case.builder(system, ctx, runtime)
+                    print(f"  -> {case.name} ...", end=" ", flush=True)
+                    compile_time, exec_time = _measure_jitted_call(
+                        fn, call_args, runtime.execution_repeats
+                    )
+
+                    per_point_note = ""
+                    if (
+                        case.name == "forward_kinematics_batched"
+                        and len(call_args) >= 2
+                    ):
+                        s_arg = call_args[1]
+                        num_points = None
+                        if hasattr(s_arg, "shape") and s_arg.shape:
+                            num_points = int(s_arg.shape[0])
+                        else:
+                            try:
+                                num_points = int(len(s_arg))
+                            except TypeError:
+                                num_points = None
+                        if num_points and num_points > 0:
+                            compile_time /= num_points
+                            exec_time /= num_points
+                            per_point_note = f" (per point over {num_points})"
+
+                    print(
+                        f"compile {compile_time:.4f}s | exec {exec_time:.4f}s"
+                        f"{per_point_note}"
+                    )
+                    results.append(
+                        {
+                            "system": system_name,
+                            "function": case.name,
+                            "size_label": system_cfg.size_label,
+                            "size_value": size,
+                            "gauss_points": gauss_points,
+                            "integration_points": integration_points,
+                            "jit_compile_time_s": compile_time,
+                            "jit_execution_time_s": exec_time,
+                            "duration": runtime.duration,
+                            "solver_dt": runtime.solver_dt,
+                            "save_dt": runtime.save_dt,
+                            "execution_repeats": runtime.execution_repeats,
+                        }
+                    )
 
     artifacts: list[str] = []
 
@@ -617,13 +704,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         artifacts.append(str(args.csv.resolve()))
     if args.plot or args.show_plot:
         _plot_results(results, args.plot, args.show_plot)
-        if args.plot:
+        if args.plot and results:
             artifacts.append(str(args.plot.resolve()))
 
     if artifacts:
         print("\nGenerated benchmark artifacts:")
         for path in artifacts:
             print(f" - {path}")
+    elif not results:
+        print(
+            "\nNo benchmark artifacts were written because no benchmark rows were produced."
+        )
     else:
         print(
             "\nNo benchmark artifacts were written. Pass --json/--csv/--plot to export data."

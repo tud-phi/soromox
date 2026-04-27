@@ -6,9 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from pathlib import Path
 import shutil
-from typing import Any, Dict, List, Mapping, Sequence
+from collections.abc import Mapping, Sequence
+from contextlib import suppress
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 
@@ -23,27 +25,27 @@ if shutil.which("latex"):
 
 NUMERIC_FIELDS = {
     "size_value": int,
+    "gauss_points": int,
+    "integration_points": int,
     "jit_compile_time_s": float,
     "jit_execution_time_s": float,
     "duration": float,
-    "dt": float,
-    "save_dt": int,
+    "solver_dt": float,
+    "save_dt": float,
     "execution_repeats": int,
 }
 
 
-def _coerce_row(row: Mapping[str, Any]) -> Dict[str, Any]:
+def _coerce_row(row: Mapping[str, Any]) -> dict[str, Any]:
     data = dict(row)
     for key, caster in NUMERIC_FIELDS.items():
         if key in data and data[key] is not None:
-            try:
+            with suppress(TypeError, ValueError):
                 data[key] = caster(data[key])
-            except (TypeError, ValueError):
-                pass
     return data
 
 
-def _load_json(path: Path) -> List[Dict[str, Any]]:
+def _load_json(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as fp:
         payload = json.load(fp)
     if not isinstance(payload, list):
@@ -51,14 +53,14 @@ def _load_json(path: Path) -> List[Dict[str, Any]]:
     return [_coerce_row(entry) for entry in payload]
 
 
-def _load_csv(path: Path) -> List[Dict[str, Any]]:
+def _load_csv(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as fp:
         reader = csv.DictReader(fp)
         rows = [_coerce_row(row) for row in reader]
     return rows
 
 
-def load_results(path: Path) -> List[Dict[str, Any]]:
+def load_results(path: Path) -> list[dict[str, Any]]:
     suffix = path.suffix.lower()
     if suffix == ".json":
         return _load_json(path)
@@ -77,7 +79,13 @@ def plot_results(
         raise ValueError("No benchmark entries available to plot")
 
     systems = sorted({row["system"] for row in results})
-    fig, axes = plt.subplots(len(systems), 2, figsize=(12, 4 * len(systems)), squeeze=False, sharex="col")
+    fig, axes = plt.subplots(
+        len(systems),
+        2,
+        figsize=(12, 4 * len(systems)),
+        squeeze=False,
+        sharex="col",
+    )
 
     for row_idx, system in enumerate(systems):
         subset = [row for row in results if row["system"] == system]
@@ -85,24 +93,57 @@ def plot_results(
         functions = sorted({row["function"] for row in subset})
         ax_compile = axes[row_idx, 0]
         ax_exec = axes[row_idx, 1]
-        for fn_name in functions:
-            fn_rows = sorted(
-                (row for row in subset if row["function"] == fn_name),
-                key=lambda item: item["size_value"],
-            )
-            sizes = [row["size_value"] for row in fn_rows]
-            compile_times = [row["jit_compile_time_s"] for row in fn_rows]
-            exec_times = [row["jit_execution_time_s"] for row in fn_rows]
+        gauss_values = {
+            row.get("gauss_points")
+            for row in subset
+            if row.get("gauss_points") not in (None, "")
+        }
+        plot_gauss_axis = len(gauss_values) > 1
 
-            ax_compile.plot(sizes, compile_times, marker="o", label=fn_name)
-            ax_exec.plot(sizes, exec_times, marker="o", label=fn_name)
+        if plot_gauss_axis:
+            sizes = sorted({row["size_value"] for row in subset})
+            for fn_name in functions:
+                for size in sizes:
+                    fn_rows = sorted(
+                        (
+                            row
+                            for row in subset
+                            if row["function"] == fn_name
+                            and row["size_value"] == size
+                            and row.get("gauss_points") not in (None, "")
+                        ),
+                        key=lambda item: item["gauss_points"],
+                    )
+                    if not fn_rows:
+                        continue
+                    x_values = [row["gauss_points"] for row in fn_rows]
+                    compile_times = [row["jit_compile_time_s"] for row in fn_rows]
+                    exec_times = [row["jit_execution_time_s"] for row in fn_rows]
+                    label = (
+                        f"{fn_name}, {size_label}={size}" if len(sizes) > 1 else fn_name
+                    )
+                    ax_compile.plot(x_values, compile_times, marker="o", label=label)
+                    ax_exec.plot(x_values, exec_times, marker="o", label=label)
+        else:
+            for fn_name in functions:
+                fn_rows = sorted(
+                    (row for row in subset if row["function"] == fn_name),
+                    key=lambda item: item["size_value"],
+                )
+                sizes = [row["size_value"] for row in fn_rows]
+                compile_times = [row["jit_compile_time_s"] for row in fn_rows]
+                exec_times = [row["jit_execution_time_s"] for row in fn_rows]
+
+                ax_compile.plot(sizes, compile_times, marker="o", label=fn_name)
+                ax_exec.plot(sizes, exec_times, marker="o", label=fn_name)
 
         ax_compile.set_title(f"{system} – compile")
         ax_exec.set_title(f"{system} – execution")
         ax_compile.set_ylabel("time [s]")
         ax_exec.set_ylabel("time [s]")
-        ax_compile.set_xlabel(size_label)
-        ax_exec.set_xlabel(size_label)
+        x_label = "Gauss-Legendre points" if plot_gauss_axis else size_label
+        ax_compile.set_xlabel(x_label)
+        ax_exec.set_xlabel(x_label)
         ax_compile.grid(True, linestyle=":", linewidth=0.5)
         ax_exec.grid(True, linestyle=":", linewidth=0.5)
         ax_exec.legend(loc="upper left", bbox_to_anchor=(1.02, 1.0))
@@ -124,9 +165,21 @@ def plot_results(
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Visualize Soromox benchmark results")
-    parser.add_argument("input", type=Path, help="Path to the benchmark JSON or CSV file")
-    parser.add_argument("--systems", nargs="*", help="Optional list of systems to include")
-    parser.add_argument("--functions", nargs="*", help="Optional list of function names to include")
+    parser.add_argument(
+        "input", type=Path, help="Path to the benchmark JSON or CSV file"
+    )
+    parser.add_argument(
+        "--systems", nargs="*", help="Optional list of systems to include"
+    )
+    parser.add_argument(
+        "--functions", nargs="*", help="Optional list of function names to include"
+    )
+    parser.add_argument(
+        "--gauss-points",
+        nargs="*",
+        type=int,
+        help="Optional subset of Gauss-Legendre point counts to plot",
+    )
     parser.add_argument(
         "--output",
         type=Path,
@@ -154,6 +207,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.functions:
         functions = set(args.functions)
         results = [row for row in results if row["function"] in functions]
+    if args.gauss_points:
+        gauss_points = set(args.gauss_points)
+        results = [
+            row
+            for row in results
+            if row.get("gauss_points") in gauss_points
+            or row.get("gauss_points") in (None, "")
+        ]
 
     if not results:
         raise ValueError("No benchmark entries remain after applying filters")
