@@ -8,7 +8,7 @@ from enum import IntEnum
 from typing import Any
 
 import equinox as eqx
-from jax import Array, vmap
+from jax import Array, grad, jacfwd, jvp, vmap
 from jax import numpy as jnp
 
 from soromox.systems.dynamical_system import DynamicalSystem
@@ -151,7 +151,6 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
-    @abstractmethod
     def forward_kinematics_tips(self, q: Array) -> Array:
         """
         Compute the forward kinematics at all segment or link tips.
@@ -165,7 +164,8 @@ class SoftRobot(DynamicalSystem):
                 - For 3D robots (PCS, GVS): shape (num_segments, 4, 4)
                 - For planar robots (PlanarPCS, Pendulum): shape (num_segments, 3)
         """
-        ...
+        s_tips = jnp.cumsum(jnp.atleast_1d(jnp.asarray(self.segment_length)))
+        return vmap(lambda s: self.forward_kinematics(q, s))(s_tips)
 
     def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
         """
@@ -183,7 +183,6 @@ class SoftRobot(DynamicalSystem):
         """
         return vmap(lambda s: self.forward_kinematics(q, s))(s_ps)
 
-    @abstractmethod
     def jacobian(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a point s along the robot.
@@ -201,9 +200,14 @@ class SoftRobot(DynamicalSystem):
                 - For 3D robots (PCS): 6 (angular velocity + linear velocity)
                 - For planar robots (PlanarPCS, Pendulum): 3 (omega_z, v_x, v_y)
         """
-        ...
+        pose = self.forward_kinematics(q, s)
+        dpose_dq = jacfwd(lambda q_: self.forward_kinematics(q_, s))(q)
 
-    @abstractmethod
+        if self.is_planar:
+            return self._planar_pose_jacobian(pose, dpose_dq)
+
+        return self._spatial_pose_jacobian(pose, dpose_dq)
+
     def jacobian_tips(self, q: Array) -> Array:
         """
         Compute inertial-frame Jacobians at all segment or link tips.
@@ -215,7 +219,8 @@ class SoftRobot(DynamicalSystem):
             J_tips: Inertial-frame Jacobians at the robot tips, with shape
                 (num_tips, n_pose_dim, num_dofs).
         """
-        ...
+        s_tips = jnp.cumsum(jnp.atleast_1d(jnp.asarray(self.segment_length)))
+        return vmap(lambda s: self.jacobian(q, s))(s_tips)
 
     def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
         """
@@ -233,7 +238,6 @@ class SoftRobot(DynamicalSystem):
         """
         return vmap(lambda s: self.jacobian(q, s))(s_ps)
 
-    @abstractmethod
     def jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
@@ -249,7 +253,8 @@ class SoftRobot(DynamicalSystem):
             J: Jacobian matrix of shape (n_pose_dim, num_dofs).
             Jd: Time derivative of the Jacobian, shape (n_pose_dim, num_dofs).
         """
-        ...
+        J, Jd = jvp(lambda q_: self.jacobian(q_, s), (q,), (qd,))
+        return J, Jd
 
     def jacobian_and_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
@@ -270,6 +275,60 @@ class SoftRobot(DynamicalSystem):
             Jd_ps: Jacobian derivatives at all points, shape (N, n_pose_dim, num_dofs).
         """
         return vmap(lambda s: self.jacobian_and_derivative(q, qd, s))(s_ps)
+
+    # -----------------------------------------
+    # Kinematics implementation helpers
+    # -----------------------------------------
+
+    def _planar_pose_jacobian(self, pose: Array, dpose_dq: Array) -> Array:
+        """
+        Convert an autodiff pose derivative to a planar inertial-frame Jacobian.
+
+        The standard planar pose representation in soromox is ``[theta, x, y]``.
+        A homogeneous SE(2) matrix is also accepted for subclasses that expose one.
+        """
+        if pose.ndim == 1 and pose.shape[0] == 3:
+            return dpose_dq
+
+        if pose.shape == (3, 3):
+            R = pose[:2, :2]
+            dR_dq = dpose_dq[:2, :2, :]
+            omega_hat = jnp.einsum("abn,cb->acn", dR_dq, R)
+            omega_z = 0.5 * (omega_hat[1, 0, :] - omega_hat[0, 1, :])
+            v = dpose_dq[:2, 2, :]
+            return jnp.concatenate([omega_z[None, :], v], axis=0)
+
+        raise ValueError(
+            "Planar forward_kinematics must return [theta, x, y] with shape (3,) "
+            "or an SE(2) matrix with shape (3, 3)."
+        )
+
+    def _spatial_pose_jacobian(self, pose: Array, dpose_dq: Array) -> Array:
+        """
+        Convert an autodiff SE(3) pose derivative to an inertial-frame Jacobian.
+
+        For ``g = [R, p]``, each column is ``[omega, v]`` with
+        ``omega = vee(dR_dq @ R.T)`` and ``v = dp_dq``.
+        """
+        if pose.shape != (4, 4):
+            raise ValueError(
+                "Spatial forward_kinematics must return an SE(3) matrix with "
+                "shape (4, 4)."
+            )
+
+        R = pose[:3, :3]
+        dR_dq = dpose_dq[:3, :3, :]
+        omega_hat = jnp.einsum("abn,cb->acn", dR_dq, R)
+        omega = 0.5 * jnp.stack(
+            [
+                omega_hat[2, 1, :] - omega_hat[1, 2, :],
+                omega_hat[0, 2, :] - omega_hat[2, 0, :],
+                omega_hat[1, 0, :] - omega_hat[0, 1, :],
+            ],
+            axis=0,
+        )
+        v = dpose_dq[:3, 3, :]
+        return jnp.concatenate([omega, v], axis=0)
 
     # -----------------------------------------
     # Dynamical matrices
@@ -337,7 +396,6 @@ class SoftRobot(DynamicalSystem):
         """
         ...
 
-    @abstractmethod
     def gravitational_force(self, q: Array) -> Array:
         """
         Compute the gravitational force.
@@ -348,7 +406,7 @@ class SoftRobot(DynamicalSystem):
         Returns:
             G: Gravitational force of shape (num_dofs,).
         """
-        ...
+        return grad(lambda q_: self.gravitational_energy(q_))(q)
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
@@ -473,7 +531,6 @@ class SoftRobot(DynamicalSystem):
     # Dynamics
     # -----------------------------------------
 
-    @abstractmethod
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
@@ -492,4 +549,33 @@ class SoftRobot(DynamicalSystem):
         Returns:
             yd: State derivative [qd, qdd], shape (2 * num_dofs,).
         """
-        ...
+        del t
+
+        q, qd = jnp.split(y, 2)
+
+        if actuation_args is None:
+            u, tau_ext = None, None
+        elif len(actuation_args) == 1:
+            u = actuation_args[0]
+            tau_ext = None
+        elif len(actuation_args) == 2:
+            u, tau_ext = actuation_args
+        else:
+            raise ValueError("actuation_args must be a tuple of length 1 or 2.")
+
+        if u is None:
+            u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
+        if tau_ext is None:
+            tau_ext = jnp.zeros_like(q)
+
+        M = self.inertia_matrix(q)
+        C = self.coriolis_matrix(q, qd)
+        G = self.gravitational_force(q)
+        K = self.elastic_force(q)
+        D = self.damping_matrix(q)
+        tau_u = self.actuation_force(q, u)
+
+        rhs = tau_u + tau_ext - C @ qd - G - K - D @ qd
+        qdd = jnp.linalg.solve(M, rhs)
+
+        return jnp.concatenate([qd, qdd])
