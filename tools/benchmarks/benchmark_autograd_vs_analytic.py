@@ -66,6 +66,11 @@ def _analytical_jacobian_and_derivative(
 def _autograd_jacobian_and_derivative(
     system: SoftRobot, q: Array, qd: Array, s: Array
 ) -> tuple[Array, Array]:
+    # Do not call SoftRobot.jacobian_and_derivative(system, ...): the base method
+    # dispatches through self.jacobian, which would resolve to PCS/GVS analytical
+    # overrides. Pin the inner Jacobian to SoftRobot.jacobian so this benchmark
+    # measures the default autograd-from-forward-kinematics path.
+    # Therefore, this is actually an autograd-based Hessian of the forward kinematics.
     return jax.jvp(lambda q_: SoftRobot.jacobian(system, q_, s), (q,), (qd,))
 
 
