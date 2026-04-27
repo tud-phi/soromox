@@ -143,6 +143,34 @@ def test_jacobian_derivative_matches_jvp(num_links):
     assert_allclose(Jd, Jd_jvp, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
+def test_spatial_jacobian_derivative_matches_jvp():
+    robot = make_spatial_robot()
+    q = jnp.array([0.2, -0.3, 0.4])
+    qd = jnp.array([0.5, -0.2, 0.3])
+
+    J_tips, Jd_tips = robot.jacobian_and_derivatives_tips(q, qd)
+    J_tips_direct = robot.jacobian_tips(q)
+    _, Jd_tips_jvp = jax.jvp(robot.jacobian_tips, (q,), (qd,))
+
+    assert_allclose(J_tips, J_tips_direct, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(Jd_tips, Jd_tips_jvp, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    s_points = jnp.stack(
+        [
+            jnp.array(0.2, dtype=q.dtype),
+            robot.L_cum[1] + jnp.array(0.2, dtype=q.dtype),
+            robot.total_length - jnp.array(0.05, dtype=q.dtype),
+        ]
+    )
+    for s in s_points:
+        J, Jd = robot._jacobian_and_derivative(q, qd, s)
+        J_direct = robot._jacobian(q, s)
+        _, Jd_jvp = jax.jvp(lambda q_, s=s: robot._jacobian(q_, s), (q,), (qd,))
+
+        assert_allclose(J, J_direct, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(Jd, Jd_jvp, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+
 @pytest.mark.parametrize("num_links", [2, 3])
 def test_inertia_matrix_is_symmetric_positive_definite(num_links):
     robot = make_articulated_robot(num_links)

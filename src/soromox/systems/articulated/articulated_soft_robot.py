@@ -328,6 +328,68 @@ class ArticulatedSoftRobot(SoftRobot):
             link_idxs, p_worlds
         )
 
+    def _world_joint_screw_derivatives(self, screws: Array, qd: Array) -> Array:
+        """Return time derivatives of world-frame joint screw axes."""
+
+        def _step(eta_parent: Array, inputs: tuple[Array, Array]):
+            screw_i, qd_i = inputs
+            screw_dot_i = lie.adjoint_se3(eta_parent) @ screw_i
+            eta_next = eta_parent + screw_i * qd_i
+            return eta_next, screw_dot_i
+
+        _, screw_dots = lax.scan(
+            _step,
+            jnp.zeros((6,), dtype=screws.dtype),
+            (screws, qd),
+        )
+        return screw_dots
+
+    def _jacobian_and_derivative_for_point_from_screws(
+        self,
+        screws: Array,
+        screw_dots: Array,
+        link_idx: Array,
+        p_world: Array,
+        qd: Array,
+    ) -> tuple[Array, Array]:
+        """Compute a point Jacobian and derivative from world-frame screw data."""
+        idxs = jnp.arange(self.num_links)
+        mask = (idxs <= link_idx).astype(screws.dtype)
+
+        omega = screws[:, :3]
+        v_origin = screws[:, 3:]
+        v_point = v_origin + jnp.cross(omega, p_world[None, :])
+        J_cols = jnp.concatenate([omega, v_point], axis=1) * mask[:, None]
+        J = J_cols.T
+
+        p_world_dot = J[3:, :] @ qd
+        omega_dot = screw_dots[:, :3]
+        v_origin_dot = screw_dots[:, 3:]
+        v_point_dot = (
+            v_origin_dot
+            + jnp.cross(omega_dot, p_world[None, :])
+            + jnp.cross(omega, p_world_dot[None, :])
+        )
+        Jd_cols = jnp.concatenate([omega_dot, v_point_dot], axis=1) * mask[:, None]
+        Jd = Jd_cols.T
+
+        return J, Jd
+
+    def _jacobian_and_derivative_for_points_from_screws(
+        self,
+        screws: Array,
+        screw_dots: Array,
+        link_idxs: Array,
+        p_worlds: Array,
+        qd: Array,
+    ) -> tuple[Array, Array]:
+        """Compute point Jacobians and derivatives from world-frame screw data."""
+        return vmap(
+            lambda i, p: self._jacobian_and_derivative_for_point_from_screws(
+                screws, screw_dots, i, p, qd
+            )
+        )(link_idxs, p_worlds)
+
     def classify_segment(self, s: Array) -> tuple[Array, Array]:
         """
         Determine which link contains an arc-length position.
@@ -503,9 +565,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return self._jacobian_for_point_from_screws(screws, link_idx, g_s[:3, 3])
 
     @eqx.filter_jit
-    def jacobian_and_derivatives_tips(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array]:
+    def jacobian_and_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Compute tip Jacobians and their time derivatives.
 
@@ -516,8 +576,14 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Tuple `(J, Jd)`, both with shape `(num_links, 6, num_links)`.
         """
-        J, Jd = jax.jvp(self.jacobian_tips, (q,), (qd,))
-        return J, Jd
+        g_joints, _, _, g_tips = self._kinematic_frames(q)
+        screws = self._world_joint_screws_from_joint_frames(g_joints)
+        screw_dots = self._world_joint_screw_derivatives(screws, qd)
+        idxs = jnp.arange(self.num_links)
+        positions = g_tips[:, :3, 3]
+        return self._jacobian_and_derivative_for_points_from_screws(
+            screws, screw_dots, idxs, positions, qd
+        )
 
     @eqx.filter_jit
     def _jacobian_and_derivative(
@@ -534,8 +600,26 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Tuple `(J, Jd)`, both with shape `(6, num_links)`.
         """
-        J, Jd = jax.jvp(lambda q_: self._jacobian(q_, s), (q,), (qd,))
-        return J, Jd
+        link_idx, s_local = self.classify_segment(s)
+        g_joints, g_links, _, _ = self._kinematic_frames(q)
+        L_i = self.segment_length[link_idx]
+        safe_L_i = jnp.where(L_i > 0, L_i, jnp.ones_like(L_i))
+        direction = jnp.where(
+            L_i > 0,
+            self.p_tip[link_idx] / safe_L_i,
+            jnp.zeros_like(self.p_tip[link_idx]),
+        )
+        displacement = jnp.where(
+            L_i > 0,
+            direction * s_local,
+            jnp.zeros_like(direction),
+        )
+        g_s = g_links[link_idx] @ self._translation(displacement)
+        screws = self._world_joint_screws_from_joint_frames(g_joints)
+        screw_dots = self._world_joint_screw_derivatives(screws, qd)
+        return self._jacobian_and_derivative_for_point_from_screws(
+            screws, screw_dots, link_idx, g_s[:3, 3], qd
+        )
 
     @eqx.filter_jit
     def inertia_matrix(self, q: Array) -> Array:
