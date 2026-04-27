@@ -3294,7 +3294,7 @@ class GVS(SoftRobot):
 
     @eqx.filter_jit
     def _active_quadrature_kinematics(
-        self, q: Array, qd: Array
+        self, q: Array, qd: Array, convective_only_jd: bool = False
     ) -> tuple[Array, Array, Array, Array]:
         """
         Return active kinematic data at interior quadrature nodes.
@@ -3302,7 +3302,11 @@ class GVS(SoftRobot):
         This is the active-coordinate counterpart of the public/full Gauss
         kinematics path. It keeps the segment and quadrature axes explicit,
         projects local joint/link contributions into active coordinates as they
-        are assembled, and drops zero-weight endpoint outputs.
+        are assembled, and drops zero-weight endpoint outputs. When
+        ``convective_only_jd`` is true, the returned derivative is only
+        guaranteed to be equivalent after multiplication by ``qd``. This is
+        sufficient for the forward-dynamics ``C(q, qd) @ qd`` path and avoids
+        assembling terms that vanish in that product.
 
         Args:
             q: Active generalized coordinates, shape
@@ -3350,9 +3354,15 @@ class GVS(SoftRobot):
 
             g_j = g_tip @ g_joint_i
             J_j = Ad_g_joint_inv @ (J_tip + T_joint_active)
-            Jd_j = Ad_g_joint_inv @ (Jd_tip + Td_joint_active) + Ad_g_joint_inv_dot @ (
-                J_tip + T_joint_active
-            )
+            if convective_only_jd:
+                Jd_j = (
+                    Ad_g_joint_inv @ (Jd_tip + Td_joint_active)
+                    + Ad_g_joint_inv_dot @ J_tip
+                )
+            else:
+                Jd_j = Ad_g_joint_inv @ (
+                    Jd_tip + Td_joint_active
+                ) + Ad_g_joint_inv_dot @ (J_tip + T_joint_active)
 
             Xs_i = self.integration_points[i_segment]
             xi_ref_Z1_i = self.xi_ref_Z1[i_segment]
@@ -3400,9 +3410,15 @@ class GVS(SoftRobot):
 
                 g_next = g_prev @ g_step
                 J_next = Ad_step_inv @ (J_prev + T_active)
-                Jd_next = Ad_step_inv @ (Jd_prev + Td_active) + Ad_step_inv_dot @ (
-                    J_prev + T_active
-                )
+                if convective_only_jd:
+                    Jd_next = (
+                        Ad_step_inv @ (Jd_prev + Td_active)
+                        + Ad_step_inv_dot @ J_prev
+                    )
+                else:
+                    Jd_next = Ad_step_inv @ (
+                        Jd_prev + Td_active
+                    ) + Ad_step_inv_dot @ (J_prev + T_active)
 
                 return (g_next, J_next, Jd_next, eta_next), (
                     g_next,
@@ -3466,7 +3482,9 @@ class GVS(SoftRobot):
             ``G`` is the active generalized gravity vector with shape
             ``(self.num_dofs,)``.
         """
-        weights, g_quads, J_quads, Jd_quads = self._active_quadrature_kinematics(q, qd)
+        weights, g_quads, J_quads, Jd_quads = self._active_quadrature_kinematics(
+            q, qd, convective_only_jd=True
+        )
         Ms_inner = self._inner_mass_matrices()
 
         def segment_terms(i: Array) -> tuple[Array, Array, Array]:

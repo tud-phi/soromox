@@ -1322,6 +1322,20 @@ def test_active_quadrature_kinematics_matches_existing_batched_path(
     assert J_quads.shape[:2] == weights.shape
     assert Jd_quads.shape == J_quads.shape
 
+    weights_fast, g_fast, J_fast, Jd_fast = robot._active_quadrature_kinematics(
+        q, qd, convective_only_jd=True
+    )
+
+    assert_allclose(weights_fast, weights, rtol=RTOL, atol=ATOL)
+    assert_allclose(g_fast, g_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_fast, J_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        jnp.einsum("ijkl,l->ijk", Jd_fast, qd),
+        jnp.einsum("ijkl,l->ijk", Jd_quads, qd),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
 
 @pytest.mark.parametrize("num_segments", [1, 3])
 def test_active_quadrature_forward_dynamics_terms_match_public_matrices(

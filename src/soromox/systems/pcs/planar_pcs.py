@@ -1989,7 +1989,11 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def _active_J_Jd_local_tips_from_strain(
-        self, xi: Array, xid: Array, B_segments: Array
+        self,
+        xi: Array,
+        xid: Array,
+        B_segments: Array,
+        convective_only_jd: bool = False,
     ) -> tuple[Array, Array]:
         """Compute active-coordinate local Jacobians at all segment tips."""
         Ad_inv_tips = vmap(
@@ -2024,7 +2028,10 @@ class PlanarPCS(SoftRobot):
             eta = Ad_inv_T_i @ xid_i
             Ad_inv_dot = -lie.adjoint_se2(eta) @ Ad_inv_i
 
-            Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_i
+            if convective_only_jd:
+                Jd_segment = (Ad_inv_i @ Td_i) @ B_i
+            else:
+                Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_i
             Jd_next = Ad_inv_i @ Jd_prev + Ad_inv_dot @ J_prev + Jd_segment
 
             return (J_next, Jd_next), (J_next, Jd_next)
@@ -2036,9 +2043,16 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def _active_quadrature_kinematics(
-        self, q: Array, qd: Array
+        self, q: Array, qd: Array, convective_only_jd: bool = False
     ) -> tuple[Array, Array, Array, Array]:
-        """Return weights, poses, active Jacobians, and derivatives at quadrature points."""
+        """
+        Return weights, poses, active Jacobians, and derivatives at quadrature points.
+
+        When ``convective_only_jd`` is true, the returned derivative is only
+        guaranteed to be equivalent after multiplication by ``qd``. This is
+        sufficient for the forward-dynamics ``C(q, qd) @ qd`` path and avoids
+        assembling terms that vanish in that product.
+        """
         xi = self.strain(q).reshape(self.num_segments, 3)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
         B_segments = self.B_xi.reshape(self.num_segments, 3, self.num_dofs)
@@ -2082,7 +2096,9 @@ class PlanarPCS(SoftRobot):
 
         g_ps = vmap(segment_poses)(g_bases, xi, s_local)
 
-        J_tips, Jd_tips = self._active_J_Jd_local_tips_from_strain(xi, xid, B_segments)
+        J_tips, Jd_tips = self._active_J_Jd_local_tips_from_strain(
+            xi, xid, B_segments, convective_only_jd=convective_only_jd
+        )
         zeros_tip = jnp.zeros_like(J_tips[:1])
         J_bases = jnp.concatenate([zeros_tip, J_tips[:-1]], axis=0)
         Jd_bases = jnp.concatenate([zeros_tip, Jd_tips[:-1]], axis=0)
@@ -2109,7 +2125,10 @@ class PlanarPCS(SoftRobot):
                 eta = Ad_inv_T @ xid_i
                 Ad_inv_dot = -lie.adjoint_se2(eta) @ Ad_inv
 
-                Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_i
+                if convective_only_jd:
+                    Jd_segment = (Ad_inv @ Td) @ B_i
+                else:
+                    Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_i
                 Jd_next = Ad_inv @ Jd_base_i + Ad_inv_dot @ J_base_i + Jd_segment
 
                 return J_next, Jd_next
@@ -2135,7 +2154,9 @@ class PlanarPCS(SoftRobot):
             Cqd (Array): Coriolis/centrifugal force of shape (num_active_strains,).
             G (Array): Gravitational force of shape (num_active_strains,).
         """
-        Ws_scaled, g_ps, J_ps, Jd_ps = self._active_quadrature_kinematics(q, qd)
+        Ws_scaled, g_ps, J_ps, Jd_ps = self._active_quadrature_kinematics(
+            q, qd, convective_only_jd=True
+        )
         num_quad = self.num_gauss_points
 
         def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:

@@ -1269,6 +1269,20 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
     assert_allclose(J_quads, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_quads, Jd_expected, rtol=RTOL, atol=ATOL)
 
+    weights_fast, g_fast, J_fast, Jd_fast = model._active_quadrature_kinematics(
+        q, qd, convective_only_jd=True
+    )
+
+    assert_allclose(weights_fast, weights_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(g_fast, g_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_fast, J_expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        jnp.einsum("ijkl,l->ijk", Jd_fast, qd),
+        jnp.einsum("ijkl,l->ijk", Jd_expected, qd),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
 
 @pytest.mark.parametrize("num_segments", [1, 3])
 @pytest.mark.parametrize(
