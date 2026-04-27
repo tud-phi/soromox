@@ -4,7 +4,6 @@ jax.config.update("jax_enable_x64", True)  # double precision
 import jax.numpy as jnp
 import numpy as onp
 import pytest
-
 from numpy.testing import assert_allclose
 
 from soromox.systems import Pendulum
@@ -63,7 +62,7 @@ def test_forward_kinematics_simple_configs(N):
 
 
 @pytest.mark.parametrize("N", [2, 3])
-def test_jacobians_match_autodiff(N):
+def test_jacobian_match_autodiff(N):
     robot = make_pendulum(N)
     q = jnp.linspace(-0.3, 0.4, N)
 
@@ -81,7 +80,7 @@ def test_jacobians_match_autodiff(N):
         )
 
     # COMs
-    J_coms_impl = robot.jacobians_coms(q)
+    J_coms_impl = robot.jacobian_coms(q)
     for i in range(robot.num_links):
         f_com_i = lambda q_: robot.forward_kinematics_coms(q_)[i]
         J_ad_i = jax.jacfwd(f_com_i)(q)
@@ -93,7 +92,7 @@ def test_jacobians_match_autodiff(N):
         )
 
     # Joints
-    J_joints_impl = robot.jacobians_joints(q)
+    J_joints_impl = robot.jacobian_joints(q)
     for i in range(robot.num_links):
         f_joint_i = lambda q_: robot.forward_kinematics_joints(q_)[i]
         J_ad_i = jax.jacfwd(f_joint_i)(q)
@@ -112,7 +111,7 @@ def test_jacobian_time_derivative_matches_jvp(N):
     qd = jnp.linspace(0.6, -0.5, N)
 
     # Closed-form J and Jdot at tips
-    J_closed, Jd_closed = robot.jacobians_and_derivatives_tips(q, qd)
+    J_closed, Jd_closed = robot.jacobian_and_derivatives_tips(q, qd)
 
     # Jdot via directional derivative with JAX JVP
     def J_of_q(q_):
@@ -136,13 +135,13 @@ def test_tip_jacobian_time_derivative_autodiff_contraction(N):
     qd = jnp.linspace(0.7, -0.4, N)
 
     J_tips = robot.jacobian_tips(q)
-    J_tips_closed, Jd_tips_closed = robot.jacobians_and_derivatives_tips(q, qd)
+    J_tips_closed, Jd_tips_closed = robot.jacobian_and_derivatives_tips(q, qd)
 
     # dJ/dq via autodiff, then Jdot = (dJ/dq) · qd
     dJdq_tips = jax.jacrev(robot.jacobian_tips)(q)  # (N,3,N,N)
     Jd_tips_auto = jnp.einsum("ijkl,l->ijk", dJdq_tips, qd)
 
-    # J returned by jacobians_and_derivatives_tips matches jacobian_tips
+    # J returned by jacobian_and_derivatives_tips matches jacobian_tips
     assert_allclose(
         J_tips,
         J_tips_closed,
@@ -289,8 +288,12 @@ def test_forward_kinematics_at_base(N):
     expected_theta = theta_cumsum[0]
     expected_pos = onp.array([0.0, 0.0])
 
-    assert_allclose(chi_s[0], expected_theta, rtol=Tolerance.rtol(), atol=Tolerance.atol())
-    assert_allclose(chi_s[1:], expected_pos, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+    assert_allclose(
+        chi_s[0], expected_theta, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+    )
+    assert_allclose(
+        chi_s[1:], expected_pos, rtol=Tolerance.rtol(), atol=Tolerance.atol()
+    )
 
 
 @pytest.mark.parametrize("N", [2, 3])
@@ -381,13 +384,13 @@ def test_jacobian_matches_autodiff(N):
 
 @pytest.mark.parametrize("N", [2, 3])
 def test_jacobian_and_derivative_at_tips(N):
-    """Test jacobian_and_derivative at tips matches jacobians_and_derivatives_tips."""
+    """Test jacobian_and_derivative at tips matches jacobian_and_derivatives_tips."""
     robot = make_pendulum(N)
     q = jnp.linspace(-0.3, 0.4, N)
     qd = jnp.linspace(0.6, -0.5, N)
 
     # Get from tips method
-    J_tips_direct, Jd_tips_direct = robot.jacobians_and_derivatives_tips(q, qd)
+    J_tips_direct, Jd_tips_direct = robot.jacobian_and_derivatives_tips(q, qd)
 
     # Get using arc-length method
     L_cum = onp.array(robot.L_cum)
@@ -450,18 +453,6 @@ def test_batched_methods(N):
 
     # Jacobian and derivative batched
     J_batched, Jd_batched = robot.jacobian_and_derivative_batched(q, qd, s_ps)
-    J_tips, Jd_tips = robot.jacobians_and_derivatives_tips(q, qd)
+    J_tips, Jd_tips = robot.jacobian_and_derivatives_tips(q, qd)
     assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(Jd_batched, Jd_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
-
-
-if __name__ == "__main__":
-    # Allow running this file directly for ad-hoc checks
-    for N in (2, 3):
-        test_forward_kinematics_simple_configs(N)
-        test_jacobians_match_autodiff(N)
-        test_jacobian_time_derivative_matches_jvp(N)
-        test_inertia_matrix_at_zero_config_matches_closed_form(N)
-        test_coriolis_christoffel_identity(N)
-        test_gravity_matches_negative_potential_gradient(N)
-        test_forward_dynamics_rest_with_zero_forces(N)

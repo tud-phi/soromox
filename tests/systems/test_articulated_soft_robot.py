@@ -110,10 +110,10 @@ def test_constructor_shape_validation():
 
 
 @pytest.mark.parametrize("num_links", [2, 3])
-def test_tip_linear_jacobians_match_autodiff(num_links):
+def test_tip_linear_jacobian_match_autodiff(num_links):
     robot = make_articulated_robot(num_links)
     q = jnp.linspace(-0.3, 0.4, num_links)
-    J_tips = robot.jacobians_tips(q)
+    J_tips = robot.jacobian_tips(q)
 
     for i in range(num_links):
 
@@ -135,9 +135,9 @@ def test_jacobian_derivative_matches_jvp(num_links):
     q = jnp.linspace(-0.3, 0.4, num_links)
     qd = jnp.linspace(0.6, -0.5, num_links)
 
-    J, Jd = robot.jacobians_and_derivatives_tips(q, qd)
-    J_direct = robot.jacobians_tips(q)
-    _, Jd_jvp = jax.jvp(robot.jacobians_tips, (q,), (qd,))
+    J, Jd = robot.jacobian_and_derivatives_tips(q, qd)
+    J_direct = robot.jacobian_tips(q)
+    _, Jd_jvp = jax.jvp(robot.jacobian_tips, (q,), (qd,))
 
     assert_allclose(J, J_direct, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(Jd, Jd_jvp, rtol=Tolerance.rtol(), atol=Tolerance.atol())
@@ -231,12 +231,12 @@ def test_spatial_mixed_axis_chain_matches_dense_matrix_equation():
     qdd_dense = jnp.linalg.solve(robot.inertia_matrix(q), rhs)
 
     assert robot.forward_kinematics_tips(q).shape == (3, 4, 4)
-    assert robot.jacobians_tips(q).shape == (3, 6, 3)
+    assert robot.jacobian_tips(q).shape == (3, 6, 3)
     assert_allclose(qdd, qdd_dense, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
 @pytest.mark.parametrize("num_links", [2, 3])
-def test_batched_kinematics_and_jacobians_match_pointwise_evaluation(num_links):
+def test_batched_kinematics_and_jacobian_match_pointwise_evaluation(num_links):
     robot = make_articulated_robot(num_links)
     q = jnp.linspace(-0.3, 0.4, num_links)
     qd = jnp.linspace(0.6, -0.5, num_links)
@@ -247,11 +247,11 @@ def test_batched_kinematics_and_jacobians_match_pointwise_evaluation(num_links):
     assert_allclose(g_batched, g_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     J_batched = robot.jacobian_batched(q, s_ps)
-    J_expected = robot.jacobians_tips(q)
+    J_expected = robot.jacobian_tips(q)
     assert_allclose(J_batched, J_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     J_batched, Jd_batched = robot.jacobian_and_derivative_batched(q, qd, s_ps)
-    J_expected, Jd_expected = robot.jacobians_and_derivatives_tips(q, qd)
+    J_expected, Jd_expected = robot.jacobian_and_derivatives_tips(q, qd)
     assert_allclose(J_batched, J_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(
         Jd_batched, Jd_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol()
