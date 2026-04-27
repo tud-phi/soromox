@@ -221,13 +221,7 @@ class PCS(SoftRobot):
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
 
-        (
-            self.M_segments,
-            self.K_full,
-            self.K,
-            self.D_full,
-            self.D_active,
-        ) = self._compute_constant_matrices()
+        self.precompute()
 
     @property
     def is_planar(self) -> bool:
@@ -505,9 +499,9 @@ class PCS(SoftRobot):
                 raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
             updated_self = eqx.tree_at(lambda m: m.D, updated_self, D)
 
-        return updated_self._with_refreshed_constant_matrices()
+        return updated_self._with_refreshed_precomputed_matrices()
 
-    def _compute_constant_matrices(self) -> tuple[Array, Array, Array, Array, Array]:
+    def _precomputed_matrices(self) -> tuple[Array, Array, Array, Array, Array]:
         """Compute state-independent matrices cached by the model."""
         M_segments = vmap(self._compute_local_mass_matrix)(
             jnp.arange(self.num_segments)
@@ -518,12 +512,27 @@ class PCS(SoftRobot):
         D_active = self.B_xi.T @ D_full @ self.B_xi
         return M_segments, K_full, K, D_full, D_active
 
-    def _with_refreshed_constant_matrices(self) -> "PCS":
+    def precompute(self) -> None:
+        """Refresh state-independent matrices cached by the model."""
+        (
+            M_segments,
+            K_full,
+            K,
+            D_full,
+            D_active,
+        ) = self._precomputed_matrices()
+        object.__setattr__(self, "M_segments", M_segments)
+        object.__setattr__(self, "K_full", K_full)
+        object.__setattr__(self, "K", K)
+        object.__setattr__(self, "D_full", D_full)
+        object.__setattr__(self, "D_active", D_active)
+
+    def _with_refreshed_precomputed_matrices(self) -> "PCS":
         """Return a copy with cached state-independent matrices refreshed."""
         return eqx.tree_at(
             lambda m: (m.M_segments, m.K_full, m.K, m.D_full, m.D_active),
             self,
-            self._compute_constant_matrices(),
+            self._precomputed_matrices(),
         )
 
     @eqx.filter_jit

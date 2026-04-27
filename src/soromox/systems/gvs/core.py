@@ -152,7 +152,9 @@ class GVS(SoftRobot):
     V_K_joint: Array  # Joint stiffness matrix (num_segments, max_dof, max_dof)
     # Precomputed full stiffness and damping matrices
     K_full: Array  # Full stiffness matrix (dof_tot_max, dof_tot_max)
+    K: Array  # Active-coordinate stiffness matrix (dof_tot_system, dof_tot_system)
     D_full: Array  # Full damping matrix (dof_tot_max, dof_tot_max)
+    D_active: Array  # Active-coordinate damping matrix (dof_tot_system, dof_tot_system)
 
     g0: Array  # Initial base pose (4,4)
     g: Array  # Gravity vector (6,)
@@ -796,8 +798,14 @@ class GVS(SoftRobot):
 
         This method can be expanded to include additional precomputations as needed.
         """
-        object.__setattr__(self, "K_full", self._stiffness_full_matrix())
-        object.__setattr__(self, "D_full", self._damping_full_matrix())
+        K_full = self._stiffness_full_matrix()
+        D_full = self._damping_full_matrix()
+        object.__setattr__(self, "K_full", K_full)
+        object.__setattr__(self, "K", self.B_select.T @ K_full @ self.B_select)
+        object.__setattr__(self, "D_full", D_full)
+        object.__setattr__(
+            self, "D_active", self.B_select.T @ D_full @ self.B_select
+        )
 
     def _link_parameter_arrays(
         self, links_list: list[LinkAttributes] | tuple[LinkAttributes, ...]
@@ -1019,12 +1027,16 @@ class GVS(SoftRobot):
                 updated_self,
                 link_arrays,
             )
+            K_full = updated_self._stiffness_full_matrix()
+            D_full = updated_self._damping_full_matrix()
             updated_self = eqx.tree_at(
-                lambda model: (model.K_full, model.D_full),
+                lambda model: (model.K_full, model.K, model.D_full, model.D_active),
                 updated_self,
                 (
-                    updated_self._stiffness_full_matrix(),
-                    updated_self._damping_full_matrix(),
+                    K_full,
+                    updated_self.B_select.T @ K_full @ updated_self.B_select,
+                    D_full,
+                    updated_self.B_select.T @ D_full @ updated_self.B_select,
                 ),
             )
 
@@ -1417,6 +1429,282 @@ class GVS(SoftRobot):
         )
         Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
         return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
+
+    def _joint_jacobian_step_terms(
+        self, B_joint: Array, xi_ref_joint: Array, q_joint: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Compute joint-local terms for body-frame Jacobian propagation.
+
+        This helper is the joint analogue of the link-cell Magnus helper used in
+        the GVS Jacobian recurrences. It evaluates the current joint strain,
+        maps it to an SE(3) transform, and computes the product that contributes
+        the current joint block to the body-frame Jacobian.
+
+        Args:
+            B_joint: Padded joint basis for one segment, shape
+                ``(6, self.max_dof)``.
+            xi_ref_joint: Reference joint strain, shape ``(6,)``.
+            q_joint: Padded generalized joint coordinates for the same segment,
+                shape ``(self.max_dof,)``.
+
+        Returns:
+            Tuple ``(g_joint, Ad_joint_inv, T_joint_B)``:
+            ``g_joint`` is the joint SE(3) transform, shape ``(4, 4)``;
+            ``Ad_joint_inv`` is ``Adjoint_g_inv_SE3(g_joint)``, shape
+            ``(6, 6)``; ``T_joint_B`` is the tangent-map/basis product
+            ``T(g_joint) @ B_joint``, shape ``(6, self.max_dof)``.
+        """
+        xi_joint = B_joint @ q_joint + xi_ref_joint
+        g_joint = lie.exp_gn_SE3(xi_joint, self.global_eps)
+        T_joint = lie.Tangent_gi_se3(
+            xi_joint, jnp.array(1.0), eps=self.tangent_eps
+        )
+        return g_joint, lie.Adjoint_g_inv_SE3(g_joint), T_joint @ B_joint
+
+    def _joint_jacobian_derivative_step_terms(
+        self, B_joint: Array, xi_ref_joint: Array, q_joint: Array, qd_joint: Array
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """
+        Compute joint-local terms for coupled ``J`` and ``Jdot`` propagation.
+
+        The returned values support the same product-rule recurrence used by
+        the link-cell derivative helpers:
+
+        ``J_next = Ad_inv @ (J_prev + T_joint_B_block)``
+
+        ``Jdot_next = Ad_inv @ (Jdot_prev + Td_joint_B_block)``
+        ``+ Ad_inv_dot @ (J_prev + T_joint_B_block)``
+
+        Args:
+            B_joint: Padded joint basis for one segment, shape
+                ``(6, self.max_dof)``.
+            xi_ref_joint: Reference joint strain, shape ``(6,)``.
+            q_joint: Padded generalized joint coordinates for the segment,
+                shape ``(self.max_dof,)``.
+            qd_joint: Padded generalized joint velocities for the segment,
+                shape ``(self.max_dof,)``.
+
+        Returns:
+            Tuple ``(g_joint, Ad_joint_inv, Ad_joint_inv_dot, T_joint_B,
+            Td_joint_B, joint_velocity)``. ``g_joint`` has shape ``(4, 4)``;
+            ``Ad_joint_inv`` and ``Ad_joint_inv_dot`` have shape ``(6, 6)``;
+            ``T_joint_B`` and ``Td_joint_B`` have shape
+            ``(6, self.max_dof)``; ``joint_velocity`` is
+            ``T_joint_B @ qd_joint`` with shape ``(6,)``.
+        """
+        xi_joint = B_joint @ q_joint + xi_ref_joint
+        xid_joint = B_joint @ qd_joint
+        g_joint = lie.exp_gn_SE3(xi_joint, self.global_eps)
+        T_joint = lie.Tangent_gi_se3(
+            xi_joint, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Td_joint = lie.Tangent_derivative_gi_se3(
+            xi_joint, xid_joint, jnp.array(1.0), eps=self.tangent_eps
+        )
+        T_joint_B = T_joint @ B_joint
+        joint_velocity = T_joint_B @ qd_joint
+        Ad_joint_inv = lie.Adjoint_g_inv_SE3(g_joint)
+        eta_joint_step = Ad_joint_inv @ joint_velocity
+        Ad_joint_inv_dot = -lie.adjoint_se3(eta_joint_step) @ Ad_joint_inv
+        return (
+            g_joint,
+            Ad_joint_inv,
+            Ad_joint_inv_dot,
+            T_joint_B,
+            Td_joint @ B_joint,
+            joint_velocity,
+        )
+
+    def _jacobian_blocks_to_flat(self, J_blocks: Array) -> Array:
+        """
+        Flatten segmented full-coordinate Jacobian blocks.
+
+        Args:
+            J_blocks: Jacobian blocks grouped as
+                ``(self.num_segments, 2, 6, self.max_dof)``, where axis 1
+                distinguishes joint and link coordinates.
+
+        Returns:
+            J_flat: Flattened full-coordinate Jacobian, shape
+            ``(6, self.num_segments * 2 * self.max_dof)``.
+        """
+        return jnp.transpose(J_blocks, (2, 0, 1, 3)).reshape(
+            6, self.num_segments * 2 * self.max_dof
+        )
+
+    def _flat_jacobian_to_blocks(self, J_flat: Array) -> Array:
+        """
+        Restore segmented blocks from a flattened full-coordinate Jacobian.
+
+        Args:
+            J_flat: Flattened full-coordinate Jacobian, shape
+                ``(6, self.num_segments * 2 * self.max_dof)``.
+
+        Returns:
+            J_blocks: Jacobian blocks grouped as
+            ``(self.num_segments, 2, 6, self.max_dof)``.
+        """
+        return jnp.transpose(
+            J_flat.reshape(6, self.num_segments, 2, self.max_dof), (1, 2, 0, 3)
+        )
+
+    def _rotation_adjoint_from_pose(self, g: Array) -> Array:
+        """
+        Build the SE(3) adjoint associated with only the pose rotation.
+
+        GVS body-frame Jacobians are rotated into the inertial frame using the
+        orientation of the evaluated pose, not the full translational adjoint.
+        This helper constructs the corresponding zero-translation SE(3) adjoint.
+
+        Args:
+            g: Homogeneous SE(3) pose, shape ``(4, 4)``.
+
+        Returns:
+            Ad_g_rot: Rotation-only adjoint matrix, shape ``(6, 6)``.
+        """
+        R = g[:3, :3]
+        g_rot = jnp.block(
+            [
+                [R, jnp.zeros((3, 1), dtype=R.dtype)],
+                [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
+            ]
+        )
+        return lie.Adjoint_g_SE3(g_rot)
+
+    def _body_jacobian_to_inertial(self, g: Array, J_body: Array) -> Array:
+        """
+        Rotate a body-frame Jacobian into the inertial frame.
+
+        Args:
+            g: Homogeneous SE(3) pose at the Jacobian evaluation point, shape
+                ``(4, 4)``.
+            J_body: Body-frame Jacobian, shape ``(6, self.dof_tot_system)``.
+
+        Returns:
+            J_inertial: Inertial-frame Jacobian, shape
+            ``(6, self.dof_tot_system)``.
+        """
+        return self._rotation_adjoint_from_pose(g) @ J_body
+
+    def _body_jacobian_derivative_to_inertial(
+        self, g: Array, J_body: Array, Jd_body: Array, qd: Array
+    ) -> tuple[Array, Array]:
+        """
+        Rotate body-frame ``J`` and ``Jdot`` into the inertial frame.
+
+        The derivative includes the time derivative of the rotation-only
+        adjoint, computed from the angular part of ``J_body @ qd``.
+
+        Args:
+            g: Homogeneous SE(3) pose at the Jacobian evaluation point, shape
+                ``(4, 4)``.
+            J_body: Body-frame Jacobian, shape ``(6, self.dof_tot_system)``.
+            Jd_body: Body-frame Jacobian derivative, shape
+                ``(6, self.dof_tot_system)``.
+            qd: Active generalized velocities, shape
+                ``(self.dof_tot_system,)``.
+
+        Returns:
+            Tuple ``(J_inertial, Jd_inertial)`` where both arrays have shape
+            ``(6, self.dof_tot_system)``.
+        """
+        Ad_g = self._rotation_adjoint_from_pose(g)
+        eta_body = J_body @ qd
+        eta_rot = jnp.concatenate(
+            [eta_body[:3], jnp.zeros(3, dtype=eta_body.dtype)]
+        )
+        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+        return Ad_g @ J_body, Ad_g @ Jd_body + Ad_g_dot @ J_body
+
+    def _inertia_integrand(self, weight: Array, J: Array, M: Array) -> Array:
+        """
+        Compute one quadrature contribution to the generalized inertia matrix.
+
+        Args:
+            weight: Length-scaled quadrature weight, shape ``()``.
+            J: Body-frame Jacobian at the quadrature node, shape
+                ``(6, self.dof_tot_system)``.
+            M: Local spatial mass matrix at the quadrature node, shape
+                ``(6, 6)``.
+
+        Returns:
+            B_ij: Inertia contribution ``weight * J.T @ M @ J``, shape
+            ``(self.dof_tot_system, self.dof_tot_system)``.
+        """
+        return weight * (J.T @ M @ J)
+
+    def _coriolis_matrix_integrand(
+        self, weight: Array, J: Array, Jd: Array, M: Array, qd: Array
+    ) -> Array:
+        """
+        Compute one quadrature contribution to the Coriolis matrix.
+
+        Args:
+            weight: Length-scaled quadrature weight, shape ``()``.
+            J: Body-frame Jacobian at the quadrature node, shape
+                ``(6, self.dof_tot_system)``.
+            Jd: Body-frame Jacobian derivative at the quadrature node, shape
+                ``(6, self.dof_tot_system)``.
+            M: Local spatial mass matrix at the quadrature node, shape
+                ``(6, 6)``.
+            qd: Active generalized velocities, shape
+                ``(self.dof_tot_system,)``.
+
+        Returns:
+            C_ij: Coriolis matrix contribution, shape
+            ``(self.dof_tot_system, self.dof_tot_system)``.
+        """
+        eta = J @ qd
+        return weight * (J.T @ (M @ Jd + lie.coadjoint_se3(eta) @ M @ J))
+
+    def _coriolis_force_integrand(
+        self, weight: Array, J: Array, Jd: Array, M: Array, qd: Array
+    ) -> Array:
+        """
+        Compute one quadrature contribution to the convective force vector.
+
+        This is the direct ``C(q, qd) @ qd`` integrand used by the optimized
+        forward-dynamics path. It avoids materializing the full Coriolis matrix
+        when only its product with ``qd`` is required.
+
+        Args:
+            weight: Length-scaled quadrature weight, shape ``()``.
+            J: Body-frame Jacobian at the quadrature node, shape
+                ``(6, self.dof_tot_system)``.
+            Jd: Body-frame Jacobian derivative at the quadrature node, shape
+                ``(6, self.dof_tot_system)``.
+            M: Local spatial mass matrix at the quadrature node, shape
+                ``(6, 6)``.
+            qd: Active generalized velocities, shape
+                ``(self.dof_tot_system,)``.
+
+        Returns:
+            Cqd_ij: Convective force contribution, shape
+            ``(self.dof_tot_system,)``.
+        """
+        eta = J @ qd
+        return weight * (
+            J.T @ (M @ (Jd @ qd) + lie.coadjoint_se3(eta) @ M @ eta)
+        )
+
+    def _gravity_integrand(self, weight: Array, g: Array, J: Array, M: Array) -> Array:
+        """
+        Compute one quadrature contribution to generalized gravity.
+
+        Args:
+            weight: Length-scaled quadrature weight, shape ``()``.
+            g: Homogeneous SE(3) pose at the quadrature node, shape ``(4, 4)``.
+            J: Body-frame Jacobian at the quadrature node, shape
+                ``(6, self.dof_tot_system)``.
+            M: Local spatial mass matrix at the quadrature node, shape
+                ``(6, 6)``.
+
+        Returns:
+            G_ij: Generalized gravity contribution, shape
+            ``(self.dof_tot_system,)``.
+        """
+        return -weight * J.T @ M @ lie.Adjoint_g_inv_SE3(g) @ self.g
 
     # =========================================================================
     @eqx.filter_jit
@@ -1895,20 +2183,17 @@ class GVS(SoftRobot):
             xi_ref_joint_i = self.V_xi_ref_joint[i_segment]  # (6,)
             q_joint_i = q_gathered[i_segment, 0]
 
-            xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i
-
-            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # shape (4, 4)
-            T_g_joint = lie.Tangent_gi_se3(
-                xi_joint_i, jnp.array(1.0), eps=self.tangent_eps
-            )  # shape (6, 6)
+            g_joint_i, Ad_g_joint_inv, T_joint_B_i = (
+                self._joint_jacobian_step_terms(
+                    B_joint_i, xi_ref_joint_i, q_joint_i
+                )
+            )
 
             T_g_joint_i_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(T_g_joint @ B_joint_i)
+                .set(T_joint_B_i)
             )
-
-            Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # shape (6, 6)
 
             g_j = g_tip @ g_joint_i  # shape (4, 4)
             J_j = jnp.einsum(
@@ -2052,20 +2337,18 @@ class GVS(SoftRobot):
             xi_ref_joint_i = self.V_xi_ref_joint[i_segment]  # (6,)
             q_joint_i = q_gathered[i_segment, 0]
 
-            xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i
-
-            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # (4,4)
-            T_g_joint = lie.Tangent_gi_se3(xi_joint_i, 1, eps=self.tangent_eps)  # (6,6)
+            g_joint_i, Ad_g_joint_inv, T_joint_B_i = (
+                self._joint_jacobian_step_terms(
+                    B_joint_i, xi_ref_joint_i, q_joint_i
+                )
+            )
 
             # contribution of this joint to its own block
             T_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(T_g_joint @ B_joint_i)
+                .set(T_joint_B_i)
             )
-
-            # propagate Jacobian through this joint (left-trivialized, body-frame)
-            Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # shape (6, 6)
 
             # Work directly in physical coordinates (consistent with FK scaling)
             g_j = g_tip @ g_joint_i
@@ -2230,10 +2513,7 @@ class GVS(SoftRobot):
 
         # J_full is (num_segments,2,6,max_dof) at location s in body frame.
         # Flatten to (6, num_segments*2*max_dof), then project to active strains.
-        J_flat = jnp.transpose(J_full, (2, 0, 1, 3)).reshape(
-            6, self.num_segments * 2 * self.max_dof
-        )
-        J_local = J_flat @ self.B_select  # -> (6, num_active_strains)
+        J_local = self._jacobian_blocks_to_flat(J_full) @ self.B_select
 
         return J_local
 
@@ -2253,15 +2533,6 @@ class GVS(SoftRobot):
         J_gauss_full = self._jacobian_gauss(q_gathered)
 
         s_flat = jnp.asarray(s_ps).reshape(-1)
-        tot_dof = self.num_segments * 2 * self.max_dof
-
-        def flatten_to_blocks(J_flat: Array) -> Array:
-            return jnp.transpose(
-                J_flat.reshape(6, self.num_segments, 2, self.max_dof), (1, 2, 0, 3)
-            )
-
-        def blocks_to_flat(J_blocks: Array) -> Array:
-            return jnp.transpose(J_blocks, (2, 0, 1, 3)).reshape(6, tot_dof)
 
         def body_single(s_val: Array) -> Array:
             i, s_local = self.classify_segment(s_val)
@@ -2291,7 +2562,7 @@ class GVS(SoftRobot):
             base_idx = jnp.minimum(closest_idx, cell_idx)
 
             J_base_flat = J_nodes[base_idx]
-            J_blocks_base = flatten_to_blocks(J_base_flat)
+            J_blocks_base = self._flat_jacobian_to_blocks(J_base_flat)
             x_base = Xs_i[base_idx]
 
             Hp = x_norm - x_base
@@ -2329,7 +2600,7 @@ class GVS(SoftRobot):
                 operand=None,
             )
 
-            J_flat = blocks_to_flat(J_blocks)
+            J_flat = self._jacobian_blocks_to_flat(J_blocks)
             return J_flat @ self.B_select
 
         return vmap(body_single)(s_flat)
@@ -2356,15 +2627,6 @@ class GVS(SoftRobot):
         Jd_gauss_full = self._jacobian_derivative_gauss(q_gathered, qd_gathered)
 
         s_flat = jnp.asarray(s_ps).reshape(-1)
-        tot_dof = self.num_segments * 2 * self.max_dof
-
-        def flatten_to_blocks(J_flat: Array) -> Array:
-            return jnp.transpose(
-                J_flat.reshape(6, self.num_segments, 2, self.max_dof), (1, 2, 0, 3)
-            )
-
-        def blocks_to_flat(J_blocks: Array) -> Array:
-            return jnp.transpose(J_blocks, (2, 0, 1, 3)).reshape(6, tot_dof)
 
         def body_single(s_val: Array) -> tuple[Array, Array]:
             i, s_local = self.classify_segment(s_val)
@@ -2397,8 +2659,8 @@ class GVS(SoftRobot):
 
             J_base_flat = J_nodes[base_idx]
             Jd_base_flat = Jd_nodes[base_idx]
-            J_blocks_base = flatten_to_blocks(J_base_flat)
-            Jd_blocks_base = flatten_to_blocks(Jd_base_flat)
+            J_blocks_base = self._flat_jacobian_to_blocks(J_base_flat)
+            Jd_blocks_base = self._flat_jacobian_to_blocks(Jd_base_flat)
             x_base = Xs_i[base_idx]
 
             Hp = x_norm - x_base
@@ -2456,8 +2718,8 @@ class GVS(SoftRobot):
                 operand=None,
             )
 
-            J_flat = blocks_to_flat(J_blocks)
-            Jd_flat = blocks_to_flat(Jd_blocks)
+            J_flat = self._jacobian_blocks_to_flat(J_blocks)
+            Jd_flat = self._jacobian_blocks_to_flat(Jd_blocks)
             return J_flat @ self.B_select, Jd_flat @ self.B_select
 
         return vmap(body_single)(s_flat)
@@ -2476,17 +2738,8 @@ class GVS(SoftRobot):
         """
         # compute the Jacobian in the body frame
         J_local = self.jacobian_bodyframe(q, s)
-
         g_s = self.forward_kinematics(q, s)
-        # construct g with zero translation for the Adjoint transformation
-        g_rot = jnp.block(
-            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
-        )
-        Ad_g = lie.Adjoint_g_SE3(g_rot)
-
-        J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
-
-        return J_global
+        return self._body_jacobian_to_inertial(g_s, J_local)
 
     @eqx.filter_jit
     def jacobian(self, q: Array, s: Array) -> Array:
@@ -2514,17 +2767,7 @@ class GVS(SoftRobot):
         J_local_tips = self._jacobian_gauss(q_gathered)[:, -1] @ self.B_select
         g_tips = self.forward_kinematics_tips(q)
 
-        def rotate_pair(g_i: Array, J_i: Array) -> Array:
-            R = g_i[:3, :3]
-            g_rot = jnp.block(
-                [
-                    [R, jnp.zeros((3, 1), dtype=R.dtype)],
-                    [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
-                ]
-            )
-            return lie.Adjoint_g_SE3(g_rot) @ J_i
-
-        return vmap(rotate_pair)(g_tips, J_local_tips)
+        return vmap(self._body_jacobian_to_inertial)(g_tips, J_local_tips)
 
     @eqx.filter_jit
     def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
@@ -2541,18 +2784,7 @@ class GVS(SoftRobot):
         J_body = self.jacobian_bodyframe_batched(q, s_ps)  # (N, 6, num_active_strains)
         g_ps = self.forward_kinematics_batched(q, s_ps)  # (N, 4, 4)
 
-        def rotate_pair(g_i: Array, J_i: Array) -> Array:
-            R = g_i[:3, :3]
-            g_rot = jnp.block(
-                [
-                    [R, jnp.zeros((3, 1), dtype=R.dtype)],
-                    [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
-                ]
-            )
-            Ad = lie.Adjoint_g_SE3(g_rot)
-            return Ad @ J_i
-
-        return vmap(rotate_pair)(g_ps, J_body)
+        return vmap(self._body_jacobian_to_inertial)(g_ps, J_body)
 
     @eqx.filter_jit
     def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
@@ -2604,34 +2836,29 @@ class GVS(SoftRobot):
             q_joint_i = q_gathered[i_segment, 0]
             qd_joint_i = qd_gathered[i_segment, 0]
 
-            xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i
-            xid_joint_i = B_joint_i @ qd_joint_i
-
-            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)
-            T_g_joint = lie.Tangent_gi_se3(
-                xi_joint_i, jnp.array(1.0), eps=self.tangent_eps
-            )
-            Td_g_joint = lie.Tangent_derivative_gi_se3(
-                xi_joint_i, xid_joint_i, jnp.array(1.0), eps=self.tangent_eps
+            (
+                g_joint_i,
+                Ad_g_joint_inv,
+                Ad_g_joint_inv_dot,
+                T_joint_B_i,
+                Td_joint_B_i,
+                joint_velocity_i,
+            ) = self._joint_jacobian_derivative_step_terms(
+                B_joint_i, xi_ref_joint_i, q_joint_i, qd_joint_i
             )
 
             T_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(T_g_joint @ B_joint_i)
+                .set(T_joint_B_i)
             )
             Td_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(Td_g_joint @ B_joint_i)
+                .set(Td_joint_B_i)
             )
 
-            Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)
-            eta_joint_step = Ad_g_joint_inv @ (T_g_joint @ B_joint_i @ qd_joint_i)
-            eta_j = Ad_g_joint_inv @ (
-                eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
-            )
-            Ad_g_joint_inv_dot = -lie.adjoint_se3(eta_joint_step) @ Ad_g_joint_inv
+            eta_j = Ad_g_joint_inv @ (eta_tip + joint_velocity_i)
 
             g_j = g_tip @ g_joint_i
             J_j = jnp.einsum(
@@ -2777,29 +3004,28 @@ class GVS(SoftRobot):
             q_joint_i = q_gathered[i_segment, 0]  # (max_dof,)
             qd_joint_i = qd_gathered[i_segment, 0]  # (max_dof,)
 
-            xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i  # (6,)
-            xid_joint_i = B_joint_i @ qd_joint_i  # (6,)
-
-            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # (4,4)
-            T_g_joint = lie.Tangent_gi_se3(
-                xi_joint_i, jnp.array(1.0), eps=self.tangent_eps
-            )  # (6,6)
-            Td_g_joint = lie.Tangent_derivative_gi_se3(
-                xi_joint_i, xid_joint_i, jnp.array(1.0), eps=self.tangent_eps
-            )  # (6,6)
+            (
+                g_joint_i,
+                Ad_g_joint_inv,
+                Ad_g_joint_inv_dot,
+                T_joint_B_i,
+                Td_joint_B_i,
+                joint_velocity_i,
+            ) = self._joint_jacobian_derivative_step_terms(
+                B_joint_i, xi_ref_joint_i, q_joint_i, qd_joint_i
+            )
 
             # contribution of this joint to its own block
             T_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(T_g_joint @ B_joint_i)
+                .set(T_joint_B_i)
             )
             Td_g_joint_B_joint_i = (
                 jnp.zeros((self.num_segments, 2, 6, self.max_dof))
                 .at[i_segment, 0]
-                .set(Td_g_joint @ B_joint_i)
+                .set(Td_joint_B_i)
             )
-            Ad_g_joint_inv = lie.Adjoint_g_inv_SE3(g_joint_i)  # (6,6)
 
             # forward kinematics of joint
             g_j = g_tip @ g_joint_i
@@ -2809,13 +3035,9 @@ class GVS(SoftRobot):
             )  # (num_segments, 2, 6, 6)
 
             # compute the bodyframe velocity
-            eta_joint_step = Ad_g_joint_inv @ (T_g_joint @ B_joint_i @ qd_joint_i)
-            eta_j = Ad_g_joint_inv @ (
-                eta_tip + T_g_joint @ B_joint_i @ qd_joint_i
-            )  # (6,)
+            eta_j = Ad_g_joint_inv @ (eta_tip + joint_velocity_i)  # (6,)
 
             # compute the bodyframe Jacobian derivative
-            Ad_g_joint_inv_dot = -lie.adjoint_se3(eta_joint_step) @ Ad_g_joint_inv
             Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
             ) + jnp.einsum(
@@ -3035,17 +3257,8 @@ class GVS(SoftRobot):
             step, (g0, J0, Jd0, eta0), jnp.arange(self.num_segments)
         )
 
-        # reshape J and Jd
-        # (num_segments, 2, 6, max_dof) => (6, num_segments * 2 * max_dof)
-        J_flat = jnp.transpose(J_full, (2, 0, 1, 3)).reshape(
-            6, self.num_segments * 2 * self.max_dof
-        )
-        J_local = J_flat @ self.B_select  # (6, num_active_strains)
-        # (num_segments, 2, 6, max_dof) => (6, num_segments * 2 * max_dof)
-        Jd_flat = jnp.transpose(Jd_full, (2, 0, 1, 3)).reshape(
-            6, self.num_segments * 2 * self.max_dof
-        )
-        Jd_local = Jd_flat @ self.B_select  # (6, num_active_strains)
+        J_local = self._jacobian_blocks_to_flat(J_full) @ self.B_select
+        Jd_local = self._jacobian_blocks_to_flat(Jd_full) @ self.B_select
 
         return J_local, Jd_local
 
@@ -3066,29 +3279,8 @@ class GVS(SoftRobot):
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_configurations)
         """
         J_local, Jd_local = self.jacobian_and_derivative_bodyframe(q, qd, s)
-
-        # compute the Adjoint transformation matrix at point s
         g_s = self.forward_kinematics(q, s)
-        g_rot = jnp.block(
-            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
-        )
-        Ad_g = lie.Adjoint_g_SE3(g_rot)
-
-        # compute the body twist eta at point s
-        eta_body = J_local @ qd
-
-        # compute the time-derivative of the Adjoint transformation matrix
-        omega = eta_body[:3]
-        eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
-        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
-
-        # rotate both J and Jd to the inertial frame
-        J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
-        Jd_global = jnp.einsum("ij, jk->ik", Ad_g, Jd_local) + jnp.einsum(
-            "ij, jk->ik", Ad_g_dot, J_local
-        )
-
-        return J_global, Jd_global
+        return self._body_jacobian_derivative_to_inertial(g_s, J_local, Jd_local, qd)
 
     @eqx.filter_jit
     def jacobian_and_derivative_inertialframe_batched(
@@ -3109,27 +3301,9 @@ class GVS(SoftRobot):
         J_body, Jd_body = self.jacobian_and_derivative_bodyframe_batched(q, qd, s_ps)
         g_ps = self.forward_kinematics_batched(q, s_ps)
 
-        def rotate_pair(g_i: Array, J_i: Array, Jd_i: Array) -> tuple[Array, Array]:
-            R = g_i[:3, :3]
-            g_rot = jnp.block(
-                [
-                    [R, jnp.zeros((3, 1), dtype=R.dtype)],
-                    [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
-                ]
-            )
-            Ad_g = lie.Adjoint_g_SE3(g_rot)
-
-            eta_body = J_i @ qd
-            eta_rot = jnp.concatenate(
-                [eta_body[:3], jnp.zeros(3, dtype=eta_body.dtype)]
-            )
-            Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
-
-            J_global = Ad_g @ J_i
-            Jd_global = Ad_g @ Jd_i + Ad_g_dot @ J_i
-            return J_global, Jd_global
-
-        return vmap(rotate_pair)(g_ps, J_body, Jd_body)
+        return vmap(
+            self._body_jacobian_derivative_to_inertial, in_axes=(0, 0, 0, None)
+        )(g_ps, J_body, Jd_body, qd)
 
     @eqx.filter_jit
     def jacobian_and_derivative(
@@ -3172,6 +3346,351 @@ class GVS(SoftRobot):
             Each array has shape ``(N, 6, num_active_strains)``.
         """
         return self.jacobian_and_derivative_inertialframe_batched(q, qd, s_ps)
+
+    def _active_selector_blocks(self) -> Array:
+        """
+        Return active-coordinate selectors grouped by segment and local block.
+
+        ``self.B_select`` maps active GVS coordinates to the padded full
+        coordinate layout. For local active-coordinate assembly, it is useful to
+        view that matrix as per-segment joint/link selector blocks.
+
+        Returns:
+            selector_blocks: Active selectors with shape
+            ``(self.num_segments, 2, self.max_dof, self.dof_tot_system)``.
+            Axis 1 is ``0`` for joint coordinates and ``1`` for link coordinates.
+        """
+        return self.B_select.reshape(
+            self.num_segments, 2, self.max_dof, self.dof_tot_system
+        )
+
+    def _inner_quadrature_weights(self) -> Array:
+        """
+        Return length-scaled quadrature weights without endpoint nodes.
+
+        GVS quadrature stores the two link endpoints, but their weights are zero.
+        Dynamics assembly only needs the interior nodes and scales each segment's
+        normalized weights by its physical length.
+
+        Returns:
+            weights: Interior quadrature weights, shape
+            ``(self.num_segments, self.max_nip - 2)``.
+        """
+        return self.V_Ws[:, 1 : self.max_nip - 1] * self.V_L[:, None]
+
+    def _inner_mass_matrices(self) -> Array:
+        """
+        Return local mass matrices without endpoint nodes.
+
+        Returns:
+            Ms_inner: Local spatial mass matrices at interior quadrature nodes,
+            shape ``(self.num_segments, self.max_nip - 2, 6, 6)``.
+        """
+        return self.V_Ms[:, 1 : self.max_nip - 1]
+
+    @eqx.filter_jit
+    def _active_quadrature_pose_jacobians(
+        self, q: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Return active pose/Jacobian data at interior quadrature nodes.
+
+        The zero-weight endpoint nodes are omitted from the returned arrays. The
+        segment-tip cell is still advanced internally so the next segment receives
+        the correct base pose and Jacobian. This helper is intentionally
+        J-only; callers that need ``Jdot`` should use
+        ``_active_quadrature_kinematics``.
+
+        Args:
+            q: Active generalized coordinates, shape
+                ``(self.dof_tot_system,)``.
+
+        Returns:
+            Tuple ``(weights, g_quads, J_quads)``. ``weights`` contains
+            length-scaled interior quadrature weights with shape
+            ``(self.num_segments, self.max_nip - 2)``. ``g_quads`` contains
+            poses at those nodes with shape
+            ``(self.num_segments, self.max_nip - 2, 4, 4)``. ``J_quads``
+            contains active-coordinate body-frame Jacobians with shape
+            ``(self.num_segments, self.max_nip - 2, 6, self.dof_tot_system)``.
+        """
+        q_gathered = self._min_size_gathered(q)
+        selector_blocks = self._active_selector_blocks()
+        weights = self._inner_quadrature_weights()
+
+        def body_segment_i(
+            carry: tuple[Array, Array], i_segment: Array
+        ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
+            g_tip, J_tip = carry
+
+            B_joint_i = self.V_B_joint[i_segment]
+            xi_ref_joint_i = self.V_xi_ref_joint[i_segment]
+            q_joint_i = q_gathered[i_segment, 0]
+            selector_joint_i = selector_blocks[i_segment, 0]
+
+            g_joint_i, Ad_g_joint_inv, T_joint_B_i = (
+                self._joint_jacobian_step_terms(
+                    B_joint_i, xi_ref_joint_i, q_joint_i
+                )
+            )
+
+            T_joint_active = T_joint_B_i @ selector_joint_i
+            g_j = g_tip @ g_joint_i
+            J_j = Ad_g_joint_inv @ (J_tip + T_joint_active)
+
+            Xs_i = self.V_Xs[i_segment]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[i_segment]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[i_segment]
+            length_i = self.V_L[i_segment]
+            B_Z1_i = self.V_B_Z1[i_segment]
+            B_Z2_i = self.V_B_Z2[i_segment]
+            q_i = q_gathered[i_segment, 1]
+            selector_link_i = selector_blocks[i_segment, 1]
+
+            def body_eval_point(
+                carry_link: tuple[Array, Array], j_eval: Array
+            ) -> tuple[tuple[Array, Array], tuple[Array, Array]]:
+                g_prev, J_prev = carry_link
+                H = Xs_i[j_eval + 1] - Xs_i[j_eval]
+
+                g_step, T_step, Ad_step_inv, B_Magnus_j = (
+                    self._magnus_jacobian_step_terms(
+                        length_i,
+                        H,
+                        q_i,
+                        B_Z1_i[j_eval],
+                        B_Z2_i[j_eval],
+                        xi_ref_Z1_i[j_eval],
+                        xi_ref_Z2_i[j_eval],
+                    )
+                )
+
+                T_active = T_step @ B_Magnus_j @ selector_link_i
+                g_next = g_prev @ g_step
+                J_next = Ad_step_inv @ (J_prev + T_active)
+                return (g_next, J_next), (g_next, J_next)
+
+            (g_tip_link, J_tip_link), (g_link_nodes, J_link_nodes) = lax.scan(
+                body_eval_point, (g_j, J_j), jnp.arange(self.max_nip - 1)
+            )
+
+            return (g_tip_link, J_tip_link), (
+                g_link_nodes[: self.max_nip - 2],
+                J_link_nodes[: self.max_nip - 2],
+            )
+
+        J_init = jnp.zeros((6, self.dof_tot_system), dtype=self.B_select.dtype)
+        (_, _), (g_quads, J_quads) = lax.scan(
+            body_segment_i, (self.g0, J_init), jnp.arange(self.num_segments)
+        )
+
+        return weights, g_quads, J_quads
+
+    @eqx.filter_jit
+    def _active_quadrature_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Return active kinematic data at interior quadrature nodes.
+
+        This is the active-coordinate counterpart of the public/full Gauss
+        kinematics path. It keeps the segment and quadrature axes explicit,
+        projects local joint/link contributions into active coordinates as they
+        are assembled, and drops zero-weight endpoint outputs.
+
+        Args:
+            q: Active generalized coordinates, shape
+                ``(self.dof_tot_system,)``.
+            qd: Active generalized velocities, shape
+                ``(self.dof_tot_system,)``.
+
+        Returns:
+            Tuple ``(weights, g_quads, J_quads, Jd_quads)``. ``weights`` has
+            shape ``(self.num_segments, self.max_nip - 2)``; ``g_quads`` has
+            shape ``(self.num_segments, self.max_nip - 2, 4, 4)``;
+            ``J_quads`` and ``Jd_quads`` both have shape
+            ``(self.num_segments, self.max_nip - 2, 6, self.dof_tot_system)``.
+        """
+        q_gathered = self._min_size_gathered(q)
+        qd_gathered = self._min_size_gathered(qd)
+        selector_blocks = self._active_selector_blocks()
+        weights = self._inner_quadrature_weights()
+
+        def body_segment_i(
+            carry: tuple[Array, Array, Array, Array], i_segment: Array
+        ) -> tuple[tuple[Array, Array, Array, Array], tuple[Array, Array, Array]]:
+            g_tip, J_tip, Jd_tip, eta_tip = carry
+
+            B_joint_i = self.V_B_joint[i_segment]
+            xi_ref_joint_i = self.V_xi_ref_joint[i_segment]
+            q_joint_i = q_gathered[i_segment, 0]
+            qd_joint_i = qd_gathered[i_segment, 0]
+            selector_joint_i = selector_blocks[i_segment, 0]
+
+            (
+                g_joint_i,
+                Ad_g_joint_inv,
+                Ad_g_joint_inv_dot,
+                T_joint_B_i,
+                Td_joint_B_i,
+                joint_velocity,
+            ) = self._joint_jacobian_derivative_step_terms(
+                B_joint_i, xi_ref_joint_i, q_joint_i, qd_joint_i
+            )
+            eta_j = Ad_g_joint_inv @ (eta_tip + joint_velocity)
+
+            T_joint_active = T_joint_B_i @ selector_joint_i
+            Td_joint_active = Td_joint_B_i @ selector_joint_i
+
+            g_j = g_tip @ g_joint_i
+            J_j = Ad_g_joint_inv @ (J_tip + T_joint_active)
+            Jd_j = Ad_g_joint_inv @ (
+                Jd_tip + Td_joint_active
+            ) + Ad_g_joint_inv_dot @ (J_tip + T_joint_active)
+
+            Xs_i = self.V_Xs[i_segment]
+            xi_ref_Z1_i = self.V_xi_ref_Z1[i_segment]
+            xi_ref_Z2_i = self.V_xi_ref_Z2[i_segment]
+            length_i = self.V_L[i_segment]
+            B_Z1_i = self.V_B_Z1[i_segment]
+            B_Z2_i = self.V_B_Z2[i_segment]
+            q_i = q_gathered[i_segment, 1]
+            qd_i = qd_gathered[i_segment, 1]
+            selector_link_i = selector_blocks[i_segment, 1]
+
+            def body_eval_point(
+                carry_link: tuple[Array, Array, Array, Array], j_eval: Array
+            ) -> tuple[tuple[Array, Array, Array, Array], tuple[Array, Array, Array]]:
+                g_prev, J_prev, Jd_prev, eta_prev = carry_link
+                H = Xs_i[j_eval + 1] - Xs_i[j_eval]
+
+                (
+                    g_step,
+                    T_step,
+                    Td_step,
+                    Ad_step_inv,
+                    B_Magnus_j,
+                    B_Magnus_dot_j,
+                ) = self._magnus_jacobian_derivative_step_terms(
+                    length_i,
+                    H,
+                    q_i,
+                    qd_i,
+                    B_Z1_i[j_eval],
+                    B_Z2_i[j_eval],
+                    xi_ref_Z1_i[j_eval],
+                    xi_ref_Z2_i[j_eval],
+                )
+
+                link_velocity = T_step @ B_Magnus_j @ qd_i
+                eta_step = Ad_step_inv @ link_velocity
+                eta_next = Ad_step_inv @ (eta_prev + link_velocity)
+                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+
+                T_active = T_step @ B_Magnus_j @ selector_link_i
+                Td_active = (
+                    Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j
+                ) @ selector_link_i
+
+                g_next = g_prev @ g_step
+                J_next = Ad_step_inv @ (J_prev + T_active)
+                Jd_next = Ad_step_inv @ (
+                    Jd_prev + Td_active
+                ) + Ad_step_inv_dot @ (J_prev + T_active)
+
+                return (g_next, J_next, Jd_next, eta_next), (
+                    g_next,
+                    J_next,
+                    Jd_next,
+                )
+
+            (
+                g_tip_link,
+                J_tip_link,
+                Jd_tip_link,
+                eta_tip_link,
+            ), (g_link_nodes, J_link_nodes, Jd_link_nodes) = lax.scan(
+                body_eval_point,
+                (g_j, J_j, Jd_j, eta_j),
+                jnp.arange(self.max_nip - 1),
+            )
+
+            return (g_tip_link, J_tip_link, Jd_tip_link, eta_tip_link), (
+                g_link_nodes[: self.max_nip - 2],
+                J_link_nodes[: self.max_nip - 2],
+                Jd_link_nodes[: self.max_nip - 2],
+            )
+
+        J_init = jnp.zeros((6, self.dof_tot_system), dtype=self.B_select.dtype)
+        Jd_init = jnp.zeros((6, self.dof_tot_system), dtype=self.B_select.dtype)
+        eta_init = jnp.zeros((6,), dtype=self.B_select.dtype)
+        (_, _, _, _), (g_quads, J_quads, Jd_quads) = lax.scan(
+            body_segment_i,
+            (self.g0, J_init, Jd_init, eta_init),
+            jnp.arange(self.num_segments),
+        )
+
+        return weights, g_quads, J_quads, Jd_quads
+
+    @eqx.filter_jit
+    def _active_quadrature_forward_dynamics_terms(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble forward-dynamics terms directly in active coordinates.
+
+        This helper returns exactly the quadrature-derived terms needed by
+        ``forward_dynamics``. In particular, it assembles the convective force
+        vector ``C(q, qd) @ qd`` directly instead of materializing the full
+        Coriolis matrix.
+
+        Args:
+            q: Active generalized coordinates, shape
+                ``(self.dof_tot_system,)``.
+            qd: Active generalized velocities, shape
+                ``(self.dof_tot_system,)``.
+
+        Returns:
+            Tuple ``(B, Cqd, G)``. ``B`` is the active inertia matrix with shape
+            ``(self.dof_tot_system, self.dof_tot_system)``. ``Cqd`` is the
+            active convective force vector with shape ``(self.dof_tot_system,)``.
+            ``G`` is the active generalized gravity vector with shape
+            ``(self.dof_tot_system,)``.
+        """
+        weights, g_quads, J_quads, Jd_quads = self._active_quadrature_kinematics(q, qd)
+        Ms_inner = self._inner_mass_matrices()
+
+        def segment_terms(i: Array) -> tuple[Array, Array, Array]:
+            weights_i = weights[i]
+            g_i = g_quads[i]
+            J_i = J_quads[i]
+            Jd_i = Jd_quads[i]
+            Ms_i = Ms_inner[i]
+
+            def point_terms(j: Array) -> tuple[Array, Array, Array]:
+                weight_ij = weights_i[j]
+                g_ij = g_i[j]
+                J_ij = J_i[j]
+                Jd_ij = Jd_i[j]
+                M_ij = Ms_i[j]
+
+                B_ij = self._inertia_integrand(weight_ij, J_ij, M_ij)
+                Cqd_ij = self._coriolis_force_integrand(
+                    weight_ij, J_ij, Jd_ij, M_ij, qd
+                )
+                G_ij = self._gravity_integrand(weight_ij, g_ij, J_ij, M_ij)
+                return B_ij, Cqd_ij, G_ij
+
+            return vmap(point_terms)(jnp.arange(self.max_nip - 2))
+
+        B_blocks, Cqd_blocks, G_blocks = vmap(segment_terms)(
+            jnp.arange(self.num_segments)
+        )
+        return (
+            jnp.sum(B_blocks, axis=(0, 1)),
+            jnp.sum(Cqd_blocks, axis=(0, 1)),
+            jnp.sum(G_blocks, axis=(0, 1)),
+        )
 
     # ===========================================
     # Dynamical matrices computation
@@ -3262,97 +3781,17 @@ class GVS(SoftRobot):
         Returns:
             B (Array): Inertia matrix, shape (dof_tot, dof_tot)
         """
-        q_gathered = self._min_size_gathered(q)
+        weights, _, J_quads = self._active_quadrature_pose_jacobians(q)
+        Ms_inner = self._inner_mass_matrices()
 
-        B_full = self._inertia_full_matrix(q_gathered)
+        def segment_terms(i: Array) -> Array:
+            def point_term(j: Array) -> Array:
+                J_ij = J_quads[i, j]
+                return self._inertia_integrand(weights[i, j], J_ij, Ms_inner[i, j])
 
-        B = self.B_select.T @ B_full @ self.B_select
+            return vmap(point_term)(jnp.arange(self.max_nip - 2))
 
-        return B
-
-    @eqx.filter_jit
-    def _coriolis_full_matrix(self, q_gathered: Array, qd_gathered: Array) -> Array:
-        """
-        Compute the full Coriolis matrix of the robot.
-
-        Args:
-            q_gathered (Array): shape (num_segments, 2, max_dof) JAX array
-                Joint coordinates.
-            qd_gathered (Array): shape (num_segments, 2, max_dof) JAX array
-                Joint velocities.
-
-        Returns:
-            C (Array): Full Coriolis matrix, shape (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-        """
-        V_J = self._jacobian_gauss(
-            q_gathered
-        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
-        V_Jd = self._jacobian_derivative_gauss(
-            q_gathered, qd_gathered
-        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
-
-        qd_flat = qd_gathered.reshape(-1)
-
-        # Define function for each quadrature point
-        def C_i(i: Array) -> Array:
-            """Assemble Coriolis contributions for one segment by quadrature.
-
-            Args:
-                i (Array): Segment index (int).
-
-            Returns:
-                C_blocks_i (Array): Blocks over quadrature points, shape
-                    (max_nip, num_segments*2*max_dof, num_segments*2*max_dof).
-            """
-            length_i = self.V_L[i]
-            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
-            J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Jd_i = V_Jd[i]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Ms_i = self.V_Ms[i]  # (max_nip, 6, 6)
-
-            def C_ij(j: Array) -> Array:
-                """Coriolis block at a single quadrature point.
-
-                Args:
-                    j (Array): Quadrature point index (int).
-
-                Returns:
-                    C_ij (Array): Block of shape (num_segments*2*max_dof, num_segments*2*max_dof).
-                """
-                Ws_ij = Ws_i[j]
-                J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
-                Jd_ij = Jd_i[j]  # (6, num_segments * 2 * max_dof)
-                Ms_ij = Ms_i[j]  # (6, 6)
-
-                C_ij = Ws_ij * (
-                    J_ij.T
-                    @ (Ms_ij @ Jd_ij + lie.coadjoint_se3(J_ij @ qd_flat) @ Ms_ij @ J_ij)
-                )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-                return C_ij
-
-            # we can skip the first and last quadrature points since their weight is zero
-            C_blocks_i = (
-                vmap(C_ij)(jnp.arange(1, self.max_nip - 1)) * length_i
-            )  # (max_nip - 2, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-
-            # For debugging purposes, we can use a list comprehension
-            # C_blocks_segment_i = jnp.stack([C_eval_points(i_eval) for i_eval in range(self.max_nip)])  # (max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-
-            return C_blocks_i
-
-        C_blocks_tot = vmap(
-            C_i
-        )(
-            jnp.arange(self.num_segments)
-        )  # (num_segments, max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-
-        # For debugging purposes, we can use a list comprehension
-        # C_blocks_tot = jnp.stack([C_segment_i(i_segment) for i_segment in range(self.num_segments)])  # (num_segments, max_nip, num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-
-        # Sum over all segments and quadrature points
-        C = jnp.sum(C_blocks_tot, axis=(0, 1))
-
-        return C
+        return jnp.sum(vmap(segment_terms)(jnp.arange(self.num_segments)), axis=(0, 1))
 
     @eqx.filter_jit
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
@@ -3366,14 +3805,21 @@ class GVS(SoftRobot):
         Returns:
             C (Array): Coriolis matrix, shape (dof_tot, dof_tot)
         """
-        q_gathered = self._min_size_gathered(q)
-        qd_gathered = self._min_size_gathered(qd)
+        weights, _, J_quads, Jd_quads = self._active_quadrature_kinematics(q, qd)
+        Ms_inner = self._inner_mass_matrices()
 
-        C_full = self._coriolis_full_matrix(q_gathered, qd_gathered)
+        def segment_terms(i: Array) -> Array:
+            def point_term(j: Array) -> Array:
+                J_ij = J_quads[i, j]
+                Jd_ij = Jd_quads[i, j]
+                M_ij = Ms_inner[i, j]
+                return self._coriolis_matrix_integrand(
+                    weights[i, j], J_ij, Jd_ij, M_ij, qd
+                )
 
-        C = self.B_select.T @ C_full @ self.B_select
+            return vmap(point_term)(jnp.arange(self.max_nip - 2))
 
-        return C
+        return jnp.sum(vmap(segment_terms)(jnp.arange(self.num_segments)), axis=(0, 1))
 
     @eqx.filter_jit
     def _gravitational_full_force(self, q_gathered: Array) -> Array:
@@ -3467,13 +3913,18 @@ class GVS(SoftRobot):
         Returns:
             G (Array): Gravitational force vector, shape (dof_tot, 1)
         """
-        q_gathered = self._min_size_gathered(q)
+        weights, g_quads, J_quads = self._active_quadrature_pose_jacobians(q)
+        Ms_inner = self._inner_mass_matrices()
 
-        G_full = self._gravitational_full_force(q_gathered)
+        def segment_terms(i: Array) -> Array:
+            def point_term(j: Array) -> Array:
+                return self._gravity_integrand(
+                    weights[i, j], g_quads[i, j], J_quads[i, j], Ms_inner[i, j]
+                )
 
-        G = self.B_select.T @ G_full
+            return vmap(point_term)(jnp.arange(self.max_nip - 2))
 
-        return G
+        return jnp.sum(vmap(segment_terms)(jnp.arange(self.num_segments)), axis=(0, 1))
 
     @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
@@ -3557,12 +4008,7 @@ class GVS(SoftRobot):
         Returns:
             K (Array): Stiffness matrix, shape (dof_tot, dof_tot)
         """
-        # K_full = self._stiffness_full_matrix()
-        K_full = self.K_full  # Use precomputed stiffness matrix
-
-        K = self.B_select.T @ K_full @ self.B_select
-
-        return K
+        return self.K
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
@@ -3575,10 +4021,7 @@ class GVS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (dof_tot,).
         """
-        K = self.stiffness_matrix()
-        tau_el = K @ q
-
-        return tau_el
+        return self.K @ q
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:
@@ -3664,12 +4107,7 @@ class GVS(SoftRobot):
         Returns:
             D (Array): Damping matrix, shape (dof_tot, dof_tot)
         """
-        # D_full = self._damping_full_matrix()
-        D_full = self.D_full  # Use precomputed damping matrix
-
-        D = self.B_select.T @ D_full @ self.B_select
-
-        return D
+        return self.D_active
 
     @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
@@ -3762,122 +4200,12 @@ class GVS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        q_gathered = self._min_size_gathered(q)
-        qd_gathered = self._min_size_gathered(qd)
-
-        # flatten qd_gathered for use in Jacobian derivative
-        qd_flat = qd_gathered.reshape(-1)
-
-        # compute the forward kinematics at all quadrature points
-        V_g = self._forward_kinematics_gauss(
-            q_gathered
-        )  # (num_segments, max_nip, 4, 4)
-
-        # compute the jacobian and its derivative at all quadrature points
-        V_J = self._jacobian_gauss(
-            q_gathered
-        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
-        V_Jd = self._jacobian_derivative_gauss(
-            q_gathered, qd_gathered
-        )  # (num_segments, max_nip, 6, num_segments * 2 * max_dof)
-
-        def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:
-            """
-            Compute the integrand for the dynamical matrices at the i-th segment.
-            Args:
-                i (Array): index of the segment
-
-            Returns:
-                B_blocks_i (Array): The inertia matrix integrand blocks.
-                C_blocks_i (Array): The Coriolis matrix integrand blocks.
-                G_blocks_i (Array): The gravitational force integrand blocks.
-            """
-            length_i = self.V_L[i]
-            Ws_i = self.V_Ws[i]  # (max_nip, 1, )
-
-            g_i = V_g[i]  # (max_nip, 4, 4)
-            J_i = V_J[i]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Jd_i = V_Jd[i]  # (max_nip, 6, num_segments * 2 * max_dof)
-            Ms_i = self.V_Ms[i]  # (max_nip, 6, 6)
-
-            def dynamical_terms_ij(j: Array) -> tuple[Array, Array, Array]:
-                """
-                Compute the integrand for the dynamical matrices at the j-th quadrature point of the i-th segment.
-                Args:
-                    j (Array): index of the quadrature point
-
-                Returns:
-                    B_ij (Array): The inertia matrix integrand.
-                    C_ij (Array): The Coriolis matrix integrand.
-                    G_ij (Array): The gravitational force integrand.
-                """
-                Ws_ij = Ws_i[j]
-                Ms_ij = Ms_i[j]  # (6, 6)
-
-                # Extract the forward kinematics at the quadrature point
-                g_ij = g_i[j]  # (4, 4)
-
-                # Extract the Jacobian and its derivative at the quadrature point
-                J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
-                Jd_ij = Jd_i[j]  # (6, num_segments * 2 * max_dof)
-
-                # Adjoint inverse of g at the quadrature point
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)  # (6, 6)
-
-                # Inertia matrix integrand
-                B_ij = Ws_ij * (
-                    J_ij.T @ Ms_ij @ J_ij
-                )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-
-                # Coriolis matrix integrand
-                C_ij = Ws_ij * (
-                    J_ij.T
-                    @ (Ms_ij @ Jd_ij + lie.coadjoint_se3(J_ij @ qd_flat) @ Ms_ij @ J_ij)
-                )  # (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-
-                G_ij = (
-                    -Ws_ij * J_ij.T @ Ms_ij @ Ad_g_inv_ij @ self.g
-                )  # (num_segments * 2 * max_dof, 1)
-
-                return B_ij, C_ij, G_ij
-
-            # we can skip the first and last quadrature points since their weight is zero
-            B_blocks_i, C_blocks_i, G_blocks_i = vmap(dynamical_terms_ij)(
-                jnp.arange(1, self.max_nip - 1)
-            )
-
-            # scale by the segment length
-            B_blocks_i = B_blocks_i * length_i
-            C_blocks_i = C_blocks_i * length_i
-            G_blocks_i = G_blocks_i * length_i
-
-            return B_blocks_i, C_blocks_i, G_blocks_i
-
-        B_blocks_tot, C_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
-            jnp.arange(self.num_segments)
-        )
-
-        # sum over segments and quadrature points
-        B_full = jnp.sum(B_blocks_tot, axis=(0, 1))
-        C_full = jnp.sum(C_blocks_tot, axis=(0, 1))
-        G_full = jnp.sum(G_blocks_tot, axis=(0, 1))
-
-        # apply `B_select` to get the reduced matrices and vectors
-        B = self.B_select.T @ B_full @ self.B_select
-        C = self.B_select.T @ C_full @ self.B_select
-        G = self.B_select.T @ G_full
-
-        # compute the elastic and damping forces
+        B, Cqd, G = self._active_quadrature_forward_dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
-        D = self.damping_matrix(q)
-        tau_d = D @ qd
-
-        # evaluate the actuation force
         tau_u = self.actuation_force(q, u)
 
-        qdd = jnp.linalg.solve(
-            B, tau_u + tau_ext - C @ qd - G - tau_el - tau_d
-        )  # Compute the acceleration
+        rhs = tau_u + tau_ext - Cqd - G - tau_el - self.D_active @ qd
+        qdd = jnp.linalg.solve(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])
 

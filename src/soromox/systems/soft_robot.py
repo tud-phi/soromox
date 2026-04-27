@@ -71,6 +71,16 @@ class SoftRobot(DynamicalSystem):
         else:
             self.global_eps = 1e1 * float(jnp.finfo(jnp.float64).eps)
 
+    def precompute(self) -> None:
+        """
+        Optional hook for refreshing state-independent cached quantities.
+
+        Subclasses with cached mass, stiffness, damping, basis, or quadrature
+        data can override this method and call it during initialization. Models
+        without such caches can inherit this no-op implementation.
+        """
+        return None
+
     @property
     @abstractmethod
     def length(self) -> Array:
