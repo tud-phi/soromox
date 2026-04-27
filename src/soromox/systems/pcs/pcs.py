@@ -2099,6 +2099,12 @@ class PCS(SoftRobot):
         """
         Return weights, poses, active Jacobians, and derivatives at quadrature points.
 
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            convective_only_jd: If true, compute a Jacobian derivative that is
+                only guaranteed to be equivalent after multiplication by ``qd``.
+
         When ``convective_only_jd`` is true, the returned derivative is only
         guaranteed to be equivalent after multiplication by ``qd``. This is
         sufficient for the forward-dynamics ``C(q, qd) @ qd`` path and avoids

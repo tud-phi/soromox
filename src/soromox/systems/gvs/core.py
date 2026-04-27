@@ -3313,6 +3313,8 @@ class GVS(SoftRobot):
                 ``(self.num_dofs,)``.
             qd: Active generalized velocities, shape
                 ``(self.num_dofs,)``.
+            convective_only_jd: If true, compute a Jacobian derivative that is
+                only guaranteed to be equivalent after multiplication by ``qd``.
 
         Returns:
             Tuple ``(weights, g_quads, J_quads, Jd_quads)``. ``weights`` has
