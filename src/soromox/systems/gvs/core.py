@@ -2875,11 +2875,7 @@ class GVS(SoftRobot):
             J (Array): Jacobian matrix of shape (6, num_dofs).
             Jd (Array): Time derivative of the Jacobian, shape (6, num_dofs).
         """
-        # TODO: Properly implement jacobian_and_derivative
-        # This should compute the Jacobian and its time derivative in the inertial frame
-        J = jnp.zeros((6, self.num_dofs))
-        Jd = jnp.zeros((6, self.num_dofs))
-        return J, Jd
+        return self.jacobian_and_derivative_inertialframe(q, qd, s)
 
     # ===========================================
     # Dynamical matrices computation
@@ -3184,21 +3180,6 @@ class GVS(SoftRobot):
         return G
 
     @eqx.filter_jit
-    def gravitational_energy(self, q: Array) -> Array:
-        """
-        Compute the gravitational potential energy of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (dof_tot,).
-
-        Returns:
-            U_g (Array): Gravitational potential energy (scalar).
-        """
-        # TODO: Properly implement gravitational energy computation
-        # This should integrate the gravitational potential energy over the robot's mass distribution
-        return jnp.array(0.0)
-
-    @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
         """
         Compute the full stiffness matrix of the robot.
@@ -3397,55 +3378,43 @@ class GVS(SoftRobot):
     @eqx.filter_jit
     def gravitational_energy(self, q: Array) -> Array:
         """
-        Compute the gravitational potential energy of the robot.
+        Compute the gravitational potential energy by Gauss quadrature.
+
+        This evaluates
+        ``U_g = -sum_i integral rho_i(s) A_i(s) g_linear.dot(p_i(s)) ds``
+        over the link centerlines. The mass density per arclength is recovered
+        from the translational block of the local mass matrix stored in
+        ``V_Ms``. The implementation uses the same cached Gauss nodes and
+        forward-kinematics integration path as the gravitational force, and does
+        not use runtime autodiff.
+
         Args:
-            q (Array): generalized coordinates of shape (dof_tot,).
+            q (Array): generalized coordinates of shape ``(dof_tot_system,)``.
 
         Returns:
-            U_g (Array): Gravitational potential energy.
+            U_g (Array): Gravitational potential energy as a scalar array.
         """
         q_gathered = self._min_size_gathered(q)
         g_list = self._forward_kinematics_gauss(q_gathered)
+        gravity_linear = self.g[3:]
 
         def U_G_i(i: Array) -> Array:
-            """
-            Compute the gravitational potential energy contribution for a single segment.
-            Args:
-                i (Array): Segment index.
-
-            Returns:
-                U_G_i (Array): Gravitational potential energy contribution.
-            """
+            """Compute the gravitational energy contribution of one segment."""
             length_i = self.V_L[i]
-            Ws_i = self.V_Ws[i]
-            Ms_i = self.V_Ms[i]
-            g_seg = g_list[i]
+            weights = self.V_Ws[i, 1 : self.max_nip - 1]
+            mass_density = (
+                jnp.trace(
+                    self.V_Ms[i, 1 : self.max_nip - 1, 3:, 3:],
+                    axis1=-2,
+                    axis2=-1,
+                )
+                / 3.0
+            )
+            positions = g_list[i, 1 : self.max_nip - 1, :3, 3]
+            height_along_gravity = positions @ gravity_linear
+            return -length_i * jnp.sum(weights * mass_density * height_along_gravity)
 
-            def U_G_ij(j: Array) -> Array:
-                """
-                Compute the gravitational potential energy contribution at a single quadrature point.
-                Args:
-                    j (Array): Quadrature point index.
-
-                Returns:
-                    U_G_ij (Array): Gravitational potential energy contribution.
-                """
-                Ws_ij = Ws_i[j]
-                Ms_ij = Ms_i[j]
-                g_ij = g_seg[j]
-                mass_density = jnp.trace(Ms_ij[3:, 3:]) / 3.0
-                position = g_ij[:3, 3]
-                p6 = jnp.concatenate([jnp.zeros(3, dtype=position.dtype), position])
-                U_G_ij = -length_i * Ws_ij * mass_density * jnp.dot(self.g, p6)
-                return U_G_ij
-
-            # we can skip the first and last quadrature points since their weight is zero
-            U_G_i = jnp.sum(vmap(U_G_ij)(jnp.arange(1, self.max_nip - 1)))
-            return U_G_i
-
-        # Total gravitational potential energy
-        U_G = jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
-        return U_G
+        return jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
