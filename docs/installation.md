@@ -1,8 +1,6 @@
 # 📦 Installation
 
-<div class="doc-summary">
-  <strong>Get started with SoRoMoX in minutes!</strong> Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
-</div>
+**Get started with SoRoMoX in minutes!** Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
 
 !!! warning "📢 Migration from JSRM"
     

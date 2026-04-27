@@ -1,8 +1,6 @@
 # 🚀 Quick Start
 
-<div class="doc-summary">
-  <strong>Get up and running with SoRoMoX in minutes!</strong> This hands-on guide walks you through your first soft robot simulation with step-by-step examples.
-</div>
+**Get up and running with SoRoMoX in minutes!** This hands-on guide walks you through your first soft robot simulation with step-by-step examples.
 
 ---
 
@@ -333,27 +331,10 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
 ## 🎯 Next Steps
 
-<div class="feature-grid">
-  <div class="feature-card">
-    <h3><span class="icon">📚</span> <a href="../examples/">Explore Examples</a></h3>
-    <p>Dive deeper with comprehensive examples and tutorials covering all robot types and use cases</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">📖</span> <a href="../../api/overview/">API Reference</a></h3>
-    <p>Complete documentation of all classes, methods, and functions with detailed parameters</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">🤝</span> <a href="../../development/contributing/">Contributing</a></h3>
-    <p>Learn how to contribute to the SoRoMoX project and help improve the library</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">🔬</span> Advanced Topics</h3>
-    <p>Control theory, optimization, and machine learning applications with SoRoMoX</p>
-  </div>
-</div>
+- **📚 [Explore Examples](../examples/)**: Dive deeper with examples and tutorials covering all robot types and use cases.
+- **📖 [API Reference](../../api/overview/)**: Complete documentation of all classes, methods, and functions.
+- **🤝 [Contributing](../../development/contributing/)**: Learn how to contribute to SoRoMoX.
+- **🔬 Advanced Topics**: Control theory, optimization, and machine learning applications with SoRoMoX.
 
 ---
 

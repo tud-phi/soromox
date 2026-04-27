@@ -1,0 +1,11 @@
+/* Keep long API symbols readable in the page table of contents. */
+@media screen and (min-width: 1200px) {
+  .md-sidebar--secondary {
+    width: 16rem;
+  }
+
+  .md-sidebar--secondary .md-nav__link {
+    font-size: 0.64rem;
+    overflow-wrap: anywhere;
+  }
+}
