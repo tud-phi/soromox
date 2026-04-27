@@ -327,6 +327,13 @@ def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
     return jnp.asarray(unique_sorted, dtype=jnp.float64)
 
 
+def strict_interior_arc_lengths(robot: GVS) -> jnp.ndarray:
+    fractions = jnp.asarray([0.37], dtype=jnp.float64)
+    starts = robot.segment_end_positions[:-1, None]
+    lengths = robot.segment_lengths[:, None]
+    return (starts + lengths * fractions).reshape(-1)
+
+
 def tip_arc_lengths(robot: GVS) -> jnp.ndarray:
     return jnp.asarray(robot.segment_end_positions[1:], dtype=jnp.float64)
 
@@ -1170,6 +1177,63 @@ def test_public_gvs_jacobian_adapters_match_inertialframe_methods() -> None:
     )
     assert_allclose(J_batch, J_batch_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
+
+
+def test_gvs_spatial_derivatives_match_autodiff() -> None:
+    robot = build_varied_basis_gvs(num_segments=3)
+    q = random_q(robot, jax.random.PRNGKey(2029), scale=0.03)
+
+    for s in strict_interior_arc_lengths(robot):
+        _, fk_s_autodiff = jvp(
+            lambda s_: robot._forward_kinematics(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            robot.forward_kinematics_spatial_derivative(q, s),
+            fk_s_autodiff,
+            rtol=1e-6,
+            atol=1e-7,
+        )
+
+        _, J_s_autodiff = jvp(
+            lambda s_: robot._jacobian(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            robot.jacobian_spatial_derivative(q, s),
+            J_s_autodiff,
+            rtol=1e-5,
+            atol=1e-6,
+        )
+
+
+def test_gvs_custom_jvps_include_spatial_derivative() -> None:
+    robot = build_varied_basis_gvs(num_segments=3)
+    q = random_q(robot, jax.random.PRNGKey(2030), scale=0.03)
+    qd = random_q(robot, jax.random.PRNGKey(2031), scale=0.02)
+    s = strict_interior_arc_lengths(robot)[1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    pose, posed = jvp(
+        lambda q_, s_: robot.forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    eta = robot.jacobian(q, s) @ qd
+    expected_posed = robot._pose_tangent_from_inertial_velocity(pose, eta)
+    expected_posed += robot.forward_kinematics_spatial_derivative(q, s) * sd
+    assert_allclose(posed, expected_posed, rtol=1e-6, atol=1e-7)
+
+    _, Jd = jvp(
+        lambda q_, s_: robot.jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    _, Jd_q = robot.jacobian_and_derivative(q, qd, s)
+    expected_Jd = Jd_q + robot.jacobian_spatial_derivative(q, s) * sd
+    assert_allclose(Jd, expected_Jd, rtol=1e-5, atol=1e-6)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])

@@ -203,9 +203,6 @@ def test_gravitational_energy(seed: int = 0):
     for _ in range(5):
         rng, q = _sample_configuration(rng, num_segments)
 
-        # Compute gravitational energy
-        U_g = robot.gravitational_energy(q)
-
         # Compute gravitational force
         G = robot.gravitational_force(q)
 
@@ -276,6 +273,29 @@ def test_elastic_energy(seed: int = 0):
         # Zero configuration should give zero elastic energy
         U_K_zero = robot.elastic_energy(jnp.zeros_like(q))
         assert jnp.abs(U_K_zero) < 1e-15, "Elastic energy at zero config should be zero"
+
+
+def test_elastic_force_matches_elastic_energy_gradient(seed: int = 0):
+    """
+    Test that elastic_force is the conservative gradient of elastic_energy.
+    """
+    print("Testing elastic_force gradient...")
+    robot = _create_robot()
+
+    rng = random.PRNGKey(seed)
+    for _ in range(5):
+        rng, q = _sample_configuration(rng, num_segments)
+
+        force = robot.elastic_force(q)
+        force_from_primal = grad(lambda q_: robot._elastic_energy(q_))(q)
+        force_from_public = grad(lambda q_: robot.elastic_energy(q_))(q)
+
+        assert jnp.allclose(force, force_from_primal, atol=1e-10), (
+            "elastic_force should match the primal elastic-energy gradient"
+        )
+        assert jnp.allclose(force, force_from_public, atol=1e-10), (
+            "elastic_energy custom JVP should use elastic_force"
+        )
 
 
 def test_stiffness_matrix(seed: int = 0):

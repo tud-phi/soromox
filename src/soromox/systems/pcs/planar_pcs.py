@@ -298,8 +298,8 @@ class PlanarPCS(SoftRobot):
         # Gravitational acceleration vector
         try:
             g = params["g"]
-        except KeyError:
-            raise KeyError("Parameter 'g' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'g' is required in params dictionary.") from err
         if not (isinstance(g, (list, jnp.ndarray))):
             raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
         g = jnp.asarray(g, dtype=jnp.float64)
@@ -312,8 +312,8 @@ class PlanarPCS(SoftRobot):
         # Lengths of the segments
         try:
             L = params["L"]
-        except KeyError:
-            raise KeyError("Parameter 'L' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'L' is required in params dictionary.") from err
         if not (isinstance(L, (list, jnp.ndarray))):
             raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
         L = jnp.asarray(L, dtype=jnp.float64)
@@ -327,8 +327,8 @@ class PlanarPCS(SoftRobot):
         # Radius of the segments
         try:
             r = params["r"]
-        except KeyError:
-            raise KeyError("Parameter 'r' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'r' is required in params dictionary.") from err
         if not (isinstance(r, (list, jnp.ndarray))):
             raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
         r = jnp.asarray(r, dtype=jnp.float64)
@@ -339,8 +339,8 @@ class PlanarPCS(SoftRobot):
         # Densities of the segments
         try:
             rho = params["rho"]
-        except KeyError:
-            raise KeyError("Parameter 'rho' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'rho' is required in params dictionary.") from err
         if not (isinstance(rho, (list, jnp.ndarray))):
             raise TypeError(f"rho must be a list or an array, got {type(rho).__name__}")
         rho = jnp.asarray(rho, dtype=jnp.float64)
@@ -353,8 +353,8 @@ class PlanarPCS(SoftRobot):
         # Elastic modulus of the segments
         try:
             E = params["E"]
-        except KeyError:
-            raise KeyError("Parameter 'E' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'E' is required in params dictionary.") from err
         if not (isinstance(E, (list, jnp.ndarray))):
             raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
         E = jnp.asarray(E, dtype=jnp.float64)
@@ -365,8 +365,8 @@ class PlanarPCS(SoftRobot):
         # Shear modulus of the segments
         try:
             G = params["G"]
-        except KeyError:
-            raise KeyError("Parameter 'G' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'G' is required in params dictionary.") from err
         if not (isinstance(G, (list, jnp.ndarray))):
             raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
         G = jnp.asarray(G, dtype=jnp.float64)
@@ -377,8 +377,8 @@ class PlanarPCS(SoftRobot):
         # Damping matrix of the robot
         try:
             D = params["D"]
-        except KeyError:
-            raise KeyError("Parameter 'D' is required in params dictionary.")
+        except KeyError as err:
+            raise KeyError("Parameter 'D' is required in params dictionary.") from err
         if not (isinstance(D, (list, jnp.ndarray))):
             raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
         D = jnp.asarray(D, dtype=jnp.float64)
@@ -657,7 +657,7 @@ class PlanarPCS(SoftRobot):
         return chi_s
 
     @eqx.filter_jit
-    def forward_kinematics(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a point s along the robot.
 
@@ -673,6 +673,26 @@ class PlanarPCS(SoftRobot):
         chi = self.chi(xi, s)
 
         return chi
+
+    @eqx.filter_jit
+    def _forward_kinematics_spatial_derivative(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the planar pose at ``s``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        segment_idx, _ = self.classify_segment(s)
+        xi_i = xi[segment_idx]
+        chi = self._forward_kinematics(q, s)
+        theta = chi[0]
+        R = jnp.array(
+            [
+                [jnp.cos(theta), -jnp.sin(theta)],
+                [jnp.sin(theta), jnp.cos(theta)],
+            ],
+            dtype=chi.dtype,
+        )
+        p_s = R @ xi_i[1:]
+        return jnp.concatenate([xi_i[:1], p_s])
 
     @eqx.filter_jit
     def forward_kinematics_tips(self, q: Array) -> Array:
@@ -1101,6 +1121,79 @@ class PlanarPCS(SoftRobot):
         return J_local
 
     @eqx.filter_jit
+    def jacobian_spatial_derivative_bodyframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the body-frame Jacobian at ``s``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        segment_idx, s_local = self.classify_segment(s)
+
+        zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
+        zero_slice = jnp.zeros((3, 3), dtype=xi.dtype)
+
+        def integrate_segment(
+            J_prev: Array,
+            i: Array,
+            xi_i: Array,
+            arc_len: Array,
+        ) -> Array:
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+
+            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
+            return J_rot.at[i].set(Ad_inv @ T)
+
+        def integrate_segment_spatial_derivative(
+            J_base: Array,
+            i: Array,
+            xi_i: Array,
+            arc_len: Array,
+        ) -> Array:
+            Ad_inv = lie.Adjoint_gi_se2_inv(xi_i, arc_len, eps=self.global_eps)
+            T = lie.Tangent_gi_se2(xi_i, arc_len, eps=self.global_eps)
+            dAd_inv_ds = -lie.adjoint_se2(xi_i) @ Ad_inv
+            dT_ds = lie.Adjoint_gi_se2(xi_i, arc_len, eps=self.global_eps)
+
+            J_s = jnp.einsum("ij, njk->nik", dAd_inv_ds, J_base)
+            return J_s.at[i].set(dAd_inv_ds @ T + Ad_inv @ dT_ds)
+
+        def scan_body(
+            carry: tuple[Array, Array, Array],
+            i: Array,
+        ) -> tuple[tuple[Array, Array, Array], Array]:
+            J_prev, J_s_target, done = carry
+
+            def compute_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
+                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+                arc_len = jnp.where(i == segment_idx, s_local, L_i)
+
+                J_next = integrate_segment(J_prev, i, xi_i, arc_len)
+                J_s_next = integrate_segment_spatial_derivative(
+                    J_prev, i, xi_i, arc_len
+                )
+
+                is_target = i == segment_idx
+                J_s_target_next = jnp.where(is_target, J_s_next, J_s_target)
+                done_next = jnp.logical_or(done, is_target)
+
+                return (J_next, J_s_target_next, done_next), zero_slice
+
+            def skip_branch(_: None) -> tuple[tuple[Array, Array, Array], Array]:
+                return (J_prev, J_s_target, done), zero_slice
+
+            return lax.cond(done, skip_branch, compute_branch, operand=None)
+
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        (_, J_s_target, _), _ = lax.scan(
+            scan_body,
+            (zeros, zeros, jnp.array(False, dtype=jnp.bool_)),
+            indices,
+        )
+
+        return self._final_size_jacobian(J_s_target) @ self.B_xi
+
+    @eqx.filter_jit
     def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a batch of points s_ps along the robot in the body frame.
@@ -1141,6 +1234,29 @@ class PlanarPCS(SoftRobot):
         J_global = Ad_g @ J_local
 
         return J_global
+
+    @eqx.filter_jit
+    def jacobian_spatial_derivative_inertialframe(
+        self, q: Array, s: Array
+    ) -> Array:
+        """
+        Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
+        """
+        J_local = self.jacobian_bodyframe(q, s)
+        J_local_s = self.jacobian_spatial_derivative_bodyframe(q, s)
+
+        chi = self._forward_kinematics(q, s)
+        theta = chi[0]
+        zero = jnp.zeros((), dtype=theta.dtype)
+        g = lie.exp_SE2(jnp.stack([theta, zero, zero]))
+        Ad_g = lie.Adjoint_g_SE2(g)
+
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        segment_idx, _ = self.classify_segment(s)
+        eta_rot_s = jnp.stack([xi[segment_idx, 0], zero, zero])
+        Ad_g_s = Ad_g @ lie.adjoint_se2(eta_rot_s)
+
+        return Ad_g_s @ J_local + Ad_g @ J_local_s
 
     @eqx.filter_jit
     def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
@@ -1547,9 +1663,10 @@ class PlanarPCS(SoftRobot):
 
         return J_global_ps, Jd_global_ps
 
-    jacobian = jacobian_inertialframe
+    _jacobian = jacobian_inertialframe
+    _jacobian_spatial_derivative = jacobian_spatial_derivative_inertialframe
     jacobian_batched = jacobian_inertialframe_batched
-    jacobian_and_derivative = jacobian_and_derivative_inertialframe
+    _jacobian_and_derivative = jacobian_and_derivative_inertialframe
     jacobian_and_derivative_batched = jacobian_and_derivative_inertialframe_batched
 
     # ==========================================
@@ -1810,7 +1927,7 @@ class PlanarPCS(SoftRobot):
         return G_full
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array) -> Array:
+    def _gravitational_force(self, q: Array) -> Array:
         """
         Compute the gravitational force acting on the robot.
 
@@ -1942,7 +2059,7 @@ class PlanarPCS(SoftRobot):
         return A
 
     @eqx.filter_jit
-    def gravitational_energy(self, q: Array) -> Array:
+    def _gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational energy of the robot.
 

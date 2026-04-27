@@ -433,7 +433,7 @@ class TendonActuatedPendulum(Pendulum):
     # Energy methods
     # ---------------------
     @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
+    def _elastic_energy(self, q: Array) -> Array:
         """
         Compute the elastic potential energy stored in joint and tendon springs.
 

@@ -550,7 +550,7 @@ class Pendulum(SoftRobot):
         return link_idx, s_local
 
     @eqx.filter_jit
-    def forward_kinematics(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics at arc-length position s along the pendulum.
 
@@ -601,7 +601,7 @@ class Pendulum(SoftRobot):
         return vmap(lambda s: self.forward_kinematics(q, s))(s_ps)
 
     @eqx.filter_jit
-    def jacobian(self, q: Array, s: Array) -> Array:
+    def _jacobian(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian at arc-length position s along the pendulum.
 
@@ -622,7 +622,7 @@ class Pendulum(SoftRobot):
         J_omega = (j_indices <= link_idx).astype(q.dtype)
 
         # Position at s
-        chi = self.forward_kinematics(q, s)
+        chi = self._forward_kinematics(q, s)
         p_s = chi[1:]
 
         # Joint positions
@@ -657,7 +657,7 @@ class Pendulum(SoftRobot):
         return vmap(lambda s: self.jacobian(q, s))(s_ps)
 
     @eqx.filter_jit
-    def jacobian_and_derivative(
+    def _jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -677,13 +677,10 @@ class Pendulum(SoftRobot):
         j_indices = jnp.arange(N)
 
         # Get Jacobian
-        J = self.jacobian(q, s)
+        J = self._jacobian(q, s)
 
         # Angular Jacobian derivative is zero (planar revolute)
         Jd_omega = jnp.zeros(N, dtype=q.dtype)
-
-        # Position and velocity at s
-        chi = self.forward_kinematics(q, s)
 
         # Joint positions and velocities
         J_joints = self.jacobian_joints(q)  # (N, 3, N)
@@ -799,7 +796,7 @@ class Pendulum(SoftRobot):
         return C
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array) -> Array:
+    def _gravitational_force(self, q: Array) -> Array:
         """
         Compute the generalized gravitational force vector.
 
@@ -919,7 +916,7 @@ class Pendulum(SoftRobot):
 
         B = self.inertia_matrix(q)
         C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_force(q)
+        G = self._gravitational_force(q)
         D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
@@ -932,7 +929,7 @@ class Pendulum(SoftRobot):
     # ---------------------
 
     @eqx.filter_jit
-    def gravitational_energy(self, q: Array) -> Array:
+    def _gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational potential energy of the pendulum system.
 
@@ -953,7 +950,7 @@ class Pendulum(SoftRobot):
         return U_g
 
     @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
+    def _elastic_energy(self, q: Array) -> Array:
         """
         Compute the elastic potential energy stored in joint springs.
 

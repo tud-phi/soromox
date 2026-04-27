@@ -1,7 +1,7 @@
 import jax
 import numpy as onp
 import pytest
-from jax import Array, jacfwd, jacrev
+from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
@@ -78,6 +78,11 @@ def sample_arc_lengths(model: PlanarPCS) -> list[float]:
     values = [near_zero] + mids + boundaries
     unique_sorted = sorted({float(v) for v in values if 0.0 < float(v) <= total})
     return unique_sorted
+
+
+def strict_interior_arc_lengths(model: PlanarPCS) -> jnp.ndarray:
+    fractions = jnp.asarray([0.37, 0.73], dtype=jnp.float64)
+    return (model.L_cum[:-1, None] + model.L[:, None] * fractions).reshape(-1)
 
 
 def random_q(model, key=jax.random.PRNGKey(0), scale=0.1):
@@ -324,7 +329,7 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments):
 
     for q in (zero_cfg, random_cfg):
         chi_batched = model.forward_kinematics_batched(q, s_ps)
-        chi_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
+        chi_expected = jax.vmap(lambda s, q=q: model.forward_kinematics(q, s))(s_ps)
 
         assert_allclose(chi_batched, chi_expected, rtol=RTOL, atol=ATOL)
 
@@ -735,7 +740,7 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments):
         for s in sample_arc_lengths(model):
             J_impl = model.jacobian_inertialframe(q, s)
 
-            def fk(q_):
+            def fk(q_, s=s):
                 return model.forward_kinematics(q_, s)  # [theta, x, y]
 
             J_ad = jax.jacfwd(fk)(q)
@@ -864,7 +869,7 @@ def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments):
         for s in sample_arc_lengths(model):
             J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
 
-            def J_of_q(q_):
+            def J_of_q(q_, s=s):
                 return model.jacobian_bodyframe(q_, s)
 
             _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
@@ -926,7 +931,7 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
         for s in sample_arc_lengths(model):
             J_impl, Jd_impl = model.jacobian_and_derivative_inertialframe(q, qd, s)
 
-            def J_of_q(q_):
+            def J_of_q(q_, s=s):
                 return model.jacobian_inertialframe(q_, s)
 
             _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
@@ -1058,6 +1063,63 @@ def test_public_planar_pcs_jacobian_aliases_match_inertialframe_methods() -> Non
     assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
 
 
+def test_planar_pcs_spatial_derivatives_match_autodiff() -> None:
+    model, _ = make_planar_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(2029), scale=0.03)
+
+    for s in strict_interior_arc_lengths(model):
+        _, fk_s_autodiff = jvp(
+            lambda s_: model._forward_kinematics(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            model.forward_kinematics_spatial_derivative(q, s),
+            fk_s_autodiff,
+            rtol=RTOL,
+            atol=ATOL,
+        )
+
+        _, J_s_autodiff = jvp(
+            lambda s_: model._jacobian(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            model.jacobian_spatial_derivative(q, s),
+            J_s_autodiff,
+            rtol=1e-6,
+            atol=1e-7,
+        )
+
+
+def test_planar_pcs_custom_jvps_include_spatial_derivative() -> None:
+    model, _ = make_planar_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(2030), scale=0.03)
+    qd = random_q(model, jax.random.PRNGKey(2031), scale=0.02)
+    s = strict_interior_arc_lengths(model)[1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    pose, posed = jvp(
+        lambda q_, s_: model.forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    eta = model.jacobian(q, s) @ qd
+    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
+    expected_posed += model.forward_kinematics_spatial_derivative(q, s) * sd
+    assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
+
+    _, Jd = jvp(
+        lambda q_, s_: model.jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    _, Jd_q = model.jacobian_and_derivative(q, qd, s)
+    expected_Jd = Jd_q + model.jacobian_spatial_derivative(q, s) * sd
+    assert_allclose(Jd, expected_Jd, rtol=1e-6, atol=1e-7)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
     robot, _ = make_planar_pcs(num_segments=num_segments)
@@ -1071,7 +1133,7 @@ def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
 
         B_impl = robot.inertia_matrix(q)
 
-        def T_of_qd(qd_):
+        def T_of_qd(qd_, q=q):
             return robot.kinetic_energy(q, qd_)
 
         dT_dqdsq = jacfwd(jax.grad(T_of_qd))(qd)
@@ -1138,7 +1200,7 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
         tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
 
         grad_T_q = dT_dq(q, qd)
-        jac_T_q = jax.jacobian(lambda qq: dT_dqd(qq, qd))(q)
+        jac_T_q = jax.jacobian(lambda qq, qd=qd: dT_dqd(qq, qd))(q)
         tau_cor_autograd = jac_T_q @ qd - grad_T_q
 
         print("tau_cor_impl:\n", tau_cor_impl)

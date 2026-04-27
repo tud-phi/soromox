@@ -338,7 +338,7 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(
 
     for q in (zero_cfg, random_cfg):
         g_batched = model.forward_kinematics_batched(q, s_ps)
-        g_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
+        g_expected = jax.vmap(lambda s, q=q: model.forward_kinematics(q, s))(s_ps)
 
         assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
 
@@ -471,7 +471,7 @@ def test_jacobian_bodyframe_matches_autodiff(num_segments: int):
             g = model.forward_kinematics(q, s)
             g_inv = se3_inverse(g)
 
-            def fk(qq: Array) -> Array:
+            def fk(qq: Array, s=s) -> Array:
                 return model.forward_kinematics(qq, s)
 
             n = q.shape[0]
@@ -522,7 +522,7 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments: int):
             R = g[:3, :3]
             g_inv = se3_inverse(g)
 
-            def fk(qq: Array) -> Array:
+            def fk(qq: Array, s=s) -> Array:
                 return model.forward_kinematics(qq, s)
 
             n = q.shape[0]
@@ -675,7 +675,7 @@ def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments: int):
         for s in sample_arc_lengths(model):
             J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
 
-            def J_body(q_):
+            def J_body(q_, s=s):
                 return model.jacobian_bodyframe(q_, s)
 
             _, Jd_jvp = jvp(J_body, (q,), (qd,))
@@ -787,7 +787,7 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments: in
         for s in sample_arc_lengths(model):
             J_impl, Jd_impl = model.jacobian_and_derivative_inertialframe(q, qd, s)
 
-            def J_global(q_):
+            def J_global(q_, s=s):
                 return model.jacobian_inertialframe(q_, s)
 
             _, Jd_jvp = jvp(J_global, (q,), (qd,))
@@ -860,6 +860,162 @@ def test_public_pcs_jacobian_aliases_match_inertialframe_methods() -> None:
     assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
 
 
+class _SentinelForwardKinematicsJVPPCS(PCS):
+    def _jacobian(self, q: Array, s: Array) -> Array:
+        entries = jnp.arange(6 * q.shape[0], dtype=q.dtype).reshape(6, q.shape[0])
+        return 1e-2 * (entries + 1.0)
+
+
+class _SentinelJacobianJVPPCS(PCS):
+    def _jacobian_and_derivative(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        J = self._jacobian(q, s)
+        Jd = jnp.full_like(J, 0.125)
+        return J, Jd
+
+
+class _SentinelGravitationalEnergyJVPPCS(PCS):
+    def _gravitational_force(self, q: Array) -> Array:
+        return jnp.linspace(0.25, 1.25, q.shape[0], dtype=q.dtype)
+
+
+def _sentinel_pcs_model(cls: type[PCS]) -> PCS:
+    base, params = make_pcs(num_segments=1)
+    return cls(
+        num_segments=1,
+        params=params,
+        num_gauss_points=base.num_gauss_points,
+        xi_ref=base.xi_ref,
+    )
+
+
+def _strict_interior_arc_lengths(model: PCS) -> jnp.ndarray:
+    fractions = jnp.asarray([0.37, 0.73], dtype=jnp.float64)
+    return (model.L_cum[:-1, None] + model.L[:, None] * fractions).reshape(-1)
+
+
+def test_pcs_custom_jvp_primal_methods_match_protected_hooks() -> None:
+    model, _ = make_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(1), scale=0.03)
+    s = model.L_cum[-1]
+
+    assert_allclose(model.forward_kinematics(q, s), model._forward_kinematics(q, s))
+    assert_allclose(model.jacobian(q, s), model.jacobian_inertialframe(q, s))
+    assert_allclose(model.gravitational_energy(q), model._gravitational_energy(q))
+
+
+def test_pcs_forward_kinematics_jvp_uses_analytical_jacobian_hook() -> None:
+    model = _sentinel_pcs_model(_SentinelForwardKinematicsJVPPCS)
+    q = random_q(model, jax.random.PRNGKey(2), scale=0.02)
+    qd = random_q(model, jax.random.PRNGKey(3), scale=0.01)
+    s = model.L_cum[-1]
+
+    pose, posed = jax.jvp(lambda q_: model.forward_kinematics(q_, s), (q,), (qd,))
+    eta = model._jacobian(q, s) @ qd
+    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
+
+    assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_jacobian_jvp_uses_analytical_derivative_hook() -> None:
+    model = _sentinel_pcs_model(_SentinelJacobianJVPPCS)
+    q = random_q(model, jax.random.PRNGKey(4), scale=0.02)
+    qd = random_q(model, jax.random.PRNGKey(5), scale=0.01)
+    s = model.L_cum[-1]
+
+    _, Jd = jax.jvp(lambda q_: model.jacobian(q_, s), (q,), (qd,))
+    _, expected_Jd = model._jacobian_and_derivative(q, qd, s)
+
+    assert_allclose(Jd, expected_Jd, rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_gravitational_energy_grad_uses_analytical_force_hook() -> None:
+    model = _sentinel_pcs_model(_SentinelGravitationalEnergyJVPPCS)
+    q = random_q(model, jax.random.PRNGKey(6), scale=0.02)
+
+    dU_dq = jax.grad(lambda q_: model.gravitational_energy(q_))(q)
+
+    assert_allclose(dU_dq, model._gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_custom_jvps_match_real_analytical_methods() -> None:
+    model, _ = make_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(7), scale=0.03)
+    qd = random_q(model, jax.random.PRNGKey(8), scale=0.02)
+    s = model.L_cum[-1]
+
+    pose, posed = jax.jvp(lambda q_: model.forward_kinematics(q_, s), (q,), (qd,))
+    eta = model.jacobian(q, s) @ qd
+    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
+    assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
+
+    J, Jd = jax.jvp(lambda q_: model.jacobian(q_, s), (q,), (qd,))
+    expected_J, expected_Jd = model.jacobian_and_derivative(q, qd, s)
+    assert_allclose(J, expected_J, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd, expected_Jd, rtol=RTOL, atol=ATOL)
+
+    dU_dq = jax.grad(lambda q_: model.gravitational_energy(q_))(q)
+    assert_allclose(dU_dq, model.gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_spatial_derivatives_match_autodiff() -> None:
+    model, _ = make_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(2029), scale=0.03)
+
+    for s in _strict_interior_arc_lengths(model):
+        _, fk_s_autodiff = jvp(
+            lambda s_: model._forward_kinematics(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            model.forward_kinematics_spatial_derivative(q, s),
+            fk_s_autodiff,
+            rtol=RTOL,
+            atol=ATOL,
+        )
+
+        _, J_s_autodiff = jvp(
+            lambda s_: model._jacobian(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            model.jacobian_spatial_derivative(q, s),
+            J_s_autodiff,
+            rtol=1e-6,
+            atol=1e-7,
+        )
+
+
+def test_pcs_custom_jvps_include_spatial_derivative() -> None:
+    model, _ = make_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(2030), scale=0.03)
+    qd = random_q(model, jax.random.PRNGKey(2031), scale=0.02)
+    s = _strict_interior_arc_lengths(model)[1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    pose, posed = jvp(
+        lambda q_, s_: model.forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    eta = model.jacobian(q, s) @ qd
+    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
+    expected_posed += model.forward_kinematics_spatial_derivative(q, s) * sd
+    assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
+
+    _, Jd = jvp(
+        lambda q_, s_: model.jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    _, Jd_q = model.jacobian_and_derivative(q, qd, s)
+    expected_Jd = Jd_q + model.jacobian_spatial_derivative(q, s) * sd
+    assert_allclose(Jd, expected_Jd, rtol=1e-6, atol=1e-7)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
     robot, _ = make_pcs(num_segments=num_segments)
@@ -873,7 +1029,7 @@ def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
 
         B_impl = robot.inertia_matrix(q)
 
-        def T_of_qd(qd_):
+        def T_of_qd(qd_, q=q):
             return robot.kinetic_energy(q, qd_)
 
         dT_dqdsq = jacfwd(jax.grad(T_of_qd))(qd)
@@ -927,7 +1083,7 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments: int):
         tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
 
         grad_T_q = dT_dq(q, qd)
-        jac_T_q = jacfwd(lambda qq: dT_dqd(qq, qd))(q)
+        jac_T_q = jacfwd(lambda qq, qd=qd: dT_dqd(qq, qd))(q)
         tau_cor_autograd = jac_T_q @ qd - grad_T_q
 
         assert_allclose(tau_cor_impl, tau_cor_autograd, rtol=RTOL, atol=ATOL)

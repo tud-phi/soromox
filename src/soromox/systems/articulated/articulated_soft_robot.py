@@ -394,7 +394,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return g_tips
 
     @eqx.filter_jit
-    def forward_kinematics(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the SE(3) frame at an arc-length position.
 
@@ -473,7 +473,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return self._jacobian_for_points(screws, idxs - 1, positions)
 
     @eqx.filter_jit
-    def jacobian(self, q: Array, s: Array) -> Array:
+    def _jacobian(self, q: Array, s: Array) -> Array:
         """
         Compute the spatial Jacobian at an arc-length position.
 
@@ -520,7 +520,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return J, Jd
 
     @eqx.filter_jit
-    def jacobian_and_derivative(
+    def _jacobian_and_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -534,7 +534,7 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Tuple `(J, Jd)`, both with shape `(6, num_links)`.
         """
-        J, Jd = jax.jvp(lambda q_: self.jacobian(q_, s), (q,), (qd,))
+        J, Jd = jax.jvp(lambda q_: self._jacobian(q_, s), (q,), (qd,))
         return J, Jd
 
     @eqx.filter_jit
@@ -578,7 +578,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return 0.5 * jnp.einsum("ijk,k->ij", christoffel, qd)
 
     @eqx.filter_jit
-    def gravitational_energy(self, q: Array) -> Array:
+    def _gravitational_energy(self, q: Array) -> Array:
         """
         Compute gravitational potential energy.
 
@@ -593,7 +593,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return -jnp.sum(self.m * (p_coms @ self.g))
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array) -> Array:
+    def _gravitational_force(self, q: Array) -> Array:
         """
         Compute generalized gravitational forces.
 
@@ -603,7 +603,7 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Gravity vector, shape `(num_links,)`.
         """
-        return jax.grad(self.gravitational_energy)(q)
+        return jax.grad(self._gravitational_energy)(q)
 
     @eqx.filter_jit
     def stiffness_matrix(self) -> Array:
@@ -629,7 +629,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return self.K @ (q - self.q_ref_k)
 
     @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
+    def _elastic_energy(self, q: Array) -> Array:
         """
         Compute elastic potential energy stored in joint springs.
 

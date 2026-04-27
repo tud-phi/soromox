@@ -888,7 +888,7 @@ class TendonActuatedPCS(PCS):
         return D_tot
 
     @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
+    def _elastic_energy(self, q: Array) -> Array:
         """
         Compute the elastic energy of the robot.
 
@@ -899,7 +899,7 @@ class TendonActuatedPCS(PCS):
             U_K_tot (float): Total elastic energy of the robot.
         """
         # Elastic energy of the body
-        U_K = super().elastic_energy(q)
+        U_K = super()._elastic_energy(q)
 
         # Elastic energy of the passive tendons
         l_pt = self.passive_tendon_length(q)
