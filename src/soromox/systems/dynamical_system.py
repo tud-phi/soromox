@@ -258,7 +258,7 @@ class DynamicalSystem(eqx.Module):
         initial_state: SystemState,
         u: Array | None = None,
         tau_ext: Array | None = None,
-        environment_model: Callable[[SystemState], tuple[Array, Any | None]]
+        environment_model: Callable[[SystemState], tuple[Array | None, Any | None]]
         | None = None,
         t1: float | Array = 10.0,
         solver_dt: float | Array = 1e-4,
@@ -292,8 +292,10 @@ class DynamicalSystem(eqx.Module):
 
         Returns:
             SystemState PyTree containing time samples, system state trajectory,
-            actuation at each saved step, and (optionally) the control state
-            trajectory. Each leaf has a leading time dimension aligned with `save_ts`.
+            actuation at each saved step, (optionally) the control state
+            trajectory, and (optionally) the environment state trajectory if
+            `initial_state.environment_state` was provided. Each leaf has a
+            leading time dimension aligned with `save_ts`.
         """
         if initial_state.control_state is not None:
             warnings.warn(
@@ -360,7 +362,7 @@ class DynamicalSystem(eqx.Module):
         initial_state: SystemState,
         controller: Callable[[SystemState], tuple[Array, Any | None]],
         tau_ext: Array | None = None,
-        environment_model: Callable[[SystemState], tuple[Array, Any | None]]
+        environment_model: Callable[[SystemState], tuple[Array | None, Any | None]]
         | None = None,
         t1: float | Array = 10.0,
         solver_dt: float | Array = 1e-4,
@@ -399,8 +401,10 @@ class DynamicalSystem(eqx.Module):
 
         Returns:
             SystemState PyTree containing time samples, system state trajectory,
-            actuation at each saved step, and controller state trajectory. Each
-            leaf has a leading time dimension aligned with `save_ts`.
+            actuation at each saved step, controller state trajectory, and
+            (optionally) the environment state trajectory if
+            `initial_state.environment_state` was provided. Each leaf has a
+            leading time dimension aligned with `save_ts`.
         """
         if controller is None:
             raise ValueError("A controller must be provided for closed-loop rollouts.")
@@ -523,7 +527,7 @@ class DynamicalSystem(eqx.Module):
         initial_state: SystemState,
         controller: Callable[[SystemState], tuple[Array, Any | None]],
         tau_ext: Array | None = None,
-        environment_model: Callable[[SystemState], tuple[Array, Any | None]]
+        environment_model: Callable[[SystemState], tuple[Array | None, Any | None]]
         | None = None,
         duration: float = 10.0,
         solver_dt: float | Array = 1e-4,
@@ -565,6 +569,13 @@ class DynamicalSystem(eqx.Module):
             solver: Diffrax solver.
             stepsize_controller: Diffrax stepsize controller.
             max_steps: maximum solver steps.
+
+        Returns:
+            SystemState PyTree containing time samples, system state trajectory,
+            actuation at each saved step, controller state trajectory, and
+            (optionally) the environment state trajectory if
+            ``initial_state.environment_state`` was provided. Each leaf has a
+            leading time dimension aligned with the regular save grid.
         """
         if controller is None:
             raise ValueError("A controller must be provided for closed-loop rollouts.")

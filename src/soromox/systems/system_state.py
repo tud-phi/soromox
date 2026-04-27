@@ -1,9 +1,19 @@
-__all__ = ["SystemState"]
+__all__ = ["EnvironmentState", "SystemState"]
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, TypeAlias
 
 import jax
 from jax import Array
+
+EnvironmentState: TypeAlias = Any
+"""Type alias for an environment state PyTree.
+
+An ``EnvironmentState`` is any JAX-compatible PyTree (e.g., a dict of
+``Array`` values, a nested structure, or a single array) that holds the
+auxiliary state of a coupled environment model.  It is integrated alongside
+the robot dynamics when an ``environment_model`` is supplied to a rollout
+method.
+"""
 
 
 @jax.tree_util.register_pytree_node_class

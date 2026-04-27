@@ -59,6 +59,18 @@ class ClockEnvironment(eqx.Module):
         return tau_environment, environment_state_dot
 
 
+class _ConstantStateDotEnvironment(eqx.Module):
+    """Returns a fixed scalar environment_state_dot regardless of input state.
+
+    Used to test that rollouts raise when environment_state_dot is returned but
+    no initial environment_state was provided.
+    """
+
+    def __call__(self, state: SystemState):
+        q_len = state.y.shape[0] // 2
+        return jnp.zeros((q_len,)), jnp.array(0.0)
+
+
 def test_rollout_to_keeps_equilibrium():
     robot = Pendulum(_pendulum_params())
 
@@ -345,6 +357,53 @@ def test_rollout_discrete_closed_loop_to_reverse_mode_grad_works():
 
     dloss_dkp = jax.grad(loss_fn)(jnp.array(8.0))
     assert jnp.isfinite(dloss_dkp)
+
+
+def test_rollout_to_environment_model_raises_without_initial_environment_state():
+    """Regression test: error if environment model returns state derivative but no initial state."""
+    import pytest
+
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.zeros((2,))
+    qd0 = jnp.zeros_like(q0)
+    initial_state = SystemState(t=0.0, y=jnp.concatenate([q0, qd0]))
+
+    with pytest.raises(ValueError, match="environment_state"):
+        robot.rollout_to(
+            initial_state=initial_state,
+            u=jnp.zeros_like(q0),
+            environment_model=_ConstantStateDotEnvironment(),
+            t1=0.05,
+            solver_dt=1e-3,
+            save_dt=0.05,
+        )
+
+
+def test_rollout_closed_loop_to_environment_model_raises_without_initial_environment_state():
+    """Regression test: error if environment model returns state derivative but no initial state."""
+    import pytest
+
+    robot = Pendulum(_pendulum_params())
+
+    q0 = jnp.zeros((2,))
+    qd0 = jnp.zeros_like(q0)
+    initial_state = SystemState(
+        t=0.0,
+        y=jnp.concatenate([q0, qd0]),
+        u=jnp.zeros_like(q0),
+    )
+    controller = ZeroController(num_actuators=q0.shape[0])
+
+    with pytest.raises(ValueError, match="environment_state"):
+        robot.rollout_closed_loop_to(
+            initial_state=initial_state,
+            controller=controller,
+            environment_model=_ConstantStateDotEnvironment(),
+            t1=0.05,
+            solver_dt=1e-3,
+            save_dt=0.05,
+        )
 
 
 def test_rollout_discrete_control_and_save_steps():
