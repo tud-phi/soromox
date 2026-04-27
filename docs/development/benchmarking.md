@@ -1,9 +1,11 @@
 # Soromox Benchmarking Toolkit
 
-Soromox ships two complementary benchmarking CLIs under `tools/benchmarks`:
+Soromox ships complementary benchmarking CLIs under `tools/benchmarks`:
 
 - `benchmark_system_methods.py` profiles individual model routines (forward kinematics,
   dynamics, etc.) to track JIT compile and steady-state execution costs.
+- `benchmark_autograd_vs_analytic.py` compares PCS/GVS analytical Jacobian and
+  gravity implementations against the default autograd-based `SoftRobot` paths.
 - `benchmark_simulation_batch_scaling.py` measures how simulation throughput scales as
   you increase the number of batched environments (e.g., via `jax.vmap`) and reports
   the simulated-time / wall-time ratio.
@@ -62,6 +64,27 @@ For `articulated_soft_robot`, the method benchmark includes both the default
 articulated-body forward dynamics path and a dense Jacobian-energy forward
 dynamics solve (`forward_dynamics_dense`). Comparing these two cases is useful
 for tracking ABA performance against the controller-facing dense dynamics API.
+
+## Comparing autograd defaults with analytical PCS/GVS methods
+
+Use `benchmark_autograd_vs_analytic.py` when you want a direct runtime comparison
+between the analytical PCS/GVS implementations and the inherited `SoftRobot`
+autograd defaults. The benchmark currently covers `jacobian`,
+`jacobian_and_derivative`, and `gravitational_force`, and reports both timing and
+output-difference columns.
+
+```bash
+python tools/benchmarks/benchmark_autograd_vs_analytic.py \
+  --systems pcs gvs \
+  --segment-counts 1 2 4 \
+  --execution-repeats 5 \
+  --csv benchmarks/autograd-vs-analytic.csv \
+  --json benchmarks/autograd-vs-analytic.json
+```
+
+Each row includes analytical and autograd cold-call estimates, mean warm-call
+execution times, the autograd/analytical execution-time ratio, and `max_abs_diff`
+/ `max_rel_diff` sanity checks for the returned arrays.
 
 ## Benchmarking simulation batch scaling
 
