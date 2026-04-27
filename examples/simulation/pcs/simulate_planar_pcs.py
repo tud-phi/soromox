@@ -45,7 +45,7 @@ if __name__ == "__main__":
         params=params,
     )
 
-    J, Jd = robot.jacobian_and_derivative(
+    J, Jd = robot.jacobian_and_time_derivative(
         q=jnp.zeros((3 * num_segments,)),
         qd=jnp.zeros((3 * num_segments,)),
         s=params["L"][0],

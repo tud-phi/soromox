@@ -188,33 +188,9 @@ class SoftRobot(DynamicalSystem):
         if sd is None:
             pose_tangent_s = jnp.zeros_like(pose)
         else:
-            pose_tangent_s = robot.forward_kinematics_spatial_derivative(q, s) * sd
+            pose_tangent_s = robot.forward_kinematics_arc_length_derivative(q, s) * sd
 
         return pose, pose_tangent_q + pose_tangent_s
-
-    def forward_kinematics_spatial_derivative(self, q: Array, s: Array) -> Array:
-        """
-        Compute the arc-length derivative of the forward kinematics at ``s``.
-
-        The returned tangent has the same shape and representation as
-        ``forward_kinematics(q, s)``.
-        """
-        return self._forward_kinematics_spatial_derivative(q, s)
-
-    def _forward_kinematics_spatial_derivative(self, q: Array, s: Array) -> Array:
-        """
-        Protected arc-length derivative hook for forward kinematics.
-
-        Subclasses can override this with an analytical expression. The default
-        implementation differentiates the protected primal hook with respect to
-        the scalar arc-length parameter ``s``.
-        """
-        _, pose_s = jvp(
-            lambda s_: self._forward_kinematics(q, s_),
-            (s,),
-            (jnp.ones_like(jnp.asarray(s)),),
-        )
-        return pose_s
 
     def forward_kinematics_tips(self, q: Array) -> Array:
         """
@@ -247,6 +223,30 @@ class SoftRobot(DynamicalSystem):
             chi_ps: Poses at all points, shape depends on robot type.
         """
         return vmap(lambda s: self.forward_kinematics(q, s))(s_ps)
+
+    def forward_kinematics_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the forward kinematics at ``s``.
+
+        The returned tangent has the same shape and representation as
+        ``forward_kinematics(q, s)``.
+        """
+        return self._forward_kinematics_arc_length_derivative(q, s)
+
+    def _forward_kinematics_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """
+        Protected arc-length derivative hook for forward kinematics.
+
+        Subclasses can override this with an analytical expression. The default
+        implementation differentiates the protected primal hook with respect to
+        the scalar arc-length parameter ``s``.
+        """
+        _, pose_s = jvp(
+            lambda s_: self._forward_kinematics(q, s_),
+            (s,),
+            (jnp.ones_like(jnp.asarray(s)),),
+        )
+        return pose_s
 
     def jacobian(self, q: Array, s: Array) -> Array:
         """
@@ -301,38 +301,14 @@ class SoftRobot(DynamicalSystem):
         if qd is None:
             Jd_q = jnp.zeros_like(J)
         else:
-            _, Jd_q = robot.jacobian_and_derivative(q, qd, s)
+            _, Jd_q = robot.jacobian_and_time_derivative(q, qd, s)
 
         if sd is None:
             Jd_s = jnp.zeros_like(J)
         else:
-            Jd_s = robot.jacobian_spatial_derivative(q, s) * sd
+            Jd_s = robot.jacobian_arc_length_derivative(q, s) * sd
 
         return J, Jd_q + Jd_s
-
-    def jacobian_spatial_derivative(self, q: Array, s: Array) -> Array:
-        """
-        Compute the arc-length derivative of the Jacobian at ``s``.
-
-        The returned derivative has the same shape and frame convention as
-        ``jacobian(q, s)``.
-        """
-        return self._jacobian_spatial_derivative(q, s)
-
-    def _jacobian_spatial_derivative(self, q: Array, s: Array) -> Array:
-        """
-        Protected arc-length derivative hook for the Jacobian.
-
-        Subclasses can override this with an analytical expression. The default
-        implementation differentiates the protected Jacobian hook with respect
-        to the scalar arc-length parameter ``s``.
-        """
-        _, J_s = jvp(
-            lambda s_: self._jacobian(q, s_),
-            (s,),
-            (jnp.ones_like(jnp.asarray(s)),),
-        )
-        return J_s
 
     def jacobian_tips(self, q: Array) -> Array:
         """
@@ -364,7 +340,31 @@ class SoftRobot(DynamicalSystem):
         """
         return vmap(lambda s: self.jacobian(q, s))(s_ps)
 
-    def jacobian_and_derivative(
+    def jacobian_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the Jacobian at ``s``.
+
+        The returned derivative has the same shape and frame convention as
+        ``jacobian(q, s)``.
+        """
+        return self._jacobian_arc_length_derivative(q, s)
+
+    def _jacobian_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """
+        Protected arc-length derivative hook for the Jacobian.
+
+        Subclasses can override this with an analytical expression. The default
+        implementation differentiates the protected Jacobian hook with respect
+        to the scalar arc-length parameter ``s``.
+        """
+        _, J_s = jvp(
+            lambda s_: self._jacobian(q, s_),
+            (s,),
+            (jnp.ones_like(jnp.asarray(s)),),
+        )
+        return J_s
+
+    def jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -379,9 +379,9 @@ class SoftRobot(DynamicalSystem):
             J: Jacobian matrix of shape (n_pose_dim, num_dofs).
             Jd: Time derivative of the Jacobian, shape (n_pose_dim, num_dofs).
         """
-        return self._jacobian_and_derivative(q, qd, s)
+        return self._jacobian_and_time_derivative(q, qd, s)
 
-    def _jacobian_and_derivative(
+    def _jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -393,13 +393,13 @@ class SoftRobot(DynamicalSystem):
         J, Jd = jvp(lambda q_: self._jacobian(q_, s), (q,), (qd,))
         return J, Jd
 
-    def jacobian_and_derivative_batched(
+    def jacobian_and_time_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
         Compute the Jacobian and its derivative at multiple points along the robot.
 
-        Default implementation uses vmap over jacobian_and_derivative.
+        Default implementation uses vmap over jacobian_and_time_derivative.
         Subclasses may override this for more efficient batch computation.
 
         Args:
@@ -409,9 +409,9 @@ class SoftRobot(DynamicalSystem):
 
         Returns:
             J_ps: Jacobians at all points, shape (N, n_pose_dim, num_dofs).
-            Jd_ps: Jacobian derivatives at all points, shape (N, n_pose_dim, num_dofs).
+            Jd_ps: Jacobian time derivatives at all points, shape (N, n_pose_dim, num_dofs).
         """
-        return vmap(lambda s: self.jacobian_and_derivative(q, qd, s))(s_ps)
+        return vmap(lambda s: self.jacobian_and_time_derivative(q, qd, s))(s_ps)
 
     # -----------------------------------------
     # Kinematics implementation helpers

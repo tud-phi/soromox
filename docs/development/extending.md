@@ -176,7 +176,7 @@ def jacobian(self, q: jax.Array, s: float) -> jax.Array:
     # or analytical derivation
     ...
 
-def jacobian_and_derivative(
+def jacobian_and_time_derivative(
     self, q: jax.Array, qd: jax.Array, s: float
 ) -> tuple[jax.Array, jax.Array]:
     """
@@ -387,7 +387,7 @@ Equinox modules are automatically registered as JAX PyTrees. Ensure:
 | **Kinematics** | | |
 | `forward_kinematics(q, s)` | Yes | Pose at arc length s |
 | `jacobian(q, s)` | Yes | Jacobian at arc length s |
-| `jacobian_and_derivative(q, qd, s)` | Recommended | Jacobian and time derivative |
+| `jacobian_and_time_derivative(q, qd, s)` | Recommended | Jacobian and time derivative |
 | **Dynamics** | | |
 | `inertia_matrix(q)` | Yes | Mass/inertia matrix M(q) |
 | `coriolis_matrix(q, qd)` | Yes | Coriolis matrix C(q,qd) |

@@ -178,7 +178,7 @@ class TestOperationalSpaceJacobian:
 
         assert J.shape == (2, planar_pcs_robot.num_dofs)
 
-    def test_jacobian_and_derivative_shapes(self, pendulum_robot):
+    def test_jacobian_and_time_derivative_shapes(self, pendulum_robot):
         """Test shapes of Jacobian and its derivative."""
         s_ps = jnp.array([float(pendulum_robot.total_length)])
         op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
@@ -186,7 +186,7 @@ class TestOperationalSpaceJacobian:
         q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
         qd = jnp.linspace(0.6, -0.5, pendulum_robot.num_links)
 
-        J, Jd = op_space.jacobian_and_derivative(q, qd)
+        J, Jd = op_space.jacobian_and_time_derivative(q, qd)
 
         assert J.shape == (3, pendulum_robot.num_dofs)
         assert Jd.shape == (3, pendulum_robot.num_dofs)

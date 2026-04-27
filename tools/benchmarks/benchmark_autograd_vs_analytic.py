@@ -57,16 +57,16 @@ def _autograd_jacobian(system: SoftRobot, q: Array, s: Array) -> Array:
     return SoftRobot.jacobian(system, q, s)
 
 
-def _analytical_jacobian_and_derivative(
+def _analytical_jacobian_and_time_derivative(
     system: SoftRobot, q: Array, qd: Array, s: Array
 ) -> tuple[Array, Array]:
-    return system.jacobian_and_derivative(q, qd, s)
+    return system.jacobian_and_time_derivative(q, qd, s)
 
 
-def _autograd_jacobian_and_derivative(
+def _autograd_jacobian_and_time_derivative(
     system: SoftRobot, q: Array, qd: Array, s: Array
 ) -> tuple[Array, Array]:
-    # Do not call SoftRobot.jacobian_and_derivative(system, ...): the base method
+    # Do not call SoftRobot.jacobian_and_time_derivative(system, ...): the base method
     # dispatches through self.jacobian, which would resolve to PCS/GVS analytical
     # overrides. Pin the inner Jacobian to SoftRobot.jacobian so this benchmark
     # measures the default autograd-from-forward-kinematics path.
@@ -96,9 +96,9 @@ def _case_registry() -> Mapping[
             _autograd_jacobian,
             lambda ctx: (ctx["q"], ctx["s_tip"]),
         ),
-        "jacobian_and_derivative": (
-            _analytical_jacobian_and_derivative,
-            _autograd_jacobian_and_derivative,
+        "jacobian_and_time_derivative": (
+            _analytical_jacobian_and_time_derivative,
+            _autograd_jacobian_and_time_derivative,
             lambda ctx: (ctx["q"], ctx["qd"], ctx["s_tip"]),
         ),
         "gravitational_force": (

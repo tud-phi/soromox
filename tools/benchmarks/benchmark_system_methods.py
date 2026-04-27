@@ -172,10 +172,10 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobians_tips, (ctx["q"],)),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
-            description="Tip Jacobians and their derivatives",
+            name="jacobian_and_time_derivative",
+            description="Tip Jacobians and their time derivatives",
             builder=lambda sys, ctx, _: (
-                sys.jacobians_and_derivatives_tips,
+                sys.jacobian_and_time_derivatives_tips,
                 (ctx["q"], ctx["qd"]),
             ),
         ),
@@ -227,10 +227,10 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobians_tips, (ctx["q"],)),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
-            description="Tip Jacobians and their derivatives",
+            name="jacobian_and_time_derivative",
+            description="Tip Jacobians and their time derivatives",
             builder=lambda sys, ctx, _: (
-                sys.jacobians_and_derivatives_tips,
+                sys.jacobian_and_time_derivatives_tips,
                 (ctx["q"], ctx["qd"]),
             ),
         ),
@@ -297,9 +297,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobian, (ctx["q"], ctx["s_tip"])),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
+            name="jacobian_and_time_derivative",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative,
+                sys.jacobian_and_time_derivative,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
@@ -364,9 +364,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobian, (ctx["q"], ctx["s_tip"])),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
+            name="jacobian_and_time_derivative",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative,
+                sys.jacobian_and_time_derivative,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
@@ -429,16 +429,16 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             ),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative_bodyframe",
+            name="jacobian_and_time_derivative_bodyframe",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative_bodyframe,
+                sys.jacobian_and_time_derivative_bodyframe,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative_inertialframe",
+            name="jacobian_and_time_derivative_inertialframe",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative_inertialframe,
+                sys.jacobian_and_time_derivative_inertialframe,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),

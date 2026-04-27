@@ -344,7 +344,7 @@ class ArticulatedSoftRobot(SoftRobot):
         )
         return screw_dots
 
-    def _jacobian_and_derivative_for_point_from_screws(
+    def _jacobian_and_time_derivative_for_point_from_screws(
         self,
         screws: Array,
         screw_dots: Array,
@@ -375,7 +375,7 @@ class ArticulatedSoftRobot(SoftRobot):
 
         return J, Jd
 
-    def _jacobian_and_derivative_for_points_from_screws(
+    def _jacobian_and_time_derivative_for_points_from_screws(
         self,
         screws: Array,
         screw_dots: Array,
@@ -385,7 +385,7 @@ class ArticulatedSoftRobot(SoftRobot):
     ) -> tuple[Array, Array]:
         """Compute point Jacobians and derivatives from world-frame screw data."""
         return vmap(
-            lambda i, p: self._jacobian_and_derivative_for_point_from_screws(
+            lambda i, p: self._jacobian_and_time_derivative_for_point_from_screws(
                 screws, screw_dots, i, p, qd
             )
         )(link_idxs, p_worlds)
@@ -565,7 +565,7 @@ class ArticulatedSoftRobot(SoftRobot):
         return self._jacobian_for_point_from_screws(screws, link_idx, g_s[:3, 3])
 
     @eqx.filter_jit
-    def jacobian_and_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
+    def jacobian_and_time_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Compute tip Jacobians and their time derivatives.
 
@@ -581,12 +581,12 @@ class ArticulatedSoftRobot(SoftRobot):
         screw_dots = self._world_joint_screw_derivatives(screws, qd)
         idxs = jnp.arange(self.num_links)
         positions = g_tips[:, :3, 3]
-        return self._jacobian_and_derivative_for_points_from_screws(
+        return self._jacobian_and_time_derivative_for_points_from_screws(
             screws, screw_dots, idxs, positions, qd
         )
 
     @eqx.filter_jit
-    def _jacobian_and_derivative(
+    def _jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -617,7 +617,7 @@ class ArticulatedSoftRobot(SoftRobot):
         g_s = g_links[link_idx] @ self._translation(displacement)
         screws = self._world_joint_screws_from_joint_frames(g_joints)
         screw_dots = self._world_joint_screw_derivatives(screws, qd)
-        return self._jacobian_and_derivative_for_point_from_screws(
+        return self._jacobian_and_time_derivative_for_point_from_screws(
             screws, screw_dots, link_idx, g_s[:3, 3], qd
         )
 

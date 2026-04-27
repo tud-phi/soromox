@@ -1147,8 +1147,10 @@ class PlanarHSA(SoftRobot):
 
         return J
 
-    # Protected SoftRobot hook for the virtual-backbone Jacobian.
-    _jacobian = jacobian_virtual_backbone
+    @eqx.filter_jit
+    def _jacobian(self, q: Array, s: Array) -> Array:
+        """Protected SoftRobot hook for the virtual-backbone Jacobian."""
+        return self.jacobian_virtual_backbone(q, s)
 
     @eqx.filter_jit
     def jacobian_tips(self, q: Array) -> Array:
@@ -1165,7 +1167,7 @@ class PlanarHSA(SoftRobot):
         return self.jacobian_batched(q, self.L_cum[1:])
 
     @eqx.filter_jit
-    def jacobian_and_derivative_virtual_backbone(
+    def jacobian_and_time_derivative_virtual_backbone(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -1183,7 +1185,7 @@ class PlanarHSA(SoftRobot):
         # Compute the Jacobian using the symbolic expression
         J = self.jacobian_virtual_backbone(q, s)
 
-        # Compute the Jacobian derivative: d/dt(J(q(t))) = d(J)/dq @ qd
+        # Compute the Jacobian time derivative: d/dt(J(q(t))) = d(J)/dq @ qd
         # Define a function that computes the Jacobian for a given q
         def jacobian_fn(q: Array) -> Array:
             return self.jacobian_virtual_backbone(q, s)
@@ -1196,8 +1198,12 @@ class PlanarHSA(SoftRobot):
 
         return J, Jd
 
-    # Protected SoftRobot hook for the virtual-backbone Jacobian derivative.
-    _jacobian_and_derivative = jacobian_and_derivative_virtual_backbone
+    @eqx.filter_jit
+    def _jacobian_and_time_derivative(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected SoftRobot hook for the virtual-backbone Jacobian time derivative."""
+        return self.jacobian_and_time_derivative_virtual_backbone(q, qd, s)
 
     @eqx.filter_jit
     def inverse_kinematics_end_effector(self, chiee: Array) -> Array:

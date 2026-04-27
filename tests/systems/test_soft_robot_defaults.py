@@ -120,7 +120,7 @@ def test_default_planar_jacobians_and_tip_methods() -> None:
     J_expected = jax.jacfwd(lambda q_: robot.forward_kinematics(q_, s))(q)
     assert_allclose(robot.jacobian(q, s), J_expected, rtol=1e-12, atol=1e-12)
 
-    J, Jd = robot.jacobian_and_derivative(q, qd, s)
+    J, Jd = robot.jacobian_and_time_derivative(q, qd, s)
     J_expected, Jd_expected = jax.jvp(lambda q_: robot.jacobian(q_, s), (q,), (qd,))
     assert_allclose(J, J_expected, rtol=1e-12, atol=1e-12)
     assert_allclose(Jd, Jd_expected, rtol=1e-12, atol=1e-12)

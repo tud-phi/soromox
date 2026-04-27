@@ -451,7 +451,7 @@ class Pendulum(SoftRobot):
         return J_tips
 
     @eqx.filter_jit
-    def jacobian_and_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
+    def jacobian_and_time_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 
@@ -657,7 +657,7 @@ class Pendulum(SoftRobot):
         return vmap(lambda s: self.jacobian(q, s))(s_ps)
 
     @eqx.filter_jit
-    def _jacobian_and_derivative(
+    def _jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -679,7 +679,7 @@ class Pendulum(SoftRobot):
         # Get Jacobian
         J = self._jacobian(q, s)
 
-        # Angular Jacobian derivative is zero (planar revolute)
+        # Angular Jacobian time derivative is zero (planar revolute)
         Jd_omega = jnp.zeros(N, dtype=q.dtype)
 
         # Joint positions and velocities
@@ -705,11 +705,11 @@ class Pendulum(SoftRobot):
         return J, Jd
 
     @eqx.filter_jit
-    def jacobian_and_derivative_batched(
+    def jacobian_and_time_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
-        Compute Jacobians and their derivatives at multiple arc-length positions.
+        Compute Jacobians and their time derivatives at multiple arc-length positions.
 
         Args:
             q: Joint angles, shape (N,) [rad].
@@ -718,9 +718,9 @@ class Pendulum(SoftRobot):
 
         Returns:
             J_ps: Jacobians at all positions, shape (M, 3, N).
-            Jd_ps: Jacobian derivatives at all positions, shape (M, 3, N).
+            Jd_ps: Jacobian time derivatives at all positions, shape (M, 3, N).
         """
-        return vmap(lambda s: self.jacobian_and_derivative(q, qd, s))(s_ps)
+        return vmap(lambda s: self.jacobian_and_time_derivative(q, qd, s))(s_ps)
 
     # -------------------------------
     # Standardized dynamics interface

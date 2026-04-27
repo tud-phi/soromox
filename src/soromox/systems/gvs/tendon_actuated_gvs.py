@@ -106,7 +106,7 @@ class TendonActuatedGVS(GVS):
         if active_tendon_routing_basis is None:
             active_tendon_routing_basis = {
                 "d_s": act.linear_routing,
-                "dd_s_ds": act.linear_routing_derivative,
+                "dd_s_ds": act.linear_routing_arc_length_derivative,
             }
         self._set_active_tendon_routing_basis(active_tendon_routing_basis)
         self._set_active_tendon_routing_params(active_tendon_routing_params)

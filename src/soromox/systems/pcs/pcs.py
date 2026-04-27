@@ -673,7 +673,7 @@ class PCS(SoftRobot):
         return g_s
 
     @eqx.filter_jit
-    def _forward_kinematics_spatial_derivative(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics_arc_length_derivative(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the SE(3) pose at ``s``.
 
@@ -1033,7 +1033,7 @@ class PCS(SoftRobot):
         return J_local
 
     @eqx.filter_jit
-    def jacobian_spatial_derivative_bodyframe(self, q: Array, s: Array) -> Array:
+    def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the body-frame Jacobian at ``s``.
         """
@@ -1055,7 +1055,7 @@ class PCS(SoftRobot):
             J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
             return J_rot.at[i].set(Ad_inv @ T)
 
-        def integrate_segment_spatial_derivative(
+        def integrate_segment_arc_length_derivative(
             J_base: Array,
             i: Array,
             xi_i: Array,
@@ -1081,7 +1081,7 @@ class PCS(SoftRobot):
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
                 J_next = integrate_segment(J_prev, i, xi_i, arc_len)
-                J_s_next = integrate_segment_spatial_derivative(
+                J_s_next = integrate_segment_arc_length_derivative(
                     J_prev, i, xi_i, arc_len
                 )
 
@@ -1152,14 +1152,14 @@ class PCS(SoftRobot):
         return J_global
 
     @eqx.filter_jit
-    def jacobian_spatial_derivative_inertialframe(
+    def jacobian_arc_length_derivative_inertialframe(
         self, q: Array, s: Array
     ) -> Array:
         """
         Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
         """
         J_local = self.jacobian_bodyframe(q, s)
-        J_local_s = self.jacobian_spatial_derivative_bodyframe(q, s)
+        J_local_s = self.jacobian_arc_length_derivative_bodyframe(q, s)
         g_s = self._forward_kinematics(q, s)
 
         g_rot = jnp.block(
@@ -1395,7 +1395,7 @@ class PCS(SoftRobot):
         return J_local_ps, Jd_local_ps
 
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe(
+    def jacobian_and_time_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -1507,7 +1507,7 @@ class PCS(SoftRobot):
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe_batched(
+    def jacobian_and_time_derivative_bodyframe_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -1536,7 +1536,7 @@ class PCS(SoftRobot):
         return J_local_ps, Jd_local_ps
 
     @eqx.filter_jit
-    def jacobian_and_derivative_inertialframe(
+    def jacobian_and_time_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -1551,7 +1551,7 @@ class PCS(SoftRobot):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_strains)
         """
-        J_local, Jd_local = self.jacobian_and_derivative_bodyframe(q, qd, s)
+        J_local, Jd_local = self.jacobian_and_time_derivative_bodyframe(q, qd, s)
 
         # compute the Adjoint transformation matrix at point s
         g_s = self.forward_kinematics(q, s)
@@ -1576,7 +1576,7 @@ class PCS(SoftRobot):
 
         return J_global, Jd_global
 
-    def jacobian_and_derivative_inertialframe_batched(
+    def jacobian_and_time_derivative_inertialframe_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -1591,7 +1591,7 @@ class PCS(SoftRobot):
             J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
             Jd_global_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_active_strains)
         """
-        J_local_ps, Jd_local_ps = self.jacobian_and_derivative_bodyframe_batched(
+        J_local_ps, Jd_local_ps = self.jacobian_and_time_derivative_bodyframe_batched(
             q, qd, s_ps
         )  # shape (N, 6, num_active_strains)
 
@@ -1627,11 +1627,34 @@ class PCS(SoftRobot):
         )  # shape (N, 6, num_active_strains)
         return J_global_ps, Jd_global_ps
 
-    _jacobian = jacobian_inertialframe
-    _jacobian_spatial_derivative = jacobian_spatial_derivative_inertialframe
-    jacobian_batched = jacobian_inertialframe_batched
-    _jacobian_and_derivative = jacobian_and_derivative_inertialframe
-    jacobian_and_derivative_batched = jacobian_and_derivative_inertialframe_batched
+    @eqx.filter_jit
+    def _jacobian(self, q: Array, s: Array) -> Array:
+        """Protected SoftRobot hook for the inertial-frame Jacobian."""
+        return self.jacobian_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def _jacobian_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """Protected SoftRobot hook for the inertial-frame Jacobian arc-length derivative."""
+        return self.jacobian_arc_length_derivative_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+        """Compute inertial-frame Jacobians at multiple arc-length positions."""
+        return self.jacobian_inertialframe_batched(q, s_ps)
+
+    @eqx.filter_jit
+    def _jacobian_and_time_derivative(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected SoftRobot hook for the inertial-frame Jacobian time derivative."""
+        return self.jacobian_and_time_derivative_inertialframe(q, qd, s)
+
+    @eqx.filter_jit
+    def jacobian_and_time_derivative_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """Compute inertial-frame Jacobians and time derivatives at multiple arc-length positions."""
+        return self.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
 
     # ==========================================
     # Useful functions for the system
@@ -2215,7 +2238,7 @@ class PCS(SoftRobot):
         Args:
             q: Active generalized coordinates, shape ``(self.num_dofs,)``.
             qd: Active generalized velocities, shape ``(self.num_dofs,)``.
-            convective_only_jd: If true, compute a Jacobian derivative that is
+            convective_only_jd: If true, compute a Jacobian time derivative that is
                 only guaranteed to be equivalent after multiplication by ``qd``.
 
         When ``convective_only_jd`` is true, the returned derivative is only

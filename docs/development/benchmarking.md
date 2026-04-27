@@ -70,7 +70,7 @@ for tracking ABA performance against the controller-facing dense dynamics API.
 Use `benchmark_autograd_vs_analytic.py` when you want a direct runtime comparison
 between the analytical PCS/GVS implementations and the inherited `SoftRobot`
 autograd defaults. The benchmark currently covers `jacobian`,
-`jacobian_and_derivative`, and `gravitational_force`, and reports both timing and
+`jacobian_and_time_derivative`, and `gravitational_force`, and reports both timing and
 output-difference columns.
 
 ```bash

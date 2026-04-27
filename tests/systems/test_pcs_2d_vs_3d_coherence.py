@@ -233,7 +233,7 @@ def test_jacobians_coherence(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_jacobian_derivatives_coherence(num_segments):
+def test_jacobian_time_derivatives_coherence(num_segments):
     planar_model = make_planar_model(num_segments)
     spatial_model = make_spatial_model(num_segments)
     arc_lengths = planar_arc_lengths(planar_model)
@@ -250,18 +250,18 @@ def test_jacobian_derivatives_coherence(num_segments):
         qd_spatial = lift_planar_velocity(planar_model, spatial_model, qd_planar)
 
         for s in arc_lengths:
-            Jb_planar, Jbd_planar = planar_model.jacobian_and_derivative_bodyframe(
+            Jb_planar, Jbd_planar = planar_model.jacobian_and_time_derivative_bodyframe(
                 q_planar, qd_planar, s
             )
-            Ji_planar, Jid_planar = planar_model.jacobian_and_derivative_inertialframe(
+            Ji_planar, Jid_planar = planar_model.jacobian_and_time_derivative_inertialframe(
                 q_planar, qd_planar, s
             )
 
-            Jb_spatial, Jbd_spatial = spatial_model.jacobian_and_derivative_bodyframe(
+            Jb_spatial, Jbd_spatial = spatial_model.jacobian_and_time_derivative_bodyframe(
                 q_spatial, qd_spatial, s
             )
             Ji_spatial, Jid_spatial = (
-                spatial_model.jacobian_and_derivative_inertialframe(
+                spatial_model.jacobian_and_time_derivative_inertialframe(
                     q_spatial, qd_spatial, s
                 )
             )

@@ -1,4 +1,4 @@
-__all__ = ["linear_routing", "linear_routing_derivative"]
+__all__ = ["linear_routing", "linear_routing_arc_length_derivative"]
 from jax import numpy as jnp
 
 
@@ -29,9 +29,9 @@ def linear_routing(tendon_routing_params, s):
     return d_s
 
 
-def linear_routing_derivative(tendon_routing_params, s):
+def linear_routing_arc_length_derivative(tendon_routing_params, s):
     """
-    Spatial derivative of the linear tendon routing as a function of ``s``.
+    Arc-length derivative of the linear tendon routing as a function of ``s``.
 
     Specifically, ``dd_s_ds`` is the derivative of ``d_s`` with respect to ``s``.
 

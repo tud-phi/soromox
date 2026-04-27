@@ -130,12 +130,12 @@ def test_tip_linear_jacobian_match_autodiff(num_links):
 
 
 @pytest.mark.parametrize("num_links", [2, 3])
-def test_jacobian_derivative_matches_jvp(num_links):
+def test_jacobian_time_derivative_matches_jvp(num_links):
     robot = make_articulated_robot(num_links)
     q = jnp.linspace(-0.3, 0.4, num_links)
     qd = jnp.linspace(0.6, -0.5, num_links)
 
-    J, Jd = robot.jacobian_and_derivatives_tips(q, qd)
+    J, Jd = robot.jacobian_and_time_derivatives_tips(q, qd)
     J_direct = robot.jacobian_tips(q)
     _, Jd_jvp = jax.jvp(robot.jacobian_tips, (q,), (qd,))
 
@@ -143,12 +143,12 @@ def test_jacobian_derivative_matches_jvp(num_links):
     assert_allclose(Jd, Jd_jvp, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
 
-def test_spatial_jacobian_derivative_matches_jvp():
+def test_spatial_jacobian_time_derivative_matches_jvp():
     robot = make_spatial_robot()
     q = jnp.array([0.2, -0.3, 0.4])
     qd = jnp.array([0.5, -0.2, 0.3])
 
-    J_tips, Jd_tips = robot.jacobian_and_derivatives_tips(q, qd)
+    J_tips, Jd_tips = robot.jacobian_and_time_derivatives_tips(q, qd)
     J_tips_direct = robot.jacobian_tips(q)
     _, Jd_tips_jvp = jax.jvp(robot.jacobian_tips, (q,), (qd,))
 
@@ -163,7 +163,7 @@ def test_spatial_jacobian_derivative_matches_jvp():
         ]
     )
     for s in s_points:
-        J, Jd = robot._jacobian_and_derivative(q, qd, s)
+        J, Jd = robot._jacobian_and_time_derivative(q, qd, s)
         J_direct = robot._jacobian(q, s)
         _, Jd_jvp = jax.jvp(lambda q_, s=s: robot._jacobian(q_, s), (q,), (qd,))
 
@@ -278,8 +278,8 @@ def test_batched_kinematics_and_jacobian_match_pointwise_evaluation(num_links):
     J_expected = robot.jacobian_tips(q)
     assert_allclose(J_batched, J_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
-    J_batched, Jd_batched = robot.jacobian_and_derivative_batched(q, qd, s_ps)
-    J_expected, Jd_expected = robot.jacobian_and_derivatives_tips(q, qd)
+    J_batched, Jd_batched = robot.jacobian_and_time_derivative_batched(q, qd, s_ps)
+    J_expected, Jd_expected = robot.jacobian_and_time_derivatives_tips(q, qd)
     assert_allclose(J_batched, J_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(
         Jd_batched, Jd_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol()
@@ -297,7 +297,7 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_link
 
     dg_dq = jax.jacfwd(robot.forward_kinematics, argnums=0)(q, s)
     dJ_dq = jax.jacfwd(robot.jacobian, argnums=0)(q, s)
-    _, dJd_dq = jax.jacfwd(robot.jacobian_and_derivative, argnums=0)(q, qd, s)
+    _, dJd_dq = jax.jacfwd(robot.jacobian_and_time_derivative, argnums=0)(q, qd, s)
 
     assert_finite(dg_dq, "dg/dq")
     assert_finite(dJ_dq, "dJ/dq")
@@ -348,7 +348,7 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration():
 
     dg_dq = jax.jacrev(robot.forward_kinematics, argnums=0)(q, s)
     dJ_dq = jax.jacrev(robot.jacobian, argnums=0)(q, s)
-    _, dJd_dq = jax.jacrev(robot.jacobian_and_derivative, argnums=0)(q, qd, s)
+    _, dJd_dq = jax.jacrev(robot.jacobian_and_time_derivative, argnums=0)(q, qd, s)
 
     assert_finite(dg_dq, "dg/dq")
     assert_finite(dJ_dq, "dJ/dq")

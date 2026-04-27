@@ -472,13 +472,13 @@ class OperationalSpaceDynamics(eqx.Module):
         return J_full
 
     @eqx.filter_jit
-    def _stacked_jacobian_and_derivative_full(
+    def _stacked_jacobian_and_time_derivative_full(
         self, q: Array, qd: Array
     ) -> tuple[Array, Array]:
         """
         Compute the full stacked Jacobian and its time derivative for all points.
 
-        Uses the robot's jacobian_and_derivative_batched method if available.
+        Uses the robot's jacobian_and_time_derivative_batched method if available.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -486,10 +486,10 @@ class OperationalSpaceDynamics(eqx.Module):
 
         Returns:
             J_full: Stacked Jacobian of shape (n_points * n_velocity_dim, num_dofs).
-            Jd_full: Stacked Jacobian derivative of shape (n_points * n_velocity_dim, num_dofs).
+            Jd_full: Stacked Jacobian time derivative of shape (n_points * n_velocity_dim, num_dofs).
         """
         # Use batched method from the robot
-        J_ps, Jd_ps = self.robot.jacobian_and_derivative_batched(q, qd, self.s_ps)
+        J_ps, Jd_ps = self.robot.jacobian_and_time_derivative_batched(q, qd, self.s_ps)
         # J_ps, Jd_ps have shape (n_points, n_pose_dim, num_dofs)
 
         # Stack to get (n_points * n_pose_dim, num_dofs)
@@ -873,7 +873,7 @@ class OperationalSpaceDynamics(eqx.Module):
         return J
 
     @eqx.filter_jit
-    def jacobian_and_derivative(self, q: Array, qd: Array) -> tuple[Array, Array]:
+    def jacobian_and_time_derivative(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Compute the operational space Jacobian and its time derivative.
 
@@ -885,7 +885,7 @@ class OperationalSpaceDynamics(eqx.Module):
             J: Operational space Jacobian of shape (n_operational_space, num_dofs).
             Jd: Time derivative of J, shape (n_operational_space, num_dofs).
         """
-        J_full, Jd_full = self._stacked_jacobian_and_derivative_full(q, qd)
+        J_full, Jd_full = self._stacked_jacobian_and_time_derivative_full(q, qd)
         # Apply task selection
         J = self.B_task.T @ J_full
         Jd = self.B_task.T @ Jd_full
@@ -1040,7 +1040,7 @@ class OperationalSpaceDynamics(eqx.Module):
             mu_x: Operational space Coriolis matrix of shape
                 (n_operational_space, num_dofs) that connects the operational-space Coriolis forces with the configuration-space velocities.
         """
-        J, Jd = self.jacobian_and_derivative(q, qd)
+        J, Jd = self.jacobian_and_time_derivative(q, qd)
         M = self.robot.inertia_matrix(q)
         C = self.robot.coriolis_matrix(q, qd)
         M_inv = jnp.linalg.inv(M)
@@ -1213,7 +1213,7 @@ class OperationalSpaceDynamics(eqx.Module):
         Returns:
             f_c_x: Operational space Coriolis force of shape (n_operational_space,).
         """
-        J, Jd = self.jacobian_and_derivative(q, qd)
+        J, Jd = self.jacobian_and_time_derivative(q, qd)
         M = self.robot.inertia_matrix(q)
         C = self.robot.coriolis_matrix(q, qd)
         M_inv = jnp.linalg.inv(M)

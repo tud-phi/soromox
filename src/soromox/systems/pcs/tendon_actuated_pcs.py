@@ -205,7 +205,7 @@ class TendonActuatedPCS(PCS):
         if active_tendon_routing_basis is None:
             active_tendon_routing_basis = {
                 "d_s": act.linear_routing,
-                "dd_s_ds": act.linear_routing_derivative,
+                "dd_s_ds": act.linear_routing_arc_length_derivative,
             }
         if active_tendon_routing_params is None:
             active_tendon_routing_params = {
@@ -226,7 +226,7 @@ class TendonActuatedPCS(PCS):
         if passive_tendon_routing_basis is None:
             passive_tendon_routing_basis = {
                 "d_s": act.linear_routing,
-                "dd_s_ds": act.linear_routing_derivative,
+                "dd_s_ds": act.linear_routing_arc_length_derivative,
             }
         if passive_tendon_routing_params is None:
             passive_tendon_routing_params = {

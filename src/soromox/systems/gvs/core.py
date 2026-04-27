@@ -1173,7 +1173,7 @@ class GVS(SoftRobot):
         Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
         return g_step, T_step, Ad_step_inv, B_Magnus
 
-    def _magnus_jacobian_derivative_step_terms(
+    def _magnus_jacobian_time_derivative_step_terms(
         self,
         length: Array,
         H: Array,
@@ -1193,7 +1193,7 @@ class GVS(SoftRobot):
         derivative and the time derivative of the Magnus basis Jacobian.
 
         With ``xid_Zk = B_Zk @ qd_i`` and
-        ``c = sqrt(3) * length**2 * H**2 / 12``, the basis-Jacobian derivative is:
+        ``c = sqrt(3) * length**2 * H**2 / 12``, the basis-Jacobian time derivative is:
 
         ``B_Magnus_dot = c * (ad(xid_Z1) @ B_Z2 - ad(xid_Z2) @ B_Z1)``
 
@@ -1254,7 +1254,7 @@ class GVS(SoftRobot):
         Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
         return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
 
-    def _magnus_spatial_derivative_step_terms(
+    def _magnus_arc_length_derivative_step_terms(
         self,
         length: Array,
         H: Array,
@@ -1365,7 +1365,7 @@ class GVS(SoftRobot):
         T_joint = lie.Tangent_gi_se3(xi_joint, jnp.array(1.0), eps=self.tangent_eps)
         return g_joint, lie.Adjoint_g_inv_SE3(g_joint), T_joint @ B_joint
 
-    def _joint_jacobian_derivative_step_terms(
+    def _joint_jacobian_time_derivative_step_terms(
         self, B_joint: Array, xi_ref_joint: Array, q_joint: Array, qd_joint: Array
     ) -> tuple[Array, Array, Array, Array, Array, Array]:
         """
@@ -1488,7 +1488,7 @@ class GVS(SoftRobot):
         """
         return self._rotation_adjoint_from_pose(g) @ J_body
 
-    def _body_jacobian_derivative_to_inertial(
+    def _body_jacobian_time_derivative_to_inertial(
         self, g: Array, J_body: Array, Jd_body: Array, qd: Array
     ) -> tuple[Array, Array]:
         """
@@ -1501,7 +1501,7 @@ class GVS(SoftRobot):
             g: Homogeneous SE(3) pose at the Jacobian evaluation point, shape
                 ``(4, 4)``.
             J_body: Body-frame Jacobian, shape ``(6, self.num_dofs)``.
-            Jd_body: Body-frame Jacobian derivative, shape
+            Jd_body: Body-frame Jacobian time derivative, shape
                 ``(6, self.num_dofs)``.
             qd: Active generalized velocities, shape
                 ``(self.num_dofs,)``.
@@ -1543,7 +1543,7 @@ class GVS(SoftRobot):
             weight: Length-scaled quadrature weight, shape ``()``.
             J: Body-frame Jacobian at the quadrature node, shape
                 ``(6, self.num_dofs)``.
-            Jd: Body-frame Jacobian derivative at the quadrature node, shape
+            Jd: Body-frame Jacobian time derivative at the quadrature node, shape
                 ``(6, self.num_dofs)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
@@ -1571,7 +1571,7 @@ class GVS(SoftRobot):
             weight: Length-scaled quadrature weight, shape ``()``.
             J: Body-frame Jacobian at the quadrature node, shape
                 ``(6, self.num_dofs)``.
-            Jd: Body-frame Jacobian derivative at the quadrature node, shape
+            Jd: Body-frame Jacobian time derivative at the quadrature node, shape
                 ``(6, self.num_dofs)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
@@ -1958,7 +1958,7 @@ class GVS(SoftRobot):
         return g_s
 
     @eqx.filter_jit
-    def _forward_kinematics_spatial_derivative(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics_arc_length_derivative(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the SE(3) pose at ``s``.
         """
@@ -2039,7 +2039,7 @@ class GVS(SoftRobot):
                     _B_Magnus,
                     _B_Magnus_H,
                     eta_step_H,
-                ) = self._magnus_spatial_derivative_step_terms(
+                ) = self._magnus_arc_length_derivative_step_terms(
                     length_i,
                     Hp,
                     q_i,
@@ -2572,7 +2572,7 @@ class GVS(SoftRobot):
         return J_local
 
     @eqx.filter_jit
-    def jacobian_spatial_derivative_bodyframe(self, q: Array, s: Array) -> Array:
+    def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the body-frame Jacobian at ``s``.
         """
@@ -2686,7 +2686,7 @@ class GVS(SoftRobot):
                     B_Magnus_p,
                     B_Magnus_H_p,
                     eta_step_H,
-                ) = self._magnus_spatial_derivative_step_terms(
+                ) = self._magnus_arc_length_derivative_step_terms(
                     length_i,
                     Hp,
                     q_i,
@@ -2831,7 +2831,7 @@ class GVS(SoftRobot):
         return vmap(body_single)(s_flat)
 
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe_batched(
+    def jacobian_and_time_derivative_bodyframe_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -2849,7 +2849,7 @@ class GVS(SoftRobot):
         q_gathered = self._min_size_gathered(q)
         qd_gathered = self._min_size_gathered(qd)
         J_gauss_full = self._jacobian_gauss(q_gathered)
-        Jd_gauss_full = self._jacobian_derivative_gauss(q_gathered, qd_gathered)
+        Jd_gauss_full = self._jacobian_time_derivative_gauss(q_gathered, qd_gathered)
 
         s_flat = jnp.asarray(s_ps).reshape(-1)
 
@@ -2902,7 +2902,7 @@ class GVS(SoftRobot):
                     Ad_step_inv,
                     B_Magnus,
                     B_Magnus_dot,
-                ) = self._magnus_jacobian_derivative_step_terms(
+                ) = self._magnus_jacobian_time_derivative_step_terms(
                     length_i,
                     Hp,
                     q_link,
@@ -2967,16 +2967,16 @@ class GVS(SoftRobot):
         return self._body_jacobian_to_inertial(g_s, J_local)
 
     @eqx.filter_jit
-    def jacobian_spatial_derivative_inertialframe(
+    def jacobian_arc_length_derivative_inertialframe(
         self, q: Array, s: Array
     ) -> Array:
         """
         Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
         """
         J_body = self.jacobian_bodyframe(q, s)
-        J_body_s = self.jacobian_spatial_derivative_bodyframe(q, s)
+        J_body_s = self.jacobian_arc_length_derivative_bodyframe(q, s)
         g_s = self._forward_kinematics(q, s)
-        g_s_derivative = self._forward_kinematics_spatial_derivative(q, s)
+        g_s_derivative = self._forward_kinematics_arc_length_derivative(q, s)
 
         Ad_g = self._rotation_adjoint_from_pose(g_s)
         omega_hat_body_s = g_s[:3, :3].T @ g_s_derivative[:3, :3]
@@ -2995,7 +2995,10 @@ class GVS(SoftRobot):
 
         return Ad_g_s @ J_body + Ad_g @ J_body_s
 
-    _jacobian_spatial_derivative = jacobian_spatial_derivative_inertialframe
+    @eqx.filter_jit
+    def _jacobian_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """Protected SoftRobot hook for the inertial-frame Jacobian arc-length derivative."""
+        return self.jacobian_arc_length_derivative_inertialframe(q, s)
 
     @eqx.filter_jit
     def _jacobian(self, q: Array, s: Array) -> Array:
@@ -3063,11 +3066,11 @@ class GVS(SoftRobot):
         return self.jacobian_inertialframe_batched(q, s_ps)
 
     @eqx.filter_jit
-    def _jacobian_derivative_gauss(
+    def _jacobian_time_derivative_gauss(
         self, q_gathered: Array, qd_gathered: Array
     ) -> Array:
         """
-        Compute the Jacobian derivative matrices at all significant points of the robot.
+        Compute the Jacobian time derivative matrices at all significant points of the robot.
 
         Args:
             q_gathered (Array): shape (num_segments, 2, max_dof) JAX array
@@ -3078,7 +3081,7 @@ class GVS(SoftRobot):
 
         Returns:
             Jd_list (Array): shape (num_segments, max_num_integration_points, 6, num_segments*2*max_dof) JAX array
-                Jacobian derivative matrices at all significant points
+                Jacobian time derivative matrices at all significant points
         """
 
         def body_segment_i(
@@ -3100,7 +3103,7 @@ class GVS(SoftRobot):
                 T_joint_B_i,
                 Td_joint_B_i,
                 joint_velocity_i,
-            ) = self._joint_jacobian_derivative_step_terms(
+            ) = self._joint_jacobian_time_derivative_step_terms(
                 B_joint_i, xi_ref_joint_i, q_joint_i, qd_joint_i
             )
 
@@ -3154,7 +3157,7 @@ class GVS(SoftRobot):
                     Ad_step_inv,
                     B_Magnus_j,
                     B_Magnus_dot_j,
-                ) = self._magnus_jacobian_derivative_step_terms(
+                ) = self._magnus_jacobian_time_derivative_step_terms(
                     length_i,
                     H,
                     q_i,
@@ -3216,11 +3219,11 @@ class GVS(SoftRobot):
         )
 
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe(
+    def jacobian_and_time_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
-        Compute the Jacobian derivative of the forward kinematics at a point s along the robot in the body frame.
+        Compute the Jacobian time derivative of the forward kinematics at a point s along the robot in the body frame.
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
             qd (Array): generalized velocities of shape (num_dofs,).
@@ -3228,7 +3231,7 @@ class GVS(SoftRobot):
 
         Returns:
             J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
-            Jd_local (Array): Jacobian derivative of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
+            Jd_local (Array): Jacobian time derivative of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
         """
         q_gathered = self._min_size_gathered(q)
         qd_gathered = self._min_size_gathered(qd)
@@ -3267,7 +3270,7 @@ class GVS(SoftRobot):
                 T_joint_B_i,
                 Td_joint_B_i,
                 joint_velocity_i,
-            ) = self._joint_jacobian_derivative_step_terms(
+            ) = self._joint_jacobian_time_derivative_step_terms(
                 B_joint_i, xi_ref_joint_i, q_joint_i, qd_joint_i
             )
 
@@ -3293,7 +3296,7 @@ class GVS(SoftRobot):
             # compute the bodyframe velocity
             eta_j = Ad_g_joint_inv @ (eta_tip + joint_velocity_i)  # (6,)
 
-            # compute the bodyframe Jacobian derivative
+            # compute the bodyframe Jacobian time derivative
             Jd_j = jnp.einsum(
                 "ij,nmjk->nmik", Ad_g_joint_inv, Jd_tip + Td_g_joint_B_joint_i
             ) + jnp.einsum(
@@ -3335,7 +3338,7 @@ class GVS(SoftRobot):
                     Ad_step_inv,
                     B_Magnus_j,
                     B_Magnus_dot_j,
-                ) = self._magnus_jacobian_derivative_step_terms(
+                ) = self._magnus_jacobian_time_derivative_step_terms(
                     length_i,
                     H,
                     q_i,
@@ -3363,7 +3366,7 @@ class GVS(SoftRobot):
                 eta_step = Ad_step_inv @ (T_step @ B_Magnus_j @ qd_i)
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
 
-                # compute the bodyframe Jacobian derivative
+                # compute the bodyframe Jacobian time derivative
                 Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
                 Jd_next = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block)
@@ -3442,7 +3445,7 @@ class GVS(SoftRobot):
                     Ad_step_inv,
                     B_Magnus_p,
                     B_Magnus_dot_p,
-                ) = self._magnus_jacobian_derivative_step_terms(
+                ) = self._magnus_jacobian_time_derivative_step_terms(
                     length_i,
                     Hp,
                     q_i,
@@ -3469,7 +3472,7 @@ class GVS(SoftRobot):
                 eta_step = Ad_step_inv @ (T_step @ B_Magnus_p @ qd_i)
                 eta_out = Ad_step_inv @ (eta_in + T_step @ B_Magnus_p @ qd_i)
 
-                # compute the bodyframe Jacobian derivative
+                # compute the bodyframe Jacobian time derivative
                 Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
                 Jd_out = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_in + Td_block)
@@ -3521,7 +3524,7 @@ class GVS(SoftRobot):
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def jacobian_and_derivative_inertialframe(
+    def jacobian_and_time_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -3536,12 +3539,12 @@ class GVS(SoftRobot):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_configurations)
         """
-        J_local, Jd_local = self.jacobian_and_derivative_bodyframe(q, qd, s)
+        J_local, Jd_local = self.jacobian_and_time_derivative_bodyframe(q, qd, s)
         g_s = self._forward_kinematics(q, s)
-        return self._body_jacobian_derivative_to_inertial(g_s, J_local, Jd_local, qd)
+        return self._body_jacobian_time_derivative_to_inertial(g_s, J_local, Jd_local, qd)
 
     @eqx.filter_jit
-    def jacobian_and_derivative_inertialframe_batched(
+    def jacobian_and_time_derivative_inertialframe_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -3556,15 +3559,15 @@ class GVS(SoftRobot):
             Tuple[Array, Array]: Jacobians and derivatives with shape
             (N, 6, num_active_strains).
         """
-        J_body, Jd_body = self.jacobian_and_derivative_bodyframe_batched(q, qd, s_ps)
+        J_body, Jd_body = self.jacobian_and_time_derivative_bodyframe_batched(q, qd, s_ps)
         g_ps = self.forward_kinematics_batched(q, s_ps)
 
         return vmap(
-            self._body_jacobian_derivative_to_inertial, in_axes=(0, 0, 0, None)
+            self._body_jacobian_time_derivative_to_inertial, in_axes=(0, 0, 0, None)
         )(g_ps, J_body, Jd_body, qd)
 
     @eqx.filter_jit
-    def _jacobian_and_derivative(
+    def _jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -3579,10 +3582,10 @@ class GVS(SoftRobot):
             J (Array): Jacobian matrix of shape (6, num_dofs).
             Jd (Array): Time derivative of the Jacobian, shape (6, num_dofs).
         """
-        return self.jacobian_and_derivative_inertialframe(q, qd, s)
+        return self.jacobian_and_time_derivative_inertialframe(q, qd, s)
 
     @eqx.filter_jit
-    def jacobian_and_derivative_batched(
+    def jacobian_and_time_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -3603,7 +3606,7 @@ class GVS(SoftRobot):
             Tuple[Array, Array]: inertial-frame Jacobians and time derivatives.
             Each array has shape ``(N, 6, num_active_strains)``.
         """
-        return self.jacobian_and_derivative_inertialframe_batched(q, qd, s_ps)
+        return self.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
 
     def _active_selector_blocks(self) -> Array:
         """
@@ -3761,7 +3764,7 @@ class GVS(SoftRobot):
                 ``(self.num_dofs,)``.
             qd: Active generalized velocities, shape
                 ``(self.num_dofs,)``.
-            convective_only_jd: If true, compute a Jacobian derivative that is
+            convective_only_jd: If true, compute a Jacobian time derivative that is
                 only guaranteed to be equivalent after multiplication by ``qd``.
 
         Returns:
@@ -3794,7 +3797,7 @@ class GVS(SoftRobot):
                 T_joint_B_i,
                 Td_joint_B_i,
                 joint_velocity,
-            ) = self._joint_jacobian_derivative_step_terms(
+            ) = self._joint_jacobian_time_derivative_step_terms(
                 B_joint_i, xi_ref_joint_i, q_joint_i, qd_joint_i
             )
             eta_j = Ad_g_joint_inv @ (eta_tip + joint_velocity)
@@ -3837,7 +3840,7 @@ class GVS(SoftRobot):
                     Ad_step_inv,
                     B_Magnus_j,
                     B_Magnus_dot_j,
-                ) = self._magnus_jacobian_derivative_step_terms(
+                ) = self._magnus_jacobian_time_derivative_step_terms(
                     length_i,
                     H,
                     q_i,

@@ -105,13 +105,13 @@ def test_jacobian_match_autodiff(N):
 
 
 @pytest.mark.parametrize("N", [2, 3])
-def test_jacobian_time_derivative_matches_jvp(N):
+def test_tip_jacobian_time_derivative_matches_jvp(N):
     robot = make_pendulum(N)
     q = jnp.linspace(-0.3, 0.4, N)
     qd = jnp.linspace(0.6, -0.5, N)
 
     # Closed-form J and Jdot at tips
-    J_closed, Jd_closed = robot.jacobian_and_derivatives_tips(q, qd)
+    J_closed, Jd_closed = robot.jacobian_and_time_derivatives_tips(q, qd)
 
     # Jdot via directional derivative with JAX JVP
     def J_of_q(q_):
@@ -135,13 +135,13 @@ def test_tip_jacobian_time_derivative_autodiff_contraction(N):
     qd = jnp.linspace(0.7, -0.4, N)
 
     J_tips = robot.jacobian_tips(q)
-    J_tips_closed, Jd_tips_closed = robot.jacobian_and_derivatives_tips(q, qd)
+    J_tips_closed, Jd_tips_closed = robot.jacobian_and_time_derivatives_tips(q, qd)
 
     # dJ/dq via autodiff, then Jdot = (dJ/dq) · qd
     dJdq_tips = jax.jacrev(robot.jacobian_tips)(q)  # (N,3,N,N)
     Jd_tips_auto = jnp.einsum("ijkl,l->ijk", dJdq_tips, qd)
 
-    # J returned by jacobian_and_derivatives_tips matches jacobian_tips
+    # J returned by jacobian_and_time_derivatives_tips matches jacobian_tips
     assert_allclose(
         J_tips,
         J_tips_closed,
@@ -383,20 +383,20 @@ def test_jacobian_matches_autodiff(N):
 
 
 @pytest.mark.parametrize("N", [2, 3])
-def test_jacobian_and_derivative_at_tips(N):
-    """Test jacobian_and_derivative at tips matches jacobian_and_derivatives_tips."""
+def test_jacobian_and_time_derivative_at_tips(N):
+    """Test jacobian_and_time_derivative at tips matches jacobian_and_time_derivatives_tips."""
     robot = make_pendulum(N)
     q = jnp.linspace(-0.3, 0.4, N)
     qd = jnp.linspace(0.6, -0.5, N)
 
     # Get from tips method
-    J_tips_direct, Jd_tips_direct = robot.jacobian_and_derivatives_tips(q, qd)
+    J_tips_direct, Jd_tips_direct = robot.jacobian_and_time_derivatives_tips(q, qd)
 
     # Get using arc-length method
     L_cum = onp.array(robot.L_cum)
     for i in range(N):
         s_tip = L_cum[i + 1]
-        J_s, Jd_s = robot.jacobian_and_derivative(q, qd, jnp.array(s_tip))
+        J_s, Jd_s = robot.jacobian_and_time_derivative(q, qd, jnp.array(s_tip))
         assert_allclose(
             J_s, J_tips_direct[i], rtol=Tolerance.rtol(), atol=Tolerance.atol()
         )
@@ -406,8 +406,8 @@ def test_jacobian_and_derivative_at_tips(N):
 
 
 @pytest.mark.parametrize("N", [2, 3])
-def test_jacobian_derivative_matches_jvp(N):
-    """Test that Jacobian derivative matches JVP."""
+def test_arc_length_jacobian_time_derivative_matches_jvp(N):
+    """Test that Jacobian time derivative matches JVP."""
     robot = make_pendulum(N)
     q = jnp.linspace(-0.3, 0.4, N)
     qd = jnp.linspace(0.6, -0.5, N)
@@ -420,7 +420,7 @@ def test_jacobian_derivative_matches_jvp(N):
         s_arr = jnp.array(s)
 
         # Closed-form
-        J_closed, Jd_closed = robot.jacobian_and_derivative(q, qd, s_arr)
+        J_closed, Jd_closed = robot.jacobian_and_time_derivative(q, qd, s_arr)
 
         # JVP
         def J_of_q(q_):
@@ -452,7 +452,7 @@ def test_batched_methods(N):
     assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     # Jacobian and derivative batched
-    J_batched, Jd_batched = robot.jacobian_and_derivative_batched(q, qd, s_ps)
-    J_tips, Jd_tips = robot.jacobian_and_derivatives_tips(q, qd)
+    J_batched, Jd_batched = robot.jacobian_and_time_derivative_batched(q, qd, s_ps)
+    J_tips, Jd_tips = robot.jacobian_and_time_derivatives_tips(q, qd)
     assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(Jd_batched, Jd_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
