@@ -1368,6 +1368,26 @@ def test_cached_constant_matrices_refresh_after_update_params() -> None:
 
     assert updated.K_full.shape == robot.K_full.shape
     assert updated.D_full.shape == robot.D_full.shape
+    assert_allclose(
+        updated.B_select_blocks,
+        updated.B_select.reshape(
+            updated.num_segments, 2, updated.max_dof, updated.dof_tot_system
+        ),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        updated.V_Ws_inner,
+        updated.V_Ws[:, 1 : updated.max_nip - 1] * updated.V_L[:, None],
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        updated.V_Ms_inner,
+        updated.V_Ms[:, 1 : updated.max_nip - 1],
+        rtol=RTOL,
+        atol=ATOL,
+    )
     assert not jnp.isnan(updated.K_full).any()
     assert not jnp.isnan(updated.D_full).any()
 

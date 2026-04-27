@@ -124,6 +124,8 @@ class GVS(SoftRobot):
     Z2: float = eqx.field(static=True, default=0.5 + math.sqrt(3) / 6)
 
     B_select: Array  # Strain basis functions for the robot (6, max_dof)
+    # Active selectors by segment/block.
+    B_select_blocks: Array
     scale_rotational_strain_basis: (
         bool  # If True, apply length scaling to angular strain contributions
     )
@@ -135,7 +137,10 @@ class GVS(SoftRobot):
     V_dof: Array  # List of number of DOFs for each link (num_segments, )
     V_Xs: Array  # List of integration points for each link (num_segments, max_nip)
     V_Ws: Array  # List of weights for each link (num_segments, max_nip)
+    # Length-scaled non-endpoint quadrature weights.
+    V_Ws_inner: Array
     V_Ms: Array
+    V_Ms_inner: Array
     V_Es: Array
     V_Gs: Array
 
@@ -155,6 +160,8 @@ class GVS(SoftRobot):
     K: Array  # Active-coordinate stiffness matrix (dof_tot_system, dof_tot_system)
     D_full: Array  # Full damping matrix (dof_tot_max, dof_tot_max)
     D_active: Array  # Active-coordinate damping matrix (dof_tot_system, dof_tot_system)
+    gather_indices: Array  # Indices for active-to-padded coordinate gather
+    gather_mask: Array  # Valid-entry mask for active-to-padded coordinate gather
 
     g0: Array  # Initial base pose (4,4)
     g: Array  # Gravity vector (6,)
@@ -798,8 +805,27 @@ class GVS(SoftRobot):
 
         This method can be expanded to include additional precomputations as needed.
         """
+        V_dof_flat = self.V_dof.reshape(-1)
+        start_indices_flat = jnp.cumsum(jnp.pad(V_dof_flat, (1, 0)))[:-1]
+        start_indices = start_indices_flat.reshape(self.num_segments, 2)
+        gather_indices = start_indices[..., None] + jnp.arange(self.max_dof)
+        gather_mask = jnp.arange(self.max_dof) < self.V_dof[..., None]
+
         K_full = self._stiffness_full_matrix()
         D_full = self._damping_full_matrix()
+        object.__setattr__(
+            self,
+            "B_select_blocks",
+            self.B_select.reshape(
+                self.num_segments, 2, self.max_dof, self.dof_tot_system
+            ),
+        )
+        object.__setattr__(
+            self, "V_Ws_inner", self.V_Ws[:, 1 : self.max_nip - 1] * self.V_L[:, None]
+        )
+        object.__setattr__(self, "V_Ms_inner", self.V_Ms[:, 1 : self.max_nip - 1])
+        object.__setattr__(self, "gather_indices", gather_indices)
+        object.__setattr__(self, "gather_mask", gather_mask)
         object.__setattr__(self, "K_full", K_full)
         object.__setattr__(self, "K", self.B_select.T @ K_full @ self.B_select)
         object.__setattr__(self, "D_full", D_full)
@@ -1030,9 +1056,19 @@ class GVS(SoftRobot):
             K_full = updated_self._stiffness_full_matrix()
             D_full = updated_self._damping_full_matrix()
             updated_self = eqx.tree_at(
-                lambda model: (model.K_full, model.K, model.D_full, model.D_active),
+                lambda model: (
+                    model.V_Ws_inner,
+                    model.V_Ms_inner,
+                    model.K_full,
+                    model.K,
+                    model.D_full,
+                    model.D_active,
+                ),
                 updated_self,
                 (
+                    updated_self.V_Ws[:, 1 : updated_self.max_nip - 1]
+                    * updated_self.V_L[:, None],
+                    updated_self.V_Ms[:, 1 : updated_self.max_nip - 1],
                     K_full,
                     updated_self.B_select.T @ K_full @ updated_self.B_select,
                     D_full,
@@ -1078,51 +1114,10 @@ class GVS(SoftRobot):
                 Padded joint coordinates.
         """
         vec = jnp.asarray(vec_min_size_flat).reshape(-1)  # Ensure q is a 1D array
-        m, n_groups = self.V_dof.shape  # n_groups = 2
-
-        # Start index calculation
-        V_dof_flat = self.V_dof.reshape(-1)
-        start_indices_flat = jnp.cumsum(jnp.pad(V_dof_flat, (1, 0)))[:-1]
-        start_indices = start_indices_flat.reshape(m, n_groups)
-
-        # Function for obtaining indexes
-        def get_indices(start: Array) -> Array:
-            """Return absolute indices for a block.
-
-            Args:
-                start (Array): Starting index in the flattened vector (scalar int/Array).
-
-            Returns:
-                indices (Array): Indices of shape (max_dof,) into the flattened vector.
-            """
-            indices = start + jnp.arange(self.max_dof)
-            return indices
-
-        # Vectorization: apply to (m, 2)
-        get_indices_vmap = vmap(vmap(get_indices, in_axes=(0,)), in_axes=(0,))
-        all_indices = get_indices_vmap(start_indices)
-
-        # Creating masks
-        def get_mask(length) -> Array:
-            """Boolean mask of valid entries for a given `length`.
-
-            Args:
-                length: Actual number of valid entries (scalar int/Array).
-
-            Returns:
-                mask (Array): Boolean mask of shape (max_dof,), True where index < length.
-            """
-            mask = jnp.arange(self.max_dof) < length
-            return mask
-
-        get_mask_vmap = vmap(vmap(get_mask, in_axes=(0,)), in_axes=(0,))
-        mask = get_mask_vmap(self.V_dof)
-
-        # Secure padding
-        vec_padded = jnp.concatenate([vec, jnp.zeros(self.max_dof)])
-
-        # We retrieve the values
-        vec_gathered = jnp.take(vec_padded, all_indices, mode="clip") * mask
+        vec_padded = jnp.concatenate([vec, jnp.zeros(self.max_dof, dtype=vec.dtype)])
+        vec_gathered = (
+            jnp.take(vec_padded, self.gather_indices, mode="clip") * self.gather_mask
+        )
 
         return vec_gathered
 
@@ -3360,9 +3355,7 @@ class GVS(SoftRobot):
             ``(self.num_segments, 2, self.max_dof, self.dof_tot_system)``.
             Axis 1 is ``0`` for joint coordinates and ``1`` for link coordinates.
         """
-        return self.B_select.reshape(
-            self.num_segments, 2, self.max_dof, self.dof_tot_system
-        )
+        return self.B_select_blocks
 
     def _inner_quadrature_weights(self) -> Array:
         """
@@ -3376,7 +3369,7 @@ class GVS(SoftRobot):
             weights: Interior quadrature weights, shape
             ``(self.num_segments, self.max_nip - 2)``.
         """
-        return self.V_Ws[:, 1 : self.max_nip - 1] * self.V_L[:, None]
+        return self.V_Ws_inner
 
     def _inner_mass_matrices(self) -> Array:
         """
@@ -3386,7 +3379,7 @@ class GVS(SoftRobot):
             Ms_inner: Local spatial mass matrices at interior quadrature nodes,
             shape ``(self.num_segments, self.max_nip - 2, 6, 6)``.
         """
-        return self.V_Ms[:, 1 : self.max_nip - 1]
+        return self.V_Ms_inner
 
     @eqx.filter_jit
     def _active_quadrature_pose_jacobians(
