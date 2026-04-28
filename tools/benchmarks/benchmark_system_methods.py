@@ -45,6 +45,7 @@ from tools.benchmarks._benchmark_common import (
     gauss_point_sweep_values,
     get_system_registry,
     normalize_gauss_point_values,
+    normalize_system_names,
     system_gauss_point_metadata,
 )
 
@@ -704,6 +705,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Display the plot window after benchmarking",
     )
     args = parser.parse_args(argv)
+    try:
+        args.systems = normalize_system_names(args.systems, registry)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.gauss_points is not None:
         if any(value < 1 for value in args.gauss_points):
             parser.error("All --gauss-points entries must be >= 1.")
