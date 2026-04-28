@@ -579,6 +579,7 @@ def _paired_ratio(
 def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     rows = _rows_by_key(results)
+    systems = sorted({str(row["system"]) for row in results})
     groups = sorted({(str(row["system"]), str(row["case"])) for row in results})
     segment_counts = sorted({int(row["segment_count"]) for row in results})
     largest_segment_count = max(segment_counts) if segment_counts else None
@@ -591,11 +592,86 @@ def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) ->
     lines = [
         "# Derivative Path Benchmark Summary",
         "",
-        "| system | case | custom JVP geomean disabled/enabled | "
-        f"custom JVP {segment_label} | direct analytic geomean protected/direct | "
-        f"direct analytic {segment_label} | max abs diff | max rel diff |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
+        "## How to read this report",
+        "",
+        "- `custom-JVP enabled speedup` is "
+        "`public_custom_jvp_disabled / public_custom_jvp_enabled`. Values above "
+        "`1.0x` mean enabling custom JVPs is faster.",
+        "- `direct analytical speedup` is "
+        "`protected_autograd / direct_analytic`. Values above `1.0x` mean the "
+        "direct analytical helper is faster than differentiating protected "
+        "primal hooks.",
+        "- `geomean` aggregates all requested segment counts for that system/case.",
+        f"- `{segment_label}` shows the largest requested segment count only.",
+        "",
+        "## System Summary",
+        "",
+        "| system | custom-JVP enabled speedup geomean | "
+        f"custom-JVP enabled speedup {segment_label} | "
+        "direct analytical speedup geomean | "
+        f"direct analytical speedup {segment_label} | max abs diff |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
+
+    for system in systems:
+        system_rows = [row for row in results if str(row["system"]) == system]
+        system_groups = sorted(
+            {(str(row["case"]), str(row.get("gauss_points", ""))) for row in system_rows}
+        )
+        public_ratios: list[float] = []
+        public_ratios_largest: list[float] = []
+        direct_ratios: list[float] = []
+        direct_ratios_largest: list[float] = []
+
+        for case, gauss_points in system_groups:
+            for segment_count in segment_counts:
+                public_ratio = _paired_ratio(
+                    rows,
+                    system,
+                    case,
+                    segment_count,
+                    gauss_points,
+                    "public_custom_jvp_disabled",
+                    "public_custom_jvp_enabled",
+                )
+                direct_ratio = _paired_ratio(
+                    rows,
+                    system,
+                    case,
+                    segment_count,
+                    gauss_points,
+                    "protected_autograd",
+                    "direct_analytic",
+                )
+                public_ratios.append(public_ratio)
+                direct_ratios.append(direct_ratio)
+                if segment_count == largest_segment_count:
+                    public_ratios_largest.append(public_ratio)
+                    direct_ratios_largest.append(direct_ratio)
+
+        max_abs_diff = max(float(row["max_abs_diff"]) for row in system_rows)
+        lines.append(
+            "| "
+            f"{system} | "
+            f"{_format_ratio(_geomean(public_ratios))} | "
+            f"{_format_ratio(_geomean(public_ratios_largest))} | "
+            f"{_format_ratio(_geomean(direct_ratios))} | "
+            f"{_format_ratio(_geomean(direct_ratios_largest))} | "
+            f"{_format_scientific(max_abs_diff)} |"
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Per-Case Details",
+            "",
+            "| system | case | custom-JVP enabled speedup geomean | "
+            f"custom-JVP enabled speedup {segment_label} | "
+            "direct analytical speedup geomean | "
+            f"direct analytical speedup {segment_label} | max abs diff | max rel diff |",
+            "|---|---|---:|---:|---:|---:|---:|---:|",
+        ]
+    )
 
     for system, case in groups:
         group_rows = [
@@ -652,13 +728,6 @@ def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) ->
             f"{_format_scientific(max_abs_diff)} | "
             f"{_format_scientific(max_rel_diff)} |"
         )
-
-    lines.append("")
-    lines.append(
-        "Ratios above 1.0 mean the numerator path is slower: "
-        "`disabled/enabled` for custom JVPs and `protected/direct` for direct "
-        "analytical paths."
-    )
     path.write_text("\n".join(lines), encoding="utf-8")
     print(f"[+] Wrote Markdown summary to {path}")
 
