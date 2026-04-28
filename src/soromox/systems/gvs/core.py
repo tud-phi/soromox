@@ -1274,9 +1274,7 @@ class GVS(SoftRobot):
         quadrature sample locations.
         """
         B_Z1, B_Z2 = self._scaled_link_basis_pair(length, B_Z1, B_Z2)
-        dB_Z1_dH, dB_Z2_dH = self._scaled_link_basis_pair(
-            length, dB_Z1_dH, dB_Z2_dH
-        )
+        dB_Z1_dH, dB_Z2_dH = self._scaled_link_basis_pair(length, dB_Z1_dH, dB_Z2_dH)
 
         xi_Z1 = B_Z1 @ q_i + xi_ref_Z1
         xi_Z2 = B_Z2 @ q_i + xi_ref_Z2
@@ -1291,9 +1289,7 @@ class GVS(SoftRobot):
         comm_coeff = jnp.sqrt(3) * (length**2) * H**2 / 12
         comm_coeff_H = jnp.sqrt(3) * (length**2) * H / 6
 
-        Magnus = length * (H / 2) * (xi_Z1 + xi_Z2) + (
-            comm_coeff * (ad_xi_Z1 @ xi_Z2)
-        )
+        Magnus = length * (H / 2) * (xi_Z1 + xi_Z2) + (comm_coeff * (ad_xi_Z1 @ xi_Z2))
         Magnus_H = (
             length / 2 * (xi_Z1 + xi_Z2)
             + length * (H / 2) * (xi_Z1_H + xi_Z2_H)
@@ -2672,9 +2668,7 @@ class GVS(SoftRobot):
                 )
 
                 g_next = g_prev @ g_step
-                J_next = jnp.einsum(
-                    "ij,nmjk->nmik", Ad_step_inv, J_prev + T_block
-                )
+                J_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, J_prev + T_block)
                 return (g_next, J_next), None
 
             def do_full_link() -> tuple[Array, Array, Array, Array]:
@@ -2736,11 +2730,11 @@ class GVS(SoftRobot):
                     xi_ref_Z2_i[j],
                 )
 
-                T_block = (
-                    jnp.zeros_like(J_in).at[i_segment, 1].set(T_step @ B_Magnus_p)
-                )
-                T_block_H = jnp.zeros_like(J_in).at[i_segment, 1].set(
-                    T_step_H @ B_Magnus_p + T_step @ B_Magnus_H_p
+                T_block = jnp.zeros_like(J_in).at[i_segment, 1].set(T_step @ B_Magnus_p)
+                T_block_H = (
+                    jnp.zeros_like(J_in)
+                    .at[i_segment, 1]
+                    .set(T_step_H @ B_Magnus_p + T_step @ B_Magnus_H_p)
                 )
                 Ad_step_inv_H = -lie.adjoint_se3(eta_step_H) @ Ad_step_inv
 
@@ -3040,9 +3034,7 @@ class GVS(SoftRobot):
         )
 
     @eqx.filter_jit
-    def jacobian_arc_length_derivative_inertialframe(
-        self, q: Array, s: Array
-    ) -> Array:
+    def jacobian_arc_length_derivative_inertialframe(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
         """
@@ -3637,7 +3629,9 @@ class GVS(SoftRobot):
             Tuple[Array, Array]: Jacobians and derivatives with shape
             (N, 6, num_active_strains).
         """
-        J_body, Jd_body = self.jacobian_and_time_derivative_bodyframe_batched(q, qd, s_ps)
+        J_body, Jd_body = self.jacobian_and_time_derivative_bodyframe_batched(
+            q, qd, s_ps
+        )
         g_ps = self.forward_kinematics_batched(q, s_ps)
 
         return vmap(
@@ -3726,7 +3720,7 @@ class GVS(SoftRobot):
         return self.inner_mass_matrices
 
     @eqx.filter_jit
-    def _active_quadrature_pose_jacobians(self, q: Array) -> tuple[Array, Array, Array]:
+    def _integration_pose_jacobians(self, q: Array) -> tuple[Array, Array, Array]:
         """
         Return active pose/Jacobian data at interior quadrature nodes.
 
@@ -3734,7 +3728,7 @@ class GVS(SoftRobot):
         segment-tip cell is still advanced internally so the next segment receives
         the correct base pose and Jacobian. This helper is intentionally
         J-only; callers that need ``Jdot`` should use
-        ``_active_quadrature_kinematics``.
+        ``integration_kinematics``.
 
         Args:
             q: Active generalized coordinates, shape
@@ -3822,7 +3816,16 @@ class GVS(SoftRobot):
         return weights, g_quads, J_quads
 
     @eqx.filter_jit
-    def _active_quadrature_kinematics(
+    def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
+        """
+        Return poses, generalized-coordinate body-frame Jacobians, and derivatives
+        at interior integration nodes.
+        """
+        _, g_quads, J_quads, Jd_quads = self._integration_kinematics(q, qd)
+        return g_quads, J_quads, Jd_quads
+
+    @eqx.filter_jit
+    def _integration_kinematics(
         self, q: Array, qd: Array, convective_only_jd: bool = False
     ) -> tuple[Array, Array, Array, Array]:
         """
@@ -3943,13 +3946,12 @@ class GVS(SoftRobot):
                 J_next = Ad_step_inv @ (J_prev + T_active)
                 if convective_only_jd:
                     Jd_next = (
-                        Ad_step_inv @ (Jd_prev + Td_active)
-                        + Ad_step_inv_dot @ J_prev
+                        Ad_step_inv @ (Jd_prev + Td_active) + Ad_step_inv_dot @ J_prev
                     )
                 else:
-                    Jd_next = Ad_step_inv @ (
-                        Jd_prev + Td_active
-                    ) + Ad_step_inv_dot @ (J_prev + T_active)
+                    Jd_next = Ad_step_inv @ (Jd_prev + Td_active) + Ad_step_inv_dot @ (
+                        J_prev + T_active
+                    )
 
                 return (g_next, J_next, Jd_next, eta_next), (
                     g_next,
@@ -3989,9 +3991,7 @@ class GVS(SoftRobot):
         return weights, g_quads, J_quads, Jd_quads
 
     @eqx.filter_jit
-    def _active_quadrature_forward_dynamics_terms(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
         Assemble forward-dynamics terms directly in active coordinates.
 
@@ -4013,7 +4013,7 @@ class GVS(SoftRobot):
             ``G`` is the active generalized gravity vector with shape
             ``(self.num_dofs,)``.
         """
-        weights, g_quads, J_quads, Jd_quads = self._active_quadrature_kinematics(
+        weights, g_quads, J_quads, Jd_quads = self._integration_kinematics(
             q, qd, convective_only_jd=True
         )
         Ms_inner = self._inner_mass_matrices()
@@ -4140,7 +4140,7 @@ class GVS(SoftRobot):
         Returns:
             B (Array): Inertia matrix, shape (num_dofs, num_dofs)
         """
-        weights, _, J_quads = self._active_quadrature_pose_jacobians(q)
+        weights, _, J_quads = self._integration_pose_jacobians(q)
         Ms_inner = self._inner_mass_matrices()
 
         def segment_terms(i: Array) -> Array:
@@ -4164,7 +4164,7 @@ class GVS(SoftRobot):
         Returns:
             C (Array): Coriolis matrix, shape (num_dofs, num_dofs)
         """
-        weights, _, J_quads, Jd_quads = self._active_quadrature_kinematics(q, qd)
+        weights, _, J_quads, Jd_quads = self._integration_kinematics(q, qd)
         Ms_inner = self._inner_mass_matrices()
 
         def segment_terms(i: Array) -> Array:
@@ -4273,7 +4273,7 @@ class GVS(SoftRobot):
         Returns:
             G (Array): Gravitational force vector, shape (num_dofs, 1)
         """
-        weights, g_quads, J_quads = self._active_quadrature_pose_jacobians(q)
+        weights, g_quads, J_quads = self._integration_pose_jacobians(q)
         Ms_inner = self._inner_mass_matrices()
 
         def segment_terms(i: Array) -> Array:
@@ -4572,7 +4572,7 @@ class GVS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        B, Cqd, G = self._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 

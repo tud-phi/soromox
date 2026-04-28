@@ -1002,7 +1002,9 @@ def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int):
         J_local_tips, Jd_local_tips = model._J_Jd_local_tips(q, qd)
 
         for idx, s_tip in enumerate(s_tips):
-            J_local, Jd_local = model.jacobian_and_time_derivative_bodyframe(q, qd, s_tip)
+            J_local, Jd_local = model.jacobian_and_time_derivative_bodyframe(
+                q, qd, s_tip
+            )
 
             assert_allclose(
                 J_local,
@@ -1038,7 +1040,9 @@ def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int):
         )
 
         for idx, s_val in enumerate(s_points):
-            J_single, Jd_single = model.jacobian_and_time_derivative_bodyframe(q, qd, s_val)
+            J_single, Jd_single = model.jacobian_and_time_derivative_bodyframe(
+                q, qd, s_val
+            )
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
             assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
@@ -1306,7 +1310,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         (False, True, False),
     ],
 )
-def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
+def test_integration_kinematics_matches_existing_batched_path_planar(
     num_segments: int, selector_per_segment: tuple[bool, ...] | None
 ):
     base_model, params = make_planar_pcs(num_segments=num_segments)
@@ -1327,8 +1331,8 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
     q = random_q(model, key_q, scale=0.05)
     qd = random_q(model, key_qd, scale=0.1)
 
-    weights, g_quads, J_quads, Jd_quads = model._active_quadrature_kinematics(q, qd)
-    Xs_scaled, weights_expected = jax.vmap(
+    g_quads, J_quads, Jd_quads = model.integration_kinematics(q, qd)
+    Xs_scaled, _ = jax.vmap(
         scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
     )(
         model.integration_points,
@@ -1345,24 +1349,9 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
     J_expected = (J_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
     Jd_expected = (Jd_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
 
-    assert_allclose(weights, weights_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(g_quads, g_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(J_quads, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_quads, Jd_expected, rtol=RTOL, atol=ATOL)
-
-    weights_fast, g_fast, J_fast, Jd_fast = model._active_quadrature_kinematics(
-        q, qd, convective_only_jd=True
-    )
-
-    assert_allclose(weights_fast, weights_expected, rtol=RTOL, atol=ATOL)
-    assert_allclose(g_fast, g_expected, rtol=RTOL, atol=ATOL)
-    assert_allclose(J_fast, J_expected, rtol=RTOL, atol=ATOL)
-    assert_allclose(
-        jnp.einsum("ijkl,l->ijk", Jd_fast, qd),
-        jnp.einsum("ijkl,l->ijk", Jd_expected, qd),
-        rtol=RTOL,
-        atol=ATOL,
-    )
 
 
 @pytest.mark.parametrize("num_segments", [1, 3])
@@ -1374,7 +1363,7 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
         (False, True, False),
     ],
 )
-def test_active_quadrature_forward_dynamics_terms_match_public_matrices_planar(
+def test_dynamics_terms_match_public_matrices_planar(
     num_segments: int, selector_per_segment: tuple[bool, ...] | None
 ):
     base_model, params = make_planar_pcs(num_segments=num_segments)
@@ -1400,7 +1389,7 @@ def test_active_quadrature_forward_dynamics_terms_match_public_matrices_planar(
     tau_ext = random_q(model, key_tau, scale=0.03)
 
     for q, qd in ((zero_q, zero_qd), (random_q_, random_qd)):
-        B, Cqd, G = model._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = model.dynamics_terms(q, qd)
         C = model.coriolis_matrix(q, qd)
 
         assert_allclose(B, model.inertia_matrix(q), rtol=RTOL, atol=ATOL)
@@ -1765,7 +1754,9 @@ def test_strain_basis_consistency_strain_and_kinematics_planar(num_segments: int
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_strain_basis_consistency_jacobians_and_time_derivatives_planar(num_segments: int):
+def test_strain_basis_consistency_jacobians_and_time_derivatives_planar(
+    num_segments: int,
+):
     selector_per_segment = jnp.array([True, True, False], dtype=bool)
     full, reduced, B = _make_full_and_reduced_planar(num_segments, selector_per_segment)
 
@@ -1802,7 +1793,9 @@ def test_strain_basis_consistency_jacobians_and_time_derivatives_planar(num_segm
         J_small, Jd_small = reduced.jacobian_and_time_derivative_bodyframe(
             q_small, qd_small, s
         )
-        J_full, Jd_full = full.jacobian_and_time_derivative_bodyframe(q_full, qd_full, s)
+        J_full, Jd_full = full.jacobian_and_time_derivative_bodyframe(
+            q_full, qd_full, s
+        )
         assert J_small.shape == (3, n_small_act)
         assert Jd_small.shape == (3, n_small_act)
         assert J_full.shape == (3, int(full.num_active_strains.item()))
@@ -1815,7 +1808,9 @@ def test_strain_basis_consistency_jacobians_and_time_derivatives_planar(num_segm
         J_small, Jd_small = reduced.jacobian_and_time_derivative_inertialframe(
             q_small, qd_small, s
         )
-        J_full, Jd_full = full.jacobian_and_time_derivative_inertialframe(q_full, qd_full, s)
+        J_full, Jd_full = full.jacobian_and_time_derivative_inertialframe(
+            q_full, qd_full, s
+        )
         assert J_small.shape == (3, n_small_act)
         assert Jd_small.shape == (3, n_small_act)
         assert J_full.shape == (3, int(full.num_active_strains.item()))

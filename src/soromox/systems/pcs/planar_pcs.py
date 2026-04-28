@@ -1428,8 +1428,8 @@ class PlanarPCS(SoftRobot):
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
-                Ad_inv, T, dAd_inv_ds, dT_ds = (
-                    self._pcs_jacobian_arc_length_step_terms(xi_i, arc_len)
+                Ad_inv, T, dAd_inv_ds, dT_ds = self._pcs_jacobian_arc_length_step_terms(
+                    xi_i, arc_len
                 )
                 chi_next = self._compose_planar_pose(
                     chi_prev, self._pcs_relative_pose(xi_i, arc_len)
@@ -1716,9 +1716,7 @@ class PlanarPCS(SoftRobot):
         return J, Js
 
     @eqx.filter_jit
-    def jacobian_arc_length_derivative_inertialframe(
-        self, q: Array, s: Array
-    ) -> Array:
+    def jacobian_arc_length_derivative_inertialframe(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
         """
@@ -2639,11 +2637,20 @@ class PlanarPCS(SoftRobot):
         return J_tips, Jd_tips
 
     @eqx.filter_jit
-    def _active_quadrature_kinematics(
+    def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
+        """
+        Return poses, generalized-coordinate body-frame Jacobians, and derivatives
+        at interior integration nodes.
+        """
+        _, g_ps, J_ps, Jd_ps = self._integration_kinematics(q, qd)
+        return g_ps, J_ps, Jd_ps
+
+    @eqx.filter_jit
+    def _integration_kinematics(
         self, q: Array, qd: Array, convective_only_jd: bool = False
     ) -> tuple[Array, Array, Array, Array]:
         """
-        Return weights, poses, active Jacobians, and derivatives at quadrature points.
+        Return weights, poses, active Jacobians, and derivatives at integration points.
 
         Args:
             q: Active generalized coordinates, shape ``(self.num_dofs,)``.
@@ -2745,9 +2752,7 @@ class PlanarPCS(SoftRobot):
         return Ws_scaled, g_ps, J_ps, Jd_ps
 
     @eqx.filter_jit
-    def _active_quadrature_forward_dynamics_terms(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
         Assemble active-coordinate inertia, Coriolis-vector, and gravity terms.
 
@@ -2757,7 +2762,7 @@ class PlanarPCS(SoftRobot):
             Cqd (Array): Coriolis/centrifugal force of shape (num_active_strains,).
             G (Array): Gravitational force of shape (num_active_strains,).
         """
-        Ws_scaled, g_ps, J_ps, Jd_ps = self._active_quadrature_kinematics(
+        Ws_scaled, g_ps, J_ps, Jd_ps = self._integration_kinematics(
             q, qd, convective_only_jd=True
         )
         num_quad = self.num_gauss_points
@@ -2831,7 +2836,7 @@ class PlanarPCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        B, Cqd, G = self._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 

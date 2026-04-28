@@ -444,7 +444,10 @@ def stack_jacobian_time_derivatives(
 ) -> jnp.ndarray:
     s_array = onp.asarray(s_points, dtype=float)
     return jnp.stack(
-        [robot.jacobian_and_time_derivative_bodyframe(q, qd, float(s))[1] for s in s_array],
+        [
+            robot.jacobian_and_time_derivative_bodyframe(q, qd, float(s))[1]
+            for s in s_array
+        ],
         axis=0,
     )
 
@@ -536,7 +539,9 @@ def _assert_gvs_pcs_coherence(num_segments: int) -> None:
             )
 
             # check the Jacobian time derivatives in body frames
-            Jb_gvs2, Jdb_gvs = robot_gvs.jacobian_and_time_derivative_bodyframe(q, qd, s)
+            Jb_gvs2, Jdb_gvs = robot_gvs.jacobian_and_time_derivative_bodyframe(
+                q, qd, s
+            )
             _, Jdb_pcs = robot_pcs.jacobian_and_time_derivative_bodyframe(q, qd, s)
             assert_allclose(
                 Jb_gvs,
@@ -554,7 +559,9 @@ def _assert_gvs_pcs_coherence(num_segments: int) -> None:
             )
 
             # check the Jacobian time derivatives in inertial frames
-            Ji_gvs2, Jdi_gvs = robot_gvs.jacobian_and_time_derivative_inertialframe(q, qd, s)
+            Ji_gvs2, Jdi_gvs = robot_gvs.jacobian_and_time_derivative_inertialframe(
+                q, qd, s
+            )
             _, Jdi_pcs = robot_pcs.jacobian_and_time_derivative_inertialframe(q, qd, s)
             assert_allclose(
                 Ji_gvs,
@@ -1376,7 +1383,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 3])
-def test_active_quadrature_kinematics_matches_existing_batched_path(
+def test_integration_kinematics_matches_existing_batched_path(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1384,30 +1391,17 @@ def test_active_quadrature_kinematics_matches_existing_batched_path(
     q = random_q(robot, key_q, scale=0.05)
     qd = random_q(robot, key_qd, scale=0.1)
 
-    weights, g_quads, J_quads, Jd_quads = robot._active_quadrature_kinematics(q, qd)
+    g_quads, J_quads, Jd_quads = robot.integration_kinematics(q, qd)
+    weights = robot._inner_quadrature_weights()
 
     assert weights.shape[0] == num_segments
     assert g_quads.shape[:2] == weights.shape
     assert J_quads.shape[:2] == weights.shape
     assert Jd_quads.shape == J_quads.shape
 
-    weights_fast, g_fast, J_fast, Jd_fast = robot._active_quadrature_kinematics(
-        q, qd, convective_only_jd=True
-    )
-
-    assert_allclose(weights_fast, weights, rtol=RTOL, atol=ATOL)
-    assert_allclose(g_fast, g_quads, rtol=RTOL, atol=ATOL)
-    assert_allclose(J_fast, J_quads, rtol=RTOL, atol=ATOL)
-    assert_allclose(
-        jnp.einsum("ijkl,l->ijk", Jd_fast, qd),
-        jnp.einsum("ijkl,l->ijk", Jd_quads, qd),
-        rtol=RTOL,
-        atol=ATOL,
-    )
-
 
 @pytest.mark.parametrize("num_segments", [1, 3])
-def test_active_quadrature_forward_dynamics_terms_match_public_matrices(
+def test_dynamics_terms_match_public_matrices(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1420,7 +1414,7 @@ def test_active_quadrature_forward_dynamics_terms_match_public_matrices(
     qd_random = random_q(robot, key_qd, scale=0.1)
 
     for q, qd in ((zero_q, zero_qd), (q_random, qd_random)):
-        B, Cqd, G = robot._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = robot.dynamics_terms(q, qd)
         C = robot.coriolis_matrix(q, qd)
 
         assert_allclose(B, robot.inertia_matrix(q), rtol=RTOL, atol=ATOL)
@@ -1662,12 +1656,12 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(
     dg_dq = jacfwd(robot.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacfwd(robot.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacfwd(robot.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe_dq = jacfwd(robot.jacobian_and_time_derivative_bodyframe, argnums=0)(
-        q, qd, s
-    )
-    _, dJd_bodyframe_dqd = jacfwd(robot.jacobian_and_time_derivative_bodyframe, argnums=1)(
-        q, qd, s
-    )
+    _, dJd_bodyframe_dq = jacfwd(
+        robot.jacobian_and_time_derivative_bodyframe, argnums=0
+    )(q, qd, s)
+    _, dJd_bodyframe_dqd = jacfwd(
+        robot.jacobian_and_time_derivative_bodyframe, argnums=1
+    )(q, qd, s)
     _, dJd_inertialframe_dq = jacfwd(
         robot.jacobian_and_time_derivative_inertialframe, argnums=0
     )(q, qd, s)
@@ -1758,12 +1752,12 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(
     dg_dq = jacrev(robot.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacrev(robot.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacrev(robot.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe_dq = jacrev(robot.jacobian_and_time_derivative_bodyframe, argnums=0)(
-        q, qd, s
-    )
-    _, dJd_bodyframe_dqd = jacrev(robot.jacobian_and_time_derivative_bodyframe, argnums=1)(
-        q, qd, s
-    )
+    _, dJd_bodyframe_dq = jacrev(
+        robot.jacobian_and_time_derivative_bodyframe, argnums=0
+    )(q, qd, s)
+    _, dJd_bodyframe_dqd = jacrev(
+        robot.jacobian_and_time_derivative_bodyframe, argnums=1
+    )(q, qd, s)
     _, dJd_inertialframe_dq = jacrev(
         robot.jacobian_and_time_derivative_inertialframe, argnums=0
     )(q, qd, s)

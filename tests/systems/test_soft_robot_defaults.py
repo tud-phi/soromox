@@ -3,6 +3,7 @@ from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
+import soromox.utils.lie_algebra as lie
 from soromox.autodiff import (
     custom_jvp_enabled,
     custom_jvp_mode,
@@ -21,6 +22,10 @@ class _PlanarDefaultRobot(SoftRobot):
         self.num_dofs = 2
         self.num_actuators = 2
         self.L = jnp.array([1.0, 2.0], dtype=jnp.float64)
+        self.num_gauss_points = 1
+        self.num_integration_points = 3
+        self.integration_points = jnp.array([0.0, 0.5, 1.0], dtype=jnp.float64)
+        self.integration_weights = jnp.array([0.0, 1.0, 0.0], dtype=jnp.float64)
 
     @property
     def length(self) -> Array:
@@ -86,7 +91,7 @@ class _SpatialDefaultRobot(_PlanarDefaultRobot):
         return g.at[:3, 3].set(p)
 
 
-class _ActiveEnergyJVPDefaultRobot(_PlanarDefaultRobot):
+class _DynamicsTermsEnergyJVPDefaultRobot(_PlanarDefaultRobot):
     def _gravitational_force(self, q: Array) -> Array:
         return jnp.array([1.5, -0.25], dtype=q.dtype)
 
@@ -97,7 +102,7 @@ class _ActiveEnergyJVPDefaultRobot(_PlanarDefaultRobot):
         del q, qd
         return 1e3 * jnp.eye(2, dtype=jnp.float64)
 
-    def _active_coriolis_force(self, qd: Array) -> Array:
+    def _convective_force(self, qd: Array) -> Array:
         return jnp.array(
             [
                 qd[0] * qd[0] + 2.0 * qd[0] * qd[1],
@@ -106,12 +111,10 @@ class _ActiveEnergyJVPDefaultRobot(_PlanarDefaultRobot):
             dtype=qd.dtype,
         )
 
-    def _active_quadrature_forward_dynamics_terms(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         return (
             self.inertia_matrix(q),
-            self._active_coriolis_force(qd),
+            self._convective_force(qd),
             self._gravitational_force(q),
         )
 
@@ -229,8 +232,51 @@ def test_default_spatial_jacobian_converts_se3_pose_derivative() -> None:
 
     assert J.shape == (6, 2)
     assert_allclose(J @ qd, twist_expected, rtol=1e-12, atol=1e-12)
+
+    J_body = robot.jacobian_bodyframe(q, s)
+    R = g[:3, :3]
+    body_twist_expected = jnp.concatenate([R.T @ omega, R.T @ gd[:3, 3]])
+    assert_allclose(J_body @ qd, body_twist_expected, rtol=1e-12, atol=1e-12)
+
     assert robot.forward_kinematics_tips(q).shape == (2, 4, 4)
     assert robot.jacobian_tips(q).shape == (2, 6, 2)
+
+
+def test_default_integration_kinematics_uses_bodyframe_samples() -> None:
+    robot = _PlanarDefaultRobot()
+    q = jnp.array([0.2, -0.3], dtype=jnp.float64)
+    qd = jnp.array([0.7, -0.4], dtype=jnp.float64)
+
+    g_ps, J_ps, Jd_ps = robot.integration_kinematics(q, qd)
+
+    s_ps = jnp.array([[0.5], [2.0]], dtype=jnp.float64)
+    s_flat = s_ps.reshape(-1)
+    g_expected = jax.vmap(lambda s: lie.exp_SE2(robot.forward_kinematics(q, s)))(
+        s_flat
+    ).reshape(2, 1, 3, 3)
+    J_expected, Jd_expected = robot.jacobian_and_time_derivative_bodyframe_batched(
+        q, qd, s_flat
+    )
+
+    assert g_ps.shape == (2, 1, 3, 3)
+    assert J_ps.shape == (2, 1, 3, 2)
+    assert Jd_ps.shape == (2, 1, 3, 2)
+    assert_allclose(g_ps, g_expected, rtol=1e-12, atol=1e-12)
+    assert_allclose(J_ps, J_expected.reshape(2, 1, 3, 2), rtol=1e-12, atol=1e-12)
+    assert_allclose(Jd_ps, Jd_expected.reshape(2, 1, 3, 2), rtol=1e-12, atol=1e-12)
+
+    pose = robot.forward_kinematics(q, s_flat[0])
+    J_inertial = robot.jacobian(q, s_flat[0])
+    theta = pose[0]
+    R = jnp.array(
+        [
+            [jnp.cos(theta), -jnp.sin(theta)],
+            [jnp.sin(theta), jnp.cos(theta)],
+        ],
+        dtype=pose.dtype,
+    )
+    J_body_expected = jnp.concatenate([J_inertial[:1], R.T @ J_inertial[1:]], axis=0)
+    assert_allclose(J_ps[0, 0], J_body_expected, rtol=1e-12, atol=1e-12)
 
 
 def test_default_gravity_force_and_forward_dynamics() -> None:
@@ -243,11 +289,15 @@ def test_default_gravity_force_and_forward_dynamics() -> None:
 
     G = robot.gravitational_force(q)
     assert_allclose(G, jnp.array([0.4, 3.0], dtype=jnp.float64))
+    M, Cqd, G_terms = robot.dynamics_terms(q, qd)
+    assert_allclose(M, robot.inertia_matrix(q), rtol=1e-12, atol=1e-12)
+    assert_allclose(Cqd, robot.coriolis_matrix(q, qd) @ qd, rtol=1e-12, atol=1e-12)
+    assert_allclose(G_terms, G, rtol=1e-12, atol=1e-12)
 
     rhs = (
         robot.actuation_matrix(q) @ u
         + tau_ext
-        - robot.coriolis_matrix(q, qd) @ qd
+        - Cqd
         - G
         - robot.elastic_force(q)
         - robot.damping_matrix(q) @ qd
@@ -257,8 +307,8 @@ def test_default_gravity_force_and_forward_dynamics() -> None:
     assert_allclose(robot.forward_dynamics(0.0, y, (u, tau_ext)), jnp.r_[qd, qdd])
 
 
-def test_default_energy_custom_jvps_use_force_and_active_dynamics_hooks() -> None:
-    robot = _ActiveEnergyJVPDefaultRobot()
+def test_default_energy_custom_jvps_use_force_and_dynamics_terms() -> None:
+    robot = _DynamicsTermsEnergyJVPDefaultRobot()
     q = jnp.array([0.2, -0.3], dtype=jnp.float64)
     qd = jnp.array([0.7, -0.4], dtype=jnp.float64)
     qd_tangent = jnp.array([-0.6, 0.25], dtype=jnp.float64)
@@ -279,13 +329,13 @@ def test_default_energy_custom_jvps_use_force_and_active_dynamics_hooks() -> Non
         (q, qd),
         (qd_tangent, qdd),
     )
-    _, active_coriolisd = jax.jvp(
-        robot._active_coriolis_force,
+    _, convective_derivative = jax.jvp(
+        robot._convective_force,
         (qd,),
         (qd_tangent,),
     )
     kinetic_expected = qd @ robot.inertia_matrix(q) @ qdd
-    kinetic_expected = kinetic_expected + 0.5 * qd @ active_coriolisd
+    kinetic_expected = kinetic_expected + 0.5 * qd @ convective_derivative
     assert_allclose(Td, kinetic_expected, rtol=1e-12, atol=1e-12)
 
     _, Ed = jax.jvp(
@@ -301,7 +351,7 @@ def test_default_energy_custom_jvps_use_force_and_active_dynamics_hooks() -> Non
     )
 
 
-def test_default_kinetic_energy_custom_jvp_falls_back_to_public_matrices() -> None:
+def test_default_kinetic_energy_custom_jvp_uses_default_dynamics_terms() -> None:
     robot = _PlanarDefaultRobot()
     q = jnp.array([0.2, -0.3], dtype=jnp.float64)
     qd = jnp.array([0.7, -0.4], dtype=jnp.float64)
@@ -314,6 +364,11 @@ def test_default_kinetic_energy_custom_jvp_falls_back_to_public_matrices() -> No
         (qd_tangent, qdd),
     )
 
+    _, Cqdd = jax.jvp(
+        lambda velocity: robot.dynamics_terms(q, velocity)[1],
+        (qd,),
+        (qd_tangent,),
+    )
     expected = qd @ robot.inertia_matrix(q) @ qdd
-    expected = expected + qd @ robot.coriolis_matrix(q, qd_tangent) @ qd
+    expected = expected + 0.5 * qd @ Cqdd
     assert_allclose(Td, expected, rtol=1e-12, atol=1e-12)

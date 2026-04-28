@@ -1252,8 +1252,8 @@ class PCS(SoftRobot):
                 L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
-                Ad_inv, T, dAd_inv_ds, dT_ds = (
-                    self._pcs_jacobian_arc_length_step_terms(xi_i, arc_len)
+                Ad_inv, T, dAd_inv_ds, dT_ds = self._pcs_jacobian_arc_length_step_terms(
+                    xi_i, arc_len
                 )
                 g_next = g_prev @ self._pcs_relative_pose(xi_i, arc_len)
                 J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
@@ -1525,9 +1525,7 @@ class PCS(SoftRobot):
 
         xi = self.strain(q).reshape(self.num_segments, 6)
         segment_idx, _ = self.classify_segment(s)
-        eta_rot_s = jnp.concatenate(
-            [xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)]
-        )
+        eta_rot_s = jnp.concatenate([xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)])
         Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
 
         J = Ad_g @ J_local
@@ -1535,9 +1533,7 @@ class PCS(SoftRobot):
         return J, Js
 
     @eqx.filter_jit
-    def jacobian_arc_length_derivative_inertialframe(
-        self, q: Array, s: Array
-    ) -> Array:
+    def jacobian_arc_length_derivative_inertialframe(self, q: Array, s: Array) -> Array:
         """
         Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
         """
@@ -1548,9 +1544,7 @@ class PCS(SoftRobot):
 
         xi = self.strain(q).reshape(self.num_segments, 6)
         segment_idx, _ = self.classify_segment(s)
-        eta_rot_s = jnp.concatenate(
-            [xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)]
-        )
+        eta_rot_s = jnp.concatenate([xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)])
         Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
         Js = Ad_g_s @ J_local + Ad_g @ Js_local
         return Js
@@ -2581,11 +2575,20 @@ class PCS(SoftRobot):
         return J_tips, Jd_tips
 
     @eqx.filter_jit
-    def _active_quadrature_kinematics(
+    def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
+        """
+        Return poses, generalized-coordinate body-frame Jacobians, and derivatives
+        at interior integration nodes.
+        """
+        _, g_ps, J_ps, Jd_ps = self._integration_kinematics(q, qd)
+        return g_ps, J_ps, Jd_ps
+
+    @eqx.filter_jit
+    def _integration_kinematics(
         self, q: Array, qd: Array, convective_only_jd: bool = False
     ) -> tuple[Array, Array, Array, Array]:
         """
-        Return weights, poses, active Jacobians, and derivatives at quadrature points.
+        Return weights, poses, active Jacobians, and derivatives at integration points.
 
         Args:
             q: Active generalized coordinates, shape ``(self.num_dofs,)``.
@@ -2676,16 +2679,14 @@ class PCS(SoftRobot):
         return Ws_inner, g_ps, J_ps, Jd_ps
 
     @eqx.filter_jit
-    def _active_quadrature_forward_dynamics_terms(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
         Assemble active-coordinate inertia, Coriolis-vector, and gravity terms.
 
         The endpoint quadrature nodes have zero weight and are dropped before the
         kinematics/Jacobian batch evaluation.
         """
-        Ws_inner, g_ps, J_ps, Jd_ps = self._active_quadrature_kinematics(
+        Ws_inner, g_ps, J_ps, Jd_ps = self._integration_kinematics(
             q, qd, convective_only_jd=True
         )
         num_inner_points = self.num_gauss_points
@@ -2759,7 +2760,7 @@ class PCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        B, Cqd, G = self._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 

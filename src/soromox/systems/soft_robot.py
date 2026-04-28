@@ -11,6 +11,7 @@ import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, vmap
 from jax import numpy as jnp
 
+import soromox.utils.lie_algebra as lie
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 
@@ -489,9 +490,162 @@ class SoftRobot(DynamicalSystem):
         """
         return vmap(lambda s: self.jacobian_and_time_derivative(q, qd, s))(s_ps)
 
+    def jacobian_bodyframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the body-frame Jacobian at a point ``s`` along the robot.
+
+        The default implementation converts the public inertial-frame Jacobian
+        to the local pose frame using the rotation-only convention used by the
+        dynamics integrands.
+        """
+        pose = self.forward_kinematics(q, s)
+        J = self.jacobian(q, s)
+        return self._inertial_jacobian_to_bodyframe(pose, J)
+
+    def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
+        """
+        Compute body-frame Jacobians at multiple points along the robot.
+        """
+        return vmap(lambda s: self.jacobian_bodyframe(q, s))(s_ps)
+
+    def jacobian_and_time_derivative_bodyframe(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute a body-frame Jacobian and its time derivative at ``s``.
+
+        The default differentiates ``jacobian_bodyframe`` with respect to the
+        generalized coordinates.
+        """
+        J, Jd = jvp(lambda q_: self.jacobian_bodyframe(q_, s), (q,), (qd,))
+        return J, Jd
+
+    def jacobian_and_time_derivative_bodyframe_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute body-frame Jacobians and time derivatives at many points.
+        """
+        return vmap(lambda s: self.jacobian_and_time_derivative_bodyframe(q, qd, s))(
+            s_ps
+        )
+
+    def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
+        """
+        Evaluate poses, body-frame Jacobians, and Jacobian derivatives at
+        interior integration nodes.
+
+        The default implementation is intentionally unfused. It samples
+        ``integration_points[..., 1:-1]`` for every segment, maps normalized
+        nodes to arclength, and calls the public kinematics/Jacobian APIs.
+        Subclasses can override this method with a fused implementation.
+
+        Returns:
+            Tuple ``(g_ps, J_ps, Jd_ps)`` with leading axes
+            ``(num_segments, num_inner_points)``.
+        """
+        if self.integration_points is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} must define integration_points or override "
+                "integration_kinematics."
+            )
+
+        segment_lengths = jnp.atleast_1d(jnp.asarray(self.segment_length))
+        segment_starts = jnp.concatenate(
+            [
+                jnp.zeros((1,), dtype=segment_lengths.dtype),
+                jnp.cumsum(segment_lengths)[:-1],
+            ]
+        )
+        points = jnp.asarray(self.integration_points)
+
+        if points.ndim == 1:
+            inner_points = points[1:-1]
+            s_ps = (
+                segment_starts[:, None]
+                + segment_lengths[:, None] * inner_points[None, :]
+            )
+        elif points.ndim == 2:
+            inner_points = points[:, 1:-1]
+            s_ps = segment_starts[:, None] + segment_lengths[:, None] * inner_points
+        else:
+            raise ValueError(
+                "integration_points must have shape (num_points,) or "
+                "(num_segments, num_points)."
+            )
+
+        s_flat = s_ps.reshape(-1)
+        g_flat = vmap(lambda s: self._homogeneous_forward_kinematics(q, s))(s_flat)
+        J_flat, Jd_flat = self.jacobian_and_time_derivative_bodyframe_batched(
+            q, qd, s_flat
+        )
+
+        leading_shape = s_ps.shape
+        g_ps = g_flat.reshape(*leading_shape, *g_flat.shape[1:])
+        J_ps = J_flat.reshape(*leading_shape, *J_flat.shape[1:])
+        Jd_ps = Jd_flat.reshape(*leading_shape, *Jd_flat.shape[1:])
+        return g_ps, J_ps, Jd_ps
+
     # -----------------------------------------
     # Kinematics implementation helpers
     # -----------------------------------------
+
+    def _homogeneous_forward_kinematics(self, q: Array, s: Array) -> Array:
+        """Return the forward-kinematics pose as an SE(2) or SE(3) matrix."""
+        return self._homogeneous_pose(self.forward_kinematics(q, s))
+
+    def _homogeneous_pose(self, pose: Array) -> Array:
+        """Convert the public pose representation to a homogeneous matrix."""
+        if self.is_planar:
+            if pose.ndim == 1 and pose.shape[0] == 3:
+                return lie.exp_SE2(pose)
+            if pose.shape == (3, 3):
+                return pose
+            raise ValueError(
+                "Planar forward_kinematics must return [theta, x, y] with shape (3,) "
+                "or an SE(2) matrix with shape (3, 3)."
+            )
+
+        if pose.shape != (4, 4):
+            raise ValueError(
+                "Spatial forward_kinematics must return an SE(3) matrix with "
+                "shape (4, 4)."
+            )
+        return pose
+
+    def _inertial_jacobian_to_bodyframe(self, pose: Array, J: Array) -> Array:
+        """
+        Rotate an inertial-frame Jacobian into the local body frame.
+
+        The convention matches the PCS/GVS dynamics code: angular and linear
+        velocity components are rotated, with no translational adjoint coupling.
+        """
+        if self.is_planar:
+            if pose.ndim == 1 and pose.shape[0] == 3:
+                theta = pose[0]
+                R = jnp.array(
+                    [
+                        [jnp.cos(theta), -jnp.sin(theta)],
+                        [jnp.sin(theta), jnp.cos(theta)],
+                    ],
+                    dtype=pose.dtype,
+                )
+            elif pose.shape == (3, 3):
+                R = pose[:2, :2]
+            else:
+                raise ValueError(
+                    "Planar forward_kinematics must return [theta, x, y] with "
+                    "shape (3,) or an SE(2) matrix with shape (3, 3)."
+                )
+            return jnp.concatenate([J[:1], R.T @ J[1:]], axis=0)
+
+        if pose.shape != (4, 4):
+            raise ValueError(
+                "Spatial forward_kinematics must return an SE(3) matrix with "
+                "shape (4, 4)."
+            )
+        R = pose[:3, :3]
+        return jnp.concatenate([R.T @ J[:3], R.T @ J[3:]], axis=0)
 
     def _planar_pose_jacobian(self, pose: Array, dpose_dq: Array) -> Array:
         """
@@ -808,16 +962,11 @@ class SoftRobot(DynamicalSystem):
         """
         Return the inertia matrix used by the kinetic-energy custom JVP.
 
-        Systems that expose active-quadrature forward-dynamics terms can reuse
-        that assembled inertia matrix instead of materializing it through the
-        public matrix API.
+        Systems that override ``dynamics_terms`` can reuse that assembled
+        inertia matrix instead of materializing it through the public matrix API.
         """
-        active_terms = getattr(self, "_active_quadrature_forward_dynamics_terms", None)
-        if active_terms is not None:
-            M, _, _ = active_terms(q, qd)
-            return M
-
-        return self.inertia_matrix(q)
+        M, _, _ = self.dynamics_terms(q, qd)
+        return M
 
     def _kinetic_energy_coriolis_cross_force(
         self, q: Array, qd: Array, qd_tangent: Array
@@ -825,21 +974,17 @@ class SoftRobot(DynamicalSystem):
         """
         Return ``C(q, qd_tangent) @ qd`` for the configuration tangent.
 
-        If an active-quadrature ``C(q, v) @ v`` helper is available, the cross
-        term is obtained by a velocity-direction JVP:
+        The cross term is obtained by a velocity-direction JVP through
+        ``dynamics_terms``:
         ``d(C(v) @ v)[qd, qd_tangent] / 2 = C(q, qd_tangent) @ qd``
         for the standard Christoffel/energy-consistent Coriolis convention.
         """
-        active_terms = getattr(self, "_active_quadrature_forward_dynamics_terms", None)
-        if active_terms is not None:
-            _, coriolis_cross = jvp(
-                lambda velocity: active_terms(q, velocity)[1],
-                (qd,),
-                (qd_tangent,),
-            )
-            return 0.5 * coriolis_cross
-
-        return self.coriolis_matrix(q, qd_tangent) @ qd
+        _, coriolis_cross = jvp(
+            lambda velocity: self.dynamics_terms(q, velocity)[1],
+            (qd,),
+            (qd_tangent,),
+        )
+        return 0.5 * coriolis_cross
 
     def gravitational_energy(self, q: Array) -> Array:
         """
@@ -1047,6 +1192,19 @@ class SoftRobot(DynamicalSystem):
     # Dynamics
     # -----------------------------------------
 
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
+        """
+        Return forward-dynamics terms ``(M, Cqd, G)``.
+
+        ``Cqd`` is the convective force vector ``C(q, qd) @ qd``. The default
+        implementation is intentionally unfused and calls the public matrix and
+        force APIs separately.
+        """
+        M = self.inertia_matrix(q)
+        Cqd = self.coriolis_matrix(q, qd) @ qd
+        G = self.gravitational_force(q)
+        return M, Cqd, G
+
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
@@ -1084,14 +1242,12 @@ class SoftRobot(DynamicalSystem):
         if tau_ext is None:
             tau_ext = jnp.zeros_like(q)
 
-        M = self.inertia_matrix(q)
-        C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_force(q)
+        M, Cqd, G = self.dynamics_terms(q, qd)
         K = self.elastic_force(q)
         D = self.damping_matrix(q)
         tau_u = self.actuation_force(q, u)
 
-        rhs = tau_u + tau_ext - C @ qd - G - K - D @ qd
+        rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
         qdd = jnp.linalg.solve(M, rhs)
 
         return jnp.concatenate([qd, qdd])
