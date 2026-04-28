@@ -47,10 +47,18 @@ class _PlanarDefaultRobot(SoftRobot):
         return jnp.array([theta, s * jnp.cos(theta) + q[1], s * jnp.sin(theta)])
 
     def inertia_matrix(self, q: Array) -> Array:
-        return jnp.diag(jnp.array([2.0, 4.0], dtype=q.dtype))
+        return jnp.array(
+            [
+                [2.0 + 0.3 * q[0] ** 2, 0.1 * jnp.sin(q[0] + q[1])],
+                [0.1 * jnp.sin(q[0] + q[1]), 4.0 + 0.2 * q[1] ** 2],
+            ],
+            dtype=q.dtype,
+        )
 
     def coriolis_matrix(self, q: Array, qd: Array) -> Array:
-        return jnp.diag(jnp.array([0.5, 1.0], dtype=q.dtype))
+        dM = jax.jacfwd(self.inertia_matrix)(q)
+        christoffel = dM + jnp.swapaxes(dM, 1, 2) - jnp.transpose(dM, (2, 0, 1))
+        return 0.5 * jnp.einsum("ijk,k->ij", christoffel, qd)
 
     def damping_matrix(self, q: Array) -> Array:
         return jnp.diag(jnp.array([0.1, 0.2], dtype=q.dtype))
@@ -98,23 +106,10 @@ class _DynamicsTermsEnergyJVPDefaultRobot(_PlanarDefaultRobot):
     def elastic_force(self, q: Array) -> Array:
         return jnp.array([-0.75, 0.5], dtype=q.dtype)
 
-    def coriolis_matrix(self, q: Array, qd: Array) -> Array:
-        del q, qd
-        return 1e3 * jnp.eye(2, dtype=jnp.float64)
-
-    def _convective_force(self, qd: Array) -> Array:
-        return jnp.array(
-            [
-                qd[0] * qd[0] + 2.0 * qd[0] * qd[1],
-                qd[0] * qd[1] - 0.5 * qd[1] * qd[1],
-            ],
-            dtype=qd.dtype,
-        )
-
     def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         return (
             self.inertia_matrix(q),
-            self._convective_force(qd),
+            self.coriolis_matrix(q, qd) @ qd,
             self._gravitational_force(q),
         )
 
@@ -307,6 +302,18 @@ def test_default_gravity_force_and_forward_dynamics() -> None:
     assert_allclose(robot.forward_dynamics(0.0, y, (u, tau_ext)), jnp.r_[qd, qdd])
 
 
+def test_default_coriolis_matrix_is_energy_consistent() -> None:
+    robot = _PlanarDefaultRobot()
+    q = jnp.array([0.2, -0.3], dtype=jnp.float64)
+    qd = jnp.array([0.7, -0.4], dtype=jnp.float64)
+
+    _, M_dot = jax.jvp(robot.inertia_matrix, (q,), (qd,))
+    C = robot.coriolis_matrix(q, qd)
+    skew = M_dot - 2.0 * C
+
+    assert_allclose(skew + skew.T, jnp.zeros_like(skew), rtol=1e-12, atol=1e-12)
+
+
 def test_default_energy_custom_jvps_use_force_and_dynamics_terms() -> None:
     robot = _DynamicsTermsEnergyJVPDefaultRobot()
     q = jnp.array([0.2, -0.3], dtype=jnp.float64)
@@ -329,13 +336,11 @@ def test_default_energy_custom_jvps_use_force_and_dynamics_terms() -> None:
         (q, qd),
         (qd_tangent, qdd),
     )
-    _, convective_derivative = jax.jvp(
-        robot._convective_force,
-        (qd,),
-        (qd_tangent,),
+    _, kinetic_expected = jax.jvp(
+        lambda q_, qd_: robot._kinetic_energy(q_, qd_),
+        (q, qd),
+        (qd_tangent, qdd),
     )
-    kinetic_expected = qd @ robot.inertia_matrix(q) @ qdd
-    kinetic_expected = kinetic_expected + 0.5 * qd @ convective_derivative
     assert_allclose(Td, kinetic_expected, rtol=1e-12, atol=1e-12)
 
     _, Ed = jax.jvp(
@@ -369,6 +374,12 @@ def test_default_kinetic_energy_custom_jvp_uses_default_dynamics_terms() -> None
         (qd,),
         (qd_tangent,),
     )
-    expected = qd @ robot.inertia_matrix(q) @ qdd
-    expected = expected + 0.5 * qd @ Cqdd
+    expected_from_dynamics_terms = qd @ robot.inertia_matrix(q) @ qdd
+    expected_from_dynamics_terms = expected_from_dynamics_terms + 0.5 * qd @ Cqdd
+    _, expected = jax.jvp(
+        lambda q_, qd_: robot._kinetic_energy(q_, qd_),
+        (q, qd),
+        (qd_tangent, qdd),
+    )
+    assert_allclose(expected_from_dynamics_terms, expected, rtol=1e-12, atol=1e-12)
     assert_allclose(Td, expected, rtol=1e-12, atol=1e-12)

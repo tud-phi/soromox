@@ -776,6 +776,14 @@ class SoftRobot(DynamicalSystem):
         """
         Compute the Coriolis/centrifugal matrix.
 
+        Implementations are expected to use the Christoffel/energy-consistent
+        convention associated with ``inertia_matrix(q)``: ``C(q, qd) @ qd`` is
+        the convective force and ``M_dot(q, qd) - 2 * C(q, qd)`` is
+        skew-symmetric. This structure is important for energy balance,
+        passivity, model-based control, and derivative-based APIs. Optimized
+        ``dynamics_terms`` overrides should return a ``Cqd`` vector consistent
+        with the same inertia matrix.
+
         Args:
             q: Generalized coordinates of shape (num_dofs,).
             qd: Generalized velocities of shape (num_dofs,).
@@ -1198,7 +1206,8 @@ class SoftRobot(DynamicalSystem):
 
         ``Cqd`` is the convective force vector ``C(q, qd) @ qd``. The default
         implementation is intentionally unfused and calls the public matrix and
-        force APIs separately.
+        force APIs separately. Overrides must keep ``M`` and ``Cqd``
+        energy-consistent with ``inertia_matrix`` and ``coriolis_matrix``.
         """
         M = self.inertia_matrix(q)
         Cqd = self.coriolis_matrix(q, qd) @ qd

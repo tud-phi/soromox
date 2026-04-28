@@ -222,8 +222,9 @@ def coriolis_matrix(self, q: jax.Array, qd: jax.Array) -> jax.Array:
     """
     Coriolis/centrifugal matrix C(q, qd).
 
-    Can be computed from Christoffel symbols or using
-    the property: C(q,qd) = dM/dt - 0.5 * grad(qd^T M qd)
+    Should use the Christoffel/energy-consistent convention associated
+    with inertia_matrix(q): C(q, qd) @ qd is the convective force and
+    M_dot(q, qd) - 2 * C(q, qd) is skew-symmetric.
 
     Returns:
         C: Coriolis matrix (num_dofs, num_dofs)
@@ -304,6 +305,15 @@ def forward_dynamics(self, t, y, tau_ext, actuation_args):
 
     return jnp.concatenate([qd, qdd])
 ```
+
+**Energy and control consistency:** `coriolis_matrix(q, qd)` must be consistent
+with the same `inertia_matrix(q)` used by the model dynamics. In the standard
+Christoffel convention, `C` itself is not generally skew-symmetric; instead
+`M_dot(q, qd) - 2 * C(q, qd)` is skew-symmetric. This structure is important for
+the mechanical energy balance, passivity arguments, and model-based control. It
+also keeps derivative-based APIs consistent. If you override an optimized
+`dynamics_terms(q, qd)` method, its returned `Cqd` vector must equal the
+convective force `C(q, qd) @ qd` for this same convention.
 
 #### 6. Implement Energy Methods (Optional but Recommended)
 
@@ -412,6 +422,9 @@ closed-form derivatives:
 
 - `grad(gravitational_energy)` is the gravitational generalized force.
 - `grad(elastic_energy)` is the elastic generalized force.
+- A `q`-directional JVP of `kinetic_energy(q, qd)` uses the same
+  Christoffel/energy-consistent convective force convention as the model
+  dynamics.
 - A `q`-directional JVP of `jacobian(q, s)` is the Jacobian time derivative
   `dJ/dq @ qd`.
 - An `s`-directional JVP is an arc-length derivative along the backbone.
