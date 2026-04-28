@@ -297,7 +297,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help=(
             "GVS sweep to benchmark. 'segments' scales the number of zero-order "
             "GVS segments. 'basis-order' keeps one GVS segment and sweeps the "
-            "monomial strain-basis order from --gvs-basis-orders."
+            "Legendre polynomial strain-basis order from --gvs-basis-orders."
         ),
     )
     parser.add_argument(

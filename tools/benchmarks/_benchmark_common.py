@@ -250,7 +250,7 @@ def _gvs_segment(strain_basis_order: int, gauss_points: int) -> GVSSegment:
         ),
         joint=JointSpec(type="fixed"),
         basis=StrainBasisSpec(
-            type="monomial",
+            type="legendre",
             active=[1, 1, 1, 1, 1, 1],
             orders=int(strain_basis_order),
             xi_ref=[0, 0, 0, 1, 0, 0],
@@ -484,6 +484,8 @@ def system_gauss_point_metadata(system: Any) -> tuple[int | None, int | None]:
     if hasattr(system, "num_gauss_points") and hasattr(
         system, "num_integration_points"
     ):
+        if system.num_gauss_points is None or system.num_integration_points is None:
+            return None, None
         return int(system.num_gauss_points), int(system.num_integration_points)
     return None, None
 
