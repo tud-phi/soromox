@@ -2577,8 +2577,25 @@ class PCS(SoftRobot):
     @eqx.filter_jit
     def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Return poses, generalized-coordinate body-frame Jacobians, and derivatives
-        at interior integration nodes.
+        Return integration-point kinematics in active generalized coordinates.
+
+        The stored quadrature grid includes zero-weight endpoint nodes; this
+        method ignores those endpoints and evaluates only the nonzero-weight
+        interior quadrature nodes. The coordinates are generalized coordinates
+        for active strain components only.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(g_ps, J_ps, Jd_ps)``. ``g_ps`` contains SE(3) poses with
+            shape ``(self.num_segments, self.num_gauss_points, 4, 4)``.
+            ``J_ps`` contains body-frame Jacobians in active generalized
+            coordinates with shape
+            ``(self.num_segments, self.num_gauss_points, 6, self.num_dofs)``.
+            ``Jd_ps`` contains their time derivatives with the same shape as
+            ``J_ps``.
         """
         _, g_ps, J_ps, Jd_ps = self._integration_kinematics(q, qd)
         return g_ps, J_ps, Jd_ps
@@ -2681,10 +2698,21 @@ class PCS(SoftRobot):
     @eqx.filter_jit
     def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Assemble active-coordinate inertia, Coriolis-vector, and gravity terms.
+        Assemble forward-dynamics terms in active generalized coordinates.
 
-        The endpoint quadrature nodes have zero weight and are dropped before the
-        kinematics/Jacobian batch evaluation.
+        The coordinates and returned generalized forces correspond only to the
+        active strain components selected by the strain basis.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(B, Cqd, G)``. ``B`` is the active-coordinate inertia
+            matrix with shape ``(self.num_dofs, self.num_dofs)``. ``Cqd`` is
+            the active Coriolis/centrifugal force vector with shape
+            ``(self.num_dofs,)``. ``G`` is the active generalized gravity
+            vector with shape ``(self.num_dofs,)``.
         """
         Ws_inner, g_ps, J_ps, Jd_ps = self._integration_kinematics(
             q, qd, convective_only_jd=True

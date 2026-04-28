@@ -3818,8 +3818,27 @@ class GVS(SoftRobot):
     @eqx.filter_jit
     def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Return poses, generalized-coordinate body-frame Jacobians, and derivatives
-        at interior integration nodes.
+        Return integration-point kinematics in active generalized coordinates.
+
+        The stored quadrature grid includes zero-weight endpoint nodes; this
+        method ignores those endpoints and evaluates only the nonzero-weight
+        interior quadrature nodes. The coordinates are generalized coordinates
+        for active strain components only.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(g_quads, J_quads, Jd_quads)``. ``g_quads`` contains SE(3)
+            poses with shape
+            ``(self.num_segments, self.max_num_integration_points - 2, 4, 4)``.
+            ``J_quads`` contains body-frame Jacobians in active generalized
+            coordinates with shape
+            ``(self.num_segments, self.max_num_integration_points - 2, 6,
+            self.num_dofs)``.
+            ``Jd_quads`` contains their time derivatives with the same shape as
+            ``J_quads``.
         """
         _, g_quads, J_quads, Jd_quads = self._integration_kinematics(q, qd)
         return g_quads, J_quads, Jd_quads
@@ -3998,7 +4017,9 @@ class GVS(SoftRobot):
         This helper returns exactly the quadrature-derived terms needed by
         ``forward_dynamics``. In particular, it assembles the convective force
         vector ``C(q, qd) @ qd`` directly instead of materializing the full
-        Coriolis matrix.
+        Coriolis matrix. The coordinates and returned generalized forces
+        correspond only to the active strain components selected by the GVS
+        segment bases.
 
         Args:
             q: Active generalized coordinates, shape
