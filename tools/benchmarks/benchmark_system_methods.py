@@ -2,8 +2,8 @@
 
 """Benchmark the core dynamics routines for Soromox soft robot systems.
 
-This script measures both the ahead-of-time JIT compilation cost and the steady-state
-execution time (after compilation) for selected systems and core methods. It supports
+This script measures both first-call JIT compilation cost and steady-state
+execution time after compilation for selected systems and core methods. It supports
 benchmarking articulated, Pendulum, PlanarPCS, PCS, and GVS implementations over a sweep
 of link or segment counts, and can optionally visualise the results.
 """
@@ -141,15 +141,21 @@ def _measure_jitted_call(
     if repeats < 1:
         raise ValueError("execution repeats must be at least 1")
 
+    # JIT a closure around the benchmark callable instead of jitting bound
+    # methods directly. Bound Equinox methods carry ``self`` as part of the
+    # callable object, and JAX may try to hash the module if the bound method is
+    # passed straight to ``jax.jit``.
+    jitted_fn = jax.jit(lambda *call_args: fn(*call_args))
+
     start = time.perf_counter()
-    first = fn(*args)
+    first = jitted_fn(*args)
     block_until_ready(first)
     first_time = time.perf_counter() - start
 
     exec_times: list[float] = []
     for _ in range(repeats):
         loop_start = time.perf_counter()
-        out = fn(*args)
+        out = jitted_fn(*args)
         block_until_ready(out)
         exec_times.append(time.perf_counter() - loop_start)
 
