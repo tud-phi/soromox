@@ -125,6 +125,8 @@ def _coerce(value: str) -> Any:
     """Best-effort numeric conversion for CSV entries."""
 
     try:
+        if value.lower() in {"", "none", "null"}:
+            return None
         if value.lower() in {"true", "false"}:
             return value.lower() == "true"
     except AttributeError:
@@ -136,6 +138,10 @@ def _coerce(value: str) -> Any:
         except (ValueError, TypeError):
             continue
     return value
+
+
+def _is_missing(value: Any) -> bool:
+    return value is None or value == "" or str(value).lower() in {"none", "null"}
 
 
 def _load_rows(path: Path) -> list[dict[str, Any]]:
@@ -164,7 +170,7 @@ def _filter_rows(
             continue
         if (
             gauss_points
-            and row.get("gauss_points") not in (None, "")
+            and not _is_missing(row.get("gauss_points"))
             and int(row["gauss_points"]) not in gauss_points
         ):
             continue
@@ -179,7 +185,7 @@ def _gauss_groups(rows: Sequence[Mapping[str, Any]]) -> Sequence[int | None]:
         {
             int(row["gauss_points"])
             for row in rows
-            if row.get("gauss_points") not in (None, "")
+            if not _is_missing(row.get("gauss_points"))
         }
     )
     return gauss_values if gauss_values else [None]
@@ -195,7 +201,13 @@ def _rows_for_group(
             row
             for row in rows
             if _size_value(row) == size_value
-            and (gauss_points is None or row.get("gauss_points") == gauss_points)
+            and (
+                gauss_points is None
+                or (
+                    not _is_missing(row.get("gauss_points"))
+                    and int(row["gauss_points"]) == gauss_points
+                )
+            )
         ),
         key=lambda row: row["batch_size"],
     )
