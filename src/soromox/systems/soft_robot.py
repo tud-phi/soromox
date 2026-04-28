@@ -1097,8 +1097,8 @@ class SoftRobot(DynamicalSystem):
 
     def _potential_energy(self, q: Array) -> Array:
         """Protected primal potential-energy hook for custom autodiff wrappers."""
-        U_g = self.gravitational_energy(q)
-        U_el = self.elastic_energy(q)
+        U_g = self._gravitational_energy(q)
+        U_el = self._elastic_energy(q)
         U = U_g + U_el
         return U
 
@@ -1146,8 +1146,8 @@ class SoftRobot(DynamicalSystem):
 
     def _total_energy(self, q: Array, qd: Array) -> Array:
         """Protected primal total-energy hook for custom autodiff wrappers."""
-        T = self.kinetic_energy(q, qd)
-        U = self.potential_energy(q)
+        T = self._kinetic_energy(q, qd)
+        U = self._potential_energy(q)
         E = T + U
         return E
 
