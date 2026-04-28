@@ -117,6 +117,17 @@ def _fourier_slots(X: Array, max_dof: int) -> tuple[Array, Array]:
     return values, derivatives
 
 
+def _fourier_values(X: Array, max_dof: int) -> Array:
+    """Return Fourier basis slot values without derivative work."""
+    slots = jnp.arange(max_dof, dtype=jnp.int32)
+    is_constant = slots == 0
+    is_cosine = slots % 2 == 1
+    modes = ((slots + 1) // 2).astype(jnp.float64)
+    angle = 2 * jnp.pi * modes * X
+    values = jnp.where(is_cosine, jnp.cos(angle), jnp.sin(angle))
+    return jnp.where(is_constant, 1.0, values)
+
+
 def _gaussian_slots(X: Array, order: Array, max_dof: int) -> tuple[Array, Array]:
     slots = jnp.arange(max_dof, dtype=jnp.int32)
     order_safe = jnp.maximum(order, 1).astype(jnp.float64)
@@ -127,6 +138,16 @@ def _gaussian_slots(X: Array, order: Array, max_dof: int) -> tuple[Array, Array]
     values = jnp.where(order == 0, jnp.where(slots == 0, 1.0, 0.0), values)
     derivatives = jnp.where(order == 0, 0.0, derivatives)
     return values, derivatives
+
+
+def _gaussian_values(X: Array, order: Array, max_dof: int) -> Array:
+    """Return Gaussian basis slot values without derivative work."""
+    slots = jnp.arange(max_dof, dtype=jnp.int32)
+    order_safe = jnp.maximum(order, 1).astype(jnp.float64)
+    centers = slots.astype(jnp.float64) / order_safe
+    c = 2 * jnp.sqrt(jnp.log(2.0)) * order_safe
+    values = jnp.exp(-((X - centers) ** 2) * c**2)
+    return jnp.where(order == 0, jnp.where(slots == 0, 1.0, 0.0), values)
 
 
 def _imq_slots(X: Array, order: Array, max_dof: int) -> tuple[Array, Array]:
@@ -140,6 +161,58 @@ def _imq_slots(X: Array, order: Array, max_dof: int) -> tuple[Array, Array]:
     values = jnp.where(order == 0, jnp.where(slots == 0, 1.0, 0.0), values)
     derivatives = jnp.where(order == 0, 0.0, derivatives)
     return values, derivatives
+
+
+def _imq_values(X: Array, order: Array, max_dof: int) -> Array:
+    """Return inverse-multiquadric basis slot values without derivative work."""
+    slots = jnp.arange(max_dof, dtype=jnp.int32)
+    order_safe = jnp.maximum(order, 1).astype(jnp.float64)
+    centers = slots.astype(jnp.float64) / order_safe
+    c = 2 * jnp.sqrt(3.0) * order_safe
+    scaled = 1.0 + ((X - centers) ** 2) * c**2
+    values = 1.0 / jnp.sqrt(scaled)
+    return jnp.where(order == 0, jnp.where(slots == 0, 1.0, 0.0), values)
+
+
+def _basis(
+    X: Array,
+    Bdof: Array,
+    Bodr: Array,
+    max_dof: int,
+    slot_values_fn,
+    widths_fn=_standard_widths,
+) -> Array:
+    """Assemble a packed basis matrix without evaluating basis derivatives."""
+    if max_dof == 0:
+        return jnp.zeros((6, 0), dtype=jnp.float64)
+
+    Bdof, Bodr = _prepared_basis_params(Bdof, Bodr)
+    widths = widths_fn(Bdof, Bodr)
+    offsets = _row_offsets(widths)
+    slots = jnp.arange(max_dof, dtype=jnp.int32)
+    B0 = jnp.zeros((6, max_dof), dtype=jnp.float64)
+
+    def row_body(B: Array, row: Array) -> tuple[Array, None]:
+        row_values = slot_values_fn(X, Bodr[row], max_dof)
+        width = widths[row]
+        offset = offsets[row]
+
+        def slot_body(B_slot: Array, slot: Array) -> tuple[Array, None]:
+            valid = slot < width
+            col = offset + slot
+            B_slot = lax.cond(
+                valid,
+                lambda B_update: B_update.at[row, col].set(row_values[slot]),
+                lambda B_update: B_update,
+                B_slot,
+            )
+            return B_slot, None
+
+        B, _ = lax.scan(slot_body, B, slots)
+        return B, None
+
+    B, _ = lax.scan(row_body, B0, jnp.arange(6, dtype=jnp.int32))
+    return B
 
 
 def _basis_pair(
@@ -196,6 +269,32 @@ def _monomial_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     return _basis_pair(X, Bdof, Bodr, max_dof, lambda x, _order, n: _monomial_slots(x, n))
 
 
+def _monomial_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
+    """
+    Assemble monomial basis values without derivative work.
+
+    This mirrors the pre-derivative implementation used by ``B_Monomial`` on
+    ``main`` so direct basis evaluation keeps the same runtime profile.
+    """
+    Bdof = Bdof.flatten()
+    Bodr = Bodr.flatten()
+    B = jnp.zeros((6, max_dof), dtype=jnp.float64)
+
+    def fill_basis(i, carry):
+        B, k = carry
+        n_terms = Bdof[i] * (Bodr[i] + 1)
+
+        def inner_body(j, inner_carry):
+            B_inner, k_inner = inner_carry
+            B_inner = B_inner.at[i, k_inner].set(X**j)
+            return B_inner, k_inner + 1
+
+        return lax.fori_loop(0, n_terms.astype(int), inner_body, (B, k))
+
+    B, _ = lax.fori_loop(0, 6, fill_basis, (B, 0))
+    return B
+
+
 def _legendre_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     return _basis_pair(
         X,
@@ -206,6 +305,53 @@ def _legendre_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     )
 
 
+def _legendre_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
+    """
+    Assemble Legendre basis values without derivative work.
+
+    The derivative implementation uses the shared fused pair helper, but the
+    public value-only path intentionally stays close to the original loop
+    structure to avoid slowing down existing ``B_LegendrePolynomial`` calls.
+    """
+    Bdof = Bdof.flatten()
+    Bodr = Bodr.flatten()
+    B = jnp.zeros((6, max_dof), dtype=jnp.float64)
+    X = 2 * X - 1
+
+    def fill_basis(i, carry):
+        B, k = carry
+        n_terms = Bdof[i] * (Bodr[i] + 1)
+
+        def inner_body(j, inner_carry):
+            B_inner, k_inner = inner_carry
+
+            def recurrence(n, state):
+                P0, P1 = state
+                P_next = ((2 * n + 1) * X * P1 - n * P0) / (n + 1)
+                return P1, P_next
+
+            def legendre_j(j):
+                return lax.cond(
+                    j == 0,
+                    lambda j_1: 1.0,
+                    lambda j_1: lax.cond(
+                        j_1 == 1,
+                        lambda j_2: X,
+                        lambda j_2: lax.fori_loop(1, j_2, recurrence, (1.0, X))[1],
+                        j_1,
+                    ),
+                    j,
+                )
+
+            B_inner = B_inner.at[i, k_inner].set(legendre_j(j))
+            return B_inner, k_inner + 1
+
+        return lax.fori_loop(0, n_terms.astype(int), inner_body, (B, k))
+
+    B, _ = lax.fori_loop(0, 6, fill_basis, (B, 0))
+    return B
+
+
 def _chebychev_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     return _basis_pair(
         X,
@@ -214,6 +360,53 @@ def _chebychev_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
         max_dof,
         lambda x, _order, n: _polynomial_slots(x, n, "chebychev"),
     )
+
+
+def _chebychev_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
+    """
+    Assemble Chebychev basis values without derivative work.
+
+    Keeping this value-only path separate is important because the fused
+    value/derivative recurrence is substantially slower for direct
+    ``B_Chebychev`` calls.
+    """
+    Bdof = Bdof.flatten()
+    Bodr = Bodr.flatten()
+    B = jnp.zeros((6, max_dof), dtype=jnp.float64)
+    X = 2 * X - 1
+
+    def fill_basis(i, carry):
+        B, k = carry
+        n_terms = Bdof[i] * (Bodr[i] + 1)
+
+        def inner_body(j, inner_carry):
+            B_inner, k_inner = inner_carry
+
+            def recurrence(n, state):
+                T0, T1 = state
+                T_next = 2 * X * T1 - T0
+                return T1, T_next
+
+            def cheb_j(j):
+                return lax.cond(
+                    j == 0,
+                    lambda j_1: 1.0,
+                    lambda j_1: lax.cond(
+                        j_1 == 1,
+                        lambda j_2: X,
+                        lambda j_2: lax.fori_loop(1, j_2, recurrence, (1.0, X))[1],
+                        j_1,
+                    ),
+                    j,
+                )
+
+            B_inner = B_inner.at[i, k_inner].set(cheb_j(j))
+            return B_inner, k_inner + 1
+
+        return lax.fori_loop(0, n_terms.astype(int), inner_body, (B, k))
+
+    B, _ = lax.fori_loop(0, 6, fill_basis, (B, 0))
+    return B
 
 
 def _fourier_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
@@ -227,42 +420,61 @@ def _fourier_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     )
 
 
+def _fourier_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
+    return _basis(
+        X,
+        Bdof,
+        Bodr,
+        max_dof,
+        lambda x, _order, n: _fourier_values(x, n),
+        widths_fn=_fourier_widths,
+    )
+
+
 def _gaussian_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     return _basis_pair(X, Bdof, Bodr, max_dof, _gaussian_slots)
+
+
+def _gaussian_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
+    return _basis(X, Bdof, Bodr, max_dof, _gaussian_values)
 
 
 def _imq_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
     return _basis_pair(X, Bdof, Bodr, max_dof, _imq_slots)
 
 
+def _imq_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
+    return _basis(X, Bdof, Bodr, max_dof, _imq_values)
+
+
 def B_Monomial(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Compute the monomial strain basis evaluated at normalized position ``X``."""
-    return _monomial_pair(X, Bdof, Bodr, max_dof)[0]
+    return _monomial_basis(X, Bdof, Bodr, max_dof)
 
 
 def B_LegendrePolynomial(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Compute the Legendre strain basis evaluated at normalized position ``X``."""
-    return _legendre_pair(X, Bdof, Bodr, max_dof)[0]
+    return _legendre_basis(X, Bdof, Bodr, max_dof)
 
 
 def B_Chebychev(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Compute the Chebychev strain basis evaluated at normalized position ``X``."""
-    return _chebychev_pair(X, Bdof, Bodr, max_dof)[0]
+    return _chebychev_basis(X, Bdof, Bodr, max_dof)
 
 
 def B_Fourier(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Compute the Fourier strain basis evaluated at normalized position ``X``."""
-    return _fourier_pair(X, Bdof, Bodr, max_dof)[0]
+    return _fourier_basis(X, Bdof, Bodr, max_dof)
 
 
 def B_Gaussian(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Compute the Gaussian strain basis evaluated at normalized position ``X``."""
-    return _gaussian_pair(X, Bdof, Bodr, max_dof)[0]
+    return _gaussian_basis(X, Bdof, Bodr, max_dof)
 
 
 def B_IMQ(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Compute the inverse-multiquadric strain basis at normalized position ``X``."""
-    return _imq_pair(X, Bdof, Bodr, max_dof)[0]
+    return _imq_basis(X, Bdof, Bodr, max_dof)
 
 
 def dB_Monomial(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
