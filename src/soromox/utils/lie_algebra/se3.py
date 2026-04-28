@@ -98,15 +98,27 @@ def hat_SE3(vec6: Array) -> Array:
 
 def exp_SE3(vec6: Array) -> Array:
     """
-    Computes the exponential map for a 6D vector of se(3).
+    Construct an SE(3) homogeneous transform from raw pose coordinates.
+
+    This helper keeps the historical ``exp_SE3`` name, but it is not the
+    matrix exponential of ``hat_SE3(vec6)`` for a general twist. The rotational
+    coordinates are interpreted as ZYX Euler angles and the translational
+    entries are inserted directly into the homogeneous transform:
+    ``vec6 = [phi, theta, psi, x, y, z]`` maps to
+    ``[[R_zyx(phi, theta, psi), [x, y, z]], [0, 0, 0, 1]]``.
+
+    Use :func:`exp_gn_SE3` when ``vec6`` represents a Lie-algebra twist whose
+    translational component must be integrated by the SE(3) exponential.
 
     Args:
         vec6 (Array): shape (6,) or (6, 1)
-            Screw coordinates [phi, theta, psi, vx, vy, vz] with ZYX Euler convention for the rotation part.
-    
+            Pose coordinates ``[phi, theta, psi, x, y, z]`` with ZYX Euler
+            convention for the rotation part and raw translation ``(x, y, z)``.
+
     Returns:
         g: shape (4, 4)
-            A 4x4 matrix representing the exponential map of the input screw vector.
+            Homogeneous pose with ZYX Euler rotation and translation
+            ``[x, y, z]``.
     """
     vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
 

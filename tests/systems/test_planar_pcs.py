@@ -707,6 +707,20 @@ def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_jacobian_bodyframe_with_pose_matches_forward_kinematics(
+    num_segments: int,
+) -> None:
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    q = random_q(model, jax.random.PRNGKey(987), scale=0.05)
+
+    for s in sample_arc_lengths(model):
+        chi, J_body = model._jacobian_bodyframe_with_pose(q, s)
+
+        assert_allclose(chi, model.forward_kinematics(q, s), rtol=RTOL, atol=ATOL)
+        assert_allclose(J_body, model.jacobian_bodyframe(q, s), rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
     model, _ = make_planar_pcs(
         num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH
@@ -1080,14 +1094,14 @@ def test_planar_pcs_arc_length_derivatives_match_autodiff() -> None:
             atol=ATOL,
         )
 
-        _, J_s_autodiff = jvp(
+        _, Js_autodiff = jvp(
             lambda s_: model._jacobian(q, s_),
             (s,),
             (jnp.ones_like(s),),
         )
         assert_allclose(
             model.jacobian_arc_length_derivative(q, s),
-            J_s_autodiff,
+            Js_autodiff,
             rtol=1e-6,
             atol=1e-7,
         )
@@ -1100,14 +1114,16 @@ def test_planar_pcs_custom_jvps_include_arc_length_derivative() -> None:
     s = strict_interior_arc_lengths(model)[1]
     sd = jnp.array(0.37, dtype=jnp.float64)
 
-    pose, posed = jvp(
+    _, posed = jvp(
         lambda q_, s_: model.forward_kinematics(q_, s_),
         (q, s),
         (qd, sd),
     )
-    eta = model.jacobian(q, s) @ qd
-    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
-    expected_posed += model.forward_kinematics_arc_length_derivative(q, s) * sd
+    _, expected_posed = jvp(
+        lambda q_, s_: model._forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
     assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
 
     _, Jd = jvp(
@@ -1115,8 +1131,11 @@ def test_planar_pcs_custom_jvps_include_arc_length_derivative() -> None:
         (q, s),
         (qd, sd),
     )
-    _, Jd_q = model.jacobian_and_time_derivative(q, qd, s)
-    expected_Jd = Jd_q + model.jacobian_arc_length_derivative(q, s) * sd
+    _, expected_Jd = jvp(
+        lambda q_, s_: model._jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
     assert_allclose(Jd, expected_Jd, rtol=1e-6, atol=1e-7)
 
 

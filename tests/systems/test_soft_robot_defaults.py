@@ -3,6 +3,11 @@ from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
+from soromox.autodiff import (
+    custom_jvp_enabled,
+    custom_jvp_mode,
+    set_custom_jvp_enabled,
+)
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 jax.config.update("jax_enable_x64", True)
@@ -109,6 +114,77 @@ class _ActiveEnergyJVPDefaultRobot(_PlanarDefaultRobot):
             self._active_coriolis_force(qd),
             self._gravitational_force(q),
         )
+
+
+class _ToggleSentinelDefaultRobot(_PlanarDefaultRobot):
+    def _jacobian(self, q: Array, s: Array) -> Array:
+        del s
+        return jnp.array(
+            [
+                [2.0, -1.0],
+                [0.5, 1.25],
+                [-0.75, 0.25],
+            ],
+            dtype=q.dtype,
+        )
+
+    def _forward_kinematics_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        pose = self._forward_kinematics(q, s)
+        return pose, jnp.full_like(pose, 0.375)
+
+    def _gravitational_force(self, q: Array) -> Array:
+        return jnp.array([4.0, -2.0], dtype=q.dtype)
+
+
+def test_custom_jvp_global_toggle_context_manager_restores_state() -> None:
+    set_custom_jvp_enabled(True)
+    assert custom_jvp_enabled()
+
+    with custom_jvp_mode(False):
+        assert not custom_jvp_enabled()
+
+    assert custom_jvp_enabled()
+
+    set_custom_jvp_enabled(False)
+    with custom_jvp_mode(True):
+        assert custom_jvp_enabled()
+
+    assert not custom_jvp_enabled()
+    set_custom_jvp_enabled(True)
+
+
+def test_custom_jvp_toggle_controls_public_forward_kinematics_arc_length_jvp() -> None:
+    robot = _ToggleSentinelDefaultRobot()
+    q = jnp.array([0.2, -0.3], dtype=jnp.float64)
+    s = jnp.array(0.8, dtype=jnp.float64)
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    with custom_jvp_mode(True):
+        _, posed = jax.jvp(lambda s_: robot.forward_kinematics(q, s_), (s,), (sd,))
+
+    assert_allclose(posed, jnp.full_like(posed, 0.375) * sd, rtol=1e-12, atol=1e-12)
+
+    with custom_jvp_mode(False):
+        _, posed = jax.jvp(lambda s_: robot.forward_kinematics(q, s_), (s,), (sd,))
+
+    _, expected = jax.jvp(lambda s_: robot._forward_kinematics(q, s_), (s,), (sd,))
+    assert_allclose(posed, expected, rtol=1e-12, atol=1e-12)
+
+
+def test_custom_jvp_toggle_controls_public_gravity_energy_grad() -> None:
+    robot = _ToggleSentinelDefaultRobot()
+    q = jnp.array([0.2, -0.3], dtype=jnp.float64)
+
+    with custom_jvp_mode(True):
+        G = jax.grad(lambda q_: robot.gravitational_energy(q_))(q)
+    assert_allclose(G, robot._gravitational_force(q), rtol=1e-12, atol=1e-12)
+
+    with custom_jvp_mode(False):
+        G = jax.grad(lambda q_: robot.gravitational_energy(q_))(q)
+    expected = jax.grad(lambda q_: robot._gravitational_energy(q_))(q)
+    assert_allclose(G, expected, rtol=1e-12, atol=1e-12)
 
 
 def test_default_planar_jacobians_and_tip_methods() -> None:

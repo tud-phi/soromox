@@ -11,6 +11,7 @@ import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, vmap
 from jax import numpy as jnp
 
+from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 
 
@@ -148,7 +149,9 @@ class SoftRobot(DynamicalSystem):
                 - For 3D robots (PCS): SE(3) transformation matrix, shape (4, 4)
                 - For planar robots (PlanarPCS, Pendulum): [theta, x, y], shape (3,)
         """
-        return SoftRobot._forward_kinematics_custom_jvp(self, q, s)
+        if custom_jvp_enabled():
+            return SoftRobot._forward_kinematics_custom_jvp(self, q, s)
+        return self._forward_kinematics(q, s)
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
@@ -163,9 +166,7 @@ class SoftRobot(DynamicalSystem):
 
     @eqx.filter_custom_jvp
     @staticmethod
-    def _forward_kinematics_custom_jvp(
-        robot: "SoftRobot", q: Array, s: Array
-    ) -> Array:
+    def _forward_kinematics_custom_jvp(robot: "SoftRobot", q: Array, s: Array) -> Array:
         """Custom-JVP entry point for the public forward_kinematics wrapper."""
         return robot._forward_kinematics(q, s)
 
@@ -177,20 +178,38 @@ class SoftRobot(DynamicalSystem):
         robot, q, s = primals
         _, qd, sd = tangents
 
-        pose = robot._forward_kinematics(q, s)
+        return robot._forward_kinematics_jvp(q, s, qd, sd)
 
-        if qd is None:
-            pose_tangent_q = jnp.zeros_like(pose)
-        else:
-            eta_q = robot.jacobian(q, s) @ qd
-            pose_tangent_q = robot._pose_tangent_from_inertial_velocity(pose, eta_q)
+    def _forward_kinematics_jvp(
+        self, q: Array, s: Array, qd: Array | None, sd: Array | None
+    ) -> tuple[Array, Array]:
+        """
+        Evaluate the FK custom-JVP tangent with the narrowest needed hooks.
+
+        The arc-length-only tangent uses the analytical
+        ``forward_kinematics_and_arc_length_derivative`` hook when available,
+        because systems often have a compact closed-form expression for
+        ``d pose / ds``. Configuration-only and mixed ``q``/``s`` tangents
+        intentionally use JAX autodiff through ``_forward_kinematics``. Earlier
+        specialized FK velocity paths duplicated substantial kinematics code
+        and did not show enough benchmark benefit to justify the maintenance
+        cost.
+        """
+        if qd is not None:
+            if sd is None:
+                return jvp(lambda q_: self._forward_kinematics(q_, s), (q,), (qd,))
+            return jvp(
+                lambda q_, s_: self._forward_kinematics(q_, s_),
+                (q, s),
+                (qd, sd),
+            )
 
         if sd is None:
-            pose_tangent_s = jnp.zeros_like(pose)
-        else:
-            pose_tangent_s = robot.forward_kinematics_arc_length_derivative(q, s) * sd
+            pose = self._forward_kinematics(q, s)
+            return pose, jnp.zeros_like(pose)
 
-        return pose, pose_tangent_q + pose_tangent_s
+        pose, poses = self.forward_kinematics_and_arc_length_derivative(q, s)
+        return pose, poses * sd
 
     def forward_kinematics_tips(self, q: Array) -> Array:
         """
@@ -248,6 +267,25 @@ class SoftRobot(DynamicalSystem):
         )
         return pose_s
 
+    def forward_kinematics_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute forward kinematics and its arc-length derivative at ``s``.
+
+        Subclasses can override the protected hook to share intermediate
+        kinematic quantities between the primal pose and ``d pose / ds``.
+        """
+        return self._forward_kinematics_and_arc_length_derivative(q, s)
+
+    def _forward_kinematics_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected hook for fused FK and arc-length derivative evaluation."""
+        pose = self._forward_kinematics(q, s)
+        poses = self._forward_kinematics_arc_length_derivative(q, s)
+        return pose, poses
+
     def jacobian(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a point s along the robot.
@@ -265,7 +303,9 @@ class SoftRobot(DynamicalSystem):
                 - For 3D robots (PCS): 6 (angular velocity + linear velocity)
                 - For planar robots (PlanarPCS, Pendulum): 3 (omega_z, v_x, v_y)
         """
-        return SoftRobot._jacobian_custom_jvp(self, q, s)
+        if custom_jvp_enabled():
+            return SoftRobot._jacobian_custom_jvp(self, q, s)
+        return self._jacobian(q, s)
 
     def _jacobian(self, q: Array, s: Array) -> Array:
         """
@@ -296,19 +336,35 @@ class SoftRobot(DynamicalSystem):
         robot, q, s = primals
         _, qd, sd = tangents
 
-        J = robot._jacobian(q, s)
+        return robot._jacobian_jvp(q, s, qd, sd)
+
+    def _jacobian_jvp(
+        self, q: Array, s: Array, qd: Array | None, sd: Array | None
+    ) -> tuple[Array, Array]:
+        """
+        Evaluate the Jacobian custom-JVP tangent with specialized hooks.
+
+        The mixed ``q``/``s`` tangent intentionally falls back to JAX autodiff
+        through ``_jacobian``. Benchmarks showed that maintaining a
+        separate fused custom-JVP path for this case does not pay for its added
+        complexity.
+        """
+        if qd is None and sd is None:
+            J = self._jacobian(q, s)
+            return J, jnp.zeros_like(J)
 
         if qd is None:
-            Jd_q = jnp.zeros_like(J)
-        else:
-            _, Jd_q = robot.jacobian_and_time_derivative(q, qd, s)
+            J, Js = self.jacobian_and_arc_length_derivative(q, s)
+            return J, Js * sd
 
         if sd is None:
-            Jd_s = jnp.zeros_like(J)
-        else:
-            Jd_s = robot.jacobian_arc_length_derivative(q, s) * sd
+            return self.jacobian_and_time_derivative(q, qd, s)
 
-        return J, Jd_q + Jd_s
+        return jvp(
+            lambda q_, s_: self._jacobian(q_, s_),
+            (q, s),
+            (qd, sd),
+        )
 
     def jacobian_tips(self, q: Array) -> Array:
         """
@@ -357,12 +413,32 @@ class SoftRobot(DynamicalSystem):
         implementation differentiates the protected Jacobian hook with respect
         to the scalar arc-length parameter ``s``.
         """
-        _, J_s = jvp(
+        _, Js = jvp(
             lambda s_: self._jacobian(q, s_),
             (s,),
             (jnp.ones_like(jnp.asarray(s)),),
         )
-        return J_s
+        return Js
+
+    def jacobian_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the Jacobian and its arc-length derivative at ``s``.
+
+        Returns:
+            J: Jacobian matrix of shape (n_pose_dim, num_dofs).
+            Js: Arc-length derivative of the Jacobian with the same shape as ``J``.
+        """
+        return self._jacobian_and_arc_length_derivative(q, s)
+
+    def _jacobian_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected hook for fused Jacobian and arc-length derivative evaluation."""
+        J = self._jacobian(q, s)
+        Js = self._jacobian_arc_length_derivative(q, s)
+        return J, Js
 
     def jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
@@ -662,7 +738,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             T: Kinetic energy (scalar).
         """
-        return SoftRobot._kinetic_energy_custom_jvp(self, q, qd)
+        if custom_jvp_enabled():
+            return SoftRobot._kinetic_energy_custom_jvp(self, q, qd)
+        return self._kinetic_energy(q, qd)
 
     def _kinetic_energy(self, q: Array, qd: Array) -> Array:
         """
@@ -676,9 +754,7 @@ class SoftRobot(DynamicalSystem):
 
     @eqx.filter_custom_jvp
     @staticmethod
-    def _kinetic_energy_custom_jvp(
-        robot: "SoftRobot", q: Array, qd: Array
-    ) -> Array:
+    def _kinetic_energy_custom_jvp(robot: "SoftRobot", q: Array, qd: Array) -> Array:
         """Custom-JVP entry point for the public kinetic_energy wrapper."""
         return robot._kinetic_energy(q, qd)
 
@@ -688,33 +764,45 @@ class SoftRobot(DynamicalSystem):
         tangents: tuple[Any, Array | None, Array | None],
     ) -> tuple[Array, Array]:
         robot, q, qd = primals
-        _, qd_tangent, qdd = tangents
+        _, q_tangent, qdd = tangents
 
         T = robot._kinetic_energy(q, qd)
-        Td = robot._kinetic_energy_jvp_tangent(q, qd, qd_tangent, qdd)
+        Td = robot._kinetic_energy_jvp_tangent(q, qd, q_tangent, qdd)
         return T, Td
 
     def _kinetic_energy_jvp_tangent(
         self,
         q: Array,
         qd: Array,
-        qd_tangent: Array | None,
+        q_tangent: Array | None,
         qdd: Array | None,
     ) -> Array:
         """Compute the kinetic-energy tangent from analytical dynamics terms."""
         Td = jnp.zeros_like(self._kinetic_energy(q, qd))
 
-        if qdd is not None:
-            M = self._kinetic_energy_inertia_matrix(q, qd)
-            Td = Td + qd @ M @ qdd
+        if q_tangent is not None:
+            Td = Td + self._kinetic_energy_q_jvp_tangent(q, qd, q_tangent)
 
-        if qd_tangent is not None:
-            coriolis_cross = self._kinetic_energy_coriolis_cross_force(
-                q, qd, qd_tangent
-            )
-            Td = Td + qd @ coriolis_cross
+        if qdd is not None:
+            Td = Td + self._kinetic_energy_qd_jvp_tangent(q, qd, qdd)
 
         return Td
+
+    def _kinetic_energy_q_jvp_tangent(
+        self, q: Array, qd: Array, q_tangent: Array
+    ) -> Array:
+        """
+        Compute the kinetic-energy contribution from a configuration tangent.
+        """
+        coriolis_cross = self._kinetic_energy_coriolis_cross_force(q, qd, q_tangent)
+        return qd @ coriolis_cross
+
+    def _kinetic_energy_qd_jvp_tangent(self, q: Array, qd: Array, qdd: Array) -> Array:
+        """
+        Compute the kinetic-energy contribution from a velocity tangent.
+        """
+        M = self._kinetic_energy_inertia_matrix(q, qd)
+        return qd @ M @ qdd
 
     def _kinetic_energy_inertia_matrix(self, q: Array, qd: Array) -> Array:
         """
@@ -763,7 +851,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U_g: Gravitational potential energy (scalar).
         """
-        return SoftRobot._gravitational_energy_custom_jvp(self, q)
+        if custom_jvp_enabled():
+            return SoftRobot._gravitational_energy_custom_jvp(self, q)
+        return self._gravitational_energy(q)
 
     def _gravitational_energy(self, q: Array) -> Array:
         """
@@ -809,7 +899,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U_el: Elastic potential energy (scalar).
         """
-        return SoftRobot._elastic_energy_custom_jvp(self, q)
+        if custom_jvp_enabled():
+            return SoftRobot._elastic_energy_custom_jvp(self, q)
+        return self._elastic_energy(q)
 
     def _elastic_energy(self, q: Array) -> Array:
         """
@@ -854,7 +946,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U: Total potential energy (scalar).
         """
-        return SoftRobot._potential_energy_custom_jvp(self, q)
+        if custom_jvp_enabled():
+            return SoftRobot._potential_energy_custom_jvp(self, q)
+        return self._potential_energy(q)
 
     def _potential_energy(self, q: Array) -> Array:
         """Protected primal potential-energy hook for custom autodiff wrappers."""
@@ -901,7 +995,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             E: Total energy (scalar).
         """
-        return SoftRobot._total_energy_custom_jvp(self, q, qd)
+        if custom_jvp_enabled():
+            return SoftRobot._total_energy_custom_jvp(self, q, qd)
+        return self._total_energy(q, qd)
 
     def _total_energy(self, q: Array, qd: Array) -> Array:
         """Protected primal total-energy hook for custom autodiff wrappers."""
@@ -912,9 +1008,7 @@ class SoftRobot(DynamicalSystem):
 
     @eqx.filter_custom_jvp
     @staticmethod
-    def _total_energy_custom_jvp(
-        robot: "SoftRobot", q: Array, qd: Array
-    ) -> Array:
+    def _total_energy_custom_jvp(robot: "SoftRobot", q: Array, qd: Array) -> Array:
         """Custom-JVP entry point for the public total_energy wrapper."""
         return robot._total_energy(q, qd)
 
@@ -924,13 +1018,30 @@ class SoftRobot(DynamicalSystem):
         tangents: tuple[Any, Array | None, Array | None],
     ) -> tuple[Array, Array]:
         robot, q, qd = primals
-        _, qd_tangent, qdd = tangents
+        _, q_tangent, qdd = tangents
 
         E = robot._total_energy(q, qd)
-        Ed = robot._kinetic_energy_jvp_tangent(q, qd, qd_tangent, qdd)
-        if qd_tangent is not None:
-            Ed = Ed + robot._potential_energy_gradient(q) @ qd_tangent
+        Ed = robot._total_energy_jvp_tangent(q, qd, q_tangent, qdd)
         return E, Ed
+
+    def _total_energy_jvp_tangent(
+        self,
+        q: Array,
+        qd: Array,
+        q_tangent: Array | None,
+        qdd: Array | None,
+    ) -> Array:
+        """Compute the total-energy tangent from analytical energy gradients."""
+        Ed = self._kinetic_energy_jvp_tangent(q, qd, q_tangent, qdd)
+
+        if q_tangent is not None:
+            Ed = Ed + self._potential_energy_jvp_tangent(q, q_tangent)
+
+        return Ed
+
+    def _potential_energy_jvp_tangent(self, q: Array, q_tangent: Array) -> Array:
+        """Compute the potential-energy contribution from a configuration tangent."""
+        return self._potential_energy_gradient(q) @ q_tangent
 
     # -----------------------------------------
     # Dynamics

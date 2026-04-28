@@ -63,15 +63,25 @@ def hat_SE2(vec3: Array) -> Array:
 
 def exp_SE2(vec3: Array) -> Array:
     """
-    Computes the exponential map for a 3D vector of se(2).
+    Construct an SE(2) homogeneous transform from raw pose coordinates.
+
+    This helper keeps the historical ``exp_SE2`` name, but it is not the
+    matrix exponential of ``hat_SE2(vec3)`` for a general twist. The
+    translational entries are inserted directly into the homogeneous transform:
+    ``vec3 = [theta, x, y]`` maps to ``[[R(theta), [x, y]], [0, 0, 1]]``.
+
+    Use :func:`exp_gn_SE2` when ``vec3`` represents a Lie-algebra twist whose
+    translational component must be integrated by the SE(2) exponential.
 
     Args:
         vec3 (Array): shape (3,) or (3, 1)
-            Screw coordinates [theta, vx, vy] where theta is the rotation angle and (vx, vy) is the translation vector.
-    
+            Pose coordinates ``[theta, x, y]`` where ``theta`` is the planar
+            rotation angle and ``(x, y)`` is the raw translation vector.
+
     Returns:
         g: shape (3, 3)
-            A 3x3 matrix representing the exponential map of the input screw vector.
+            Homogeneous pose with rotation ``R(theta)`` and translation
+            ``[x, y]``.
     """
     vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
 

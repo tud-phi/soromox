@@ -1196,14 +1196,14 @@ def test_gvs_arc_length_derivatives_match_autodiff() -> None:
             atol=1e-7,
         )
 
-        _, J_s_autodiff = jvp(
+        _, Js_autodiff = jvp(
             lambda s_: robot._jacobian(q, s_),
             (s,),
             (jnp.ones_like(s),),
         )
         assert_allclose(
             robot.jacobian_arc_length_derivative(q, s),
-            J_s_autodiff,
+            Js_autodiff,
             rtol=1e-5,
             atol=1e-6,
         )
@@ -1216,14 +1216,16 @@ def test_gvs_custom_jvps_include_arc_length_derivative() -> None:
     s = strict_interior_arc_lengths(robot)[1]
     sd = jnp.array(0.37, dtype=jnp.float64)
 
-    pose, posed = jvp(
+    _, posed = jvp(
         lambda q_, s_: robot.forward_kinematics(q_, s_),
         (q, s),
         (qd, sd),
     )
-    eta = robot.jacobian(q, s) @ qd
-    expected_posed = robot._pose_tangent_from_inertial_velocity(pose, eta)
-    expected_posed += robot.forward_kinematics_arc_length_derivative(q, s) * sd
+    _, expected_posed = jvp(
+        lambda q_, s_: robot._forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
     assert_allclose(posed, expected_posed, rtol=1e-6, atol=1e-7)
 
     _, Jd = jvp(
@@ -1231,8 +1233,11 @@ def test_gvs_custom_jvps_include_arc_length_derivative() -> None:
         (q, s),
         (qd, sd),
     )
-    _, Jd_q = robot.jacobian_and_time_derivative(q, qd, s)
-    expected_Jd = Jd_q + robot.jacobian_arc_length_derivative(q, s) * sd
+    _, expected_Jd = jvp(
+        lambda q_, s_: robot._jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
     assert_allclose(Jd, expected_Jd, rtol=1e-5, atol=1e-6)
 
 

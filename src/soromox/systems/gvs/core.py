@@ -1516,6 +1516,28 @@ class GVS(SoftRobot):
         Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
         return Ad_g @ J_body, Ad_g @ Jd_body + Ad_g_dot @ J_body
 
+    def _body_jacobian_arc_length_derivative_to_inertial(
+        self, g: Array, J_body: Array, Js_body: Array, gs: Array
+    ) -> tuple[Array, Array]:
+        """
+        Rotate body-frame ``J`` and ``dJ/ds`` into the inertial frame.
+        """
+        Ad_g = self._rotation_adjoint_from_pose(g)
+        omega_hat_body_s = g[:3, :3].T @ gs[:3, :3]
+        omega_body_s = 0.5 * jnp.array(
+            [
+                omega_hat_body_s[2, 1] - omega_hat_body_s[1, 2],
+                omega_hat_body_s[0, 2] - omega_hat_body_s[2, 0],
+                omega_hat_body_s[1, 0] - omega_hat_body_s[0, 1],
+            ],
+            dtype=g.dtype,
+        )
+        eta_rot_s = jnp.concatenate(
+            [omega_body_s, jnp.zeros(3, dtype=omega_body_s.dtype)]
+        )
+        Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
+        return Ad_g @ J_body, Ad_g_s @ J_body + Ad_g @ Js_body
+
     def _inertia_integrand(self, weight: Array, J: Array, M: Array) -> Array:
         """
         Compute one quadrature contribution to the generalized inertia matrix.
@@ -1869,12 +1891,13 @@ class GVS(SoftRobot):
                     g_out (Array): Tip transform at `s` within this segment, shape (4, 4).
                 """
                 x = s_local / length_i
-                # idx of cell j such that integration_points[j] <= x <= integration_points[j+1]
                 j = jnp.clip(
                     jnp.searchsorted(Xs_i, x) - 1,
                     0,
                     self.max_num_integration_points - 2,
                 )
+                H = Xs_i[j + 1] - Xs_i[j]
+                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 # compose complete cells up to j-1 without dynamic-length arange
                 def full_cell_masked(carry: Array, idx: Array) -> tuple[Array, None]:
@@ -1898,14 +1921,8 @@ class GVS(SoftRobot):
                 )
 
                 # enter the (partial) cell j
-                H = Xs_i[j + 1] - Xs_i[j]
-                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
-
-                Xp = jnp.array(
-                    [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
-                )  # length-2, static
-
-                Bp = self._eval_B_segment(i_segment, Xp)  # (2, 6, max_dof)
+                Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
+                Bp = self._eval_B_segment(i_segment, Xp)
                 Bp_Z1 = Bp[0]
                 Bp_Z2 = Bp[1]
 
@@ -1962,6 +1979,16 @@ class GVS(SoftRobot):
         """
         Compute the arc-length derivative of the SE(3) pose at ``s``.
         """
+        _, gs = self._forward_kinematics_and_arc_length_derivative(q, s)
+        return gs
+
+    @eqx.filter_jit
+    def _forward_kinematics_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the SE(3) pose and its arc-length derivative at ``s``.
+        """
         q_gathered = self._min_size_gathered(q)
         segment_idx, s_local = self.classify_segment(s)
 
@@ -2013,6 +2040,8 @@ class GVS(SoftRobot):
                     0,
                     self.max_num_integration_points - 2,
                 )
+                H = Xs_i[j + 1] - Xs_i[j]
+                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 def full_cell_masked(carry: Array, idx: Array) -> tuple[Array, None]:
                     g_next, _ = full_cell(carry, idx)
@@ -2024,8 +2053,6 @@ class GVS(SoftRobot):
                     jnp.arange(self.max_num_integration_points - 1),
                 )
 
-                H = Xs_i[j + 1] - Xs_i[j]
-                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
                 Bp = self._eval_B_segment(i_segment, Xp)
                 dBp = self._eval_dB_segment(i_segment, Xp)
@@ -2078,7 +2105,7 @@ class GVS(SoftRobot):
             jnp.arange(self.num_segments),
         )
 
-        return g_s_derivative
+        return g_s, g_s_derivative
 
     @eqx.filter_jit
     def forward_kinematics_tips(self, q: Array) -> Array:
@@ -2347,16 +2374,17 @@ class GVS(SoftRobot):
         return J
 
     @eqx.filter_jit
-    def jacobian_bodyframe(self, q: Array, s: Array) -> Array:
+    def _jacobian_bodyframe_terms(self, q: Array, s: Array) -> tuple[Array, Array]:
         """
-        Compute the Jacobian of the forward kinematics at a point s along the robot in the body frame.
+        Compute the pose and body-frame Jacobian at ``s`` in one scan.
 
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
             s (Array): point coordinate along the robot in the interval [0, L].
 
         Returns:
-            J_local (Array): Jacobian of the forward kinematics at point s in the body frame, shape (6, num_active_strains)
+            g_s (Array): SE(3) pose at point s.
+            J_local (Array): Body-frame Jacobian at point s.
         """
         q_gathered = self._min_size_gathered(q)
 
@@ -2480,6 +2508,8 @@ class GVS(SoftRobot):
                     0,
                     self.max_num_integration_points - 2,
                 )
+                H = Xs_i[j + 1] - Xs_i[j]
+                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 # masked full cells up to j-1
                 def full_cell_masked(
@@ -2508,11 +2538,8 @@ class GVS(SoftRobot):
                 )
 
                 # partial cell j with Hp
-                H = Xs_i[j + 1] - Xs_i[j]
-                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
-
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
-                Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
+                Bp = self._eval_B_segment(i_segment, Xp)
                 g_step, T_step, Ad_step_inv, B_Magnus_p = (
                     self._magnus_jacobian_step_terms(
                         length_i,
@@ -2569,20 +2596,31 @@ class GVS(SoftRobot):
         # Flatten to (6, num_segments*2*max_dof), then project to active strains.
         J_local = self._jacobian_blocks_to_flat(J_full) @ self.active_dof_map
 
+        return g_s, J_local
+
+    @eqx.filter_jit
+    def jacobian_bodyframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the Jacobian of the forward kinematics at a point s along the robot in the body frame.
+        """
+        _, J_local = self._jacobian_bodyframe_terms(q, s)
         return J_local
 
     @eqx.filter_jit
-    def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
+    def _jacobian_and_arc_length_derivative_bodyframe_terms(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array, Array]:
         """
-        Compute the arc-length derivative of the body-frame Jacobian at ``s``.
+        Compute pose, body-frame Jacobian, and arc-length terms at ``s``.
         """
         q_gathered = self._min_size_gathered(q)
         segment_idx, s_local = self.classify_segment(s)
+        gs0 = jnp.zeros((4, 4), dtype=q.dtype)
 
         def body_segment_i(
-            carry: tuple[Array, Array, Array], i_segment: Array
-        ) -> tuple[Array, Array, Array]:
-            g_tip, J_tip, J_s_tip = carry
+            carry: tuple[Array, Array, Array, Array], i_segment: Array
+        ) -> tuple[Array, Array, Array, Array]:
+            g_tip, J_tip, Js_tip, gs_tip = carry
 
             B_joint_i = self.B_joint[i_segment]
             xi_ref_joint_i = self.xi_ref_joint[i_segment]
@@ -2639,21 +2677,23 @@ class GVS(SoftRobot):
                 )
                 return (g_next, J_next), None
 
-            def do_full_link() -> tuple[Array, Array, Array]:
+            def do_full_link() -> tuple[Array, Array, Array, Array]:
                 (g_end, J_end), _ = lax.scan(
                     full_cell,
                     (g_j, J_j),
                     jnp.arange(self.max_num_integration_points - 1),
                 )
-                return g_end, J_end, jnp.zeros_like(J_end)
+                return g_end, J_end, jnp.zeros_like(J_end), gs0
 
-            def do_partial_link() -> tuple[Array, Array, Array]:
+            def do_partial_link() -> tuple[Array, Array, Array, Array]:
                 x = s_local / length_i
                 j = jnp.clip(
                     jnp.searchsorted(Xs_i, x) - 1,
                     0,
                     self.max_num_integration_points - 2,
                 )
+                H = Xs_i[j + 1] - Xs_i[j]
+                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 def full_cell_masked(
                     carry: tuple[Array, Array], idx: Array
@@ -2671,8 +2711,6 @@ class GVS(SoftRobot):
                     jnp.arange(self.max_num_integration_points - 1),
                 )
 
-                H = Xs_i[j + 1] - Xs_i[j]
-                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
                 Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
                 Bp = self._eval_B_segment(i_segment, Xp)
                 dBp = self._eval_dB_segment(i_segment, Xp)
@@ -2711,8 +2749,9 @@ class GVS(SoftRobot):
                 J_H = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv_H, J_in + T_block
                 ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv, T_block_H)
-                J_s = J_H / length_i
-                return g_out, J_out, J_s
+                Js = J_H / length_i
+                gs = g_out @ lie.hat_SE3(eta_step_H / length_i)
+                return g_out, J_out, Js, gs
 
             return lax.cond(
                 i_segment < segment_idx,
@@ -2722,25 +2761,47 @@ class GVS(SoftRobot):
             )
 
         def step(
-            carry: tuple[Array, Array, Array], i: Array
-        ) -> tuple[tuple[Array, Array, Array], None]:
-            g_curr, J_curr, J_s_curr = carry
-            g_next, J_next, J_s_next = body_segment_i(carry, i)
+            carry: tuple[Array, Array, Array, Array], i: Array
+        ) -> tuple[tuple[Array, Array, Array, Array], None]:
+            g_curr, J_curr, Js_curr, gs_curr = carry
+            g_next, J_next, Js_next, gs_next = body_segment_i(carry, i)
             return (
                 jnp.where(i <= segment_idx, g_next, g_curr),
                 jnp.where(i <= segment_idx, J_next, J_curr),
-                jnp.where(i <= segment_idx, J_s_next, J_s_curr),
+                jnp.where(i <= segment_idx, Js_next, Js_curr),
+                jnp.where(i <= segment_idx, gs_next, gs_curr),
             ), None
 
         J0 = jnp.zeros((self.num_segments, 2, 6, self.max_dof))
-        (g_s, J_full, J_s_full), _ = lax.scan(
+        (g_s, J_full, Js_full, gs), _ = lax.scan(
             step,
-            (self.g0, J0, J0),
+            (self.g0, J0, J0, gs0),
             jnp.arange(self.num_segments),
         )
 
-        J_s_flat = self._jacobian_blocks_to_flat(J_s_full)
-        return J_s_flat @ self.active_dof_map
+        J_body = self._jacobian_blocks_to_flat(J_full) @ self.active_dof_map
+        Js_body = self._jacobian_blocks_to_flat(Js_full) @ self.active_dof_map
+        return g_s, J_body, Js_body, gs
+
+    @eqx.filter_jit
+    def jacobian_and_arc_length_derivative_bodyframe(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the body-frame Jacobian and its arc-length derivative at ``s``.
+        """
+        _, J_body, Js_body, _ = (
+            self._jacobian_and_arc_length_derivative_bodyframe_terms(q, s)
+        )
+        return J_body, Js_body
+
+    @eqx.filter_jit
+    def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the body-frame Jacobian at ``s``.
+        """
+        _, Js = self.jacobian_and_arc_length_derivative_bodyframe(q, s)
+        return Js
 
     @eqx.filter_jit
     def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
@@ -2961,10 +3022,22 @@ class GVS(SoftRobot):
         Returns:
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
         """
-        # compute the Jacobian in the body frame
-        J_local = self.jacobian_bodyframe(q, s)
-        g_s = self._forward_kinematics(q, s)
+        g_s, J_local = self._jacobian_bodyframe_terms(q, s)
         return self._body_jacobian_to_inertial(g_s, J_local)
+
+    @eqx.filter_jit
+    def jacobian_and_arc_length_derivative_inertialframe(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the inertial-frame Jacobian and its arc-length derivative at ``s``.
+        """
+        g_s, J_body, Js_body, gs = (
+            self._jacobian_and_arc_length_derivative_bodyframe_terms(q, s)
+        )
+        return self._body_jacobian_arc_length_derivative_to_inertial(
+            g_s, J_body, Js_body, gs
+        )
 
     @eqx.filter_jit
     def jacobian_arc_length_derivative_inertialframe(
@@ -2973,32 +3046,25 @@ class GVS(SoftRobot):
         """
         Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
         """
-        J_body = self.jacobian_bodyframe(q, s)
-        J_body_s = self.jacobian_arc_length_derivative_bodyframe(q, s)
-        g_s = self._forward_kinematics(q, s)
-        g_s_derivative = self._forward_kinematics_arc_length_derivative(q, s)
-
-        Ad_g = self._rotation_adjoint_from_pose(g_s)
-        omega_hat_body_s = g_s[:3, :3].T @ g_s_derivative[:3, :3]
-        omega_body_s = 0.5 * jnp.array(
-            [
-                omega_hat_body_s[2, 1] - omega_hat_body_s[1, 2],
-                omega_hat_body_s[0, 2] - omega_hat_body_s[2, 0],
-                omega_hat_body_s[1, 0] - omega_hat_body_s[0, 1],
-            ],
-            dtype=g_s.dtype,
+        g_s, J_body, Js_body, gs = (
+            self._jacobian_and_arc_length_derivative_bodyframe_terms(q, s)
         )
-        eta_rot_s = jnp.concatenate(
-            [omega_body_s, jnp.zeros(3, dtype=omega_body_s.dtype)]
+        _, Js = self._body_jacobian_arc_length_derivative_to_inertial(
+            g_s, J_body, Js_body, gs
         )
-        Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
-
-        return Ad_g_s @ J_body + Ad_g @ J_body_s
+        return Js
 
     @eqx.filter_jit
     def _jacobian_arc_length_derivative(self, q: Array, s: Array) -> Array:
         """Protected SoftRobot hook for the inertial-frame Jacobian arc-length derivative."""
         return self.jacobian_arc_length_derivative_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def _jacobian_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected SoftRobot hook for inertial-frame Jacobian arc-length derivative."""
+        return self.jacobian_and_arc_length_derivative_inertialframe(q, s)
 
     @eqx.filter_jit
     def _jacobian(self, q: Array, s: Array) -> Array:
@@ -3219,11 +3285,11 @@ class GVS(SoftRobot):
         )
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_bodyframe(
+    def _jacobian_and_time_derivative_bodyframe_terms(
         self, q: Array, qd: Array, s: Array
-    ) -> tuple[Array, Array]:
+    ) -> tuple[Array, Array, Array]:
         """
-        Compute the Jacobian time derivative of the forward kinematics at a point s along the robot in the body frame.
+        Compute pose, body-frame Jacobian, and time derivative at ``s``.
         Args:
             q (Array): generalized coordinates of shape (num_dofs,).
             qd (Array): generalized velocities of shape (num_dofs,).
@@ -3401,6 +3467,8 @@ class GVS(SoftRobot):
                     0,
                     self.max_num_integration_points - 2,
                 )
+                H = Xs_i[j + 1] - Xs_i[j]
+                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
 
                 # consume up to j-1 (masked)
                 def full_cell_masked(
@@ -3431,13 +3499,8 @@ class GVS(SoftRobot):
                 )
 
                 # partial cell j of size Hp
-                H = Xs_i[j + 1] - Xs_i[j]
-                Hp = jnp.clip(x - Xs_i[j], 0.0, H)
-
-                Xp = jnp.array(
-                    [Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp]
-                )  # two partial Gauss points
-                Bp = self._eval_B_segment(i_segment, Xp)  # (2,6,max_dof)
+                Xp = jnp.array([Xs_i[j] + self.Z1 * Hp, Xs_i[j] + self.Z2 * Hp])
+                Bp = self._eval_B_segment(i_segment, Xp)
                 (
                     g_step,
                     T_step,
@@ -3521,6 +3584,18 @@ class GVS(SoftRobot):
         J_local = self._jacobian_blocks_to_flat(J_full) @ self.active_dof_map
         Jd_local = self._jacobian_blocks_to_flat(Jd_full) @ self.active_dof_map
 
+        return g_s, J_local, Jd_local
+
+    @eqx.filter_jit
+    def jacobian_and_time_derivative_bodyframe(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the Jacobian time derivative of the forward kinematics at a point s along the robot in the body frame.
+        """
+        _, J_local, Jd_local = self._jacobian_and_time_derivative_bodyframe_terms(
+            q, qd, s
+        )
         return J_local, Jd_local
 
     @eqx.filter_jit
@@ -3539,9 +3614,12 @@ class GVS(SoftRobot):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_configurations)
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_configurations)
         """
-        J_local, Jd_local = self.jacobian_and_time_derivative_bodyframe(q, qd, s)
-        g_s = self._forward_kinematics(q, s)
-        return self._body_jacobian_time_derivative_to_inertial(g_s, J_local, Jd_local, qd)
+        g_s, J_local, Jd_local = self._jacobian_and_time_derivative_bodyframe_terms(
+            q, qd, s
+        )
+        return self._body_jacobian_time_derivative_to_inertial(
+            g_s, J_local, Jd_local, qd
+        )
 
     @eqx.filter_jit
     def jacobian_and_time_derivative_inertialframe_batched(

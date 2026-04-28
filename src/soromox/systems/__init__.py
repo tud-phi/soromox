@@ -1,3 +1,8 @@
+from soromox.autodiff import (
+    custom_jvp_enabled,
+    custom_jvp_mode,
+    set_custom_jvp_enabled,
+)
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.soft_robot import (
     CrossSectionGeometry,
@@ -32,6 +37,9 @@ __all__ = [
     "SoftRobot",
     "CrossSectionGeometry",
     "SystemState",
+    "custom_jvp_enabled",
+    "custom_jvp_mode",
+    "set_custom_jvp_enabled",
     # articulated systems
     "ArticulatedSoftRobot",
     # gvs systems

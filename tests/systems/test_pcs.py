@@ -860,10 +860,19 @@ def test_public_pcs_jacobian_wrappers_match_inertialframe_methods() -> None:
     assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
 
 
-class _SentinelForwardKinematicsJVPPCS(PCS):
+class _SentinelJacobianOnlyPCS(PCS):
     def _jacobian(self, q: Array, s: Array) -> Array:
         entries = jnp.arange(6 * q.shape[0], dtype=q.dtype).reshape(6, q.shape[0])
         return 1e-2 * (entries + 1.0)
+
+
+class _SentinelForwardKinematicsArcLengthJVPPCS(PCS):
+    def _forward_kinematics_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        pose = self._forward_kinematics(q, s)
+        poses = jnp.full_like(pose, 0.375)
+        return pose, poses
 
 
 class _SentinelJacobianJVPPCS(PCS):
@@ -873,6 +882,15 @@ class _SentinelJacobianJVPPCS(PCS):
         J = self._jacobian(q, s)
         Jd = jnp.full_like(J, 0.125)
         return J, Jd
+
+
+class _SentinelJacobianArcLengthJVPPCS(PCS):
+    def _jacobian_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        J = self._jacobian(q, s)
+        Js = jnp.full_like(J, 0.25)
+        return J, Js
 
 
 class _SentinelGravitationalEnergyJVPPCS(PCS):
@@ -905,17 +923,29 @@ def test_pcs_custom_jvp_primal_methods_match_protected_hooks() -> None:
     assert_allclose(model.gravitational_energy(q), model._gravitational_energy(q))
 
 
-def test_pcs_forward_kinematics_jvp_uses_analytical_jacobian_hook() -> None:
-    model = _sentinel_pcs_model(_SentinelForwardKinematicsJVPPCS)
+def test_pcs_forward_kinematics_jvp_uses_protected_primal_autodiff() -> None:
+    model = _sentinel_pcs_model(_SentinelJacobianOnlyPCS)
     q = random_q(model, jax.random.PRNGKey(2), scale=0.02)
     qd = random_q(model, jax.random.PRNGKey(3), scale=0.01)
     s = model.L_cum[-1]
 
-    pose, posed = jax.jvp(lambda q_: model.forward_kinematics(q_, s), (q,), (qd,))
-    eta = model._jacobian(q, s) @ qd
-    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
+    _, posed = jax.jvp(lambda q_: model.forward_kinematics(q_, s), (q,), (qd,))
+    _, expected_posed = jax.jvp(
+        lambda q_: model._forward_kinematics(q_, s), (q,), (qd,)
+    )
 
     assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_forward_kinematics_jvp_uses_arc_length_pair_hook() -> None:
+    model = _sentinel_pcs_model(_SentinelForwardKinematicsArcLengthJVPPCS)
+    q = random_q(model, jax.random.PRNGKey(2034), scale=0.02)
+    s = model.L_cum[-1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    _, posed = jax.jvp(lambda s_: model.forward_kinematics(q, s_), (s,), (sd,))
+
+    assert_allclose(posed, jnp.full_like(posed, 0.375) * sd, rtol=RTOL, atol=ATOL)
 
 
 def test_pcs_jacobian_jvp_uses_analytical_time_derivative_hook() -> None:
@@ -926,6 +956,34 @@ def test_pcs_jacobian_jvp_uses_analytical_time_derivative_hook() -> None:
 
     _, Jd = jax.jvp(lambda q_: model.jacobian(q_, s), (q,), (qd,))
     _, expected_Jd = model._jacobian_and_time_derivative(q, qd, s)
+
+    assert_allclose(Jd, expected_Jd, rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_jacobian_jvp_uses_arc_length_pair_hook() -> None:
+    model = _sentinel_pcs_model(_SentinelJacobianArcLengthJVPPCS)
+    q = random_q(model, jax.random.PRNGKey(2035), scale=0.02)
+    s = model.L_cum[-1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    _, Jd = jax.jvp(lambda s_: model.jacobian(q, s_), (s,), (sd,))
+
+    assert_allclose(Jd, jnp.full_like(Jd, 0.25) * sd, rtol=RTOL, atol=ATOL)
+
+
+def test_pcs_jacobian_mixed_jvp_uses_protected_primal_autodiff() -> None:
+    model = _sentinel_pcs_model(_SentinelJacobianOnlyPCS)
+    q = random_q(model, jax.random.PRNGKey(2036), scale=0.02)
+    qd = random_q(model, jax.random.PRNGKey(2037), scale=0.01)
+    s = model.L_cum[-1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    _, Jd = jax.jvp(lambda q_, s_: model.jacobian(q_, s_), (q, s), (qd, sd))
+    _, expected_Jd = jax.jvp(
+        lambda q_, s_: model._jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
 
     assert_allclose(Jd, expected_Jd, rtol=RTOL, atol=ATOL)
 
@@ -976,14 +1034,14 @@ def test_pcs_arc_length_derivatives_match_autodiff() -> None:
             atol=ATOL,
         )
 
-        _, J_s_autodiff = jvp(
+        _, Js_autodiff = jvp(
             lambda s_: model._jacobian(q, s_),
             (s,),
             (jnp.ones_like(s),),
         )
         assert_allclose(
             model.jacobian_arc_length_derivative(q, s),
-            J_s_autodiff,
+            Js_autodiff,
             rtol=1e-6,
             atol=1e-7,
         )
@@ -996,14 +1054,16 @@ def test_pcs_custom_jvps_include_arc_length_derivative() -> None:
     s = _strict_interior_arc_lengths(model)[1]
     sd = jnp.array(0.37, dtype=jnp.float64)
 
-    pose, posed = jvp(
+    _, posed = jvp(
         lambda q_, s_: model.forward_kinematics(q_, s_),
         (q, s),
         (qd, sd),
     )
-    eta = model.jacobian(q, s) @ qd
-    expected_posed = model._pose_tangent_from_inertial_velocity(pose, eta)
-    expected_posed += model.forward_kinematics_arc_length_derivative(q, s) * sd
+    _, expected_posed = jvp(
+        lambda q_, s_: model._forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
     assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
 
     _, Jd = jvp(
@@ -1011,8 +1071,11 @@ def test_pcs_custom_jvps_include_arc_length_derivative() -> None:
         (q, s),
         (qd, sd),
     )
-    _, Jd_q = model.jacobian_and_time_derivative(q, qd, s)
-    expected_Jd = Jd_q + model.jacobian_arc_length_derivative(q, s) * sd
+    _, expected_Jd = jvp(
+        lambda q_, s_: model._jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
     assert_allclose(Jd, expected_Jd, rtol=1e-6, atol=1e-7)
 
 
