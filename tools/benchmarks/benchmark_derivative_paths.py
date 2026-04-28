@@ -60,6 +60,15 @@ Tree = Any
 
 StrategyFn = Callable[[SoftRobot, Mapping[str, Array]], Tree]
 
+SYSTEM_SUMMARY_EXCLUDED_CASES = frozenset(
+    {
+        # Plain Jacobian evaluation is a useful primal wrapper-overhead control,
+        # but it is not a derivative path. Keep it in the per-case table while
+        # excluding it from system-level derivative speedup aggregates.
+        "jacobian",
+    }
+)
+
 
 def _total_length(system: SoftRobot) -> Array:
     if hasattr(system, "segment_lengths"):
@@ -602,6 +611,8 @@ def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) ->
         "direct analytical helper is faster than differentiating protected "
         "primal hooks.",
         "- `geomean` aggregates all requested segment counts for that system/case.",
+        "- The system summary excludes primal control cases such as `jacobian`; "
+        "those rows remain visible in the per-case table.",
         f"- `{segment_label}` shows the largest requested segment count only.",
         "",
         "## System Summary",
@@ -614,7 +625,12 @@ def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) ->
     ]
 
     for system in systems:
-        system_rows = [row for row in results if str(row["system"]) == system]
+        system_rows = [
+            row
+            for row in results
+            if str(row["system"]) == system
+            and str(row["case"]) not in SYSTEM_SUMMARY_EXCLUDED_CASES
+        ]
         system_groups = sorted(
             {(str(row["case"]), str(row.get("gauss_points", ""))) for row in system_rows}
         )
