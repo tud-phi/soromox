@@ -127,7 +127,7 @@ dev = [
     "bump2version",
     "check-manifest",
     "codecov",
-    "coverage",
+    "coverage[toml]",
     "pre-commit",
     "pytest",
     "pytest-cov",
@@ -165,7 +165,7 @@ rendering = [
 ]
 test = [
     "codecov",
-    "coverage",
+    "coverage[toml]",
     "pytest",
     "pytest-cov",
     "pytest-html",
@@ -175,7 +175,7 @@ all = [
     "bump2version",
     "check-manifest",
     "codecov",
-    "coverage",
+    "coverage[toml]",
     "ffmpeg-python",
     "ipython",
     "matplotlib",
@@ -234,6 +234,14 @@ soromox = ["symbolic_expressions/*.dill"]
 # https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
 requires = ["pip>=23.1", "setuptools>=68.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
+
+# ==================== Coverage Configuration ====================
+[tool.coverage.run]
+source = ["src/soromox"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 # ==================== Ruff Configuration ====================
 [tool.ruff]

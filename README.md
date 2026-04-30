@@ -12,6 +12,7 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
+[![Coverage](https://img.shields.io/badge/coverage-local%20report-blue.svg)](#running-tests-with-coverage)
 
 </div>
 
@@ -142,6 +143,27 @@ uv pip install -e ".[dev,examples]"
 
 # Or use uv sync for reproducible installs (creates uv.lock)
 uv sync --extra dev --extra examples
+```
+
+### Running Tests with Coverage
+
+Coverage.py is included in the `dev`, `test`, and `all` extras. To run the test suite with the project coverage settings:
+
+```bash
+uv run --extra test make coverage
+```
+
+or call Coverage.py directly:
+
+```bash
+uv run --extra test python -m coverage run -m pytest
+uv run --extra test python -m coverage report
+```
+
+For CI uploads, generate an XML report with:
+
+```bash
+uv run --extra test make coverage_xml
 ```
 
 ## Usage

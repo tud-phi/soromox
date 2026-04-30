@@ -25,13 +25,21 @@ pre-commit-install:
 test:
 	pytest
 
+.PHONY: coverage
+coverage:
+	coverage run -m pytest
+	coverage report
+
 .PHONY: test_coverage
-test_coverage:
-	pytest --cov=src
+test_coverage: coverage
+
+.PHONY: coverage_xml
+coverage_xml:
+	coverage run -m pytest
+	coverage xml
 
 .PHONY: test_coverage_xml
-test_coverage_xml:
-	pytest --cov=src --cov-report=xml
+test_coverage_xml: coverage_xml
 
 #* Cleaning
 .PHONY: pycache-remove
