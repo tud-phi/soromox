@@ -11,8 +11,6 @@ from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
 
 import optimistix as optx
-<<<<<<< HEAD:tests/test_tendon_actuated_gvs.py
-=======
 
 
 def _segments(
@@ -26,7 +24,6 @@ def _segments(
         for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
     ]
 
->>>>>>> origin/main:tests/systems/test_tendon_actuated_gvs.py
 
 def test_actuation_matrix_gvs():
     """
@@ -510,20 +507,10 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
             g = [0.0, 0.0, -9.81]
 
             robotGVS = TendonActuatedGVS(
-<<<<<<< HEAD:tests/test_tendon_actuated_gvs.py
-                links_list=[link1],
-                joints_list=[joint1],
-                basis_list=[basis1],
-                n_gauss_list=n_gauss_list,
-                gravity_vector=gravity_vector,
-                tendon_routing_params=tendon_params,
-                scale_rotational_strain_basis=False,
-=======
                 segments=_segments([link1], [joint1], [basis1], num_gauss_points),
                 g=g,
                 active_tendon_routing_params=tendon_params,
                 scale_rotational_basis_by_length=False,
->>>>>>> origin/main:tests/systems/test_tendon_actuated_gvs.py
             )
 
         else:  # segment_lengths.shape[0] == 2
@@ -561,22 +548,12 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
             g = [0.0, 0.0, -9.81]
 
             robotGVS = TendonActuatedGVS(
-<<<<<<< HEAD:tests/test_tendon_actuated_gvs.py
-                links_list=[link1, link2],
-                joints_list=[joint1, joint2],
-                basis_list=[basis1, basis2],
-                n_gauss_list=n_gauss_list,
-                gravity_vector=gravity_vector,
-                tendon_routing_params=tendon_params,
-                scale_rotational_strain_basis=False,
-=======
                 segments=_segments(
                     [link1, link2], [joint1, joint2], [basis1, basis2], num_gauss_points
                 ),
                 g=g,
                 active_tendon_routing_params=tendon_params,
                 scale_rotational_basis_by_length=False,
->>>>>>> origin/main:tests/systems/test_tendon_actuated_gvs.py
             )
 
         num_segments = int(segment_lengths.shape[0])
