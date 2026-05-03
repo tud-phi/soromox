@@ -3,12 +3,16 @@ import pandas as pd
 import jax.numpy as jnp
 from soromox.systems import CrossSectionGeometry, TendonActuatedGVS
 from soromox.systems.gvs import LinkAttributes, JointAttributes, BasisAttributes
-from functools import partial
 import matplotlib.pyplot as plt
 import optimistix as optx
 import equinox as eqx
 import optax
 import numpy as onp
+
+try:
+    from soromox.rendering import Open3DRenderer
+except ImportError:
+    Open3DRenderer = None
 
 jax.config.update("jax_enable_x64", True)
 
@@ -209,6 +213,25 @@ def compute_marker_errors(robot, u_batch, q0, measured_markers_batch, E, nu, rho
 
 ### SOFT ROBOT UTILITIES FUNCTIONS ###
 
+def draw_robot_curve(
+    robot: TendonActuatedGVS,
+    q: jnp.ndarray,
+    num_points: int = 50,
+):
+    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
+    L_max = jnp.sum(robot.V_L)
+
+    s_ps = jnp.linspace(0, L_max, num_points)
+    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
+
+    # q_gathered = robot._min_size_gathered(q)
+    # V_g = robot._forward_kinematics_gauss(q_gathered)
+
+    # g_ps = jnp.concatenate(V_g[:, :, :-1, -1:], axis=0)
+
+    curve = onp.array(g_ps, dtype=onp.float64)
+    return curve  # (N, 3)
+
 
 # ---- Marker prediction for a fixed q  ----
 def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
@@ -232,6 +255,18 @@ def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
     p4 = tip_at_s(jnp.sum(robot.V_L), jnp.array([0.008, 0.0, 0.0]))
     return jnp.concatenate([p1, p2, p3, p4], axis=0)  # (12,)
 
+
+def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+    def statics_eq(q, args):
+        u = args
+        K = robot.stiffness_matrix()
+        B = robot.actuation_matrix(q)
+        G = robot.gravitational_force(q)
+        return K @ q + G - B @ u
+
+    solver = optx.Newton(rtol=1e-6, atol=1e-6)
+    statics_eq_jit = jax.jit(statics_eq)
+    return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
 
 # STATIC EQUILIBRIUM EQUATION SOLVER with UPDATED E,rho AND NU
 def solve_equilibrium_Enurho(
@@ -529,11 +564,17 @@ print("rho_hat:", rho_hat)
 print("Final loss:", best_loss)
 print("best_step:", best_step)
 
+# save results
+# onp.save("data/E_hat.npy", onp.asarray(E_hat))
+# onp.save("data/nu_hat.npy", onp.asarray(nu_hat))
+# onp.save("data/rho_hat.npy", onp.asarray(rho_hat))
+# onp.save("data/loss_history.npy", onp.asarray(loss_history))
 
-# onp.save("E_hat.npy", onp.asarray(E_hat))
-# onp.save("nu_hat.npy", onp.asarray(nu_hat))
-# onp.save("rho_hat.npy", onp.asarray(rho_hat))
-
+#load results
+# E_hat = jnp.array(onp.load("data/E_hat.npy"))
+# nu_hat = jnp.array(onp.load("data/nu_hat.npy"))
+# rho_hat = jnp.array(onp.load("data/rho_hat.npy"))
+# loss_history = onp.load("data/loss_history.npy").tolist()
 
 # ### PLOTTING RESULTS ###
 
@@ -544,7 +585,6 @@ errors_after = compute_marker_errors(
     robot, u_batch, q0, measured_markers_batch, E_hat, nu_hat, rho_hat
 )
 
-
 def marker_rmse(errors):
     # errors shape: (M, 12)
     errors_reshaped = errors.reshape(errors.shape[0], 4, 3)  # (M, 4, 3)
@@ -554,31 +594,37 @@ def marker_rmse(errors):
 
 rmse_before = marker_rmse(errors_before)
 rmse_after = marker_rmse(errors_after)
+# onp.save("data/rmse_before.npy", onp.asarray(rmse_before))
+# onp.save("data/errors_before.npy", onp.asarray(errors_before))
+# onp.save("data/rmse_after.npy", onp.asarray(rmse_after))
+# onp.save("data/errors_after.npy", onp.asarray(errors_after))
 
-marker_names = [f"marker {i + 1}" for i in range(4)]
+marker_names = [f"M{i + 1}" for i in range(4)]
 x = onp.arange(len(marker_names))
 width = 0.35
 
-plt.figure(figsize=(8, 5))
+plt.figure(figsize=(12, 9))
 plt.plot(loss_history, "o-", color="blue", label="Loss")
-plt.xlabel("Optimization step")
-plt.ylabel("Loss")
-plt.title("Loss evolution during optimization")
+plt.xlabel("Optimization step", fontsize=16)
+plt.ylabel("Loss", fontsize=16)
+# plt.title("Loss evolution during optimization")
 plt.grid(True, linestyle="--", alpha=0.5)
-plt.legend()
+plt.legend(fontsize=16)
+plt.tick_params(axis='both', labelsize=16)
 plt.tight_layout()
 # plt.savefig("loss_over_time.svg", format="svg", bbox_inches="tight")
 # plt.savefig("loss_over_time.pdf", format="pdf", bbox_inches="tight")
 # plt.savefig("loss_over_time.jpg", format="jpg", dpi=300, bbox_inches="tight")
 plt.show()
 
-plt.figure(figsize=(8, 5))
-plt.bar(x - width / 2, rmse_before, width, label="Before optimization", alpha=0.7)
-plt.bar(x + width / 2, rmse_after, width, label="After optimization", alpha=0.7)
-plt.xticks(x, marker_names)
-plt.ylabel("RMSE [m]")
-plt.title("Marker position errors before vs after optimization")
-plt.legend()
+plt.figure(figsize=(12, 9))
+plt.bar(x - width / 2, rmse_before, width, label="Initial param.", alpha=0.8)
+plt.bar(x + width / 2, rmse_after, width, label="Optimized param.", alpha=0.8)
+plt.xticks(x, marker_names, fontsize=16)
+plt.ylabel("RMS Position Error [m]", fontsize=16)
+# plt.title("Marker position errors before vs after optimization")
+plt.legend(fontsize=16)
+plt.tick_params(axis='both', labelsize=16)
 plt.grid(True, linestyle="--", alpha=0.5)
 plt.tight_layout()
 # plt.savefig("rmse_per_marker.svg", format="svg", bbox_inches="tight")
@@ -587,7 +633,7 @@ plt.tight_layout()
 plt.show()
 
 
-plt.figure(figsize=(10, 5))
+plt.figure(figsize=(12, 9))
 plt.plot(jnp.sqrt(jnp.sum(errors_before**2, axis=1)), "o-", label="Before")
 plt.plot(jnp.sqrt(jnp.sum(errors_after**2, axis=1)), "s-", label="After")
 plt.xlabel("Sample index")
@@ -598,4 +644,164 @@ plt.grid(True)
 # plt.savefig("error_per_configuration.svg", format="svg", bbox_inches="tight")
 # plt.savefig("error_per_configuration.pdf", format="pdf", bbox_inches="tight")
 # plt.savefig("error_per_configuration.jpg", format="jpg", dpi=300, bbox_inches="tight")
+plt.show()
+
+# Markers comparison visualization
+robot_hat = TendonActuatedGVS(
+    links_list=[
+        LinkAttributes(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=float(E_hat),
+            nu=float(nu_hat),
+            rho=float(rho_hat),
+            eta=1e4,
+            L=0.0250 + 0.2550 + 0.0250,
+            r_i=0.01541,
+            r_f=0.00642,
+        ),
+        LinkAttributes(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=float(E_hat),
+            nu=float(nu_hat),
+            rho=float(rho_hat),
+            eta=1e4,
+            L=0.0550,
+            r_i=0.00642,
+            r_f=0.00480,
+        ),
+    ],
+    joints_list=[joint1, joint2],
+    basis_list=[basis1, basis2],
+    n_gauss_list=n_gauss_list,
+    gravity_vector=gravity_vector,
+    tendon_routing_params=tendon_routing_params,
+    p0=p0,
+    scale_rotational_strain_basis=True,
+)
+
+# For each input in u_batch, solve statics and plot original vs optimized shapes
+M = int(u_batch.shape[1])
+
+# Precompute solutions, curves and markers for all samples
+curves_orig = []
+curves_hat = []
+markers_orig = []
+markers_hat = []
+measured_pts = []
+
+for m in range(M):
+    # solve static equilibrium for this input
+    res0 = solve_equilibrium(robot, u_batch[:, m], q0)
+    res_hat = solve_equilibrium(robot_hat, u_batch[:, m], q0)
+
+    q_stat0_m = res0.value
+    q_statHat_m = res_hat.value
+
+    # sample backbone curves (use a finer resolution for nicer plots)
+    curve0 = draw_robot_curve(robot, q_stat0_m, num_points=200)
+    curve_hat = draw_robot_curve(robot_hat, q_statHat_m, num_points=200)
+
+    curves_orig.append(onp.asarray(curve0))
+    curves_hat.append(onp.asarray(curve_hat))
+
+    # predicted marker positions
+    markers0 = onp.asarray(markers_from_q(robot, q_stat0_m).reshape(4, 3))
+    markersH = onp.asarray(markers_from_q(robot_hat, q_statHat_m).reshape(4, 3))
+    markers_orig.append(markers0)
+    markers_hat.append(markersH)
+
+    # measured markers from your dataset: measured_markers_batch shape (12, M)
+    meas = onp.asarray(measured_markers_batch[:, m].reshape(4, 3))
+    measured_pts.append(meas)
+
+# compute plot bounds from all points
+all_pts = []
+for c0, ch, m0, mh, mm in zip(curves_orig, curves_hat, markers_orig, markers_hat, measured_pts):
+    all_pts.append(c0)
+    all_pts.append(ch)
+    all_pts.append(m0)
+    all_pts.append(mh)
+    all_pts.append(mm)
+all_pts = onp.vstack(all_pts)
+mins = all_pts.min(axis=0)
+maxs = all_pts.max(axis=0)
+ranges = maxs - mins
+max_range = ranges.max()
+center = 0.5 * (maxs + mins)
+
+fig, ax = plt.subplots(figsize=(12, 9), subplot_kw={"projection": "3d"})
+
+# choose colors for each sample but avoid pure red/blue for the backbone shapes
+tab10 = plt.get_cmap("tab10")
+allowed_indices = [1, 2, 4, 5, 6, 7, 8, 9]  # skip 0 (blue) and 3 (red)
+colors = [tab10(allowed_indices[i % len(allowed_indices)]) for i in range(M)]
+
+alpha_orig = 0.25  # transparency for original (less prominent)
+alpha_hat = 1.0    # optimized more opaque
+
+for m in range(M):
+    c = colors[m]
+    c_rgb = (c[0], c[1], c[2])
+
+    curve0 = curves_orig[m]
+    curve_hat = curves_hat[m]
+
+    # plot backbones with same color but different alpha
+    ax.plot(curve0[:, 0], curve0[:, 1], curve0[:, 2], lw=3, color=c_rgb, alpha=alpha_orig)
+    ax.plot(curve_hat[:, 0], curve_hat[:, 1], curve_hat[:, 2], lw=3, color=c_rgb, alpha=alpha_hat)
+
+    # predicted markers: use orange for original, red for optimized
+    m0 = markers_orig[m]
+    mh = markers_hat[m]
+    # measured markers
+    mm = measured_pts[m]
+
+    # per-marker alpha gradient from marker1 -> marker4 (0.25 -> 1.0)
+    grad_alphas = onp.linspace(0.25, 1.0, 4)
+    red_col = (0.8, 0.1, 0.1)
+    orange_col = (1.0, 0.55, 0.0)
+    blue_col = (0.0, 0.2, 0.8)
+
+    for i in range(4):
+        a = float(grad_alphas[i])
+        # original predicted marker (orange), scaled by original alpha factor
+        ax.scatter(
+            m0[i, 0], m0[i, 1], m0[i, 2], marker="x", color=orange_col, s=50, alpha= a
+        )
+        # optimized predicted marker (red)
+        ax.scatter(mh[i, 0], mh[i, 1], mh[i, 2], marker="x", color=red_col, s=90, alpha=a)
+        # measured marker (blue circle) with gradient alpha
+        ax.scatter(
+            mm[i, 0], mm[i, 1], mm[i, 2], marker="o", facecolors="none", edgecolors=blue_col, s=90, alpha=a
+        )
+
+# Set axis labels and title (larger font)
+ax.set_xlabel("X [m]", fontsize=14)
+ax.set_ylabel("Y [m]", fontsize=14)
+ax.set_zlabel("Z [m]", fontsize=14)
+ax.view_init(elev=20, azim=15)
+#ax.set_title("Shape comparison across inputs", fontsize=14)
+
+# enforce equal aspect ratio for 3D plot
+ax.set_xlim(center[0] - max_range / 2, center[0] + max_range / 2)
+ax.set_ylim(center[1] - max_range / 2, center[1] + max_range / 2)
+ax.set_zlim(center[2] - max_range / 2, center[2] + max_range / 2)
+ax.set_box_aspect([1, 1, 1])
+
+# create a custom legend: show division Original vs Optimized plus markers
+from matplotlib.lines import Line2D
+legend_elems = [
+    Line2D([0], [0], color='k', lw=2.5, linestyle='-', alpha=alpha_orig, label='Original Backbone'),
+    Line2D([0], [0], color='k', lw=3.0, linestyle='-', alpha=alpha_hat, label='Optimized Backbone'),
+    Line2D([0], [0], marker='x', color='w', markerfacecolor='orange', markeredgecolor='orange', markersize=8, label='Predicted markers (Original)'),
+    Line2D([0], [0], marker='x', color='w', markerfacecolor='red', markeredgecolor='red', markersize=8, label='Predicted markers (Optimized)'),
+    Line2D([0], [0], marker='o', color='w', markeredgecolor='blue', markerfacecolor='none', markersize=8, label='Measured markers'),
+]
+ax.legend(handles=legend_elems, loc='upper left', fontsize=14)
+
+plt.tight_layout()
+plt.tick_params(axis='both', labelsize=12)
+
+# plt.savefig("MARKERS_CONFIG_ss.pdf", format="pdf", bbox_inches="tight")
+# plt.savefig("MARKERS_CONFIG_ss.jpg", format="jpg", dpi=300, bbox_inches="tight")
 plt.show()
