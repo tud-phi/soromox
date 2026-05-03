@@ -25,13 +25,21 @@ pre-commit-install:
 test:
 	pytest
 
+.PHONY: coverage
+coverage:
+	coverage run -m pytest
+	coverage report
+
 .PHONY: test_coverage
-test_coverage:
-	pytest --cov=src
+test_coverage: coverage
+
+.PHONY: coverage_xml
+coverage_xml:
+	coverage run -m pytest
+	coverage xml
 
 .PHONY: test_coverage_xml
-test_coverage_xml:
-	pytest --cov=src --cov-report=xml
+test_coverage_xml: coverage_xml
 
 #* Cleaning
 .PHONY: pycache-remove
@@ -57,19 +65,16 @@ build-remove:
 #* Documentation
 .PHONY: docs-serve
 docs-serve:
-	conda run --live-stream --name soromox mkdocs serve
+	uv run --extra docs zensical serve
 
 .PHONY: docs-build
 docs-build:
-	conda run --live-stream --name soromox mkdocs build --clean
+	uv run --extra docs zensical build --clean
 
 .PHONY: docs-build-strict
 docs-build-strict:
-	conda run --live-stream --name soromox mkdocs build --clean --strict
-
-.PHONY: docs-deploy
-docs-deploy:
-	conda run --live-stream --name soromox mkdocs gh-deploy --force
+	@echo "Zensical does not currently support strict mode; running the normal docs build."
+	uv run --extra docs zensical build --clean
 
 .PHONY: cleanup
 cleanup: pycache-remove dsstore-remove ipynbcheckpoints-remove pytestcache-remove

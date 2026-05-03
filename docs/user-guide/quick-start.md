@@ -1,14 +1,15 @@
 # 🚀 Quick Start
 
-<div class="doc-summary">
-  <strong>Get up and running with SoRoMoX in minutes!</strong> This hands-on guide walks you through your first soft robot simulation with step-by-step examples.
-</div>
+**Get up and running with SoRoMoX in minutes!** This hands-on guide walks you through your first soft robot simulation with step-by-step examples.
 
 ---
 
 ## 🎯 Your First Simulation
 
-Let's dive right in with a classic example - simulating a double pendulum to understand the basics using the new Pendulum class API:
+Let's dive right in with a classic example - simulating a double pendulum to understand the basics using the Pendulum class API:
+
+!!! tip "Tabbed Interface"
+    This example is broken down into four tabs. Click through each tab to see the complete workflow: **Setup** → **Initialize** → **Simulate** → **Analyze**. All code blocks build on previous tabs.
 
 === "🔧 Setup"
 
@@ -16,6 +17,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     import jax.numpy as jnp
     import matplotlib.pyplot as plt
     from soromox.systems import Pendulum, SystemState
+    from soromox.rendering import ViserRenderer
 
     # Define parameters for a double pendulum
     num_links = 2
@@ -37,7 +39,7 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     # Set initial conditions
     q0 = jnp.array([jnp.pi/4, jnp.pi/6])   # Initial angles [rad]
     qd0 = jnp.array([0.0, 0.0])            # Initial velocities [rad/s]
-    state0 = jnp.concatenate([q0, qd0])    # State = [q, qd]
+    initial_state = SystemState(t=0.0, y=jnp.concatenate([q0, qd0]))
     ```
 
 === "⚡ Simulate"
@@ -51,7 +53,6 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     u = jnp.zeros((num_links,))
 
     # Integrate using the class helper (Diffrax under the hood)
-    initial_state = SystemState(t=t_span[0], y=jnp.concatenate([q0, qd0]))
     trajectory = robot.rollout_to(
         initial_state=initial_state,
         u=u,
@@ -60,48 +61,46 @@ Let's dive right in with a classic example - simulating a double pendulum to und
         save_dt=solver_dt,
     )
     ts = trajectory.t
-    qs, qds = jnp.split(trajectory.y, 2, axis=1)
-    us = trajectory.u
+    q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
+    u_ts = trajectory.u
     ```
 
 === "📊 Analyze"
 
     ```python
-    # Extract results
-    t = ts
-    q = qs
-    qd = qds
+    # Extract results from trajectory
 
-    # Compute end-effector (last tip) trajectory — returns [theta, px, py]
-    end_effector_positions = jnp.array([
-        robot.forward_kinematics_tips(q_i)[-1, 1:] for q_i in q  # Get [px, py]
-    ])
+    # Compute end-effector (last tip) trajectory over time (using vmap for batched time sample processing)
+    # forward_kinematics_tips returns [theta, px, py] for each link tip
+    xee_ts = jax.vmap(robot.forward_kinematics_tips)(q_ts)[:,-1,1:]
+    ```
 
-    # Create visualization
+    ```python
+    # Create visualization with three subplots
     fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 10))
 
-    # Joint angles over time
-    ax1.plot(t, q[:, 0], label='Joint 1', linewidth=2, color='#1f77b4')
-    ax1.plot(t, q[:, 1], label='Joint 2', linewidth=2, color='#ff7f0e')
+    # Plot 1: Joint angles over time
+    ax1.plot(t, q_ts[:, 0], label='Joint 1', linewidth=2, color='#1f77b4')
+    ax1.plot(t, q_ts[:, 1], label='Joint 2', linewidth=2, color='#ff7f0e')
     ax1.set_ylabel('Joint Angles [rad]')
     ax1.set_title('🔄 Joint Angles vs Time')
     ax1.legend()
     ax1.grid(True, alpha=0.3)
 
-    # Joint velocities over time
-    ax2.plot(t, qd[:, 0], label='Joint 1', linewidth=2, color='#1f77b4')
-    ax2.plot(t, qd[:, 1], label='Joint 2', linewidth=2, color='#ff7f0e')
+    # Plot 2: Joint velocities over time
+    ax2.plot(t, qd_ts[:, 0], label='Joint 1', linewidth=2, color='#1f77b4')
+    ax2.plot(t, qd_ts[:, 1], label='Joint 2', linewidth=2, color='#ff7f0e')
     ax2.set_ylabel('Joint Velocities [rad/s]')
     ax2.set_title('💨 Joint Velocities vs Time')
     ax2.legend()
     ax2.grid(True, alpha=0.3)
 
-    # End-effector trajectory
-    ax3.plot(end_effector_positions[:, 0], end_effector_positions[:, 1], 
+    # Plot 3: End-effector trajectory in workspace
+    ax3.plot(xee_ts[:, 0], xee_ts[:, 1],  # x and y coordinates of the end-effector
              linewidth=3, color='#2ca02c', alpha=0.8)
-    ax3.scatter(end_effector_positions[0, 0], end_effector_positions[0, 1], 
+    ax3.scatter(xee_ts[0, 0], xee_ts[0, 1], 
                 s=100, color='green', marker='o', label='Start', zorder=5)
-    ax3.scatter(end_effector_positions[-1, 0], end_effector_positions[-1, 1], 
+    ax3.scatter(xee_ts[-1, 0], xee_ts[-1, 1], 
                 s=100, color='red', marker='s', label='End', zorder=5)
     ax3.set_xlabel('X Position [m]')
     ax3.set_ylabel('Y Position [m]')
@@ -114,30 +113,63 @@ Let's dive right in with a classic example - simulating a double pendulum to und
     plt.show()
     ```
 
+    ```python
+    # Interactive 3D visualization with ViserRenderer
+    # Opens a web-based interface in your browser for interactive exploration
+    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer.render_sequence(
+        ts,
+        q_ts,
+        playback_speed=1.0,
+        loop=True,
+        autoplay=True,
+        plot_configurations=True,
+        robot_name="Pendulum",
+    )
+    # The visualization will open in your browser automatically
+    # You can interact with the 3D scene, play/pause animation, and view plots
+    ```
+
 !!! success "🎉 Congratulations!"
-    You've just simulated your first robot with SoRoMoX! The pendulum exhibits chaotic motion due to its nonlinear dynamics.
+    You've just simulated your first robot with SoRoMoX! The pendulum exhibits chaotic motion due to its nonlinear dynamics. 
+    
+    **What you learned:**
+    - How to define system parameters
+    - How to initialize a robot system
+    - How to run a simulation using `rollout_to()`
+    - How to extract and visualize results
+    
+    **Next:** Explore the [Core Concepts](#core-concepts) below to understand the architecture, or jump to [Soft Robot Examples](#soft-robot-example) for more advanced simulations.
 
 ---
 
 ## 🧠 Core Concepts
 
-### 🏭 Factory Pattern
+### 🏗️ Object-Oriented Architecture
 
-SoRoMoX uses an elegant factory pattern to create system functions:
+SoRoMoX uses an object-oriented design based on Equinox dataclasses. Systems are instantiated directly as classes:
 
 ```python title="System Creation"
-ode_fn, forward_kinematics, jacobian_fn, _ = system.factory(parameters)
+from soromox.systems import (
+    ArticulatedSoftRobot,
+    PCS,
+)
+# For spatial articulated soft robots
+robot = ArticulatedSoftRobot(params)
+
+# For soft continuum robots (PCS, GVS, HSA)
+robot = PCS(num_segments=3, params=params)
 ```
 
-**Returns:**
+**Key Benefits:**
 
-- `ode_fn` → Differential equations for numerical integration
-- `forward_kinematics` → Position and orientation computation  
-- `jacobian_fn` → Velocity relationships and sensitivities
-- `_` → Additional system-specific functions
+- **Extensibility**: Easy to subclass and modify methods (e.g., custom actuation mappings)
+- **JAX Compatibility**: Full support for JIT compilation, automatic differentiation, and vectorization
+- **Type Safety**: Clear interfaces with static type checking
+- **Performance**: Optimized computation graphs compiled at runtime
 
-!!! tip "Why Factory Pattern?"
-    This approach allows JAX to optimize the entire computation graph at compile time, resulting in much faster execution.
+!!! note "Migration from Factory Pattern"
+    SoRoMoX previously used a factory pattern, but has migrated to object-oriented classes for better extensibility and maintainability. All systems now inherit from `DynamicalSystem` or `SoftRobot` base classes. See the [API Reference](../api/overview.md) for details.
 
 ### 📋 Parameter Dictionary
 
@@ -158,13 +190,28 @@ params = {
 
 ### 🔄 State Representation
 
-Robot states follow a consistent `[positions, velocities]` format:
+Robot states are represented using the `SystemState` dataclass, which encapsulates time, state vector, and optional actuation/control state:
 
-```python title="State Vector"
+```python title="SystemState"
+from soromox.systems import SystemState
+
 # For an n-DOF system:
 positions = q      # Shape: (n,)
-velocities = qd # Shape: (n,)
-state = jnp.concatenate([q, qd])  # Shape: (2n,)
+velocities = qd    # Shape: (n,)
+y = jnp.concatenate([q, qd])  # State vector, shape: (2n,)
+
+# Create a SystemState instance
+state = SystemState(
+    t=0.0,                    # Current time
+    y=y,                      # State vector [q, qd]
+    u=None,                   # Optional: actuation input
+    control_state=None        # Optional: controller state (e.g., integrator terms)
+)
+
+# Access state components
+time = state.t
+state_vector = state.y
+q, qd = jnp.split(state.y, 2)  # Split into positions and velocities
 ```
 
 ---
@@ -177,11 +224,27 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
     ```python
     from soromox.systems import PlanarPCS
-    from soromox.parameters import Params
 
     # Create a 3-segment soft robot
     num_segments = 3
-    params = Params.default_planar_pcs(num_segments)
+    params = {
+        "L": 0.1 * jnp.ones((num_segments,)),  # Segment lengths [m]
+        "r": 0.02 * jnp.ones((num_segments,)),  # Segment radii [m]
+        "rho": 1070.0 * jnp.ones((num_segments,)),  # Density [kg/m³]
+        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        "g": jnp.array([0.0, 9.81]),  # Gravity vector [m/s²]
+        "th0": jnp.pi / 2,  # Initial orientation [rad]
+    }
+    # Damping matrix (optional but recommended for stability)
+    # Structure: diagonal matrix with damping coefficients for each strain component
+    # [bending, shear_x, shear_y] per segment, scaled by segment length
+    params["D"] = 1e-3 * jnp.diag(
+        jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0).flatten()
+        * params["L"][:, None].flatten()
+    )
+    # Note: Damping helps stabilize simulations and represents material dissipation.
+    # For static analysis, you can omit this or set to zero.
 
     # Initialize the PCS robot
     robot = PlanarPCS(
@@ -190,17 +253,17 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
     )
 
     # Define configuration (strains)
+    # Each segment has 3 strain components: [curvature, shear_x, shear_y]
     q = jnp.array([0.1, 0.0, 0.0,  # Segment 1: [curvature, shear_x, shear_y]
                    0.2, 0.0, 0.0,  # Segment 2
                    0.3, 0.0, 0.0]) # Segment 3
 
     # Compute forward kinematics along the robot
     s_values = jnp.linspace(0, robot.L.sum(), 100)
-    backbone_shape = jnp.array([
-        robot.forward_kinematics(q, s) for s in s_values
-    ])
+    backbone_shape = robot.forward_kinematics_batched(q, s_values)
 
     # Extract positions for plotting
+    # forward_kinematics returns [theta, px, py] for planar systems
     x_positions = backbone_shape[:, 1]  # X coordinates
     y_positions = backbone_shape[:, 2]  # Y coordinates
 
@@ -268,27 +331,10 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
 ## 🎯 Next Steps
 
-<div class="feature-grid">
-  <div class="feature-card">
-    <h3><span class="icon">📚</span> [Explore Examples](examples.md)</h3>
-    <p>Dive deeper with comprehensive examples and tutorials</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">📖</span> [API Reference](../api/systems.md)</h3>
-    <p>Complete documentation of all classes and functions</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">🤝</span> [Contributing](../development/contributing.md)</h3>
-    <p>Learn how to contribute to the SoRoMoX project</p>
-  </div>
-  
-  <div class="feature-card">
-    <h3><span class="icon">🔬</span> Advanced Topics</h3>
-    <p>Control theory, optimization, and machine learning applications</p>
-  </div>
-</div>
+- **📚 [Explore Examples](../examples/)**: Dive deeper with examples and tutorials covering all robot types and use cases.
+- **📖 [API Reference](../../api/overview/)**: Complete documentation of all classes, methods, and functions.
+- **🤝 [Contributing](../../development/contributing/)**: Learn how to contribute to SoRoMoX.
+- **🔬 Advanced Topics**: Control theory, optimization, and machine learning applications with SoRoMoX.
 
 ---
 
@@ -333,7 +379,7 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
 !!! warning "Common Pitfalls"
     
-    - **Singular Configurations**: Check manipulability before inverse operations
-    - **Physical Limits**: Ensure parameters respect material constraints  
-    - **Numerical Precision**: Use appropriate tolerances for convergence
-    - **Memory Usage**: Be mindful of array sizes in batch operations
+    - **Numerical Precision**: Enable double precision with `jax.config.update("jax_enable_x64", True)`
+    - **Unstable Simulations**: Use a smaller timestep and a higher order solver to prevent numerical instability and improve accuracy of the simulation.
+    - **Slow Batched Simulations**: If batched simulations are slow, try using a smaller batch size and execute on a desktop-size GPU.
+    - **Automatic Differentiation**: Please use automatic differentiation with care as it can be very slow and memory-intensive - in particular, when differentiating through the simulation integration.

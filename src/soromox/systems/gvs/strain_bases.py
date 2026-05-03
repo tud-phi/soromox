@@ -10,7 +10,7 @@ __all__ = [
     "dof_Chebychev",
     "dof_Fourier",
     "dof_Gaussian",
-    "dof_IMQ"
+    "dof_IMQ",
 ]
 import jax.numpy as jnp
 from jax import Array, lax
@@ -207,10 +207,9 @@ def B_Fourier(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
             B_inner = lax.cond(
                 j_val == 1,
                 lambda _: B_inner.at[i, k_inner].set(1.0),
-                lambda _: B_inner.at[i, k_inner]
-                .set(val_cos)
-                .at[i, k_inner + 1]
-                .set(val_sin),
+                lambda _: (
+                    B_inner.at[i, k_inner].set(val_cos).at[i, k_inner + 1].set(val_sin)
+                ),
                 operand=None,
             )
 

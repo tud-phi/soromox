@@ -10,8 +10,15 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from soromox.systems import GVS, PCS, CrossSectionGeometry, Pendulum, PlanarPCS
-from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
+from soromox.systems import (
+    GVS,
+    PCS,
+    ArticulatedSoftRobot,
+    CrossSectionGeometry,
+    Pendulum,
+    PlanarPCS,
+)
+from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 Array = jax.Array
 
@@ -23,6 +30,13 @@ class SystemConfig:
     factory: Callable[[int], Any]
     size_label: str
     build_context: Callable[[Any], MutableMapping[str, Array]]
+    gauss_factory: Callable[[int, int], Any] | None = None
+    default_gauss_points: int | None = None
+    min_gauss_points: int = 1
+
+    @property
+    def supports_gauss_points(self) -> bool:
+        return self.gauss_factory is not None
 
 
 def _pendulum_factory(num_links: int) -> Pendulum:
@@ -57,7 +71,70 @@ def _pendulum_context(system: Pendulum) -> MutableMapping[str, Array]:
     return ctx
 
 
-def _planar_pcs_factory(num_segments: int) -> PlanarPCS:
+def _articulated_soft_robot_factory(
+    num_links: int, gauss_points: int = 5
+) -> ArticulatedSoftRobot:
+    axes = jnp.array(
+        [
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ]
+    )
+    axis_indices = jnp.arange(num_links) % axes.shape[0]
+    omega = axes[axis_indices]
+    joint_screws = jnp.concatenate([omega, jnp.zeros((num_links, 3))], axis=1)
+
+    lengths = jnp.linspace(0.15, 0.25, num_links)
+    lateral = 0.03 * jnp.sin(jnp.arange(num_links, dtype=lengths.dtype))
+    vertical = 0.04 * jnp.cos(jnp.arange(num_links, dtype=lengths.dtype))
+    p_tip = jnp.stack([lengths, lateral, vertical], axis=1)
+    p_com = 0.5 * p_tip
+
+    masses = jnp.linspace(0.8, 1.2, num_links)
+    I_diag = jnp.stack(
+        [
+            0.03 * masses * lengths**2,
+            0.04 * masses * lengths**2,
+            0.05 * masses * lengths**2,
+        ],
+        axis=1,
+    )
+    I_com = jax.vmap(jnp.diag)(I_diag)
+
+    params = {
+        "joint_screws": joint_screws,
+        "p_tip": p_tip,
+        "p_com": p_com,
+        "m": masses,
+        "I_com": I_com,
+        "g": jnp.array([0.0, 0.0, -9.81]),
+        "K": 5.0 * jnp.eye(num_links),
+        "D": 0.1 * jnp.eye(num_links),
+    }
+    return ArticulatedSoftRobot(params)
+
+
+def _articulated_soft_robot_context(
+    system: ArticulatedSoftRobot,
+) -> MutableMapping[str, Array]:
+    n = system.num_links
+    q = jnp.linspace(-0.15, 0.15, n)
+    qd = jnp.linspace(0.2, -0.2, n)
+    ctx: MutableMapping[str, Array] = {
+        "q": q,
+        "qd": qd,
+        "u": jnp.zeros((system.num_actuators,)),
+        "tau_ext": jnp.zeros((n,)),
+        "y": jnp.concatenate([q, qd]),
+        "t": jnp.array(0.0),
+        "s_tip": system.total_length,
+        "g_tips": system.forward_kinematics_tips(q),
+    }
+    return ctx
+
+
+def _planar_pcs_factory(num_segments: int, gauss_points: int = 5) -> PlanarPCS:
     lengths = jnp.full((num_segments,), 0.12)
     radii = jnp.full((num_segments,), 0.015)
     rho = 1070.0 * jnp.ones((num_segments,))
@@ -75,7 +152,11 @@ def _planar_pcs_factory(num_segments: int) -> PlanarPCS:
         * lengths[:, None]
     ).reshape(-1)
     params["D"] = 5.0e-4 * jnp.diag(diag_entries)
-    return PlanarPCS(num_segments=num_segments, params=params)
+    return PlanarPCS(
+        num_segments=num_segments,
+        params=params,
+        num_gauss_points=gauss_points,
+    )
 
 
 def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
@@ -101,7 +182,7 @@ def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
     return ctx
 
 
-def _pcs_factory(num_segments: int) -> PCS:
+def _pcs_factory(num_segments: int, gauss_points: int = 5) -> PCS:
     lengths = jnp.full((num_segments,), 0.1)
     radii = jnp.full((num_segments,), 0.02)
     rho = 1050.0 * jnp.ones((num_segments,))
@@ -121,7 +202,11 @@ def _pcs_factory(num_segments: int) -> PCS:
         * lengths[:, None]
     ).reshape(-1)
     params["D"] = 5.0e-4 * jnp.diag(diag_entries)
-    return PCS(num_segments=num_segments, params=params)
+    return PCS(
+        num_segments=num_segments,
+        params=params,
+        num_gauss_points=gauss_points,
+    )
 
 
 def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
@@ -148,46 +233,40 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
     return ctx
 
 
-def _gvs_factory(num_segments: int) -> GVS:
-    links: Sequence[LinkAttributes] = []
-    joints: Sequence[JointAttributes] = []
-    bases: Sequence[BasisAttributes] = []
-    n_gauss: Sequence[int] = []
+def _gvs_factory(num_segments: int, gauss_points: int = 5) -> GVS:
+    segments: list[GVSSegment] = []
     for _ in range(num_segments):
-        links.append(
-            LinkAttributes(
-                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                E=1.0e6,
-                nu=0.45,
-                rho=980.0,
-                eta=2.5e3,
-                L=0.25,
-                r_i=0.02,
-                r_f=0.02,
+        segments.append(
+            GVSSegment(
+                link=LinkSpec(
+                    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+                    E=1.0e6,
+                    nu=0.45,
+                    rho=980.0,
+                    eta=2.5e3,
+                    L=0.25,
+                    r_i=0.02,
+                    r_f=0.02,
+                ),
+                joint=JointSpec(type="fixed"),
+                basis=StrainBasisSpec(
+                    type="monomial",
+                    active=[1, 1, 1, 1, 1, 1],
+                    orders=[1, 1, 1, 1, 1, 1],
+                    xi_ref=[0, 0, 0, 1, 0, 0],
+                ),
+                num_gauss_points=gauss_points,
             )
         )
-        joints.append(JointAttributes(jointtype="Fixed"))
-        bases.append(
-            BasisAttributes(
-                basistype="Monomial",
-                Bdof=[1, 1, 1, 1, 1, 1],
-                Bodr=[0, 0, 0, 0, 0, 0],
-                xi_ref=[0, 0, 0, 1, 0, 0],
-            )
-        )
-        n_gauss.append(5)
 
     return GVS(
-        links_list=list(links),
-        joints_list=list(joints),
-        basis_list=list(bases),
-        n_gauss_list=list(n_gauss),
-        gravity_vector=[0.0, 0.0, 9.81],
+        segments=segments,
+        g=[0.0, 0.0, 9.81],
     )
 
 
 def _gvs_context(system: GVS) -> MutableMapping[str, Array]:
-    dof = system.dof_tot_system
+    dof = system.num_dofs
     q = jnp.linspace(-0.12, 0.12, dof)
     qd = jnp.linspace(0.16, -0.16, dof)
     ctx: MutableMapping[str, Array] = {
@@ -197,6 +276,7 @@ def _gvs_context(system: GVS) -> MutableMapping[str, Array]:
         "tau_ext": jnp.zeros((dof,)),
         "y": jnp.concatenate([q, qd]),
         "t": jnp.array(0.0),
+        "s_tip": jnp.sum(system.segment_lengths),
     }
     return ctx
 
@@ -210,20 +290,32 @@ def get_system_registry() -> Mapping[str, SystemConfig]:
             size_label="num_links",
             build_context=_pendulum_context,
         ),
+        "articulated_soft_robot": SystemConfig(
+            factory=_articulated_soft_robot_factory,
+            size_label="num_links",
+            build_context=_articulated_soft_robot_context,
+        ),
         "planar_pcs": SystemConfig(
             factory=_planar_pcs_factory,
             size_label="num_segments",
             build_context=_planar_pcs_context,
+            gauss_factory=_planar_pcs_factory,
+            default_gauss_points=5,
         ),
         "pcs": SystemConfig(
             factory=_pcs_factory,
             size_label="num_segments",
             build_context=_pcs_context,
+            gauss_factory=_pcs_factory,
+            default_gauss_points=5,
         ),
         "gvs": SystemConfig(
             factory=_gvs_factory,
             size_label="num_segments",
             build_context=_gvs_context,
+            gauss_factory=_gvs_factory,
+            default_gauss_points=5,
+            min_gauss_points=5,
         ),
     }
 
@@ -251,6 +343,81 @@ def add_system_selection_args(
         default=list(default_segment_counts),
         help="Sequence of link/segment counts to benchmark",
     )
+
+
+def add_gauss_point_args(parser: argparse.ArgumentParser) -> None:
+    """Attach shared Gaussian quadrature sweep arguments to a parser."""
+
+    parser.add_argument(
+        "--gauss-points",
+        nargs="+",
+        type=int,
+        default=None,
+        help=(
+            "Optional sweep of Gauss-Legendre quadrature orders/interior point "
+            "counts. Applies only to systems with quadrature-driven dynamics; "
+            "PCS/GVS include two zero-weight endpoints internally."
+        ),
+    )
+
+
+def normalize_gauss_point_values(
+    values: Sequence[int] | None,
+) -> list[int] | None:
+    """Return a sorted, de-duplicated Gauss-point sweep."""
+
+    if values is None:
+        return None
+    return sorted(dict.fromkeys(values))
+
+
+def gauss_point_sweep_values(
+    config: Any,
+    requested_values: Sequence[int] | None,
+) -> list[int | None]:
+    """Return the Gauss-point values that should be evaluated for a system."""
+
+    if requested_values is None:
+        return [None]
+    if not getattr(config, "supports_gauss_points", False):
+        return []
+
+    min_value = int(getattr(config, "min_gauss_points", 1))
+    return [int(value) for value in requested_values if value >= min_value]
+
+
+def build_system_with_gauss_points(
+    config: Any,
+    size: int,
+    gauss_points: int | None,
+) -> Any:
+    """Build a configured benchmark system, optionally overriding quadrature."""
+
+    if gauss_points is None:
+        return config.factory(size)
+    if not getattr(config, "supports_gauss_points", False):
+        raise ValueError(
+            f"{getattr(config, 'size_label', 'system')} does not support "
+            "Gaussian quadrature point sweeps."
+        )
+    return config.gauss_factory(size, gauss_points)
+
+
+def system_gauss_point_metadata(system: Any) -> tuple[int | None, int | None]:
+    """Return ``(gauss_points, integration_points)`` for quadrature systems.
+
+    ``gauss_points`` is the requested Gauss-Legendre order/interior count used
+    by constructors. ``integration_points`` includes Soromox's zero-weight
+    boundary nodes where the implementation stores them.
+    """
+
+    if hasattr(system, "max_num_gauss_points"):
+        return int(system.max_num_gauss_points), int(system.max_num_integration_points)
+    if hasattr(system, "num_gauss_points") and hasattr(
+        system, "num_integration_points"
+    ):
+        return int(system.num_gauss_points), int(system.num_integration_points)
+    return None, None
 
 
 def add_integration_args(

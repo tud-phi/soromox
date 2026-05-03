@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import sys
-from pathlib import Path
 import shutil
-from typing import Any, Dict, Iterable, List, Mapping, Sequence
+import sys
+from collections.abc import Iterable, Mapping, Sequence
+from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -40,7 +41,7 @@ def _coerce(value: str) -> Any:
     return value
 
 
-def _load_rows(path: Path) -> List[Dict[str, Any]]:
+def _load_rows(path: Path) -> list[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as fp:
         reader = csv.DictReader(fp)
         rows = [{key: _coerce(val) for key, val in row.items()} for row in reader]
@@ -53,12 +54,19 @@ def _filter_rows(
     rows: Iterable[Mapping[str, Any]],
     systems: Sequence[str] | None,
     segment_counts: Sequence[int] | None,
-) -> List[Mapping[str, Any]]:
-    filtered: List[Mapping[str, Any]] = []
+    gauss_points: Sequence[int] | None,
+) -> list[Mapping[str, Any]]:
+    filtered: list[Mapping[str, Any]] = []
     for row in rows:
         if systems and row["system"] not in systems:
             continue
         if segment_counts and int(row["segment_count"]) not in segment_counts:
+            continue
+        if (
+            gauss_points
+            and row.get("gauss_points") not in (None, "")
+            and int(row["gauss_points"]) not in gauss_points
+        ):
             continue
         filtered.append(row)
     if not filtered:
@@ -66,8 +74,47 @@ def _filter_rows(
     return filtered
 
 
+def _gauss_groups(rows: Sequence[Mapping[str, Any]]) -> Sequence[int | None]:
+    gauss_values = sorted(
+        {
+            int(row["gauss_points"])
+            for row in rows
+            if row.get("gauss_points") not in (None, "")
+        }
+    )
+    return gauss_values if gauss_values else [None]
+
+
+def _rows_for_group(
+    rows: Sequence[Mapping[str, Any]],
+    segment_count: int,
+    gauss_points: int | None,
+) -> list[Mapping[str, Any]]:
+    return sorted(
+        (
+            row
+            for row in rows
+            if row["segment_count"] == segment_count
+            and (gauss_points is None or row.get("gauss_points") == gauss_points)
+        ),
+        key=lambda row: row["batch_size"],
+    )
+
+
+def _group_label(
+    size_label: str,
+    segment_count: int,
+    gauss_points: int | None,
+    show_gauss: bool,
+) -> str:
+    label = f"{size_label}={segment_count}"
+    if show_gauss:
+        label = f"{label}, gauss={gauss_points}"
+    return label
+
+
 def _plot(
-    rows: List[Mapping[str, Any]],
+    rows: list[Mapping[str, Any]],
     output: Path | None,
     show: bool,
     log_x: bool,
@@ -93,21 +140,28 @@ def _plot(
         if size_label == "num_segments":
             size_label = r"Number of Segments $N$"
         segment_values = sorted({row["segment_count"] for row in subset})
+        gauss_groups = _gauss_groups(subset)
+        show_gauss = len(gauss_groups) > 1
         for seg in segment_values:
-            seg_rows = sorted(
-                (row for row in subset if row["segment_count"] == seg),
-                key=lambda r: r["batch_size"],
-            )
-            x = [row["batch_size"] for row in seg_rows]
-            y_per_env = [row.get("per_env_speed_ratio", row.get("speed_ratio")) for row in seg_rows]
-            y_total = [row.get("total_speed_ratio") for row in seg_rows]
-            label = f"{size_label}={seg}"
-            ax_per_env.plot(x, y_per_env, marker="o", label=label)
-            ax_total.plot(x, y_total, marker="o", label=label)
+            for gauss_points in gauss_groups:
+                seg_rows = _rows_for_group(subset, seg, gauss_points)
+                if not seg_rows:
+                    continue
+                x = [row["batch_size"] for row in seg_rows]
+                y_per_env = [
+                    row.get("per_env_speed_ratio", row.get("speed_ratio"))
+                    for row in seg_rows
+                ]
+                y_total = [row.get("total_speed_ratio") for row in seg_rows]
+                label = _group_label(size_label, seg, gauss_points, show_gauss)
+                ax_per_env.plot(x, y_per_env, marker="o", label=label)
+                ax_total.plot(x, y_total, marker="o", label=label)
 
         ax_per_env.set_title(f"{system} – per-env speed")
         ax_total.set_title(f"{system} – total throughput")
-        ax_total.set_xlabel(r"Number of environments $n_\mathrm{envs}$ (parallel simulations)")
+        ax_total.set_xlabel(
+            r"Number of environments $n_\mathrm{envs}$ (parallel simulations)"
+        )
         for axis in (ax_per_env, ax_total):
             axis.grid(True, linestyle=":", linewidth=0.6)
             if log_x:
@@ -130,7 +184,7 @@ def _plot(
 
 
 def _plot_total_throughput(
-    rows: List[Mapping[str, Any]],
+    rows: list[Mapping[str, Any]],
     output: Path | None,
     show: bool,
     log_x: bool,
@@ -161,15 +215,17 @@ def _plot_total_throughput(
         if size_label in ["num_segments", "num_links"]:
             size_label = r"$N$"
         segment_values = sorted({row["segment_count"] for row in subset})
+        gauss_groups = _gauss_groups(subset)
+        show_gauss = len(gauss_groups) > 1
         for seg in segment_values:
-            seg_rows = sorted(
-                (row for row in subset if row["segment_count"] == seg),
-                key=lambda r: r["batch_size"],
-            )
-            x = [row["batch_size"] for row in seg_rows]
-            y_total = [row.get("total_speed_ratio") for row in seg_rows]
-            label = f"{size_label}={seg}"
-            ax.plot(x, y_total, marker="o", label=label)
+            for gauss_points in gauss_groups:
+                seg_rows = _rows_for_group(subset, seg, gauss_points)
+                if not seg_rows:
+                    continue
+                x = [row["batch_size"] for row in seg_rows]
+                y_total = [row.get("total_speed_ratio") for row in seg_rows]
+                label = _group_label(size_label, seg, gauss_points, show_gauss)
+                ax.plot(x, y_total, marker="o", label=label)
 
         ax.set_xlabel(r"Number of environments $n_\mathrm{envs}$")
         ax.grid(True, linestyle=":", linewidth=0.6)
@@ -212,6 +268,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Optional subset of segment counts to plot",
     )
     parser.add_argument(
+        "--gauss-points",
+        nargs="*",
+        type=int,
+        help="Optional subset of Gauss-Legendre point counts to plot",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         help="Optional path to save the plot (defaults to CSV path with .pdf suffix)",
@@ -240,7 +302,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     rows = _load_rows(args.csv)
-    rows = _filter_rows(rows, args.systems, args.segment_counts)
+    rows = _filter_rows(rows, args.systems, args.segment_counts, args.gauss_points)
     throughput_output: Path | None = None
     if args.output is not None:
         throughput_output = args.output.with_name(
@@ -248,7 +310,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     _plot(rows, args.output, args.show, args.log_x, args.log_y)
     if throughput_output is not None:
-        _plot_total_throughput(rows, throughput_output, args.show, args.log_x, args.log_y)
+        _plot_total_throughput(
+            rows, throughput_output, args.show, args.log_x, args.log_y
+        )
     if not args.output and not args.show:
         print("[!] Neither --output nor --show was supplied; nothing was rendered.")
     return 0

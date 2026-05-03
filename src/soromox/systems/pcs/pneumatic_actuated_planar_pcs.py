@@ -1,5 +1,7 @@
 __all__ = ["PneumaticActuatedPlanarPCS"]
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
@@ -16,49 +18,28 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
 
     Attributes:
-    ----------
-    num_segments : int
-        Number of segments (constant strain sections) along the robot.
-    num_actuators : int
-        Number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS).
-    th0 : Array
-        Initial orientation angle of the robot in radians.
-    g : Array
-        Gravitational acceleration vector (embedded in a 3D vector).
-        [0, g_x, g_y]
-    L, r, E, G, rho, D : Array
-        Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
-    num_active_strains : int
-        Number of active strain components (based on strain_selector).
-    num_strains : int
-        Total number of strain components (6 * num_segments).
-    B_xi : Array
-        Basis matrix for projecting active strains.
-    xi_ref : Array
-        Reference strain (reference configuration) of the robot.
-    num_gauss_points : int
-        Number of points used for numerical integration.
-        Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
-    Xs, Ws : Array
-        Gauss-Legendre quadrature nodes and weights for numerical integration.
-    r_chamber_in : Array
-        Inner radius of each segment's pneumatic chamber.
-    r_chamber_out : Array
-        Outer radius of each segment's pneumatic chamber.
-    phi_chamber : Array
-        Sector angle of each segment's pneumatic chamber.
-    d_chamber : Array
-        Radial distance of the center of the chambers from the centerline of the backbone for each segment.
-    num_chambers_per_segment : int
-        Number of pneumatic chambers per segment (default is 2).
-    actuation_basis : Array
-        Actuation basis matrix for mapping control inputs to segment strains.
-    simplified_actuation_mapping : bool
-        If True, uses a simplified actuation mapping (default is False).
-    chamber_cross_section_geometry : str
-        The cross sectional geometry of the chambers.
-    pneumatic_load_distribution_assumption : str
-        Determines the assumption used to map the pneumatic forces into configuration space.
+        num_segments: Number of segments (constant strain sections) along the robot.
+        num_actuators: Number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar pneumatically-actuated PCS).
+        th0: Initial orientation angle of the robot in radians.
+        g: Gravitational acceleration vector (embedded in a 3D vector).
+            [0, g_x, g_y]
+        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        num_active_strains: Number of active strain components (based on strain_selector).
+        num_strains: Total number of strain components (6 * num_segments).
+        B_xi: Basis matrix for projecting active strains.
+        xi_ref: Reference strain (reference configuration) of the robot.
+        num_gauss_points: Requested nonzero Gauss-Legendre quadrature nodes.
+        num_integration_points: Stored integration nodes, including zero-weight endpoints.
+        integration_points, integration_weights: Quadrature nodes and weights.
+        r_chamber_in: Inner radius of each segment's pneumatic chamber.
+        r_chamber_out: Outer radius of each segment's pneumatic chamber.
+        phi_chamber: Sector angle of each segment's pneumatic chamber.
+        d_chamber: Radial distance of the center of the chambers from the centerline of the backbone for each segment.
+        num_chambers_per_segment: Number of pneumatic chambers per segment (default is 2).
+        actuation_basis: Actuation basis matrix for mapping control inputs to segment strains.
+        simplified_actuation_mapping: If True, uses a simplified actuation mapping (default is False).
+        chamber_cross_section_geometry: The cross sectional geometry of the chambers.
+        pneumatic_load_distribution_assumption: Determines the assumption used to map the pneumatic forces into configuration space.
 
     Notes:
     -----
@@ -103,16 +84,14 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         segment_actuation_selector: Array | None = None,
         chamber_cross_section_geometry: str = "circular",
         pneumatic_load_distribution_assumption: str = "infitesimal",
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the PneumaticallyActuatedPlanarPCS class
+
         Args:
             num_segments (int): number of segments in the robot
             params (Dict[str, Array]): dictionary containing the robot parameters
-            order_gauss (int): order of the Gauss quadrature rule
-            strain_selector (Optional[Array]): array to select which strains are active. All six strains are active by default.
-            xi_ref (Optional[Array]): reference configuration for the robot
             segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
             chamber_cross_section_geometry: the cross sectional geometry of the chambers. Options:
                 - circular: assumes circular chamber cross sections with outside radius "r_chamber_out" and inside radius "r_chamber_in" with their center at a distance of "d_chamber" from the centerline of the backbone
@@ -273,6 +252,7 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
                     Sector angle of each segment's pneumatic chamber [rad]
                 - "d_chamber" : Array of num_segments floats
                     Radial distance of the center of the chambers from the centerline of the backbone [m]
+
         Returns:
             updated_self (PneumaticallyActuatedPlanarPCS):
                 A new instance of PneumaticallyActuatedPlanarPCS with updated parameters.

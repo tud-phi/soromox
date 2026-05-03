@@ -68,6 +68,7 @@ def exp_SE2(vec3: Array) -> Array:
     Args:
         vec3 (Array): shape (3,) or (3, 1)
             Screw coordinates [theta, vx, vy] where theta is the rotation angle and (vx, vy) is the translation vector.
+    
     Returns:
         g: shape (3, 3)
             A 3x3 matrix representing the exponential map of the input screw vector.

@@ -1,8 +1,6 @@
 # 📦 Installation
 
-<div class="doc-summary">
-  <strong>Get started with SoRoMoX in minutes!</strong> Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
-</div>
+**Get started with SoRoMoX in minutes!** Choose from multiple installation methods to get Soft Robot Models in jaX (SoRoMoX) running on your system.
 
 !!! warning "📢 Migration from JSRM"
     
@@ -11,9 +9,10 @@
     - **Package Name**: `import jsrm` → `import soromox`
     - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
     - **Performance**: Symbolic derivations → Numerical implementations
-    - **New Features**: Support for Spatial PCS and GVS systems
-    
-    See the [User Guide](user-guide/quick-start.md) for migration examples.
+    - **New Soft Robot Models**: Support for Spatial PCS, GVS, and articulated soft robot systems
+    - **Actuation**: Popular soft robot actuation modalities such as tendon-actuation and pneumatic-actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
+    - **Renderers**: SoRoMoX includes built-in renderers for visualization
+    - **Control**: Model-based control implementations are included
 
 ---
 
@@ -24,13 +23,17 @@
     - **JAX** >= 0.4.0
     - **NumPy** >= 1.21.0
 
+!!! warning "Python Version Compatibility"
+    - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
+    - **Python 3.14 on Windows**: There may currently exist an incompatibility of Python 3.14 on Windows with the package
+
 ---
 
 ## 🚀 Quick Install
 
-=== "🐍 PyPI (Recommended)"
+=== "🐍 pip (Recommended)"
 
-    The easiest way to install SoRoMoX is from PyPI:
+    The easiest way to install SoRoMoX is from PyPI using pip:
 
     ```bash
     pip install soromox
@@ -38,6 +41,21 @@
 
     !!! success "Ready to go!"
         This installs the core SoRoMoX package with all essential dependencies.
+
+=== "⚡ uv (Fast Alternative)"
+
+    For faster installation, use [uv](https://github.com/astral-sh/uv) - an extremely fast Python package installer:
+
+    ```bash
+    # Install uv if you haven't already
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+
+    # Install soromox
+    uv pip install soromox
+    ```
+
+    !!! tip "Speed Boost"
+        uv is 10-100x faster than pip and automatically handles virtual environments. Perfect for rapid prototyping!
 
 === "🔨 From Source"
 
@@ -52,18 +70,30 @@
     !!! tip "Development Mode"
         The `-e` flag installs in "editable" mode, so changes to the source code are immediately available.
 
-=== "🐋 Docker"
-
-    Use our pre-built Docker container:
-
-    ```bash
-    docker pull ghcr.io/tud-phi/soromox:latest
-    docker run -it --rm ghcr.io/tud-phi/soromox:latest
-    ```
-
 ---
 
 ## 🎯 Installation Options
+
+SoRoMoX provides several optional dependency groups for different use cases:
+
+### 🎨 Rendering Dependencies
+
+For 3D visualization and animation:
+
+```bash
+pip install soromox[rendering]
+```
+
+**Includes:**
+
+- `matplotlib` - For 2D plotting and simple rendering of the backbone shape
+- `open3d` - High-quality 3D visualization
+- `viser` - Web-based interactive rendering
+- `opencv-python` - 2D rendering for planar robots
+- ``ffmpeg`` - Video encoding and processing
+
+!!! note "Open3D Compatibility"
+    Open3D rendering is currently not compatible with Python 3.13+. If you need 3D visualization, please use Python 3.12 or earlier, or use the `viser` renderer instead.
 
 ### 📚 Examples Dependencies
 
@@ -75,11 +105,15 @@ pip install soromox[examples]
 
 **Includes:**
 
-- `diffrax` - Advanced differential equation solving
-- `jaxopt` - High-performance optimization algorithms  
+- `ffmpeg-python` - Video encoding and processing
+- `ipython` - Enhanced interactive Python shell
 - `matplotlib` - Publication-ready plotting and visualization
+- `open3d` - High-quality 3D visualization
 - `opencv-python` - Computer vision and image processing
-- `scipy` - Scientific computing utilities
+- `optimistix` - Nonlinear solvers for root finding, minimization, fixed points, and least squares optimization in JAX
+- `plotly` - Interactive plotting and visualization
+- `seaborn` - Statistical data visualization
+- `viser` - Web-based interactive rendering
 
 ### 🛠️ Development Dependencies
 
@@ -92,10 +126,9 @@ pip install soromox[dev]
 **Includes:**
 
 - `pytest` - Testing framework
-- `black` - Code formatting
-- `flake8` - Code linting
-- `mypy` - Type checking
-- `pre-commit` - Git hooks
+- `ruff` - Fast Python linter and formatter
+- `mypy` - Static type checking
+- `pre-commit` - Git hooks for code quality
 
 ### 📖 Documentation Dependencies
 
@@ -107,9 +140,8 @@ pip install soromox[docs]
 
 **Includes:**
 
-- `mkdocs-material` - Modern documentation theme
-- `mkdocstrings` - API documentation generation
-- `mkdocs-jupyter` - Jupyter notebook integration
+- `zensical` - Documentation site generator
+- `mkdocstrings-python` - API documentation generation
 
 ### 🎉 Complete Installation
 
@@ -119,18 +151,13 @@ Get everything at once:
 pip install soromox[all]
 ```
 
----
+This installs all optional dependencies including rendering, examples, development tools, and documentation builders.
 
-## ⚙️ Environment Setup
-
-!!! warning "Important Step"
-    After installation, always source the environment variables when opening a new terminal:
-
+!!! tip "Using uv"
+    All these options work with uv as well:
     ```bash
-    source 01-configure-env-vars.sh
+    uv pip install soromox[rendering,examples]
     ```
-
-    This ensures SoRoMoX can find all necessary configuration files and paths.
 
 ---
 
@@ -215,18 +242,20 @@ Test your installation with this quick verification script:
         pip install jax[metal]
         ```
 
-    === "🔧 Environment Variables"
-        
-        **Problem:** Module not found errors
-        
-        **Solution:** Ensure environment is properly configured:
+    === "🔧 Import Errors"
+
+        **Problem:** `ModuleNotFoundError` for soromox modules
+
+        **Solution:** Ensure the package is installed in your current environment:
         ```bash
-        # Check if variables are set
-        echo $PYTHONPATH
-        
-        # Re-source the configuration
-        source 01-configure-env-vars.sh
-        ```
+        # Check installation
+        pip list | grep soromox
+
+        # Reinstall if needed
+        pip install --force-reinstall soromox
+
+        # For development installations
+        pip install -e .
 
 ---
 
@@ -234,7 +263,7 @@ Test your installation with this quick verification script:
 
 !!! info "Need assistance?"
 
-    - 📚 **Documentation**: Check our [API Reference](api/systems.md)
+    - 📚 **Documentation**: Check our [API Reference](api/overview.md)
     - 💬 **Discussions**: Join our [GitHub Discussions](https://github.com/tud-phi/soromox/discussions)  
     - 🐛 **Issues**: Report bugs on [GitHub Issues](https://github.com/tud-phi/soromox/issues)
-    - 📧 **Email**: Contact us at `m.stolzle@tudelft.nl`
+    - 📧 **Email**: Contact us at `mstolzle@mit.edu`

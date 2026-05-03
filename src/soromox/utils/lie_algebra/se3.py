@@ -103,6 +103,7 @@ def exp_SE3(vec6: Array) -> Array:
     Args:
         vec6 (Array): shape (6,) or (6, 1)
             Screw coordinates [phi, theta, psi, vx, vy, vz] with ZYX Euler convention for the rotation part.
+    
     Returns:
         g: shape (4, 4)
             A 4x4 matrix representing the exponential map of the input screw vector.

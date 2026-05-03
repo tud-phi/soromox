@@ -1,9 +1,12 @@
+from pathlib import Path
+
 import cv2  # importing cv2
 import jax
-import jax.numpy as jnp
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from pathlib import Path
+
+
+import jax.numpy as jnp
 
 import soromox
 from soromox.parameters.hsa_params import (

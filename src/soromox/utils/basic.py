@@ -29,6 +29,7 @@ def compute_strain_basis(
     Args:
         strain_selector (Array):
             boolean array of shape (n_xi, ) specifying which strain components are active
+    
     Returns:
         strain_basis (Array):
             strain basis matrix of shape (n_xi, n_q) where n_q is the number of configuration variables

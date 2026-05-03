@@ -2,16 +2,16 @@ from collections.abc import Callable
 from pathlib import Path
 
 import jax
+
+jax.config.update("jax_enable_x64", True)  # double precision
 import scipy as sp
 from jax import Array, jacrev, jit, random
 from jax import numpy as jnp
 
 import soromox
 from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL
-from soromox.utils.numerical_jacobian import approx_derivative
-
-jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.systems import PlanarHSA
+from soromox.utils.numerical_jacobian import approx_derivative
 
 
 def factory_fn(
@@ -27,6 +27,7 @@ def factory_fn(
         params: dictionary with robot parameters
         strain_selector: boolean array to select the strains to be activated
         verbose: flag to print additional information
+    
     Returns:
         phi2chi_static_model_fn: function that maps motor angles to the end-effector pose
         jac_phi2chi_static_model_fn: function that computes the Jacobian between the actuation space and the task-space
@@ -62,6 +63,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
+        
         Returns:
             q: planar HSA configuration consisting of (k_be, sigma_sh, sigma_ax)
             aux: dictionary with auxiliary data
@@ -100,6 +102,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
+        
         Returns:
             chi: end-effector pose
             aux: dictionary with auxiliary data

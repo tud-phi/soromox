@@ -19,6 +19,7 @@ def symbolically_derive_planar_hsa_model(
         num_segments: number of constant strain segments
         filepath: path to save the derived model
         num_rods_per_segment: number of HSA rods per segment
+    
     Returns:
         sym_exps: dictionary with entries
             params_syms: dictionary of robot parameters
@@ -621,6 +622,7 @@ def _sym_beta_fn(vxi: sp.Matrix, roff: sp.Expr) -> sp.Matrix:
     Symbolically map the generalized coordinates to the strains in the physical rods
     Args:
         vxi: strains of the virtual backbone of shape (3, )
+    
     Returns:
         pxi: strains in the physical rods of shape (3, )
     """

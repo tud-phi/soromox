@@ -12,20 +12,28 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
+[![Coverage](https://img.shields.io/badge/coverage-local%20report-blue.svg)](#running-tests-with-coverage)
 
 </div>
 
-> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS and GVS), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
+> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS, GVS, and articulated soft robots), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
 
-We provide implementations of several popular and expressive soft robot models in JAX for fast, parallelizable, and differentiable simulations. Specifically, we focus on strain-based models that are suitable for modeling slender structures like soft robots (i.e., robots with a large length compared to their diameter often referred to as Cosserat rods).
-So far, we have implemented the following systems:
+SoRoMoX provides three core capabilities for soft robotics research:
 
-- [N-link pendulum](examples/simulate_pendulum.py)
-- [Planar Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_planar_pcs.py)
-- [Spatial Piecewise Constant Strain (PCS) continuum soft robot](examples/simulate_pcs.py)
-- [Planar Handed Shearing Auxetics (HSA) robot](examples/simulate_planar_hsa.py)
+- **Soft Robot Models**: Kinematic and dynamic models of continuum and articulated soft robots with JAX implementation
+- **Model-Based Control**: Comprehensive suite of controllers including PID, gravity cancellation, potential shaping, impedance control, and computed torque
+- **Visualization**: Multiple rendering backends (Matplotlib, Open3D, Viser, OpenCV) for 2D and 3D visualization
 
-We are happy to receive contributions for other soft robot models. See the [Contributing Guide](development/contributing.md) for more details.
+SoRoMoX includes strain-based continuum models for slender structures (Cosserat rods), planar benchmarks, and spatial articulated soft robot systems. The following systems are implemented:
+
+| System Type | Variants |
+|-------------|----------|
+| Articulated Systems | [Pendulum](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated Pendulum](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py), [Articulated Soft Robot](examples/simulation/articulated/simulate_articulated_soft_robot.py) |
+| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Tendon-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [Pneumatic-Actuated](examples/simulation/pcs/simulate_pneumatic_actuated_planar_pcs.py) |
+| GVS (Geometric Variable Strain) | [Spatial](examples/simulation/gvs/simulate_gvs.py), [Tendon-Actuated](examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
+| HSA (Handed Shearing Auxetics) | [Planar](examples/simulation/hsa/simulate_planar_hsa.py) |
+
+We are happy to receive contributions for other soft robot models. See the [Contributing Guide](docs/development/contributing.md) for more details.
 
 ## Citation
 
@@ -56,6 +64,26 @@ The model of the kinematics and dynamics of the planar HSA robot are part of the
   pages={153--167},
   year={2023},
   organization={Springer}
+}
+```
+
+### Model-Based Controllers Citation
+
+If you found the implementation of the model-based controllers (e.g., PID, gravity cancellation, potential shaping regulators) useful, please consider also citing the following PhD thesis:
+
+```bibtex
+@phdthesis{stolzle2025phdthesis,
+  title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
+  keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
+  author = "Maximilian St{\"o}lzle",
+  year = "2025",
+  month = "9",
+  day = "15",
+  language = "English",
+  type = "Dissertation (TU Delft)",
+  school = "Mechanical Engineering, Delft University of Technology",
+  doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
+  isbn = "978-94-6384-836-7",
 }
 ```
 
@@ -90,7 +118,7 @@ uv pip install -e .
 The extras in `pyproject.toml` bundle optional tooling:
 
 - `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
-- `docs`: MkDocs stack for building the documentation site.
+- `docs`: Zensical stack for building the documentation site.
 - `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
 - `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
 - `test`: minimal test stack (pytest, coverage, tox, html report).
@@ -117,18 +145,45 @@ uv pip install -e ".[dev,examples]"
 uv sync --extra dev --extra examples
 ```
 
-## Usage
+### Running Tests with Coverage
 
-Simply, call one of the example scripts to simulate a system. For example, to simulate the N-link pendulum:
+Coverage.py is included in the `dev`, `test`, and `all` extras. To run the test suite with the project coverage settings:
 
 ```bash
-python examples/simulate_pendulum.py
+uv run --extra test make coverage
+```
+
+or call Coverage.py directly:
+
+```bash
+uv run --extra test python -m coverage run -m pytest
+uv run --extra test python -m coverage report
+```
+
+For CI uploads, generate an XML report with:
+
+```bash
+uv run --extra test make coverage_xml
+```
+
+## Usage
+
+Simply call one of the example scripts to simulate a system. For example, to simulate the N-link pendulum:
+
+```bash
+python examples/simulation/pendulum/simulate_pendulum.py
 ```
 
 or to simulate the planar PCS robot:
 
 ```bash
-python examples/simulate_planar_pcs.py
+python examples/simulation/pcs/simulate_planar_pcs.py
+```
+
+For model-based control examples:
+
+```bash
+python examples/control/configuration_space/setpoint_regulation_comparison.py
 ```
 
 ## Documentation
@@ -141,13 +196,10 @@ To build and serve the documentation locally:
 
 ```bash
 # Install documentation dependencies
-pip install -e ".[docs]"
+uv sync --extra docs
 
-# Serve documentation with live reload (if mkdocs is in PATH)
-mkdocs serve
-
-# OR using conda environment
-conda run --live-stream --name soromox mkdocs serve
+# Serve documentation with live reload
+uv run --extra docs zensical serve
 ```
 
 The documentation will be available at `http://127.0.0.1:8000`.
@@ -155,19 +207,11 @@ The documentation will be available at `http://127.0.0.1:8000`.
 ### Building Documentation for Production
 
 ```bash
-# Build static documentation (if mkdocs is in PATH)
-mkdocs build
+# Build static documentation
+uv run --extra docs zensical build --clean
 
-# OR using conda environment
-conda run --live-stream --name soromox mkdocs build
-
-# Build with strict mode (for CI/development)
-mkdocs build --strict
-# OR: conda run --live-stream --name soromox mkdocs build --strict
-
-# Deploy to GitHub Pages (maintainers only)
-mkdocs gh-deploy
-# OR: conda run --live-stream --name soromox mkdocs gh-deploy
+# Zensical does not currently support MkDocs-style strict mode.
+# The CI workflow runs the same build command.
 ```
 
 You can also use the Makefile targets:
@@ -181,9 +225,6 @@ make docs-build
 
 # Build with strict mode checking
 make docs-build-strict
-
-# Deploy to GitHub Pages
-make docs-deploy
 ```
 
 ## Version Management and Releases

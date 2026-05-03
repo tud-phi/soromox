@@ -1,5 +1,7 @@
 __all__ = ["TendonActuatedPlanarPCS"]
 
+from typing import Any
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
@@ -15,36 +17,26 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     using the Cosserat rod theory and piecewise constant strain assumption.
     It supports computation of forward kinematics, Jacobians, dynamical matrices.
 
+    This class assumes parallel routing of the tendons to the backbone centerline.
+    For other kinds of tendon routings (e.g., out-of-plane, helicoidal, etc.),
+    the `TendonActuatedPCS` should be used.
+
     Attributes:
-    ----------
-    num_segments : int
-        Number of segments (constant strain sections) along the robot.
-    num_actuators : int
-        Number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar tendon-driven robots).
-    th0 : Array
-        Initial orientation angle of the robot in radians.
-    g : Array
-        Gravitational acceleration vector (embedded in a 3D vector).
-        [0, g_x, g_y]
-    L, r, E, G, rho, D : Array
-        Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
-    num_active_strains : int
-        Number of active strain components (based on strain_selector).
-    num_strains : int
-        Total number of strain components (6 * num_segments).
-    B_xi : Array
-        Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
-    xi_ref : Array
-        Reference strain (reference configuration) of the robot.
-    num_gauss_points : int
-        Number of points used for numerical integration.
-        Corresponds to the order of Gauss-Legendre quadrature + 2 (for the endpoints).
-    Xs, Ws : Array
-        Gauss-Legendre quadrature nodes and weights for numerical integration.
-    d: Array
-        Distances of the tendons from the segment's backbone.
-    segment_indices_to_actuate : Array
-        Indices of the segments that are actuated.
+        num_segments: Number of segments (constant strain sections) along the robot.
+        num_actuators: Number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar tendon-driven robots).
+        th0: Initial orientation angle of the robot in radians.
+        g: Gravitational acceleration vector (embedded in a 3D vector).
+            [0, g_x, g_y]
+        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        num_active_strains: Number of active strain components (based on strain_selector).
+        num_strains: Total number of strain components (6 * num_segments).
+        B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
+        xi_ref: Reference strain (reference configuration) of the robot.
+        num_gauss_points: Requested nonzero Gauss-Legendre quadrature nodes.
+        num_integration_points: Stored integration nodes, including zero-weight endpoints.
+        integration_points, integration_weights: Quadrature nodes and weights.
+        d: Distances of the tendons from the segment's backbone.
+        segment_indices_to_actuate: Indices of the segments that are actuated.
 
     Notes:
     -----
@@ -55,6 +47,9 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         Thus:   - kappa_z corresponds to bending around the z-axis,
                 - sigma_x corresponds to axial strain along the x-axis,
                 - sigma_y corresponds to shear along the y-axis.
+    - This class assumes parallel routing of the tendons to the backbone centerline.
+      For other kinds of tendon routings (e.g., out-of-plane, helicoidal, etc.),
+      the `TendonActuatedPCS` should be used.
 
     """
 
@@ -67,10 +62,11 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         params: dict[str, Array],
         *args,
         segment_actuation_selector: Array | None = None,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the TendonActuatedPlanarPCS class
+
         Args:
             num_segments (int): number of segments in the robot
             params (Dict[str, Array]):
@@ -94,15 +90,6 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                     Damping matrix of each segment [Pa*s]
                 - "d": List/Array of num_segments floats
                     Distance of the tendons from the segment's backbone [m]
-            order_gauss (int, optional):
-                Order of the Gauss-Legendre quadrature for integration over each segment.
-                Defaults to 5.
-            strain_selector (Optional[Array], optional):
-                Boolean array of shape (3 * num_segments,) specifying which strain components are active.
-                Defaults to all strains active (i.e. all True).
-            xi_ref (Optional[Array], optional):
-                Reference strain of shape (3 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
             segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
         """
         super().__init__(num_segments, params, *args, **kwargs)
@@ -241,6 +228,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
             Args:
                 segment_idx: index of the segment
                 d_sm: distance of the tendons from the segment's backbone (shape: (num_segment_tendons,))
+
             Returns:
                 A_sm: actuation matrix of shape (n_xi, num_segment_tendons)
             """
@@ -261,6 +249,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
                         i: index of the segment
                         L_i: length of the segment
                         xi_i: strains for the segment
+
                     Returns:
                         A_d_segment: actuation matrix for the segment of shape (3, 3)
                     """

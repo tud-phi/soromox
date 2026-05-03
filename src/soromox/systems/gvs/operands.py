@@ -49,8 +49,8 @@ class GeometricOperand:
 
     Attributes
     ----------
-    Xs : Array
-        Gauss nodes on the normalized interval [0, 1]; shape (nip,).
+    integration_points : Array
+        Gauss nodes on the normalized interval [0, 1]; shape (num_integration_points,).
     r_params : Tuple[Array, Array]
         Circular section radius parameters (r_i, r_f) [m]. Each element is a scalar Array.
     h_params : Tuple[Array, Array]
@@ -64,11 +64,11 @@ class GeometricOperand:
 
     Notes
     -----
-    The geometric parameters are interpolated linearly along `Xs` to obtain the
+    The geometric parameters are interpolated linearly along `integration_points` to obtain the
     local cross-section A and second moments of area I_x, I_y, I_z.
     """
 
-    Xs: Array
+    integration_points: Array
     r_params: tuple[Array, Array]
     h_params: tuple[Array, Array]
     w_params: tuple[Array, Array]
@@ -77,7 +77,7 @@ class GeometricOperand:
 
     def tree_flatten(self):
         children = (
-            self.Xs,
+            self.integration_points,
             self.r_params,
             self.h_params,
             self.w_params,

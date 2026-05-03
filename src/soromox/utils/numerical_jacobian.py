@@ -396,7 +396,7 @@ def _dense_difference(fun, x0, f0, h, use_one_sided, method):
     J_T_rows = []
     for i in range(h.size):
         if method == "2-point":
-            x1 = x0 + jnp.concat(
+            x1 = x0 + jnp.concatenate(
                 [
                     jnp.zeros(
                         (i,),
@@ -416,7 +416,7 @@ def _dense_difference(fun, x0, f0, h, use_one_sided, method):
             f2 = fun(x2)
             df = -3.0 * f0 + 4 * f1 - f2
 
-            dx01 = jnp.concat(
+            dx01 = jnp.concatenate(
                 [
                     jnp.zeros((i,)),
                     h[i : i + 1],
@@ -431,7 +431,7 @@ def _dense_difference(fun, x0, f0, h, use_one_sided, method):
             f2 = fun(x2)
             df = -3.0 * f0 + 4 * f1 - f2
         elif method == "3-point" and not use_one_sided[i]:
-            dx02 = jnp.concat(
+            dx02 = jnp.concatenate(
                 [
                     jnp.zeros((i,)),
                     h[i : i + 1],

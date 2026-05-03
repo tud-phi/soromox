@@ -35,18 +35,18 @@ class Basis:
     Notes
     -----
     - Basis evaluators produce matrices of shape (6, max_dof) at a single `x in [0,1]`.
-      After vectorization over `Xs` they yield (nip, 6, max_dof).
+      After vectorization over `integration_points` they yield (num_integration_points, 6, max_dof).
     - Basis columns map generalized coordinates to the 6D Cosserat strain twist per
       unit length [rad/m, rad/m, rad/m, 1/m, 1/m, 1/m].
     """
 
     BASISTYPE_MAP = {
-        "Monomial": 0,
-        "Legendre": 1,
-        "Chebychev": 2,
-        "Fourier": 3,
-        "Gaussian": 4,
-        "IMQ": 5,
+        "monomial": 0,
+        "legendre": 1,
+        "chebyshev": 2,
+        "fourier": 3,
+        "gaussian": 4,
+        "imq": 5,
     }
 
     DOF_BRANCHES = [
@@ -61,12 +61,12 @@ class Basis:
     @staticmethod
     def make_B_branch(B_fn, max_dof):
         def padded_branch(operand):
-            Xs, Bdof, Bodr = operand
+            points, Bdof, Bodr = operand
 
             def apply_fn(x):
                 return B_fn(x, Bdof, Bodr, max_dof)
 
-            return jax.vmap(apply_fn)(Xs)
+            return jax.vmap(apply_fn)(points)
 
         return padded_branch
 
@@ -94,14 +94,14 @@ class Joint:
     """
 
     JOINTTYPE_MAP = {
-        "Revolute": 0,  # Revolute joint
-        "Prismatic": 1,  # Prismatic joint
-        "Helical": 2,  # Helical joint
-        "Cylindrical": 3,  # Cylindrical joint
-        "Planar": 4,  # Planar joint
-        "Spherical": 5,  # Spherical joint
-        "Free": 6,  # Free motion joint
-        "Fixed": 7,  # No motion joint
+        "revolute": 0,
+        "prismatic": 1,
+        "helical": 2,
+        "cylindrical": 3,
+        "planar": 4,
+        "spherical": 5,
+        "free": 6,
+        "fixed": 7,
     }
     AXIS_MAP = {
         "x": 0,  # x-axis
@@ -114,14 +114,14 @@ class Joint:
         "xz": 2,  # xz-plane
     }
     DICT_JOINT_TYPE_DOF = {
-        "Revolute": 1,
-        "Prismatic": 1,
-        "Helical": 1,
-        "Cylindrical": 2,
-        "Planar": 3,
-        "Spherical": 3,
-        "Free": 6,
-        "Fixed": 0,
+        "revolute": 1,
+        "prismatic": 1,
+        "helical": 1,
+        "cylindrical": 2,
+        "planar": 3,
+        "spherical": 3,
+        "free": 6,
+        "fixed": 0,
     }
 
     @staticmethod
@@ -179,7 +179,7 @@ class Link:
     -----
     - `interpolate_param` performs linear interpolation between initial and final
       geometric parameters along normalized arc length x in [0, 1].
-    - `compute_*_params` return tuples (I_x, I_y, I_z, A) with shape (nip,):
+    - `compute_*_params` return tuples (I_x, I_y, I_z, A) with shape (num_integration_points,):
         I_* [m^4], A [m^2]. These feed mass/stiffness/damping computations.
     """
 
@@ -233,32 +233,32 @@ class Link:
         Compute area and second moments for a rectangular section along the link.
 
         Uses linear interpolation of `h_params=(h_i, h_f)` and `w_params=(w_i, w_f)`
-        over `Xs` to obtain local height and width, then evaluates:
+        over `integration_points` to obtain local height and width, then evaluates:
         - Iy = (1/12) h w^3 [m^4]
         - Iz = (1/12) w h^3 [m^4]
         - Ix = Iy + Iz [m^4] (polar about the center)
         - A  = h w [m^2]
 
         Args:
-            operand: GeometricOperand with fields `Xs`, `h_params`, `w_params`.
+            operand: GeometricOperand with fields `integration_points`, `h_params`, `w_params`.
 
         Returns:
-            Ix_p (Array): Polar second moment of area about the local x-axis [m^4], shape (nip,).
-            Iy_p (Array): Second moment of area about the local y-axis [m^4], shape (nip,).
-            Iz_p (Array): Second moment of area about the local z-axis [m^4], shape (nip,).
-            A_p (Array): Cross-sectional area [m^2], shape (nip,).
+            Ix_p (Array): Polar second moment of area about the local x-axis [m^4], shape (num_integration_points,).
+            Iy_p (Array): Second moment of area about the local y-axis [m^4], shape (num_integration_points,).
+            Iz_p (Array): Second moment of area about the local z-axis [m^4], shape (num_integration_points,).
+            A_p (Array): Cross-sectional area [m^2], shape (num_integration_points,).
         """
-        Xs = operand.Xs
+        normalized_points = operand.integration_points
         h_params = operand.h_params
         w_params = operand.w_params
 
-        h_nGauss = Link.interpolate_param(Xs, *h_params)
-        w_nGauss = Link.interpolate_param(Xs, *w_params)
+        h_at_points = Link.interpolate_param(normalized_points, *h_params)
+        w_at_points = Link.interpolate_param(normalized_points, *w_params)
 
-        Iy_p = (1 / 12) * h_nGauss * w_nGauss**3
-        Iz_p = (1 / 12) * w_nGauss * h_nGauss**3
+        Iy_p = (1 / 12) * h_at_points * w_at_points**3
+        Iz_p = (1 / 12) * w_at_points * h_at_points**3
         Ix_p = Iy_p + Iz_p
-        A_p = h_nGauss * w_nGauss
+        A_p = h_at_points * w_at_points
         return Ix_p, Iy_p, Iz_p, A_p
 
     @staticmethod
@@ -268,7 +268,7 @@ class Link:
         """
         Compute area and second moments for a circular section along the link.
 
-        Uses linear interpolation of `r_params=(r_i, r_f)` over `Xs` to obtain local
+        Uses linear interpolation of `r_params=(r_i, r_f)` over `integration_points` to obtain local
         radius r, then evaluates:
         - Iy = π/4 r^4 [m^4]
         - Iz = π/4 r^4 [m^4]
@@ -276,23 +276,23 @@ class Link:
         - A  = π r^2 [m^2]
 
         Args:
-            operand: GeometricOperand with fields `Xs`, `r_params`.
+            operand: GeometricOperand with fields `integration_points`, `r_params`.
 
         Returns:
-            Ix_p (Array): Polar second moment of area about the local x-axis [m^4], shape (nip,).
-            Iy_p (Array): Second moment of area about the local y-axis [m^4], shape (nip,).
-            Iz_p (Array): Second moment of area about the local z-axis [m^4], shape (nip,).
-            A_p (Array): Cross-sectional area [m^2], shape (nip,).
+            Ix_p (Array): Polar second moment of area about the local x-axis [m^4], shape (num_integration_points,).
+            Iy_p (Array): Second moment of area about the local y-axis [m^4], shape (num_integration_points,).
+            Iz_p (Array): Second moment of area about the local z-axis [m^4], shape (num_integration_points,).
+            A_p (Array): Cross-sectional area [m^2], shape (num_integration_points,).
         """
-        Xs = operand.Xs
+        normalized_points = operand.integration_points
         r_params = operand.r_params
 
-        r_nGauss = Link.interpolate_param(Xs, *r_params)
+        r_at_points = Link.interpolate_param(normalized_points, *r_params)
 
-        Iy_p = jnp.pi / 4 * r_nGauss**4
+        Iy_p = jnp.pi / 4 * r_at_points**4
         Iz_p = Iy_p
         Ix_p = Iy_p + Iz_p
-        A_p = jnp.pi * r_nGauss**2
+        A_p = jnp.pi * r_at_points**2
         return Ix_p, Iy_p, Iz_p, A_p
 
     @staticmethod
@@ -303,30 +303,30 @@ class Link:
         Compute area and second moments for an elliptical section along the link.
 
         Uses linear interpolation of `a_params=(a_i, a_f)` and `b_params=(b_i, b_f)`
-        over `Xs` to obtain local semi-axes a, b, then evaluates:
+        over `integration_points` to obtain local semi-axes a, b, then evaluates:
         - Iy = π/4 a b^3 [m^4]
         - Iz = π/4 b a^3 [m^4]
         - Ix = Iy + Iz [m^4] (polar moment)
         - A  = π a b [m^2]
 
         Args:
-            operand: GeometricOperand with fields `Xs`, `a_params`, `b_params`.
+            operand: GeometricOperand with fields `integration_points`, `a_params`, `b_params`.
 
         Returns:
-            Ix_p (Array): Polar second moment of area about the local x-axis [m^4], shape (nip,).
-            Iy_p (Array): Second moment of area about the local y-axis [m^4], shape (nip,).
-            Iz_p (Array): Second moment of area about the local z-axis [m^4], shape (nip,).
-            A_p (Array): Cross-sectional area [m^2], shape (nip,).
+            Ix_p (Array): Polar second moment of area about the local x-axis [m^4], shape (num_integration_points,).
+            Iy_p (Array): Second moment of area about the local y-axis [m^4], shape (num_integration_points,).
+            Iz_p (Array): Second moment of area about the local z-axis [m^4], shape (num_integration_points,).
+            A_p (Array): Cross-sectional area [m^2], shape (num_integration_points,).
         """
-        Xs = operand.Xs
+        normalized_points = operand.integration_points
         a_params = operand.a_params
         b_params = operand.b_params
 
-        a_nGauss = Link.interpolate_param(Xs, *a_params)
-        b_nGauss = Link.interpolate_param(Xs, *b_params)
+        a_at_points = Link.interpolate_param(normalized_points, *a_params)
+        b_at_points = Link.interpolate_param(normalized_points, *b_params)
 
-        Iy_p = jnp.pi / 4 * a_nGauss * b_nGauss**3
-        Iz_p = jnp.pi / 4 * b_nGauss * a_nGauss**3
+        Iy_p = jnp.pi / 4 * a_at_points * b_at_points**3
+        Iz_p = jnp.pi / 4 * b_at_points * a_at_points**3
         Ix_p = Iy_p + Iz_p
-        A_p = jnp.pi * a_nGauss * b_nGauss
+        A_p = jnp.pi * a_at_points * b_at_points
         return Ix_p, Iy_p, Iz_p, A_p

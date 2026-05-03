@@ -1,9 +1,10 @@
-__all__ = ["Pendulum", "normalize_joint_angles"]
+__all__ = ["Pendulum"]
 
+
+from typing import Any
 
 import equinox as eqx
-import numpy as onp
-from jax import Array, jit, vmap
+from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
@@ -57,20 +58,13 @@ class Pendulum(SoftRobot):
     - q ∈ R^N: joint angles (relative)
     - qd ∈ R^N: joint angular velocities
 
-    Attributes
-    ----------
-    num_links : int (static)
-        Number of links / DoFs.
-    num_actuators: int (static)
-        Number of joint actuators. Equal to num_links.
-    m, I, L, Lc, r : Array (shape (N,))
-        Physical link properties (radius used for visualization).
-    g : Array (shape (2,))
-        Planar gravity vector [g_x, g_y].
-    K, D : Array (shape (N, N))
-        Optional joint stiffness and damping matrices (zeros if omitted).
-    q_ref_k :  Array (shape (N,))
-        Optional rest configuration of the torsional springs (defualt is the zero configuration)
+    Attributes:
+        num_links: Number of links / DoFs.
+        num_actuators: Number of joint actuators. Equal to num_links.
+        m, I, L, Lc, r: Physical link properties (radius used for visualization).
+        g: Planar gravity vector [g_x, g_y].
+        K, D: Optional joint stiffness and damping matrices (zeros if omitted).
+        q_ref_k: Optional rest configuration of the torsional springs (default is the zero configuration).
     """
 
     # Static field
@@ -92,7 +86,7 @@ class Pendulum(SoftRobot):
     def __init__(
         self,
         params: dict[str, Array],
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """
         Initialize the pendulum system with the given parameters.
@@ -345,7 +339,7 @@ class Pendulum(SoftRobot):
         chi_coms = jnp.concatenate([theta[:, None], p_coms], axis=-1)
         return chi_coms
 
-    def _linear_jacobians_coms(self, q: Array) -> Array:
+    def _linear_jacobian_coms(self, q: Array) -> Array:
         """
         Compute linear velocity Jacobians for all link centers of mass.
 
@@ -372,7 +366,7 @@ class Pendulum(SoftRobot):
         Jv_coms = jnp.stack([col_x, col_y], axis=1)  # (n,2,n)
         return Jv_coms
 
-    def _linear_jacobians_tips(self, q: Array) -> Array:
+    def _linear_jacobian_tips(self, q: Array) -> Array:
         """
         Compute linear velocity Jacobians for the distal tips of all links.
 
@@ -413,7 +407,7 @@ class Pendulum(SoftRobot):
         return Jw_links
 
     @eqx.filter_jit
-    def jacobians_joints(self, q: Array) -> Array:
+    def jacobian_joints(self, q: Array) -> Array:
         """
         Spatial Jacobians at proximal joint positions for all links.
 
@@ -429,7 +423,7 @@ class Pendulum(SoftRobot):
             J_joints (Array): array of spatial Jacobians with shape (N, 3, N), where for each i:
                    J_joints[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at joint i.
         """
-        Jv_tip = self._linear_jacobians_tips(q)  # (N,2,N)
+        Jv_tip = self._linear_jacobian_tips(q)  # (N,2,N)
         # Build linear Jacobians at joints: i=0 -> zeros; i>0 -> tip of (i-1)
         Jv_joints = jnp.zeros_like(Jv_tip)
         Jv_joints = Jv_joints.at[1:].set(Jv_tip[:-1])
@@ -440,9 +434,9 @@ class Pendulum(SoftRobot):
         return J_joints
 
     @eqx.filter_jit
-    def jacobians_tips(self, q: Array) -> Array:
+    def jacobian_tips(self, q: Array) -> Array:
         """
-        Spatial Jacobian for the distal tip of a specified link.
+        Spatial Jacobians for all link tips.
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
@@ -451,15 +445,13 @@ class Pendulum(SoftRobot):
             J_tips (Array): array of spatial Jacobians with shape (N, 3, N), where for each i:
                    J_tips[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at tip i.
         """
-        Jv_all_tip = self._linear_jacobians_tips(q)  # (N,2,N)
+        Jv_all_tip = self._linear_jacobian_tips(q)  # (N,2,N)
         Jw_all = self._angular_jacobians()  # (N,N)
         J_tips = jnp.concatenate([Jw_all[:, None, :], Jv_all_tip], axis=1)
         return J_tips
 
     @eqx.filter_jit
-    def jacobians_and_derivatives_tips(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array]:
+    def jacobian_and_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 
@@ -481,12 +473,12 @@ class Pendulum(SoftRobot):
         N = self.num_links
 
         # compute the Jacobians at the tips
-        J_tips = self.jacobians_tips(q)
+        J_tips = self.jacobian_tips(q)
         # the linear part of the jacobian
         Jv_tips = J_tips[:, 1:, :]
 
-        # compute the jacobians at the joints
-        J_joints = self.jacobians_joints(q)
+        # compute the jacobian at the joints
+        J_joints = self.jacobian_joints(q)
         # linear part of the jacobian
         Jv_joints = J_joints[:, 1:, :]
 
@@ -507,7 +499,7 @@ class Pendulum(SoftRobot):
         return J_tips, Jd_tips
 
     @eqx.filter_jit
-    def jacobians_coms(self, q: Array) -> Array:
+    def jacobian_coms(self, q: Array) -> Array:
         """
         Spatial Jacobian for the center of mass (COM) of a specified link.
 
@@ -518,7 +510,7 @@ class Pendulum(SoftRobot):
             J_coms (Array): array of spatial Jacobians with shape (N, 3, N), where for each i:
                    J_coms[i] = [Jw; Jv_x; Jv_y] with shape (3, N) at COM i.
         """
-        Jv_all_com = self._linear_jacobians_coms(q)  # (N,2,N)
+        Jv_all_com = self._linear_jacobian_coms(q)  # (N,2,N)
         Jw_all = self._angular_jacobians()  # (N,N)
         J_coms = jnp.concatenate([Jw_all[:, None, :], Jv_all_com], axis=1)
         return J_coms
@@ -694,7 +686,7 @@ class Pendulum(SoftRobot):
         chi = self.forward_kinematics(q, s)
 
         # Joint positions and velocities
-        J_joints = self.jacobians_joints(q)  # (N, 3, N)
+        J_joints = self.jacobian_joints(q)  # (N, 3, N)
         Jv_joints = J_joints[:, 1:, :]  # (N, 2, N) linear part
         v_joints = jnp.einsum("icj,j->ic", Jv_joints, qd)  # (N, 2)
 
@@ -750,7 +742,7 @@ class Pendulum(SoftRobot):
         Returns:
             B (Array): Generalized mass matrix, shape (N, N) [kg⋅m²]
         """
-        Jv = self._linear_jacobians_coms(q)  # (n,2,n)
+        Jv = self._linear_jacobian_coms(q)  # (n,2,n)
         Jw = self._angular_jacobians()  # (n,n)
         # B = Σ ( m_i Jv_i^T Jv_i + I_i Jw_i^T Jw_i )
         m_terms = jnp.einsum("i,ika,ikb->ab", self.m, Jv, Jv)
@@ -782,8 +774,8 @@ class Pendulum(SoftRobot):
         """
         N = self.num_links
         # Linear Jacobians at COMs and at joints (proximal ends)
-        Jv = self._linear_jacobians_coms(q)  # (N, 2, N) for COMs
-        Jv_tip = self._linear_jacobians_tips(q)  # (N, 2, N) for tips
+        Jv = self._linear_jacobian_coms(q)  # (N, 2, N) for COMs
+        Jv_tip = self._linear_jacobian_tips(q)  # (N, 2, N) for tips
         # Build joint linear Jacobians: joint 0 at origin (zero), joint j>0 equals tip of link j-1
         Jv_joints = jnp.zeros_like(Jv_tip)
         Jv_joints = Jv_joints.at[1:].set(Jv_tip[:-1])  # (N, 2, N)
@@ -821,7 +813,7 @@ class Pendulum(SoftRobot):
         Returns:
             G (Array): Generalized gravity vector, shape (N,) [N⋅m]
         """
-        Jv = self._linear_jacobians_coms(
+        Jv = self._linear_jacobian_coms(
             q
         )  # (N,2,N) -> indices (link, component, joint)
         # Force on COM i: f_i = m_i * g
@@ -881,20 +873,6 @@ class Pendulum(SoftRobot):
         """
         A = jnp.eye(self.num_links)
         return A
-
-    def actuation_force(self, q: Array, u: Array) -> Array:
-        """
-        Compute generalized actuation forces from control inputs.
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad] (unused)
-            u (Array): Control torques, shape (N,) [N⋅m]
-
-        Returns:
-            tau_u (Array): Generalized actuation forces τ_u = u, shape (N,) [N⋅m]
-        """
-        tau_u = self.actuation_matrix(q) @ u
-        return tau_u
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -967,12 +945,12 @@ class Pendulum(SoftRobot):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            U_G (Array): Gravitational potential energy [J] (scalar)
+            U_g (Array): Gravitational potential energy [J] (scalar)
         """
         p_coms = self._com_positions(q)  # (n, 2)
         # U_G = -Σ_i m_i * g^T @ p_com_i
-        U_G = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
-        return U_G
+        U_g = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
+        return U_g
 
     @eqx.filter_jit
     def elastic_energy(self, q: Array) -> Array:
@@ -980,88 +958,14 @@ class Pendulum(SoftRobot):
         Compute the elastic potential energy stored in joint springs.
 
         The elastic energy is computed as:
-        U_K = 0.5 * q^T @ K @ q
+        U_k = 0.5 * q^T @ K @ q
         where K is the joint stiffness matrix.
 
         Args:
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            U_K (Array): Elastic potential energy [J] (scalar)
+            U_k (Array): Elastic potential energy [J] (scalar)
         """
-        U_K = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
-        return U_K
-
-    # --------------------------
-    # Operational space dynamics
-    # --------------------------
-    @eqx.filter_jit
-    def operational_space_dynamical_matrices(
-        self,
-        q: Array,
-        qd: Array,
-        link_idx: Array,
-        operational_space_selector: tuple = (True, True, True),
-    ) -> tuple[Array, Array, Array, Array, Array]:
-        """
-        Compute the operational space dynamical matrices for the tip of the specified link.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-            qd (Array): time-derivative of the generalized coordinates of shape (num_active_strains,).
-            link_idx (Array): index of the link to compute the operational space dynamics for.
-            operational_space_selector (Tuple): Selector for the operational space dimensions.
-                Default is (True, True, True) for all dimensions.
-
-        Returns:
-            Lambda (Array): Inertia matrix in the operational space, shape (num_operational_space_dims, num_operational_space_dims).
-            mu (Array): Coriolis and centrifugal matrix in the operational space, shape (num_operational_space_dims,).
-            J (Array): Jacobian of the forward kinematics at point s in the body frame, shape (num_operational_space_dims, num_active_strains).
-            Jd (Array): Time-derivative of the Jacobian at point s in the body frame, shape (num_operational_space_dims, num_active_strains).
-            JB_pinv (Array): Dynamically-consistent pseudo-inverse of the Jacobian, shape (num_active_strains, num_operational_space_dims).
-        """
-        # make operational_space_selector a boolean array
-        operational_space_selector = onp.array(operational_space_selector, dtype=bool)
-
-        # Jacobian and its time-derivative
-        J_tips, Jd_tips = self.jacobians_and_derivatives_tips(q, qd)
-
-        # select the appropiate link
-        J = J_tips[link_idx]
-        Jd = Jd_tips[link_idx]
-
-        J = J[operational_space_selector, :]
-        Jd = Jd[operational_space_selector, :]
-
-        # inverse of the inertia matrix in the configuration space
-        B = self.inertia_matrix(q)
-        B_inv = jnp.linalg.inv(B)
-        C = self.coriolis_matrix(q, qd)
-
-        Lambda = jnp.linalg.inv(
-            J @ B_inv @ J.T
-        )  # inertia matrix in the operational space
-        mu = Lambda @ (
-            J @ B_inv @ C - Jd
-        )  # coriolis and centrifugal matrix in the operational space
-
-        JB_pinv = (
-            B_inv @ J.T @ Lambda
-        )  # dynamically-consistent pseudo-inverse of the Jacobian
-
-        return Lambda, mu, J, Jd, JB_pinv
-
-
-@jit
-def normalize_joint_angles(q: Array) -> Array:
-    """
-    Normalize joint angles to the interval [-pi, pi].
-
-    Args:
-        q (Array): Joint angles.
-
-    Returns:
-        q_norm (Array): Normalized joint angles.
-    """
-    q_norm = jnp.mod(q + jnp.pi, 2 * jnp.pi) - jnp.pi
-    return q_norm
+        U_k = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
+        return U_k

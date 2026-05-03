@@ -30,17 +30,20 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: pip
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[docs,examples]"
+          uv sync --extra docs --extra examples
 
       - name: Build documentation
         run: |
-          mkdocs build --clean
+          uv run --extra docs zensical build --clean
 
       - name: Setup Pages
         if: github.ref == 'refs/heads/main'

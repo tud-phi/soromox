@@ -1,5 +1,7 @@
 __all__ = ["TendonActuatedPendulum"]
 
+from typing import Any
+
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
@@ -70,42 +72,25 @@ class TendonActuatedPendulum(Pendulum):
     - q ∈ R^N: joint angles (relative)
     - qd ∈ R^N: joint angular velocities
 
-    Attributes
-    ----------
-    num_links : int (static)
-        Number of links / DoFs.
-    m, I, L, Lc : Array (shape (N,))
-        Physical link properties.
-    g : Array (shape (2,))
-        Planar gravity vector [g_x, g_y].
-    K, D : Array (shape (N, N))
-        Optional joint stiffness and damping matrices (zeros if omitted).
-    R_at: Array (shape (Na, N))
-        Optional routing matrix of the active tendons, which entries represent the radius of the pulley
-        at each joint that route the cable (identity if omitted). If a tendon is attached at the i-th joint
-        with i < N, then the entries for that tendon at index > i must be equal to 0.
-    R_pt: Array (shape (Np, N))
-        Optional routing matrix of the passive tendons (zers if omitted).
-    A_at: Array (shape (N, Na))
-        Optional actuation matrix of the active tendons (identity if omitted).
-    A_pt: Array (shape (N, Np))
-        Optional actuation matrix of the passive tendons (zero if omitted).
-    K_pt: Array (shape (Np, Np))
-        Optional stiffness matrix of the passive tendons (zero if omitted).
-    D_pt: Array (shape (Np, Np))
-        Optional damping matrix of the passive tendons (zero if omitted).
-    l_pt0: Array (shape (Np,))
-        Optional vector of the initial displacement of the passive tendons (zero if omitted).
-    tau_pt0: Array (shape (Np,))
-        Vector of the elastic force due to the pre-stretch of the passive tendons (zero if l_pt0 is omitted).
-    h_q: Array (shape (N, N))
-        Transformation matrix from actuation to configuration coordinates, such that q = h_q(y) (identity if omitted).
-    h_q_inv: Array (shape (N, N))
-        Transformation matrix from configuration to actuation coordinates, such that y = h_q_inv(q) (identity if omitted).
+    Attributes:
+        num_links: Number of links / DoFs.
+        m, I, L, Lc: Physical link properties.
+        g: Planar gravity vector [g_x, g_y].
+        K, D: Optional joint stiffness and damping matrices (zeros if omitted).
+        R_at: Optional routing matrix of the active tendons, which entries represent the radius of the pulley
+            at each joint that route the cable (identity if omitted). If a tendon is attached at the i-th joint
+            with i < N, then the entries for that tendon at index > i must be equal to 0.
+        R_pt: Optional routing matrix of the passive tendons (zero if omitted).
+        A_at: Optional actuation matrix of the active tendons (identity if omitted).
+        A_pt: Optional actuation matrix of the passive tendons (zero if omitted).
+        K_pt: Optional stiffness matrix of the passive tendons (zero if omitted).
+        D_pt: Optional damping matrix of the passive tendons (zero if omitted).
+        l_pt0: Optional vector of the initial displacement of the passive tendons (zero if omitted).
+        tau_pt0: Vector of the elastic force due to the pre-stretch of the passive tendons (zero if l_pt0 is omitted).
 
     References:
-    ----------
-    - [Tendon-driven actuation of an articulated link system] Murray, Richard M., Zexiang Li, and S. Shankar Sastry. A mathematical introduction to robotic manipulation. CRC press, 2017. (Chapter 6)
+        Murray, R. M., Li, Z., & Sastry, S. S. (2017). A Mathematical Introduction
+        to Robotic Manipulation (Chapter 6: Tendon-driven actuation). CRC Press.
     """
 
     R_at: Array
@@ -118,15 +103,13 @@ class TendonActuatedPendulum(Pendulum):
     D_pt: Array
     l_pt0: Array
     tau_pt0: Array
-    h_q: Array
-    h_q_inv: Array
 
     def __init__(
         self,
         params: dict[str, Array],
         tendon_params: dict[str, Array] = {},
         *args,
-        **kwargs,
+        **kwargs: Any,
     ):
         """
         Initialize the pendulum system with the given parameters.
@@ -179,11 +162,6 @@ class TendonActuatedPendulum(Pendulum):
 
         # Elastic force due to pre-stretch of the passive tendons
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
-
-        # Set actuation coordinates transformation
-        h_q, h_q_inv = self._set_conf2act_tranformation(self.A_at)
-        self.h_q = h_q
-        self.h_q_inv = h_q_inv
 
         # Consistency checks (lightweight; JIT friendly if shapes static)
         assert (
@@ -289,11 +267,8 @@ class TendonActuatedPendulum(Pendulum):
         updated = self
         if "R_at" in tendon_params:
             R_at = jnp.asarray(tendon_params["R_at"])
-            h_q, h_q_inv = self._set_conf2act_tranformation(R_at.T)
             updated = eqx.tree_at(lambda x: x.R_at, updated, R_at)
             updated = eqx.tree_at(lambda x: x.A_at, updated, R_at.T)
-            updated = eqx.tree_at(lambda x: x.h_q, updated, h_q)
-            updated = eqx.tree_at(lambda x: x.h_q_inv, updated, h_q_inv)
         if "R_pt" in tendon_params:
             R_pt = jnp.asarray(tendon_params["R_pt"])
             updated = eqx.tree_at(lambda x: x.R_pt, updated, R_pt)
@@ -395,6 +370,7 @@ class TendonActuatedPendulum(Pendulum):
         return l_tot_p
 
     tendon_length = active_tendon_length  # Alias for compatibility
+    actuated_coordinates = active_tendon_length  # Alias for actuation space dynamics
 
     # -------------------------------
     # Standardized dynamics interface
@@ -470,154 +446,9 @@ class TendonActuatedPendulum(Pendulum):
             q (Array): Joint angles, shape (N,) [rad]
 
         Returns:
-            U_K_tot (Array): Total elastic potential energy [J] (scalar)
+            U_k (Array): Total elastic potential energy [J] (scalar)
         """
-        U_K_tot = 0.5 * q.T @ self.K @ q + 0.5 * (
+        U_k = 0.5 * q.T @ self.K @ q + 0.5 * (
             self.R_pt @ q + self.l_pt0
         ).T @ self.K_pt @ (self.R_pt @ q + self.l_pt0)
-        return U_K_tot
-
-    # ---------------------
-    # Actuation coordinates
-    # ---------------------
-    def _set_conf2act_tranformation(self, A: Array) -> tuple[Array, Array]:
-        """
-        Sets the transformation matrix between actuation (y) and configuration coordinates,
-        and adds it as attribute (as it is constant).
-
-        Args:
-            A (Array): actuation matrix of the robot, shape (N, Na)
-
-        Returns:
-            h_q (Array): transformation matrix such that y = h_q(q), shape (N, N)
-            h_q_inv (Array): transformation matrix such that q = h_q_inv(q), shape (N, N)
-        """
-
-        def basis_expansion(A: Array, r: int) -> Array:
-            """
-            Computes the basis expansion of a rectangular matrix via QR method. It is assumed that A is full rank = r.
-
-            Args:
-                A (Array): rectangular matrix, shape (n, m)
-                r (int): number of columns to expand the matrix (r <= n)
-
-            Returns:
-                A_expanded (Array): square matrix which last n - r columns are linearly independent from the first m, shape (n, n)
-            """
-            # Rank the input matrix ASSUMED to be equal to self.num_actuators
-            # r = jnp.linalg.matrix_rank(A)
-
-            # Full orthonormal Q (n, n)
-            Q_complete, _ = jnp.linalg.qr(
-                A, mode="complete"
-            )  # Q_complete @ R = A (R may be padded zeros)
-
-            # Span of the orthogonal complement
-            extra = Q_complete[:, r:]  # (n, n - r)
-
-            # Expanded input matrix with n - r linearly independent columns
-            A_expanded = jnp.concatenate([A, extra], axis=1)  # (n, m + (n - r))
-
-            return A_expanded
-
-        # Compute basis expansion of the actuation matrix
-        A_at_exp = basis_expansion(self.A_at, self.num_actuators)  # (N, N)
-
-        # Define change of coordinates between configuration (q) and actuation space (y)
-        h_q_inv = A_at_exp.T
-        h_q = jnp.linalg.inv(h_q_inv)
-
-        return h_q, h_q_inv
-
-    def conf2act_coords(self, q: Array) -> Array:
-        """
-        Compute the actuation coordinates corresponding to the input
-        configuration coordinates.
-
-        Args:
-            q (Array): configuration coordinates, shape (N,)
-
-        Returns:
-            y (Array): actuation coordinates, shape (N,)
-        """
-        return self.h_q_inv @ q
-
-    def act2conf_coords(self, y: Array) -> Array:
-        """
-        Compute the configuration coordinates corresponding to the input
-        configuration coordinates.
-
-        Args:
-            y (Array): actuation coordinates, shape (N,)
-
-        Returns:
-            q (Array): configuration coordinates, shape (N,)
-        """
-        return self.h_q @ y
-
-    def conf2act_jacobian(self, q: Array):
-        """
-        Jacobian of the configuration to actuation map.
-
-        Args:
-            q (Array): configuration coordinates, shape (N,)
-
-        Returns:
-            J_h_q_inv (Array): jacobian, shape (N, N)
-        """
-        J_h_q_inv = self.h_q_inv
-        return J_h_q_inv
-
-    def act2conf_jacobian(self, y: Array):
-        """
-        Jacobian of the actuation to configuration map, J_(h_q)^{-1} = d (h_q)^{-1}(y) / d y
-
-        Args:
-            y (Array): actuation coordinates, shape (N,)
-
-        Returns:
-            J_h_q (Array): jacobian, shape (N, N)
-        """
-        J_h_q = self.h_q
-        return J_h_q
-
-    def actuation_space_dynamics(
-        self,
-        q: Array,
-        qd: Array,
-    ) -> tuple[Array, Array, Array, Array]:
-        """
-        Compute the actuation space dynamical matrices, which can be expressed as
-            M_y(q) @ ydd + eta_y(q, qd) @ yd + JhM_pinv.T @ (G(q) + K @ q + D @ qd) = [tau, 0_{n - m}],
-        where ydd, yd, y are the acceleration, velocity, and configuration of the actuation coordinates,
-        respectively. Similarly for qd, q in configuration coordinates.
-
-        Args:
-            q (Array): generalized coordinates of shape (N,).
-            qd (Array): time-derivative of the generalized coordinates of shape (N,).
-
-        Returns:
-            M_y (Array): Inertia matrix in the actuation space, shape (N, N).
-            eta_y (Array): Coriolis and centrifugal matrix in the actuation space, shape (N,).
-            J (Array): Jacobian of the h_q map, shape (N, N).
-            JhM_pinv (Array): Dynamically-consistent pseudo-inverse of the Jacobian, shape (N, N).
-        """
-        # Jacobians
-        J = self.conf2act_jacobian(q)
-        # Even J_inv = self.conf2act_jacobian(y=h_q_inv(q)) in this case because h_q is linear, it is in general not true.
-        # Below is reported the right computation in the general case (when (J_h_q)^{-1} != J_(h_q)^{-1})
-        J_inv = jnp.linalg.inv(J)
-
-        # Inertia matrix
-        M = self.inertia_matrix(q)
-        M_inv = jnp.linalg.inv(M)
-
-        # Coriolis
-        C = self.coriolis_matrix(q, qd)
-
-        # Actuation space dynamics
-        M_y = J_inv.T @ M @ J_inv
-        eta_y = M_y @ (J @ M_inv @ C) @ J_inv
-        JhM_pinv = J_inv
-
-        return M_y, eta_y, J, JhM_pinv
+        return U_k

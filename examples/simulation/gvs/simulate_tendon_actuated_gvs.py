@@ -6,8 +6,15 @@ import matplotlib.pyplot as plt
 import optimistix as optx
 
 from soromox.rendering import Open3DRenderer
-from soromox.systems import CrossSectionGeometry, SystemState, TendonActuatedGVS
-from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
+from soromox.systems import (
+    CrossSectionGeometry,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    StrainBasisSpec,
+    SystemState,
+    TendonActuatedGVS,
+)
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
@@ -43,7 +50,7 @@ jnp.set_printoptions(
 
 # 2 link version
 # Link 1
-link1 = LinkAttributes(
+link1 = LinkSpec(
     cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     E=3.04e5,
     nu=0.45,
@@ -55,7 +62,7 @@ link1 = LinkAttributes(
 )
 
 # Link 2
-link2 = LinkAttributes(
+link2 = LinkSpec(
     cross_section_geometry=CrossSectionGeometry.CIRCULAR,
     E=3.04e5,
     nu=0.45,
@@ -65,22 +72,22 @@ link2 = LinkAttributes(
     r_i=0.00642,
     r_f=0.00480,
 )
-joint1 = JointAttributes(jointtype="Fixed")
-joint2 = JointAttributes(jointtype="Fixed")
+joint1 = JointSpec(type="fixed")
+joint2 = JointSpec(type="fixed")
 
-basis1 = BasisAttributes(
-    basistype="Monomial", Bdof=[1, 1, 1, 1, 0, 0], Bodr=[1, 1, 1, 1, 0, 0]
+basis1 = StrainBasisSpec(
+    type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
 )
-basis2 = BasisAttributes(
-    basistype="Monomial", Bdof=[0, 1, 1, 0, 0, 0], Bodr=[0, 0, 0, 0, 0, 0]
+basis2 = StrainBasisSpec(
+    type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
 )
 
 
-n_gauss_list = [8, 8]
-gravity_vector = [0.0, 0.0, -9.81]
+num_gauss_points = [8, 8]
+g = [0.0, 0.0, -9.81]
 
 
-tendon_routing_params = {
+active_tendon_routing_params = {
     "ry": jnp.array(
         [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
     ),
@@ -101,14 +108,18 @@ p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
 
 # 2 link version
 robot = TendonActuatedGVS(
-    links_list=[link1, link2],
-    joints_list=[joint1, joint2],
-    basis_list=[basis1, basis2],
-    n_gauss_list=n_gauss_list,
-    gravity_vector=gravity_vector,
-    tendon_routing_params=tendon_routing_params,
+    segments=[
+        GVSSegment(
+            link=link1, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
+        ),
+        GVSSegment(
+            link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
+        ),
+    ],
+    g=g,
+    active_tendon_routing_params=active_tendon_routing_params,
     p0=p0,
-    scale_rotational_strain_basis=True,
+    scale_rotational_basis_by_length=True,
 )
 # debug: check g0
 # g0_test = lie.exp_SE3(p0)
@@ -117,7 +128,7 @@ robot = TendonActuatedGVS(
 ### MATRICES CHECKING AND PRINTING ###
 
 print("num_segments:", int(robot.num_segments))
-print("V_dof (joint, link) per segment:\n", robot.V_dof)
+print("V_dof (joint, link) per segment:\n", robot.dofs_per_segment)
 print("max_dof: \n", robot.max_dof)
 # max_dof = robot.max_dof
 # padded = 2 * max_dof
@@ -125,7 +136,7 @@ print("max_dof: \n", robot.max_dof)
 
 #### DEBUG: CHECKING MATRICES #####
 
-# xi_reference = jax.device_get(robot.V_xi_ref_Xs)
+# xi_reference = jax.device_get(robot.xi_ref_Xs)
 # print("xi_reference shape:", onp.array(xi_reference).shape)
 # print(onp.array(xi_reference))
 # xi_ref_b1gp0 = xi_reference[0, 0]
@@ -133,21 +144,21 @@ print("max_dof: \n", robot.max_dof)
 
 # Bq printing per segment
 for j in range(robot.num_segments):
-    dof_joint = int(robot.V_dof[j, 0])
-    dof_link = int(robot.V_dof[j, 1])
+    dof_joint = int(robot.dofs_per_segment[j, 0])
+    dof_link = int(robot.dofs_per_segment[j, 1])
 
-#     n_gauss_seg = int(robot.V_nip[j])
+#     n_gauss_seg = int(robot.num_integration_points[j])
 #     print(f"segment {j} -> dof_joint={dof_joint}, dof_link={dof_link}")
 
 
 na = robot.num_actuators
 print("num_actuators:", na)
-dof = sum(robot.V_dof.reshape(-1))
+dof = sum(robot.dofs_per_segment.reshape(-1))
 print("total dof:", dof)
 
 q0 = jnp.zeros((dof,))
 q0dot = jnp.zeros((dof,))
-L_cum = jax.device_get(robot.V_L_cum)
+L_cum = jax.device_get(robot.segment_end_positions)
 total_length = float(L_cum[-1])
 s_end = float(total_length)
 g_end = robot.forward_kinematics(q0, s_end)
@@ -164,7 +175,7 @@ u = jnp.asarray([-1, -0.00], dtype=q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 
-print("body lengths per segment:", robot.V_L)
+print("body lengths per segment:", robot.segment_lengths)
 # print("L_cum:", L_cum)
 # print("total length:", total_length)
 print("s_end:", s_end)

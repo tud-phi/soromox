@@ -13,8 +13,15 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
-from soromox.systems import GVS, CrossSectionGeometry, SystemState
-from soromox.systems.gvs import BasisAttributes, JointAttributes, LinkAttributes
+from soromox.systems import (
+    GVS,
+    CrossSectionGeometry,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    StrainBasisSpec,
+    SystemState,
+)
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -25,12 +32,12 @@ jnp.set_printoptions(
 
 if __name__ == "__main__":
     # Define model inputs
-    List_links: list[LinkAttributes] = []
-    List_joints: list[JointAttributes] = []
-    List_basis: list[BasisAttributes] = []
-    List_nGauss: list[int] = []
+    links: list[LinkSpec] = []
+    joints: list[JointSpec] = []
+    bases: list[StrainBasisSpec] = []
+    num_gauss_points: list[int] = []
 
-    link1 = LinkAttributes(
+    link1 = LinkSpec(
         cross_section_geometry=CrossSectionGeometry.CIRCULAR,
         E=1e6,
         nu=0.5,
@@ -40,19 +47,19 @@ if __name__ == "__main__":
         r_i=0.03,
         r_f=0.03,
     )
-    List_links.append(link1)
-    joint1 = JointAttributes(jointtype="Fixed")
-    List_joints.append(joint1)
-    basis1 = BasisAttributes(
-        basistype="Legendre",
-        Bdof=[0, 1, 1, 0, 0, 0],
-        Bodr=[0, 0, 0, 0, 0, 0],
+    links.append(link1)
+    joint1 = JointSpec(type="fixed")
+    joints.append(joint1)
+    basis1 = StrainBasisSpec(
+        type="legendre",
+        active=[0, 1, 1, 0, 0, 0],
+        orders=[0, 0, 0, 0, 0, 0],
         xi_ref=[0, 0, 0, 1, 0, 0],
     )
-    List_basis.append(basis1)
-    List_nGauss.append(5)  # Number of Gauss points for the first link
+    bases.append(basis1)
+    num_gauss_points.append(5)  # Number of Gauss points for the first link
 
-    link2 = LinkAttributes(
+    link2 = LinkSpec(
         cross_section_geometry=CrossSectionGeometry.CIRCULAR,
         E=1e6,
         nu=0.5,
@@ -62,20 +69,20 @@ if __name__ == "__main__":
         r_i=0.03,
         r_f=0.03,
     )
-    List_links.append(link2)
-    joint2 = JointAttributes(jointtype="Fixed")
-    # joint2 = JointAttributes(jointtype='Revolute', axis='z')
-    List_joints.append(joint2)
-    basis2 = BasisAttributes(
-        basistype="Monomial",
-        Bdof=[1, 1, 0, 0, 0, 0],
-        Bodr=[0, 0, 0, 0, 0, 0],
+    links.append(link2)
+    joint2 = JointSpec(type="fixed")
+    # joint2 = JointSpec(type='revolute', axis='z')
+    joints.append(joint2)
+    basis2 = StrainBasisSpec(
+        type="monomial",
+        active=[1, 1, 0, 0, 0, 0],
+        orders=[0, 0, 0, 0, 0, 0],
         xi_ref=[0, 0, 0, 1, 0, 0],
     )
-    List_basis.append(basis2)
-    List_nGauss.append(6)  # Number of Gauss points for the second link
+    bases.append(basis2)
+    num_gauss_points.append(6)  # Number of Gauss points for the second link
 
-    # link3 = LinkAttributes(
+    # link3 = LinkSpec(
     #     cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,  # Section type
     #     E=1e7,                # Young's modulus in Pascals
     #     nu=0.4,               # Poisson's ratio [-1, 0.5]
@@ -87,41 +94,41 @@ if __name__ == "__main__":
     #     b_i=0.02,             # Initial semi-minor axis in meters
     #     b_f=0.02              # Final semi-minor axis in meters
     # )
-    # List_links.append(link3)
-    # joint3 = JointAttributes(
-    #     jointtype='Revolute',  # Prismatic joint
+    # links.append(link3)
+    # joint3 = JointSpec(
+    #     type='revolute',  # Prismatic joint
     #     axis='z',               # Axis of translation
     # )
-    # List_joints.append(joint3)
-    # basis3 = BasisAttributes(
-    #     basistype='Chebychev',       # Type of basis
-    #     Bdof=[0, 1, 0, 1, 0, 0],    # Degrees of freedom for each deformation type
-    #     Bodr=[0, 0, 0, 0, 0, 0],    # Order of basis functions for each deformation type
+    # joints.append(joint3)
+    # basis3 = StrainBasisSpec(
+    #     type='chebyshev',       # Type of basis
+    #     active=[0, 1, 0, 1, 0, 0],    # Degrees of freedom for each deformation type
+    #     orders=[0, 0, 0, 0, 0, 0],    # Order of basis functions for each deformation type
     #     xi_ref=[0, 0, 0, 1, 0, 0], # Reference strain values as vector
     # )
-    # List_basis.append(basis3)
-    # List_nGauss.append(5)  # Number of Gauss points for the third link
+    # bases.append(basis3)
+    # num_gauss_points.append(5)  # Number of Gauss points for the third link
 
     # ======================================================
     # Robot initialization
     # ======================================================
     robot = GVS(
-        links_list=List_links,
-        joints_list=List_joints,
-        basis_list=List_basis,
-        n_gauss_list=List_nGauss,
-        gravity_vector=[0, 0, -9.81],
+        segments=[
+            GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
+            for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
+        ],
+        g=[0, 0, -9.81],
     )
 
     print(f"System initialized with {robot.num_segments} segments")
-    print(f"max DOFs: {robot.max_dof}, max Gauss points: {robot.max_nGauss}.")
-    print(f"Total DOFs: {robot.dof_tot_system} (chosen), {robot.dof_tot_max} (real)")
+    print(f"max DOFs: {robot.max_dof}, max Gauss points: {robot.max_num_gauss_points}.")
+    print(f"Total DOFs: {robot.num_dofs} (chosen), {robot.num_padded_dofs} (real)")
 
     # =====================================================
     # Simulation upon time
     # =====================================================
     # Initial configuration
-    q0 = jnp.zeros(robot.dof_tot_system)
+    q0 = jnp.zeros(robot.num_dofs)
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
