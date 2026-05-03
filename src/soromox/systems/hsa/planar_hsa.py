@@ -9,6 +9,7 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
+from soromox.systems.params import PlanarHSAParams, PlanarHSAStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.basic import (
     compute_strain_basis,
@@ -146,15 +147,79 @@ class PlanarHSA(SoftRobot):
 
     # parameters for lambdify
     params_for_lambdify: list[Array]
+    params_syms: Any = eqx.field(static=True)
+    params: PlanarHSAParams
+
+    @staticmethod
+    def _symbolic_expression_params(
+        params: PlanarHSAParams, consider_hysteresis: bool
+    ) -> dict[str, Array | dict[str, Array]]:
+        """Map typed HSA params to the symbolic-expression parameter names."""
+        mapped: dict[str, Array | dict[str, Array]] = {
+            "th0": params.base_angle,
+            "L": params.length,
+            "lpc": params.proximal_cap_length,
+            "ldc": params.distal_cap_length,
+            "h": params.rod_height,
+            "rout": params.rod_outer_radius,
+            "rin": params.rod_inner_radius,
+            "roff": params.rod_offset,
+            "kappa_b_ref": params.bending_reference,
+            "sigma_sh_ref": params.shear_reference,
+            "sigma_a_ref": params.axial_reference,
+            "C_varepsilon": params.strain_coupling,
+            "pcudim": params.platform_dimension,
+            "rhor": params.rod_density,
+            "rhop": params.platform_density,
+            "rhoec": params.end_cap_density,
+            "g": params.gravity,
+            "S_b_hat": params.nominal_bending_stiffness,
+            "S_sh_hat": params.nominal_shear_stiffness,
+            "S_a_hat": params.nominal_axial_stiffness,
+            "S_b_sh": params.bending_shear_stiffness,
+            "C_S_b": params.bending_stiffness_correction,
+            "C_S_sh": params.shear_stiffness_correction,
+            "C_S_a": params.axial_stiffness_correction,
+            "zetab": params.bending_damping,
+            "zetash": params.shear_damping,
+            "zetaa": params.axial_damping,
+            "mpl": params.platform_mass,
+            "CoGpl": params.platform_center_of_gravity,
+            "chiee_off": params.end_effector_offset,
+        }
+        if consider_hysteresis:
+            mapped["hysteresis"] = {
+                "basis": params.hysteresis_basis,
+                "alpha": params.hysteresis_alpha,
+                "A": params.hysteresis_A,
+                "n": params.hysteresis_n,
+                "beta": params.hysteresis_beta,
+                "gamma": params.hysteresis_gamma,
+            }
+        return mapped
+
+    @staticmethod
+    def _params_for_lambdify(
+        symbolic_expression_params: dict[str, Array | dict[str, Array]],
+        params_syms: dict[str, Any],
+    ) -> list[Array]:
+        """Flatten typed params in the order expected by saved lambdified functions."""
+        params_for_lambdify = []
+        for params_key, params_vals in sorted(symbolic_expression_params.items()):
+            if params_key in params_syms.keys():
+                if isinstance(params_vals, dict):
+                    for _, nested_vals in sorted(params_vals.items()):
+                        for param in jnp.asarray(nested_vals).flatten():
+                            params_for_lambdify.append(param)
+                else:
+                    for param in jnp.asarray(params_vals).flatten():
+                        params_for_lambdify.append(param)
+        return params_for_lambdify
 
     def __init__(
         self,
-        sym_exp_filepath: str | Path,
-        params: dict[str, Array],
-        strain_selector: Array | None = None,
-        consider_underactuation: bool = True,
-        consider_hysteresis: bool = False,
-        eps: float = 1e-6,
+        params: PlanarHSAParams,
+        structure: PlanarHSAStructure,
         **kwargs: Any,
     ) -> None:
         """
@@ -171,11 +236,19 @@ class PlanarHSA(SoftRobot):
             eps: small number to avoid singularities (e.g., division by zero)
             **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
-        super().__init__(eps=eps, **kwargs)
+        if not isinstance(params, PlanarHSAParams):
+            raise TypeError("params must be a PlanarHSAParams instance.")
+        if not isinstance(structure, PlanarHSAStructure):
+            raise TypeError("structure must be a PlanarHSAStructure instance.")
+        super().__init__(eps=structure.eps, **kwargs)
+        self.params = params
+        symbolic_expression_params = self._symbolic_expression_params(
+            params, structure.consider_hysteresis
+        )
 
         # Load saved symbolic data
         try:
-            sym_exps = dill.load(open(str(sym_exp_filepath), "rb"))
+            sym_exps = dill.load(open(str(structure.symbolic_expression_path), "rb"))
         except FileNotFoundError:
             raise FileNotFoundError(
                 "Symbolic expressions file not found. Please generate the symbolic expressions first."
@@ -188,13 +261,12 @@ class PlanarHSA(SoftRobot):
             raise KeyError(
                 "Symbolic expressions file does not contain 'params_syms'. Please generate the symbolic expressions first."
             )
+        self.params_syms = params_syms
 
         try:
-            params_for_lambdify = []
-            for params_key, params_vals in sorted(params.items()):
-                if params_key in params_syms.keys():
-                    for param in params_vals.flatten():
-                        params_for_lambdify.append(param)
+            params_for_lambdify = self._params_for_lambdify(
+                symbolic_expression_params, params_syms
+            )
         except KeyError:
             raise KeyError(
                 "Symbolic expressions file does not contain the required parameters. Please generate the symbolic expressions first."
@@ -202,7 +274,7 @@ class PlanarHSA(SoftRobot):
         self.params_for_lambdify = params_for_lambdify
 
         try:
-            L = params["L"]
+            L = symbolic_expression_params["L"]
         except KeyError:
             raise KeyError(
                 "Symbolic expressions file does not contain 'L'. Please generate the symbolic expressions first."
@@ -256,7 +328,7 @@ class PlanarHSA(SoftRobot):
         self.num_dofs = num_dofs
 
         # set number of actuators
-        self.consider_underactuation = consider_underactuation
+        self.consider_underactuation = structure.consider_underactuation
         if self.consider_underactuation:
             # the number of actuators equals the number of HSA rods
             self.num_actuators = num_rods_per_segment * num_segments
@@ -265,13 +337,16 @@ class PlanarHSA(SoftRobot):
             self.num_actuators = self.num_dofs
 
         # Hysteresis
-        self.consider_hysteresis = consider_hysteresis
+        self.consider_hysteresis = structure.consider_hysteresis
 
         # ================================================================
         # Robot parameters
-        self._set_params(params, consider_hysteresis, num_dofs)
+        self._set_params(
+            symbolic_expression_params, structure.consider_hysteresis, num_dofs
+        )
 
         # compute the strain basis
+        strain_selector = structure.strain_selector
         if strain_selector is None:
             strain_selector = jnp.ones((num_dofs,), dtype=bool)
         else:
@@ -682,118 +757,146 @@ class PlanarHSA(SoftRobot):
             self.hyst_beta = jnp.zeros((1,))
             self.hyst_gamma = jnp.zeros((1,))
 
-    def update_params(self, params: dict[str, Array]) -> None:
-        """
-        Update the parameters of the PlanarHSA model.
+    def with_params(self, params: PlanarHSAParams) -> "PlanarHSA":
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, PlanarHSAParams):
+            raise TypeError("params must be a PlanarHSAParams instance.")
 
-        Args:
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters to update:
-                - "roff": Array of shape (num_segments, num_rods_per_segment)
-                    offset [m] of each rod from the centerline.
-                    The rows correspond to the segments.
-                - "kappa_b_ref": Array of shape (num_segments, num_rods_per_segment)
-                    bending reference curvatures of each rod
-                - "sigma_sh_ref": Array of shape (num_segments, num_rods_per_segment)
-                    shear reference curvatures of each rod
-                - "sigma_a_ref": Array of shape (num_segments, num_rods_per_segment)
-                    axial reference strains of each rod
-                - "pcudim": Array of shape (num_segments, 3)
-                    width, height, depth of each segment's platform [m]
-                - "lpc": Array of shape (num_segments,)
-                    length of the rigid proximal of the rods connecting to the base [m]
-                - "ldc": Array of shape (num_segments,)
-                    length of the rigid distal of the rods connecting to the platform [m]
-                - "chiee_off": Array of shape (3,)
-                    rigid offset transformation from the distal end of the platform to the end-effector [m]
-                    in the form [theta, p_x, p_y]
-                - "hysteresis": Dictionary containing hysteresis parameters if consider_hysteresis is True
-                    - "basis":
-                        Basis for the hysteresis model
-                    - Bouc-Wen model parameters:
-                        - "alpha": [-] Ratio of post-yield and pre-yield stiffness
-                        - "A": TODO
-                        - "n": [-] TODO
-                        - "beta": [-] TODO
-                        - "gamma": [-] TODO
-        """
-        # Apply updates sequentially
-        updated_self = self
+        arrays = (
+            jnp.asarray(params.length),
+            jnp.asarray(params.rod_offset),
+            jnp.asarray(params.bending_reference),
+            jnp.asarray(params.shear_reference),
+            jnp.asarray(params.axial_reference),
+            jnp.asarray(params.platform_dimension),
+            jnp.asarray(params.proximal_cap_length),
+            jnp.asarray(params.distal_cap_length),
+            jnp.asarray(params.end_effector_offset),
+        )
+        current_arrays = (
+            self.L,
+            self.roff,
+            self.kappa_b_ref,
+            self.sigma_sh_ref,
+            self.sigma_a_ref,
+            self.pcudim,
+            self.lpc,
+            self.ldc,
+            self.chiee_off,
+        )
+        names = (
+            "length",
+            "rod_offset",
+            "bending_reference",
+            "shear_reference",
+            "axial_reference",
+            "platform_dimension",
+            "proximal_cap_length",
+            "distal_cap_length",
+            "end_effector_offset",
+        )
+        for name, value, current in zip(names, arrays, current_arrays):
+            if value.shape != current.shape:
+                raise ValueError(
+                    f"{name} must have shape {current.shape}, got {value.shape}."
+                )
 
-        if "roff" in params:
-            roff = params["roff"]
-            updated_self = eqx.tree_at(lambda x: x.roff, updated_self, roff)
-
-        if "kappa_b_ref" in params:
-            kappa_b_ref = params["kappa_b_ref"]
-            updated_self = eqx.tree_at(
-                lambda x: x.kappa_b_ref, updated_self, kappa_b_ref
-            )
-
-        if "sigma_sh_ref" in params:
-            sigma_sh_ref = params["sigma_sh_ref"]
-            updated_self = eqx.tree_at(
-                lambda x: x.sigma_sh_ref, updated_self, sigma_sh_ref
-            )
-
-        if "sigma_a_ref" in params:
-            sigma_a_ref = params["sigma_a_ref"]
-            updated_self = eqx.tree_at(
-                lambda x: x.sigma_a_ref, updated_self, sigma_a_ref
-            )
-
-        if "pcudim" in params:
-            pcudim = params["pcudim"]
-            updated_self = eqx.tree_at(lambda x: x.pcudim, updated_self, pcudim)
-
-        if "lpc" in params:
-            lpc = params["lpc"]
-            updated_self = eqx.tree_at(lambda x: x.lpc, updated_self, lpc)
-
-        if "ldc" in params:
-            ldc = params["ldc"]
-            updated_self = eqx.tree_at(lambda x: x.ldc, updated_self, ldc)
-
-        if "chiee_off" in params:
-            chiee_off = params["chiee_off"]
-            updated_self = eqx.tree_at(lambda x: x.chiee_off, updated_self, chiee_off)
+        L = arrays[0]
+        L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1, dtype=L.dtype), L]))
+        symbolic_expression_params = self._symbolic_expression_params(
+            params, self.consider_hysteresis
+        )
+        params_for_lambdify = self._params_for_lambdify(
+            symbolic_expression_params, self.params_syms
+        )
 
         if self.consider_hysteresis:
-            if "hysteresis" in params:
-                hyst_params = params["hysteresis"]
-                updated_self = eqx.tree_at(
-                    lambda x: x.hyst_params, updated_self, hyst_params
-                )
+            hysteresis_arrays = (
+                jnp.asarray(params.hysteresis_basis),
+                jnp.asarray(params.hysteresis_alpha),
+                jnp.asarray(params.hysteresis_A),
+                jnp.asarray(params.hysteresis_n),
+                jnp.asarray(params.hysteresis_beta),
+                jnp.asarray(params.hysteresis_gamma),
+            )
+            current_hysteresis_arrays = (
+                self.B_hyst,
+                self.hyst_alpha,
+                self.hyst_A,
+                self.hyst_n,
+                self.hyst_beta,
+                self.hyst_gamma,
+            )
+            for name, value, current in zip(
+                (
+                    "hysteresis_basis",
+                    "hysteresis_alpha",
+                    "hysteresis_A",
+                    "hysteresis_n",
+                    "hysteresis_beta",
+                    "hysteresis_gamma",
+                ),
+                hysteresis_arrays,
+                current_hysteresis_arrays,
+            ):
+                if value.shape != current.shape:
+                    raise ValueError(
+                        f"{name} must have shape {current.shape}, got {value.shape}."
+                    )
+        else:
+            hysteresis_arrays = (
+                self.B_hyst,
+                self.hyst_alpha,
+                self.hyst_A,
+                self.hyst_n,
+                self.hyst_beta,
+                self.hyst_gamma,
+            )
 
-            if "basis" in hyst_params:
-                B_hyst = hyst_params["basis"]
-                updated_self = eqx.tree_at(lambda x: x.B_hyst, updated_self, B_hyst)
+        return eqx.tree_at(
+            lambda model: (
+                model.params,
+                model.params_for_lambdify,
+                model.L,
+                model.L_cum,
+                model.Lmax,
+                model.roff,
+                model.kappa_b_ref,
+                model.sigma_sh_ref,
+                model.sigma_a_ref,
+                model.pcudim,
+                model.lpc,
+                model.ldc,
+                model.chiee_off,
+                model.B_hyst,
+                model.hyst_alpha,
+                model.hyst_A,
+                model.hyst_n,
+                model.hyst_beta,
+                model.hyst_gamma,
+            ),
+            self,
+            (
+                params,
+                params_for_lambdify,
+                L,
+                L_cum,
+                L_cum[-1],
+                arrays[1],
+                arrays[2],
+                arrays[3],
+                arrays[4],
+                arrays[5],
+                arrays[6],
+                arrays[7],
+                arrays[8],
+                *hysteresis_arrays,
+            ),
+        )
 
-            if "alpha" in hyst_params:
-                hyst_alpha = hyst_params["alpha"]
-                updated_self = eqx.tree_at(
-                    lambda x: x.hyst_alpha, updated_self, hyst_alpha
-                )
-
-            if "A" in hyst_params:
-                hyst_A = hyst_params["A"]
-                updated_self = eqx.tree_at(lambda x: x.hyst_A, updated_self, hyst_A)
-
-            if "n" in hyst_params:
-                hyst_n = hyst_params["n"]
-                updated_self = eqx.tree_at(lambda x: x.hyst_n, updated_self, hyst_n)
-
-            if "beta" in hyst_params:
-                hyst_beta = hyst_params["beta"]
-                updated_self = eqx.tree_at(
-                    lambda x: x.hyst_beta, updated_self, hyst_beta
-                )
-
-            if "gamma" in hyst_params:
-                hyst_gamma = hyst_params["gamma"]
-                updated_self = eqx.tree_at(
-                    lambda x: x.hyst_gamma, updated_self, hyst_gamma
-                )
+    def update_params(self, **updates: Array) -> "PlanarHSA":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
     def classify_segment(self, s: Array) -> tuple[Array, Array]:

@@ -38,7 +38,13 @@ from soromox.control.actuation_space import (
 )
 from soromox.coordinate_transformations.actuation_space import ActuationSpaceDynamics
 from soromox.rendering import Open3DRenderer
-from soromox.systems import SystemState, TendonActuatedPCS
+from soromox.systems import (
+    LinearTendonRoutingParams,
+    PCSParams,
+    SystemState,
+    TendonActuatedPCS,
+    TendonActuatedPCSParams,
+)
 
 
 def create_robot() -> tuple[TendonActuatedPCS, int]:
@@ -58,24 +64,28 @@ def create_robot() -> tuple[TendonActuatedPCS, int]:
     radius = 2e-2  # Segment radius [m]
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
 
-    params = {
-        # Base pose: robot pointing upward in z-direction
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
-        "L": 1e-1 * jnp.ones((num_segments,)),  # Segment length [m]
-        "r": radius * jnp.ones((num_segments,)),  # Segment radius [m]
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
     # Damping matrix
-    params["D"] = 1e-3 * jnp.diag(
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    body_params = PCSParams(
+        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=radius * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
     )
 
     # Tendon routing: 3 tendons at 120 degrees apart, parallel to backbone
@@ -85,20 +95,19 @@ def create_robot() -> tuple[TendonActuatedPCS, int]:
     angles_deg = jnp.array([0.0, 120.0, 240.0])
     angles_rad = jnp.deg2rad(angles_deg)
 
-    active_tendon_routing_params = {
-        "ry": tendon_distance * jnp.sin(angles_rad),  # y-coordinate of tendons
-        "rz": tendon_distance * jnp.cos(angles_rad),  # z-coordinate of tendons
-        "my": jnp.zeros(3),  # Parallel to backbone (no y-slope)
-        "mz": jnp.zeros(3),  # Parallel to backbone (no z-slope)
-        "idx_seg_att": jnp.array(
-            [0, 0, 0]
-        ),  # All attached to segment 0 (the only segment)
-    }
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=tendon_distance * jnp.sin(angles_rad),
+        z_intercept=tendon_distance * jnp.cos(angles_rad),
+        y_slope=jnp.zeros(3),
+        z_slope=jnp.zeros(3),
+        attachment_segment_index=jnp.array([0, 0, 0]),
+    )
 
     robot = TendonActuatedPCS(
-        num_segments=num_segments,
-        params=params,
-        active_tendon_routing_params=active_tendon_routing_params,
+        params=TendonActuatedPCSParams(
+            body=body_params,
+            active_tendon_routing=active_tendon_routing,
+        ),
     )
 
     num_dofs = robot.num_active_strains

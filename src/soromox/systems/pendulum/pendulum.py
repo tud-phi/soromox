@@ -7,6 +7,7 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from soromox.systems.params import PendulumParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
@@ -82,35 +83,25 @@ class Pendulum(SoftRobot):
     K: Array
     D: Array
     q_ref_k: Array
+    params: PendulumParams
 
     def __init__(
         self,
-        params: dict[str, Array],
+        params: PendulumParams,
         **kwargs: Any,
     ) -> None:
-        """
-        Initialize the pendulum system with the given parameters.
-        Args:
-            params: Dictionary with robot parameters with keys
-                - "m": Masses of the links (N,)
-                - "I": Planar inertias about COM (N,)
-                - "L": Link lengths (N,)
-                - "Lc": COM offset from prior joint (N,)
-                - "g": Planar gravity vector (2,)
-                - "r": Link radii for visualization (N,) (optional)
-                - "K": stiffness matrix (N,N) (optional)
-                - "D": damping matrix (N,N) (optional)
-                - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
-            **kwargs: Additional keyword arguments for SoftRobot.__init__.
-        """
+        """Initialize the pendulum system with typed parameters."""
         super().__init__(**kwargs)
+        if not isinstance(params, PendulumParams):
+            raise TypeError("params must be a PendulumParams instance.")
+        self.params = params
 
         # Basic parameter extraction
-        m = jnp.asarray(params["m"])  # (n,)
-        I = jnp.asarray(params["I"])  # (n,)
-        L = jnp.asarray(params["L"])  # (n,)
-        Lc = jnp.asarray(params["Lc"])  # (n,)
-        g = jnp.asarray(params["g"])  # (2,)
+        m = jnp.asarray(params.mass)  # (n,)
+        I = jnp.asarray(params.moment_inertia)  # (n,)
+        L = jnp.asarray(params.length)  # (n,)
+        Lc = jnp.asarray(params.center_of_mass_length)  # (n,)
+        g = jnp.asarray(params.gravity)  # (2,)
 
         n_q = m.shape[0]
         # Consistency checks (lightweight; JIT friendly if shapes static)
@@ -129,11 +120,11 @@ class Pendulum(SoftRobot):
         self.L = L
         self.Lc = Lc
         self.g = g
-        self.r = jnp.asarray(params.get("r", 0.05 * L))
+        self.r = jnp.asarray(params.radius)
 
-        self.K = jnp.asarray(params.get("K", jnp.zeros((n_q, n_q))))
-        self.D = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
-        self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
+        self.K = jnp.asarray(params.joint_stiffness)
+        self.D = jnp.asarray(params.joint_damping)
+        self.q_ref_k = jnp.asarray(params.joint_rest_configuration)
 
     @property
     def is_planar(self) -> bool:
@@ -158,50 +149,61 @@ class Pendulum(SoftRobot):
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
         return tag, jnp.array([radius])
 
-    def update_params(self, params: dict[str, Array]) -> "Pendulum":
-        """
-        Update the system parameters and return a new instance (functional style).
+    def _current_body_params(self) -> PendulumParams:
+        """Return pendulum body params, including typed actuated wrappers."""
+        if isinstance(self.params, PendulumParams):
+            return self.params
+        body = getattr(self.params, "body", None)
+        if isinstance(body, PendulumParams):
+            return body
+        raise TypeError("model params do not contain PendulumParams body fields.")
 
-        This method creates a new Pendulum instance with updated parameters while
-        preserving the original instance (immutable update pattern for JAX compatibility).
-
-        Args:
-            params (Dict[str, Array]): Dictionary with robot parameters. Supported keys:
-                - "m": Masses of the links, shape (N,) [kg]
-                - "I": Planar inertias about COM, shape (N,) [kg⋅m²]
-                - "L": Link lengths, shape (N,) [m]
-                - "Lc": COM offset from proximal joint, shape (N,) [m]
-                - "g": Planar gravity vector, shape (2,) [m/s²]
-                - "K": Joint stiffness matrix, shape (N,N) [N⋅m/rad] (optional)
-                - "D": Joint damping matrix, shape (N,N) [N⋅m⋅s/rad] (optional)
-                - "q_ref_k": rest configuration of the torsional springs defined in K (N,) [rad] (optional)
-                - "r": Link radii for visualization (N,) (optional)
-
-        Returns:
-            Pendulum: New instance with updated parameters.
-        """
-        updated = self
-        if "m" in params:
-            updated = eqx.tree_at(lambda x: x.m, updated, jnp.asarray(params["m"]))
-        if "I" in params:
-            updated = eqx.tree_at(lambda x: x.I, updated, jnp.asarray(params["I"]))
-        if "L" in params:
-            updated = eqx.tree_at(lambda x: x.L, updated, jnp.asarray(params["L"]))
-        if "Lc" in params:
-            updated = eqx.tree_at(lambda x: x.Lc, updated, jnp.asarray(params["Lc"]))
-        if "g" in params:
-            updated = eqx.tree_at(lambda x: x.g, updated, jnp.asarray(params["g"]))
-        if "K" in params:
-            updated = eqx.tree_at(lambda x: x.K, updated, jnp.asarray(params["K"]))
-        if "D" in params:
-            updated = eqx.tree_at(lambda x: x.D, updated, jnp.asarray(params["D"]))
-        if "q_ref_k" in params:
-            updated = eqx.tree_at(
-                lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"])
+    def _with_pendulum_params(
+        self, params: PendulumParams, stored_params: Any | None = None
+    ) -> "Pendulum":
+        """Return a copy with pendulum body caches refreshed."""
+        current_params = self._current_body_params()
+        if not isinstance(params, PendulumParams):
+            raise TypeError("params must be a PendulumParams instance.")
+        if params.mass.shape != current_params.mass.shape:
+            raise ValueError(
+                "mass shape changes the model structure; construct a new Pendulum."
             )
-        if "r" in params:
-            updated = eqx.tree_at(lambda x: x.r, updated, jnp.asarray(params["r"]))
-        return updated
+        return eqx.tree_at(
+            lambda x: (
+                x.params,
+                x.m,
+                x.I,
+                x.L,
+                x.Lc,
+                x.g,
+                x.r,
+                x.K,
+                x.D,
+                x.q_ref_k,
+            ),
+            self,
+            (
+                params if stored_params is None else stored_params,
+                jnp.asarray(params.mass),
+                jnp.asarray(params.moment_inertia),
+                jnp.asarray(params.length),
+                jnp.asarray(params.center_of_mass_length),
+                jnp.asarray(params.gravity),
+                jnp.asarray(params.radius),
+                jnp.asarray(params.joint_stiffness),
+                jnp.asarray(params.joint_damping),
+                jnp.asarray(params.joint_rest_configuration),
+            ),
+        )
+
+    def with_params(self, params: PendulumParams) -> "Pendulum":
+        """Return an updated copy with a full typed parameter object."""
+        return self._with_pendulum_params(params)
+
+    def update_params(self, **updates: Array) -> "Pendulum":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     # -------------------------------------------------
     # Internal helpers (geometry & Jacobians, pure JAX)

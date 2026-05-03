@@ -10,6 +10,7 @@ from numpy.testing import assert_allclose
 
 from soromox.systems import ArticulatedSoftRobot, Pendulum, SoftRobot
 from soromox.utils.tolerance import Tolerance
+from system_param_builders import articulated_params, pendulum_params
 
 
 def make_articulated_robot(num_links: int = 2) -> ArticulatedSoftRobot:
@@ -26,27 +27,27 @@ def make_articulated_robot(num_links: int = 2) -> ArticulatedSoftRobot:
             for i in range(num_links)
         ]
     )
-    params = {
-        "joint_screws": joint_screws,
-        "p_tip": p_tip,
-        "p_com": p_com,
-        "m": m,
-        "I_com": I_com,
-        "g": jnp.array([0.0, -9.81, 0.0]),
-    }
+    params = articulated_params(
+        joint_screw=joint_screws,
+        tip_position=p_tip,
+        center_of_mass_position=p_com,
+        mass=m,
+        center_of_mass_inertia=I_com,
+        gravity=jnp.array([0.0, -9.81, 0.0]),
+    )
     return ArticulatedSoftRobot(params)
 
 
 def make_matching_pendulum(num_links: int = 2) -> Pendulum:
     assert num_links in (2, 3)
     L = jnp.array([1.0, 1.5, 0.8])[:num_links]
-    params = {
-        "m": jnp.array([1.0, 2.0, 0.8])[:num_links],
-        "I": jnp.array([0.1, 0.2, 0.05])[:num_links],
-        "L": L,
-        "Lc": 0.5 * L,
-        "g": jnp.array([0.0, -9.81]),
-    }
+    params = pendulum_params(
+        mass=jnp.array([1.0, 2.0, 0.8])[:num_links],
+        moment_inertia=jnp.array([0.1, 0.2, 0.05])[:num_links],
+        length=L,
+        center_of_mass_length=0.5 * L,
+        gravity=jnp.array([0.0, -9.81]),
+    )
     return Pendulum(params)
 
 
@@ -58,22 +59,26 @@ def make_spatial_robot() -> ArticulatedSoftRobot:
             [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         ]
     )
-    params = {
-        "joint_screws": joint_screws,
-        "p_tip": jnp.array([[0.8, 0.0, 0.1], [0.6, 0.0, 0.2], [0.4, 0.1, 0.0]]),
-        "p_com": jnp.array([[0.4, 0.0, 0.05], [0.3, 0.0, 0.1], [0.2, 0.05, 0.0]]),
-        "m": jnp.array([1.0, 0.8, 0.5]),
-        "I_com": jnp.array(
+    params = articulated_params(
+        joint_screw=joint_screws,
+        tip_position=jnp.array(
+            [[0.8, 0.0, 0.1], [0.6, 0.0, 0.2], [0.4, 0.1, 0.0]]
+        ),
+        center_of_mass_position=jnp.array(
+            [[0.4, 0.0, 0.05], [0.3, 0.0, 0.1], [0.2, 0.05, 0.0]]
+        ),
+        mass=jnp.array([1.0, 0.8, 0.5]),
+        center_of_mass_inertia=jnp.array(
             [
                 jnp.diag(jnp.array([0.02, 0.03, 0.04])),
                 jnp.diag(jnp.array([0.015, 0.025, 0.035])),
                 jnp.diag(jnp.array([0.01, 0.02, 0.03])),
             ]
         ),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "K": jnp.diag(jnp.array([0.2, 0.3, 0.4])),
-        "D": jnp.diag(jnp.array([0.01, 0.02, 0.03])),
-    }
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        joint_stiffness=jnp.diag(jnp.array([0.2, 0.3, 0.4])),
+        joint_damping=jnp.diag(jnp.array([0.01, 0.02, 0.03])),
+    )
     return ArticulatedSoftRobot(params)
 
 
@@ -91,21 +96,23 @@ def test_import_and_inheritance():
 
 
 def test_constructor_shape_validation():
-    params = {
-        "joint_screws": jnp.zeros((2, 6)),
-        "p_tip": jnp.zeros((2, 3)),
-        "p_com": jnp.zeros((2, 3)),
-        "m": jnp.ones((2,)),
-        "I_com": jnp.broadcast_to(jnp.eye(3), (2, 3, 3)),
-        "g": jnp.zeros((3,)),
-    }
+    params = articulated_params(
+        joint_screw=jnp.zeros((2, 6)),
+        tip_position=jnp.zeros((2, 3)),
+        center_of_mass_position=jnp.zeros((2, 3)),
+        mass=jnp.ones((2,)),
+        center_of_mass_inertia=jnp.broadcast_to(jnp.eye(3), (2, 3, 3)),
+        gravity=jnp.zeros((3,)),
+    )
 
-    with pytest.raises(ValueError, match="p_tip"):
-        ArticulatedSoftRobot({**params, "p_tip": jnp.zeros((3, 3))})
+    with pytest.raises(ValueError, match="tip_position"):
+        ArticulatedSoftRobot(params.replace(tip_position=jnp.zeros((3, 3))))
 
-    with pytest.raises(ValueError, match="I_com"):
+    with pytest.raises(ValueError, match="center_of_mass_inertia"):
         ArticulatedSoftRobot(
-            {**params, "I_com": jnp.broadcast_to(jnp.eye(3), (3, 3, 3))}
+            params.replace(
+                center_of_mass_inertia=jnp.broadcast_to(jnp.eye(3), (3, 3, 3))
+            )
         )
 
 

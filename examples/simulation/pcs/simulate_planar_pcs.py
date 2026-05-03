@@ -7,7 +7,7 @@ from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
-from soromox.systems import PlanarPCS, SystemState
+from soromox.systems import PlanarPCS, PlanarPCSParams, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -21,34 +21,34 @@ if __name__ == "__main__":
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-    params = {
-        "th0": jnp.array(jnp.pi / 2),  # initial orientation angle [rad]
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    params = PlanarPCSParams(
+        base_angle=jnp.array(jnp.pi / 2),  # initial orientation angle [rad]
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
+        young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
     )
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PlanarPCS(
-        num_segments=num_segments,
-        params=params,
-    )
+    robot = PlanarPCS(params=params)
 
     J, Jd = robot.jacobian_and_time_derivative(
         q=jnp.zeros((3 * num_segments,)),
         qd=jnp.zeros((3 * num_segments,)),
-        s=params["L"][0],
+        s=params.length[0],
     )
 
     # =====================================================

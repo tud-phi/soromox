@@ -8,6 +8,7 @@ from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 import soromox.utils.lie_algebra as lie
+from soromox.systems.params import PlanarPCSParams, PlanarPCSStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
@@ -62,6 +63,8 @@ class PlanarPCS(SoftRobot):
 
     """
 
+    params: PlanarPCSParams
+
     # Robot parameters
     th0: Array  # Initial orientation angle [rad]
     g: Array  # Gravitational acceleration vector
@@ -95,61 +98,23 @@ class PlanarPCS(SoftRobot):
 
     def __init__(
         self,
-        num_segments: int,
-        params: dict[str, Array],
-        num_gauss_points: int = 5,
-        strain_selector: Array | None = None,
-        xi_ref: Array | None = None,
-        scale_rotational_basis_by_length: bool | None = False,
+        params: PlanarPCSParams,
+        structure: PlanarPCSStructure | None = None,
         **kwargs: Any,
     ):
-        """
-        Initialize the PlanarPCS class.
-
-        Args:
-            num_segments (int):
-                Number of segments in the robot.
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                    Default is 90 degrees (1.57 radians).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-            num_gauss_points (int, optional):
-                Number of nonzero Gauss-Legendre points per segment.
-                Defaults to 5.
-            strain_selector (Optional[Array], optional):
-                Boolean array of shape (3 * num_segments,) specifying which strain components are active.
-                Defaults to all strains active (i.e. all True).
-            xi_ref (Optional[Array], optional):
-                Reference strain of shape (3 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-            scale_rotational_basis_by_length (bool, optional):
-                If True, divide rotational rows of the active strain basis by
-                the corresponding segment length.
-            **kwargs: Additional keyword arguments for SoftRobot.__init__.
-        """
+        """Initialize the PlanarPCS class from typed dynamic parameters."""
         super().__init__(**kwargs)
-        self.scale_rotational_basis_by_length = bool(scale_rotational_basis_by_length)
+        if not isinstance(params, PlanarPCSParams):
+            raise TypeError("params must be a PlanarPCSParams instance.")
+        if structure is None:
+            structure = PlanarPCSStructure()
+        self.params = params
+        self.scale_rotational_basis_by_length = bool(
+            structure.scale_rotational_basis_by_length
+        )
 
         # Number of segments
-        if not isinstance(num_segments, int):
-            raise TypeError(
-                f"num_segments must be an integer, got {type(num_segments).__name__}"
-            )
+        num_segments = int(params.length.shape[0])
         if num_segments < 1:
             raise ValueError(f"num_segments must be at least 1, got {num_segments}")
         self.num_segments = num_segments
@@ -163,6 +128,7 @@ class PlanarPCS(SoftRobot):
 
         # ================================================================
         # Integration grid
+        num_gauss_points = structure.num_gauss_points
         if not isinstance(num_gauss_points, int):
             raise TypeError(
                 f"num_gauss_points must be an integer, got {type(num_gauss_points).__name__}"
@@ -181,6 +147,7 @@ class PlanarPCS(SoftRobot):
 
         # ================================================================
         # Strain basis matrix
+        strain_selector = structure.strain_selector
         if strain_selector is None:
             strain_selector = jnp.ones(self.num_strains, dtype=bool)
         else:
@@ -204,23 +171,13 @@ class PlanarPCS(SoftRobot):
         self.num_active_strains = jnp.sum(strain_selector)
         self.num_dofs = int(self.num_active_strains.item())
 
-        # Reference configuration strain
-        if xi_ref is None:
-            xi_ref = jnp.tile(
-                jnp.array([0.0, 1.0, 0.0], dtype=jnp.float64), (self.num_segments, 1)
-            ).reshape(self.num_strains)
-        else:
-            if not isinstance(xi_ref, (list, jnp.ndarray)):
-                raise TypeError(
-                    f"xi_ref must be a list or an array, got {type(xi_ref).__name__}"
-                )
-            xi_ref = jnp.asarray(xi_ref)
-            if xi_ref.size != self.num_strains:
-                raise ValueError(
-                    f"xi_ref must have {self.num_strains} elements, got {xi_ref.size}"
-                )
-            xi_ref = xi_ref.reshape(self.num_strains)
-        self.xi_ref = xi_ref
+        reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
+        if reference_strain.size != self.num_strains:
+            raise ValueError(
+                "reference_strain must have "
+                f"{self.num_strains} elements, got {reference_strain.size}."
+            )
+        self.xi_ref = reference_strain.reshape(self.num_strains)
 
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
@@ -261,254 +218,164 @@ class PlanarPCS(SoftRobot):
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
         return tag, jnp.array([radius])
 
-    def _set_params(self, params: dict[str, Array]) -> None:
-        """
-        Set the parameters of the PCS model.
-
-        Args:
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                    Default is 90 degrees (1.57 radians).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-        """
+    def _set_params(self, params: PlanarPCSParams) -> None:
+        """Set cached runtime arrays from typed parameters."""
         # Initial orientation angle
-        th0 = params.get("th0", jnp.pi / 2.0)  # Default to 90 degrees
-        if not (isinstance(th0, (float, int, jnp.ndarray))):
-            raise TypeError(
-                f"th0 must be a float, int, or an array, got {type(th0).__name__}"
-            )
+        th0 = params.base_angle
         th0 = jnp.asarray(th0, dtype=jnp.float64)
         self.th0 = th0
 
         # Gravitational acceleration vector
-        try:
-            g = params["g"]
-        except KeyError as err:
-            raise KeyError("Parameter 'g' is required in params dictionary.") from err
-        if not (isinstance(g, (list, jnp.ndarray))):
-            raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
+        g = params.gravity
         g = jnp.asarray(g, dtype=jnp.float64)
         if g.size != 2:
-            raise ValueError(f"g must be a vector of shape (2,), got {g.size}")
+            raise ValueError(f"gravity must be a vector of shape (2,), got {g.size}")
         self.g = jnp.concatenate(
             [jnp.zeros(1), g]
         )  # Add a zero for the orientation angle
 
         # Lengths of the segments
-        try:
-            L = params["L"]
-        except KeyError as err:
-            raise KeyError("Parameter 'L' is required in params dictionary.") from err
-        if not (isinstance(L, (list, jnp.ndarray))):
-            raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
+        L = params.length
         L = jnp.asarray(L, dtype=jnp.float64)
         if L.shape != (self.num_segments,):
-            raise ValueError(f"L must have shape ({self.num_segments},), got {L.shape}")
+            raise ValueError(
+                "length must have shape "
+                f"({self.num_segments},), got {L.shape}"
+            )
         self.L = L
 
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
         self.L_cum = L_cum
 
         # Radius of the segments
-        try:
-            r = params["r"]
-        except KeyError as err:
-            raise KeyError("Parameter 'r' is required in params dictionary.") from err
-        if not (isinstance(r, (list, jnp.ndarray))):
-            raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
+        r = params.radius
         r = jnp.asarray(r, dtype=jnp.float64)
         if r.shape != (self.num_segments,):
-            raise ValueError(f"r must have shape ({self.num_segments},), got {r.shape}")
+            raise ValueError(
+                f"radius must have shape ({self.num_segments},), got {r.shape}"
+            )
         self.r = r
 
         # Densities of the segments
-        try:
-            rho = params["rho"]
-        except KeyError as err:
-            raise KeyError("Parameter 'rho' is required in params dictionary.") from err
-        if not (isinstance(rho, (list, jnp.ndarray))):
-            raise TypeError(f"rho must be a list or an array, got {type(rho).__name__}")
+        rho = params.density
         rho = jnp.asarray(rho, dtype=jnp.float64)
         if rho.shape != (self.num_segments,):
             raise ValueError(
-                f"rho must have shape ({self.num_segments},), got {rho.shape}"
+                f"density must have shape ({self.num_segments},), got {rho.shape}"
             )
         self.rho = rho
 
         # Elastic modulus of the segments
-        try:
-            E = params["E"]
-        except KeyError as err:
-            raise KeyError("Parameter 'E' is required in params dictionary.") from err
-        if not (isinstance(E, (list, jnp.ndarray))):
-            raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
+        E = params.young_modulus
         E = jnp.asarray(E, dtype=jnp.float64)
         if E.shape != (self.num_segments,):
-            raise ValueError(f"E must have shape ({self.num_segments},), got {E.shape}")
+            raise ValueError(
+                f"young_modulus must have shape ({self.num_segments},), got {E.shape}"
+            )
         self.E = E
 
         # Shear modulus of the segments
-        try:
-            G = params["G"]
-        except KeyError as err:
-            raise KeyError("Parameter 'G' is required in params dictionary.") from err
-        if not (isinstance(G, (list, jnp.ndarray))):
-            raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
+        G = params.shear_modulus
         G = jnp.asarray(G, dtype=jnp.float64)
         if G.shape != (self.num_segments,):
-            raise ValueError(f"G must have shape ({self.num_segments},), got {G.shape}")
+            raise ValueError(
+                f"shear_modulus must have shape ({self.num_segments},), got {G.shape}"
+            )
         self.G = G
 
         # Damping matrix of the robot
-        try:
-            D = params["D"]
-        except KeyError as err:
-            raise KeyError("Parameter 'D' is required in params dictionary.") from err
-        if not (isinstance(D, (list, jnp.ndarray))):
-            raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
+        D = params.damping_matrix
         D = jnp.asarray(D, dtype=jnp.float64)
         expected_D_shape = (self.num_strains, self.num_strains)
         if D.shape != expected_D_shape:
-            raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
+            raise ValueError(
+                f"damping_matrix must have shape {expected_D_shape}, got {D.shape}"
+            )
         self.D = D
 
-    def update_params(self, params: dict[str, Array]) -> "PlanarPCS":
-        """
-        Update the parameters of the PCS model.
+    def _current_body_params(self) -> PlanarPCSParams:
+        """Return the planar PCS body params, including typed actuated wrappers."""
+        if isinstance(self.params, PlanarPCSParams):
+            return self.params
+        body = getattr(self.params, "body", None)
+        if isinstance(body, PlanarPCSParams):
+            return body
+        raise TypeError("model params do not contain PlanarPCSParams body fields.")
 
-        Args:
-            params (Dict[str, Array]):
-                Dictionary that contains the robot parameters to update:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-
-        Returns:
-            updated_self (PlanarPCS):
-                A new instance of PlanarPCS with updated parameters.
-        """
-        # Apply updates sequentially
-        updated_self = self
-
-        if "th0" in params:
-            th0 = params["th0"]
-            if not (isinstance(th0, (float, int, jnp.ndarray))):
-                raise TypeError(
-                    f"th0 must be a float, int, or an array, got {type(th0).__name__}"
-                )
-            th0 = jnp.asarray(th0, dtype=jnp.float64)
-            updated_self = eqx.tree_at(lambda m: m.th0, updated_self, th0)
-
-        if "g" in params:
-            g = params["g"]
-            if not (isinstance(g, (list, jnp.ndarray))):
-                raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
-            g = jnp.asarray(g, dtype=jnp.float64)
-            if g.size != 2:
-                raise ValueError(f"g must be a vector of shape (2,), got {g.size}")
-            updated_self = eqx.tree_at(
-                lambda m: m.g, updated_self, jnp.concatenate([jnp.zeros(1), g])
+    def _with_planar_pcs_params(
+        self, params: PlanarPCSParams, stored_params: Any | None = None
+    ) -> "PlanarPCS":
+        """Return a copy with planar PCS body caches refreshed."""
+        current_params = self._current_body_params()
+        if not isinstance(params, PlanarPCSParams):
+            raise TypeError("params must be a PlanarPCSParams instance.")
+        if params.length.shape != current_params.length.shape:
+            raise ValueError(
+                "length shape changes the model structure; construct a new PlanarPCS."
+            )
+        if params.reference_strain.shape != current_params.reference_strain.shape:
+            raise ValueError(
+                "reference_strain shape changes the model structure; construct a new PlanarPCS."
             )
 
-        if "L" in params:
-            L = params["L"]
-            if not (isinstance(L, (list, jnp.ndarray))):
-                raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
-            L = jnp.asarray(L, dtype=jnp.float64)
-            if L.shape != (self.num_segments,):
-                raise ValueError(
-                    f"L must have shape ({self.num_segments},), got {L.shape}"
-                )
-            L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), L]))
-            updated_self = eqx.tree_at(
-                lambda m: (m.L, m.L_cum), updated_self, (L, L_cum)
+        base_angle = jnp.asarray(params.base_angle, dtype=jnp.float64)
+        gravity = jnp.asarray(params.gravity, dtype=jnp.float64)
+        segment_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+        radius = jnp.asarray(params.radius, dtype=jnp.float64)
+        density = jnp.asarray(params.density, dtype=jnp.float64)
+        young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
+        shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
+        damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
+        reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
+
+        expected_D_shape = (self.num_strains, self.num_strains)
+        if damping_matrix.shape != expected_D_shape:
+            raise ValueError(
+                f"damping_matrix must have shape {expected_D_shape}, got {damping_matrix.shape}"
             )
 
-        if "r" in params:
-            r = params["r"]
-            if not (isinstance(r, (list, jnp.ndarray))):
-                raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
-            r = jnp.asarray(r, dtype=jnp.float64)
-            if r.shape != (self.num_segments,):
-                raise ValueError(
-                    f"r must have shape ({self.num_segments},), got {r.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.r, updated_self, r)
-
-        if "rho" in params:
-            rho = params["rho"]
-            if not (isinstance(rho, (list, jnp.ndarray))):
-                raise TypeError(
-                    f"rho must be a list or an array, got {type(rho).__name__}"
-                )
-            rho = jnp.asarray(rho, dtype=jnp.float64)
-            if rho.shape != (self.num_segments,):
-                raise ValueError(
-                    f"rho must have shape ({self.num_segments},), got {rho.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.rho, updated_self, rho)
-
-        if "E" in params:
-            E = params["E"]
-            if not (isinstance(E, (list, jnp.ndarray))):
-                raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
-            E = jnp.asarray(E, dtype=jnp.float64)
-            if E.shape != (self.num_segments,):
-                raise ValueError(
-                    f"E must have shape ({self.num_segments},), got {E.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.E, updated_self, E)
-
-        if "G" in params:
-            G = params["G"]
-            if not (isinstance(G, (list, jnp.ndarray))):
-                raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
-            G = jnp.asarray(G, dtype=jnp.float64)
-            if G.shape != (self.num_segments,):
-                raise ValueError(
-                    f"G must have shape ({self.num_segments},), got {G.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.G, updated_self, G)
-
-        if "D" in params:
-            D = params["D"]
-            if not (isinstance(D, (list, jnp.ndarray))):
-                raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
-            D = jnp.asarray(D, dtype=jnp.float64)
-            expected_D_shape = (self.num_strains, self.num_strains)
-            if D.shape != expected_D_shape:
-                raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
-            updated_self = eqx.tree_at(lambda m: m.D, updated_self, D)
-
+        updated_self = eqx.tree_at(
+            lambda m: (
+                m.params,
+                m.th0,
+                m.g,
+                m.L,
+                m.L_cum,
+                m.r,
+                m.rho,
+                m.E,
+                m.G,
+                m.D,
+                m.xi_ref,
+            ),
+            self,
+            (
+                params if stored_params is None else stored_params,
+                base_angle,
+                jnp.concatenate([jnp.zeros(1, dtype=gravity.dtype), gravity]),
+                segment_lengths,
+                jnp.cumsum(
+                    jnp.concatenate(
+                        [jnp.zeros(1, dtype=segment_lengths.dtype), segment_lengths]
+                    )
+                ),
+                radius,
+                density,
+                young_modulus,
+                shear_modulus,
+                damping_matrix,
+                reference_strain.reshape(self.num_strains),
+            ),
+        )
         return updated_self._with_refreshed_precomputed_matrices()
+
+    def with_params(self, params: PlanarPCSParams) -> "PlanarPCS":
+        """Return an updated copy with a full typed parameter object."""
+        return self._with_planar_pcs_params(params)
+
+    def update_params(self, **updates: Array) -> "PlanarPCS":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     def _precomputed_matrices(self) -> tuple[Array, Array, Array, Array, Array]:
         """Compute state-independent matrices cached by the model."""

@@ -17,42 +17,56 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
-from soromox.systems import SystemState, TendonActuatedPCS
+from soromox.systems import (
+    LinearTendonRoutingParams,
+    PCSParams,
+    PCSStructure,
+    SystemState,
+    TendonActuatedPCS,
+    TendonActuatedPCSParams,
+)
 
 
 def build_robot() -> TendonActuatedPCS:
     """Construct a simple tendon-actuated PCS robot."""
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))
-    params = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),
-        "E": 2e3 * jnp.ones((num_segments,)),
-        "G": 1e3 * jnp.ones((num_segments,)),
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
     )
-    active_tendon_routing_params = {
-        "ry": jnp.array([2e-2, -2e-2, 1e-2, -1e-2]),
-        "rz": jnp.zeros((4,)),
-        "my": jnp.array([0.0, 0.0, 0.0, 0.0]),
-        "mz": jnp.array([0.0, 0.0, 0.0, 0.0]),
-        "idx_seg_att": jnp.array([0, 0, 1, 1]),
-    }
+    body_params = PCSParams(
+        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+    )
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=jnp.array([2e-2, -2e-2, 1e-2, -1e-2]),
+        z_intercept=jnp.zeros((4,)),
+        y_slope=jnp.zeros((4,)),
+        z_slope=jnp.zeros((4,)),
+        attachment_segment_index=jnp.array([0, 0, 1, 1]),
+    )
 
     return TendonActuatedPCS(
-        num_segments=num_segments,
-        params=params,
-        active_tendon_routing_params=active_tendon_routing_params,
+        params=TendonActuatedPCSParams(
+            body=body_params,
+            active_tendon_routing=active_tendon_routing,
+        ),
+        structure=PCSStructure(),
     )
 
 

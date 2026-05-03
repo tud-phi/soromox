@@ -10,24 +10,39 @@ import numpy as onp
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems import SystemState, TendonActuatedPendulum
+from soromox.systems import (
+    PassiveTendonParams,
+    PendulumParams,
+    SystemState,
+    TendonActuatedPendulum,
+    TendonActuatedPendulumParams,
+)
 
 num_links = 2
 
-params = {
-    "m": jnp.array([10.0, 6.0]),
-    "I": jnp.array([3.0, 2.0]),
-    "L": jnp.array([2.0, 1.0]),
-    "Lc": jnp.array([1.0, 0.5]),
-    "g": jnp.array([0.0, -9.81]),
-    "K": jnp.diag(jnp.array([1.5, 2.0])),
-}
-tendon_params = {
-    "R_at": jnp.array([[0.2, -0.25]]),
-    "R_pt": jnp.array([[-0.15, 0.3]]),
-    "k_pt": jnp.array([2.75]),
-    "l_pt0": jnp.array([0.5]),
-}
+body_params = PendulumParams(
+    mass=jnp.array([10.0, 6.0]),
+    moment_inertia=jnp.array([3.0, 2.0]),
+    length=jnp.array([2.0, 1.0]),
+    center_of_mass_length=jnp.array([1.0, 0.5]),
+    gravity=jnp.array([0.0, -9.81]),
+    joint_stiffness=jnp.diag(jnp.array([1.5, 2.0])),
+    joint_damping=jnp.zeros((num_links, num_links)),
+    joint_rest_configuration=jnp.zeros((num_links,)),
+    radius=jnp.array([0.05, 0.05]),
+)
+params = TendonActuatedPendulumParams(
+    body=body_params,
+    active_routing_matrix=jnp.array([[0.2, -0.25]]),
+    passive_routing_matrix=jnp.array([[-0.15, 0.3]]),
+    active_tendon_reference_configuration=jnp.zeros((num_links,)),
+    passive_tendon_reference_configuration=jnp.zeros((num_links,)),
+    passive_tendon=PassiveTendonParams(
+        stiffness=jnp.array([2.75]),
+        damping=jnp.array([0.0]),
+        rest_length_offset=jnp.array([0.5]),
+    ),
+)
 
 # define initial configuration
 q0 = jnp.zeros((num_links,))
@@ -182,7 +197,7 @@ def draw_robot(
 
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = TendonActuatedPendulum(params, tendon_params)
+    robot = TendonActuatedPendulum(params=params)
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation

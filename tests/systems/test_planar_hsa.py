@@ -9,8 +9,10 @@ from jax import random
 
 import soromox
 from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL as params
-from soromox.systems import PlanarHSA
+from soromox.systems import PlanarHSA, PlanarHSAStructure
+from system_param_builders import planar_hsa_params_from_legacy
 
+typed_params = planar_hsa_params_from_legacy(params)
 num_segments = 1
 num_rods_per_segment = 2
 
@@ -25,8 +27,8 @@ sym_exp_filepath = (
 def _create_robot():
     """Helper to create a robot instance."""
     return PlanarHSA(
-        sym_exp_filepath=sym_exp_filepath,
-        params=params,
+        params=typed_params,
+        structure=PlanarHSAStructure(symbolic_expression_path=str(sym_exp_filepath)),
     )
 
 
@@ -36,8 +38,8 @@ def _sample_configuration(rng, num_segments):
     kappa_b = random.uniform(
         subrng1,
         (num_segments,),
-        minval=-jnp.pi / jnp.mean(params["L"]),
-        maxval=jnp.pi / jnp.mean(params["L"]),
+        minval=-jnp.pi / jnp.mean(typed_params.length),
+        maxval=jnp.pi / jnp.mean(typed_params.length),
     )
     sigma_sh = random.uniform(subrng2, (num_segments,), minval=-0.2, maxval=0.2)
     sigma_a = random.uniform(subrng3, (num_segments,), minval=0.0, maxval=0.5)

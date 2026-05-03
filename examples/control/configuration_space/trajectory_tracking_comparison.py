@@ -45,7 +45,7 @@ from soromox.control.configuration_space import (
     PotentialCompensationRegulator,
 )
 from soromox.rendering import Open3DRenderer
-from soromox.systems import PCS, SystemState
+from soromox.systems import PCS, PCSParams, SystemState
 
 
 def create_robot() -> tuple[PCS, int]:
@@ -53,26 +53,31 @@ def create_robot() -> tuple[PCS, int]:
     num_segments = 1
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
 
-    params = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
-        "L": 1e-1 * jnp.ones((num_segments,)),  # Segment length [m]
-        "r": 2e-2 * jnp.ones((num_segments,)),  # Segment radius [m]
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
     # Damping matrix
-    params["D"] = 1e-3 * jnp.diag(
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
     )
+    params = PCSParams(
+        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+    )
 
-    robot = PCS(num_segments=num_segments, params=params)
+    robot = PCS(params=params)
     num_dofs = robot.num_active_strains
 
     return robot, int(num_dofs)

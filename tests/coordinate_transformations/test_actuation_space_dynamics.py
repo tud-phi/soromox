@@ -21,8 +21,16 @@ from numpy.testing import assert_allclose
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 from soromox.systems import (
+    PCSStructure,
     TendonActuatedPCS,
     TendonActuatedPendulum,
+)
+from system_param_builders import (
+    linear_tendon_routing,
+    pcs_params,
+    pendulum_params,
+    tendon_actuated_pcs_params,
+    tendon_actuated_pendulum_params,
 )
 
 # -----------------------
@@ -32,43 +40,51 @@ from soromox.systems import (
 
 @pytest.fixture
 def fully_actuated_pendulum():
-    """Create a 3-link fully actuated tendon pendulum (identity routing)."""
-    params = {
-        "m": jnp.array([1.0, 1.0, 1.0]),
-        "I": jnp.array([0.1, 0.1, 0.1]),
-        "L": jnp.array([0.5, 0.5, 0.5]),
-        "Lc": jnp.array([0.25, 0.25, 0.25]),
-        "g": jnp.array([0.0, -9.81]),
-        "K": jnp.eye(3) * 10.0,
-        "D": jnp.eye(3) * 0.5,
-    }
-    return TendonActuatedPendulum(params)
+    """Create a 3-link fully actuated tendon pendulum."""
+    body = pendulum_params(
+        mass=jnp.array([1.0, 1.0, 1.0]),
+        moment_inertia=jnp.array([0.1, 0.1, 0.1]),
+        length=jnp.array([0.5, 0.5, 0.5]),
+        center_of_mass_length=jnp.array([0.25, 0.25, 0.25]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.eye(3) * 10.0,
+        joint_damping=jnp.eye(3) * 0.5,
+    )
+    return TendonActuatedPendulum(
+        tendon_actuated_pendulum_params(
+            body=body,
+            active_routing_matrix=jnp.tril(jnp.ones((3, 3))),
+        )
+    )
 
 
 @pytest.fixture
 def underactuated_pendulum():
     """Create a 3-link underactuated tendon pendulum (2 tendons on 3 joints)."""
-    params = {
-        "m": jnp.array([1.0, 1.0, 1.0]),
-        "I": jnp.array([0.1, 0.1, 0.1]),
-        "L": jnp.array([0.5, 0.5, 0.5]),
-        "Lc": jnp.array([0.25, 0.25, 0.25]),
-        "g": jnp.array([0.0, -9.81]),
-        "K": jnp.eye(3) * 10.0,
-        "D": jnp.eye(3) * 0.5,
-    }
+    body = pendulum_params(
+        mass=jnp.array([1.0, 1.0, 1.0]),
+        moment_inertia=jnp.array([0.1, 0.1, 0.1]),
+        length=jnp.array([0.5, 0.5, 0.5]),
+        center_of_mass_length=jnp.array([0.25, 0.25, 0.25]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.eye(3) * 10.0,
+        joint_damping=jnp.eye(3) * 0.5,
+    )
     # Valid underactuated tendon routing (tendons can't skip joints)
     # Tendon 1: routes through joints 0 and 1 only (attaches at joint 1)
     # Tendon 2: routes through all 3 joints (attaches at joint 2)
-    tendon_params = {
-        "R_at": jnp.array(
-            [
-                [1.0, 1.0, 0.0],  # Tendon 1: routes through joints 0,1
-                [1.0, 1.0, 1.0],  # Tendon 2: routes through all 3 joints
-            ]
+    active_routing_matrix = jnp.array(
+        [
+            [1.0, 1.0, 0.0],  # Tendon 1: routes through joints 0,1
+            [1.0, 1.0, 1.0],  # Tendon 2: routes through all 3 joints
+        ]
+    )
+    return TendonActuatedPendulum(
+        tendon_actuated_pendulum_params(
+            body=body,
+            active_routing_matrix=active_routing_matrix,
         )
-    }
-    return TendonActuatedPendulum(params, tendon_params)
+    )
 
 
 @pytest.fixture
@@ -81,15 +97,15 @@ def fully_actuated_pcs():
     num_segments = 1
     # Note: D must be provided in full strain space (num_strains x num_strains = 6x6 for 1 segment)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
-    params = {
-        "L": jnp.array([0.1]),
-        "r": jnp.array([0.01]),
-        "rho": jnp.array([1000.0]),
-        "E": jnp.array([1e6]),
-        "G": jnp.array([1e5]),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "D": jnp.eye(6) * 0.01,  # Full strain space (6 strains × 1 segment)
-    }
+    body = pcs_params(
+        length=jnp.array([0.1]),
+        radius=jnp.array([0.01]),
+        density=jnp.array([1000.0]),
+        young_modulus=jnp.array([1e6]),
+        shear_modulus=jnp.array([1e5]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        damping_matrix=jnp.eye(6) * 0.01,  # Full strain space (6 strains x 1 segment)
+    )
     # Select only bending strains (kappa_y, kappa_z = 2 DOFs total)
     # Strain components per segment: [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]
     strain_selector = jnp.array(
@@ -105,18 +121,20 @@ def fully_actuated_pcs():
     # 2 tendons for 2 DOFs (fully actuated bending)
     # Tendon at +y creates moment around z (affects kappa_z)
     # Tendon at +z creates moment around y (affects kappa_y)
-    tendon_routing_params = {
-        "ry": jnp.array([0.005, 0.0]),  # first tendon at +y
-        "my": jnp.array([0.0, 0.0]),  # slope in y
-        "rz": jnp.array([0.0, 0.005]),  # second tendon at +z
-        "mz": jnp.array([0.0, 0.0]),  # slope in z
-        "idx_seg_att": jnp.array([0, 0]),  # both attach at segment 0
-    }
+    tendon_routing_params = linear_tendon_routing(
+        y_intercept=jnp.array([0.005, 0.0]),  # first tendon at +y
+        y_slope=jnp.array([0.0, 0.0]),  # slope in y
+        z_intercept=jnp.array([0.0, 0.005]),  # second tendon at +z
+        z_slope=jnp.array([0.0, 0.0]),  # slope in z
+        attachment_segment_index=jnp.array([0, 0]),  # both attach at segment 0
+    )
+    params = tendon_actuated_pcs_params(
+        body=body,
+        active_tendon_routing=tendon_routing_params,
+    )
     return TendonActuatedPCS(
-        num_segments,
         params,
-        strain_selector=strain_selector,
-        active_tendon_routing_params=tendon_routing_params,
+        structure=PCSStructure(strain_selector=strain_selector),
     )
 
 
@@ -126,15 +144,15 @@ def underactuated_pcs():
     num_segments = 2
     # Note: D must be provided in full strain space (num_strains x num_strains = 12x12)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
-    params = {
-        "L": jnp.array([0.1, 0.1]),
-        "r": jnp.array([0.01, 0.01]),
-        "rho": jnp.array([1000.0, 1000.0]),
-        "E": jnp.array([1e6, 1e6]),
-        "G": jnp.array([1e5, 1e5]),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "D": jnp.eye(12) * 0.01,  # Full strain space (6 strains × 2 segments)
-    }
+    body = pcs_params(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([1e5, 1e5]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        damping_matrix=jnp.eye(12) * 0.01,  # Full strain space (6 strains x 2 segments)
+    )
     # Select only bending strains (kappa_y, kappa_z per segment = 4 DOFs total)
     strain_selector = jnp.array(
         [
@@ -154,18 +172,20 @@ def underactuated_pcs():
     )
     # 2 tendons for 4 DOFs (underactuated)
     # Use tendons at different offsets to ensure non-singular actuation matrix
-    tendon_routing_params = {
-        "ry": jnp.array([0.005, 0.0]),  # first tendon at +y, second at origin in y
-        "my": jnp.array([0.0, 0.0]),  # slope in y
-        "rz": jnp.array([0.0, 0.005]),  # first tendon at origin in z, second at +z
-        "mz": jnp.array([0.0, 0.0]),  # slope in z
-        "idx_seg_att": jnp.array([1, 1]),  # both tendons attach at distal end
-    }
+    tendon_routing_params = linear_tendon_routing(
+        y_intercept=jnp.array([0.005, 0.0]),  # first tendon at +y, second at origin in y
+        y_slope=jnp.array([0.0, 0.0]),  # slope in y
+        z_intercept=jnp.array([0.0, 0.005]),  # first tendon at origin in z, second at +z
+        z_slope=jnp.array([0.0, 0.0]),  # slope in z
+        attachment_segment_index=jnp.array([1, 1]),  # both tendons attach at distal end
+    )
+    params = tendon_actuated_pcs_params(
+        body=body,
+        active_tendon_routing=tendon_routing_params,
+    )
     return TendonActuatedPCS(
-        num_segments,
         params,
-        strain_selector=strain_selector,
-        active_tendon_routing_params=tendon_routing_params,
+        structure=PCSStructure(strain_selector=strain_selector),
     )
 
 

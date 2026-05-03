@@ -8,7 +8,12 @@ from jax import numpy as jnp
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems import SystemState, TendonActuatedPlanarPCS
+from soromox.systems import (
+    PlanarPCSStructure,
+    SystemState,
+    TendonActuatedPlanarPCS,
+    TendonActuatedPlanarPCSParams,
+)
 
 videos_dir = Path("videos")
 videos_dir.mkdir(parents=True, exist_ok=True)
@@ -19,24 +24,24 @@ if __name__ == "__main__":
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-    params = {
-        "th0": jnp.array(jnp.pi / 2),  # initial orientation angle [rad]
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": 0 * jnp.array([0.0, 9.81]),  # gravitational acceleration [m/s^2] UP!
-        "E": 5e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "d": 2e-2
-        * jnp.array([[1.0, -1.0]]).repeat(
-            num_segments, axis=0
-        ),  # distance of tendons from the central axis [m]
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    params = TendonActuatedPlanarPCSParams(
+        base_angle=jnp.array(jnp.pi / 2),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=0 * jnp.array([0.0, 9.81]),
+        young_modulus=5e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
+        tendon_distance=2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0),
     )
 
     # activate all strains (i.e. bending, shear, and axial)
@@ -48,9 +53,8 @@ if __name__ == "__main__":
     # Robot initialization
     # ======================================================
     robot = TendonActuatedPlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
         segment_actuation_selector=segment_actuation_selector,
     )
 

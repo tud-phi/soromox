@@ -15,19 +15,57 @@ from soromox.rendering import (
 )
 from soromox.systems import (
     GVS,
+    GVSLinkParams,
+    GVSParams,
+    GVSStructure,
     CrossSectionGeometry,
-    GVSSegment,
-    JointSpec,
-    LinkSpec,
-    StrainBasisSpec,
     SystemState,
 )
+from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+
+
+def gvs_params_from_segments(
+    segments: list[GVSSegment],
+    *,
+    gravity,
+    base_pose=None,
+    max_dof: int = 6,
+) -> tuple[GVSParams, GVSStructure]:
+    if base_pose is None:
+        base_pose = jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0])
+    links = [segment.link for segment in segments]
+    return (
+        GVSParams(
+            link=GVSLinkParams(
+                length=jnp.asarray([link.L for link in links]),
+                young_modulus=jnp.asarray([link.E for link in links]),
+                poisson_ratio=jnp.asarray([link.nu for link in links]),
+                density=jnp.asarray([link.rho for link in links]),
+                damping_coefficient=jnp.asarray([link.eta for link in links]),
+                radius_initial=jnp.asarray([link.r_i for link in links]),
+                radius_final=jnp.asarray([link.r_f for link in links]),
+                height_initial=jnp.asarray([link.h_i for link in links]),
+                height_final=jnp.asarray([link.h_f for link in links]),
+                width_initial=jnp.asarray([link.w_i for link in links]),
+                width_final=jnp.asarray([link.w_f for link in links]),
+                semi_major_initial=jnp.asarray([link.a_i for link in links]),
+                semi_major_final=jnp.asarray([link.a_f for link in links]),
+                semi_minor_initial=jnp.asarray([link.b_i for link in links]),
+                semi_minor_final=jnp.asarray([link.b_f for link in links]),
+            ),
+            gravity=jnp.asarray(gravity),
+            base_pose=jnp.asarray(base_pose),
+            reference_strain=jnp.asarray([segment.basis.xi_ref for segment in segments]),
+            joint_stiffness=jnp.zeros((len(segments), max_dof, max_dof)),
+        ),
+        GVSStructure(segments=tuple(segments), max_dof=max_dof),
+    )
 
 
 if __name__ == "__main__":
@@ -112,13 +150,15 @@ if __name__ == "__main__":
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = GVS(
-        segments=[
-            GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
-            for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
-        ],
-        g=[0, 0, -9.81],
+    segments = [
+        GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
+        for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
+    ]
+    gvs_params, gvs_structure = gvs_params_from_segments(
+        segments,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
     )
+    robot = GVS(params=gvs_params, structure=gvs_structure)
 
     print(f"System initialized with {robot.num_segments} segments")
     print(f"max DOFs: {robot.max_dof}, max Gauss points: {robot.max_num_gauss_points}.")

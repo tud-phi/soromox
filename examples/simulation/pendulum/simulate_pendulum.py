@@ -6,18 +6,22 @@ import matplotlib.pyplot as plt
 from jax import numpy as jnp
 
 from soromox.rendering import OpenCVPlanarRenderer, ViserRenderer
-from soromox.systems import Pendulum, SystemState
+from soromox.systems import Pendulum, PendulumParams, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
 num_links = 2
-params = {
-    "m": jnp.array([10.0, 6.0]),
-    "I": jnp.array([3.0, 2.0]),
-    "L": jnp.array([2.0, 1.0]),
-    "Lc": jnp.array([1.0, 0.5]),
-    "g": jnp.array([0.0, -9.81]),
-}
+params = PendulumParams(
+    mass=jnp.array([10.0, 6.0]),
+    moment_inertia=jnp.array([3.0, 2.0]),
+    length=jnp.array([2.0, 1.0]),
+    center_of_mass_length=jnp.array([1.0, 0.5]),
+    gravity=jnp.array([0.0, -9.81]),
+    joint_stiffness=jnp.zeros((num_links, num_links)),
+    joint_damping=jnp.zeros((num_links, num_links)),
+    joint_rest_configuration=jnp.zeros((num_links,)),
+    radius=jnp.array([0.05, 0.05]),
+)
 
 # define initial configuration
 q0 = jnp.zeros((num_links,))
@@ -36,7 +40,7 @@ video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
 
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = Pendulum(params)
+    robot = Pendulum(params=params)
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation

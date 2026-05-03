@@ -3,17 +3,18 @@ import jax
 from jax import numpy as jnp
 
 from soromox.systems import Pendulum, SystemState
+from system_param_builders import pendulum_params
 
 
 def _pendulum_params():
     # Gravity set to zero so the zero configuration is an equilibrium for zero actuation.
-    return {
-        "L": jnp.array([0.5, 0.3]),
-        "Lc": jnp.array([0.25, 0.15]),
-        "m": jnp.array([1.0, 0.5]),
-        "I": jnp.array([0.1, 0.05]),
-        "g": jnp.array([0.0, 0.0]),
-    }
+    return pendulum_params(
+        length=jnp.array([0.5, 0.3]),
+        center_of_mass_length=jnp.array([0.25, 0.15]),
+        mass=jnp.array([1.0, 0.5]),
+        moment_inertia=jnp.array([0.1, 0.05]),
+        gravity=jnp.array([0.0, 0.0]),
+    )
 
 
 class PIDController(eqx.Module):

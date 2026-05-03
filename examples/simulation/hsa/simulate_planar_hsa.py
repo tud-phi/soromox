@@ -10,13 +10,13 @@ import jax.numpy as jnp
 
 import soromox
 from soromox.parameters.hsa_params import (
-    PARAMS_FPU_CONTROL,
-    PARAMS_FPU_HYSTERESIS_CONTROL,
+    PLANAR_HSA_FPU_CONTROL_PARAMS,
+    PLANAR_HSA_FPU_HYSTERESIS_CONTROL_PARAMS,
 )
 from soromox.rendering.planar_hsa.opencv_renderer import (
     OpenCVPlanarHSARenderer,
 )
-from soromox.systems import PlanarHSA, SystemState
+from soromox.systems import PlanarHSA, PlanarHSAStructure, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -41,22 +41,28 @@ if __name__ == "__main__":
     consider_hysteresis = True
 
     params = (
-        PARAMS_FPU_HYSTERESIS_CONTROL if consider_hysteresis else PARAMS_FPU_CONTROL
+        PLANAR_HSA_FPU_HYSTERESIS_CONTROL_PARAMS
+        if consider_hysteresis
+        else PLANAR_HSA_FPU_CONTROL_PARAMS
     )
     # increase damping for simulation stability
-    params["zetab"] = 5 * params["zetab"]
-    params["zetash"] = 5 * params["zetash"]
-    params["zetaa"] = 5 * params["zetaa"]
+    params = params.replace(
+        bending_damping=5 * params.bending_damping,
+        shear_damping=5 * params.shear_damping,
+        axial_damping=5 * params.axial_damping,
+    )
 
     # ======================================================
     # Robot initialization
     # ======================================================
     robot = PlanarHSA(
-        sym_exp_filepath=sym_exp_filepath,
         params=params,
-        strain_selector=strain_selector,
-        consider_underactuation=True,
-        consider_hysteresis=consider_hysteresis,
+        structure=PlanarHSAStructure(
+            symbolic_expression_path=str(sym_exp_filepath),
+            strain_selector=strain_selector,
+            consider_underactuation=True,
+            consider_hysteresis=consider_hysteresis,
+        ),
     )
     print(
         f"Planar HSA with {num_segments} segments and {num_rods_per_segment} rods per segment initialized."

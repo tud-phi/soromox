@@ -4,8 +4,9 @@ from numpy.testing import assert_allclose
 import pytest
 from typing import List, Tuple
 
-from soromox.systems import PlanarPCS, PCS
+from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
 from soromox.utils.tolerance import Tolerance
+from system_param_builders import pcs_params, planar_pcs_params
 
 
 jax.config.update("jax_enable_x64", True)
@@ -23,43 +24,43 @@ def make_planar_model(
 ) -> PlanarPCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
-    params = {
-        "th0": jnp.array(0.0),
-        "L": L,
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": 1070 * jnp.ones((num_segments,)),
-        "g": jnp.array([0.0, -9.81]),
-        "E": 2e3 * jnp.ones((num_segments,)),
-        "G": 1e3 * jnp.ones((num_segments,)),
-    }
     diag_entries = (
         jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-        * params["L"][:, None]
+        * L[:, None]
     ).flatten()
-    params["D"] = 1e-3 * jnp.diag(diag_entries)
+    params = planar_pcs_params(
+        base_angle=jnp.array(0.0),
+        length=L,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=1070 * jnp.ones((num_segments,)),
+        gravity=jnp.array([0.0, -9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=1e-3 * jnp.diag(diag_entries),
+    )
 
-    return PlanarPCS(num_segments=num_segments, params=params, num_gauss_points=3)
+    return PlanarPCS(params=params, structure=PlanarPCSStructure(num_gauss_points=3))
 
 
 def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) -> PCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
-    params = {
-        "p0": jnp.zeros((6,)),
-        "L": L,
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": 1070 * jnp.ones((num_segments,)),
-        "g": jnp.array([0.0, -9.81, 0.0]),
-        "E": 2e3 * jnp.ones((num_segments,)),
-        "G": 1e3 * jnp.ones((num_segments,)),
-    }
     diag_entries = (
         jnp.repeat(jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0)
-        * params["L"][:, None]
+        * L[:, None]
     ).flatten()
-    params["D"] = 1e-3 * jnp.diag(diag_entries)
+    params = pcs_params(
+        base_pose=jnp.zeros((6,)),
+        length=L,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=1070 * jnp.ones((num_segments,)),
+        gravity=jnp.array([0.0, -9.81, 0.0]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=1e-3 * jnp.diag(diag_entries),
+    )
 
-    return PCS(num_segments=num_segments, params=params, num_gauss_points=3)
+    return PCS(params=params, structure=PCSStructure(num_gauss_points=3))
 
 
 def planar_arc_lengths(model: PlanarPCS) -> List[float]:

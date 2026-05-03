@@ -14,17 +14,58 @@
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import TendonActuatedPCS
+from soromox.systems import (
+    LinearTendonRoutingParams,
+    PCSParams,
+    PCSStructure,
+    PassiveTendonParams,
+    TendonActuatedPCS,
+    TendonActuatedPCSParams,
+)
 
 # Create a tendon-actuated 3D PCS robot
+body_params = PCSParams(
+    length=jnp.array([0.1, 0.1]),
+    radius=jnp.array([0.01, 0.01]),
+    density=jnp.array([1000.0, 1000.0]),
+    young_modulus=jnp.array([1e6, 1e6]),
+    shear_modulus=jnp.array([1e5, 1e5]),
+    damping_matrix=jnp.eye(12),
+    gravity=jnp.array([0.0, 0.0, -9.81]),
+    base_pose=jnp.zeros(6),
+    reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 2),
+)
+
+active_routing = LinearTendonRoutingParams(
+    y_intercept=jnp.array([0.01, -0.01]),
+    y_slope=jnp.array([0.0, 0.0]),
+    z_intercept=jnp.array([0.0, 0.0]),
+    z_slope=jnp.array([0.0, 0.0]),
+    attachment_segment_index=jnp.array([1, 1]),
+)
+
+passive_routing = LinearTendonRoutingParams(
+    y_intercept=jnp.array([0.005]),
+    y_slope=jnp.array([0.0]),
+    z_intercept=jnp.array([0.005]),
+    z_slope=jnp.array([0.0]),
+    attachment_segment_index=jnp.array([1]),
+)
+
+passive_tendon = PassiveTendonParams(
+    stiffness=jnp.array([10.0]),
+    damping=jnp.array([0.1]),
+    rest_length_offset=jnp.array([0.0]),
+)
+
 robot = TendonActuatedPCS(
-    num_segments=2,
-    L=jnp.array([0.1, 0.1]),           # Segment lengths
-    r=jnp.array([0.01, 0.01]),         # Cross-section radii
-    rho=jnp.array([1000.0, 1000.0]),   # Density
-    E=jnp.array([1e6, 1e6]),           # Young's modulus
-    G=jnp.array([1e5, 1e5]),           # Shear modulus
-    active_tendon_routing_params=...,   # Tendon routing configuration
+    params=TendonActuatedPCSParams(
+        body=body_params,
+        active_tendon_routing=active_routing,
+        passive_tendon_routing=passive_routing,
+        passive_tendon=passive_tendon,
+    ),
+    structure=PCSStructure(num_gauss_points=5),
 )
 
 # Configuration and actuation
@@ -32,14 +73,16 @@ q = jnp.zeros(robot.num_dofs)
 u = jnp.array([1.0, -1.0])  # Tendon tensions
 
 # Forward kinematics
-chi = robot.forward_kinematics(q, s=robot.length)
+chi = robot.forward_kinematics(q, s=robot.L_cum[-1])
 ```
 
 ## Key Features
 
 ### Tendon Routing
 
-Tendons are defined by their offset from the backbone centerline as a function of arc length:
+Tendons are defined by their offset from the backbone centerline as a function of
+arc length. `LinearTendonRoutingParams` stores all tendons in one batched PyTree:
+each field has leading shape `(num_tendons,)`.
 
 - `active_d_s(s)`: Active tendon offset vector at arc length `s`
 - `active_dd_s_ds(s)`: Derivative of tendon offset (for Jacobian computation)
@@ -48,9 +91,9 @@ Tendons are defined by their offset from the backbone centerline as a function o
 
 Optional passive tendons provide:
 
-- Elastic restoring forces via stiffness `K_pt`
-- Damping via coefficient `D_pt`
-- Initial displacement `l_pt0`
+- Per-tendon elastic restoring forces via `PassiveTendonParams.stiffness`
+- Per-tendon damping via `PassiveTendonParams.damping`
+- Per-tendon rest-length offsets via `PassiveTendonParams.rest_length_offset`
 
 ## API Reference
 

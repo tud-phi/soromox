@@ -35,6 +35,9 @@ Active tendons are routed through pulleys with radii specified by the routing ma
 
 where **u** are the motor inputs.
 
+`active_tendon_reference_configuration` is the joint configuration `q_ref_at`
+used for active tendon displacement, `R_at * (q - q_ref_at)`.
+
 ### Passive Tendons
 
 Passive tendons are attached to springs and dampers at the base, with:
@@ -42,11 +45,12 @@ Passive tendons are attached to springs and dampers at the base, with:
 - Routing matrix **R_pt** specifying pulley radii
 - Stiffness coefficients **k_pt** and damping coefficients **d_pt**
 - Initial pre-stretch lengths **l_pt0**
+- Reference configuration **q_ref_pt** where passive displacement is measured
 
 The passive tendon contributions are:
 
 ```text
-τ_el_pt = A_pt * K_pt * (R_pt * q + l_pt0)
+τ_el_pt = A_pt * K_pt * (R_pt * (q - q_ref_pt) + l_pt0)
 τ_d_pt = A_pt * D_pt * R_pt * qd
 ```
 
@@ -69,28 +73,41 @@ where:
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import TendonActuatedPendulum
+from soromox.systems import (
+    PassiveTendonParams,
+    PendulumParams,
+    TendonActuatedPendulum,
+    TendonActuatedPendulumParams,
+)
 
 # Base pendulum parameters
-params = {
-    "m": jnp.array([10.0, 6.0]),           # Link masses [kg]
-    "I": jnp.array([3.0, 2.0]),            # COM inertias [kg·m²]
-    "L": jnp.array([2.0, 1.0]),            # Link lengths [m]
-    "Lc": jnp.array([1.0, 0.5]),           # COM distances [m]
-    "g": jnp.array([0.0, -9.81]),          # Gravity vector [m/s²]
-    "K": jnp.diag(jnp.array([1.5, 2.0]))   # Joint stiffness [N⋅m/rad]
-}
+body_params = PendulumParams(
+    mass=jnp.array([10.0, 6.0]),
+    moment_inertia=jnp.array([3.0, 2.0]),
+    length=jnp.array([2.0, 1.0]),
+    center_of_mass_length=jnp.array([1.0, 0.5]),
+    gravity=jnp.array([0.0, -9.81]),
+    joint_stiffness=jnp.diag(jnp.array([1.5, 2.0])),
+    joint_damping=jnp.zeros((2, 2)),
+    joint_rest_configuration=jnp.zeros(2),
+    radius=jnp.array([0.05, 0.05]),
+)
 
-# Tendon routing parameters
-tendon_params = {
-    "R_at": jnp.array([[0.2, -0.25]]),     # Active tendon routing (1 tendon, 2 joints)
-    "R_pt": jnp.array([[-0.15, 0.3]]),     # Passive tendon routing (1 tendon, 2 joints)  
-    "k_pt": jnp.array([2.75]),             # Passive tendon stiffness [N/m]
-    "l_pt0": jnp.array([0.5])              # Passive tendon pre-stretch [m]
-}
+params = TendonActuatedPendulumParams(
+    body=body_params,
+    active_routing_matrix=jnp.array([[0.2, -0.25]]),
+    passive_routing_matrix=jnp.array([[-0.15, 0.3]]),
+    active_tendon_reference_configuration=jnp.zeros(2),
+    passive_tendon_reference_configuration=jnp.zeros(2),
+    passive_tendon=PassiveTendonParams(
+        stiffness=jnp.array([2.75]),
+        damping=jnp.array([0.1]),
+        rest_length_offset=jnp.array([0.5]),
+    ),
+)
 
 # Create robot instance
-robot = TendonActuatedPendulum(params, tendon_params)
+robot = TendonActuatedPendulum(params=params)
 ```
 
 ### Forward Kinematics and Dynamics
@@ -137,12 +154,12 @@ L_passive = robot.passive_tendon_length(q)   # Passive tendon lengths
 
 ```python
 # Update robot parameters (returns new instance)
-new_params = {"m": jnp.array([12.0, 7.0])}
-robot_updated = robot.update_params(new_params)
+body_updated = robot.params.body.replace(mass=jnp.array([12.0, 7.0]))
+robot_updated = robot.update_params(body=body_updated)
 
 # Update tendon parameters
-new_tendon_params = {"k_pt": jnp.array([3.0])}
-robot_updated = robot.update_tendon_params(new_tendon_params)
+passive_updated = robot.params.passive_tendon.replace(stiffness=jnp.array([3.0]))
+robot_updated = robot.update_params(passive_tendon=passive_updated)
 ```
 
 ### Simulation

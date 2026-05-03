@@ -1,5 +1,6 @@
 __all__ = ["GVS"]
 import math
+from dataclasses import replace
 from typing import Any
 
 import equinox as eqx
@@ -23,6 +24,7 @@ from soromox.systems.gvs.joint_bases import (
 from soromox.systems.gvs.operands import GeometricOperand, JointOperand
 from soromox.systems.gvs.primitives import Basis, Joint, Link
 from soromox.systems.gvs.specs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.systems.params import GVSParams, GVSStructure
 from soromox.systems.gvs.strain_bases import (
     B_IMQ,
     B_Chebychev,
@@ -183,29 +185,105 @@ class GVS(SoftRobot):
     width_params: Array  # Rectangular width params (num_segments, 2)
     semi_major_params: Array  # Elliptical semi-major params (num_segments, 2)
     semi_minor_params: Array  # Elliptical semi-minor params (num_segments, 2)
+    params: GVSParams
+    structure: GVSStructure = eqx.field(static=True)
 
     def __init__(
         self,
-        segments: list[GVSSegment] | tuple[GVSSegment, ...],
-        g: list[float] | Array,
-        max_dof: int | None = None,
-        max_num_gauss_points: int | None = None,
-        p0: Array | None = None,
-        scale_rotational_basis_by_length: bool | None = False,
+        params: GVSParams,
+        structure: GVSStructure,
         **kwargs: Any,
     ) -> None:
-        """Initialize a GVS robot from explicit per-segment specifications."""
+        """Initialize a GVS robot from typed params and static segment structure."""
         super().__init__(**kwargs)
-        self.scale_rotational_basis_by_length = bool(scale_rotational_basis_by_length)
+        if not isinstance(params, GVSParams):
+            raise TypeError("params must be a GVSParams instance.")
+        if not isinstance(structure, GVSStructure):
+            raise TypeError("structure must be a GVSStructure instance.")
+        self.params = params
+        self.structure = structure
+        self.scale_rotational_basis_by_length = bool(
+            structure.scale_rotational_basis_by_length
+        )
+        segments = self._segments_from_params(structure.segments, params)
         assign_gvs_runtime_arrays(
             self,
             segments=segments,
-            max_dof=max_dof,
-            max_num_gauss_points=max_num_gauss_points,
-            g=g,
-            p0=p0,
+            max_dof=structure.max_dof,
+            max_num_gauss_points=structure.max_num_gauss_points,
+            g=params.gravity,
+            p0=params.base_pose,
         )
         self.precompute()
+
+    @staticmethod
+    def _segments_from_params(
+        segments: list[GVSSegment] | tuple[GVSSegment, ...],
+        params: GVSParams,
+    ) -> tuple[GVSSegment, ...]:
+        """Return static GVS segment specs populated with typed numeric params."""
+        if not segments:
+            raise ValueError("GVS requires at least one segment.")
+        link = params.link
+        n_segments = len(segments)
+        segment_lengths = jnp.asarray(link.length)
+        reference_strain = jnp.asarray(params.reference_strain)
+        joint_stiffness = jnp.asarray(params.joint_stiffness)
+        if segment_lengths.shape != (n_segments,):
+            raise ValueError(
+                f"link.length must have shape ({n_segments},), got {segment_lengths.shape}."
+            )
+        if reference_strain.shape != (n_segments, 6):
+            raise ValueError(
+                f"reference_strain must have shape ({n_segments}, 6), got {reference_strain.shape}."
+            )
+        if joint_stiffness.ndim != 3 or joint_stiffness.shape[0] != n_segments:
+            raise ValueError(
+                "joint_stiffness must have shape (num_segments, max_dof, max_dof)."
+            )
+
+        updated_segments = []
+        for i, segment in enumerate(segments):
+            joint_dof = Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
+            if (
+                joint_stiffness.shape[1] < joint_dof
+                or joint_stiffness.shape[2] < joint_dof
+            ):
+                raise ValueError(
+                    "joint_stiffness trailing dimensions must cover every joint DOF."
+                )
+            updated_link = replace(
+                segment.link,
+                E=link.young_modulus[i],
+                nu=link.poisson_ratio[i],
+                rho=link.density[i],
+                eta=link.damping_coefficient[i],
+                L=link.length[i],
+                r_i=link.radius_initial[i],
+                r_f=link.radius_final[i],
+                h_i=link.height_initial[i],
+                h_f=link.height_final[i],
+                w_i=link.width_initial[i],
+                w_f=link.width_final[i],
+                a_i=link.semi_major_initial[i],
+                a_f=link.semi_major_final[i],
+                b_i=link.semi_minor_initial[i],
+                b_f=link.semi_minor_final[i],
+            )
+            updated_joint = replace(
+                segment.joint,
+                stiffness=joint_stiffness[i, :joint_dof, :joint_dof],
+            )
+            updated_basis = replace(segment.basis, xi_ref=reference_strain[i])
+            updated_segments.append(
+                replace(
+                    segment,
+                    link=updated_link,
+                    joint=updated_joint,
+                    basis=updated_basis,
+                )
+            )
+        return tuple(updated_segments)
 
     @property
     def is_planar(self) -> bool:
@@ -784,116 +862,123 @@ class GVS(SoftRobot):
             jnp.stack(semi_minor_param_items),
         )
 
-    def update_params(self, params: dict[str, Any]) -> "GVS":
-        """
-        Return a copy of the GVS model with selected parameters updated.
-
-        The supported updates are intentionally limited to parameters that do
-        not change the generalized-coordinate layout:
-
-        - ``"links"`` refreshes segment lengths, cross-section geometry,
-          local mass/stiffness/damping arrays, and cached full stiffness and
-          damping matrices.
-        - ``"g"`` refreshes the inertial gravity vector.
-        - ``"p0"`` refreshes the base pose from a 6D SE(3) exponential
-          coordinate.
-
-        Changing joint families, basis families, basis orders, or quadrature
-        orders can change the active coordinate layout and should be done by
-        constructing a new ``GVS`` instance.
-
-        Args:
-            params: Dictionary of parameter updates. Supported keys are
-                ``"links"``, ``"g"``, and ``"p0"``.
-                ``"links"`` must have length ``self.num_segments``.
-                ``"g"`` must have shape ``(3,)``.
-                ``"p0"`` must have shape ``(6,)``.
-
-        Returns:
-            updated_self: A new ``GVS`` instance with the requested parameters
-                updated. The original instance is left unchanged.
-
-        Raises:
-            KeyError: If an unsupported update key is provided.
-            ValueError: If an update has an incompatible shape.
-        """
-        supported_keys = {"links", "g", "p0"}
-        unknown_keys = set(params) - supported_keys
-        if unknown_keys:
-            unknown = ", ".join(sorted(unknown_keys))
-            raise KeyError(f"Unsupported GVS update_params keys: {unknown}")
-
-        updated_self = self
-
-        if "links" in params:
-            link_arrays = self._link_parameter_arrays(params["links"])
-            updated_self = eqx.tree_at(
-                lambda model: (
-                    model.segment_lengths,
-                    model.segment_end_positions,
-                    model.mass_matrices,
-                    model.stiffness_matrices,
-                    model.damping_matrices,
-                    model.cross_section_geometry_index,
-                    model.radius_params,
-                    model.height_params,
-                    model.width_params,
-                    model.semi_major_params,
-                    model.semi_minor_params,
-                ),
-                updated_self,
-                link_arrays,
+    def _reference_strain_runtime_arrays(
+        self, reference_strain: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        """Build padded GVS reference-strain arrays without changing layout."""
+        reference_strain = jnp.asarray(reference_strain, dtype=jnp.float64)
+        if reference_strain.shape != (self.num_segments, 6):
+            raise ValueError(
+                "reference_strain must have shape "
+                f"({self.num_segments}, 6), got {reference_strain.shape}."
             )
-            K_full = updated_self._stiffness_full_matrix()
-            D_full = updated_self._damping_full_matrix()
-            updated_self = eqx.tree_at(
-                lambda model: (
-                    model.inner_integration_weights,
-                    model.inner_mass_matrices,
-                    model.K_full,
-                    model.K,
-                    model.D_full,
-                    model.D_active,
-                ),
-                updated_self,
-                (
-                    updated_self.integration_weights[
-                        :, 1 : updated_self.max_num_integration_points - 1
-                    ]
-                    * updated_self.segment_lengths[:, None],
-                    updated_self.mass_matrices[
-                        :, 1 : updated_self.max_num_integration_points - 1
-                    ],
-                    K_full,
-                    updated_self.active_dof_map.T
-                    @ K_full
-                    @ updated_self.active_dof_map,
-                    D_full,
-                    updated_self.active_dof_map.T
-                    @ D_full
-                    @ updated_self.active_dof_map,
-                ),
+        xs_mask = (
+            jnp.arange(self.max_num_integration_points)[None, :]
+            < self.num_integration_points[:, None]
+        )
+        z_mask = (
+            jnp.arange(self.max_num_integration_points - 1)[None, :]
+            < (self.num_integration_points[:, None] - 1)
+        )
+        xi_ref_joint = jnp.zeros_like(self.xi_ref_joint)
+        xi_ref_Xs = reference_strain[:, None, :] * xs_mask[:, :, None]
+        xi_ref_Z1 = reference_strain[:, None, :] * z_mask[:, :, None]
+        xi_ref_Z2 = reference_strain[:, None, :] * z_mask[:, :, None]
+        return xi_ref_joint, xi_ref_Xs, xi_ref_Z1, xi_ref_Z2
+
+    def with_params(self, params: GVSParams) -> "GVS":
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, GVSParams):
+            raise TypeError("params must be a GVSParams instance.")
+        segments = self._segments_from_params(self.structure.segments, params)
+        links = tuple(segment.link for segment in segments)
+        link_arrays = self._link_parameter_arrays(links)
+        (
+            xi_ref_joint,
+            xi_ref_Xs,
+            xi_ref_Z1,
+            xi_ref_Z2,
+        ) = self._reference_strain_runtime_arrays(params.reference_strain)
+
+        joint_stiffness = jnp.asarray(params.joint_stiffness, dtype=jnp.float64)
+        if joint_stiffness.shape != self.joint_stiffness.shape:
+            raise ValueError(
+                "joint_stiffness shape changes the padded GVS layout; "
+                f"expected {self.joint_stiffness.shape}, got {joint_stiffness.shape}."
             )
 
-        if "g" in params:
-            g_vec = jnp.asarray(params["g"], dtype=jnp.float64)
-            if g_vec.shape != (3,):
-                raise ValueError(f"g must have shape (3,), got {g_vec.shape}")
-            updated_self = eqx.tree_at(
-                lambda model: model.g,
-                updated_self,
-                jnp.concatenate([jnp.zeros(3, dtype=g_vec.dtype), g_vec]),
-            )
+        gravity = jnp.asarray(params.gravity, dtype=jnp.float64)
+        if gravity.shape != (3,):
+            raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
+        base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
+        if base_pose.shape != (6,):
+            raise ValueError(f"base_pose must have shape (6,), got {base_pose.shape}.")
 
-        if "p0" in params:
-            p0 = jnp.asarray(params["p0"], dtype=jnp.float64)
-            if p0.shape != (6,):
-                raise ValueError(f"p0 must have shape (6,), got {p0.shape}")
-            updated_self = eqx.tree_at(
-                lambda model: model.g0, updated_self, lie.exp_SE3(p0)
-            )
+        updated_self = eqx.tree_at(
+            lambda model: (
+                model.params,
+                model.segment_lengths,
+                model.segment_end_positions,
+                model.mass_matrices,
+                model.stiffness_matrices,
+                model.damping_matrices,
+                model.cross_section_geometry_index,
+                model.radius_params,
+                model.height_params,
+                model.width_params,
+                model.semi_major_params,
+                model.semi_minor_params,
+                model.xi_ref_joint,
+                model.xi_ref_Xs,
+                model.xi_ref_Z1,
+                model.xi_ref_Z2,
+                model.joint_stiffness,
+                model.g0,
+                model.g,
+            ),
+            self,
+            (
+                params,
+                *link_arrays,
+                xi_ref_joint,
+                xi_ref_Xs,
+                xi_ref_Z1,
+                xi_ref_Z2,
+                joint_stiffness,
+                lie.exp_SE3(base_pose),
+                jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
+            ),
+        )
+        K_full = updated_self._stiffness_full_matrix()
+        D_full = updated_self._damping_full_matrix()
+        return eqx.tree_at(
+            lambda model: (
+                model.inner_integration_weights,
+                model.inner_mass_matrices,
+                model.K_full,
+                model.K,
+                model.D_full,
+                model.D_active,
+            ),
+            updated_self,
+            (
+                updated_self.integration_weights[
+                    :, 1 : updated_self.max_num_integration_points - 1
+                ]
+                * updated_self.segment_lengths[:, None],
+                updated_self.mass_matrices[
+                    :, 1 : updated_self.max_num_integration_points - 1
+                ],
+                K_full,
+                updated_self.active_dof_map.T @ K_full @ updated_self.active_dof_map,
+                D_full,
+                updated_self.active_dof_map.T @ D_full @ updated_self.active_dof_map,
+            ),
+        )
 
-        return updated_self
+    def update_params(self, **updates: Array) -> "GVS":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     # Gathering functions =========================================================
     @eqx.filter_jit
@@ -3114,7 +3199,7 @@ class GVS(SoftRobot):
         Args:
             q (Array): generalized coordinates of shape
                 ``(num_active_strains,)``.
-            s_ps (Array): arclength locations in ``[0, self.length]``, shape
+            s_ps (Array): arclength locations in ``[0, self.segment_lengths]``, shape
                 ``(N,)``.
 
         Returns:
@@ -3671,7 +3756,7 @@ class GVS(SoftRobot):
                 ``(num_active_strains,)``.
             qd (Array): generalized velocities of shape
                 ``(num_active_strains,)``.
-            s_ps (Array): arclength locations in ``[0, self.length]``, shape
+            s_ps (Array): arclength locations in ``[0, self.segment_lengths]``, shape
                 ``(N,)``.
 
         Returns:

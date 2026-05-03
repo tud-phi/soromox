@@ -8,6 +8,7 @@ from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 import soromox.utils.lie_algebra as lie
+from soromox.systems.params import ArticulatedSoftRobotParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
@@ -24,7 +25,7 @@ class ArticulatedSoftRobot(SoftRobot):
     Notes
     -----
     The generalized coordinates `q` are the scalar joint coordinates. Each
-    joint has a screw axis `joint_screws[i] = [omega, v]` expressed in the
+    joint has a screw axis `joint_screw[i] = [omega, v]` expressed in the
     joint frame before the joint motion is applied. The post-joint link frame is
     connected to the next link through the fixed tip vector `p_tip[i]`.
 
@@ -76,7 +77,7 @@ class ArticulatedSoftRobot(SoftRobot):
 
     Attributes:
         num_links: Number of links and joints.
-        joint_screws: Joint screw axes, shape `(num_links, 6)`.
+        joint_screw: Joint screw axis array, shape `(num_links, 6)`.
         g_parent_joint: Fixed transforms from previous link tip to joint frame,
             shape `(num_links, 4, 4)`.
         p_tip: Link tip vectors in post-joint link frames, shape `(num_links, 3)`.
@@ -93,7 +94,8 @@ class ArticulatedSoftRobot(SoftRobot):
 
     num_links: int = eqx.field(static=True)
 
-    joint_screws: Array
+    params: ArticulatedSoftRobotParams
+    joint_screw: Array
     g_parent_joint: Array
     p_tip: Array
     p_com: Array
@@ -105,68 +107,48 @@ class ArticulatedSoftRobot(SoftRobot):
     q_ref_k: Array
     r: Array
 
-    def __init__(self, params: dict[str, Array], **kwargs: Any) -> None:
-        """
-        Initialize an articulated soft robot.
-
-        Args:
-            params: Dictionary with robot parameters:
-                - `"joint_screws"`: Screw axes `[omega, v]`, shape `(N, 6)`.
-                - `"g_parent_joint"`: Fixed transforms from previous tip to the
-                  current joint frame, shape `(N, 4, 4)` (optional).
-                - `"p_tip"`: Link tip vectors in post-joint link frames,
-                  shape `(N, 3)`.
-                - `"p_com"`: COM vectors in post-joint link frames,
-                  shape `(N, 3)`.
-                - `"m"`: Link masses, shape `(N,)`.
-                - `"I_com"`: Link inertia matrices about COMs, shape `(N, 3, 3)`.
-                - `"g"`: Gravity acceleration vector in the base frame,
-                  shape `(3,)`.
-                - `"K"`: Joint stiffness matrix, shape `(N, N)` (optional).
-                - `"D"`: Joint damping matrix, shape `(N, N)` (optional).
-                - `"q_ref_k"`: Joint spring rest configuration, shape `(N,)`
-                  (optional).
-                - `"r"`: Circular visualization radii, shape `(N,)` (optional).
-            **kwargs: Additional keyword arguments for `SoftRobot`.
-
-        Raises:
-            ValueError: If required parameters have incompatible shapes.
-        """
+    def __init__(self, params: ArticulatedSoftRobotParams, **kwargs: Any) -> None:
+        """Initialize an articulated soft robot from typed dynamic parameters."""
         super().__init__(**kwargs)
+        if not isinstance(params, ArticulatedSoftRobotParams):
+            raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
+        self.params = params
 
-        joint_screws = jnp.asarray(params["joint_screws"])
-        p_tip = jnp.asarray(params["p_tip"])
-        p_com = jnp.asarray(params["p_com"])
-        m = jnp.asarray(params["m"])
-        I_com = jnp.asarray(params["I_com"])
-        g = jnp.asarray(params["g"])
+        joint_screw = jnp.asarray(params.joint_screw)
+        p_tip = jnp.asarray(params.tip_position)
+        p_com = jnp.asarray(params.center_of_mass_position)
+        m = jnp.asarray(params.mass)
+        I_com = jnp.asarray(params.center_of_mass_inertia)
+        g = jnp.asarray(params.gravity)
 
-        if joint_screws.ndim != 2 or joint_screws.shape[1] != 6:
-            raise ValueError("joint_screws must have shape (N, 6).")
-        n = joint_screws.shape[0]
+        if joint_screw.ndim != 2 or joint_screw.shape[1] != 6:
+            raise ValueError("joint_screw must have shape (N, 6).")
+        n = joint_screw.shape[0]
         expected_vec = (n, 3)
         if p_tip.shape != expected_vec:
-            raise ValueError(f"p_tip must have shape {expected_vec}.")
+            raise ValueError(f"tip_position must have shape {expected_vec}.")
         if p_com.shape != expected_vec:
-            raise ValueError(f"p_com must have shape {expected_vec}.")
+            raise ValueError(f"center_of_mass_position must have shape {expected_vec}.")
         if m.shape != (n,):
-            raise ValueError(f"m must have shape {(n,)}.")
+            raise ValueError(f"mass must have shape {(n,)}.")
         if I_com.shape != (n, 3, 3):
-            raise ValueError(f"I_com must have shape {(n, 3, 3)}.")
+            raise ValueError(
+                f"center_of_mass_inertia must have shape {(n, 3, 3)}."
+            )
         if g.shape != (3,):
-            raise ValueError("g must have shape (3,).")
+            raise ValueError("gravity must have shape (3,).")
 
-        g_parent_joint = jnp.asarray(
-            params.get("g_parent_joint", jnp.broadcast_to(jnp.eye(4), (n, 4, 4)))
-        )
+        g_parent_joint = jnp.asarray(params.parent_to_joint_transform)
         if g_parent_joint.shape != (n, 4, 4):
-            raise ValueError(f"g_parent_joint must have shape {(n, 4, 4)}.")
+            raise ValueError(
+                f"parent_to_joint_transform must have shape {(n, 4, 4)}."
+            )
 
         self.num_links = int(n)
         self.num_dofs = self.num_links
         self.num_actuators = self.num_links
 
-        self.joint_screws = joint_screws
+        self.joint_screw = joint_screw
         self.g_parent_joint = g_parent_joint
         self.p_tip = p_tip
         self.p_com = p_com
@@ -174,19 +156,19 @@ class ArticulatedSoftRobot(SoftRobot):
         self.I_com = I_com
         self.g = g
 
-        self.K = jnp.asarray(params.get("K", jnp.zeros((n, n))))
-        self.D = jnp.asarray(params.get("D", jnp.zeros((n, n))))
-        self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n,))))
-        self.r = jnp.asarray(params.get("r", 0.05 * self.segment_length))
+        self.K = jnp.asarray(params.joint_stiffness)
+        self.D = jnp.asarray(params.joint_damping)
+        self.q_ref_k = jnp.asarray(params.joint_rest_configuration)
+        self.r = jnp.asarray(params.radius)
 
         if self.K.shape != (n, n):
-            raise ValueError(f"K must have shape {(n, n)}.")
+            raise ValueError(f"joint_stiffness must have shape {(n, n)}.")
         if self.D.shape != (n, n):
-            raise ValueError(f"D must have shape {(n, n)}.")
+            raise ValueError(f"joint_damping must have shape {(n, n)}.")
         if self.q_ref_k.shape != (n,):
-            raise ValueError(f"q_ref_k must have shape {(n,)}.")
+            raise ValueError(f"joint_rest_configuration must have shape {(n,)}.")
         if self.r.shape != (n,):
-            raise ValueError(f"r must have shape {(n,)}.")
+            raise ValueError(f"radius must have shape {(n,)}.")
 
     @property
     def is_planar(self) -> bool:
@@ -261,7 +243,7 @@ class ArticulatedSoftRobot(SoftRobot):
         fixed_transforms = vmap(
             lambda p, g_parent_joint: self._translation(p) @ g_parent_joint
         )(parent_offsets, self.g_parent_joint)
-        joint_transforms = vmap(self._joint_motion)(self.joint_screws, q)
+        joint_transforms = vmap(self._joint_motion)(self.joint_screw, q)
         g_parent_child = fixed_transforms @ joint_transforms
         return vmap(lie.Adjoint_g_inv_SE3)(g_parent_child)
 
@@ -290,7 +272,7 @@ class ArticulatedSoftRobot(SoftRobot):
         _, frames = lax.scan(
             _step,
             jnp.eye(4, dtype=q.dtype),
-            (self.g_parent_joint, self.joint_screws, q, self.p_com, self.p_tip),
+            (self.g_parent_joint, self.joint_screw, q, self.p_com, self.p_tip),
         )
         return frames
 
@@ -301,7 +283,7 @@ class ArticulatedSoftRobot(SoftRobot):
 
     def _world_joint_screws_from_joint_frames(self, g_joints: Array) -> Array:
         """Return base-frame screw axes from precomputed joint frames."""
-        return vmap(lambda g, s: lie.Adjoint_g_SE3(g) @ s)(g_joints, self.joint_screws)
+        return vmap(lambda g, s: lie.Adjoint_g_SE3(g) @ s)(g_joints, self.joint_screw)
 
     def _jacobian_for_point(self, q: Array, link_idx: Array, p_world: Array) -> Array:
         """Compute the spatial Jacobian for a point on `link_idx`."""
@@ -784,7 +766,7 @@ class ArticulatedSoftRobot(SoftRobot):
 
         Xup = self._link_motion_transforms(q)
         spatial_inertias = self._spatial_inertias()
-        S = self.joint_screws
+        S = self.joint_screw
 
         def _velocity_step(
             v_parent: Array, inputs: tuple[Array, Array, Array, Array]
@@ -897,84 +879,111 @@ class ArticulatedSoftRobot(SoftRobot):
         qdd = self._aba_forward_accelerations(q, qd, tau)
         return jnp.concatenate([qd, qdd])
 
-    def _validate_updated_param(self, key: str, value: Any) -> Array:
-        """
-        Coerce and validate a mutable parameter update.
-
-        Args:
-            key: Parameter name to update.
-            value: Replacement value.
-
-        Returns:
-            Validated parameter value as a JAX array.
-
-        Raises:
-            ValueError: If the replacement value has an incompatible shape.
-        """
-        value = jnp.asarray(value)
-
-        expected_shapes = {
-            "joint_screws": (self.num_links, 6),
-            "g_parent_joint": (self.num_links, 4, 4),
-            "p_tip": (self.num_links, 3),
-            "p_com": (self.num_links, 3),
-            "m": (self.num_links,),
-            "I_com": (self.num_links, 3, 3),
-            "g": (3,),
-            "K": (self.num_dofs, self.num_dofs),
-            "D": (self.num_dofs, self.num_dofs),
-            "q_ref_k": (self.num_dofs,),
-            "r": (self.num_links,),
-        }
-
-        expected_shape = expected_shapes[key]
-        if value.shape != expected_shape:
-            raise ValueError(
-                f"Parameter '{key}' must have shape {expected_shape}, got {value.shape}."
-            )
-
-        return value
-
-    def update_params(self, params: dict[str, Array]) -> "ArticulatedSoftRobot":
-        """
-        Return an updated copy with selected parameters replaced.
-
-        Args:
-            params: Parameter updates for mutable constructor parameters only.
-
-        Returns:
-            Updated `ArticulatedSoftRobot` instance.
-
-        Raises:
-            KeyError: If an unknown or non-updatable parameter name is supplied.
-            ValueError: If a replacement value has an incompatible shape.
-        """
-        allowed_params = {
-            "joint_screws",
-            "g_parent_joint",
-            "p_tip",
-            "p_com",
-            "m",
-            "I_com",
-            "g",
-            "K",
-            "D",
-            "q_ref_k",
-            "r",
-        }
-        static_params = {"num_links", "num_dofs", "num_actuators"}
-
-        updated = self
-        for key, value in params.items():
-            if key in static_params:
-                raise KeyError(
-                    f"Attempted to update static parameter '{key}', which is not allowed."
+    def _validated_param_arrays(
+        self, params: ArticulatedSoftRobotParams
+    ) -> tuple[Array, ...]:
+        """Coerce typed parameters and enforce the fixed serial-chain layout."""
+        arrays = (
+            jnp.asarray(params.joint_screw),
+            jnp.asarray(params.parent_to_joint_transform),
+            jnp.asarray(params.tip_position),
+            jnp.asarray(params.center_of_mass_position),
+            jnp.asarray(params.mass),
+            jnp.asarray(params.center_of_mass_inertia),
+            jnp.asarray(params.gravity),
+            jnp.asarray(params.joint_stiffness),
+            jnp.asarray(params.joint_damping),
+            jnp.asarray(params.joint_rest_configuration),
+            jnp.asarray(params.radius),
+        )
+        expected_shapes = (
+            (self.num_links, 6),
+            (self.num_links, 4, 4),
+            (self.num_links, 3),
+            (self.num_links, 3),
+            (self.num_links,),
+            (self.num_links, 3, 3),
+            (3,),
+            (self.num_dofs, self.num_dofs),
+            (self.num_dofs, self.num_dofs),
+            (self.num_dofs,),
+            (self.num_links,),
+        )
+        names = (
+            "joint_screw",
+            "parent_to_joint_transform",
+            "tip_position",
+            "center_of_mass_position",
+            "mass",
+            "center_of_mass_inertia",
+            "gravity",
+            "joint_stiffness",
+            "joint_damping",
+            "joint_rest_configuration",
+            "radius",
+        )
+        for name, value, expected_shape in zip(names, arrays, expected_shapes):
+            if value.shape != expected_shape:
+                raise ValueError(
+                    f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
-            if key not in allowed_params:
-                raise KeyError(f"Attempted to update unknown parameter '{key}'.")
+        return arrays
 
-            validated_value = updated._validate_updated_param(key, value)
-            updated = eqx.tree_at(
-                lambda x, name=key: getattr(x, name), updated, validated_value
+    def with_params(
+        self, params: ArticulatedSoftRobotParams
+    ) -> "ArticulatedSoftRobot":
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, ArticulatedSoftRobotParams):
+            raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
+        if params.mass.shape != self.params.mass.shape:
+            raise ValueError(
+                "mass shape changes the model structure; construct a new ArticulatedSoftRobot."
             )
-        return updated
+        (
+            joint_screw,
+            parent_to_joint_transform,
+            tip_position,
+            center_of_mass_position,
+            mass,
+            center_of_mass_inertia,
+            gravity,
+            joint_stiffness,
+            joint_damping,
+            joint_rest_configuration,
+            radius,
+        ) = self._validated_param_arrays(params)
+        return eqx.tree_at(
+            lambda model: (
+                model.params,
+                model.joint_screw,
+                model.g_parent_joint,
+                model.p_tip,
+                model.p_com,
+                model.m,
+                model.I_com,
+                model.g,
+                model.K,
+                model.D,
+                model.q_ref_k,
+                model.r,
+            ),
+            self,
+            (
+                params,
+                joint_screw,
+                parent_to_joint_transform,
+                tip_position,
+                center_of_mass_position,
+                mass,
+                center_of_mass_inertia,
+                gravity,
+                joint_stiffness,
+                joint_damping,
+                joint_rest_configuration,
+                radius,
+            ),
+        )
+
+    def update_params(self, **updates: Array) -> "ArticulatedSoftRobot":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))

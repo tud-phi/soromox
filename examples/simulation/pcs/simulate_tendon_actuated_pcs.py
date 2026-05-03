@@ -13,7 +13,14 @@ from soromox.rendering import (
     RendererColorConfig,
     ViserRenderer,
 )
-from soromox.systems import SystemState, TendonActuatedPCS
+from soromox.systems import (
+    LinearTendonRoutingParams,
+    PCSParams,
+    PassiveTendonParams,
+    SystemState,
+    TendonActuatedPCS,
+    TendonActuatedPCSParams,
+)
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -24,68 +31,60 @@ if __name__ == "__main__":
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-    params = {
-        "p0": jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
-        "L": 1e-1 * jnp.ones((num_segments,)),  # default: 1e-1
-        "r": 2e-2 * jnp.ones((num_segments,)),  # default: 2e-2
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
     )
-    active_tendon_routing_params = {
-        "ry": 2e-2
-        * jnp.array(
-            [1.0, -1.0]
-        ),  # y-coordinate of the pulling point of the tendons [m]
-        "rz": 2e-2
-        * jnp.array([0.0, 0.0]),  # z-coordinate of the pulling point of the tendons [m]
-        "my": jnp.array(
-            [0.0, 0.0]
-        ),  # slope coefficient in the x-y plane of the tendons [-]
-        "mz": jnp.array(
-            [0.0, 0.0]
-        ),  # slope coefficient in the x-z plane of the tendons [-]
-        "idx_seg_att": jnp.array(
-            [1, 0]
-        ),  # length of the tendons = x-coordinate of the attachment points [m]
-    }
-    passive_tendon_routing_params = {
-        "ry": 2e-2
-        * jnp.array([0.0]),  # y-coordinate of the pulling point of the tendons [m]
-        "rz": 2e-2
-        * jnp.array([1.0]),  # z-coordinate of the pulling point of the tendons [m]
-        "my": jnp.array([0.0]),  # slope coefficient in the x-y plane of the tendons [-]
-        "mz": jnp.array([0.0]),  # slope coefficient in the x-z plane of the tendons [-]
-        "idx_seg_att": jnp.array(
-            [1]
-        ),  # length of the tendons = x-coordinate of the attachment points [m]
-    }
-    passive_tendon_params = {
-        "k_pt": jnp.array([0.6]),
-        "d_pt": jnp.array([0.1]),
-        "l_pt0": jnp.array([-0.3]),
-    }
+    body_params = PCSParams(
+        base_pose=jnp.array(
+            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
+        ),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+    )
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=2e-2 * jnp.array([1.0, -1.0]),
+        z_intercept=2e-2 * jnp.array([0.0, 0.0]),
+        y_slope=jnp.array([0.0, 0.0]),
+        z_slope=jnp.array([0.0, 0.0]),
+        attachment_segment_index=jnp.array([1, 0]),
+    )
+    passive_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=2e-2 * jnp.array([0.0]),
+        z_intercept=2e-2 * jnp.array([1.0]),
+        y_slope=jnp.array([0.0]),
+        z_slope=jnp.array([0.0]),
+        attachment_segment_index=jnp.array([1]),
+    )
+    passive_tendon = PassiveTendonParams(
+        stiffness=jnp.array([0.6]),
+        damping=jnp.array([0.1]),
+        rest_length_offset=jnp.array([-0.3]),
+    )
 
     # ======================================================
     # Robot initialization
     # ======================================================
     robot = TendonActuatedPCS(
-        num_segments=num_segments,
-        params=params,
-        active_tendon_routing_params=active_tendon_routing_params,
-        passive_tendon_routing_params=passive_tendon_routing_params,
-        passive_tendon_params=passive_tendon_params,
+        params=TendonActuatedPCSParams(
+            body=body_params,
+            active_tendon_routing=active_tendon_routing,
+            passive_tendon_routing=passive_tendon_routing,
+            passive_tendon=passive_tendon,
+        ),
     )
 
     # =====================================================

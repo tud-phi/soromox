@@ -5,10 +5,11 @@ from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
-from soromox.systems import PCS, CrossSectionGeometry
+from soromox.systems import PCS, CrossSectionGeometry, PCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra.se3 import Adjoint_g_SE3, log_SE3
 from soromox.utils.tolerance import Tolerance
+from system_param_builders import pcs_params
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -32,30 +33,30 @@ def make_pcs(
 ):
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
-    params = {
-        "p0": jnp.zeros((6,)),
-        "L": L,
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": 1070 * jnp.ones((num_segments,)),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "E": 2e3 * jnp.ones((num_segments,)),
-        "G": 1e3 * jnp.ones((num_segments,)),
-    }
     diag_vals = jnp.repeat(
         jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
     )
-    params["D"] = 1e-3 * jnp.diag((diag_vals * L[:, None]).flatten())
-
     if xi_ref is None:
         xi_ref = jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments)
+    params = pcs_params(
+        base_pose=jnp.zeros((6,)),
+        length=L,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=1070 * jnp.ones((num_segments,)),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=1e-3 * jnp.diag((diag_vals * L[:, None]).flatten()),
+        reference_strain=xi_ref,
+    )
 
     model = PCS(
-        num_segments=num_segments,
         params=params,
-        num_gauss_points=num_gauss_points,
-        xi_ref=xi_ref,
-        strain_selector=strain_selector,
-        scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        structure=PCSStructure(
+            num_gauss_points=num_gauss_points,
+            strain_selector=strain_selector,
+            scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        ),
     )
 
     return model, params
@@ -129,17 +130,9 @@ def test_constant_strain_call():
     """
     Test the constant strain system with numerical integration and Jacobian for 1 segment.
     """
-    params = {
-        "p0": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        "L": jnp.array([1e-1]),
-        "r": jnp.array([2e-2]),
-        "rho": 1000 * jnp.ones((1,)),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "E": 1e8 * jnp.ones((1,)),  # Elastic modulus [Pa]
-        "G": 1e7 * jnp.ones((1,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
-        (jnp.array([[1e0, 0.0, 0.0, 1e3, 0.0, 1e3]]) * params["L"][:, None]).flatten()
+    L = jnp.array([1e-1])
+    D = 1e-3 * jnp.diag(
+        (jnp.array([[1e0, 0.0, 0.0, 1e3, 0.0, 1e3]]) * L[:, None]).flatten()
     )
     # activate all strains (i.e. bending, shear, and axial)
     strain_selector = jnp.ones((6,), dtype=bool)
@@ -147,13 +140,21 @@ def test_constant_strain_call():
     xi_ref = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
 
     num_segments = 1
+    params = pcs_params(
+        base_pose=jnp.zeros(6),
+        length=L,
+        radius=jnp.array([2e-2]),
+        density=1000 * jnp.ones((1,)),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        young_modulus=1e8 * jnp.ones((1,)),
+        shear_modulus=1e7 * jnp.ones((1,)),
+        damping_matrix=D,
+        reference_strain=xi_ref,
+    )
 
     robot = PCS(
-        num_segments=num_segments,
         params=params,
-        num_gauss_points=5,
-        strain_selector=strain_selector,
-        xi_ref=xi_ref,
+        structure=PCSStructure(num_gauss_points=5, strain_selector=strain_selector),
     )
 
     # ========================================
@@ -165,18 +166,18 @@ def test_constant_strain_call():
     test_cases = [
         (
             jnp.zeros((6,)),
-            params["L"][0] / 2,
-            jnp.eye(4).at[0, 3].set(params["L"][0] / 2),
+            params.length[0] / 2,
+            jnp.eye(4).at[0, 3].set(params.length[0] / 2),
         ),
         (
             jnp.zeros((6,)),
-            params["L"][0],
-            jnp.eye(4).at[0, 3].set(params["L"][0]),
+            params.length[0],
+            jnp.eye(4).at[0, 3].set(params.length[0]),
         ),
         (
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            params["L"][0],
-            jnp.eye(4).at[0, 3].set(2 * params["L"][0]),
+            params.length[0],
+            jnp.eye(4).at[0, 3].set(2 * params.length[0]),
         ),
     ]
 
@@ -216,7 +217,9 @@ def test_constant_strain_call():
     )
     print("[Valid test]\n")
 
-    q = jnp.array([jnp.pi / (2 * params["L"][0]), 0.0, 0.0, 0.0, 0.0, 0.0])
+    q = jnp.array(
+        [jnp.pi / (2 * params.length[0]), 0.0, 0.0, 0.0, 0.0, 0.0]
+    )
     qd = jnp.zeros((6,))
     u = jnp.ones((6,))  # identity torque for testing
     print("q = ", q, "qd = ", qd, "u = ", u)
@@ -243,10 +246,9 @@ def test_constant_strain_call():
 
     # test energies
     print("\nTesting energies... ------------------------")
-    params_bis = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
-    }
-    robot = robot.update_params(params_bis)
+    robot = robot.update_params(
+        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0])
+    )
     q = jnp.zeros((6,))
     qd = jnp.zeros((6,))
     print("q = ", q, "qd = ", qd)
@@ -263,11 +265,11 @@ def test_constant_strain_call():
     assert not jnp.isnan(E_pot).any(), "Potential energy contains NaN!"
     E_pot_th = jnp.array(
         0.5
-        * params["rho"][0]
+        * params.density[0]
         * jnp.pi
-        * params["r"][0] ** 2
-        * jnp.linalg.norm(params["g"])
-        * params["L"][0] ** 2
+        * params.radius[0] ** 2
+        * jnp.linalg.norm(params.gravity)
+        * params.length[0] ** 2
     )
     assert_allclose(E_pot, E_pot_th, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
@@ -277,10 +279,8 @@ def test_constant_strain_call():
     q = jnp.zeros((6,))
     qd = jnp.zeros((6,))
     u = jnp.zeros((6,))  # no external forces
-    params_bis = params.copy()
-    params_bis["g"] = jnp.zeros((3,))  # no gravity for this test
-    robot = robot.update_params(params_bis)
-    print("q = ", q, "qd = ", qd, "u = ", u, "g = ", params_bis["g"])
+    robot = robot.update_params(gravity=jnp.zeros((3,)))  # no gravity for this test
+    print("q = ", q, "qd = ", qd, "u = ", u, "g = ", robot.params.gravity)
     y = jnp.concatenate([q, qd])
     yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qdd, qdres = jnp.split(yd, 2)
@@ -295,17 +295,17 @@ def test_public_pcs_accessors_and_geometry_helpers() -> None:
     q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
 
     assert model.is_planar is False
-    assert_allclose(model.length, jnp.sum(params["L"]), rtol=RTOL, atol=ATOL)
-    assert_allclose(model.segment_length, params["L"], rtol=RTOL, atol=ATOL)
+    assert_allclose(model.length, jnp.sum(params.length), rtol=RTOL, atol=ATOL)
+    assert_allclose(model.segment_length, params.length, rtol=RTOL, atol=ATOL)
 
-    s_second = params["L"][0] + 0.25 * params["L"][1]
+    s_second = params.length[0] + 0.25 * params.length[1]
     segment_idx, s_local = model.classify_segment(s_second)
     assert int(segment_idx) == 1
-    assert_allclose(s_local, 0.25 * params["L"][1], rtol=RTOL, atol=ATOL)
+    assert_allclose(s_local, 0.25 * params.length[1], rtol=RTOL, atol=ATOL)
 
     tag, geom = model.cross_section_geometry(q, s_second)
     assert int(tag) == CrossSectionGeometry.CIRCULAR
-    assert_allclose(geom, jnp.array([params["r"][1]]), rtol=RTOL, atol=ATOL)
+    assert_allclose(geom, jnp.array([params.radius[1]]), rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -907,10 +907,8 @@ class _SentinelGravitationalEnergyJVPPCS(PCS):
 def _sentinel_pcs_model(cls: type[PCS]) -> PCS:
     base, params = make_pcs(num_segments=1)
     return cls(
-        num_segments=1,
         params=params,
-        num_gauss_points=base.num_gauss_points,
-        xi_ref=base.xi_ref,
+        structure=PCSStructure(num_gauss_points=base.num_gauss_points),
     )
 
 
@@ -1326,13 +1324,11 @@ def test_cached_constant_matrices_refresh_after_update_params():
     )
 
     updated = model.update_params(
-        {
-            "r": 1.1 * model.r,
-            "rho": 0.9 * model.rho,
-            "E": 1.25 * model.E,
-            "G": 0.75 * model.G,
-            "D": 2.0 * model.D,
-        }
+        radius=1.1 * model.r,
+        density=0.9 * model.rho,
+        young_modulus=1.25 * model.E,
+        shear_modulus=0.75 * model.G,
+        damping_matrix=2.0 * model.D,
     )
     segment_ids = jnp.arange(updated.num_segments)
     expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
@@ -1476,7 +1472,7 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates():
         atol=ATOL,
     )
 
-    updated = scaled.update_params({"L": jnp.array([0.2, 0.3])})
+    updated = scaled.update_params(length=jnp.array([0.2, 0.3]))
     updated_scale = jnp.array(
         [5.0, 5.0, 5.0, 1.0, 1.0, 1.0, 10 / 3, 10 / 3, 10 / 3, 1.0, 1.0, 1.0]
     )

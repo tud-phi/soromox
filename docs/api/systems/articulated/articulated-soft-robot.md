@@ -16,32 +16,35 @@ the dense equations of motion.
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import ArticulatedSoftRobot
+from soromox.systems import ArticulatedSoftRobot, ArticulatedSoftRobotParams
 
-params = {
-    "joint_screws": jnp.array([
+params = ArticulatedSoftRobotParams(
+    joint_screw=jnp.array([
         [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
     ]),
-    "p_tip": jnp.array([
+    tip_position=jnp.array([
         [0.5, 0.0, 0.0],
         [0.4, 0.0, 0.0],
     ]),
-    "p_com": jnp.array([
+    center_of_mass_position=jnp.array([
         [0.25, 0.0, 0.0],
         [0.20, 0.0, 0.0],
     ]),
-    "m": jnp.array([1.0, 0.8]),
-    "I_com": jnp.array([
+    mass=jnp.array([1.0, 0.8]),
+    center_of_mass_inertia=jnp.array([
         jnp.diag(jnp.array([0.02, 0.03, 0.04])),
         jnp.diag(jnp.array([0.01, 0.02, 0.03])),
     ]),
-    "g": jnp.array([0.0, 0.0, -9.81]),
-    "K": jnp.diag(jnp.array([0.5, 0.3])),
-    "D": jnp.diag(jnp.array([0.02, 0.01])),
-}
+    gravity=jnp.array([0.0, 0.0, -9.81]),
+    joint_stiffness=jnp.diag(jnp.array([0.5, 0.3])),
+    joint_damping=jnp.diag(jnp.array([0.02, 0.01])),
+    joint_rest_configuration=jnp.zeros(2),
+    parent_to_joint_transform=jnp.broadcast_to(jnp.eye(4), (2, 4, 4)),
+    radius=jnp.array([0.025, 0.02]),
+)
 
-robot = ArticulatedSoftRobot(params)
+robot = ArticulatedSoftRobot(params=params)
 q = jnp.array([0.2, -0.1])
 qd = jnp.array([0.0, 0.0])
 

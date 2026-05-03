@@ -158,15 +158,13 @@ For guidance on adding custom robot systems or renderers, see the [Extending SoR
 Use Google-style docstrings:
 
 ```python
-def forward_kinematics(params: Dict, q: Array) -> Array:
+def forward_kinematics(params: PCSParams, q: Array) -> Array:
     """
     Compute forward kinematics for the robot.
     
     Args:
-        params: Dictionary of robot parameters including:
-            - l: Segment lengths
-            - r: Segment radii  
-            - E: Young's moduli
+        params: Typed PCS parameters. Numeric fields are JAX arrays and can be
+            replaced immutably with ``params.replace(...)``.
         q: Configuration vector of shape (n_dof,)
         
     Returns:
@@ -176,7 +174,7 @@ def forward_kinematics(params: Dict, q: Array) -> Array:
         ValueError: If configuration vector has wrong dimensions
         
     Example:
-        >>> params = {"L": jnp.array([0.1]), "r": jnp.array([0.01])}
+        >>> params = params.replace(length=jnp.array([0.1]))
         >>> q = jnp.array([0.0, 0.0, -1.0])
         >>> pos = forward_kinematics(params, q)
     """
@@ -201,9 +199,7 @@ from soromox.systems import YourSystem
 class TestYourSystem:
     def setup_method(self):
         """Set up test fixtures."""
-        self.params = {
-            # Test parameters
-        }
+        self.params = YourSystemParams(...)
     
     def test_forward_kinematics(self):
         """Test forward kinematics."""

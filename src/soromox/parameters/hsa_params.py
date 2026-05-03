@@ -1,10 +1,17 @@
 __all__ = [
     "generate_base_params_for_fpu",
     "generate_base_params_for_epu",
+    "planar_hsa_params_from_values",
     "PARAMS_FPU_CONTROL",
     "PARAMS_FPU_SYSTEM_ID",
     "PARAMS_EPU_CONTROL",
     "PARAMS_EPU_SYSTEM_ID",
+    "PLANAR_HSA_FPU_CONTROL_PARAMS",
+    "PLANAR_HSA_FPU_HYSTERESIS_CONTROL_PARAMS",
+    "PLANAR_HSA_FPU_SYSTEM_ID_PARAMS",
+    "PLANAR_HSA_EPU_CONTROL_PARAMS",
+    "PLANAR_HSA_EPU_HYSTERESIS_CONTROL_PARAMS",
+    "PLANAR_HSA_EPU_SYSTEM_ID_PARAMS",
 ]
 
 
@@ -13,6 +20,51 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 from jax import Array
+
+from soromox.systems.params import PlanarHSAParams
+
+
+def planar_hsa_params_from_values(params: dict[str, Array]) -> PlanarHSAParams:
+    """Build typed planar HSA params from the generated numeric value set."""
+    hysteresis = params.get("hysteresis", {})
+    return PlanarHSAParams(
+        base_angle=jnp.asarray(params["th0"]),
+        length=jnp.asarray(params["L"]),
+        proximal_cap_length=jnp.asarray(params["lpc"]),
+        distal_cap_length=jnp.asarray(params["ldc"]),
+        rod_height=jnp.asarray(params["h"]),
+        rod_outer_radius=jnp.asarray(params["rout"]),
+        rod_inner_radius=jnp.asarray(params["rin"]),
+        rod_offset=jnp.asarray(params["roff"]),
+        bending_reference=jnp.asarray(params["kappa_b_ref"]),
+        shear_reference=jnp.asarray(params["sigma_sh_ref"]),
+        axial_reference=jnp.asarray(params["sigma_a_ref"]),
+        strain_coupling=jnp.asarray(params["C_varepsilon"]),
+        platform_dimension=jnp.asarray(params["pcudim"]),
+        rod_density=jnp.asarray(params["rhor"]),
+        platform_density=jnp.asarray(params["rhop"]),
+        end_cap_density=jnp.asarray(params["rhoec"]),
+        gravity=jnp.asarray(params["g"]),
+        nominal_bending_stiffness=jnp.asarray(params["S_b_hat"]),
+        nominal_shear_stiffness=jnp.asarray(params["S_sh_hat"]),
+        nominal_axial_stiffness=jnp.asarray(params["S_a_hat"]),
+        bending_shear_stiffness=jnp.asarray(params["S_b_sh"]),
+        bending_stiffness_correction=jnp.asarray(params["C_S_b"]),
+        shear_stiffness_correction=jnp.asarray(params["C_S_sh"]),
+        axial_stiffness_correction=jnp.asarray(params["C_S_a"]),
+        bending_damping=jnp.asarray(params["zetab"]),
+        shear_damping=jnp.asarray(params["zetash"]),
+        axial_damping=jnp.asarray(params["zetaa"]),
+        platform_mass=jnp.asarray(params["mpl"]),
+        platform_center_of_gravity=jnp.asarray(params["CoGpl"]),
+        end_effector_offset=jnp.asarray(params["chiee_off"]),
+        hysteresis_basis=jnp.asarray(hysteresis.get("basis", jnp.zeros((0, 0)))),
+        hysteresis_alpha=jnp.asarray(hysteresis.get("alpha", jnp.zeros((0,)))),
+        hysteresis_A=jnp.asarray(hysteresis.get("A", jnp.zeros((1,)))),
+        hysteresis_n=jnp.asarray(hysteresis.get("n", jnp.zeros((1,)))),
+        hysteresis_beta=jnp.asarray(hysteresis.get("beta", jnp.zeros((1,)))),
+        hysteresis_gamma=jnp.asarray(hysteresis.get("gamma", jnp.zeros((1,)))),
+    )
 
 
 def generate_common_base_params(
@@ -333,4 +385,15 @@ PARAMS_EPU_CONTROL = generate_base_params_for_epu(
 )
 PARAMS_EPU_HYSTERESIS_CONTROL = generate_base_params_for_epu(
     num_segments=1, num_rods_per_segment=2, rod_multiplier=2, consider_hysteresis=True
+)
+
+PLANAR_HSA_FPU_SYSTEM_ID_PARAMS = planar_hsa_params_from_values(PARAMS_FPU_SYSTEM_ID)
+PLANAR_HSA_FPU_CONTROL_PARAMS = planar_hsa_params_from_values(PARAMS_FPU_CONTROL)
+PLANAR_HSA_FPU_HYSTERESIS_CONTROL_PARAMS = planar_hsa_params_from_values(
+    PARAMS_FPU_HYSTERESIS_CONTROL
+)
+PLANAR_HSA_EPU_SYSTEM_ID_PARAMS = planar_hsa_params_from_values(PARAMS_EPU_SYSTEM_ID)
+PLANAR_HSA_EPU_CONTROL_PARAMS = planar_hsa_params_from_values(PARAMS_EPU_CONTROL)
+PLANAR_HSA_EPU_HYSTERESIS_CONTROL_PARAMS = planar_hsa_params_from_values(
+    PARAMS_EPU_HYSTERESIS_CONTROL
 )

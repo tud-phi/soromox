@@ -6,9 +6,10 @@ from jax import Array, jacfwd, jacrev, jvp
 from numpy.testing import assert_allclose
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems import GVS, PCS, CrossSectionGeometry
+from soromox.systems import GVS, PCS, PCSStructure, CrossSectionGeometry
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
+from system_param_builders import gvs_params_from_segments, pcs_params
 
 jax.config.update("jax_enable_x64", True)
 
@@ -68,31 +69,30 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
     g = jnp.array([0.0, 0.0, -9.81])
 
     # initialize the GVS model
-    robot_gvs = GVS(
-        segments=segments,
-        g=g,
-        p0=jnp.zeros(6),
+    gvs_params, gvs_structure = gvs_params_from_segments(
+        segments, gravity=g, base_pose=jnp.zeros(6)
     )
+    robot_gvs = GVS(params=gvs_params, structure=gvs_structure)
 
     # PCS definition with identical geometry and material params
-    params = {
-        "p0": jnp.zeros(6),
-        "L": Ls,
-        "r": rs,
-        "rho": rhos,
-        "g": g,
-        "E": E,
-        "G": Gpcs,
-    }
-    # zero damping for fair comparison
-    params["D"] = jnp.zeros((6 * num_segments, 6 * num_segments))
+    params = pcs_params(
+        base_pose=jnp.zeros(6),
+        length=Ls,
+        radius=rs,
+        density=rhos,
+        gravity=g,
+        young_modulus=E,
+        shear_modulus=Gpcs,
+        damping_matrix=jnp.zeros((6 * num_segments, 6 * num_segments)),
+        reference_strain=jnp.tile(
+            jnp.array([0, 0, 0, 1, 0, 0]), (num_segments, 1)
+        ).reshape(6 * num_segments),
+    )
     robot_pcs = PCS(
-        num_segments=num_segments,
         params=params,
-        num_gauss_points=5,
-        strain_selector=jnp.ones((6 * num_segments,), dtype=bool),
-        xi_ref=jnp.tile(jnp.array([0, 0, 0, 1, 0, 0]), (num_segments, 1)).reshape(
-            6 * num_segments
+        structure=PCSStructure(
+            num_gauss_points=5,
+            strain_selector=jnp.ones((6 * num_segments,), dtype=bool),
         ),
     )
 
@@ -264,10 +264,10 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
             )
         )
 
-    return GVS(
-        segments=segments,
-        g=[0.0, 0.0, -9.81],
+    params, structure = gvs_params_from_segments(
+        segments, gravity=jnp.array([0.0, 0.0, -9.81])
     )
+    return GVS(params=params, structure=structure)
 
 
 def build_constant_strain_gvs(
@@ -304,17 +304,18 @@ def build_constant_strain_gvs(
         for _ in range(num_segments)
     ]
 
-    return GVS(
-        segments=segments,
-        g=[0.0, 0.0, -9.81],
+    params, structure = gvs_params_from_segments(
+        segments,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        base_pose=jnp.zeros(6),
         max_dof=max_dof,
-        p0=jnp.zeros(6),
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )
+    return GVS(params=params, structure=structure)
 
 
 def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
-    lengths = jnp.asarray(robot.segment_lengths)
+    lengths = jnp.asarray(robot.segment_length)
     cumulative = jnp.cumsum(lengths)
     total = float(cumulative[-1])
 
@@ -330,7 +331,7 @@ def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
 def strict_interior_arc_lengths(robot: GVS) -> jnp.ndarray:
     fractions = jnp.asarray([0.37], dtype=jnp.float64)
     starts = robot.segment_end_positions[:-1, None]
-    lengths = robot.segment_lengths[:, None]
+    lengths = robot.segment_length[:, None]
     return (starts + lengths * fractions).reshape(-1)
 
 
@@ -491,7 +492,7 @@ def _assert_gvs_pcs_coherence(num_segments: int) -> None:
         qd_random = random_q(robot_gvs, key_qd, scale=0.1)
         config_velocity_cases += ((q_random, qd_random),)
 
-    L_total = float(jnp.sum(robot_gvs.segment_lengths))
+    L_total = float(jnp.sum(robot_gvs.length))
     s_candidates = jnp.concatenate(
         [
             jnp.asarray([0.0], dtype=jnp.float64),
@@ -626,15 +627,15 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
     q = jnp.zeros((int(robot.num_dofs),), dtype=jnp.float64)
 
     assert robot.is_planar is False
-    assert_allclose(robot.length, jnp.sum(robot.segment_lengths), rtol=RTOL, atol=ATOL)
-    assert_allclose(robot.segment_length, robot.segment_lengths, rtol=RTOL, atol=ATOL)
+    assert_allclose(robot.length, jnp.sum(robot.segment_length), rtol=RTOL, atol=ATOL)
+    assert_allclose(robot.segment_length, robot.params.link.length, rtol=RTOL, atol=ATOL)
 
-    s_second = robot.segment_lengths[0] + 0.25 * robot.segment_lengths[1]
+    s_second = robot.segment_length[0] + 0.25 * robot.segment_length[1]
     segment_idx, s_local = robot.classify_segment(s_second)
     assert int(segment_idx) == 1
-    assert_allclose(s_local, 0.25 * robot.segment_lengths[1], rtol=RTOL, atol=ATOL)
+    assert_allclose(s_local, 0.25 * robot.segment_length[1], rtol=RTOL, atol=ATOL)
 
-    tag, geom = robot.cross_section_geometry(q, 0.5 * robot.segment_lengths[0])
+    tag, geom = robot.cross_section_geometry(q, 0.5 * robot.segment_length[0])
     expected_radius = robot.radius_params[0, 0] + 0.5 * (
         robot.radius_params[0, 1] - robot.radius_params[0, 0]
     )
@@ -654,9 +655,9 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
     )
 
     s_third = (
-        robot.segment_lengths[0]
-        + robot.segment_lengths[1]
-        + 0.75 * robot.segment_lengths[2]
+        robot.segment_length[0]
+        + robot.segment_length[1]
+        + 0.75 * robot.segment_length[2]
     )
     tag, geom = robot.cross_section_geometry(q, s_third)
     expected_a = robot.semi_major_params[2, 0] + 0.75 * (
@@ -1431,21 +1432,14 @@ def test_cached_constant_matrices_refresh_after_update_params() -> None:
     )
 
     updated = robot.update_params(
-        {
-            "links": [
-                LinkSpec(
-                    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                    E=1.25e6,
-                    nu=0.45,
-                    rho=900.0,
-                    eta=2.0,
-                    L=float(length),
-                    r_i=0.022,
-                    r_f=0.022,
-                )
-                for length in robot.segment_lengths
-            ]
-        }
+        link=robot.params.link.replace(
+            young_modulus=1.25e6 * jnp.ones_like(robot.segment_length),
+            poisson_ratio=0.45 * jnp.ones_like(robot.segment_length),
+            density=900.0 * jnp.ones_like(robot.segment_length),
+            damping_coefficient=2.0 * jnp.ones_like(robot.segment_length),
+            radius_initial=0.022 * jnp.ones_like(robot.segment_length),
+            radius_final=0.022 * jnp.ones_like(robot.segment_length),
+        )
     )
 
     assert updated.K_full.shape == robot.K_full.shape
@@ -1461,7 +1455,7 @@ def test_cached_constant_matrices_refresh_after_update_params() -> None:
     assert_allclose(
         updated.inner_integration_weights,
         updated.integration_weights[:, 1 : updated.max_num_integration_points - 1]
-        * updated.segment_lengths[:, None],
+        * updated.segment_length[:, None],
         rtol=RTOL,
         atol=ATOL,
     )
@@ -1840,7 +1834,7 @@ def test_gvs_autodiff_checks(num_segments: int) -> None:
     n = int(robot.num_dofs)
     q = jnp.linspace(0.01, 0.01 * n, n, dtype=jnp.float64)
     qd = jnp.linspace(0.02, 0.02 * n, n, dtype=jnp.float64)
-    s = jnp.sum(robot.segment_lengths, dtype=jnp.float64) * 0.7
+    s = jnp.sum(robot.length, dtype=jnp.float64) * 0.7
 
     def J_body(q_):
         return robot.jacobian_bodyframe(q_, s)

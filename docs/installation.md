@@ -169,17 +169,22 @@ Test your installation with this quick verification script:
 
     ```python
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS
+    from soromox.systems import PlanarPCS, PlanarPCSParams
 
     # Create a simple 1-segment PCS robot
-    num_segments = 1
-    strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
-
-    # Initialize the system
-    _, forward_kinematics, _, _ = planar_pcs_num.factory(
-        num_segments, 
-        strain_selector
+    params = PlanarPCSParams(
+        length=jnp.array([0.1]),
+        radius=jnp.array([0.01]),
+        density=jnp.array([1000.0]),
+        young_modulus=jnp.array([1e6]),
+        shear_modulus=jnp.array([1e5]),
+        damping_matrix=jnp.eye(3),
+        gravity=jnp.array([0.0, -9.81]),
+        reference_strain=jnp.array([0.0, 1.0, 0.0]),
+        base_angle=jnp.array(jnp.pi / 2),
     )
+    robot = PlanarPCS(params=params)
+    robot.forward_kinematics(jnp.zeros(robot.num_dofs), s=0.1)
 
     print("🎉 SoRoMoX installation successful!")
     ```
@@ -189,14 +194,26 @@ Test your installation with this quick verification script:
     ```python
     import jax
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS
-    from soromox.parameters import Params
+    from soromox.systems import PlanarPCS, PlanarPCSParams
 
-    # Test JAX compilation and differentiation
+    params = PlanarPCSParams(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([1e5, 1e5]),
+        damping_matrix=jnp.eye(6),
+        gravity=jnp.array([0.0, -9.81]),
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 2),
+        base_angle=jnp.array(jnp.pi / 2),
+    )
+    robot = PlanarPCS(params=params)
+
+    # Test JAX compilation and differentiation. Same-shape params updates keep
+    # the PyTree layout fixed and avoid recompilation.
     @jax.jit
     def test_function(q):
-        robot = PlanarPCS(num_segments=2, params=Params.default())
-        return robot.forward_kinematics(q, s=1.0)
+        return robot.forward_kinematics(q, s=0.2)
 
     # Test with sample configuration
     q = jnp.array([0.1, 0.0, 0.0, 0.1, 0.0, 0.0])

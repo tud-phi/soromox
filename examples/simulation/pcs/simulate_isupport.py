@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems import ISupport, SystemState
+from soromox.systems import ISupport, ISupportParams, SystemState
 
 if __name__ == "__main__":
     num_segments = 1
@@ -26,33 +26,7 @@ if __name__ == "__main__":
         2 * (1 + poisson_ratio)
     )  # Shear modulus from elastic modulus and poisson ratio
 
-    params = {
-        "p0": jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
-        "L": 190 * 1e-3 * jnp.ones((num_segments,)),
-        "r": 35.6 * 1e-3 * jnp.ones((num_segments,)),
-        "rho": 1104
-        * jnp.ones((num_segments,)),  # material density of TPU 80 A LF by BASF [kg/m^3]
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": E * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": G * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "r_chamber_in": 6.39
-        * 1e-3
-        * jnp.ones(
-            (num_segments,)
-        ),  # inner radius of each segment's pneumatic chamber [m]
-        "r_chamber_out": 7.79
-        * 1e-3
-        * jnp.ones(
-            (num_segments,)
-        ),  # outer radius of each segment's pneumatic chamber [m]
-        "d_chamber": 20
-        * 1e-3
-        * jnp.ones(
-            (num_segments,)
-        ),  # radial distance of the center of the chambers from the centerline of the backbone [m]
-    }
+    segment_lengths = 190 * 1e-3 * jnp.ones((num_segments,))
 
     # damping coefficient
     # these values are from the paper but they seem way too large
@@ -60,7 +34,7 @@ if __name__ == "__main__":
     # gamma_r = 1.9416 * 10**(-4)  # rotational damping constant [m^2/s]
     gamma_t = 806 * 1e-3  # translational damping constant [1/s]
     gamma_r = 1.0 * 1e-4  # rotational damping constant [m^2/s]
-    params["D"] = jnp.diag(
+    damping_matrix = jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]]),
@@ -69,14 +43,28 @@ if __name__ == "__main__":
             )
         ).flatten()
     )
+    params = ISupportParams(
+        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=35.6 * 1e-3 * jnp.ones((num_segments,)),
+        density=1104 * jnp.ones((num_segments,)),
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        young_modulus=E * jnp.ones((num_segments,)),
+        shear_modulus=G * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+        chamber_inner_radius=6.39 * 1e-3 * jnp.ones((num_segments,)),
+        chamber_outer_radius=7.79 * 1e-3 * jnp.ones((num_segments,)),
+        chamber_distance=20 * 1e-3 * jnp.ones((num_segments,)),
+        chamber_angle_offset=jnp.zeros((num_segments,)),
+    )
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = ISupport(
-        num_segments=num_segments,
-        params=params,
-    )
+    robot = ISupport(params=params)
 
     # =====================================================
     # Simulation upon time

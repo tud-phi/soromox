@@ -5,10 +5,11 @@ from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
-from soromox.systems import CrossSectionGeometry, PlanarPCS
+from soromox.systems import CrossSectionGeometry, PlanarPCS, PlanarPCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2, exp_SE2
 from soromox.utils.tolerance import Tolerance
+from system_param_builders import planar_pcs_params
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -37,29 +38,32 @@ def make_planar_pcs(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     segment_length = 1e-1 if total_length is None else total_length / num_segments
-    params = {
-        "th0": jnp.array(th0),  # initial orientation angle [rad]
-        "L": segment_length * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, -9.81]),  # gravity vector [m/s^2] UP!
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = segment_length * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    params = planar_pcs_params(
+        base_angle=jnp.array(th0),  # initial orientation angle [rad]
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, -9.81]),  # gravity vector [m/s^2] UP!
+        young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        damping_matrix=damping_matrix,
+        reference_strain=xi_ref,
     )
 
     model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=xi_ref,
-        num_gauss_points=num_gauss_points,
-        strain_selector=strain_selector,
-        scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        structure=PlanarPCSStructure(
+            num_gauss_points=num_gauss_points,
+            strain_selector=strain_selector,
+            scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        ),
     )
 
     return model, params
@@ -109,7 +113,7 @@ def segment_tip_poses(model: PlanarPCS, q: Array) -> Array:
 def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     th, px, py = chi
-    th0 = params["th0"].item()
+    th0 = params.base_angle.item()
     print("th0 = ", th0)
     xi = (
         (th - th0)
@@ -255,7 +259,7 @@ def test_planar_constant_strain_call():
     # Test the differential relation: delta_chi ≈ J * delta_q
     print("Testing differential relation: delta_chi ≈ J * delta_q")
     delta_q = jnp.array([EPS, -EPS, 2 * EPS])
-    chi_plus = robot.forward_kinematics(q=q + delta_q, s=params["L"][0])
+    chi_plus = robot.forward_kinematics(q=q + delta_q, s=params.length[0])
     chi_pred = chi + J @ delta_q
     assert_allclose(chi_plus, chi_pred, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
@@ -265,10 +269,8 @@ def test_planar_constant_strain_call():
     q = jnp.zeros((3,))
     qd = jnp.zeros((3,))
     u = jnp.zeros((3,))  # no external forces
-    params_bis = params.copy()
-    params_bis["g"] = jnp.zeros((2,))  # no gravity for this test
-    robot = robot.update_params(params_bis)
-    print("q = ", q, "qd = ", qd, "u = ", u, "g = ", params_bis["g"])
+    robot = robot.update_params(gravity=jnp.zeros((2,)))  # no gravity for this test
+    print("q = ", q, "qd = ", qd, "u = ", u, "g = ", robot.params.gravity)
     y = jnp.concatenate([q, qd])
     yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qdd, qdres = jnp.split(yd, 2)
@@ -283,17 +285,17 @@ def test_public_planar_pcs_accessors_geometry_and_chi() -> None:
     q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
 
     assert model.is_planar is True
-    assert_allclose(model.length, jnp.sum(params["L"]), rtol=RTOL, atol=ATOL)
-    assert_allclose(model.segment_length, params["L"], rtol=RTOL, atol=ATOL)
+    assert_allclose(model.length, jnp.sum(params.length), rtol=RTOL, atol=ATOL)
+    assert_allclose(model.segment_length, params.length, rtol=RTOL, atol=ATOL)
 
-    s_second = params["L"][0] + 0.25 * params["L"][1]
+    s_second = params.length[0] + 0.25 * params.length[1]
     segment_idx, s_local = model.classify_segment(s_second)
     assert int(segment_idx) == 1
-    assert_allclose(s_local, 0.25 * params["L"][1], rtol=RTOL, atol=ATOL)
+    assert_allclose(s_local, 0.25 * params.length[1], rtol=RTOL, atol=ATOL)
 
     tag, geom = model.cross_section_geometry(q, s_second)
     assert int(tag) == CrossSectionGeometry.CIRCULAR
-    assert_allclose(geom, jnp.array([params["r"][1]]), rtol=RTOL, atol=ATOL)
+    assert_allclose(geom, jnp.array([params.radius[1]]), rtol=RTOL, atol=ATOL)
 
     xi = model.strain(q)
     assert_allclose(model.chi(xi, s_second), model.forward_kinematics(q, s_second))
@@ -525,7 +527,8 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments):
 
     model, params = make_planar_pcs(num_segments=num_segments)
     model_reduced = PlanarPCS(
-        num_segments=num_segments, params=params, strain_selector=strain_selector
+        params=params,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
 
     # Test with multiple random configurations
@@ -575,9 +578,8 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments):
     )
 
     model_no_curvature = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector_no_curvature,
+        structure=PlanarPCSStructure(strain_selector=strain_selector_no_curvature),
     )
 
     # Test one configuration with no curvature model
@@ -610,9 +612,8 @@ def test_inverse_kinematics_strain_selector_edge_cases():
         jnp.array([True, False, False]), num_segments
     )
     model_curvature_only = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector_curvature_only,
+        structure=PlanarPCSStructure(strain_selector=strain_selector_curvature_only),
     )
 
     # Test with a simple configuration
@@ -637,9 +638,8 @@ def test_inverse_kinematics_strain_selector_edge_cases():
         jnp.array([False, True, False]), num_segments
     )
     model_extension_only = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector_extension_only,
+        structure=PlanarPCSStructure(strain_selector=strain_selector_extension_only),
     )
 
     q_test2 = random_q(model_extension_only, key=jax.random.PRNGKey(222), scale=0.05)
@@ -1320,10 +1320,8 @@ def test_integration_kinematics_matches_existing_batched_path_planar(
         else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
     )
     model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
     dof = int(model.num_active_strains.item())
 
@@ -1373,10 +1371,8 @@ def test_dynamics_terms_match_public_matrices_planar(
         else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
     )
     model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
     dof = int(model.num_active_strains.item())
 
@@ -1411,20 +1407,16 @@ def test_cached_constant_matrices_refresh_after_update_params_planar():
     selector_per_segment = jnp.array([True, True, False], dtype=bool)
     base_model, params = make_planar_pcs(num_segments=2)
     model = PlanarPCS(
-        num_segments=2,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=jnp.tile(selector_per_segment, 2),
+        structure=PlanarPCSStructure(strain_selector=jnp.tile(selector_per_segment, 2)),
     )
 
     updated = model.update_params(
-        {
-            "r": 1.1 * model.r,
-            "rho": 0.9 * model.rho,
-            "E": 1.25 * model.E,
-            "G": 0.75 * model.G,
-            "D": 2.0 * model.D,
-        }
+        radius=1.1 * model.r,
+        density=0.9 * model.rho,
+        young_modulus=1.25 * model.E,
+        shear_modulus=0.75 * model.G,
+        damping_matrix=2.0 * model.D,
     )
     segment_ids = jnp.arange(updated.num_segments)
     expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
@@ -1583,10 +1575,8 @@ def test_strain_basis_creation_matches_selector_order_planar():
         [True, False, True, False, True, False, True, True, False], dtype=bool
     )
     model = PlanarPCS(
-        num_segments=3,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
 
     expected_B = expected_selection_basis(9, (0, 2, 4, 6, 7))
@@ -1682,7 +1672,7 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates_pla
         atol=ATOL,
     )
 
-    updated = scaled.update_params({"L": jnp.array([0.2, 0.3])})
+    updated = scaled.update_params(length=jnp.array([0.2, 0.3]))
     updated_scale = jnp.array([5.0, 1.0, 1.0, 10 / 3, 1.0, 1.0])
     assert_allclose(
         updated.B_xi,
@@ -1698,16 +1688,12 @@ def _make_full_and_reduced_planar(num_segments: int, selector_per_segment: Array
     # Build a base model and copy its params for both full and reduced variants
     base_model, params = make_planar_pcs(num_segments=num_segments)
     full_model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=None,
+        structure=PlanarPCSStructure(strain_selector=None),
     )
     reduced_model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
     return full_model, reduced_model, reduced_model.B_xi
 

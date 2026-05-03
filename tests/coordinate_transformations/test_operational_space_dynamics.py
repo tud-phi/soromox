@@ -11,6 +11,7 @@ from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems import PCS, Pendulum, PlanarPCS
 from soromox.utils.rotations import RotationRepresentation
 from soromox.utils.tolerance import Tolerance
+from system_param_builders import pcs_params, pendulum_params, planar_pcs_params
 
 # -----------------------
 # Fixtures
@@ -20,45 +21,45 @@ from soromox.utils.tolerance import Tolerance
 @pytest.fixture
 def pcs_robot():
     """Create a 2-segment PCS robot."""
-    params = {
-        "L": [0.1, 0.1],
-        "r": [0.01, 0.01],
-        "rho": [1000.0, 1000.0],
-        "E": [1e6, 1e6],
-        "G": [0.5e6, 0.5e6],
-        "D": jnp.eye(12) * 0.1,
-        "g": [0.0, 0.0, -9.81],
-    }
-    return PCS(num_segments=2, params=params)
+    params = pcs_params(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([0.5e6, 0.5e6]),
+        damping_matrix=jnp.eye(12) * 0.1,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+    )
+    return PCS(params=params)
 
 
 @pytest.fixture
 def planar_pcs_robot():
     """Create a 2-segment PlanarPCS robot."""
-    params = {
-        "L": [0.1, 0.1],
-        "r": [0.01, 0.01],
-        "rho": [1000.0, 1000.0],
-        "E": [1e6, 1e6],
-        "G": [0.5e6, 0.5e6],
-        "D": jnp.eye(6) * 0.1,
-        "g": [0.0, -9.81],
-    }
-    return PlanarPCS(num_segments=2, params=params)
+    params = planar_pcs_params(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([0.5e6, 0.5e6]),
+        damping_matrix=jnp.eye(6) * 0.1,
+        gravity=jnp.array([0.0, -9.81]),
+    )
+    return PlanarPCS(params=params)
 
 
 @pytest.fixture
 def pendulum_robot():
     """Create a 3-link pendulum robot."""
-    params = {
-        "m": jnp.array([1.0, 2.0, 0.8]),
-        "I": jnp.array([0.1, 0.2, 0.05]),
-        "L": jnp.array([1.0, 1.5, 0.8]),
-        "Lc": jnp.array([0.5, 0.75, 0.4]),
-        "g": jnp.array([0.0, -9.81]),
-        "K": jnp.eye(3) * 10.0,
-        "D": jnp.eye(3) * 0.5,
-    }
+    params = pendulum_params(
+        mass=jnp.array([1.0, 2.0, 0.8]),
+        moment_inertia=jnp.array([0.1, 0.2, 0.05]),
+        length=jnp.array([1.0, 1.5, 0.8]),
+        center_of_mass_length=jnp.array([0.5, 0.75, 0.4]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.eye(3) * 10.0,
+        joint_damping=jnp.eye(3) * 0.5,
+    )
     return Pendulum(params)
 
 

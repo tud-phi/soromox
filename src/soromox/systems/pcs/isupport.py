@@ -4,6 +4,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from soromox.systems.params import ISupportParams, PCSStructure
+
 from .pcs import PCS
 
 
@@ -46,6 +48,7 @@ class ISupport(PCS):
 
     """
 
+    params: ISupportParams
     actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
@@ -61,9 +64,8 @@ class ISupport(PCS):
 
     def __init__(
         self,
-        num_segments: int,
-        params: dict[str, Array],
-        *args,
+        params: ISupportParams,
+        structure: PCSStructure | None = None,
         segment_actuation_selector: Array | None = None,
         num_chambers_per_segment: int = 3,
         **kwargs: Any,
@@ -106,12 +108,9 @@ class ISupport(PCS):
                 Number of pneumatic chambers per segment. Defaults to 3.
             **kwargs: Additional keyword arguments.
         """
-        super().__init__(
-            num_segments,
-            params,
-            *args,
-            **kwargs,
-        )
+        if not isinstance(params, ISupportParams):
+            raise TypeError("params must be an ISupportParams instance.")
+        super().__init__(params, structure=structure, **kwargs)
 
         if segment_actuation_selector is None:
             segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)
@@ -134,7 +133,7 @@ class ISupport(PCS):
 
         self._set_params(params)
 
-    def _set_params(self, params: dict[str, Array]):
+    def _set_params(self, params: ISupportParams):
         """
         Set the parameters of the ISupport class.
 
@@ -177,171 +176,78 @@ class ISupport(PCS):
         super()._set_params(params)
 
         # Pneumatic chamber parameters
-        try:
-            r_chamber_in = params["r_chamber_in"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'r_chamber_in' (inner radius of each segment's pneumatic chamber) is required for the pneumatically actuated planar PCS."
-            )
-        if not isinstance(r_chamber_in, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'r_chamber_in' must be a list or a jnp.ndarray."
-            )
-        if len(r_chamber_in) != self.num_segments:
+        r_chamber_in = jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64)
+        if r_chamber_in.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'r_chamber_in' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_inner_radius must have shape "
+                f"({self.num_segments},), got {r_chamber_in.shape}."
             )
-        self.r_chamber_in = jnp.asarray(r_chamber_in, dtype=jnp.float64)
+        self.r_chamber_in = r_chamber_in
 
-        try:
-            r_chamber_out = params["r_chamber_out"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'r_chamber_out' (outer radius of each segment's pneumatic chamber) is required for the pneumatically actuated planar PCS."
-            )
-        if not isinstance(r_chamber_out, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'r_chamber_out' must be a list or a jnp.ndarray."
-            )
-        if len(r_chamber_out) != self.num_segments:
+        r_chamber_out = jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64)
+        if r_chamber_out.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'r_chamber_out' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_outer_radius must have shape "
+                f"({self.num_segments},), got {r_chamber_out.shape}."
             )
-        self.r_chamber_out = jnp.asarray(r_chamber_out, dtype=jnp.float64)
+        self.r_chamber_out = r_chamber_out
 
-        try:
-            d_chamber = params["d_chamber"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'd_chamber' (radial distance of the center of the chambers from the centerline of the backbone) is required for the pneumatically actuated planar PCS."
-            )
-        if not isinstance(d_chamber, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'd_chamber' must be a list or a jnp.ndarray."
-            )
-        if len(d_chamber) != self.num_segments:
+        d_chamber = jnp.asarray(params.chamber_distance, dtype=jnp.float64)
+        if d_chamber.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_distance must have shape "
+                f"({self.num_segments},), got {d_chamber.shape}."
             )
-        self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)
+        self.d_chamber = d_chamber
 
-        varphi_chamber_off = params.get(
-            "varphi_chamber_off", jnp.zeros(self.num_segments)
+        varphi_chamber_off = jnp.asarray(
+            params.chamber_angle_offset, dtype=jnp.float64
         )
-        if not isinstance(varphi_chamber_off, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'varphi_chamber_off' must be a list or a jnp.ndarray."
-            )
-        if len(varphi_chamber_off) != self.num_segments:
+        if varphi_chamber_off.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'varphi_chamber_off' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_angle_offset must have shape "
+                f"({self.num_segments},), got {varphi_chamber_off.shape}."
             )
-        self.varphi_chamber_off = jnp.asarray(varphi_chamber_off, dtype=jnp.float64)
+        self.varphi_chamber_off = varphi_chamber_off
 
-    def update_params(self, params: dict[str, Array]) -> "ISupport":
-        """
-        Update the parameters of the ISupport class.
-
-        Args:
-            params (Dict[str, Array]):
-                Dictionary that contains the robot parameters to update:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "r_chamber_in" : Array of num_segments floats
-                    Inner radius of each segment's pneumatic chamber [m]
-                - "r_chamber_out" : Array of num_segments floats
-                    Outer radius of each segment's pneumatic chamber [m]
-                - "d_chamber" : Array of num_segments floats
-                    Radial distance of the center of the chambers from the centerline of the backbone [m]
-                - "varphi_chamber_off" : Array of num_segments floats
-                    Angular offset of the first actuator from the local z-axis [rad]
-
-        Returns:
-            updated_self (PneumaticallyActuatedPlanarPCS):
-                A new instance of PneumaticallyActuatedPlanarPCS with updated parameters.
-        """
-        # Apply updates sequentially
-        updated_self = super().update_params(params)
-
-        if "r_chamber_in" in params:
-            r_chamber_in = params["r_chamber_in"]
-            if not isinstance(r_chamber_in, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'r_chamber_in' must be a list or a jnp.ndarray."
-                )
-            if len(r_chamber_in) != self.num_segments:
+    def with_params(self, params: ISupportParams) -> "ISupport":
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, ISupportParams):
+            raise TypeError("params must be an ISupportParams instance.")
+        chamber_arrays = (
+            jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64),
+            jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64),
+            jnp.asarray(params.chamber_distance, dtype=jnp.float64),
+            jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64),
+        )
+        for name, value in zip(
+            (
+                "chamber_inner_radius",
+                "chamber_outer_radius",
+                "chamber_distance",
+                "chamber_angle_offset",
+            ),
+            chamber_arrays,
+        ):
+            if value.shape != (self.num_segments,):
                 raise ValueError(
-                    f"The parameter 'r_chamber_in' must have the same length as the number of segments ({self.num_segments})."
+                    f"{name} must have shape ({self.num_segments},), got {value.shape}."
                 )
-            updated_self = eqx.tree_at(
-                lambda x: x.r_chamber_in,
-                updated_self,
-                jnp.asarray(r_chamber_in, dtype=jnp.float64),
-            )
+        updated_self = self._with_pcs_params(params)
+        return eqx.tree_at(
+            lambda model: (
+                model.r_chamber_in,
+                model.r_chamber_out,
+                model.d_chamber,
+                model.varphi_chamber_off,
+            ),
+            updated_self,
+            chamber_arrays,
+        )
 
-        if "r_chamber_out" in params:
-            r_chamber_out = params["r_chamber_out"]
-            if not isinstance(r_chamber_out, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'r_chamber_out' must be a list or a jnp.ndarray."
-                )
-            if len(r_chamber_out) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'r_chamber_out' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.r_chamber_out,
-                updated_self,
-                jnp.asarray(r_chamber_out, dtype=jnp.float64),
-            )
-
-        if "d_chamber" in params:
-            d_chamber = params["d_chamber"]
-            if not isinstance(d_chamber, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'd_chamber' must be a list or a jnp.ndarray."
-                )
-            if len(d_chamber) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.d_chamber,
-                updated_self,
-                jnp.asarray(d_chamber, dtype=jnp.float64),
-            )
-
-        if "varphi_chamber_off" in params:
-            varphi_chamber_off = params["varphi_chamber_off"]
-            if not isinstance(varphi_chamber_off, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'varphi_chamber_off' must be a list or a jnp.ndarray."
-                )
-            if len(varphi_chamber_off) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'varphi_chamber_off' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.varphi_chamber_off,
-                updated_self,
-                jnp.asarray(varphi_chamber_off, dtype=jnp.float64),
-            )
-
-        return updated_self
+    def update_params(self, **updates: Array) -> "ISupport":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
     def _local_actuator_polar_angles(self, i: Array) -> Array:
