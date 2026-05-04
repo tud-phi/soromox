@@ -647,7 +647,6 @@ if __name__ == "__main__":
         gravity=jnp.asarray(g),
         base_pose=p0,
         active_tendon_routing=active_tendon_routing,
-        max_dof=7,
         scale_rotational_basis_by_length=True,
     )
 
@@ -1065,5 +1064,4 @@ if __name__ == "__main__":
     # plt.savefig("violin_error_distribution_12markers.pdf", format="pdf", bbox_inches="tight")
     # plt.savefig("violin_error_distribution_12markers.jpg", format="jpg", dpi=300, bbox_inches="tight")
     plt.show()
-
 

@@ -434,7 +434,6 @@ if __name__ == "__main__":
         gravity=jnp.asarray(g),
         base_pose=p0,
         active_tendon_routing=active_tendon_routing,
-        max_dof=7,
         scale_rotational_basis_by_length=True,
     )
 
@@ -701,7 +700,6 @@ if __name__ == "__main__":
         gravity=jnp.asarray(g),
         base_pose=p0,
         active_tendon_routing=active_tendon_routing,
-        max_dof=7,
         scale_rotational_basis_by_length=True,
     )
 
