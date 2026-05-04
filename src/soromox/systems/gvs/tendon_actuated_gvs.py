@@ -321,8 +321,6 @@ class TendonActuatedGVS(GVS):
             -1, self.max_dof, self.num_actuators
         )
 
-        A_blocks_flat = A_blocks.reshape(-1, self.max_dof, self.num_actuators)
-
         A_full = A_blocks_flat.reshape(
             -1, self.num_actuators
         )  # (num_segments*2*max_dof, num_actuators)

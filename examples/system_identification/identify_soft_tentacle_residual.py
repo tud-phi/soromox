@@ -1,7 +1,6 @@
 import jax
 import pandas as pd
 import jax.numpy as jnp
-from soromox.systems import CrossSectionGeometry, TendonActuatedGVS
 import matplotlib.pyplot as plt
 import optimistix as optx
 import equinox as eqx

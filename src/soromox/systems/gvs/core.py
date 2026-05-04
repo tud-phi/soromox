@@ -3804,8 +3804,6 @@ class GVS(SoftRobot):
                     B_Xs_ij = B_Xs_ij.at[:3, :].divide(length_i)
 
                 return Ws_ij * (B_Xs_ij.T @ Es_ij @ B_Xs_ij)
-
-                return Ws_j * (B_Xs_j.T @ Es_j @ B_Xs_j)
             
             # we can skip the first and last quadrature points since their weight is zero
             K_link_i = (
