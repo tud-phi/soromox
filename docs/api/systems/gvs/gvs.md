@@ -5,11 +5,12 @@
 ## Overview
 
 `GVS` extends the PCS approach by letting each segment declare its own link,
-joint, strain basis, and quadrature resolution. Static segment choices live in
-`GVSStructure`; dynamic numeric arrays live in `GVSParams`. For ordinary use,
-construct from segment specs with `GVS.from_segments(...)`. The explicit
-`GVS(params=..., structure=...)` constructor remains available for advanced
-optimization and system-identification workflows.
+joint, strain basis, and quadrature resolution. For ordinary use, construct from
+segment specs with `GVS.from_segments(...)`. The factory splits those specs into
+`GVSStructure`, which stores only static choices, and `GVSParams`, which stores
+all dynamic numeric arrays. The explicit `GVS(params=..., structure=...)`
+constructor remains available for advanced optimization and
+system-identification workflows.
 
 ## Quick Start
 
@@ -45,16 +46,17 @@ q = jnp.zeros(robot.num_dofs)
 base_transform = robot.forward_kinematics(q, s=robot.segment_end_positions[-1])
 ```
 
-`GVS.from_segments(...)` still creates typed `GVSParams` and `GVSStructure`
+`GVS.from_segments(...)` creates typed `GVSParams` and `GVSStructure`
 internally, so `robot.params` can be optimized or partially replaced later.
-For workflows that need the split without constructing a robot, use
-`GVS.params_from_segments(...)`.
+Static structure contains no copied material constants, lengths, joint
+stiffness, or reference strains. For workflows that need the split without
+constructing a robot, use `GVS.params_from_segments(...)`.
 
 ## Segment Specs
 
-- `LinkSpec`: link geometry, material properties, and length. Use `LinkSpec.circular`, `LinkSpec.rectangular`, or `LinkSpec.elliptical` for common cross sections.
-- `JointSpec`: joint type and optional axis, plane, pitch, and stiffness. Factory methods include `fixed`, `revolute`, `prismatic`, `helical`, `cylindrical`, `planar`, `spherical`, and `free`.
-- `StrainBasisSpec`: basis family, active strain components, basis orders, and reference strain.
+- `LinkSpec`: construction input for link geometry, material properties, and length. Its numeric values are copied into `GVSParams.link`; only the cross-section family remains static.
+- `JointSpec`: construction input for joint type and optional axis, plane, pitch, and stiffness. Stiffness is copied into `GVSParams.joint_stiffness`.
+- `StrainBasisSpec`: construction input for basis family, active strain components, basis orders, and reference strain. Reference strain is copied into `GVSParams.reference_strain`.
 - `GVSSegment`: combines one link, one preceding joint, one strain basis, and `num_gauss_points`.
 
 ## Basis And Joint Names

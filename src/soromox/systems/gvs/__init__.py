@@ -1,13 +1,20 @@
-from .core import *
-from .specs import *
-from .tendon_actuated_gvs import *
 from soromox.systems.params import (
     GVSLinkParams,
     GVSParams,
-    GVSStructure,
     LinearTendonRoutingParams,
     TendonActuatedGVSParams,
 )
+from soromox.systems.structures import (
+    GVSJointStructure,
+    GVSLinkStructure,
+    GVSSegmentStructure,
+    GVSStrainBasisStructure,
+    GVSStructure,
+)
+
+from .core import *
+from .specs import *
+from .tendon_actuated_gvs import *
 
 __all__ = [
     "GVS",
@@ -19,6 +26,10 @@ __all__ = [
     "GVSLinkParams",
     "GVSParams",
     "GVSStructure",
+    "GVSSegmentStructure",
+    "GVSLinkStructure",
+    "GVSJointStructure",
+    "GVSStrainBasisStructure",
     "TendonActuatedGVSParams",
     "LinearTendonRoutingParams",
 ]

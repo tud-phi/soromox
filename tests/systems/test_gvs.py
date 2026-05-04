@@ -4,12 +4,12 @@ import numpy as onp
 import pytest
 from jax import Array, jacfwd, jacrev, jvp
 from numpy.testing import assert_allclose
+from system_param_builders import gvs_params_from_segments, pcs_params
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems import GVS, PCS, PCSStructure, CrossSectionGeometry
+from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSStructure
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import gvs_params_from_segments, pcs_params
 
 jax.config.update("jax_enable_x64", True)
 
@@ -367,9 +367,52 @@ def test_gvs_segment_factories_match_explicit_constructor() -> None:
 
     assert_allclose(factory.params.link.length, params.link.length)
     assert_allclose(factory.joint_stiffness, explicit.joint_stiffness)
-    assert_allclose(factory.cross_section_geometry_index, explicit.cross_section_geometry_index)
+    assert_allclose(
+        factory.cross_section_geometry_index, explicit.cross_section_geometry_index
+    )
     assert int(factory.cross_section_geometry_index[0]) == CrossSectionGeometry.CIRCULAR
-    assert int(factory.cross_section_geometry_index[1]) == CrossSectionGeometry.RECTANGULAR
+    assert (
+        int(factory.cross_section_geometry_index[1]) == CrossSectionGeometry.RECTANGULAR
+    )
+
+
+def test_gvs_structure_contains_only_static_segment_choices() -> None:
+    segment = GVSSegment(
+        link=LinkSpec.circular(
+            E=1.0e6,
+            nu=0.45,
+            rho=1000.0,
+            eta=1.0,
+            L=0.2,
+            r=0.02,
+        ),
+        joint=JointSpec(type="revolute", axis="z", stiffness=jnp.array([[0.3]])),
+        basis=StrainBasisSpec(
+            type="monomial",
+            active=[1, 1, 0, 0, 0, 0],
+            orders=[0, 1, 0, 0, 0, 0],
+            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        ),
+        num_gauss_points=5,
+    )
+    params, structure = GVS.params_from_segments(
+        [segment],
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        max_dof=6,
+    )
+    stored_segment = structure.segments[0]
+
+    assert stored_segment.link.cross_section_geometry == CrossSectionGeometry.CIRCULAR
+    for dynamic_name in ("E", "L", "rho", "r_i"):
+        assert not hasattr(stored_segment.link, dynamic_name)
+    assert stored_segment.joint.type == "revolute"
+    assert stored_segment.joint.axis == "z"
+    assert not hasattr(stored_segment.joint, "stiffness")
+    assert stored_segment.basis.active == (1, 1, 0, 0, 0, 0)
+    assert stored_segment.basis.orders == (0, 1, 0, 0, 0, 0)
+    assert not hasattr(stored_segment.basis, "xi_ref")
+    assert_allclose(params.link.young_modulus, jnp.array([1.0e6]))
+    assert_allclose(params.joint_stiffness[0, 0, 0], 0.3)
 
 
 def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
@@ -686,7 +729,9 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
 
     assert robot.is_planar is False
     assert_allclose(robot.length, jnp.sum(robot.segment_length), rtol=RTOL, atol=ATOL)
-    assert_allclose(robot.segment_length, robot.params.link.length, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        robot.segment_length, robot.params.link.length, rtol=RTOL, atol=ATOL
+    )
 
     s_second = robot.segment_length[0] + 0.25 * robot.segment_length[1]
     segment_idx, s_local = robot.classify_segment(s_second)
@@ -1500,6 +1545,12 @@ def test_cached_constant_matrices_refresh_after_update_params() -> None:
         )
     )
 
+    assert (
+        updated.structure.segments[0].link.cross_section_geometry
+        == robot.structure.segments[0].link.cross_section_geometry
+    )
+    assert not hasattr(updated.structure.segments[0].link, "E")
+    assert not hasattr(updated.structure.segments[0].link, "r_i")
     assert updated.K_full.shape == robot.K_full.shape
     assert updated.D_full.shape == robot.D_full.shape
     assert_allclose(

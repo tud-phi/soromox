@@ -8,13 +8,13 @@ from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
 import soromox.utils.lie_algebra as lie
-from soromox.utils.integration import scale_gaussian_quadrature
 from soromox.systems.params import (
     LinearTendonRoutingParams,
     PassiveTendonParams,
-    PCSStructure,
     TendonActuatedPCSParams,
 )
+from soromox.systems.structures import PCSStructure
+from soromox.utils.integration import scale_gaussian_quadrature
 
 from .pcs import PCS
 
@@ -167,9 +167,7 @@ class TendonActuatedPCS(PCS):
         # Set physical parameters of the passive tendons
         self._set_passive_tendon(params.passive_tendon)
 
-    def _set_passive_tendon(
-        self, passive_tendon: PassiveTendonParams
-    ) -> None:
+    def _set_passive_tendon(self, passive_tendon: PassiveTendonParams) -> None:
         """
         This internal function stores as attributes of the class the physical
         parameters of the passive tendons specified by the user.
@@ -313,7 +311,10 @@ class TendonActuatedPCS(PCS):
             raise ValueError(
                 "Changing the number of passive tendons requires reconstruction."
             )
-        if params.passive_tendon.num_tendons != params.passive_tendon_routing.num_tendons:
+        if (
+            params.passive_tendon.num_tendons
+            != params.passive_tendon_routing.num_tendons
+        ):
             raise ValueError(
                 "passive_tendon length must match passive_tendon_routing length."
             )

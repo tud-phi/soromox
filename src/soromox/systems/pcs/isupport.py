@@ -4,7 +4,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
-from soromox.systems.params import ISupportParams, PCSStructure
+from soromox.systems.params import ISupportParams
+from soromox.systems.structures import PCSStructure
 
 from .pcs import PCS
 
@@ -200,9 +201,7 @@ class ISupport(PCS):
             )
         self.d_chamber = d_chamber
 
-        varphi_chamber_off = jnp.asarray(
-            params.chamber_angle_offset, dtype=jnp.float64
-        )
+        varphi_chamber_off = jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64)
         if varphi_chamber_off.shape != (self.num_segments,):
             raise ValueError(
                 "chamber_angle_offset must have shape "

@@ -1,5 +1,7 @@
+from soromox.systems.params import PlanarHSAParams
+from soromox.systems.structures import PlanarHSAStructure
+
 from .planar_hsa import PlanarHSA
-from soromox.systems.params import PlanarHSAParams, PlanarHSAStructure
 
 __all__ = [
     "PlanarHSA",

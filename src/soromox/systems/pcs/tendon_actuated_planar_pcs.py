@@ -6,10 +6,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
-from soromox.systems.params import (
-    PlanarPCSStructure,
-    TendonActuatedPlanarPCSParams,
-)
+from soromox.systems.params import TendonActuatedPlanarPCSParams
+from soromox.systems.structures import PlanarPCSStructure
 
 from .planar_pcs import PlanarPCS
 
@@ -98,9 +96,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
             segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
         """
         if not isinstance(params, TendonActuatedPlanarPCSParams):
-            raise TypeError(
-                "params must be a TendonActuatedPlanarPCSParams instance."
-            )
+            raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")
         super().__init__(params, structure=structure, **kwargs)
 
         if segment_actuation_selector is None:
@@ -157,9 +153,7 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     ) -> "TendonActuatedPlanarPCS":
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, TendonActuatedPlanarPCSParams):
-            raise TypeError(
-                "params must be a TendonActuatedPlanarPCSParams instance."
-            )
+            raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")
         d = jnp.asarray(params.tendon_distance, dtype=jnp.float64)
         if d.shape != self.d.shape:
             raise ValueError(

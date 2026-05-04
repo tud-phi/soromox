@@ -9,11 +9,11 @@ from jax import numpy as jnp
 import soromox.actuation.tendon_actuation as act
 import soromox.utils.lie_algebra as lie
 from soromox.systems.params import (
-    GVSStructure,
     LinearTendonRoutingParams,
     PassiveTendonParams,
     TendonActuatedGVSParams,
 )
+from soromox.systems.structures import GVSStructure
 
 from .core import GVS
 from .specs import GVSSegment
@@ -181,9 +181,7 @@ class TendonActuatedGVS(GVS):
                 )
         return passive_tendon_routing
 
-    def _set_passive_tendon(
-        self, passive_tendon: PassiveTendonParams
-    ) -> None:
+    def _set_passive_tendon(self, passive_tendon: PassiveTendonParams) -> None:
         """Store per-passive-tendon stiffness, damping, and rest-length offsets."""
         if not isinstance(passive_tendon, PassiveTendonParams):
             raise TypeError("passive_tendon must be a PassiveTendonParams instance.")
@@ -253,9 +251,7 @@ class TendonActuatedGVS(GVS):
         """
         return tendon_routing_basis["d_s"], tendon_routing_basis["dd_s_ds"]
 
-    def with_params(
-        self, params: TendonActuatedGVSParams
-    ) -> "TendonActuatedGVS":
+    def with_params(self, params: TendonActuatedGVSParams) -> "TendonActuatedGVS":
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, TendonActuatedGVSParams):
             raise TypeError("params must be a TendonActuatedGVSParams instance.")
@@ -273,7 +269,10 @@ class TendonActuatedGVS(GVS):
             raise ValueError(
                 "Changing the number of passive tendons requires reconstruction."
             )
-        if params.passive_tendon.num_tendons != params.passive_tendon_routing.num_tendons:
+        if (
+            params.passive_tendon.num_tendons
+            != params.passive_tendon_routing.num_tendons
+        ):
             raise ValueError(
                 "passive_tendon length must match passive_tendon_routing length."
             )
@@ -559,6 +558,7 @@ class TendonActuatedGVS(GVS):
         d_s_fn: Callable,
     ) -> Array:
         """Compute forward kinematics for one batched tendon family."""
+
         def forward_kinematics_tendon_k(
             single_tendon_routing_params: LinearTendonRoutingParams,
             q: Array,

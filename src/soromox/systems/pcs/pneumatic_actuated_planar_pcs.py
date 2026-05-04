@@ -6,10 +6,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
-from soromox.systems.params import (
-    PlanarPCSStructure,
-    PneumaticActuatedPlanarPCSParams,
-)
+from soromox.systems.params import PneumaticActuatedPlanarPCSParams
+from soromox.systems.structures import PlanarPCSStructure
 
 from .planar_pcs import PlanarPCS
 

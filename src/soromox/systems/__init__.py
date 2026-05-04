@@ -4,11 +4,6 @@ from soromox.autodiff import (
     set_custom_jvp_enabled,
 )
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.soft_robot import (
-    CrossSectionGeometry,
-    SoftRobot,
-)
-from soromox.systems.system_state import EnvironmentState, SystemState
 from soromox.systems.params import (
     ArticulatedSoftRobotParams,
     BaseArticulatedSoftRobotParams,
@@ -18,23 +13,34 @@ from soromox.systems.params import (
     BaseTendonRoutingParams,
     GVSLinkParams,
     GVSParams,
-    GVSStructure,
     ISupportParams,
     LinearTendonRoutingParams,
-    PCSParams,
-    PCSStructure,
     PassiveTendonParams,
+    PCSParams,
     PendulumParams,
     PlanarHSAParams,
-    PlanarHSAStructure,
     PlanarPCSParams,
-    PlanarPCSStructure,
     PneumaticActuatedPlanarPCSParams,
     TendonActuatedGVSParams,
     TendonActuatedPCSParams,
     TendonActuatedPendulumParams,
     TendonActuatedPlanarPCSParams,
 )
+from soromox.systems.soft_robot import (
+    CrossSectionGeometry,
+    SoftRobot,
+)
+from soromox.systems.structures import (
+    GVSJointStructure,
+    GVSLinkStructure,
+    GVSSegmentStructure,
+    GVSStrainBasisStructure,
+    GVSStructure,
+    PCSStructure,
+    PlanarHSAStructure,
+    PlanarPCSStructure,
+)
+from soromox.systems.system_state import EnvironmentState, SystemState
 
 from .articulated import ArticulatedSoftRobot
 from .gvs import (
@@ -81,6 +87,10 @@ __all__ = [
     "GVSParams",
     "GVSLinkParams",
     "GVSStructure",
+    "GVSSegmentStructure",
+    "GVSLinkStructure",
+    "GVSJointStructure",
+    "GVSStrainBasisStructure",
     "GVSSegment",
     "LinkSpec",
     "JointSpec",

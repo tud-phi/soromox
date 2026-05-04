@@ -4,10 +4,10 @@
 
 ## Overview
 
-`TendonActuatedGVS` extends `GVS` with cable-driven actuation. Static GVS
-segment choices live in `GVSStructure`; numeric values and tendon layouts live in
-typed PyTree params. The usual constructor is segment-first via
-`TendonActuatedGVS.from_segments(...)`.
+`TendonActuatedGVS` extends `GVS` with cable-driven actuation. The usual
+constructor is segment-first via `TendonActuatedGVS.from_segments(...)`. The
+factory splits GVS segment specs into static structure and dynamic params, then
+stores tendon routing and passive tendon impedance in typed PyTree params.
 
 ## Quick Start
 
@@ -51,7 +51,10 @@ A = robot.actuation_matrix(q)
 ```
 
 As for plain `GVS`, the segment-first factory builds `GVSParams` and
-`GVSStructure` internally. `robot.params.body.link.length` is still available for
+`GVSStructure` internally. Static structure stores only choices such as joint
+family, basis layout, quadrature count, and cross-section family; numeric values
+like material constants, reference strain, and joint stiffness live in
+`robot.params.body`. `robot.params.body.link.length` is available for
 optimization/update workflows.
 
 ## Tendon Routing

@@ -6,8 +6,6 @@ __all__ = [
     "BaseTendonRoutingParams",
     "LinearTendonRoutingParams",
     "PassiveTendonParams",
-    "PCSStructure",
-    "PlanarPCSStructure",
     "PCSParams",
     "PlanarPCSParams",
     "TendonActuatedPCSParams",
@@ -17,15 +15,12 @@ __all__ = [
     "PendulumParams",
     "TendonActuatedPendulumParams",
     "ArticulatedSoftRobotParams",
-    "GVSStructure",
     "GVSLinkParams",
     "GVSParams",
     "TendonActuatedGVSParams",
-    "PlanarHSAStructure",
     "PlanarHSAParams",
 ]
 
-from collections.abc import Sequence
 from dataclasses import fields
 from typing import Any
 
@@ -207,31 +202,6 @@ class PassiveTendonParams(BaseSystemParams):
                 )
 
 
-class PCSStructure(eqx.Module):
-    """Static PCS layout that determines JAX compilation structure.
-
-    This stores quadrature count, strain activation, and basis scaling choices.
-    Changing any of these choices changes array shapes or static control flow and
-    therefore requires constructing a new ``PCS`` instance.
-    """
-
-    num_gauss_points: int = eqx.field(static=True, default=5)
-    strain_selector: Array | None = None
-    scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
-
-
-class PlanarPCSStructure(eqx.Module):
-    """Static planar PCS layout.
-
-    The fields mirror ``PCSStructure`` but apply to planar strain coordinates.
-    Dynamic physical values live in ``PlanarPCSParams``.
-    """
-
-    num_gauss_points: int = eqx.field(static=True, default=5)
-    strain_selector: Array | None = None
-    scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
-
-
 class PCSParams(BaseContinuumSoftRobotParams):
     """Dynamic parameters for the spatial PCS model.
 
@@ -285,10 +255,7 @@ class TendonActuatedPCSParams(BaseSystemParams):
         self.active_tendon_routing.validate()
         self.passive_tendon_routing.validate()
         self.passive_tendon.validate()
-        if (
-            self.passive_tendon.num_tendons
-            != self.passive_tendon_routing.num_tendons
-        ):
+        if self.passive_tendon.num_tendons != self.passive_tendon_routing.num_tendons:
             raise ValueError(
                 "passive_tendon must have one impedance entry per "
                 "passive_tendon_routing entry."
@@ -401,30 +368,15 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
     radius: Array
 
 
-class GVSStructure(eqx.Module):
-    """Static GVS segment structure and padded layout choices.
-
-    ``segments`` stores static ``GVSSegment`` specs: joint families, basis
-    families/orders/active masks, quadrature counts, and cross-section families.
-    ``max_dof`` and ``max_num_gauss_points`` control padding. Changing any field
-    here is a structural change and requires reconstruction.
-    """
-
-    segments: Sequence[Any] = eqx.field(static=True)
-    max_dof: int | None = eqx.field(static=True, default=None)
-    max_num_gauss_points: int | None = eqx.field(static=True, default=None)
-    scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
-
-
 class GVSLinkParams(BaseSystemParams):
     """Dynamic per-link arrays for all GVS segments.
 
     Every field has leading shape ``(num_segments,)``; this is not a single-link
-    object. It stores the numeric link values paired with the static link specs in
-    ``GVSStructure.segments``. ``length`` follows the singular per-link naming
-    convention used by the other fields. Reference strain is intentionally stored
-    on ``GVSParams`` because it belongs to the strain basis state, not the link
-    cross-section/material data.
+    object. It stores the numeric link values without duplicating the static
+    cross-section family stored in ``GVSStructure.segments``. ``length`` follows
+    the singular per-link naming convention used by the other fields. Reference
+    strain is intentionally stored on ``GVSParams`` because it belongs to the
+    strain basis state, not the link cross-section/material data.
     """
 
     length: Array
@@ -520,29 +472,11 @@ class TendonActuatedGVSParams(BaseSystemParams):
         self.active_tendon_routing.validate()
         self.passive_tendon_routing.validate()
         self.passive_tendon.validate()
-        if (
-            self.passive_tendon.num_tendons
-            != self.passive_tendon_routing.num_tendons
-        ):
+        if self.passive_tendon.num_tendons != self.passive_tendon_routing.num_tendons:
             raise ValueError(
                 "passive_tendon must have one impedance entry per "
                 "passive_tendon_routing entry."
             )
-
-
-class PlanarHSAStructure(eqx.Module):
-    """Static symbolic and layout choices for planar HSA.
-
-    The symbolic expression path, strain selector, underactuation flag,
-    hysteresis mode, and regularization epsilon determine static evaluation
-    structure. Dynamic physical values live in ``PlanarHSAParams``.
-    """
-
-    symbolic_expression_path: str = eqx.field(static=True)
-    strain_selector: Array | None = None
-    consider_underactuation: bool = eqx.field(static=True, default=True)
-    consider_hysteresis: bool = eqx.field(static=True, default=False)
-    eps: float = eqx.field(static=True, default=1e-6)
 
 
 class PlanarHSAParams(BaseSystemParams):

@@ -8,8 +8,9 @@ from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems.params import PCSParams, PCSStructure
+from soromox.systems.params import PCSParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.structures import PCSStructure
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
@@ -252,8 +253,7 @@ class PCS(SoftRobot):
         L = jnp.asarray(L, dtype=jnp.float64)
         if L.shape != (self.num_segments,):
             raise ValueError(
-                "length must have shape "
-                f"({self.num_segments},), got {L.shape}"
+                f"length must have shape ({self.num_segments},), got {L.shape}"
             )
         self.L = L
 
