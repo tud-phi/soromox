@@ -5,9 +5,9 @@ from typing import Any
 import jax.numpy as jnp
 
 import soromox.utils.lie_algebra as lie
+from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
-from soromox.systems.params import GVSParams
-from soromox.systems.structures import GVSSegmentStructure
+from soromox.systems.gvs.structures import GVSSegmentStructure
 from soromox.utils.basic import compute_strain_basis
 
 

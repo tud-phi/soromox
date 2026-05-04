@@ -8,9 +8,9 @@ from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems.params import PCSParams
+from soromox.systems.pcs.params import PCSParams
+from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
-from soromox.systems.structures import PCSStructure
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,

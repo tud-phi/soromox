@@ -6,8 +6,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
-from soromox.systems.params import PneumaticActuatedPlanarPCSParams
-from soromox.systems.structures import PlanarPCSStructure
+from soromox.systems.pcs.params import PneumaticActuatedPlanarPCSParams
+from soromox.systems.pcs.structures import PlanarPCSStructure
 
 from .planar_pcs import PlanarPCS
 
@@ -93,15 +93,18 @@ class PneumaticActuatedPlanarPCS(PlanarPCS):
         Initialize the PneumaticallyActuatedPlanarPCS class
 
         Args:
-            num_segments (int): number of segments in the robot
-            params (Dict[str, Array]): dictionary containing the robot parameters
-            segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
-            chamber_cross_section_geometry: the cross sectional geometry of the chambers. Options:
+            params: Dynamic pneumatic planar PCS parameters.
+            structure: Static planar PCS layout. If omitted, the default planar
+                PCS structure is used.
+            segment_actuation_selector: Boolean array selecting the actuated
+                segments. Defaults to all segments active.
+            chamber_cross_section_geometry: Cross-sectional geometry of the chambers. Options:
                 - circular: assumes circular chamber cross sections with outside radius "r_chamber_out" and inside radius "r_chamber_in" with their center at a distance of "d_chamber" from the centerline of the backbone
                 - concentric: assumes chambers that are concentric with the circular geometry of the soft robot cross sectional geometry with outside radius "r_chamber_out", inside radius "r_chamber_in", and sector angle "phi_chamber".
             pneumatic_load_distribution_assumption: determines the assumption used to map the pneumatic forces into configuration space. Options:
                 - infitesimal: assumes infitesimally thin chambers (in terms of height) such that the pneumatic forces and torques directly act on the generalized coordinates
                 - cap_bodyframe_jacobians: assumes that the pneumatic chambers contain two discrete caps at the proximal and distal end of the segment, respectively. Then, the bodyframe jacobian is used to map the wrenches on the generalized coordinates
+            **kwargs: Additional keyword arguments.
         """
         if not isinstance(params, PneumaticActuatedPlanarPCSParams):
             raise TypeError(

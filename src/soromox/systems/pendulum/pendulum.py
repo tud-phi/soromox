@@ -7,7 +7,7 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from soromox.systems.params import PendulumParams
+from soromox.systems.pendulum.params import PendulumParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
@@ -453,7 +453,9 @@ class Pendulum(SoftRobot):
         return J_tips
 
     @eqx.filter_jit
-    def jacobian_and_time_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
+    def jacobian_and_time_derivatives_tips(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 

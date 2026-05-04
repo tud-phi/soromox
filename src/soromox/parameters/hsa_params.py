@@ -21,7 +21,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from soromox.systems.params import PlanarHSAParams
+from soromox.systems.hsa.params import PlanarHSAParams
 
 
 def planar_hsa_params_from_values(params: dict[str, Array]) -> PlanarHSAParams:

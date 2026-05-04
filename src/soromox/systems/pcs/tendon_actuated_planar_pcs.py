@@ -6,8 +6,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
-from soromox.systems.params import TendonActuatedPlanarPCSParams
-from soromox.systems.structures import PlanarPCSStructure
+from soromox.systems.pcs.params import TendonActuatedPlanarPCSParams
+from soromox.systems.pcs.structures import PlanarPCSStructure
 
 from .planar_pcs import PlanarPCS
 
@@ -71,29 +71,12 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         Initialize the TendonActuatedPlanarPCS class
 
         Args:
-            num_segments (int): number of segments in the robot
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                    Default is 90 degrees (1.57 radians).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "d": List/Array of num_segments floats
-                    Distance of the tendons from the segment's backbone [m]
-            segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
+            params: Dynamic tendon-actuated planar PCS parameters.
+            structure: Static planar PCS layout. If omitted, the default planar
+                PCS structure is used.
+            segment_actuation_selector: Boolean array selecting the actuated
+                segments. Defaults to all segments active.
+            **kwargs: Additional keyword arguments.
         """
         if not isinstance(params, TendonActuatedPlanarPCSParams):
             raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")

@@ -1,36 +1,16 @@
 __all__ = [
-    "PCSStructure",
-    "PlanarPCSStructure",
     "GVSLinkStructure",
     "GVSJointStructure",
     "GVSStrainBasisStructure",
     "GVSSegmentStructure",
     "GVSStructure",
-    "PlanarHSAStructure",
 ]
 
 from typing import Any
 
 import equinox as eqx
-from jax import Array
 
 from soromox.systems.soft_robot import CrossSectionGeometry
-
-
-class PCSStructure(eqx.Module):
-    """Static PCS layout that determines JAX compilation structure."""
-
-    num_gauss_points: int = eqx.field(static=True, default=5)
-    strain_selector: Array | None = None
-    scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
-
-
-class PlanarPCSStructure(eqx.Module):
-    """Static planar PCS layout."""
-
-    num_gauss_points: int = eqx.field(static=True, default=5)
-    strain_selector: Array | None = None
-    scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
 
 
 class GVSLinkStructure(eqx.Module):
@@ -88,13 +68,3 @@ class GVSStructure(eqx.Module):
     max_dof: int | None = eqx.field(static=True, default=None)
     max_num_gauss_points: int | None = eqx.field(static=True, default=None)
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
-
-
-class PlanarHSAStructure(eqx.Module):
-    """Static symbolic and layout choices for planar HSA."""
-
-    symbolic_expression_path: str = eqx.field(static=True)
-    strain_selector: Array | None = None
-    consider_underactuation: bool = eqx.field(static=True, default=True)
-    consider_hysteresis: bool = eqx.field(static=True, default=False)
-    eps: float = eqx.field(static=True, default=1e-6)

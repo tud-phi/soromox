@@ -8,7 +8,7 @@ from jax import Array, lax, vmap
 from jax import numpy as jnp
 
 import soromox.utils.lie_algebra as lie
-from soromox.systems.params import ArticulatedSoftRobotParams
+from soromox.systems.articulated.params import ArticulatedSoftRobotParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
@@ -132,17 +132,13 @@ class ArticulatedSoftRobot(SoftRobot):
         if m.shape != (n,):
             raise ValueError(f"mass must have shape {(n,)}.")
         if I_com.shape != (n, 3, 3):
-            raise ValueError(
-                f"center_of_mass_inertia must have shape {(n, 3, 3)}."
-            )
+            raise ValueError(f"center_of_mass_inertia must have shape {(n, 3, 3)}.")
         if g.shape != (3,):
             raise ValueError("gravity must have shape (3,).")
 
         g_parent_joint = jnp.asarray(params.parent_to_joint_transform)
         if g_parent_joint.shape != (n, 4, 4):
-            raise ValueError(
-                f"parent_to_joint_transform must have shape {(n, 4, 4)}."
-            )
+            raise ValueError(f"parent_to_joint_transform must have shape {(n, 4, 4)}.")
 
         self.num_links = int(n)
         self.num_dofs = self.num_links
@@ -547,7 +543,9 @@ class ArticulatedSoftRobot(SoftRobot):
         return self._jacobian_for_point_from_screws(screws, link_idx, g_s[:3, 3])
 
     @eqx.filter_jit
-    def jacobian_and_time_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
+    def jacobian_and_time_derivatives_tips(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array]:
         """
         Compute tip Jacobians and their time derivatives.
 
@@ -929,9 +927,7 @@ class ArticulatedSoftRobot(SoftRobot):
                 )
         return arrays
 
-    def with_params(
-        self, params: ArticulatedSoftRobotParams
-    ) -> "ArticulatedSoftRobot":
+    def with_params(self, params: ArticulatedSoftRobotParams) -> "ArticulatedSoftRobot":
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, ArticulatedSoftRobotParams):
             raise TypeError("params must be an ArticulatedSoftRobotParams instance.")

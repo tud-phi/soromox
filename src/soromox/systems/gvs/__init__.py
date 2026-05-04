@@ -1,16 +1,16 @@
-from soromox.systems.params import (
+from soromox.systems.gvs.params import (
     GVSLinkParams,
     GVSParams,
-    LinearTendonRoutingParams,
     TendonActuatedGVSParams,
 )
-from soromox.systems.structures import (
+from soromox.systems.gvs.structures import (
     GVSJointStructure,
     GVSLinkStructure,
     GVSSegmentStructure,
     GVSStrainBasisStructure,
     GVSStructure,
 )
+from soromox.systems.params import LinearTendonRoutingParams
 
 from .core import *
 from .specs import *

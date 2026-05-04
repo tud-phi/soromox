@@ -4,8 +4,8 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
-from soromox.systems.params import ISupportParams
-from soromox.systems.structures import PCSStructure
+from soromox.systems.pcs.params import ISupportParams
+from soromox.systems.pcs.structures import PCSStructure
 
 from .pcs import PCS
 
@@ -75,37 +75,13 @@ class ISupport(PCS):
         Initialize the ISupport class
 
         Args:
-            num_segments (int):
-                Number of segments in the robot.
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-            segment_actuation_selector (Optional[Array], optional):
-                Boolean array of shape (num_segments,) specifying which segments are actively controlled.
-                Defaults to all segments active (i.e. all True).
-            num_chambers_per_segment (int, optional):
+            params: Dynamic I-SUPPORT parameters.
+            structure: Static PCS layout. If omitted, the default PCS structure
+                is used.
+            segment_actuation_selector: Boolean array of shape ``(num_segments,)``
+                specifying which segments are actively controlled. Defaults to all
+                segments active.
+            num_chambers_per_segment:
                 Number of pneumatic chambers per segment. Defaults to 3.
             **kwargs: Additional keyword arguments.
         """

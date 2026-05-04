@@ -6,7 +6,7 @@ import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems.params import TendonActuatedPendulumParams
+from soromox.systems.pendulum.params import TendonActuatedPendulumParams
 
 from .pendulum import Pendulum
 
@@ -264,7 +264,9 @@ class TendonActuatedPendulum(Pendulum):
         if R_at.shape[1] != self.num_links or R_pt.shape[1] != self.num_links:
             raise ValueError("routing matrices must have one column per link.")
         if k_pt.shape != (R_pt.shape[0],) or d_pt.shape != (R_pt.shape[0],):
-            raise ValueError("passive_tendon stiffness and damping must match R_pt rows.")
+            raise ValueError(
+                "passive_tendon stiffness and damping must match R_pt rows."
+            )
         if l_pt0.shape != (R_pt.shape[0],):
             raise ValueError("passive_tendon rest_length_offset must match R_pt rows.")
         if q_ref_at.shape != (self.num_links,) or q_ref_pt.shape != (self.num_links,):

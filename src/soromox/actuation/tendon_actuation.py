@@ -1,8 +1,17 @@
-__all__ = ["linear_routing", "linear_routing_arc_length_derivative"]
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from jax import Array
 from jax import numpy as jnp
 
+if TYPE_CHECKING:
+    from soromox.systems.params import LinearTendonRoutingParams
 
-def linear_routing(tendon_routing_params, s):
+__all__ = ["linear_routing", "linear_routing_arc_length_derivative"]
+
+
+def linear_routing(tendon_routing_params: LinearTendonRoutingParams, s: Array) -> Array:
     """
     Routing of linear tendons as a function of ``s``.
 
@@ -30,7 +39,9 @@ def linear_routing(tendon_routing_params, s):
     return jnp.stack([jnp.zeros_like(y), y, z], axis=-1)
 
 
-def linear_routing_arc_length_derivative(tendon_routing_params, s):
+def linear_routing_arc_length_derivative(
+    tendon_routing_params: LinearTendonRoutingParams, s: Array
+) -> Array:
     """
     Arc-length derivative of the linear tendon routing as a function of ``s``.
 

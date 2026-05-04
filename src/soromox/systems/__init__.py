@@ -3,42 +3,43 @@ from soromox.autodiff import (
     custom_jvp_mode,
     set_custom_jvp_enabled,
 )
+from soromox.systems.articulated.params import ArticulatedSoftRobotParams
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.params import (
-    ArticulatedSoftRobotParams,
-    BaseArticulatedSoftRobotParams,
-    BaseContinuumSoftRobotParams,
-    BaseSoftRobotParams,
-    BaseSystemParams,
-    BaseTendonRoutingParams,
-    GVSLinkParams,
-    GVSParams,
-    ISupportParams,
-    LinearTendonRoutingParams,
-    PassiveTendonParams,
-    PCSParams,
-    PendulumParams,
-    PlanarHSAParams,
-    PlanarPCSParams,
-    PneumaticActuatedPlanarPCSParams,
-    TendonActuatedGVSParams,
-    TendonActuatedPCSParams,
-    TendonActuatedPendulumParams,
-    TendonActuatedPlanarPCSParams,
-)
-from soromox.systems.soft_robot import (
-    CrossSectionGeometry,
-    SoftRobot,
-)
-from soromox.systems.structures import (
+from soromox.systems.gvs.params import GVSLinkParams, GVSParams, TendonActuatedGVSParams
+from soromox.systems.gvs.structures import (
     GVSJointStructure,
     GVSLinkStructure,
     GVSSegmentStructure,
     GVSStrainBasisStructure,
     GVSStructure,
-    PCSStructure,
-    PlanarHSAStructure,
-    PlanarPCSStructure,
+)
+from soromox.systems.hsa.params import PlanarHSAParams
+from soromox.systems.hsa.structures import PlanarHSAStructure
+from soromox.systems.params import (
+    BaseArticulatedSoftRobotParams,
+    BaseContinuumSoftRobotParams,
+    BaseSoftRobotParams,
+    BaseSystemParams,
+    BaseTendonRoutingParams,
+    LinearTendonRoutingParams,
+    PassiveTendonParams,
+)
+from soromox.systems.pcs.params import (
+    ISupportParams,
+    PCSParams,
+    PlanarPCSParams,
+    PneumaticActuatedPlanarPCSParams,
+    TendonActuatedPCSParams,
+    TendonActuatedPlanarPCSParams,
+)
+from soromox.systems.pcs.structures import PCSStructure, PlanarPCSStructure
+from soromox.systems.pendulum.params import (
+    PendulumParams,
+    TendonActuatedPendulumParams,
+)
+from soromox.systems.soft_robot import (
+    CrossSectionGeometry,
+    SoftRobot,
 )
 from soromox.systems.system_state import EnvironmentState, SystemState
 

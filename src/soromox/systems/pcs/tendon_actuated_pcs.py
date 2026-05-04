@@ -11,9 +11,9 @@ import soromox.utils.lie_algebra as lie
 from soromox.systems.params import (
     LinearTendonRoutingParams,
     PassiveTendonParams,
-    TendonActuatedPCSParams,
 )
-from soromox.systems.structures import PCSStructure
+from soromox.systems.pcs.params import TendonActuatedPCSParams
+from soromox.systems.pcs.structures import PCSStructure
 from soromox.utils.integration import scale_gaussian_quadrature
 
 from .pcs import PCS

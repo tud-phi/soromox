@@ -1,8 +1,9 @@
 # Parameters
 
-System parameters are represented as typed Equinox PyTrees from
-`soromox.systems.params`. Static compilation choices live in
-`soromox.systems.structures`.
+System parameters are represented as typed Equinox PyTrees. Shared base classes
+and cross-system tendon params live in `soromox.systems.params`; concrete params
+and structures live next to their system family, for example
+`soromox.systems.gvs.params` and `soromox.systems.gvs.structures`.
 
 ## Overview
 
@@ -18,6 +19,18 @@ Each system separates dynamic numeric values from static model structure:
   need richer setup. For GVS, `GVSSegment`, `LinkSpec`, `JointSpec`, and
   `StrainBasisSpec` may contain both static choices and numeric values; factory
   methods split them into params and structure objects.
+
+The top-level `soromox.systems` package re-exports the public params,
+structures, and specs for convenient imports. Internally, concrete containers
+are family-local:
+
+| System family | Dynamic params | Static structures | Construction specs |
+|---------------|----------------|-------------------|--------------------|
+| PCS | `soromox.systems.pcs.params` | `soromox.systems.pcs.structures` | - |
+| GVS | `soromox.systems.gvs.params` | `soromox.systems.gvs.structures` | `soromox.systems.gvs.specs` |
+| HSA | `soromox.systems.hsa.params` | `soromox.systems.hsa.structures` | - |
+| Pendulum | `soromox.systems.pendulum.params` | - | - |
+| Articulated | `soromox.systems.articulated.params` | - | - |
 
 The public construction pattern is:
 
@@ -134,7 +147,70 @@ updated_robot = robot.update_params(length=jnp.array([0.12, 0.1]))
       docstring_section_style: table
       members_order: source
 
-::: soromox.systems.structures
+::: soromox.systems.pcs.params
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.pcs.structures
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.gvs.params
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.gvs.structures
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.hsa.params
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.hsa.structures
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.pendulum.params
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      group_by_category: true
+      docstring_section_style: table
+      members_order: source
+
+::: soromox.systems.articulated.params
     options:
       show_root_heading: true
       show_source: false

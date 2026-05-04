@@ -8,12 +8,12 @@ from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
 import soromox.utils.lie_algebra as lie
+from soromox.systems.gvs.params import TendonActuatedGVSParams
+from soromox.systems.gvs.structures import GVSStructure
 from soromox.systems.params import (
     LinearTendonRoutingParams,
     PassiveTendonParams,
-    TendonActuatedGVSParams,
 )
-from soromox.systems.structures import GVSStructure
 
 from .core import GVS
 from .specs import GVSSegment

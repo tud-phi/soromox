@@ -9,9 +9,9 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
-from soromox.systems.params import PlanarHSAParams
+from soromox.systems.hsa.params import PlanarHSAParams
+from soromox.systems.hsa.structures import PlanarHSAStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
-from soromox.systems.structures import PlanarHSAStructure
 from soromox.utils.basic import (
     compute_strain_basis,
     concatenate_params_syms,
@@ -227,14 +227,10 @@ class PlanarHSA(SoftRobot):
         Initialize the PlanarHSA system.
 
         Args:
-            sym_exp_filepath: path to file containing symbolic expressions
-            params: dictionary with robot parameters
-            strain_selector: array of shape (num_dofs, ) with boolean values indicating which components of the
-                    strain are active / non-zero
-            consider_underactuation (bool): If True, the underactuation model is considered. Otherwise, the fully-actuated
-                    model is considered with the identity matrix as the actuation matrix.
-            consider_hysteresis: If True, Bouc-Wen is used to model hysteresis. Otherwise, hysteresis will be neglected.
-            eps: small number to avoid singularities (e.g., division by zero)
+            params: Dynamic HSA parameters.
+            structure: Static symbolic expression path and layout choices. This
+                includes the strain selector, underactuation flag, hysteresis
+                flag, and regularization epsilon.
             **kwargs: Additional keyword arguments for SoftRobot.__init__.
         """
         if not isinstance(params, PlanarHSAParams):

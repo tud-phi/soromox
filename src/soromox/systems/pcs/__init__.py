@@ -1,14 +1,16 @@
 from soromox.systems.params import (
-    ISupportParams,
     LinearTendonRoutingParams,
     PassiveTendonParams,
+)
+from soromox.systems.pcs.params import (
+    ISupportParams,
     PCSParams,
     PlanarPCSParams,
     PneumaticActuatedPlanarPCSParams,
     TendonActuatedPCSParams,
     TendonActuatedPlanarPCSParams,
 )
-from soromox.systems.structures import PCSStructure, PlanarPCSStructure
+from soromox.systems.pcs.structures import PCSStructure, PlanarPCSStructure
 
 from .isupport import ISupport
 from .pcs import PCS
