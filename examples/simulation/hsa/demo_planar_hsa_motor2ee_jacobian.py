@@ -164,7 +164,9 @@ if __name__ == "__main__":
         strain_selector=strain_selector,
     )
 
-    phi_max = jnp.full(params.rod_height.shape, 270 / 180 * jnp.pi).flatten()
+    # PLANAR_HSA_FPU_CONTROL_PARAMS is calibrated up to 200 degrees.
+    # Keep random samples within the model's intended actuation range.
+    phi_max = jnp.full(params.rod_height.shape, 200 / 180 * jnp.pi).flatten()
 
     # define initial configuration
     q0 = jnp.array([0.0, 0.0, 0.0])
