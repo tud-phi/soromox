@@ -14,6 +14,7 @@ from soromox.systems import (
     GVSSegment,
     JointSpec,
     LinkSpec,
+    LinearTendonRoutingParams,
     StrainBasisSpec,
     TendonActuatedGVS,
 )
@@ -617,25 +618,25 @@ if __name__ == "__main__":
     num_gauss_points = [8, 8]
     g = [0.0, 0.0, -9.81]
 
-    active_tendon_routing_params = {
-        "ry": jnp.array(
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=jnp.array(
             [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
         ),
-        "my": jnp.array(
+        y_slope=jnp.array(
             [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
         ),
-        "rz": jnp.array(
+        z_intercept=jnp.array(
             [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
         ),
-        "mz": jnp.array(
+        z_slope=jnp.array(
             [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
         ),
-        "idx_seg_att": jnp.array([0, 0]),
-    }
+        attachment_segment_index=jnp.array([0, 0]),
+    )
     p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
 
-    robot = TendonActuatedGVS(
-        segments=[
+    robot = TendonActuatedGVS.from_segments(
+        [
             GVSSegment(
                 link=link1, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
             ),
@@ -643,9 +644,10 @@ if __name__ == "__main__":
                 link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
             ),
         ],
-        g=g,
-        active_tendon_routing_params=active_tendon_routing_params,
-        p0=p0,
+        gravity=jnp.asarray(g),
+        base_pose=p0,
+        active_tendon_routing=active_tendon_routing,
+        max_dof=7,
         scale_rotational_basis_by_length=True,
     )
 
@@ -1063,6 +1065,5 @@ if __name__ == "__main__":
     # plt.savefig("violin_error_distribution_12markers.pdf", format="pdf", bbox_inches="tight")
     # plt.savefig("violin_error_distribution_12markers.jpg", format="jpg", dpi=300, bbox_inches="tight")
     plt.show()
-
 
 
