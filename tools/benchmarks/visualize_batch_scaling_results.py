@@ -86,6 +86,7 @@ SIZE_STYLES = {
 }
 FALLBACK_LINESTYLES = ["-", "--", "-.", ":", (0, (5, 2)), (0, (1, 1))]
 FALLBACK_MARKERS = ["o", "s", "^", "D", "p", "x", "v", "*"]
+SEGMENT_SIZE_LABELS = {"num_segments", "num_links"}
 
 
 def _system_key(system: Any) -> str:
@@ -218,6 +219,37 @@ def _filter_rows(
         filtered.append(row)
     if not filtered:
         raise ValueError("No rows remain after applying the requested filters.")
+    return filtered
+
+
+def _filter_to_shared_segment_range(
+    rows: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    size_labels = {row["size_label"] for row in rows}
+    if not size_labels <= SEGMENT_SIZE_LABELS:
+        return list(rows)
+
+    sizes_by_system: dict[Any, list[int]] = {}
+    for row in rows:
+        sizes_by_system.setdefault(row["system"], []).append(_size_value(row))
+
+    if len(sizes_by_system) < 2:
+        return list(rows)
+
+    common_min = max(min(sizes) for sizes in sizes_by_system.values())
+    common_max = min(max(sizes) for sizes in sizes_by_system.values())
+    filtered = [
+        row for row in rows if common_min <= _size_value(row) <= common_max
+    ]
+    if not filtered:
+        raise ValueError(
+            "No rows remain after limiting to the shared segment-count range."
+        )
+    if len(filtered) < len(rows):
+        print(
+            "[i] Limited segment/link plots to the shared size range "
+            f"{common_min}..{common_max}."
+        )
     return filtered
 
 
@@ -583,12 +615,16 @@ def _plot_combined_scaling(
     size_labels = {row["size_label"] for row in rows}
     if size_labels <= {"num_segments", "num_links"}:
         size_label = r"$N$"
+        size_legend_title = "Number of Segments"
     elif size_labels == {"strain_basis_order"}:
         size_label = r"$p$"
+        size_legend_title = "Basis Order"
     elif size_labels <= {"num_segments", "num_links", "strain_basis_order"}:
         size_label = r"$N$ or $p$"
+        size_legend_title = "Resolution"
     else:
         size_label = _size_label(rows[0]["size_label"], compact=True)
+        size_legend_title = "Resolution"
     size_handles = []
     for size in size_values:
         linestyle, marker = _style_for_size(size)
@@ -618,7 +654,7 @@ def _plot_combined_scaling(
     ax.add_artist(first_legend)
     ax.legend(
         handles=size_handles,
-        title="Resolution",
+        title=size_legend_title,
         loc="lower right",
         ncol=2 if len(size_handles) > 4 else 1,
         frameon=True,
@@ -722,6 +758,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
     rows = _load_rows(args.csv)
     rows = _filter_rows(rows, args.systems, args.segment_counts, args.gauss_points)
+    rows = _filter_to_shared_segment_range(rows)
     throughput_output: Path | None = None
     if args.output is not None:
         throughput_output = args.output.with_name(
