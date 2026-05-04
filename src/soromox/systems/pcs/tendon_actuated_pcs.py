@@ -202,12 +202,9 @@ class TendonActuatedPCS(PCS):
             )
         tendon_routing_params.validate()
         self.num_actuators = tendon_routing_params.num_tendons
-        for idx in tendon_routing_params.attachment_segment_index:
-            if idx >= self.num_segments:
-                raise ValueError(
-                    "active_tendon_routing.attachment_segment_index values must be strictly "
-                    + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
-                )
+        tendon_routing_params.validate_attachment_segments(
+            self.num_segments, "active_tendon_routing"
+        )
         if self._check_tendon_routing_in_body(tendon_routing_params, d_s):
             raise UserWarning("Active tendon(s) exit the robot body.")
         return tendon_routing_params
@@ -228,12 +225,9 @@ class TendonActuatedPCS(PCS):
             )
         tendon_routing_params.validate()
         self.n_p = tendon_routing_params.num_tendons
-        for idx in tendon_routing_params.attachment_segment_index:
-            if idx >= self.num_segments:
-                raise ValueError(
-                    "passive_tendon_routing.attachment_segment_index values must be strictly "
-                    + "lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
-                )
+        tendon_routing_params.validate_attachment_segments(
+            self.num_segments, "passive_tendon_routing"
+        )
         if self._check_tendon_routing_in_body(tendon_routing_params, d_s):
             raise UserWarning("Passive tendon(s) exit the robot body.")
         return tendon_routing_params
@@ -321,6 +315,12 @@ class TendonActuatedPCS(PCS):
         params.active_tendon_routing.validate()
         params.passive_tendon_routing.validate()
         params.passive_tendon.validate()
+        self.params.active_tendon_routing.assert_same_attachment_segments(
+            params.active_tendon_routing, "active_tendon_routing"
+        )
+        self.params.passive_tendon_routing.assert_same_attachment_segments(
+            params.passive_tendon_routing, "passive_tendon_routing"
+        )
 
         updated_self = self._with_pcs_params(params.body, stored_params=params)
         return eqx.tree_at(
@@ -354,6 +354,7 @@ class TendonActuatedPCS(PCS):
         tendon_routing_params_k: LinearTendonRoutingParams,
         d_s_fn: Callable,
         dd_s_ds_fn: Callable,
+        attachment_segment_idx: Array | None = None,
     ) -> Array:
         """
         Compute the actuation matrix contribution of one tendon k at s contained in segment i.
@@ -367,7 +368,8 @@ class TendonActuatedPCS(PCS):
         Returns:
             Phi_a_k (Array): local actuation matrix contribution of one tendon of shape (6,).
         """
-        attachment_segment_idx = tendon_routing_params_k.attachment_segment_index  # ()
+        if attachment_segment_idx is None:
+            attachment_segment_idx = tendon_routing_params_k.attachment_segment_index
         is_tendon_active = attachment_segment_idx >= i  # ()
 
         # extract tendon routing evolution in the cross-sectional plane
@@ -453,9 +455,17 @@ class TendonActuatedPCS(PCS):
                 # Vectorize the actuation basis computation for all tendons
                 Phi_a_j = vmap(
                     self._local_actuation_basis,
-                    in_axes=(None, None, None, 0, None, None),
+                    in_axes=(None, None, None, 0, None, None, 0),
                     out_axes=(-1),
-                )(i, xi_i, Xs_j, tendon_routing_params, d_s, dd_s_ds)  # (6, nt)
+                )(
+                    i,
+                    xi_i,
+                    Xs_j,
+                    tendon_routing_params,
+                    d_s,
+                    dd_s_ds,
+                    tendon_routing_params.attachment_segment_index_array,
+                )  # (6, nt)
 
                 A_j = Phi_a_j
 
@@ -568,6 +578,7 @@ class TendonActuatedPCS(PCS):
 
                 def tendon_length_density_tendon_k(
                     tendon_routing_params_k: LinearTendonRoutingParams,
+                    attachment_segment_idx: Array,
                 ) -> Array:
                     """
                     Compute the tendon length density contribution of one tendon at the
@@ -586,7 +597,13 @@ class TendonActuatedPCS(PCS):
 
                     # compute local actuation basis
                     Phi_a_k = self._local_actuation_basis(
-                        i, xi_i, Xs_j, tendon_routing_params_k, d_s, dd_s_ds
+                        i,
+                        xi_i,
+                        Xs_j,
+                        tendon_routing_params_k,
+                        d_s,
+                        dd_s_ds,
+                        attachment_segment_idx,
                     )  # (6,)
 
                     # compute tendon length density contribution
@@ -599,7 +616,8 @@ class TendonActuatedPCS(PCS):
 
                 # Vectorize the tendon length density computation for all tendons
                 dl_ds_j = vmap(tendon_length_density_tendon_k)(
-                    tendon_routing_params
+                    tendon_routing_params,
+                    tendon_routing_params.attachment_segment_index_array,
                 )  # (num_actuators,)
 
                 return Ws_j * dl_ds_j
@@ -623,9 +641,11 @@ class TendonActuatedPCS(PCS):
             jnp.arange(self.num_segments)
         )  # (num_segments, num_gauss_points, num_actuators)
 
-        l = jnp.sum(dl_ds_blocks, axis=(0, 1))  # Sum over the segments and Gauss points
+        tendon_lengths = jnp.sum(
+            dl_ds_blocks, axis=(0, 1)
+        )  # Sum over the segments and Gauss points
 
-        return l
+        return tendon_lengths
 
     @eqx.filter_jit
     def forward_kinematics_active_tendons(self, q: Array, s: Array) -> Array:
@@ -681,6 +701,7 @@ class TendonActuatedPCS(PCS):
 
         def forward_kinematics_tendon_k(
             single_tendon_routing_params: LinearTendonRoutingParams,
+            attachment_segment_idx: Array,
             q: Array,
             s: Array,
         ) -> Array:
@@ -697,9 +718,7 @@ class TendonActuatedPCS(PCS):
             Returns:
                 t_k_s (Array): cartesian position of the tendons at s, shape (3,)
             """
-            lt = self.L_cum[
-                single_tendon_routing_params.attachment_segment_index + 1
-            ]  # ()
+            lt = self.L_cum[attachment_segment_idx + 1]  # ()
             s_val = jnp.clip(s, 0.0, lt)  # ()
 
             g_s = self.forward_kinematics(q, s_val)  # (4,4)
@@ -711,8 +730,11 @@ class TendonActuatedPCS(PCS):
             return t_k_s
 
         # Vectorize the forward kinematics computation for all tendons
-        t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, None, None))(
-            tendon_routing_params, q, s
+        t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, 0, None, None))(
+            tendon_routing_params,
+            tendon_routing_params.attachment_segment_index_array,
+            q,
+            s,
         )  # (n_actuators, 3)
 
         return t_s

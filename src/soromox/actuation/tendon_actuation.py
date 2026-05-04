@@ -17,8 +17,9 @@ def linear_routing(tendon_routing_params: LinearTendonRoutingParams, s: Array) -
 
     ``LinearTendonRoutingParams`` stores a leading tendon axis. System classes
     evaluate this function through ``jax.vmap`` so each tendon may have distinct
-    intercepts, slopes, and attachment segment. Direct batched calls are also
-    supported when the parameter fields and ``s`` are broadcast-compatible.
+    intercepts and slopes. Attachment segment indices are static topology
+    metadata and are not used by the local routing law. Direct batched calls are
+    also supported when the parameter fields and ``s`` are broadcast-compatible.
 
     Args:
         tendon_routing_params: Single-tendon or batched ``LinearTendonRoutingParams``.

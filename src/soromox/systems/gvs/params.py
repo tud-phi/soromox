@@ -2,6 +2,7 @@ __all__ = ["GVSLinkParams", "GVSParams", "TendonActuatedGVSParams"]
 
 import equinox as eqx
 from jax import Array
+from jax import numpy as jnp
 
 from soromox.systems.params import (
     BaseSoftRobotParams,
@@ -39,7 +40,12 @@ class GVSLinkParams(BaseSystemParams):
     semi_minor_final: Array
 
     def validate(self) -> None:
-        n_segments = self.length.shape[0]
+        length = jnp.asarray(self.length)
+        if len(length.shape) != 1:
+            raise ValueError(
+                "length must be one-dimensional with shape (num_segments,)."
+            )
+        n_segments = length.shape[0]
         expected_shape = (n_segments,)
         for name in (
             "young_modulus",
@@ -57,7 +63,7 @@ class GVSLinkParams(BaseSystemParams):
             "semi_minor_initial",
             "semi_minor_final",
         ):
-            value = getattr(self, name)
+            value = jnp.asarray(getattr(self, name))
             if value.shape != expected_shape:
                 raise ValueError(
                     f"{name} must have shape {expected_shape}, got {value.shape}."
@@ -82,13 +88,27 @@ class GVSParams(BaseSoftRobotParams):
     def validate(self) -> None:
         self.link.validate()
         n_segments = self.link.length.shape[0]
-        if self.reference_strain.shape[0] != n_segments:
+        gravity = jnp.asarray(self.gravity)
+        if gravity.shape != (3,):
+            raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
+        base_pose = jnp.asarray(self.base_pose)
+        if base_pose.shape != (6,):
+            raise ValueError(f"base_pose must have shape (6,), got {base_pose.shape}.")
+        reference_strain = jnp.asarray(self.reference_strain)
+        if reference_strain.shape != (n_segments, 6):
             raise ValueError(
-                "reference_strain must have one leading entry per GVS segment."
+                f"reference_strain must have shape ({n_segments}, 6), "
+                f"got {reference_strain.shape}."
             )
-        if self.joint_stiffness.shape[0] != n_segments:
+        joint_stiffness = jnp.asarray(self.joint_stiffness)
+        if (
+            joint_stiffness.ndim != 3
+            or joint_stiffness.shape[0] != n_segments
+            or joint_stiffness.shape[1] != joint_stiffness.shape[2]
+        ):
             raise ValueError(
-                "joint_stiffness must have one leading entry per GVS segment."
+                "joint_stiffness must have shape "
+                f"({n_segments}, max_dof, max_dof), got {joint_stiffness.shape}."
             )
 
 

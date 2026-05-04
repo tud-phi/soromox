@@ -148,12 +148,9 @@ class TendonActuatedGVS(GVS):
             )
         active_tendon_routing.validate()
         self.num_actuators = active_tendon_routing.num_tendons
-        for idx in active_tendon_routing.attachment_segment_index:
-            if idx >= self.num_segments:
-                raise ValueError(
-                    "active_tendon_routing.attachment_segment_index values must be strictly "
-                    f"lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
-                )
+        active_tendon_routing.validate_attachment_segments(
+            self.num_segments, "active_tendon_routing"
+        )
         # if self._check_tendon_routing_in_body(active_tendon_routing):
         #     raise UserWarning(f"Tendon(s) exit the robot body.")
         return active_tendon_routing
@@ -173,12 +170,9 @@ class TendonActuatedGVS(GVS):
             )
         passive_tendon_routing.validate()
         self.n_p = passive_tendon_routing.num_tendons
-        for idx in passive_tendon_routing.attachment_segment_index:
-            if idx >= self.num_segments:
-                raise ValueError(
-                    "passive_tendon_routing.attachment_segment_index values must be strictly "
-                    f"lower than the number of segments of the robot. Got {idx}; num_segments = {self.num_segments}."
-                )
+        passive_tendon_routing.validate_attachment_segments(
+            self.num_segments, "passive_tendon_routing"
+        )
         return passive_tendon_routing
 
     def _set_passive_tendon(self, passive_tendon: PassiveTendonParams) -> None:
@@ -279,6 +273,12 @@ class TendonActuatedGVS(GVS):
         params.active_tendon_routing.validate()
         params.passive_tendon_routing.validate()
         params.passive_tendon.validate()
+        self.params.active_tendon_routing.assert_same_attachment_segments(
+            params.active_tendon_routing, "active_tendon_routing"
+        )
+        self.params.passive_tendon_routing.assert_same_attachment_segments(
+            params.passive_tendon_routing, "passive_tendon_routing"
+        )
         updated_self = GVS.with_params(self, params.body)
         return eqx.tree_at(
             lambda model: (
@@ -308,6 +308,7 @@ class TendonActuatedGVS(GVS):
     def _local_tendon_basis_single(
         self,
         single_tendon_routing_params: LinearTendonRoutingParams,
+        attachment_segment_idx: Array,
         q_i: Array,
         s: Array,
         i: Array,
@@ -319,7 +320,6 @@ class TendonActuatedGVS(GVS):
         Returns a (6,) vector: actuation basis contribution of a single tendon
         at segment i and abscissa index j (for abscissa value s).
         """
-        attachment_segment_idx = single_tendon_routing_params.attachment_segment_index
         cond = attachment_segment_idx >= i  # ()
 
         B_Xs_j = self.B_Xs[i, j]  # (6, max_dof)
@@ -343,6 +343,7 @@ class TendonActuatedGVS(GVS):
     def _local_actuation_basis_single(
         self,
         single_active_tendon_routing: LinearTendonRoutingParams,
+        attachment_segment_idx: Array,
         q_i: Array,
         s: Array,
         i: Array,
@@ -351,6 +352,7 @@ class TendonActuatedGVS(GVS):
         """Return the active actuation basis contribution of one tendon."""
         return self._local_tendon_basis_single(
             single_active_tendon_routing,
+            attachment_segment_idx,
             q_i,
             s,
             i,
@@ -374,11 +376,23 @@ class TendonActuatedGVS(GVS):
         Vectorized wrapper: compute actuation basis Phi_a_s for all tendons at
         given (q_i, s, segment i, gauss index j). Returns (6, num_tendons).
         """
+        attachment_segment_indices = (
+            tendon_routing_params.attachment_segment_index_array
+        )
         Phi_a_s = vmap(
             self._local_tendon_basis_single,
-            in_axes=(0, None, None, None, None, None, None),
+            in_axes=(0, 0, None, None, None, None, None, None),
             out_axes=1,
-        )(tendon_routing_params, q_i, s, i, j, d_s_fn, dd_s_ds_fn)
+        )(
+            tendon_routing_params,
+            attachment_segment_indices,
+            q_i,
+            s,
+            i,
+            j,
+            d_s_fn,
+            dd_s_ds_fn,
+        )
 
         return Phi_a_s
 
@@ -561,6 +575,7 @@ class TendonActuatedGVS(GVS):
 
         def forward_kinematics_tendon_k(
             single_tendon_routing_params: LinearTendonRoutingParams,
+            attachment_segment_idx: Array,
             q: Array,
             s: Array,
         ) -> Array:
@@ -577,9 +592,7 @@ class TendonActuatedGVS(GVS):
             Returns:
                 t_k_s (Array): cartesian position of the tendons at s, shape (3,)
             """
-            lt = self.segment_end_positions[
-                single_tendon_routing_params.attachment_segment_index + 1
-            ]  # ()
+            lt = self.segment_end_positions[attachment_segment_idx + 1]  # ()
             s_val = jnp.clip(s, 0.0, lt)  # ()
 
             g_s = self.forward_kinematics(q, s_val)  # (4,4)
@@ -588,8 +601,11 @@ class TendonActuatedGVS(GVS):
 
             return t_k_s
 
-        t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, None, None))(
-            tendon_routing_params, q, s
+        t_s = vmap(forward_kinematics_tendon_k, in_axes=(0, 0, None, None))(
+            tendon_routing_params,
+            tendon_routing_params.attachment_segment_index_array,
+            q,
+            s,
         )  # (n_actuators, 3)
 
         return t_s
@@ -671,6 +687,7 @@ class TendonActuatedGVS(GVS):
 
                 def tendon_length_density_tendon_k(
                     tendon_routing_params_k: LinearTendonRoutingParams,
+                    attachment_segment_idx: Array,
                 ) -> Array:
                     """
                     Compute the tendon length density contribution of one tendon at the
@@ -691,6 +708,7 @@ class TendonActuatedGVS(GVS):
                     # compute local actuation basis
                     Phi_a_k = self._local_tendon_basis_single(
                         tendon_routing_params_k,
+                        attachment_segment_idx,
                         q_i,
                         Xs_j * length_i,
                         i,
@@ -712,7 +730,8 @@ class TendonActuatedGVS(GVS):
 
                 # Vectorize the tendon length density computation for all tendons
                 dl_ds_j = vmap(tendon_length_density_tendon_k)(
-                    tendon_routing_params
+                    tendon_routing_params,
+                    tendon_routing_params.attachment_segment_index_array,
                 )  # (num_tendons,)
 
                 return Ws_j * dl_ds_j * length_i
@@ -729,9 +748,9 @@ class TendonActuatedGVS(GVS):
             jnp.arange(self.num_segments)
         )  # (num_segments, num_gauss_points, num_actuators)
 
-        l = jnp.sum(dl_ds_blocks, axis=(0, 1)).reshape((num_tendons,))
+        tendon_lengths = jnp.sum(dl_ds_blocks, axis=(0, 1)).reshape((num_tendons,))
 
-        return l
+        return tendon_lengths
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:

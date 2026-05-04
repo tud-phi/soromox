@@ -99,6 +99,35 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
     return robot_gvs, robot_pcs
 
 
+def test_params_from_segments_stores_resolved_max_dof():
+    segment = GVSSegment(
+        link=LinkSpec(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=1e6,
+            nu=0.45,
+            rho=1000.0,
+            eta=0.0,
+            L=0.2,
+            r_i=0.02,
+            r_f=0.02,
+        ),
+        joint=JointSpec(type="fixed"),
+        basis=StrainBasisSpec(
+            type="monomial",
+            active=[1, 1, 1, 1, 1, 1],
+            orders=[0, 0, 0, 0, 0, 0],
+            xi_ref=[0, 0, 0, 1, 0, 0],
+        ),
+        num_gauss_points=5,
+    )
+
+    params, structure = GVS.params_from_segments(
+        [segment], gravity=jnp.array([0.0, 0.0, -9.81])
+    )
+
+    assert structure.max_dof == params.joint_stiffness.shape[1] == 6
+
+
 def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
     """
     Initialize a GVS robot with a configurable number of segments, mixing joint families and

@@ -110,6 +110,7 @@ class PCS(SoftRobot):
         super().__init__(**kwargs)
         if not isinstance(params, PCSParams):
             raise TypeError("params must be a PCSParams instance.")
+        params.validate()
         if structure is None:
             structure = PCSStructure()
         self.params = params
@@ -322,6 +323,7 @@ class PCS(SoftRobot):
         current_params = self._current_body_params()
         if not isinstance(params, PCSParams):
             raise TypeError("params must be a PCSParams instance.")
+        params.validate()
         if params.length.shape != current_params.length.shape:
             raise ValueError(
                 "length shape changes the model structure; construct a new PCS."
@@ -388,6 +390,21 @@ class PCS(SoftRobot):
 
     def update_params(self, **updates: Array) -> "PCS":
         """Return an updated copy with selected typed parameter fields replaced."""
+        if (
+            "length" in updates
+            and jnp.asarray(updates["length"]).shape != self.params.length.shape
+        ):
+            raise ValueError(
+                "length shape changes the model structure; construct a new PCS."
+            )
+        if (
+            "reference_strain" in updates
+            and jnp.asarray(updates["reference_strain"]).shape
+            != self.params.reference_strain.shape
+        ):
+            raise ValueError(
+                "reference_strain shape changes the model structure; construct a new PCS."
+            )
         return self.with_params(self.params.replace(**updates))
 
     def _precomputed_matrices(self) -> tuple[Array, Array, Array, Array, Array]:

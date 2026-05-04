@@ -18,6 +18,33 @@ from soromox.systems.params import (
 )
 
 
+def _require_shape(name: str, value: Array, expected_shape: tuple[int, ...]) -> None:
+    if value.shape != expected_shape:
+        raise ValueError(f"{name} must have shape {expected_shape}, got {value.shape}.")
+
+
+def _validate_continuum_base(
+    params: BaseContinuumSoftRobotParams,
+    *,
+    strain_dim: int,
+    gravity_dim: int,
+) -> int:
+    if len(params.length.shape) != 1:
+        raise ValueError("length must be one-dimensional with shape (num_segments,).")
+    n_segments = params.length.shape[0]
+    if n_segments < 1:
+        raise ValueError(f"num_segments must be at least 1, got {n_segments}.")
+    _require_shape("density", params.density, (n_segments,))
+    _require_shape("gravity", params.gravity, (gravity_dim,))
+    expected_reference_size = strain_dim * n_segments
+    if params.reference_strain.size != expected_reference_size:
+        raise ValueError(
+            "reference_strain must contain "
+            f"{expected_reference_size} entries, got {params.reference_strain.size}."
+        )
+    return n_segments
+
+
 class PCSParams(BaseContinuumSoftRobotParams):
     """Dynamic parameters for the spatial PCS model.
 
@@ -33,6 +60,16 @@ class PCSParams(BaseContinuumSoftRobotParams):
     damping_matrix: Array
     base_pose: Array
 
+    def validate(self) -> None:
+        n_segments = _validate_continuum_base(self, strain_dim=6, gravity_dim=3)
+        _require_shape("radius", self.radius, (n_segments,))
+        _require_shape("young_modulus", self.young_modulus, (n_segments,))
+        _require_shape("shear_modulus", self.shear_modulus, (n_segments,))
+        _require_shape(
+            "damping_matrix", self.damping_matrix, (6 * n_segments, 6 * n_segments)
+        )
+        _require_shape("base_pose", self.base_pose, (6,))
+
 
 class PlanarPCSParams(BaseContinuumSoftRobotParams):
     """Dynamic parameters for the planar PCS model.
@@ -46,6 +83,15 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
     shear_modulus: Array
     damping_matrix: Array
     base_angle: Array
+
+    def validate(self) -> None:
+        n_segments = _validate_continuum_base(self, strain_dim=3, gravity_dim=2)
+        _require_shape("radius", self.radius, (n_segments,))
+        _require_shape("young_modulus", self.young_modulus, (n_segments,))
+        _require_shape("shear_modulus", self.shear_modulus, (n_segments,))
+        _require_shape(
+            "damping_matrix", self.damping_matrix, (3 * n_segments, 3 * n_segments)
+        )
 
 
 class TendonActuatedPCSParams(BaseSystemParams):
@@ -88,6 +134,18 @@ class TendonActuatedPlanarPCSParams(PlanarPCSParams):
 
     tendon_distance: Array
 
+    def validate(self) -> None:
+        super().validate()
+        n_segments = self.length.shape[0]
+        if (
+            self.tendon_distance.ndim != 2
+            or self.tendon_distance.shape[0] != n_segments
+        ):
+            raise ValueError(
+                "tendon_distance must have shape "
+                f"({n_segments}, num_tendons_per_segment), got {self.tendon_distance.shape}."
+            )
+
 
 class PneumaticActuatedPlanarPCSParams(PlanarPCSParams):
     """Dynamic parameters for pneumatic planar PCS.
@@ -102,6 +160,17 @@ class PneumaticActuatedPlanarPCSParams(PlanarPCSParams):
     chamber_angle: Array
     chamber_distance: Array
 
+    def validate(self) -> None:
+        super().validate()
+        n_segments = self.length.shape[0]
+        for name in (
+            "chamber_inner_radius",
+            "chamber_outer_radius",
+            "chamber_angle",
+            "chamber_distance",
+        ):
+            _require_shape(name, getattr(self, name), (n_segments,))
+
 
 class ISupportParams(PCSParams):
     """Dynamic parameters for the I-SUPPORT spatial pneumatic PCS model.
@@ -114,3 +183,14 @@ class ISupportParams(PCSParams):
     chamber_outer_radius: Array
     chamber_distance: Array
     chamber_angle_offset: Array
+
+    def validate(self) -> None:
+        super().validate()
+        n_segments = self.length.shape[0]
+        for name in (
+            "chamber_inner_radius",
+            "chamber_outer_radius",
+            "chamber_distance",
+            "chamber_angle_offset",
+        ):
+            _require_shape(name, getattr(self, name), (n_segments,))

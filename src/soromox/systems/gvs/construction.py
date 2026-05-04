@@ -125,7 +125,7 @@ def params_and_structure_from_segments(
     )
     structure = GVSStructure(
         segments=static_segments,
-        max_dof=max_dof,
+        max_dof=layout_max_dof,
         max_num_gauss_points=max_num_gauss_points,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )

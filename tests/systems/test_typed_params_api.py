@@ -3,23 +3,25 @@ import jax
 import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
+from system_param_builders import (
+    linear_tendon_routing,
+    passive_tendon_params,
+    pcs_params,
+    pendulum_params,
+    tendon_actuated_pcs_params,
+)
 
 from soromox.actuation.tendon_actuation import (
     linear_routing,
     linear_routing_arc_length_derivative,
 )
 from soromox.systems import (
-    ArticulatedSoftRobotParams,
     PCS,
+    ArticulatedSoftRobotParams,
     PCSParams,
     Pendulum,
     PendulumParams,
-)
-from system_param_builders import (
-    linear_tendon_routing,
-    passive_tendon_params,
-    pcs_params,
-    pendulum_params,
+    TendonActuatedPCS,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -75,9 +77,47 @@ def test_system_update_rejects_static_shape_changes():
 
     with pytest.raises(ValueError, match="length"):
         robot.update_params(length=jnp.array([0.1, 0.1, 0.1]))
+    with pytest.raises(ValueError, match="radius"):
+        robot.update_params(radius=jnp.array([0.03]))
 
     with pytest.raises(KeyError, match="Unknown parameter field"):
         robot.update_params(unknown=jnp.array([0.0]))
+
+
+def test_tendon_attachment_indices_are_static_topology():
+    body = _pcs_params(num_segments=2)
+    routing = linear_tendon_routing(
+        y_intercept=jnp.array([0.005], dtype=jnp.float64),
+        y_slope=jnp.array([0.0], dtype=jnp.float64),
+        z_intercept=jnp.array([0.0], dtype=jnp.float64),
+        z_slope=jnp.array([0.0], dtype=jnp.float64),
+        attachment_segment_index=jnp.array([1], dtype=jnp.int32),
+    )
+    robot = TendonActuatedPCS(
+        params=tendon_actuated_pcs_params(body=body, active_tendon_routing=routing)
+    )
+
+    assert routing.attachment_segment_index == (1,)
+    assert routing.routing_for_tendon(0).attachment_segment_index == 1
+    assert not any(
+        getattr(leaf, "dtype", None) == jnp.dtype(jnp.int32)
+        for leaf in jax.tree.leaves(routing)
+    )
+
+    with pytest.raises(ValueError, match="topology"):
+        routing.replace(attachment_segment_index=jnp.array([0], dtype=jnp.int32))
+
+    changed_attachment = linear_tendon_routing(
+        y_intercept=routing.y_intercept,
+        y_slope=routing.y_slope,
+        z_intercept=routing.z_intercept,
+        z_slope=routing.z_slope,
+        attachment_segment_index=jnp.array([0], dtype=jnp.int32),
+    )
+    with pytest.raises(ValueError, match="topology"):
+        robot.with_params(
+            robot.params.replace(active_tendon_routing=changed_attachment)
+        )
 
 
 def test_same_shape_param_updates_do_not_retrace_under_filter_jit():
@@ -153,30 +193,30 @@ def test_passive_tendon_params_store_per_tendon_impedance():
 
 
 def test_removed_plural_typed_param_names_fail():
-    pcs_kwargs = dict(
-        radius=jnp.array([0.01], dtype=jnp.float64),
-        density=jnp.array([1000.0], dtype=jnp.float64),
-        young_modulus=jnp.array([1e6], dtype=jnp.float64),
-        shear_modulus=jnp.array([1e5], dtype=jnp.float64),
-        damping_matrix=jnp.eye(6, dtype=jnp.float64),
-        gravity=jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        base_pose=jnp.zeros(6, dtype=jnp.float64),
-        reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-    )
+    pcs_kwargs = {
+        "radius": jnp.array([0.01], dtype=jnp.float64),
+        "density": jnp.array([1000.0], dtype=jnp.float64),
+        "young_modulus": jnp.array([1e6], dtype=jnp.float64),
+        "shear_modulus": jnp.array([1e5], dtype=jnp.float64),
+        "damping_matrix": jnp.eye(6, dtype=jnp.float64),
+        "gravity": jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
+        "base_pose": jnp.zeros(6, dtype=jnp.float64),
+        "reference_strain": jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+    }
     with pytest.raises(TypeError, match="segment_lengths"):
         PCSParams(
             segment_lengths=jnp.array([0.1], dtype=jnp.float64),
             **pcs_kwargs,
         )
 
-    pendulum_kwargs = dict(
-        mass=jnp.array([1.0], dtype=jnp.float64),
-        moment_inertia=jnp.array([0.1], dtype=jnp.float64),
-        gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
-        joint_stiffness=jnp.zeros((1, 1), dtype=jnp.float64),
-        joint_damping=jnp.zeros((1, 1), dtype=jnp.float64),
-        radius=jnp.array([0.02], dtype=jnp.float64),
-    )
+    pendulum_kwargs = {
+        "mass": jnp.array([1.0], dtype=jnp.float64),
+        "moment_inertia": jnp.array([0.1], dtype=jnp.float64),
+        "gravity": jnp.array([0.0, -9.81], dtype=jnp.float64),
+        "joint_stiffness": jnp.zeros((1, 1), dtype=jnp.float64),
+        "joint_damping": jnp.zeros((1, 1), dtype=jnp.float64),
+        "radius": jnp.array([0.02], dtype=jnp.float64),
+    }
     with pytest.raises(TypeError, match="link_lengths"):
         PendulumParams(
             link_lengths=jnp.array([0.5], dtype=jnp.float64),
@@ -199,18 +239,18 @@ def test_removed_plural_typed_param_names_fail():
             **pendulum_kwargs,
         )
 
-    articulated_kwargs = dict(
-        parent_to_joint_transform=jnp.eye(4, dtype=jnp.float64)[None, :, :],
-        tip_position=jnp.array([[0.5, 0.0, 0.0]], dtype=jnp.float64),
-        center_of_mass_position=jnp.array([[0.25, 0.0, 0.0]], dtype=jnp.float64),
-        mass=jnp.array([1.0], dtype=jnp.float64),
-        center_of_mass_inertia=jnp.eye(3, dtype=jnp.float64)[None, :, :],
-        gravity=jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        joint_stiffness=jnp.zeros((1, 1), dtype=jnp.float64),
-        joint_damping=jnp.zeros((1, 1), dtype=jnp.float64),
-        joint_rest_configuration=jnp.zeros((1,), dtype=jnp.float64),
-        radius=jnp.array([0.02], dtype=jnp.float64),
-    )
+    articulated_kwargs = {
+        "parent_to_joint_transform": jnp.eye(4, dtype=jnp.float64)[None, :, :],
+        "tip_position": jnp.array([[0.5, 0.0, 0.0]], dtype=jnp.float64),
+        "center_of_mass_position": jnp.array([[0.25, 0.0, 0.0]], dtype=jnp.float64),
+        "mass": jnp.array([1.0], dtype=jnp.float64),
+        "center_of_mass_inertia": jnp.eye(3, dtype=jnp.float64)[None, :, :],
+        "gravity": jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
+        "joint_stiffness": jnp.zeros((1, 1), dtype=jnp.float64),
+        "joint_damping": jnp.zeros((1, 1), dtype=jnp.float64),
+        "joint_rest_configuration": jnp.zeros((1,), dtype=jnp.float64),
+        "radius": jnp.array([0.02], dtype=jnp.float64),
+    }
     with pytest.raises(TypeError, match="joint_screws"):
         ArticulatedSoftRobotParams(
             joint_screws=jnp.array([[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),

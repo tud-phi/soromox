@@ -23,6 +23,35 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
     center_of_mass_length: Array
     radius: Array
 
+    def validate(self) -> None:
+        mass = jnp.asarray(self.mass)
+        if len(mass.shape) != 1:
+            raise ValueError("mass must be one-dimensional with shape (num_links,).")
+        n_links = mass.shape[0]
+        if n_links < 1:
+            raise ValueError(f"num_links must be at least 1, got {n_links}.")
+        for name in (
+            "moment_inertia",
+            "length",
+            "center_of_mass_length",
+            "joint_rest_configuration",
+            "radius",
+        ):
+            value = jnp.asarray(getattr(self, name))
+            if value.shape != (n_links,):
+                raise ValueError(
+                    f"{name} must have shape ({n_links},), got {value.shape}."
+                )
+        for name in ("joint_stiffness", "joint_damping"):
+            value = jnp.asarray(getattr(self, name))
+            if value.shape != (n_links, n_links):
+                raise ValueError(
+                    f"{name} must have shape ({n_links}, {n_links}), got {value.shape}."
+                )
+        gravity = jnp.asarray(self.gravity)
+        if gravity.shape != (2,):
+            raise ValueError(f"gravity must have shape (2,), got {gravity.shape}.")
+
 
 class TendonActuatedPendulumParams(BaseSystemParams):
     """Dynamic parameters for tendon-actuated pendulum chains.
@@ -45,6 +74,9 @@ class TendonActuatedPendulumParams(BaseSystemParams):
     def validate(self) -> None:
         self.body.validate()
         self.passive_tendon.validate()
+        active_routing_matrix = jnp.asarray(self.active_routing_matrix)
+        if active_routing_matrix.ndim != 2:
+            raise ValueError("active_routing_matrix must be two-dimensional.")
         passive_routing_matrix = jnp.asarray(self.passive_routing_matrix)
         if passive_routing_matrix.ndim != 2:
             raise ValueError("passive_routing_matrix must be two-dimensional.")
@@ -53,11 +85,15 @@ class TendonActuatedPendulumParams(BaseSystemParams):
                 "passive_tendon must have one impedance entry per passive routing row."
             )
         n_links = self.body.mass.shape[0]
-        if self.active_tendon_reference_configuration.shape != (n_links,):
+        if active_routing_matrix.shape[1] != n_links:
+            raise ValueError("active_routing_matrix must have one column per link.")
+        if passive_routing_matrix.shape[1] != n_links:
+            raise ValueError("passive_routing_matrix must have one column per link.")
+        if jnp.asarray(self.active_tendon_reference_configuration).shape != (n_links,):
             raise ValueError(
                 "active_tendon_reference_configuration must have shape (num_links,)."
             )
-        if self.passive_tendon_reference_configuration.shape != (n_links,):
+        if jnp.asarray(self.passive_tendon_reference_configuration).shape != (n_links,):
             raise ValueError(
                 "passive_tendon_reference_configuration must have shape (num_links,)."
             )

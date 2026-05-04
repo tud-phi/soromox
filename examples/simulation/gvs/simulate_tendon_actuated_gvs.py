@@ -175,7 +175,7 @@ u = jnp.asarray([-1, -0.00], dtype=q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 
-print("body lengths per segment:", robot.length)
+print("total body length:", robot.length)
 # print("L_cum:", L_cum)
 # print("total length:", total_length)
 print("s_end:", s_end)

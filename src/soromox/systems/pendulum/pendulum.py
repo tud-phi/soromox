@@ -94,6 +94,7 @@ class Pendulum(SoftRobot):
         super().__init__(**kwargs)
         if not isinstance(params, PendulumParams):
             raise TypeError("params must be a PendulumParams instance.")
+        params.validate()
         self.params = params
 
         # Basic parameter extraction
@@ -165,6 +166,7 @@ class Pendulum(SoftRobot):
         current_params = self._current_body_params()
         if not isinstance(params, PendulumParams):
             raise TypeError("params must be a PendulumParams instance.")
+        params.validate()
         if params.mass.shape != current_params.mass.shape:
             raise ValueError(
                 "mass shape changes the model structure; construct a new Pendulum."
@@ -203,6 +205,25 @@ class Pendulum(SoftRobot):
 
     def update_params(self, **updates: Array) -> "Pendulum":
         """Return an updated copy with selected typed parameter fields replaced."""
+        shape_locked_fields = (
+            "mass",
+            "moment_inertia",
+            "length",
+            "center_of_mass_length",
+            "joint_stiffness",
+            "joint_damping",
+            "joint_rest_configuration",
+            "radius",
+            "gravity",
+        )
+        for name in shape_locked_fields:
+            if (
+                name in updates
+                and jnp.asarray(updates[name]).shape != getattr(self.params, name).shape
+            ):
+                raise ValueError(
+                    f"{name} shape changes the model structure; construct a new Pendulum."
+                )
         return self.with_params(self.params.replace(**updates))
 
     # -------------------------------------------------

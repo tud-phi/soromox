@@ -112,6 +112,7 @@ class ArticulatedSoftRobot(SoftRobot):
         super().__init__(**kwargs)
         if not isinstance(params, ArticulatedSoftRobotParams):
             raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
+        params.validate()
         self.params = params
 
         joint_screw = jnp.asarray(params.joint_screw)
@@ -931,6 +932,7 @@ class ArticulatedSoftRobot(SoftRobot):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, ArticulatedSoftRobotParams):
             raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
+        params.validate()
         if params.mass.shape != self.params.mass.shape:
             raise ValueError(
                 "mass shape changes the model structure; construct a new ArticulatedSoftRobot."

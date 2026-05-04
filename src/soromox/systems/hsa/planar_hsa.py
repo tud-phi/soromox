@@ -237,6 +237,7 @@ class PlanarHSA(SoftRobot):
             raise TypeError("params must be a PlanarHSAParams instance.")
         if not isinstance(structure, PlanarHSAStructure):
             raise TypeError("structure must be a PlanarHSAStructure instance.")
+        params.validate()
         super().__init__(eps=structure.eps, **kwargs)
         self.params = params
         symbolic_expression_params = self._symbolic_expression_params(
@@ -758,6 +759,7 @@ class PlanarHSA(SoftRobot):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, PlanarHSAParams):
             raise TypeError("params must be a PlanarHSAParams instance.")
+        params.validate()
 
         arrays = (
             jnp.asarray(params.length),
