@@ -16,14 +16,23 @@ import numpy as np
 import seaborn as sns
 from matplotlib.lines import Line2D
 
-if shutil.which("latex"):
-    plt.rcParams.update(
-        {
-            "text.usetex": True,
-            "font.family": "serif",
-            "font.serif": ["Computer Modern Roman"],
-        }
-    )
+LATEX_AVAILABLE = shutil.which("latex") is not None
+LATEX_FONT_RC = {
+    "text.usetex": True,
+    "font.family": "serif",
+    "font.serif": ["Computer Modern Roman"],
+}
+
+
+def _theme_rc(rc: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    theme_rc = dict(rc or {})
+    if LATEX_AVAILABLE:
+        theme_rc.update(LATEX_FONT_RC)
+    return theme_rc
+
+
+if LATEX_AVAILABLE:
+    plt.rcParams.update(LATEX_FONT_RC)
 
 
 MODEL_ORDER = ["articulated_soft_robot", "planar_pcs", "pcs", "gvs"]
@@ -237,8 +246,7 @@ def _plot(
     log_y: bool,
 ) -> None:
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
-    if sns is not None:
-        sns.set_theme(style="whitegrid")
+    sns.set_theme(style="whitegrid", rc=_theme_rc())
 
     fig, axes = plt.subplots(
         2,
@@ -313,8 +321,7 @@ def _plot_total_throughput(
         return
 
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
-    if sns is not None:
-        sns.set_theme(style="whitegrid")
+    sns.set_theme(style="whitegrid", rc=_theme_rc())
 
     fig, axes = plt.subplots(
         1,
@@ -392,11 +399,11 @@ def _plot_combined_scaling(
         print("[!] No results available for the combined scaling plot.")
         return
 
-    if sns is not None:
-        sns.set_theme(
-            context="paper",
-            style="ticks",
-            rc={
+    sns.set_theme(
+        context="paper",
+        style="ticks",
+        rc=_theme_rc(
+            {
                 "axes.linewidth": 0.8,
                 "axes.labelsize": 9,
                 "axes.titlesize": 10,
@@ -405,8 +412,9 @@ def _plot_combined_scaling(
                 "legend.title_fontsize": 8,
                 "xtick.labelsize": 8,
                 "ytick.labelsize": 8,
-            },
-        )
+            }
+        ),
+    )
 
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
     fig, ax = plt.subplots(figsize=(7.2, 4.8), constrained_layout=True)
