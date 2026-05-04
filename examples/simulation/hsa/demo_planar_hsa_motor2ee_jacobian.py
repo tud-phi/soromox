@@ -27,7 +27,7 @@ def factory_fn(
         params: typed planar HSA parameters
         strain_selector: boolean array to select the strains to be activated
         verbose: flag to print additional information
-    
+
     Returns:
         phi2chi_static_model_fn: function that maps motor angles to the end-effector pose
         jac_phi2chi_static_model_fn: function that computes the Jacobian between the actuation space and the task-space
@@ -65,7 +65,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
-        
+
         Returns:
             q: planar HSA configuration consisting of (k_be, sigma_sh, sigma_ax)
             aux: dictionary with auxiliary data
@@ -104,7 +104,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
-        
+
         Returns:
             chi: end-effector pose
             aux: dictionary with auxiliary data
@@ -164,9 +164,7 @@ if __name__ == "__main__":
         strain_selector=strain_selector,
     )
 
-    # PLANAR_HSA_FPU_CONTROL_PARAMS is calibrated up to 200 degrees.
-    # Keep random samples within the model's intended actuation range.
-    phi_max = jnp.full(params.rod_height.shape, 200 / 180 * jnp.pi).flatten()
+    phi_max = params.phi_max.flatten()
 
     # define initial configuration
     q0 = jnp.array([0.0, 0.0, 0.0])

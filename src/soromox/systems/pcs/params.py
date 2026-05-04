@@ -13,6 +13,7 @@ from jax import Array
 from soromox.systems.params import (
     BaseContinuumSoftRobotParams,
     BaseSystemParams,
+    BaseTendonRoutingParams,
     LinearTendonRoutingParams,
     PassiveTendonParams,
 )
@@ -92,6 +93,7 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
         _require_shape(
             "damping_matrix", self.damping_matrix, (3 * n_segments, 3 * n_segments)
         )
+        _require_shape("base_angle", self.base_angle, ())
 
 
 class TendonActuatedPCSParams(BaseSystemParams):
@@ -104,8 +106,8 @@ class TendonActuatedPCSParams(BaseSystemParams):
     """
 
     body: PCSParams
-    active_tendon_routing: LinearTendonRoutingParams
-    passive_tendon_routing: LinearTendonRoutingParams = eqx.field(
+    active_tendon_routing: BaseTendonRoutingParams
+    passive_tendon_routing: BaseTendonRoutingParams = eqx.field(
         default_factory=LinearTendonRoutingParams.empty
     )
     passive_tendon: PassiveTendonParams = eqx.field(

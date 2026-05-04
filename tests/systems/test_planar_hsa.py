@@ -68,6 +68,13 @@ def test_end_effector_kinematics(seed: int = 0):
             raise ValueError("q != q_rec")
 
 
+def test_planar_hsa_exposes_phi_max():
+    robot = _create_robot()
+
+    assert jnp.allclose(typed_params.phi_max, params["phi_max"])
+    assert jnp.allclose(robot.phi_max, typed_params.phi_max)
+
+
 def test_jacobian_virtual_backbone(seed: int = 0):
     """
     Test that the symbolic Jacobian matches the autograd Jacobian of forward kinematics.

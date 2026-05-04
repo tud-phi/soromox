@@ -2,18 +2,17 @@ import jax.numpy as jnp
 from jax import Array
 
 from soromox.systems import (
-    ArticulatedSoftRobotParams,
     GVS,
+    ArticulatedSoftRobotParams,
+    BaseTendonRoutingParams,
     GVSParams,
     GVSStructure,
     LinearTendonRoutingParams,
-    PCSParams,
-    PCSStructure,
     PassiveTendonParams,
+    PCSParams,
     PendulumParams,
     PlanarHSAParams,
     PlanarPCSParams,
-    PlanarPCSStructure,
     TendonActuatedGVSParams,
     TendonActuatedPCSParams,
     TendonActuatedPendulumParams,
@@ -189,8 +188,8 @@ def passive_tendon_params(
 def tendon_actuated_pcs_params(
     *,
     body: PCSParams,
-    active_tendon_routing: LinearTendonRoutingParams,
-    passive_tendon_routing: LinearTendonRoutingParams | None = None,
+    active_tendon_routing: BaseTendonRoutingParams,
+    passive_tendon_routing: BaseTendonRoutingParams | None = None,
     passive_tendon: PassiveTendonParams | None = None,
 ) -> TendonActuatedPCSParams:
     if passive_tendon_routing is None:
@@ -276,8 +275,8 @@ def gvs_params_from_segments(
 def tendon_actuated_gvs_params(
     *,
     body: GVSParams,
-    active_tendon_routing: LinearTendonRoutingParams,
-    passive_tendon_routing: LinearTendonRoutingParams | None = None,
+    active_tendon_routing: BaseTendonRoutingParams,
+    passive_tendon_routing: BaseTendonRoutingParams | None = None,
     passive_tendon: PassiveTendonParams | None = None,
 ) -> TendonActuatedGVSParams:
     if passive_tendon_routing is None:
@@ -322,6 +321,7 @@ def planar_hsa_params_from_legacy(params: dict) -> PlanarHSAParams:
         bending_damping=jnp.asarray(params["zetab"]),
         shear_damping=jnp.asarray(params["zetash"]),
         axial_damping=jnp.asarray(params["zetaa"]),
+        phi_max=jnp.asarray(params["phi_max"]),
         platform_mass=jnp.asarray(params["mpl"]),
         platform_center_of_gravity=jnp.asarray(params["CoGpl"]),
         end_effector_offset=jnp.asarray(params["chiee_off"]),

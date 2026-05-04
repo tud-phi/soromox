@@ -55,6 +55,7 @@ def planar_hsa_params_from_values(params: dict[str, Array]) -> PlanarHSAParams:
         bending_damping=jnp.asarray(params["zetab"]),
         shear_damping=jnp.asarray(params["zetash"]),
         axial_damping=jnp.asarray(params["zetaa"]),
+        phi_max=jnp.asarray(params["phi_max"]),
         platform_mass=jnp.asarray(params["mpl"]),
         platform_center_of_gravity=jnp.asarray(params["CoGpl"]),
         end_effector_offset=jnp.asarray(params["chiee_off"]),
@@ -125,8 +126,8 @@ def generate_common_base_params(
         https://en.wikipedia.org/wiki/Bouc%E2%80%93Wen_model_of_hysteresis
 
         Notation of Bouc-Wen hysteresis model is based on the paper:
-        Song J. and Der Kiureghian A. (2006) 
-        Generalized Bouc–Wen model for highly asymmetric hysteresis. 
+        Song J. and Der Kiureghian A. (2006)
+        Generalized Bouc–Wen model for highly asymmetric hysteresis.
         Journal of Engineering Mechanics. ASCE. Vol 132, No. 6 pp. 610–618
 
         Important: we assume that each strain experiences independent hysteresis

@@ -8,6 +8,7 @@ from system_param_builders import (
     passive_tendon_params,
     pcs_params,
     pendulum_params,
+    planar_pcs_params,
     tendon_actuated_pcs_params,
 )
 
@@ -18,6 +19,7 @@ from soromox.actuation.tendon_actuation import (
 from soromox.systems import (
     PCS,
     ArticulatedSoftRobotParams,
+    BaseTendonRoutingParams,
     PCSParams,
     Pendulum,
     PendulumParams,
@@ -52,6 +54,43 @@ def _pcs_params(num_segments: int = 2):
     )
 
 
+class QuadraticTendonRoutingParams(BaseTendonRoutingParams):
+    y_offset: jax.Array
+    y_quadratic: jax.Array
+    z_offset: jax.Array
+    z_quadratic: jax.Array
+    attachment_segment_index: tuple[int, ...] = eqx.field(static=True)
+
+    @property
+    def num_tendons(self) -> int:
+        return int(self.y_offset.shape[0])
+
+    @property
+    def attachment_segment_indices(self) -> tuple[int, ...]:
+        return self.attachment_segment_index
+
+    def validate(self) -> None:
+        expected_shape = (self.num_tendons,)
+        for name in ("y_quadratic", "z_offset", "z_quadratic"):
+            value = getattr(self, name)
+            if value.shape != expected_shape:
+                raise ValueError(f"{name} must have shape {expected_shape}.")
+        if len(self.attachment_segment_index) != self.num_tendons:
+            raise ValueError("attachment_segment_index must match num_tendons.")
+
+
+def quadratic_routing(params: QuadraticTendonRoutingParams, s):
+    y = params.y_offset + params.y_quadratic * s**2
+    z = params.z_offset + params.z_quadratic * s**2
+    return jnp.stack([jnp.zeros_like(y), y, z], axis=-1)
+
+
+def quadratic_routing_derivative(params: QuadraticTendonRoutingParams, s):
+    y = 2.0 * params.y_quadratic * s
+    z = 2.0 * params.z_quadratic * s
+    return jnp.stack([jnp.zeros_like(y), y, z], axis=-1)
+
+
 def test_params_are_pytrees_and_replace_is_immutable():
     params = _pcs_params()
     leaves = jax.tree.leaves(params)
@@ -82,6 +121,22 @@ def test_system_update_rejects_static_shape_changes():
 
     with pytest.raises(KeyError, match="Unknown parameter field"):
         robot.update_params(unknown=jnp.array([0.0]))
+
+
+def test_planar_pcs_params_validate_scalar_base_angle():
+    params = planar_pcs_params(
+        length=jnp.array([0.1], dtype=jnp.float64),
+        radius=jnp.array([0.02], dtype=jnp.float64),
+        density=jnp.array([1000.0], dtype=jnp.float64),
+        young_modulus=jnp.array([1e6], dtype=jnp.float64),
+        shear_modulus=jnp.array([1e5], dtype=jnp.float64),
+        damping_matrix=jnp.eye(3, dtype=jnp.float64),
+        gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
+        base_angle=jnp.array([0.0], dtype=jnp.float64),
+    )
+
+    with pytest.raises(ValueError, match="base_angle"):
+        params.validate()
 
 
 def test_tendon_attachment_indices_are_static_topology():
@@ -118,6 +173,31 @@ def test_tendon_attachment_indices_are_static_topology():
         robot.with_params(
             robot.params.replace(active_tendon_routing=changed_attachment)
         )
+
+
+def test_tendon_system_accepts_base_routing_subclasses():
+    body = _pcs_params(num_segments=1)
+    routing = QuadraticTendonRoutingParams(
+        y_offset=jnp.array([0.005], dtype=jnp.float64),
+        y_quadratic=jnp.array([0.01], dtype=jnp.float64),
+        z_offset=jnp.array([0.0], dtype=jnp.float64),
+        z_quadratic=jnp.array([0.0], dtype=jnp.float64),
+        attachment_segment_index=(0,),
+    )
+    robot = TendonActuatedPCS(
+        params=tendon_actuated_pcs_params(body=body, active_tendon_routing=routing),
+        active_tendon_routing_basis={
+            "d_s": quadratic_routing,
+            "dd_s_ds": quadratic_routing_derivative,
+        },
+    )
+
+    assert robot.num_actuators == 1
+    assert robot.active_tendon_routing is routing
+    assert robot.actuation_matrix(jnp.zeros((robot.num_dofs,))).shape == (
+        robot.num_dofs,
+        1,
+    )
 
 
 def test_same_shape_param_updates_do_not_retrace_under_filter_jit():

@@ -60,6 +60,10 @@ class BaseSystemParams(eqx.Module):
         """Validate parameter consistency."""
         return None
 
+    def validate_against_structure(self, structure: Any) -> None:
+        """Validate params against static construction choices."""
+        self.validate()
+
 
 class BaseSoftRobotParams(BaseSystemParams):
     """Common dynamic parameters for soft robot systems.
@@ -111,6 +115,36 @@ class BaseTendonRoutingParams(BaseSystemParams):
     def num_tendons(self) -> int:
         raise NotImplementedError
 
+    @property
+    def attachment_segment_indices(self) -> tuple[int, ...]:
+        """Attachment segment indices as concrete topology metadata."""
+        raise NotImplementedError
+
+    @property
+    def attachment_segment_index_array(self) -> Array:
+        """Attachment segment indices as a JAX array for vectorized computations."""
+        return jnp.asarray(self.attachment_segment_indices, dtype=jnp.int32)
+
+    def validate_attachment_segments(self, num_segments: int, name: str) -> None:
+        """Validate static attachment indices against a concrete robot layout."""
+        for idx in self.attachment_segment_indices:
+            if idx >= num_segments:
+                raise ValueError(
+                    f"{name}.attachment_segment_index values must be strictly lower "
+                    f"than the number of segments of the robot. Got {idx}; "
+                    f"num_segments = {num_segments}."
+                )
+
+    def assert_same_attachment_segments(
+        self, other: "BaseTendonRoutingParams", name: str
+    ) -> None:
+        """Reject runtime topology changes hidden inside same-shape params."""
+        if self.attachment_segment_indices != other.attachment_segment_indices:
+            raise ValueError(
+                f"Changing {name}.attachment_segment_index changes tendon topology; "
+                "construct a new system."
+            )
+
 
 class LinearTendonRoutingParams(BaseTendonRoutingParams):
     """Batched linear routing parameters for active or passive tendons.
@@ -151,11 +185,6 @@ class LinearTendonRoutingParams(BaseTendonRoutingParams):
             return self.attachment_segment_index
         return (int(self.attachment_segment_index),)
 
-    @property
-    def attachment_segment_index_array(self) -> Array:
-        """Attachment segment indices as a JAX array for vectorized computations."""
-        return jnp.asarray(self.attachment_segment_indices, dtype=jnp.int32)
-
     def validate(self) -> None:
         if len(self.y_intercept.shape) != 1:
             raise ValueError(
@@ -185,26 +214,6 @@ class LinearTendonRoutingParams(BaseTendonRoutingParams):
                 raise ValueError(
                     f"attachment_segment_index values must be non-negative; got {idx}."
                 )
-
-    def validate_attachment_segments(self, num_segments: int, name: str) -> None:
-        """Validate static attachment indices against a concrete robot layout."""
-        for idx in self.attachment_segment_indices:
-            if idx >= num_segments:
-                raise ValueError(
-                    f"{name}.attachment_segment_index values must be strictly lower "
-                    f"than the number of segments of the robot. Got {idx}; "
-                    f"num_segments = {num_segments}."
-                )
-
-    def assert_same_attachment_segments(
-        self, other: "LinearTendonRoutingParams", name: str
-    ) -> None:
-        """Reject runtime topology changes hidden inside same-shape params."""
-        if self.attachment_segment_indices != other.attachment_segment_indices:
-            raise ValueError(
-                f"Changing {name}.attachment_segment_index changes tendon topology; "
-                "construct a new system."
-            )
 
     def replace(self, **updates: Any) -> "LinearTendonRoutingParams":
         """Return a copy with selected dynamic routing fields replaced."""

@@ -206,7 +206,7 @@ class GVS(SoftRobot):
             raise TypeError("params must be a GVSParams instance.")
         if not isinstance(structure, GVSStructure):
             raise TypeError("structure must be a GVSStructure instance.")
-        params.validate()
+        params.validate_against_structure(structure)
         self.params = params
         self.structure = structure
         self.scale_rotational_basis_by_length = bool(
@@ -887,7 +887,7 @@ class GVS(SoftRobot):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, GVSParams):
             raise TypeError("params must be a GVSParams instance.")
-        params.validate()
+        params.validate_against_structure(self.structure)
         link_arrays = self._link_parameter_arrays(params.link)
         (
             xi_ref_joint,

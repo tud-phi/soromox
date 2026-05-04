@@ -11,6 +11,7 @@ import soromox.utils.lie_algebra as lie
 from soromox.systems.gvs.params import TendonActuatedGVSParams
 from soromox.systems.gvs.structures import GVSStructure
 from soromox.systems.params import (
+    BaseTendonRoutingParams,
     LinearTendonRoutingParams,
     PassiveTendonParams,
 )
@@ -64,8 +65,8 @@ class TendonActuatedGVS(GVS):
     """
 
     params: TendonActuatedGVSParams
-    active_tendon_routing: LinearTendonRoutingParams
-    passive_tendon_routing: LinearTendonRoutingParams
+    active_tendon_routing: BaseTendonRoutingParams
+    passive_tendon_routing: BaseTendonRoutingParams
     n_p: int
     # B_xi_segments: Array
     active_d_s: Callable = eqx.field(static=True)
@@ -101,7 +102,7 @@ class TendonActuatedGVS(GVS):
 
         if not isinstance(params, TendonActuatedGVSParams):
             raise TypeError("params must be a TendonActuatedGVSParams instance.")
-        params.validate()
+        params.validate_against_structure(structure)
         super().__init__(params.body, structure=structure, **kwargs)
         self.params = params
 
@@ -133,8 +134,8 @@ class TendonActuatedGVS(GVS):
         self._set_passive_tendon(params.passive_tendon)
 
     def _set_active_tendon_routing(
-        self, active_tendon_routing: LinearTendonRoutingParams
-    ) -> LinearTendonRoutingParams:
+        self, active_tendon_routing: BaseTendonRoutingParams
+    ) -> BaseTendonRoutingParams:
         """
         This internal function stores as attributes of the class the parameters of
         the tendon routings specified by the user.
@@ -142,9 +143,9 @@ class TendonActuatedGVS(GVS):
         Args:
             active_tendon_routing: Batched routing params for all active tendons.
         """
-        if not isinstance(active_tendon_routing, LinearTendonRoutingParams):
+        if not isinstance(active_tendon_routing, BaseTendonRoutingParams):
             raise TypeError(
-                "active_tendon_routing must be a LinearTendonRoutingParams instance."
+                "active_tendon_routing must be a BaseTendonRoutingParams instance."
             )
         active_tendon_routing.validate()
         self.num_actuators = active_tendon_routing.num_tendons
@@ -156,17 +157,17 @@ class TendonActuatedGVS(GVS):
         return active_tendon_routing
 
     def _set_passive_tendon_routing(
-        self, passive_tendon_routing: LinearTendonRoutingParams
-    ) -> LinearTendonRoutingParams:
+        self, passive_tendon_routing: BaseTendonRoutingParams
+    ) -> BaseTendonRoutingParams:
         """
         Store the parameters for all passive tendon routings.
 
         Args:
             passive_tendon_routing: Batched routing params for all passive tendons.
         """
-        if not isinstance(passive_tendon_routing, LinearTendonRoutingParams):
+        if not isinstance(passive_tendon_routing, BaseTendonRoutingParams):
             raise TypeError(
-                "passive_tendon_routing must be a LinearTendonRoutingParams instance."
+                "passive_tendon_routing must be a BaseTendonRoutingParams instance."
             )
         passive_tendon_routing.validate()
         self.n_p = passive_tendon_routing.num_tendons
@@ -195,8 +196,8 @@ class TendonActuatedGVS(GVS):
         segments: list[GVSSegment] | tuple[GVSSegment, ...],
         *,
         gravity: Array,
-        active_tendon_routing: LinearTendonRoutingParams,
-        passive_tendon_routing: LinearTendonRoutingParams | None = None,
+        active_tendon_routing: BaseTendonRoutingParams,
+        passive_tendon_routing: BaseTendonRoutingParams | None = None,
         passive_tendon: PassiveTendonParams | None = None,
         base_pose: Array | None = None,
         max_dof: int | None = None,
@@ -249,6 +250,19 @@ class TendonActuatedGVS(GVS):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, TendonActuatedGVSParams):
             raise TypeError("params must be a TendonActuatedGVSParams instance.")
+        params.validate_against_structure(self.structure)
+        if type(params.active_tendon_routing) is not type(
+            self.params.active_tendon_routing
+        ):
+            raise ValueError(
+                "Changing active_tendon_routing type requires reconstruction."
+            )
+        if type(params.passive_tendon_routing) is not type(
+            self.params.passive_tendon_routing
+        ):
+            raise ValueError(
+                "Changing passive_tendon_routing type requires reconstruction."
+            )
         if (
             params.active_tendon_routing.num_tendons
             != self.params.active_tendon_routing.num_tendons
@@ -307,7 +321,7 @@ class TendonActuatedGVS(GVS):
     @eqx.filter_jit
     def _local_tendon_basis_single(
         self,
-        single_tendon_routing_params: LinearTendonRoutingParams,
+        single_tendon_routing_params: BaseTendonRoutingParams,
         attachment_segment_idx: Array,
         q_i: Array,
         s: Array,
@@ -342,7 +356,7 @@ class TendonActuatedGVS(GVS):
     @eqx.filter_jit
     def _local_actuation_basis_single(
         self,
-        single_active_tendon_routing: LinearTendonRoutingParams,
+        single_active_tendon_routing: BaseTendonRoutingParams,
         attachment_segment_idx: Array,
         q_i: Array,
         s: Array,
@@ -368,7 +382,7 @@ class TendonActuatedGVS(GVS):
         s: Array,
         i: Array,
         j: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s_fn: Callable,
         dd_s_ds_fn: Callable,
     ) -> Array:
@@ -438,7 +452,7 @@ class TendonActuatedGVS(GVS):
     def _actuation_matrix(
         self,
         q: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s_fn: Callable,
         dd_s_ds_fn: Callable,
     ) -> Array:
@@ -568,13 +582,13 @@ class TendonActuatedGVS(GVS):
         self,
         q: Array,
         s: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s_fn: Callable,
     ) -> Array:
         """Compute forward kinematics for one batched tendon family."""
 
         def forward_kinematics_tendon_k(
-            single_tendon_routing_params: LinearTendonRoutingParams,
+            single_tendon_routing_params: BaseTendonRoutingParams,
             attachment_segment_idx: Array,
             q: Array,
             s: Array,
@@ -641,7 +655,7 @@ class TendonActuatedGVS(GVS):
     def _tendon_length(
         self,
         q: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s_fn: Callable,
         dd_s_ds_fn: Callable,
     ) -> Array:
@@ -686,7 +700,7 @@ class TendonActuatedGVS(GVS):
                     B_Xs_j = B_Xs_j.at[:3, :].divide(length_i)
 
                 def tendon_length_density_tendon_k(
-                    tendon_routing_params_k: LinearTendonRoutingParams,
+                    tendon_routing_params_k: BaseTendonRoutingParams,
                     attachment_segment_idx: Array,
                 ) -> Array:
                     """

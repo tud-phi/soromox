@@ -145,6 +145,7 @@ class PlanarHSA(SoftRobot):
     hyst_n: Array
     hyst_beta: Array
     hyst_gamma: Array
+    phi_max: Array
 
     # parameters for lambdify
     params_for_lambdify: list[Array]
@@ -342,6 +343,7 @@ class PlanarHSA(SoftRobot):
         self._set_params(
             symbolic_expression_params, structure.consider_hysteresis, num_dofs
         )
+        self.phi_max = jnp.asarray(params.phi_max)
 
         # compute the strain basis
         strain_selector = structure.strain_selector
@@ -771,6 +773,7 @@ class PlanarHSA(SoftRobot):
             jnp.asarray(params.proximal_cap_length),
             jnp.asarray(params.distal_cap_length),
             jnp.asarray(params.end_effector_offset),
+            jnp.asarray(params.phi_max),
         )
         current_arrays = (
             self.L,
@@ -782,6 +785,7 @@ class PlanarHSA(SoftRobot):
             self.lpc,
             self.ldc,
             self.chiee_off,
+            self.phi_max,
         )
         names = (
             "length",
@@ -793,6 +797,7 @@ class PlanarHSA(SoftRobot):
             "proximal_cap_length",
             "distal_cap_length",
             "end_effector_offset",
+            "phi_max",
         )
         for name, value, current in zip(names, arrays, current_arrays):
             if value.shape != current.shape:
@@ -873,6 +878,7 @@ class PlanarHSA(SoftRobot):
                 model.hyst_n,
                 model.hyst_beta,
                 model.hyst_gamma,
+                model.phi_max,
             ),
             self,
             (
@@ -890,6 +896,7 @@ class PlanarHSA(SoftRobot):
                 arrays[7],
                 arrays[8],
                 *hysteresis_arrays,
+                arrays[9],
             ),
         )
 

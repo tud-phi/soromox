@@ -9,7 +9,7 @@ from jax import numpy as jnp
 import soromox.actuation.tendon_actuation as act
 import soromox.utils.lie_algebra as lie
 from soromox.systems.params import (
-    LinearTendonRoutingParams,
+    BaseTendonRoutingParams,
     PassiveTendonParams,
 )
 from soromox.systems.pcs.params import TendonActuatedPCSParams
@@ -99,10 +99,10 @@ class TendonActuatedPCS(PCS):
 
     n_p: int
     params: TendonActuatedPCSParams
-    active_tendon_routing: LinearTendonRoutingParams
+    active_tendon_routing: BaseTendonRoutingParams
     active_d_s: Callable = eqx.field(static=True)
     active_dd_s_ds: Callable = eqx.field(static=True)
-    passive_tendon_routing: LinearTendonRoutingParams
+    passive_tendon_routing: BaseTendonRoutingParams
     passive_d_s: Callable = eqx.field(static=True)
     passive_dd_s_ds: Callable = eqx.field(static=True)
     K_pt: Array
@@ -187,8 +187,8 @@ class TendonActuatedPCS(PCS):
         self.l_pt0 = jnp.asarray(passive_tendon.rest_length_offset)
 
     def _set_active_tendon_routing(
-        self, tendon_routing_params: LinearTendonRoutingParams, d_s: Callable
-    ) -> LinearTendonRoutingParams:
+        self, tendon_routing_params: BaseTendonRoutingParams, d_s: Callable
+    ) -> BaseTendonRoutingParams:
         """
         This internal function stores as attributes of the class the parameters of
         the active tendon routings specified by the user.
@@ -196,9 +196,9 @@ class TendonActuatedPCS(PCS):
         Args:
             tendon_routing_params: Batched routing params for all active tendons.
         """
-        if not isinstance(tendon_routing_params, LinearTendonRoutingParams):
+        if not isinstance(tendon_routing_params, BaseTendonRoutingParams):
             raise TypeError(
-                "active_tendon_routing must be a LinearTendonRoutingParams instance."
+                "active_tendon_routing must be a BaseTendonRoutingParams instance."
             )
         tendon_routing_params.validate()
         self.num_actuators = tendon_routing_params.num_tendons
@@ -210,8 +210,8 @@ class TendonActuatedPCS(PCS):
         return tendon_routing_params
 
     def _set_passive_tendon_routing(
-        self, tendon_routing_params: LinearTendonRoutingParams, d_s: Callable
-    ) -> LinearTendonRoutingParams:
+        self, tendon_routing_params: BaseTendonRoutingParams, d_s: Callable
+    ) -> BaseTendonRoutingParams:
         """
         This internal function stores as attributes of the class the parameters of
         the passive tendon routings specified by the user.
@@ -219,9 +219,9 @@ class TendonActuatedPCS(PCS):
         Args:
             tendon_routing_params: Batched routing params for all passive tendons.
         """
-        if not isinstance(tendon_routing_params, LinearTendonRoutingParams):
+        if not isinstance(tendon_routing_params, BaseTendonRoutingParams):
             raise TypeError(
-                "passive_tendon_routing must be a LinearTendonRoutingParams instance."
+                "passive_tendon_routing must be a BaseTendonRoutingParams instance."
             )
         tendon_routing_params.validate()
         self.n_p = tendon_routing_params.num_tendons
@@ -291,6 +291,18 @@ class TendonActuatedPCS(PCS):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, TendonActuatedPCSParams):
             raise TypeError("params must be a TendonActuatedPCSParams instance.")
+        if type(params.active_tendon_routing) is not type(
+            self.params.active_tendon_routing
+        ):
+            raise ValueError(
+                "Changing active_tendon_routing type requires reconstruction."
+            )
+        if type(params.passive_tendon_routing) is not type(
+            self.params.passive_tendon_routing
+        ):
+            raise ValueError(
+                "Changing passive_tendon_routing type requires reconstruction."
+            )
         if (
             params.active_tendon_routing.num_tendons
             != self.params.active_tendon_routing.num_tendons
@@ -351,7 +363,7 @@ class TendonActuatedPCS(PCS):
         i: Array,
         xi_i: Array,
         s: Array,
-        tendon_routing_params_k: LinearTendonRoutingParams,
+        tendon_routing_params_k: BaseTendonRoutingParams,
         d_s_fn: Callable,
         dd_s_ds_fn: Callable,
         attachment_segment_idx: Array | None = None,
@@ -405,7 +417,7 @@ class TendonActuatedPCS(PCS):
     def _actuation_matrix(
         self,
         q: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s: Callable,
         dd_s_ds: Callable,
     ) -> Array:
@@ -530,7 +542,7 @@ class TendonActuatedPCS(PCS):
     def _tendon_length(
         self,
         q: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s: Callable,
         dd_s_ds: Callable,
     ) -> Array:
@@ -577,7 +589,7 @@ class TendonActuatedPCS(PCS):
                 Ws_j = Ws_scaled[j]
 
                 def tendon_length_density_tendon_k(
-                    tendon_routing_params_k: LinearTendonRoutingParams,
+                    tendon_routing_params_k: BaseTendonRoutingParams,
                     attachment_segment_idx: Array,
                 ) -> Array:
                     """
@@ -685,7 +697,7 @@ class TendonActuatedPCS(PCS):
         self,
         q: Array,
         s: Array,
-        tendon_routing_params: LinearTendonRoutingParams,
+        tendon_routing_params: BaseTendonRoutingParams,
         d_s: Callable,
     ) -> Array:
         """
@@ -700,7 +712,7 @@ class TendonActuatedPCS(PCS):
         """
 
         def forward_kinematics_tendon_k(
-            single_tendon_routing_params: LinearTendonRoutingParams,
+            single_tendon_routing_params: BaseTendonRoutingParams,
             attachment_segment_idx: Array,
             q: Array,
             s: Array,

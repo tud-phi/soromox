@@ -127,6 +127,12 @@ def test_params_from_segments_stores_resolved_max_dof():
 
     assert structure.max_dof == params.joint_stiffness.shape[1] == 6
 
+    oversized = params.replace(joint_stiffness=jnp.zeros((1, 7, 7)))
+    with pytest.raises(ValueError, match="joint_stiffness"):
+        oversized.validate_against_structure(structure)
+    with pytest.raises(ValueError, match="joint_stiffness"):
+        GVS(params=oversized, structure=structure)
+
 
 def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
     """

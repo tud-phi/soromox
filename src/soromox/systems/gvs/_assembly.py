@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import soromox.utils.lie_algebra as lie
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
-from soromox.systems.gvs.structures import GVSSegmentStructure
+from soromox.systems.gvs.structures import GVSSegmentStructure, GVSStructure
 from soromox.utils.basic import compute_strain_basis
 
 
@@ -18,33 +18,16 @@ def _set_model_field(model: Any, name: str, value: Any) -> None:
 def _validate_segments(
     segments: list[GVSSegmentStructure] | tuple[GVSSegmentStructure, ...],
     params: GVSParams,
+    max_dof: int | None,
+    max_num_gauss_points: int | None,
 ) -> None:
-    if not segments:
-        raise ValueError("GVS requires at least one segment.")
-    n_segments = len(segments)
-    params.validate()
-    if params.link.length.shape != (n_segments,):
-        raise ValueError(
-            f"link.length must have shape ({n_segments},), got {params.link.length.shape}."
+    params.validate_against_structure(
+        GVSStructure(
+            segments=tuple(segments),
+            max_dof=max_dof,
+            max_num_gauss_points=max_num_gauss_points,
         )
-    if params.reference_strain.shape != (n_segments, 6):
-        raise ValueError(
-            "reference_strain must have shape "
-            f"({n_segments}, 6), got {params.reference_strain.shape}."
-        )
-    if (
-        params.joint_stiffness.ndim != 3
-        or params.joint_stiffness.shape[0] != n_segments
-    ):
-        raise ValueError(
-            "joint_stiffness must have shape (num_segments, max_dof, max_dof)."
-        )
-    for idx, segment in enumerate(segments):
-        if segment.num_gauss_points < 5:
-            raise ValueError(
-                "Each GVS segment requires at least 5 Gauss points; "
-                f"segment {idx} has {segment.num_gauss_points}."
-            )
+    )
 
 
 def assign_gvs_runtime_arrays(
@@ -58,7 +41,7 @@ def assign_gvs_runtime_arrays(
     p0: jnp.ndarray | None,
 ) -> None:
     """Assemble padded runtime arrays from public GVS segment specs."""
-    _validate_segments(segments, params)
+    _validate_segments(segments, params, max_dof, max_num_gauss_points)
 
     _set_model_field(model, "num_segments", len(segments))
     num_gauss_points_per_segment = [segment.num_gauss_points for segment in segments]

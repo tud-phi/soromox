@@ -42,6 +42,7 @@ class PlanarHSAParams(BaseSystemParams):
     bending_damping: Array
     shear_damping: Array
     axial_damping: Array
+    phi_max: Array
     platform_mass: Array
     platform_center_of_gravity: Array
     end_effector_offset: Array
@@ -87,6 +88,7 @@ class PlanarHSAParams(BaseSystemParams):
             "bending_damping",
             "shear_damping",
             "axial_damping",
+            "phi_max",
         ):
             value = jnp.asarray(getattr(self, name))
             if value.shape != rod_shape:
