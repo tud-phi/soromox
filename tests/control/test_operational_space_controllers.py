@@ -12,7 +12,7 @@ class FakeOperationalSpaceDynamics:
         self.robot = robot
         self.B_task = jnp.eye(2)
 
-    def jacobian_and_derivative(self, q, qd):
+    def jacobian_and_time_derivative(self, q, qd):
         return jnp.eye(2), jnp.zeros((2, 2))
 
     def dynamically_consistent_pseudoinverse(self, q):
@@ -47,7 +47,7 @@ def test_impedance_control_tracker_computes_operational_space_control(
     u_control, control_state_dot = controller(state)
 
     q, qd = jnp.split(state.y, 2)
-    J, _ = osd.jacobian_and_derivative(q, qd)
+    J, _ = osd.jacobian_and_time_derivative(q, qd)
     J_bar = osd.dynamically_consistent_pseudoinverse(q)
     N = jnp.eye(robot.num_dofs) - J_bar @ J
     tau_task_forces = robot.elastic_force(q) + robot.damping_matrix(q) @ qd
