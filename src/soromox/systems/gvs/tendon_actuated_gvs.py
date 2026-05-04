@@ -16,6 +16,7 @@ from soromox.systems.params import (
 )
 
 from .core import GVS
+from .specs import GVSSegment
 
 
 class TendonActuatedGVS(GVS):
@@ -195,6 +196,50 @@ class TendonActuatedGVS(GVS):
         self.K_pt = jnp.diag(jnp.asarray(passive_tendon.stiffness))
         self.D_pt = jnp.diag(jnp.asarray(passive_tendon.damping))
         self.l_pt0 = jnp.asarray(passive_tendon.rest_length_offset)
+
+    @classmethod
+    def from_segments(
+        cls,
+        segments: list[GVSSegment] | tuple[GVSSegment, ...],
+        *,
+        gravity: Array,
+        active_tendon_routing: LinearTendonRoutingParams,
+        passive_tendon_routing: LinearTendonRoutingParams | None = None,
+        passive_tendon: PassiveTendonParams | None = None,
+        base_pose: Array | None = None,
+        max_dof: int | None = None,
+        max_num_gauss_points: int | None = None,
+        scale_rotational_basis_by_length: bool = False,
+        active_tendon_routing_basis: dict[str, Callable] | None = None,
+        passive_tendon_routing_basis: dict[str, Callable] | None = None,
+        **kwargs: Any,
+    ) -> "TendonActuatedGVS":
+        """Construct a tendon-actuated GVS model from segment and tendon specs."""
+        body, structure = GVS.params_from_segments(
+            segments,
+            gravity=gravity,
+            base_pose=base_pose,
+            max_dof=max_dof,
+            max_num_gauss_points=max_num_gauss_points,
+            scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        )
+        if passive_tendon_routing is None:
+            passive_tendon_routing = LinearTendonRoutingParams.empty()
+        if passive_tendon is None:
+            passive_tendon = PassiveTendonParams.empty()
+        params = TendonActuatedGVSParams(
+            body=body,
+            active_tendon_routing=active_tendon_routing,
+            passive_tendon_routing=passive_tendon_routing,
+            passive_tendon=passive_tendon,
+        )
+        return cls(
+            params=params,
+            structure=structure,
+            active_tendon_routing_basis=active_tendon_routing_basis,
+            passive_tendon_routing_basis=passive_tendon_routing_basis,
+            **kwargs,
+        )
 
     def _set_tendon_routing_basis(
         self, tendon_routing_basis: dict[str, Callable]

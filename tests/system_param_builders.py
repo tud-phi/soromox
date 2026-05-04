@@ -3,7 +3,7 @@ from jax import Array
 
 from soromox.systems import (
     ArticulatedSoftRobotParams,
-    GVSLinkParams,
+    GVS,
     GVSParams,
     GVSStructure,
     LinearTendonRoutingParams,
@@ -19,7 +19,6 @@ from soromox.systems import (
     TendonActuatedPendulumParams,
     TendonActuatedPlanarPCSParams,
 )
-from soromox.systems.gvs.primitives import Basis, Joint
 
 
 def pcs_params(
@@ -264,64 +263,14 @@ def gvs_params_from_segments(
     max_num_gauss_points: int | None = None,
     scale_rotational_basis_by_length: bool = False,
 ) -> tuple[GVSParams, GVSStructure]:
-    n = len(segments)
-    if base_pose is None:
-        base_pose = jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0])
-    dofs_joint = [
-        Joint.DICT_JOINT_TYPE_DOF[segment.joint.type] for segment in segments
-    ]
-    dofs_link = []
-    for segment in segments:
-        basis_type_idx = Basis.BASISTYPE_MAP[segment.basis.type]
-        dofs_link.append(
-            int(
-                Basis.DOF_BRANCHES[basis_type_idx](
-                    (
-                        jnp.asarray(segment.basis.active),
-                        jnp.asarray(segment.basis.orders),
-                    )
-                )
-            )
-        )
-    real_max_dof = max(dofs_joint + dofs_link)
-    layout_max_dof = real_max_dof if max_dof is None else max_dof
-    joint_stiffness = jnp.zeros((n, layout_max_dof, layout_max_dof))
-    for i, segment in enumerate(segments):
-        dof = Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
-        stiffness = jnp.asarray(segment.joint.stiffness)
-        if dof and stiffness.shape == (dof, dof):
-            joint_stiffness = joint_stiffness.at[i, :dof, :dof].set(stiffness)
-    link = GVSLinkParams(
-        length=jnp.asarray([segment.link.L for segment in segments]),
-        young_modulus=jnp.asarray([segment.link.E for segment in segments]),
-        poisson_ratio=jnp.asarray([segment.link.nu for segment in segments]),
-        density=jnp.asarray([segment.link.rho for segment in segments]),
-        damping_coefficient=jnp.asarray([segment.link.eta for segment in segments]),
-        radius_initial=jnp.asarray([segment.link.r_i for segment in segments]),
-        radius_final=jnp.asarray([segment.link.r_f for segment in segments]),
-        height_initial=jnp.asarray([segment.link.h_i for segment in segments]),
-        height_final=jnp.asarray([segment.link.h_f for segment in segments]),
-        width_initial=jnp.asarray([segment.link.w_i for segment in segments]),
-        width_final=jnp.asarray([segment.link.w_f for segment in segments]),
-        semi_major_initial=jnp.asarray([segment.link.a_i for segment in segments]),
-        semi_major_final=jnp.asarray([segment.link.a_f for segment in segments]),
-        semi_minor_initial=jnp.asarray([segment.link.b_i for segment in segments]),
-        semi_minor_final=jnp.asarray([segment.link.b_f for segment in segments]),
-    )
-    params = GVSParams(
-        link=link,
-        gravity=jnp.asarray(gravity),
-        base_pose=jnp.asarray(base_pose),
-        reference_strain=jnp.asarray([segment.basis.xi_ref for segment in segments]),
-        joint_stiffness=joint_stiffness,
-    )
-    structure = GVSStructure(
-        segments=tuple(segments),
+    return GVS.params_from_segments(
+        segments,
+        gravity=gravity,
+        base_pose=base_pose,
         max_dof=max_dof,
         max_num_gauss_points=max_num_gauss_points,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )
-    return params, structure
 
 
 def tendon_actuated_gvs_params(

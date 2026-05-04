@@ -264,10 +264,7 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
             )
         )
 
-    params, structure = gvs_params_from_segments(
-        segments, gravity=jnp.array([0.0, 0.0, -9.81])
-    )
-    return GVS(params=params, structure=structure)
+    return GVS.from_segments(segments, gravity=jnp.array([0.0, 0.0, -9.81]))
 
 
 def build_constant_strain_gvs(
@@ -312,6 +309,67 @@ def build_constant_strain_gvs(
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )
     return GVS(params=params, structure=structure)
+
+
+def test_gvs_segment_factories_match_explicit_constructor() -> None:
+    segments = [
+        GVSSegment(
+            link=LinkSpec.circular(
+                E=1.0e6,
+                nu=0.45,
+                rho=1000.0,
+                eta=1.0,
+                L=0.2,
+                r=0.02,
+            ),
+            joint=JointSpec(type="fixed"),
+            basis=StrainBasisSpec(
+                type="monomial",
+                active=[1, 1, 1, 1, 0, 0],
+                orders=[0, 0, 0, 0, 0, 0],
+            ),
+            num_gauss_points=5,
+        ),
+        GVSSegment(
+            link=LinkSpec.rectangular(
+                E=9.0e5,
+                nu=0.4,
+                rho=950.0,
+                eta=2.0,
+                L=0.15,
+                h=0.03,
+                w=0.02,
+            ),
+            joint=JointSpec(type="revolute", axis="z", stiffness=jnp.array([[0.3]])),
+            basis=StrainBasisSpec(
+                type="legendre",
+                active=[0, 1, 1, 0, 0, 0],
+                orders=[0, 1, 1, 0, 0, 0],
+            ),
+            num_gauss_points=6,
+        ),
+    ]
+    gravity = jnp.array([0.0, 0.0, -9.81])
+
+    params, structure = GVS.params_from_segments(
+        segments,
+        gravity=gravity,
+        base_pose=jnp.zeros(6),
+        max_dof=6,
+    )
+    explicit = GVS(params=params, structure=structure)
+    factory = GVS.from_segments(
+        segments,
+        gravity=gravity,
+        base_pose=jnp.zeros(6),
+        max_dof=6,
+    )
+
+    assert_allclose(factory.params.link.length, params.link.length)
+    assert_allclose(factory.joint_stiffness, explicit.joint_stiffness)
+    assert_allclose(factory.cross_section_geometry_index, explicit.cross_section_geometry_index)
+    assert int(factory.cross_section_geometry_index[0]) == CrossSectionGeometry.CIRCULAR
+    assert int(factory.cross_section_geometry_index[1]) == CrossSectionGeometry.RECTANGULAR
 
 
 def sample_arc_lengths(robot: GVS) -> jnp.ndarray:

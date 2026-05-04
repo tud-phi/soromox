@@ -15,11 +15,9 @@ from soromox.systems import (
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
 from system_param_builders import (
-    gvs_params_from_segments,
     linear_tendon_routing,
     passive_tendon_params,
     pcs_params,
-    tendon_actuated_gvs_params,
     tendon_actuated_pcs_params,
 )
 
@@ -49,21 +47,15 @@ def _make_tendon_gvs(
     max_dof=None,
     scale_rotational_basis_by_length: bool = False,
 ) -> TendonActuatedGVS:
-    body, structure = gvs_params_from_segments(
+    return TendonActuatedGVS.from_segments(
         segments,
         gravity=jnp.asarray(gravity),
+        active_tendon_routing=tendon_params,
+        passive_tendon_routing=passive_tendon_routing,
+        passive_tendon=passive_tendon,
         base_pose=base_pose,
         max_dof=max_dof,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
-    )
-    return TendonActuatedGVS(
-        params=tendon_actuated_gvs_params(
-            body=body,
-            active_tendon_routing=tendon_params,
-            passive_tendon_routing=passive_tendon_routing,
-            passive_tendon=passive_tendon,
-        ),
-        structure=structure,
     )
 
 

@@ -8,13 +8,9 @@ import optimistix as optx
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     CrossSectionGeometry,
-    GVSLinkParams,
-    GVSParams,
-    GVSStructure,
     LinearTendonRoutingParams,
     SystemState,
     TendonActuatedGVS,
-    TendonActuatedGVSParams,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
@@ -46,47 +42,6 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
-
-
-def gvs_params_from_segments(
-    segments: list[GVSSegment],
-    *,
-    gravity,
-    base_pose,
-    max_dof: int = 6,
-    scale_rotational_basis_by_length: bool = False,
-) -> tuple[GVSParams, GVSStructure]:
-    links = [segment.link for segment in segments]
-    return (
-        GVSParams(
-            link=GVSLinkParams(
-                length=jnp.asarray([link.L for link in links]),
-                young_modulus=jnp.asarray([link.E for link in links]),
-                poisson_ratio=jnp.asarray([link.nu for link in links]),
-                density=jnp.asarray([link.rho for link in links]),
-                damping_coefficient=jnp.asarray([link.eta for link in links]),
-                radius_initial=jnp.asarray([link.r_i for link in links]),
-                radius_final=jnp.asarray([link.r_f for link in links]),
-                height_initial=jnp.asarray([link.h_i for link in links]),
-                height_final=jnp.asarray([link.h_f for link in links]),
-                width_initial=jnp.asarray([link.w_i for link in links]),
-                width_final=jnp.asarray([link.w_f for link in links]),
-                semi_major_initial=jnp.asarray([link.a_i for link in links]),
-                semi_major_final=jnp.asarray([link.a_f for link in links]),
-                semi_minor_initial=jnp.asarray([link.b_i for link in links]),
-                semi_minor_final=jnp.asarray([link.b_f for link in links]),
-            ),
-            gravity=jnp.asarray(gravity),
-            base_pose=jnp.asarray(base_pose),
-            reference_strain=jnp.asarray([segment.basis.xi_ref for segment in segments]),
-            joint_stiffness=jnp.zeros((len(segments), max_dof, max_dof)),
-        ),
-        GVSStructure(
-            segments=tuple(segments),
-            max_dof=max_dof,
-            scale_rotational_basis_by_length=scale_rotational_basis_by_length,
-        ),
-    )
 
 
 ### BODY DEFINITION OF THE SOFT ROBOT ###
@@ -158,18 +113,13 @@ segments = [
         link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
     ),
 ]
-body_params, structure = gvs_params_from_segments(
+robot = TendonActuatedGVS.from_segments(
     segments,
     gravity=jnp.asarray(g),
     base_pose=p0,
+    active_tendon_routing=active_tendon_routing,
+    max_dof=6,
     scale_rotational_basis_by_length=True,
-)
-robot = TendonActuatedGVS(
-    params=TendonActuatedGVSParams(
-        body=body_params,
-        active_tendon_routing=active_tendon_routing,
-    ),
-    structure=structure,
 )
 # debug: check g0
 # g0_test = lie.exp_SE3(p0)
