@@ -671,7 +671,7 @@ link2_hat = LinkSpec(
     rho=float(rho_hat),
     eta=1e4,
     L=0.0550,
-     r_i=0.00642,
+    r_i=0.00642,
     r_f=0.00480,
 )
 robot_hat = TendonActuatedGVS(

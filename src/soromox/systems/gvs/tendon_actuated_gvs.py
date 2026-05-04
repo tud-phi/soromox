@@ -316,7 +316,7 @@ class TendonActuatedGVS(GVS):
         # # For debugging purposes, you can uncomment the following line to see the step-by-step computation
         # A_blocks_tot = jnp.stack([A_segment_i(i) for i in range(self.num_segments)], axis=0)
         # print('A_blocks_tot =\n', A_blocks_tot.shape)
-      
+
         A_blocks_flat = A_blocks.reshape(
             -1, self.max_dof, self.num_actuators
         )
