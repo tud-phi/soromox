@@ -1,5 +1,33 @@
 #!/usr/bin/env python3
-"""Visualise batch-scaling benchmark results stored in CSV format."""
+"""Visualise batch-scaling benchmark CSV results.
+
+The script reads one or more outputs from
+``benchmark_simulation_batch_scaling.py`` and renders per-system scaling plots,
+total-throughput summaries, and a consolidated model comparison.
+
+Examples:
+    Plot the GVS strain-basis-order sweep::
+
+        uv run python tools/benchmarks/visualize_batch_scaling_results.py \
+          benchmarks/batch_scaling/articulated_soft_robot_1s.csv \
+          benchmarks/batch_scaling/planar_pcs_1s.csv \
+          benchmarks/batch_scaling/pcs_1s.csv \
+          benchmarks/batch_scaling/gvs_basis_order_1s.csv \
+          --output benchmarks/batch_scaling/batch_scaling_strain_basis_order.pdf \
+          --log-x \
+          --log-y
+
+    Plot the GVS segment-count sweep::
+
+        uv run python tools/benchmarks/visualize_batch_scaling_results.py \
+          benchmarks/batch_scaling/articulated_soft_robot_1s.csv \
+          benchmarks/batch_scaling/planar_pcs_1s.csv \
+          benchmarks/batch_scaling/pcs_1s.csv \
+          benchmarks/batch_scaling/gvs_segments_1s.csv \
+          --output benchmarks/batch_scaling/batch_scaling_segments.pdf \
+          --log-x \
+          --log-y
+"""
 
 from __future__ import annotations
 
