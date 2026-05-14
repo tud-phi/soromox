@@ -553,38 +553,13 @@ def _plot_combined_scaling(
         plt.close(fig)
         return
 
-    x_min, x_max = min(all_x), max(all_x)
+    x_min = min(all_x)
     y_min, y_max = min(all_y), max(all_y)
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel(r"Number of parallel environments $n_\mathrm{envs}$")
     ax.set_ylabel(r"Simulation throughput $r_\mathrm{sw}$")
     ax.set_title("GPU Batch-Scaling Throughput")
-
-    x_ref = np.array([x_min, x_max], dtype=float)
-    y_anchor = float(np.percentile(np.asarray(all_y, dtype=float), 12))
-    y_ref = y_anchor * (x_ref / x_min)
-    ax.plot(
-        x_ref,
-        y_ref,
-        color="0.35",
-        linestyle="--",
-        linewidth=0.9,
-        alpha=0.7,
-        zorder=0,
-    )
-    label_x = float(np.sqrt(x_min * x_max))
-    label_y = y_anchor * (label_x / x_min)
-    ax.text(
-        label_x,
-        label_y,
-        "ideal linear scaling",
-        color="0.35",
-        fontsize=8,
-        rotation=28,
-        ha="center",
-        va="bottom",
-    )
 
     if y_min <= 1.0 <= y_max:
         ax.axhline(1.0, color="0.45", linestyle=":", linewidth=0.8, alpha=0.75)
