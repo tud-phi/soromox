@@ -302,6 +302,21 @@ def test_default_gravity_force_and_forward_dynamics() -> None:
     assert_allclose(robot.forward_dynamics(0.0, y, (u, tau_ext)), jnp.r_[qd, qdd])
 
 
+def test_default_potential_force_sums_conservative_forces() -> None:
+    robot = _PlanarDefaultRobot()
+    q = jnp.array([0.2, -0.3], dtype=jnp.float64)
+
+    expected = robot.gravitational_force(q) + robot.elastic_force(q)
+
+    assert_allclose(robot.potential_force(q), expected, rtol=1e-12, atol=1e-12)
+    assert_allclose(
+        robot._potential_energy_gradient(q),
+        robot.potential_force(q),
+        rtol=1e-12,
+        atol=1e-12,
+    )
+
+
 def test_default_coriolis_matrix_is_energy_consistent() -> None:
     robot = _PlanarDefaultRobot()
     q = jnp.array([0.2, -0.3], dtype=jnp.float64)

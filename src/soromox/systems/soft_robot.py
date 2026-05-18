@@ -840,6 +840,20 @@ class SoftRobot(DynamicalSystem):
         """
         return self._gravitational_force(q)
 
+    def potential_force(self, q: Array) -> Array:
+        """
+        Compute the total conservative generalized force.
+
+        This is the sum of gravitational and elastic forces.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            tau_pot: Potential force of shape (num_dofs,).
+        """
+        return self.gravitational_force(q) + self.elastic_force(q)
+
     def _gravitational_force(self, q: Array) -> Array:
         """
         Protected gravitational-force hook.
@@ -1112,7 +1126,7 @@ class SoftRobot(DynamicalSystem):
 
     def _potential_energy_gradient(self, q: Array) -> Array:
         """Gradient of total potential energy with respect to q."""
-        return self.gravitational_force(q) + self.elastic_force(q)
+        return self.potential_force(q)
 
     @eqx.filter_custom_jvp
     @staticmethod
