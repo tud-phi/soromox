@@ -88,7 +88,7 @@ class ISupport(PCS):
         self.num_chambers_per_segment = num_chambers_per_segment
         self.num_actuators = (
             self.num_segments * self.num_chambers_per_segment
-        )  # each segment has three control inputs (u1, u2, u3)
+        )  # each segment has one pressure input per chamber
 
         self._set_params(params)
 
@@ -412,9 +412,10 @@ class ISupport(PCS):
             jnp.arange(self.num_segments),
         )
 
-        # we need to sum the contributions of the actuation of each segment
-        A = blk_diag(
+        # assemble the contributions of the actuation of each segment
+        A_full = blk_diag(
             A_blocks_tot
         )  # shape (6 * num_segments, num_segments * num_chambers_per_segment)
+        A = self.B_xi.T @ A_full  # shape (num_active_strains, num_actuators)
 
         return A

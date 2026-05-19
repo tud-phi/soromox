@@ -235,6 +235,52 @@ def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
     assert jnp.all(jnp.linalg.norm(actuation_matrix, axis=0) > 0.0)
 
 
+def test_isupport_actuation_matrix_projects_to_active_strains():
+    params = make_isupport_params(num_segments=2)
+    strain_selector = jnp.array(
+        [
+            False,
+            True,
+            True,
+            True,
+            False,
+            False,
+            False,
+            True,
+            True,
+            True,
+            False,
+            False,
+        ],
+        dtype=bool,
+    )
+    full_robot = ISupport(params=params, structure=PCSStructure(num_gauss_points=1))
+    reduced_robot = ISupport(
+        params=params,
+        structure=PCSStructure(
+            num_gauss_points=1,
+            strain_selector=strain_selector,
+        ),
+    )
+
+    full_actuation_matrix = full_robot.actuation_matrix(
+        jnp.zeros((full_robot.num_dofs,))
+    )
+    reduced_actuation_matrix = reduced_robot.actuation_matrix(
+        jnp.zeros((reduced_robot.num_dofs,))
+    )
+
+    assert reduced_robot.num_actuators == full_robot.num_actuators
+    assert reduced_actuation_matrix.shape == (
+        reduced_robot.num_dofs,
+        reduced_robot.num_actuators,
+    )
+    assert jnp.allclose(
+        reduced_actuation_matrix,
+        reduced_robot.B_xi.T @ full_actuation_matrix,
+    )
+
+
 def test_isupport_update_params_and_validation():
     params = make_isupport_params()
     robot = ISupport(params=params, structure=PCSStructure(num_gauss_points=1))
