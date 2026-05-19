@@ -6,6 +6,7 @@ from jax import Array, vmap
 
 from soromox.systems.pcs.params import ISupportParams
 from soromox.systems.pcs.structures import PCSStructure
+from soromox.utils.array_math import blk_diag
 
 from .pcs import PCS
 
@@ -50,7 +51,6 @@ class ISupport(PCS):
     """
 
     params: ISupportParams
-    actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
 
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
     r_chamber_out: (
@@ -67,7 +67,6 @@ class ISupport(PCS):
         self,
         params: ISupportParams,
         structure: PCSStructure | None = None,
-        segment_actuation_selector: Array | None = None,
         num_chambers_per_segment: int = 3,
         **kwargs: Any,
     ):
@@ -78,9 +77,6 @@ class ISupport(PCS):
             params: Dynamic I-SUPPORT parameters.
             structure: Static PCS layout. If omitted, the default PCS structure
                 is used.
-            segment_actuation_selector: Boolean array of shape ``(num_segments,)``
-                specifying which segments are actively controlled. Defaults to all
-                segments active.
             num_chambers_per_segment:
                 Number of pneumatic chambers per segment. Defaults to 3.
             **kwargs: Additional keyword arguments.
@@ -89,24 +85,10 @@ class ISupport(PCS):
             raise TypeError("params must be an ISupportParams instance.")
         super().__init__(params, structure=structure, **kwargs)
 
-        if segment_actuation_selector is None:
-            segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)
         self.num_chambers_per_segment = num_chambers_per_segment
-
         self.num_actuators = (
-            int(jnp.sum(segment_actuation_selector)) * self.num_chambers_per_segment
+            self.num_segments * self.num_chambers_per_segment
         )  # each segment has three control inputs (u1, u2, u3)
-
-        actuation_basis = jnp.zeros(
-            (self.num_chambers_per_segment * self.num_segments, self.num_actuators)
-        )
-        actuation_basis_cumsum = jnp.cumsum(segment_actuation_selector)
-        for i in range(self.num_segments):
-            j = int(actuation_basis_cumsum[i].item()) - 1
-            if segment_actuation_selector[i].item() is True:
-                actuation_basis = actuation_basis.at[2 * i, j].set(1.0)
-                actuation_basis = actuation_basis.at[2 * i + 1, j + 1].set(1.0)
-        self.actuation_basis = actuation_basis
 
         self._set_params(params)
 
@@ -430,16 +412,9 @@ class ISupport(PCS):
             jnp.arange(self.num_segments),
         )
 
-        # # For debugging purposes, we can use a for loop instead of vmap
-        # A_blocks_tot = jnp.stack(
-        #     [A_segment_i(i) for i in range(self.num_segments)],
-        #     axis=0
-        # )
-
         # we need to sum the contributions of the actuation of each segment
-        A = jnp.concatenate(A_blocks_tot, axis=-1)
-
-        # apply the actuation_basis
-        A = A @ self.actuation_basis
+        A = blk_diag(
+            A_blocks_tot
+        )  # shape (6 * num_segments, num_segments * num_chambers_per_segment)
 
         return A
