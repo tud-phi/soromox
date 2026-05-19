@@ -36,22 +36,47 @@ def make_pneumatic_planar_params():
     )
 
 
-def make_isupport_params():
+def make_isupport_params(num_segments=1):
     return ISupportParams(
         base_pose=jnp.zeros((6,)),
-        length=jnp.array([0.1]),
-        radius=jnp.array([0.02]),
-        density=jnp.array([1000.0]),
+        length=jnp.full((num_segments,), 0.1),
+        radius=jnp.full((num_segments,), 0.02),
+        density=jnp.full((num_segments,), 1000.0),
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=jnp.array([2e3]),
-        shear_modulus=jnp.array([1e3]),
-        damping_matrix=1e-3 * jnp.eye(6),
-        reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-        chamber_inner_radius=jnp.array([0.002]),
-        chamber_outer_radius=jnp.array([0.004]),
-        chamber_distance=jnp.array([0.01]),
-        chamber_angle_offset=jnp.array([0.0]),
+        young_modulus=jnp.full((num_segments,), 2e3),
+        shear_modulus=jnp.full((num_segments,), 1e3),
+        damping_matrix=1e-3 * jnp.eye(6 * num_segments),
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+        chamber_inner_radius=jnp.full((num_segments,), 0.002),
+        chamber_outer_radius=jnp.full((num_segments,), 0.004),
+        chamber_distance=jnp.full((num_segments,), 0.01),
+        chamber_angle_offset=jnp.zeros((num_segments,)),
     )
+
+
+def expected_isupport_segment_actuation(params, segment_idx, num_chambers=3):
+    chamber_area = jnp.pi * params.chamber_inner_radius[segment_idx] ** 2
+    chamber_distance = params.chamber_distance[segment_idx]
+    chamber_angles = params.chamber_angle_offset[segment_idx] + jnp.linspace(
+        0.0, 2.0 * jnp.pi, num_chambers, endpoint=False
+    )
+    expected_columns = []
+    for angle in chamber_angles:
+        expected_columns.append(
+            jnp.array(
+                [
+                    0.0,
+                    -chamber_distance * jnp.cos(angle) * chamber_area,
+                    chamber_distance * jnp.sin(angle) * chamber_area,
+                    chamber_area,
+                    0.0,
+                    0.0,
+                ]
+            )
+        )
+    return jnp.stack(expected_columns, axis=-1)
 
 
 def test_pneumatic_planar_pcs_circular_geometry_and_actuation_matrix():
@@ -172,6 +197,42 @@ def test_isupport_geometry_helpers_and_actuation_matrix_shape():
     actuation_matrix = robot.actuation_matrix(jnp.zeros((6,)))
     assert actuation_matrix.shape == (6, 3)
     assert not jnp.isnan(actuation_matrix).any()
+
+
+def test_isupport_actuation_matrix_matches_per_segment_chamber_model():
+    params = make_isupport_params()
+    robot = ISupport(params=params, structure=PCSStructure(num_gauss_points=1))
+
+    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
+
+    assert actuation_matrix.shape == (6, robot.num_chambers_per_segment)
+    assert jnp.allclose(
+        actuation_matrix,
+        expected_isupport_segment_actuation(params, 0, robot.num_chambers_per_segment),
+    )
+    assert jnp.all(jnp.linalg.norm(actuation_matrix, axis=0) > 0.0)
+
+
+def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
+    params = make_isupport_params(num_segments=2).replace(
+        chamber_inner_radius=jnp.array([0.002, 0.003]),
+        chamber_distance=jnp.array([0.01, 0.015]),
+        chamber_angle_offset=jnp.array([0.0, 0.2]),
+    )
+    robot = ISupport(params=params, structure=PCSStructure(num_gauss_points=1))
+
+    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
+    num_chambers = robot.num_chambers_per_segment
+    expected_segment_0 = expected_isupport_segment_actuation(params, 0, num_chambers)
+    expected_segment_1 = expected_isupport_segment_actuation(params, 1, num_chambers)
+
+    assert robot.num_actuators == 2 * num_chambers
+    assert actuation_matrix.shape == (12, robot.num_actuators)
+    assert jnp.allclose(actuation_matrix[:6, :num_chambers], expected_segment_0)
+    assert jnp.allclose(actuation_matrix[6:, num_chambers:], expected_segment_1)
+    assert jnp.allclose(actuation_matrix[:6, num_chambers:], 0.0)
+    assert jnp.allclose(actuation_matrix[6:, :num_chambers], 0.0)
+    assert jnp.all(jnp.linalg.norm(actuation_matrix, axis=0) > 0.0)
 
 
 def test_isupport_update_params_and_validation():
