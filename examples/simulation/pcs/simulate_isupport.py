@@ -17,7 +17,7 @@ from soromox.rendering import MatplotlibRenderer
 from soromox.systems import ISupport, ISupportParams, SystemState
 
 if __name__ == "__main__":
-    num_segments = 1
+    num_segments = 2
 
     # Elastic modulus and poisson ratio
     E = 1.6464 * 1e6  # Elastic modulus [Pa]
@@ -33,7 +33,11 @@ if __name__ == "__main__":
     # gamma_t = 806  # translational damping constant [1/s]
     # gamma_r = 1.9416 * 10**(-4)  # rotational damping constant [m^2/s]
     gamma_t = 806 * 1e-3  # translational damping constant [1/s]
-    gamma_r = 1.0 * 1e-4  # rotational damping constant [m^2/s]
+    gamma_r = 1.0 * 1e-3  # rotational damping constant [m^2/s]
+    # Damping is specified per unit backbone length and must be integrated over
+    # each segment, matching the strain-space stiffness assembly. Without this
+    # length scaling the velocity term makes the two-segment fixed-step rollout
+    # unnecessarily stiff and can drive the explicit solver to NaNs.
     damping_matrix = jnp.diag(
         (
             jnp.repeat(
@@ -41,6 +45,7 @@ if __name__ == "__main__":
                 num_segments,
                 axis=0,
             )
+            * segment_lengths[:, None]
         ).flatten()
     )
     params = ISupportParams(
@@ -83,7 +88,10 @@ if __name__ == "__main__":
     # print("A:\n", A)
 
     # Actuation pressures
-    u = jnp.array([2e-1, 0.0, 0.0]) * 1e5
+    u = (
+        jnp.repeat(jnp.array([2e-1, 0.0, 0.0])[None, :], num_segments, axis=0).flatten()
+        * 1e5
+    )
 
     # Simulation time parameters
     t0 = 0.0
