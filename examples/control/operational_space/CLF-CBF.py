@@ -86,16 +86,23 @@ if __name__ == "__main__":
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))
 
+    # --------------------------------------------------
+    # Continuum body parameters
+    # --------------------------------------------------
+    # The robot is modeled as a two-segment piecewise-constant-strain body.
+    # Each vector entry corresponds to one segment.
     params = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
-        "L": 15e-2 * 2 / num_segments * jnp.ones((num_segments,)),
-        "r": 3.6e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),
-        "E": 20e3 * jnp.ones((num_segments,)),
-        "G": 20e3 * jnp.ones((num_segments,)),
+        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # base pose
+        "L": 15e-2 * 2 / num_segments * jnp.ones((num_segments,)),      # segment lengths [m]
+        "r": 3.6e-2 * jnp.ones((num_segments,)),                        # backbone radius [m]
+        "rho": rho,                                                     # density [kg/m^3]
+        "g": jnp.array([0.0, 0.0, 9.81]),                                # gravity [m/s^2]
+        "E": 20e3 * jnp.ones((num_segments,)),                          # Young's modulus [Pa]
+        "G": 20e3 * jnp.ones((num_segments,)),                          # shear modulus [Pa]
     }
 
+    # Diagonal strain damping matrix. Translational strain damping is kept
+    # lower than rotational/shear-like entries, then scaled by segment length.
     params["D"] = 1e-3 * jnp.diag(
         (
             jnp.repeat(
@@ -106,6 +113,12 @@ if __name__ == "__main__":
         ).flatten()
     )
 
+    # --------------------------------------------------
+    # Tendon routing parameters
+    # --------------------------------------------------
+    # Three straight tendons are attached to each segment. The y/z intercepts
+    # place each tendon around the backbone cross-section, slightly inside the
+    # outer radius.
     r0, r1 = float(params["r"][0]) - 0.005, float(params["r"][1]) - 0.005
     theta0 = jnp.deg2rad(jnp.array([120, 240, 0]))
     theta1 = jnp.deg2rad(jnp.array([180, 300, 60]))
@@ -126,9 +139,12 @@ if __name__ == "__main__":
         .flatten()
     )
 
-    # New soromox API: wrap the old params dict into PCSParams / TendonActuatedPCSParams.
-    # Keep the old params dict unchanged because the rest of this script still reads
-    # params["L"], params["r"], etc.
+    # --------------------------------------------------
+    # soromox system parameter objects
+    # --------------------------------------------------
+    # The legacy params dict remains above because the controller, plots, and
+    # obstacle checks still read params["L"], params["r"], etc. These dataclasses
+    # are the system objects consumed by the current soromox API.
     body_params = PCSParams(
         base_pose=params["p0"],
         length=params["L"],
