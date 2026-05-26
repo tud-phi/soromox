@@ -13,7 +13,7 @@ from cbfpy.cbfs.clf_cbf import CLFCBF, CLFCBFConfig
 import matplotlib.pyplot as plt
 import numpy as onp
 from functools import partial
-
+plt.rcParams['pdf.fonttype'] = 42  # For editable text in Illustrator
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
@@ -232,9 +232,11 @@ if __name__ == "__main__":
             # smooth minimum
             h_all = (-1.0 / kappa) * jnp.log(jnp.sum(jnp.exp(-kappa * H)))
             # return h_all.reshape(-1)/10
-            # return jnp.min(H).reshape(-1) 
+            force_min = 5 + 1000* jnp.min(H).reshape(-1)
+            # return jnp.min(H).reshape(-1) *1000
+            return force_min
 
-            return jnp.array([0.0]) # --- IGNORE ---
+            # return jnp.array([0.0]) # --- IGNORE ---
 
         def alpha_2(self, h_2):
             return h_2 * 20.0
@@ -335,6 +337,7 @@ if __name__ == "__main__":
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+    
 
     # ======================================================
     # End-effector tracking
@@ -402,16 +405,57 @@ if __name__ == "__main__":
     )
 
     # ======================================================
-    # h2 over time
+    # Figure-style plot: max normal force boundary + goal distance
+    # NOTE:
+    #   Do NOT change h_2 logic.
+    #   h_2 is used only as the raw barrier/force-like quantity here.
+    #   For plotting force, we convert it as:
+    #       no contact / safe side  -> plotted force = 0
+    #       contact / violation     -> positive plotted force
     # ======================================================
     h2_ts = jax.vmap(config.h_2)(y_ts)
-    plt.figure()
-    plt.plot(ts, onp.asarray(h2_ts).squeeze(), label="h_2")
-    plt.axhline(0.0, linestyle="--", linewidth=1)
-    plt.xlabel("Time [s]")
-    plt.ylabel("h_2")
-    plt.title("Barrier value over time")
-    plt.grid(True)
-    plt.legend()
+    h2_np = onp.asarray(h2_ts).squeeze()
+
+    # Plotting-only logic. Keep config.h_2 unchanged.
+    # Your current h_2 is force_min = 5 + 1000 * min_clearance.
+    # The boundary force is therefore 5 N.
+    # When h_2 is below the boundary, the amount below boundary is contact force.
+    force_limit = 5.0
+    max_force_np = onp.maximum(0.0, force_limit - h2_np)
+
+    # End-effector distance to goal.
+    ee_pos_np = onp.asarray(g_ee_ts[:, :3, 3])
+    z_des_np = onp.asarray(z_des)
+    goal_dist_np = onp.linalg.norm(ee_pos_np - z_des_np[None, :], axis=1)
+
+    fig, ax1 = plt.subplots(figsize=(8, 4))
+
+    # Left axis: maximum pairwise normal contact force.
+    ax1.plot(ts_np, max_force_np, color="tab:red", linewidth=2.5)
+    ax1.axhline(force_limit, color="tab:red", linestyle="--", linewidth=2.0)
+    ax1.fill_between(
+        ts_np,
+        force_limit,
+        force_limit * 1.08,
+        color="tab:red",
+        alpha=0.12,
+    )
+    ax1.set_xlabel("Time [s]", fontsize=18)
+    ax1.set_ylabel("Max Pairwise Normal Force [N]", color="tab:red", fontsize=16)
+    ax1.tick_params(axis="x", labelsize=13)
+    ax1.tick_params(axis="y", labelcolor="tab:red", labelsize=13)
+    ax1.set_ylim(0.0, force_limit * 1.08)
+    ax1.grid(True, alpha=0.25)
+    ax1.spines["left"].set_color("tab:red")
+
+    # Right axis: end-effector goal distance.
+    ax2 = ax1.twinx()
+    ax2.plot(ts_np, goal_dist_np, color="tab:blue", linewidth=2.5)
+    ax2.set_ylabel("Goal Distance [m]", color="tab:blue", fontsize=16)
+    ax2.tick_params(axis="y", labelcolor="tab:blue", labelsize=13)
+    ax2.spines["right"].set_color("tab:blue")
+
     plt.tight_layout()
+    plt.savefig("force_goal_distance_plot.png", dpi=300, bbox_inches="tight")
+    plt.savefig("force_goal_distance_plot.pdf", bbox_inches="tight")
     plt.show()
