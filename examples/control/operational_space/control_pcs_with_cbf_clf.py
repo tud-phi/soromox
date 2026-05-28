@@ -3,25 +3,24 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
+from functools import partial
 
 import jax
-from jax import Array
 import jax.numpy as jnp
-from cbfpy.cbfs.clf_cbf import CLFCBF, CLFCBFConfig
-
 import matplotlib.pyplot as plt
 import numpy as onp
-from functools import partial
-plt.rcParams['pdf.fonttype'] = 42  # For editable text in Illustrator
+from cbfpy.cbfs.clf_cbf import CLFCBF, CLFCBFConfig
+from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
+from jax import Array
+
+plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
+from soromox.rendering import Open3DRenderer, RendererColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
-    SystemState,
     TendonActuatedPCS,
     TendonActuatedPCSParams,
 )
-from soromox.rendering import Open3DRenderer, RendererColorConfig
 
 jax.config.update("jax_enable_x64", True)
 jnp.set_printoptions(
@@ -37,10 +36,10 @@ jnp.set_printoptions(precision=4, suppress=True)
 # ======================================================
 @jax.jit
 def pairwise_h(
-    p: jnp.ndarray,                        # (P, 3)
-    centers: jnp.ndarray,                 # (N, 3)
-    r_obs: jnp.ndarray,                   # (N,)
-    r_robot: jnp.ndarray | float = 0.0,   # scalar or (P,)
+    p: jnp.ndarray,  # (P, 3)
+    centers: jnp.ndarray,  # (N, 3)
+    r_obs: jnp.ndarray,  # (N,)
+    r_robot: jnp.ndarray | float = 0.0,  # scalar or (P,)
     safety: float = 0.0,
 ) -> jnp.ndarray:
     p = jnp.asarray(p)
@@ -50,8 +49,8 @@ def pairwise_h(
     r_robot = jnp.asarray(r_robot)
     r_robot = r_robot + jnp.zeros((p.shape[0],), dtype=p.dtype)
 
-    diff = p[:, None, :] - centers[None, :, :]   # (P, N, 3)
-    dist = jnp.linalg.norm(diff, axis=-1)        # (P, N)
+    diff = p[:, None, :] - centers[None, :, :]  # (P, N, 3)
+    dist = jnp.linalg.norm(diff, axis=-1)  # (P, N)
     H = dist - (r_obs[None, :] + r_robot[:, None] + safety)
     return H
 
@@ -77,9 +76,9 @@ class SoftRobotDynamics:
     @partial(jax.jit, static_argnums=(0,))
     def g(self, y):
         u_zero = jnp.zeros(self.n_u)
-        return jax.jacfwd(
-            lambda u: self.robot.forward_dynamics(0.0, y, (u, None))
-        )(u_zero)
+        return jax.jacfwd(lambda u: self.robot.forward_dynamics(0.0, y, (u, None)))(
+            u_zero
+        )
 
 
 if __name__ == "__main__":
@@ -93,12 +92,15 @@ if __name__ == "__main__":
     # Each vector entry corresponds to one segment.
     params = {
         "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # base pose
-        "L": 15e-2 * 2 / num_segments * jnp.ones((num_segments,)),      # segment lengths [m]
-        "r": 3.6e-2 * jnp.ones((num_segments,)),                        # backbone radius [m]
-        "rho": rho,                                                     # density [kg/m^3]
-        "g": jnp.array([0.0, 0.0, 9.81]),                                # gravity [m/s^2]
-        "E": 20e3 * jnp.ones((num_segments,)),                          # Young's modulus [Pa]
-        "G": 20e3 * jnp.ones((num_segments,)),                          # shear modulus [Pa]
+        "L": 15e-2
+        * 2
+        / num_segments
+        * jnp.ones((num_segments,)),  # segment lengths [m]
+        "r": 3.6e-2 * jnp.ones((num_segments,)),  # backbone radius [m]
+        "rho": rho,  # density [kg/m^3]
+        "g": jnp.array([0.0, 0.0, 9.81]),  # gravity [m/s^2]
+        "E": 20e3 * jnp.ones((num_segments,)),  # Young's modulus [Pa]
+        "G": 20e3 * jnp.ones((num_segments,)),  # shear modulus [Pa]
     }
 
     # Diagonal strain damping matrix. Translational strain damping is kept
@@ -109,7 +111,8 @@ if __name__ == "__main__":
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
                 num_segments,
                 axis=0,
-            ) * params["L"][:, None]
+            )
+            * params["L"][:, None]
         ).flatten()
     )
 
@@ -192,16 +195,18 @@ if __name__ == "__main__":
             self.safety_margin = 0.00
 
             self.obs = {
-                "centers": jnp.array([
-                    [0.10, 0.08, 0.24],
-                    [0.12, 0.06, 0.32],
-                    [0.04, 0.055, 0.20],
-                ]),
+                "centers": jnp.array(
+                    [
+                        [0.10, 0.08, 0.24],
+                        [0.12, 0.06, 0.32],
+                        [0.04, 0.055, 0.20],
+                    ]
+                ),
                 "radii": jnp.array([0.02, 0.02, 0.02]),
             }
 
             super().__init__(
-                n=2 * int(robot.num_active_strains),   # y = [q, qd]
+                n=2 * int(robot.num_active_strains),  # y = [q, qd]
                 m=int(robot.num_actuators),
                 relax_cbf=False,
                 cbf_relaxation_penalty=1e6,
@@ -228,14 +233,14 @@ if __name__ == "__main__":
             e_2 = jnp.linalg.norm(p_2 - p_des[:3])
             # e_2 = (p_2 - p_des[:3])**2
             return e_2.reshape(-1)
-        
+
         # --------------------------------------------------
         # CBF #2
         # --------------------------------------------------
         def h_2(self, y, kappa=2000.0):
             q, qd = dyn.split(y)
-            g_ps = robot.forward_kinematics_batched(q, self.s_ps)   # (P,4,4)
-            p = g_ps[:, :3, 3]                                      # (P,3)
+            g_ps = robot.forward_kinematics_batched(q, self.s_ps)  # (P,4,4)
+            p = g_ps[:, :3, 3]  # (P,3)
 
             H = pairwise_h(
                 p,
@@ -248,7 +253,7 @@ if __name__ == "__main__":
             # smooth minimum
             h_all = (-1.0 / kappa) * jnp.log(jnp.sum(jnp.exp(-kappa * H)))
             # return h_all.reshape(-1)/10
-            force_min = 5 + 1000* jnp.min(H).reshape(-1)
+            force_min = 5 + 1000 * jnp.min(H).reshape(-1)
             # return jnp.min(H).reshape(-1) *1000
             return force_min
 
@@ -259,7 +264,6 @@ if __name__ == "__main__":
 
         def gamma_2(self, V_2):
             return V_2 * 10.0
-
 
     # ======================================================
     # Build controller
@@ -325,11 +329,11 @@ if __name__ == "__main__":
     # ======================================================
     # Clearance over time
     # ======================================================
-    g_ee_tsp = jax.vmap(
-        lambda q: robot.forward_kinematics_batched(q, config.s_ps)
-    )(q_ts)
+    g_ee_tsp = jax.vmap(lambda q: robot.forward_kinematics_batched(q, config.s_ps))(
+        q_ts
+    )
 
-    p_tsp = g_ee_tsp[:, :, :3, 3]   # (T,P,3)
+    p_tsp = g_ee_tsp[:, :, :3, 3]  # (T,P,3)
     centers = config.obs["centers"]
     radii = config.obs["radii"]
 
@@ -353,7 +357,6 @@ if __name__ == "__main__":
     plt.grid(True)
     plt.tight_layout()
     plt.show()
-    
 
     # ======================================================
     # End-effector tracking
