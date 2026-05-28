@@ -144,6 +144,7 @@ docs = [
     # Do not add mkdocs-section-index unless we intentionally reintroduce the MkDocs plugin runtime.
 ]
 examples = [
+    "cbfpy",
     "ffmpeg-python",
     "ipython",
     "matplotlib",
@@ -173,6 +174,7 @@ test = [
 ]
 all = [
     "bump2version",
+    "cbfpy",
     "check-manifest",
     "codecov",
     "coverage[toml]",
