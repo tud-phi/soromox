@@ -208,7 +208,7 @@ if __name__ == "__main__":
             super().__init__(
                 n=2 * int(robot.num_active_strains),  # y = [q, qd]
                 m=int(robot.num_actuators),
-                relax_cbf=False,
+                relax_qp=False,
                 cbf_relaxation_penalty=1e6,
                 clf_relaxation_penalty=10,
             )
@@ -216,16 +216,16 @@ if __name__ == "__main__":
         # --------------------------------------------------
         # Real dynamics from file 1
         # --------------------------------------------------
-        def f(self, y) -> Array:
+        def f(self, y, *args, **kwargs) -> Array:
             return dyn.f(y)
 
-        def g(self, y) -> Array:
+        def g(self, y, *args, **kwargs) -> Array:
             return dyn.g(y)
 
         # --------------------------------------------------
         # CLF #2
         # --------------------------------------------------
-        def V_2(self, y, z_des=None) -> Array:
+        def V_2(self, y, z_des=None, *args, **kwargs) -> Array:
             q, qd = dyn.split(y)
             g_ee_2 = robot.forward_kinematics(q, jnp.sum(robot.L))
             p_2 = g_ee_2[:3, 3]
@@ -237,7 +237,7 @@ if __name__ == "__main__":
         # --------------------------------------------------
         # CBF #2
         # --------------------------------------------------
-        def h_2(self, y, kappa=2000.0):
+        def h_2(self, y, *args, kappa=2000.0, **kwargs):
             q, qd = dyn.split(y)
             g_ps = robot.forward_kinematics_batched(q, self.s_ps)  # (P,4,4)
             p = g_ps[:, :3, 3]  # (P,3)
@@ -259,10 +259,10 @@ if __name__ == "__main__":
 
             # return jnp.array([0.0]) # --- IGNORE ---
 
-        def alpha_2(self, h_2):
+        def alpha_2(self, h_2, *args, **kwargs):
             return h_2 * 20.0
 
-        def gamma_2(self, V_2):
+        def gamma_2(self, V_2, *args, **kwargs):
             return V_2 * 10.0
 
     # ======================================================
