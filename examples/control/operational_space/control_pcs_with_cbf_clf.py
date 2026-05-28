@@ -7,6 +7,11 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
+<<<<<<< HEAD:examples/control/operational_space/control_pcs_with_cbf_clf.py
+=======
+from cbfpy.cbfs.clf_cbf import CLFCBFConfig
+
+>>>>>>> 056937f (Update CLF-CBF example):examples/control/operational_space/CLF-CBF.py
 import matplotlib.pyplot as plt
 import numpy as onp
 from cbfpy.cbfs.clf_cbf import CLFCBF, CLFCBFConfig
@@ -79,6 +84,106 @@ class SoftRobotDynamics:
         return jax.jacfwd(lambda u: self.robot.forward_dynamics(0.0, y, (u, None)))(
             u_zero
         )
+
+
+# ======================================================
+# Closed-form HOCLF-HOCBF controller
+# ======================================================
+class ClosedFormHOCLFHOCBFController:
+    """Sequential half-space projections: u0 -> HOCLF -> HOCBF."""
+
+    def __init__(
+        self,
+        config: CLFCBFConfig,
+        dynamics: SoftRobotDynamics,
+        projection_eps: float = 1e-12,
+    ):
+        self.config = config
+        self.dyn = dynamics
+        self.projection_eps = projection_eps
+
+    @staticmethod
+    def _project_upper_halfspace(u: Array, a: Array, upper: Array, eps: float) -> Array:
+        """Project onto a @ u <= upper."""
+        a = jnp.ravel(a)
+        upper = jnp.ravel(upper)[0]
+        violation = a @ u - upper
+        denom = a @ a + eps
+        return u - jnp.maximum(0.0, violation / denom) * a
+
+    @staticmethod
+    def _project_lower_halfspace(u: Array, a: Array, lower: Array, eps: float) -> Array:
+        """Project onto a @ u >= lower."""
+        a = jnp.ravel(a)
+        lower = jnp.ravel(lower)[0]
+        violation = lower - a @ u
+        denom = a @ a + eps
+        return u + jnp.maximum(0.0, violation / denom) * a
+
+    def _hoclf_state(self, z: Array, z_des: Array) -> Array:
+        """psi_V = V2_dot + gamma2(V2)."""
+        f_z = self.dyn.f(z)
+
+        def V2_fn(state):
+            return self.config.V_2(state, z_des)
+
+        V2, V2_dot = jax.jvp(V2_fn, (z,), (f_z,))
+        return V2_dot + self.config.gamma_2(V2)
+
+    def _hocbf_state(self, z: Array) -> Array:
+        """psi_h = h2_dot + alpha2(h2)."""
+        f_z = self.dyn.f(z)
+        h2, h2_dot = jax.jvp(self.config.h_2, (z,), (f_z,))
+        return h2_dot + self.config.alpha_2(h2)
+
+    @partial(jax.jit, static_argnums=(0,))
+    def hoclf_constraint(self, z: Array, z_des: Array) -> tuple[Array, Array]:
+        """Return a, upper for the HOCLF constraint a @ u <= upper."""
+        f_z = self.dyn.f(z)
+        g_z = self.dyn.g(z)
+
+        def psi_v_fn(state):
+            return self._hoclf_state(state, z_des)
+
+        psi_v, Lf_psi_v = jax.jvp(psi_v_fn, (z,), (f_z,))
+
+        def Lg_col(g_col):
+            return jax.jvp(psi_v_fn, (z,), (g_col,))[1]
+
+        Lg_psi_v = jax.vmap(Lg_col, in_axes=1, out_axes=1)(g_z)
+        upper = -Lf_psi_v - self.config.gamma(psi_v)
+        return jnp.squeeze(Lg_psi_v, axis=0), upper
+
+    @partial(jax.jit, static_argnums=(0,))
+    def hocbf_constraint(self, z: Array) -> tuple[Array, Array]:
+        """Return a, lower for the HOCBF constraint a @ u >= lower."""
+        f_z = self.dyn.f(z)
+        g_z = self.dyn.g(z)
+
+        psi_h, Lf_psi_h = jax.jvp(self._hocbf_state, (z,), (f_z,))
+
+        def Lg_col(g_col):
+            return jax.jvp(self._hocbf_state, (z,), (g_col,))[1]
+
+        Lg_psi_h = jax.vmap(Lg_col, in_axes=1, out_axes=1)(g_z)
+        lower = -Lf_psi_h - self.config.alpha(psi_h)
+        return jnp.squeeze(Lg_psi_h, axis=0), lower
+
+    @partial(jax.jit, static_argnums=(0,))
+    def controller(self, z: Array, z_des: Array) -> Array:
+        """Closed-form controller: zero input -> HOCLF projection -> HOCBF projection."""
+        u0 = jnp.zeros(self.config.m)
+
+        a_clf, upper_clf = self.hoclf_constraint(z, z_des)
+        u_hoclf = self._project_upper_halfspace(
+            u0, a_clf, upper_clf, self.projection_eps
+        )
+
+        a_cbf, lower_cbf = self.hocbf_constraint(z)
+        u_safe = self._project_lower_halfspace(
+            u_hoclf, a_cbf, lower_cbf, self.projection_eps
+        )
+        return u_safe
 
 
 if __name__ == "__main__":
@@ -269,7 +374,7 @@ if __name__ == "__main__":
     # Build controller
     # ======================================================
     config = TendonSoroConfig()
-    clf_cbf = CLFCBF.from_config(config)
+    controller = ClosedFormHOCLFHOCBFController(config, dyn)
 
     z_des = config.p_d_2
 
@@ -297,8 +402,10 @@ if __name__ == "__main__":
         p_des = args
         z = y
 
-        # CLF-CBF controller directly gives the safe control.
-        u_safe = clf_cbf.controller(z, p_des)
+        # Closed-form controller:
+        #   1. project zero input onto the HOCLF half-space,
+        #   2. project that result onto the HOCBF half-space.
+        u_safe = controller.controller(z, p_des)
 
         # Directly call soromox forward_dynamics inside diffrax rollout.
         yd = robot.forward_dynamics(t, z, (u_safe, None))
