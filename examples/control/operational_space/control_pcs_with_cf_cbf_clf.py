@@ -7,14 +7,9 @@ from functools import partial
 
 import jax
 import jax.numpy as jnp
-<<<<<<< HEAD:examples/control/operational_space/control_pcs_with_cbf_clf.py
-=======
-from cbfpy.cbfs.clf_cbf import CLFCBFConfig
-
->>>>>>> 056937f (Update CLF-CBF example):examples/control/operational_space/CLF-CBF.py
 import matplotlib.pyplot as plt
 import numpy as onp
-from cbfpy.cbfs.clf_cbf import CLFCBF, CLFCBFConfig
+from cbfpy.cbfs.clf_cbf import CLFCBFConfig
 from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
 from jax import Array
 
@@ -321,16 +316,16 @@ if __name__ == "__main__":
         # --------------------------------------------------
         # Real dynamics from file 1
         # --------------------------------------------------
-        def f(self, y, *args, **kwargs) -> Array:
+        def f(self, y) -> Array:
             return dyn.f(y)
 
-        def g(self, y, *args, **kwargs) -> Array:
+        def g(self, y) -> Array:
             return dyn.g(y)
 
         # --------------------------------------------------
         # CLF #2
         # --------------------------------------------------
-        def V_2(self, y, z_des=None, *args, **kwargs) -> Array:
+        def V_2(self, y, z_des=None) -> Array:
             q, qd = dyn.split(y)
             g_ee_2 = robot.forward_kinematics(q, jnp.sum(robot.L))
             p_2 = g_ee_2[:3, 3]
@@ -342,7 +337,7 @@ if __name__ == "__main__":
         # --------------------------------------------------
         # CBF #2
         # --------------------------------------------------
-        def h_2(self, y, *args, kappa=2000.0, **kwargs):
+        def h_2(self, y, kappa=2000.0):
             q, qd = dyn.split(y)
             g_ps = robot.forward_kinematics_batched(q, self.s_ps)  # (P,4,4)
             p = g_ps[:, :3, 3]  # (P,3)
@@ -364,10 +359,10 @@ if __name__ == "__main__":
 
             # return jnp.array([0.0]) # --- IGNORE ---
 
-        def alpha_2(self, h_2, *args, **kwargs):
+        def alpha_2(self, h_2):
             return h_2 * 20.0
 
-        def gamma_2(self, V_2, *args, **kwargs):
+        def gamma_2(self, V_2):
             return V_2 * 10.0
 
     # ======================================================
