@@ -244,10 +244,10 @@ All renderers support:
 
 ## Quick Links
 
-- **📦 [Installation Guide](installation/)**: Get SoRoMoX installed and configured on your system.
-- **🚀 [Quick Start](user-guide/quick-start/)**: Jump right in with hands-on tutorials and examples.
-- **📖 [Examples](user-guide/examples/)**: Explore examples for simulation, control, and visualization.
-- **📋 [API Reference](api/overview/)**: Complete documentation of all classes and functions.
+- **📦 [Installation Guide](installation.md)**: Get SoRoMoX installed and configured on your system.
+- **🚀 [Quick Start](user-guide/quick-start.md)**: Jump right in with hands-on tutorials and examples.
+- **📖 [Examples](user-guide/examples.md)**: Explore examples for simulation, control, and visualization.
+- **📋 [API Reference](api/overview.md)**: Complete documentation of all classes and functions.
 
 ---
 

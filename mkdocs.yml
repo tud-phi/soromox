@@ -6,6 +6,7 @@ site_url: https://tud-phi.github.io/soromox
 repo_name: tud-phi/soromox
 repo_url: https://github.com/tud-phi/soromox
 edit_uri: edit/main/docs/
+not_in_nav: 404.md
 
 copyright: Copyright &copy; 2020-2026 Physical Intelligence (PhI) Lab @ TU Delft
 

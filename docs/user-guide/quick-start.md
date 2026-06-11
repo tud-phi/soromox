@@ -346,9 +346,9 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
 ## 🎯 Next Steps
 
-- **📚 [Explore Examples](../examples/)**: Dive deeper with examples and tutorials covering all robot types and use cases.
-- **📖 [API Reference](../../api/overview/)**: Complete documentation of all classes, methods, and functions.
-- **🤝 [Contributing](../../development/contributing/)**: Learn how to contribute to SoRoMoX.
+- **📚 [Explore Examples](examples.md)**: Dive deeper with examples and tutorials covering all robot types and use cases.
+- **📖 [API Reference](../api/overview.md)**: Complete documentation of all classes, methods, and functions.
+- **🤝 [Contributing](../development/contributing.md)**: Learn how to contribute to SoRoMoX.
 - **🔬 Advanced Topics**: Control theory, optimization, and machine learning applications with SoRoMoX.
 
 ---

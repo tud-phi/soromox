@@ -121,3 +121,11 @@ After construction, GVS exposes canonical runtime arrays:
       show_root_heading: true
       show_source: false
       heading_level: 3
+
+## References
+
+Key literature on the geometric variable-strain formulation and its applications:
+
+- Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. *IEEE Robotics and Automation Letters*, 5(3), 4006-4013.
+- Mathew, A. T., Hmida, I. B., Armanini, C., Boyer, F., & Renda, F. (2022). Sorosim: A MATLAB toolbox for hybrid rigid-soft robots based on the geometric variable-strain approach. *IEEE Robotics & Automation Magazine*, 30(3), 106-122.
+- Boyer, F., Lebastard, V., Candelier, F., & Renda, F. (2020). Dynamics of continuum and soft robots: A strain parameterization based approach. *IEEE Transactions on Robotics*, 37(3), 847-863.
