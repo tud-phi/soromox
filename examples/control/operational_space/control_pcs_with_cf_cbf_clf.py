@@ -10,7 +10,6 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as onp
 from cbfpy.cbfs.clf_cbf import CLFCBFConfig
-from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
 from jax import Array
 
 plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
@@ -18,6 +17,7 @@ from soromox.rendering import Open3DRenderer, RendererColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
+    SystemState,
     TendonActuatedPCS,
     TendonActuatedPCSParams,
 )
@@ -393,35 +393,33 @@ if __name__ == "__main__":
     solver_dt = 1e-4
     save_dt = 1e-4
 
-    def closed_loop_dyn(t, y, args):
-        p_des = args
-        z = y
-
+    def closed_loop_controller(state: SystemState):
         # Closed-form controller:
         #   1. project zero input onto the HOCLF half-space,
         #   2. project that result onto the HOCBF half-space.
-        u_safe = controller.controller(z, p_des)
+        u_safe = controller.controller(state.y, z_des)
+        return u_safe, None
 
-        # Directly call soromox forward_dynamics inside diffrax rollout.
-        yd = robot.forward_dynamics(t, z, (u_safe, None))
-        return yd
+    initial_state = SystemState(
+        t=jnp.array(t0),
+        y=y0,
+        u=jnp.zeros((robot.num_actuators,)),
+        control_state=None,
+    )
 
-    print("\nRunning closed-loop rollout via diffrax.diffeqsolve ...")
+    print("\nRunning closed-loop rollout via robot.rollout_closed_loop_to ...")
 
-    sol = diffeqsolve(
-        ODETerm(closed_loop_dyn),
-        Tsit5(),
-        t0=t0,
+    trajectory = robot.rollout_closed_loop_to(
+        initial_state=initial_state,
+        controller=closed_loop_controller,
         t1=t1,
-        dt0=solver_dt,
-        y0=y0,
-        args=z_des,
-        saveat=SaveAt(ts=jnp.arange(t0, t1, save_dt)),
+        solver_dt=solver_dt,
+        save_ts=jnp.arange(t0, t1, save_dt),
         max_steps=None,
     )
 
-    ts = sol.ts
-    y_ts = sol.ys
+    ts = trajectory.t
+    y_ts = trajectory.y
     q_ts, qd_ts = jnp.split(y_ts, 2, axis=1)
 
     print("Simulation done.")
