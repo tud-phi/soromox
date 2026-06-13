@@ -6,7 +6,7 @@ from jax import Array, jacfwd, jacrev, jvp
 from numpy.testing import assert_allclose
 from system_param_builders import gvs_params_from_segments, pcs_params, spatial_base_pose
 
-import soromox.utils.lie_algebra as lie
+from soromox.utils.lie_algebra import se3
 from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSStructure
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
@@ -516,7 +516,7 @@ def se3_tangent_to_body_twist(
 
 def body_twist_between(g_base: jnp.ndarray, g_target: jnp.ndarray) -> jnp.ndarray:
     g_rel = se3_inverse(g_base) @ g_target
-    xi = lie.log_SE3(g_rel, eps=1e-12)
+    xi = se3.log(g_rel, eps=1e-12)
     R = g_rel[:3, :3]
     omega = xi[:3]
     alt_omega = 0.5 * jnp.array(
@@ -531,7 +531,7 @@ def spatial_from_body(g: jnp.ndarray, xi_body: jnp.ndarray) -> jnp.ndarray:
     g_rot = jnp.block(
         [[g[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
     )
-    return lie.Adjoint_g_SE3(g_rot) @ xi_body
+    return se3.adjoint(g_rot) @ xi_body
 
 
 def segment_tip_transforms(robot: GVS, q: jnp.ndarray) -> jnp.ndarray:
@@ -601,7 +601,7 @@ def gvs_jacobian_inertialframe_from_body(
     g_s_wo_rot = jnp.block(
         [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
     )
-    Adj_g = lie.Adjoint_g_SE3(g_s_wo_rot)
+    Adj_g = se3.adjoint(g_s_wo_rot)
     return Adj_g @ J_local
 
 
@@ -1126,7 +1126,7 @@ def test_jacobian_tips_matches_pointwise_and_gauss(num_segments: int):
                 [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
             ]
         )
-        return lie.Adjoint_g_SE3(g_rot) @ J_i
+        return se3.adjoint(g_rot) @ J_i
 
     J_gauss_tips = jax.vmap(rotate_pair)(g_tips, J_local_gauss_tips)
 

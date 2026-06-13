@@ -4,12 +4,12 @@ from typing import Any
 
 import jax.numpy as jnp
 
-import soromox.utils.lie_algebra as lie
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
 from soromox.systems.gvs.structures import GVSSegmentStructure, GVSStructure
 from soromox.systems.params import validate_quaternion_base_pose
 from soromox.utils.basic import compute_strain_basis
+from soromox.utils.lie_algebra import poses
 
 
 def _set_model_field(model: Any, name: str, value: Any) -> None:
@@ -282,11 +282,9 @@ def assign_gvs_runtime_arrays(
     )
 
     if p0 is None:
-        p0_arr = jnp.array(
-            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64
-        )
+        p0_arr = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
     else:
         p0_arr = jnp.asarray(p0, dtype=jnp.float64)
     validate_quaternion_base_pose("p0", p0_arr, (7,))
     _set_model_field(model, "base_pose", p0_arr)
-    _set_model_field(model, "g0", lie.transform_from_quaternion_pose_SE3(p0_arr))
+    _set_model_field(model, "g0", poses.quaternion_pose_to_transform(p0_arr))

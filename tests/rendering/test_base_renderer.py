@@ -7,7 +7,7 @@ from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.systems.soft_robot import CrossSectionGeometry
-from soromox.utils import lie_algebra as lie
+from soromox.utils.lie_algebra import poses
 
 
 class DummyPlanarRobot:
@@ -17,7 +17,7 @@ class DummyPlanarRobot:
 
     def __init__(self, base_pose: jnp.ndarray):
         self.base_pose = jnp.asarray(base_pose)
-        self.base_transform = lie.transform_from_planar_pose_SE2(self.base_pose)
+        self.base_transform = poses.planar_pose_to_transform(self.base_pose)
 
     def forward_kinematics_batched(self, q, s_ps):
         theta = self.base_pose[0]

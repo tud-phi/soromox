@@ -7,8 +7,7 @@ from numpy.testing import assert_allclose
 
 from soromox.systems import CrossSectionGeometry, PlanarPCS, PlanarPCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
-from soromox.utils import lie_algebra as lie
-from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2
+from soromox.utils.lie_algebra import poses, se2
 from soromox.utils.tolerance import Tolerance
 from system_param_builders import planar_base_pose, planar_pcs_params
 
@@ -734,8 +733,8 @@ def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
         J_body = model.jacobian_bodyframe(q, s)
         chi = model.forward_kinematics(q, s)
         # only rotation
-        g = lie.transform_from_planar_pose_SE2(jnp.array([chi[0], 0.0, 0.0]))
-        J_expected = Adjoint_g_SE2(g) @ J_body
+        g = poses.planar_pose_to_transform(jnp.array([chi[0], 0.0, 0.0]))
+        J_expected = se2.adjoint(g) @ J_body
 
         assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
             f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_expected:\n{J_expected}"
@@ -1343,7 +1342,7 @@ def test_integration_kinematics_matches_existing_batched_path_planar(
     num_inner = model.num_gauss_points
 
     chi_expected = model.forward_kinematics_batched(q, s_points)
-    g_expected = jax.vmap(lie.transform_from_planar_pose_SE2)(chi_expected).reshape(
+    g_expected = jax.vmap(poses.planar_pose_to_transform)(chi_expected).reshape(
         num_segments, num_inner, 3, 3
     )
     J_full, Jd_full = model._J_Jd_local_batched(q, qd, s_points)

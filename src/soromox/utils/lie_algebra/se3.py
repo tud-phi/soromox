@@ -1,150 +1,120 @@
 __all__ = [
-    "tilde_SE3",
-    "hat_SE3",
-    "transform_from_quaternion_pose_SE3",
-    "log_SE3",
-    "exp_gn_SE3",
-    "adjoint_se3",
-    "coadjoint_se3",
-    "Adjoint_g_SE3",
-    "Adjoint_g_inv_SE3",
-    "Adjoint_gi_se3",
-    "Adjoint_gi_se3_inv",
-    "Tangent_gi_se3",
-    "Tangent_derivative_gi_se3",
+    "skew",
+    "hat",
+    "exp",
+    "log",
+    "small_adjoint",
+    "coadjoint",
+    "adjoint",
+    "adjoint_inverse",
 ]
 
 import jax.numpy as jnp
 from jax import Array, lax
 
-from soromox.utils.rotations import quaternion_to_rotation_matrix
-
 
 def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
-    """
-    Computes the magnitude of the rotational strain component of a 6D vector.
+    """Return a differentiability-aware norm of the rotational twist part.
+
+    The spatial twist convention is angular-first, so this helper computes
+    ``norm(xi[:3])`` for ``xi = [omega, v]``. Near zero rotation it returns an
+    exact scalar zero instead of evaluating ``sqrt(dot(omega, omega))``. This
+    avoids reverse-mode autodiff singularities at ``omega == 0`` and matches
+    the small-angle branch used by :func:`exp`.
 
     Args:
-        xi (Array): shape (6,) or (6, 1)
-            Screw coordinates [omega, v] in se(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
+        eps: Small positive scalar threshold. If ``dot(omega, omega) <= eps**2``,
+            the helper returns zero.
 
     Returns:
-        theta: scalar
-            Magnitude of the rotational strain component.
+        Scalar array containing the regularized rotational magnitude.
     """
     k = xi[:3]
-
-    # not differentiable in reverse mode at k=0
-    # theta = jnp.linalg.norm(k)
-
-    # differentiable in reverse mode at k=0
     theta_sq = jnp.dot(k, k)
-    theta = lax.cond(
+    return lax.cond(
         theta_sq <= eps**2,
         lambda _: jnp.zeros((), dtype=xi.dtype),
         lambda _: jnp.sqrt(theta_sq),
         operand=None,
     )
-    return theta
 
 
-def tilde_SE3(vec3: Array) -> Array:
-    """
-    Computes the tilde operator of SE(3) for a 3D vector.
+def skew(vec: Array) -> Array:
+    """Return the skew-symmetric cross-product matrix for a 3-vector.
 
-    Args:
-        vec3 (Array): shape (3,) or (3, 1)
-            3D vector [x, y, z].
-
-    Returns:
-        tilde: shape (3, 3)
-            A 3x3 matrix representing the tilde operator of the input vector.
-    """
-    vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
-
-    # Extract components of the vector
-    x, y, z = vec3.flatten()
-
-    # Construct the tilde operator
-    tilde = jnp.array([[0, -z, y], [z, 0, -x], [-y, x, 0]])
-    return tilde
-
-
-def hat_SE3(vec6: Array) -> Array:
-    """
-    Computes the hat operator for a 6D vector of se(3).
+    For a vector ``a = [x, y, z]``, the returned matrix ``a_hat`` satisfies
+    ``a_hat @ b == cross(a, b)`` for any 3-vector ``b``. This is the
+    ``so(3)`` matrix representation used in all spatial ``SE(3)`` operators in
+    this module.
 
     Args:
-        vec6 (Array): shape (6,) or (6, 1)
-            Screw coordinates [omega, v] in se(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
+        vec: Vector with shape ``(3,)`` or ``(3, 1)`` in Cartesian
+            ``[x, y, z]`` order.
 
     Returns:
-        hat: shape (4, 4)
-            Matrix representation of the Lie algebra element.
+        Array with shape ``(3, 3)`` containing the skew-symmetric
+        cross-product matrix.
     """
-    vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
+    vec = jnp.asarray(vec).reshape(-1)
+    x, y, z = vec
 
-    ang = vec6[:3].reshape((3, 1))  # Angular as a (3,1) vector
-    lin = vec6[3:].reshape((3, 1))  # Linear as a (3,1) vector
-
-    angtilde = tilde_SE3(ang)  # Tilde operator for angular part
-
-    hat = jnp.block([[angtilde, lin], [jnp.zeros((1, 3)), jnp.zeros((1, 1))]])
-
-    return hat
+    return jnp.array(
+        [[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]],
+        dtype=vec.dtype,
+    )
 
 
-def transform_from_quaternion_pose_SE3(pose: Array) -> Array:
-    """
-    Construct an SE(3) homogeneous transform from quaternion pose coordinates.
+def hat(xi: Array) -> Array:
+    """Return the homogeneous matrix representation of an ``se(3)`` twist.
 
-    This helper is not the matrix exponential of ``hat_SE3(pose)``. The
-    translational entries are inserted directly into the homogeneous transform:
-    ``pose = [qw, qx, qy, qz, x, y, z]`` maps to
-    ``[[R(q), [x, y, z]], [0, 0, 0, 1]]``. Use :func:`exp_gn_SE3` when the input
-    represents a Lie-algebra twist whose
-    translational component must be integrated by the SE(3) exponential.
+    Spatial twists use angular-first coordinates
+    ``xi = [omega_x, omega_y, omega_z, v_x, v_y, v_z]``. The returned matrix is
+    ``[[skew(omega), v], [0, 0, 0, 0]]`` and is suitable for use in the matrix
+    exponential.
 
     Args:
-        pose: Pose coordinates with shape ``(7,)`` in
-            ``[qw, qx, qy, qz, x, y, z]`` order. The quaternion is scalar-first
-            and normalized before constructing the rotation matrix. The
-            translation ``(x, y, z)`` is inserted directly.
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)``. The first three
+            entries are the angular component ``omega`` and the final three
+            entries are the translational component ``v``.
 
     Returns:
-        g: shape (4, 4)
-            Homogeneous pose with quaternion rotation and translation ``[x, y, z]``.
+        Array with shape ``(4, 4)`` representing the same algebra element in
+        homogeneous matrix form.
     """
-    pose = jnp.asarray(pose).reshape(-1)
-    R = quaternion_to_rotation_matrix(pose[:4])
-    p = pose[4:].reshape((3, 1))
+    xi = jnp.asarray(xi).reshape(-1)
 
-    g = jnp.block([[R, p], [jnp.zeros((1, 3)), jnp.ones((1, 1))]])
+    omega = xi[:3].reshape((3, 1))
+    v = xi[3:].reshape((3, 1))
 
-    return g
+    return jnp.block(
+        [[skew(omega), v], [jnp.zeros((1, 3), dtype=xi.dtype), jnp.zeros((1, 1), dtype=xi.dtype)]]
+    )
 
 
-def log_SE3(g: Array, eps: float | Array) -> Array:
-    """
-    Computes the logarithm map from SE(3) to se(3), i.e., extracts the twist from a transformation matrix.
+def log(g: Array, eps: float | Array) -> Array:
+    """Compute the Lie-group logarithm from ``SE(3)`` to ``se(3)``.
+
+    The returned vector is a spatial twist in angular-first coordinates. The
+    translational component is not the raw transform translation; it is the
+    result of applying the inverse ``SE(3)`` left Jacobian to the translation.
+    This makes the function the inverse of :func:`exp` for regular transforms.
 
     Args:
-        g (Array): shape (4, 4)
-            Homogeneous transform in SE(3).
-        eps (Union[float, Array]): tolerance to avoid division by zero in small angle approximations.
+        g: Homogeneous ``SE(3)`` transform with shape ``(4, 4)``. The rotation
+            is read from ``g[:3, :3]`` and the translation from ``g[:3, 3]``.
+        eps: Small positive scalar threshold used for the small-angle branch.
+            The implementation uses a conservative scaled threshold for the
+            rotation extraction to avoid divisions by nearly zero sine values.
 
     Returns:
-        log: shape (6,)
-            Twist coordinates corresponding to ``g``.
+        Array with shape ``(6,)`` in
+        ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
     """
     R = g[:3, :3]
     p = g[:3, 3].reshape((3, 1))
 
-    # Compute the rotation angle
     trace_R = jnp.trace(R)
     skew_part = R - R.T
     skew_norm_sq = jnp.sum(jnp.square(skew_part))
@@ -153,8 +123,6 @@ def log_SE3(g: Array, eps: float | Array) -> Array:
     sin_theta = jnp.sqrt(jnp.maximum(0.0, skew_norm_sq) * 0.125)
     eps_scalar = 1e8 * jnp.asarray(eps, dtype=R.dtype)
     is_small_angle = sin_theta <= jnp.sin(eps_scalar)
-    # jax.debug.print("sin(theta): {sinth}, sin(eps): {seps}", sinth=sin_theta, seps=jnp.sin(eps_scalar))
-    # jax.debug.print("is_small_angle: {b}", b=is_small_angle)
 
     theta = lax.cond(
         is_small_angle,
@@ -164,14 +132,12 @@ def log_SE3(g: Array, eps: float | Array) -> Array:
     )
 
     def _omega_hat_small(args):
-        skew, _ = args
-        return 0.5 * skew
+        skew_matrix, _ = args
+        return 0.5 * skew_matrix
 
     def _omega_hat_general(args):
-        skew, angle = args
-        sin_theta = jnp.sin(angle)
-        factor = angle / (2.0 * sin_theta)
-        return factor * skew
+        skew_matrix, angle = args
+        return angle / (2.0 * jnp.sin(angle)) * skew_matrix
 
     omega_hat = lax.cond(
         is_small_angle,
@@ -183,9 +149,6 @@ def log_SE3(g: Array, eps: float | Array) -> Array:
     omega = jnp.array(
         [omega_hat[2, 1], omega_hat[0, 2], omega_hat[1, 0]], dtype=R.dtype
     ).reshape((3, 1))
-
-    # Compute V inverse (Jacobian inverse)
-    omega_tilde = omega_hat
 
     def _compute_V_inv_small(args):
         omega_local, _ = args
@@ -207,428 +170,145 @@ def log_SE3(g: Array, eps: float | Array) -> Array:
         is_small_angle,
         _compute_V_inv_small,
         _compute_V_inv_general,
-        (omega_tilde, theta),
+        (omega_hat, theta),
     )
 
     v = V_inv @ p
 
-    log = jnp.vstack([omega, v]).reshape(-1)
-    return log
+    return jnp.vstack([omega, v]).reshape(-1)
 
 
-def exp_gn_SE3(vec6: Array, eps: float | Array) -> Array:
-    """
-    Function to compute the exponential map of the Magnus expansion.
+def exp(xi: Array, eps: float | Array) -> Array:
+    """Compute the Lie-group exponential from ``se(3)`` to ``SE(3)``.
+
+    This is the matrix exponential of :func:`hat`. The translational component
+    of ``xi`` is integrated through the ``SE(3)`` left Jacobian, so it is a
+    twist coordinate rather than a direct pose translation. Use
+    ``poses.quaternion_pose_to_transform`` for direct quaternion-plus-position
+    pose coordinates.
 
     Args:
-        vec6 (Array): shape (6,) or (6, 1)
-            Screw coordinates used in the Magnus expansion.
-        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
+        eps: Small positive scalar threshold. If ``norm(omega) <= eps``, a
+            truncated Taylor series is used to avoid singular divisions and
+            keep derivatives finite near zero rotation.
+
     Returns:
-        g (Array): shape (4, 4)
-            Homogeneous transform obtained from the Magnus expansion.
+        Homogeneous ``SE(3)`` transform with shape ``(4, 4)``.
     """
-    theta = _rotational_strain_magnitude(vec6, eps)
-    vec6_hat = hat_SE3(vec6)  # Compute the hat
+    xi = jnp.asarray(xi).reshape(-1)
+    theta = _rotational_strain_magnitude(xi, eps)
+    xi_hat = hat(xi)
 
     costheta = jnp.cos(theta)
     sintheta = jnp.sin(theta)
 
-    g = lax.cond(
+    return lax.cond(
         theta <= eps,
         lambda _: (
-            jnp.eye(4)  # Avoid division by zero
-            + vec6_hat
-            + 1 / 2 * jnp.linalg.matrix_power(vec6_hat, 2)
-            + 1 / 6 * jnp.linalg.matrix_power(vec6_hat, 3)
+            jnp.eye(4, dtype=xi.dtype)
+            + xi_hat
+            + 0.5 * jnp.linalg.matrix_power(xi_hat, 2)
+            + (1.0 / 6.0) * jnp.linalg.matrix_power(xi_hat, 3)
         ),
         lambda _: (
-            jnp.eye(4)
-            + vec6_hat
-            + 1
+            jnp.eye(4, dtype=xi.dtype)
+            + xi_hat
+            + (1.0 - costheta)
             / jnp.power(theta, 2)
-            * (1 - costheta)
-            * jnp.linalg.matrix_power(vec6_hat, 2)
-            + 1
+            * jnp.linalg.matrix_power(xi_hat, 2)
+            + (theta - sintheta)
             / jnp.power(theta, 3)
-            * (theta - sintheta)
-            * jnp.linalg.matrix_power(vec6_hat, 3)
+            * jnp.linalg.matrix_power(xi_hat, 3)
         ),
         operand=None,
     )
 
-    return g
 
+def small_adjoint(xi: Array) -> Array:
+    """Return the Lie algebra adjoint matrix ``ad_xi``.
 
-def adjoint_se3(vec6: Array) -> Array:
-    """
-    Computes the adjoint representation of a vector of se(3).
-
-    Args:
-        vec6 (Array): shape (6,) or (6, 1)
-            Screw coordinates [omega, v] in se(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
-
-    Returns:
-        Array: shape (6, 6)
-            Adjoint representation of ``vec6``.
-    """
-    vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
-
-    ang = vec6[:3].reshape((3, 1))  # Angular as a (3,1) vector
-    lin = vec6[3:].reshape((3, 1))  # Linear as a (3,1) vector
-
-    angtilde = tilde_SE3(ang)  # Tilde operator for angular part
-    lintilde = tilde_SE3(lin)  # Tilde operator for linear part
-
-    ad = jnp.block([[angtilde, jnp.zeros((3, 3))], [lintilde, angtilde]])
-
-    return ad
-
-
-def coadjoint_se3(vec6: Array) -> Array:
-    """
-    Computes the co-adjoint representation of a vector of se(3).
+    The returned matrix implements the spatial Lie bracket in angular-first
+    coordinates: ``small_adjoint(xi) @ eta == [xi, eta]`` for twists
+    ``xi`` and ``eta`` written as ``[omega, v]``.
 
     Args:
-        vec6 (Array): shape (6,) or (6, 1)
-            Screw coordinates [omega, v] in se(3).
-            The first three elements correspond to the angular component,
-            and the last three elements correspond to the linear component.
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
 
     Returns:
-        Array: shape (6, 6)
-            Co-adjoint representation of ``vec6``.
+        Array with shape ``(6, 6)`` representing ``ad_xi``.
     """
-    vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
+    xi = jnp.asarray(xi).reshape(-1)
 
-    ang = vec6[:3].reshape((3, 1))  # Angular as a (3,1) vector
-    lin = vec6[3:].reshape((3, 1))  # Linear as a (3,1) vector
+    omega = xi[:3].reshape((3, 1))
+    v = xi[3:].reshape((3, 1))
 
-    angtilde = tilde_SE3(ang)  # Tilde operator for angular part
-    lintilde = tilde_SE3(lin)  # Tilde operator for linear part
+    omega_hat = skew(omega)
+    v_hat = skew(v)
 
-    coad = jnp.block([[angtilde, lintilde], [jnp.zeros((3, 3)), angtilde]])
-
-    return coad
+    return jnp.block([[omega_hat, jnp.zeros((3, 3), dtype=xi.dtype)], [v_hat, omega_hat]])
 
 
-def Adjoint_g_SE3(mat4: Array) -> Array:
-    """
-    Computes the adjoint representation of a 4x4 matrix.
+def coadjoint(xi: Array) -> Array:
+    """Return the spatial coadjoint matrix ``-ad_xi.T``.
+
+    Dual vectors are ordered consistently with angular-first twists, i.e.
+    ``[moment_x, moment_y, moment_z, force_x, force_y, force_z]``. The returned
+    matrix acts on those dual vectors and is used in the dynamics terms where
+    spatial inertia and wrench quantities are expressed in the same convention.
 
     Args:
-        mat4 (Array): shape (4, 4)
-            Homogeneous transform in SE(3).
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
 
     Returns:
-        Array: shape (6, 6)
-            Adjoint matrix associated with ``mat4``.
+        Array with shape ``(6, 6)`` representing the coadjoint action on
+        angular-first dual vectors.
     """
-    R = mat4[:3, :3]  # Extract the angular part (top-left 3x3 block)
-    t = mat4[:3, 3].reshape((3, 1))  # Extract the linear part (top-right column)
-
-    ttilde = tilde_SE3(t)  # Tilde operator for linear part
-
-    Ad = jnp.block([[R, jnp.zeros((3, 3))], [ttilde @ R, R]])
-
-    return Ad
+    return -small_adjoint(xi).T
 
 
-def Adjoint_g_inv_SE3(mat4: Array) -> Array:
-    """
-    Computes the adjoint representation of a 4x4 matrix.
+def adjoint(g: Array) -> Array:
+    """Return the group adjoint matrix ``Ad_g`` for an ``SE(3)`` transform.
+
+    The adjoint maps spatial twists between frames according to the homogeneous
+    transform ``g`` and the angular-first twist convention. It is constructed
+    so that ``hat(adjoint(g) @ xi) == g @ hat(xi) @ inverse(g)``.
 
     Args:
-        mat4 (Array): shape (4, 4)
-            Homogeneous transform in SE(3).
+        g: Homogeneous ``SE(3)`` transform with shape ``(4, 4)``. The rotation
+            block is ``g[:3, :3]`` and the translation is ``g[:3, 3]``.
 
     Returns:
-        Array: shape (6, 6)
-            Inverse adjoint matrix associated with ``mat4``.
+        Array with shape ``(6, 6)`` representing ``Ad_g`` in
+        ``[omega, v]`` coordinates.
     """
-    R = mat4[:3, :3]  # Extract the angular part (top-left 3x3 block)
-    t = mat4[:3, 3].reshape((3, 1))  # Extract the linear part (top-right column)
+    R = g[:3, :3]
+    t = g[:3, 3].reshape((3, 1))
+    t_hat = skew(t)
 
-    ttilde = tilde_SE3(t)  # Tilde operator for linear part
-    R_inv = jnp.transpose(R)  # Since R is a rotation matrix, R^-1=R^T
-
-    # Construct the inverse Adjoint matrix
-    Ad_inv = jnp.block([[R_inv, jnp.zeros((3, 3))], [-R_inv @ ttilde, R_inv]])
-
-    return Ad_inv
+    return jnp.block([[R, jnp.zeros((3, 3), dtype=g.dtype)], [t_hat @ R, R]])
 
 
-def Adjoint_gi_se3(
-    xi_i: Array,
-    s_i: Array,
-    eps: float | Array,
-) -> Array:
-    """
-    Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(3) deformed ine the current segment according to a strain vector xi_i.
+def adjoint_inverse(g: Array) -> Array:
+    """Return the inverse group adjoint matrix ``Ad_g^{-1}``.
+
+    This is equivalent to ``adjoint(inverse(g))`` but avoids explicitly
+    constructing the inverse homogeneous transform. The result maps spatial
+    twists in the opposite direction from :func:`adjoint`.
 
     Args:
-        xi_i (Array): shape (6,) or (6, 1)
-            Constant strain vector in the segment, [omega, v].
-        s_i (Array): scalar arclength position along the segment.
-        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
+        g: Homogeneous ``SE(3)`` transform with shape ``(4, 4)``.
 
     Returns:
-        Array: shape (6, 6)
-            Adjoint matrix evaluated at ``s_i``.
+        Array with shape ``(6, 6)`` representing the inverse adjoint in
+        angular-first coordinates.
     """
-    theta = _rotational_strain_magnitude(xi_i, eps)
-    adjoint_xi_i = adjoint_se3(xi_i)
+    R = g[:3, :3]
+    t = g[:3, 3].reshape((3, 1))
+    t_hat = skew(t)
+    R_inv = jnp.transpose(R)
 
-    def _series_branch() -> Array:
-        return jnp.eye(6) + s_i * adjoint_xi_i
-
-    def _general_branch(theta_val: Array) -> Array:
-        cos_theta = jnp.cos(s_i * theta_val)
-        sin_theta = jnp.sin(s_i * theta_val)
-
-        adjoint_xi_i_square = adjoint_xi_i @ adjoint_xi_i
-        adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
-        adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
-
-        term1 = (
-            (3 * sin_theta - s_i * theta_val * cos_theta)
-            / (2 * theta_val)
-            * adjoint_xi_i
-        )
-        term2 = (
-            (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
-            / (2 * theta_val**2)
-            * adjoint_xi_i_square
-        )
-        term3 = (
-            (sin_theta - s_i * theta_val * cos_theta)
-            / (2 * theta_val**3)
-            * adjoint_xi_i_cube
-        )
-        term4 = (
-            (2 - 2 * cos_theta - s_i * theta_val * sin_theta)
-            / (2 * theta_val**4)
-            * adjoint_xi_i_quad
-        )
-
-        return jnp.eye(6) + term1 + term2 + term3 + term4
-
-    Ad = lax.cond(
-        theta <= eps,
-        lambda _: _series_branch(),
-        lambda _: _general_branch(theta),
-        operand=None,
-    )
-
-    return Ad
-
-
-def Adjoint_gi_se3_inv(
-    xi_i: Array,
-    s_i: Array,
-    eps: float | Array,
-) -> Array:
-    """
-    Computes the adjoint representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(3) deformed ine the current segment according to a strain vector xi_i.
-
-    Args:
-        xi_i (Array): shape (6,) or (6, 1)
-            Constant strain vector in the segment, [omega, v].
-        s_i (Array): scalar arclength position along the segment.
-        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
-
-    Returns:
-        Array: shape (6, 6)
-            Inverse adjoint matrix evaluated at ``s_i``.
-    """
-    Ad = Adjoint_gi_se3(
-        xi_i, s_i, eps=eps
-    )  # Adjoint representation of the input vector
-
-    # Extract R and -Jt from the Adjoint matrix
-    R = Ad[:3, :3]
-    ttildeR = Ad[3:, :3]
-
-    # Compute the inverse using the Schur complement
-    R_inv = jnp.transpose(R)  # Since R is a rotation matrix, R^-1=R^T
-    ttilde = ttildeR @ R_inv  # Compute the tilde operator for the linear part
-    # Construct the inverse Adjoint matrix
-    Ad_inv = jnp.block([[R_inv, jnp.zeros((3, 3))], [-R_inv @ ttilde, R_inv]])
-
-    return Ad_inv
-
-
-def Tangent_gi_se3(
-    xi_i: Array,
-    s_i: Array,
-    eps: float | Array,
-) -> Array:
-    """
-    Computes the tangent representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(3) deformed in the current segment according to a strain vector xi_i.
-
-    Args:
-        xi_i (Array): shape (6,) or (6, 1)
-            Constant strain vector in the segment, [omega, v].
-        s_i (Array): scalar arclength position along the segment.
-        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
-
-    Returns:
-        T (Array): shape (6, 6)
-            A 6x6 matrix representing the tangent transformation of the input screw vector at the specified position.
-    """
-    theta = _rotational_strain_magnitude(xi_i, eps)
-    adjoint_xi_i = adjoint_se3(xi_i)
-
-    def _series_branch() -> Array:
-        return s_i * jnp.eye(6) + 0.5 * s_i**2 * adjoint_xi_i
-
-    def _general_branch(theta_val: Array) -> Array:
-        cos_theta = jnp.cos(s_i * theta_val)
-        sin_theta = jnp.sin(s_i * theta_val)
-
-        adjoint_xi_i_square = adjoint_xi_i @ adjoint_xi_i
-        adjoint_xi_i_cube = adjoint_xi_i_square @ adjoint_xi_i
-        adjoint_xi_i_quad = adjoint_xi_i_cube @ adjoint_xi_i
-
-        term1 = (
-            (4 - 4 * cos_theta - s_i * theta_val * sin_theta)
-            / (2 * theta_val**2)
-            * adjoint_xi_i
-        )
-        term2 = (
-            (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta)
-            / (2 * theta_val**3)
-            * adjoint_xi_i_square
-        )
-        term3 = (
-            (2 - 2 * cos_theta - s_i * theta_val * sin_theta)
-            / (2 * theta_val**4)
-            * adjoint_xi_i_cube
-        )
-        term4 = (
-            (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta)
-            / (2 * theta_val**5)
-            * adjoint_xi_i_quad
-        )
-
-        return s_i * jnp.eye(6) + term1 + term2 + term3 + term4
-
-    T = lax.cond(
-        theta <= eps,
-        lambda _: _series_branch(),
-        lambda _: _general_branch(theta),
-        operand=None,
-    )
-
-    return T
-
-
-def Tangent_derivative_gi_se3(
-    xi_i: Array,
-    xid_i: Array,
-    s_i: Array,
-    eps: float | Array,
-) -> Array:
-    """
-    Computes the tangent derivative representation of a position of a points at s_i (local curvilinear coordinate)
-    along a rod in SE(3) deformed in the current segment according to a strain vector xi_i and its derivative xid_i.
-
-    Args:
-        xi_i (Array): shape (6,) or (6, 1)
-            Constant strain vector in the segment, [omega, v].
-        xid_i (Array): shape (6,) or (6, 1)
-            Time derivative of the strain vector.
-        s_i (Array): scalar arclength position along the segment.
-        eps (Union[float, Array]): small value to avoid division by zero in the series expansion.
-
-    Returns:
-        Td (Array): shape (6, 6)
-            A 6x6 matrix representing the tangent derivative transformation of the input screw vector at the specified position.
-    """
-    k = xi_i[:3]
-    kd = xid_i[:3]
-
-    theta = _rotational_strain_magnitude(xi_i, eps)
-    adjoint_xi_i = adjoint_se3(xi_i)
-    adjoint_xid_i = adjoint_se3(xid_i)
-
-    def _adjoint_powers_with_derivatives(max_power: int):
-        current = jnp.eye(6)
-        dot_current = jnp.zeros_like(adjoint_xi_i)
-        powers = [current]
-        dot_powers = [dot_current]
-
-        for _ in range(max_power):
-            dot_next = dot_current @ adjoint_xi_i + current @ adjoint_xid_i
-            current = current @ adjoint_xi_i
-            powers.append(current)
-            dot_powers.append(dot_next)
-            dot_current = dot_next
-
-        return powers, dot_powers
-
-    def _series_branch() -> Array:
-        return 0.5 * s_i**2 * adjoint_xid_i
-
-    def _general_branch(theta_val: Array) -> Array:
-        cos_theta = jnp.cos(s_i * theta_val)
-        sin_theta = jnp.sin(s_i * theta_val)
-
-        powers, dot_powers = _adjoint_powers_with_derivatives(4)
-
-        adjoint_xi_i_square = powers[2]
-        adjoint_xi_i_cube = powers[3]
-        adjoint_xi_i_quad = powers[4]
-        adjoint_dot_xi_i = dot_powers[1]
-        adjoint_dot_xi_i_square = dot_powers[2]
-        adjoint_dot_xi_i_cube = dot_powers[3]
-        adjoint_dot_xi_i_quad = dot_powers[4]
-
-        thetad = jnp.dot(kd, k) / theta_val
-
-        coeff_theta_common = (
-            -8
-            + (8 - s_i**2 * theta_val**2) * cos_theta
-            + 5 * s_i * theta_val * sin_theta
-        )
-        coeff_theta_alt = (
-            -8 * s_i * theta_val
-            + (15 - s_i**2 * theta_val**2) * sin_theta
-            - 7 * s_i * theta_val * cos_theta
-        )
-
-        coeff1_theta = thetad / (2 * theta_val**3) * coeff_theta_common
-        coeff1 = (4 - 4 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**2)
-
-        coeff2_theta = thetad / (2 * theta_val**4) * coeff_theta_alt
-        coeff2 = (4 * s_i * theta_val - 5 * sin_theta + s_i * theta_val * cos_theta) / (
-            2 * theta_val**3
-        )
-
-        coeff3_theta = thetad / (2 * theta_val**5) * coeff_theta_common
-        coeff3 = (2 - 2 * cos_theta - s_i * theta_val * sin_theta) / (2 * theta_val**4)
-
-        coeff4_theta = thetad / (2 * theta_val**6) * coeff_theta_alt
-        coeff4 = (2 * s_i * theta_val - 3 * sin_theta + s_i * theta_val * cos_theta) / (
-            2 * theta_val**5
-        )
-
-        term1 = coeff1_theta * adjoint_xi_i + coeff1 * adjoint_dot_xi_i
-        term2 = coeff2_theta * adjoint_xi_i_square + coeff2 * adjoint_dot_xi_i_square
-        term3 = coeff3_theta * adjoint_xi_i_cube + coeff3 * adjoint_dot_xi_i_cube
-        term4 = coeff4_theta * adjoint_xi_i_quad + coeff4 * adjoint_dot_xi_i_quad
-
-        return term1 + term2 + term3 + term4
-
-    Td = lax.cond(
-        theta <= eps,
-        lambda _: _series_branch(),
-        lambda _: _general_branch(theta),
-        operand=None,
-    )
-    return Td
+    return jnp.block([[R_inv, jnp.zeros((3, 3), dtype=g.dtype)], [-R_inv @ t_hat, R_inv]])

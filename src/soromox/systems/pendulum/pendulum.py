@@ -7,7 +7,6 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
-import soromox.utils.lie_algebra as lie
 from soromox.systems.pendulum.params import PendulumParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 

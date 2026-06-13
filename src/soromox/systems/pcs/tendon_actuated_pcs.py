@@ -7,7 +7,6 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
-import soromox.utils.lie_algebra as lie
 from soromox.systems.params import (
     BaseTendonRoutingParams,
     PassiveTendonParams,
@@ -15,6 +14,7 @@ from soromox.systems.params import (
 from soromox.systems.pcs.params import TendonActuatedPCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.utils.integration import scale_gaussian_quadrature
+from soromox.utils.lie_algebra import se3
 
 from .pcs import PCS
 
@@ -388,13 +388,11 @@ class TendonActuatedPCS(PCS):
         d_s = jnp.append(d_s_fn(tendon_routing_params_k, s), 1.0)  # (4,)
         dd_s = jnp.append(dd_s_ds_fn(tendon_routing_params_k, s), 1.0)  # (4,)
 
-        term = (dd_s + lie.hat_SE3(xi_i) @ d_s)[:-1]  # (3,)
+        term = (dd_s + se3.hat(xi_i) @ d_s)[:-1]  # (3,)
         norm = jnp.linalg.norm(term)  # ()
         t = term / norm  # (3,)
 
-        Phi_a_k = is_tendon_active * jnp.hstack(
-            [lie.tilde_SE3(d_s[:-1]) @ t, t]
-        )  # (6,)
+        Phi_a_k = is_tendon_active * jnp.hstack([se3.skew(d_s[:-1]) @ t, t])  # (6,)
 
         return Phi_a_k
 

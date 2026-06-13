@@ -7,7 +7,7 @@ from numpy.testing import assert_allclose
 
 from soromox.systems import PCS, CrossSectionGeometry, PCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
-from soromox.utils.lie_algebra.se3 import Adjoint_g_SE3, log_SE3
+from soromox.utils.lie_algebra import se3
 from soromox.utils.tolerance import Tolerance
 from system_param_builders import pcs_params, spatial_base_pose
 
@@ -100,7 +100,7 @@ def se3_inverse(g: Array) -> Array:
 
 def body_twist_between(g_base: Array, g_target: Array) -> Array:
     g_rel = se3_inverse(g_base) @ g_target
-    xi = log_SE3(g_rel, eps=1e-12)
+    xi = se3.log(g_rel, eps=1e-12)
     R = g_rel[:3, :3]
     omega = xi[:3]
     alt_omega = 0.5 * jnp.array(
@@ -114,7 +114,7 @@ def spatial_from_body(g: Array, xi_body: Array) -> Array:
     g_rot = jnp.block(
         [[g[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
     )
-    return Adjoint_g_SE3(g_rot) @ xi_body
+    return se3.adjoint(g_rot) @ xi_body
 
 
 def segment_tip_transforms(model: PCS, q: Array) -> Array:

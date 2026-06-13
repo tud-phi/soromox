@@ -7,7 +7,6 @@ import jax
 import jax.numpy as jnp
 from jax import Array, lax, vmap
 
-import soromox.utils.lie_algebra as lie
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData
 from soromox.systems.gvs.construction import params_and_structure_from_segments
@@ -47,6 +46,7 @@ from soromox.systems.gvs.structures import (
 )
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.integration import gauss_quadrature
+from soromox.utils.lie_algebra import constant_strain, poses, se3
 
 
 class GVS(SoftRobot):
@@ -938,7 +938,7 @@ class GVS(SoftRobot):
                 xi_ref_Z2,
                 joint_stiffness,
                 base_pose,
-                lie.transform_from_quaternion_pose_SE3(base_pose),
+                poses.quaternion_pose_to_transform(base_pose),
                 jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
             ),
         )
@@ -1181,8 +1181,8 @@ class GVS(SoftRobot):
             ``(6, self.max_dof)``.
             ``comm_coeff`` is the scalar coefficient ``c`` above, shape ``()``.
         """
-        ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
-        ad_xi_Z2 = lie.adjoint_se3(xi_Z2)
+        ad_xi_Z1 = se3.small_adjoint(xi_Z1)
+        ad_xi_Z2 = se3.small_adjoint(xi_Z2)
         comm_coeff = jnp.sqrt(3) * (length**2) * H**2 / 12
 
         Magnus = length * (H / 2) * (xi_Z1 + xi_Z2) + (comm_coeff * (ad_xi_Z1 @ xi_Z2))
@@ -1246,9 +1246,11 @@ class GVS(SoftRobot):
         Magnus, B_Magnus, _ = self._magnus_and_basis_from_strains(
             length, H, xi_Z1, xi_Z2, B_Z1, B_Z2
         )
-        g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
-        T_step = lie.Tangent_gi_se3(Magnus, jnp.array(1.0), eps=self.tangent_eps)
-        Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+        g_step = se3.exp(Magnus, self.global_eps)
+        T_step = constant_strain.tangent_se3(
+            Magnus, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Ad_step_inv = se3.adjoint_inverse(g_step)
         return g_step, T_step, Ad_step_inv, B_Magnus
 
     def _magnus_jacobian_time_derivative_step_terms(
@@ -1320,16 +1322,18 @@ class GVS(SoftRobot):
             length, H, xi_Z1, xi_Z2, B_Z1, B_Z2
         )
         B_Magnus_dot = comm_coeff * (
-            lie.adjoint_se3(xid_Z1) @ B_Z2 - lie.adjoint_se3(xid_Z2) @ B_Z1
+            se3.small_adjoint(xid_Z1) @ B_Z2 - se3.small_adjoint(xid_Z2) @ B_Z1
         )
         Magnusd = B_Magnus @ qd_i
 
-        g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
-        T_step = lie.Tangent_gi_se3(Magnus, jnp.array(1.0), eps=self.tangent_eps)
-        Td_step = lie.Tangent_derivative_gi_se3(
+        g_step = se3.exp(Magnus, self.global_eps)
+        T_step = constant_strain.tangent_se3(
+            Magnus, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Td_step = constant_strain.tangent_derivative_se3(
             Magnus, Magnusd, jnp.array(1.0), eps=self.tangent_eps
         )
-        Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+        Ad_step_inv = se3.adjoint_inverse(g_step)
         return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
 
     def _magnus_arc_length_derivative_step_terms(
@@ -1359,10 +1363,10 @@ class GVS(SoftRobot):
         xi_Z1_H = dB_Z1_dH @ q_i
         xi_Z2_H = dB_Z2_dH @ q_i
 
-        ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
-        ad_xi_Z2 = lie.adjoint_se3(xi_Z2)
-        ad_xi_Z1_H = lie.adjoint_se3(xi_Z1_H)
-        ad_xi_Z2_H = lie.adjoint_se3(xi_Z2_H)
+        ad_xi_Z1 = se3.small_adjoint(xi_Z1)
+        ad_xi_Z2 = se3.small_adjoint(xi_Z2)
+        ad_xi_Z1_H = se3.small_adjoint(xi_Z1_H)
+        ad_xi_Z2_H = se3.small_adjoint(xi_Z2_H)
 
         comm_coeff = jnp.sqrt(3) * (length**2) * H**2 / 12
         comm_coeff_H = jnp.sqrt(3) * (length**2) * H / 6
@@ -1391,12 +1395,14 @@ class GVS(SoftRobot):
             )
         )
 
-        g_step = lie.exp_gn_SE3(Magnus, self.global_eps)
-        T_step = lie.Tangent_gi_se3(Magnus, jnp.array(1.0), eps=self.tangent_eps)
-        T_step_H = lie.Tangent_derivative_gi_se3(
+        g_step = se3.exp(Magnus, self.global_eps)
+        T_step = constant_strain.tangent_se3(
+            Magnus, jnp.array(1.0), eps=self.tangent_eps
+        )
+        T_step_H = constant_strain.tangent_derivative_se3(
             Magnus, Magnus_H, jnp.array(1.0), eps=self.tangent_eps
         )
-        Ad_step_inv = lie.Adjoint_g_inv_SE3(g_step)
+        Ad_step_inv = se3.adjoint_inverse(g_step)
         eta_step_H = Ad_step_inv @ (T_step @ Magnus_H)
 
         return (
@@ -1430,14 +1436,16 @@ class GVS(SoftRobot):
         Returns:
             Tuple ``(g_joint, Ad_joint_inv, T_joint_B)``:
             ``g_joint`` is the joint SE(3) transform, shape ``(4, 4)``;
-            ``Ad_joint_inv`` is ``Adjoint_g_inv_SE3(g_joint)``, shape
+            ``Ad_joint_inv`` is ``se3.adjoint_inverse(g_joint)``, shape
             ``(6, 6)``; ``T_joint_B`` is the tangent-map/basis product
             ``T(g_joint) @ B_joint``, shape ``(6, self.max_dof)``.
         """
         xi_joint = B_joint @ q_joint + xi_ref_joint
-        g_joint = lie.exp_gn_SE3(xi_joint, self.global_eps)
-        T_joint = lie.Tangent_gi_se3(xi_joint, jnp.array(1.0), eps=self.tangent_eps)
-        return g_joint, lie.Adjoint_g_inv_SE3(g_joint), T_joint @ B_joint
+        g_joint = se3.exp(xi_joint, self.global_eps)
+        T_joint = constant_strain.tangent_se3(
+            xi_joint, jnp.array(1.0), eps=self.tangent_eps
+        )
+        return g_joint, se3.adjoint_inverse(g_joint), T_joint @ B_joint
 
     def _joint_jacobian_time_derivative_step_terms(
         self, B_joint: Array, xi_ref_joint: Array, q_joint: Array, qd_joint: Array
@@ -1472,16 +1480,18 @@ class GVS(SoftRobot):
         """
         xi_joint = B_joint @ q_joint + xi_ref_joint
         xid_joint = B_joint @ qd_joint
-        g_joint = lie.exp_gn_SE3(xi_joint, self.global_eps)
-        T_joint = lie.Tangent_gi_se3(xi_joint, jnp.array(1.0), eps=self.tangent_eps)
-        Td_joint = lie.Tangent_derivative_gi_se3(
+        g_joint = se3.exp(xi_joint, self.global_eps)
+        T_joint = constant_strain.tangent_se3(
+            xi_joint, jnp.array(1.0), eps=self.tangent_eps
+        )
+        Td_joint = constant_strain.tangent_derivative_se3(
             xi_joint, xid_joint, jnp.array(1.0), eps=self.tangent_eps
         )
         T_joint_B = T_joint @ B_joint
         joint_velocity = T_joint_B @ qd_joint
-        Ad_joint_inv = lie.Adjoint_g_inv_SE3(g_joint)
+        Ad_joint_inv = se3.adjoint_inverse(g_joint)
         eta_joint_step = Ad_joint_inv @ joint_velocity
-        Ad_joint_inv_dot = -lie.adjoint_se3(eta_joint_step) @ Ad_joint_inv
+        Ad_joint_inv_dot = -se3.small_adjoint(eta_joint_step) @ Ad_joint_inv
         return (
             g_joint,
             Ad_joint_inv,
@@ -1545,7 +1555,7 @@ class GVS(SoftRobot):
                 [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
             ]
         )
-        return lie.Adjoint_g_SE3(g_rot)
+        return se3.adjoint(g_rot)
 
     def _body_jacobian_to_inertial(self, g: Array, J_body: Array) -> Array:
         """
@@ -1587,7 +1597,7 @@ class GVS(SoftRobot):
         Ad_g = self._rotation_adjoint_from_pose(g)
         eta_body = J_body @ qd
         eta_rot = jnp.concatenate([eta_body[:3], jnp.zeros(3, dtype=eta_body.dtype)])
-        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+        Ad_g_dot = Ad_g @ se3.small_adjoint(eta_rot)
         return Ad_g @ J_body, Ad_g @ Jd_body + Ad_g_dot @ J_body
 
     def _body_jacobian_arc_length_derivative_to_inertial(
@@ -1609,7 +1619,7 @@ class GVS(SoftRobot):
         eta_rot_s = jnp.concatenate(
             [omega_body_s, jnp.zeros(3, dtype=omega_body_s.dtype)]
         )
-        Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
+        Ad_g_s = Ad_g @ se3.small_adjoint(eta_rot_s)
         return Ad_g @ J_body, Ad_g_s @ J_body + Ad_g @ Js_body
 
     def _inertia_integrand(self, weight: Array, J: Array, M: Array) -> Array:
@@ -1651,7 +1661,7 @@ class GVS(SoftRobot):
             ``(self.num_dofs, self.num_dofs)``.
         """
         eta = J @ qd
-        return weight * (J.T @ (M @ Jd + lie.coadjoint_se3(eta) @ M @ J))
+        return weight * (J.T @ (M @ Jd + se3.coadjoint(eta) @ M @ J))
 
     def _coriolis_force_integrand(
         self, weight: Array, J: Array, Jd: Array, M: Array, qd: Array
@@ -1679,7 +1689,7 @@ class GVS(SoftRobot):
             ``(self.num_dofs,)``.
         """
         eta = J @ qd
-        return weight * (J.T @ (M @ (Jd @ qd) + lie.coadjoint_se3(eta) @ M @ eta))
+        return weight * (J.T @ (M @ (Jd @ qd) + se3.coadjoint(eta) @ M @ eta))
 
     def _gravity_integrand(self, weight: Array, g: Array, J: Array, M: Array) -> Array:
         """
@@ -1697,7 +1707,7 @@ class GVS(SoftRobot):
             G_ij: Generalized gravity contribution, shape
             ``(self.num_dofs,)``.
         """
-        return -weight * J.T @ M @ lie.Adjoint_g_inv_SE3(g) @ self.g
+        return -weight * J.T @ M @ se3.adjoint_inverse(g) @ self.g
 
     # =========================================================================
     @eqx.filter_jit
@@ -1734,7 +1744,7 @@ class GVS(SoftRobot):
 
             xi_joint_i = B_joint_i @ q_joint_i + xi_ref_joint_i  # shape (6,)
 
-            g_joint_i = lie.exp_gn_SE3(xi_joint_i, self.global_eps)  # shape (4, 4)
+            g_joint_i = se3.exp(xi_joint_i, self.global_eps)  # shape (4, 4)
 
             g_j = g_tip @ g_joint_i  # Start with the last transformation matrix
 
@@ -1785,12 +1795,12 @@ class GVS(SoftRobot):
                 xi_Z2_j = B_Z2_j @ q_i + xi_ref_Z2_j
 
                 # Magnus expansion
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
+                ad_xi_Z1_j = se3.small_adjoint(xi_Z1_j)
                 Magnus_j = length_i * (H / 2) * (xi_Z1_j + xi_Z2_j) + (
                     jnp.sqrt(3) * (length_i**2) * H**2 / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
 
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
+                g_step = se3.exp(Magnus_j, self.global_eps)
 
                 g_j = g_j_prev @ g_step
 
@@ -1895,9 +1905,7 @@ class GVS(SoftRobot):
             xi_ref_joint = self.xi_ref_joint[i_segment]
             q_joint_i = q_gathered[i_segment, 0]
 
-            g_joint_i = lie.exp_gn_SE3(
-                B_joint @ q_joint_i + xi_ref_joint, self.global_eps
-            )
+            g_joint_i = se3.exp(B_joint @ q_joint_i + xi_ref_joint, self.global_eps)
 
             g_j = g_tip @ g_joint_i
 
@@ -1935,11 +1943,11 @@ class GVS(SoftRobot):
                 xi_Z2_j = (B_Z2_j @ q_i) + xi_ref_Z2_i[j]
 
                 # Magnus expansion
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
+                ad_xi_Z1_j = se3.small_adjoint(xi_Z1_j)
                 Magnus_j = (H / 2) * length_i * (xi_Z1_j + xi_Z2_j) + (
                     jnp.sqrt(3) * (length_i**2) * H**2 / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
-                g_step = lie.exp_gn_SE3(Magnus_j, self.global_eps)
+                g_step = se3.exp(Magnus_j, self.global_eps)
 
                 return g_prev @ g_step, None
 
@@ -2008,12 +2016,12 @@ class GVS(SoftRobot):
                 xi_Z2_j = (Bp_Z2 @ q_i) + self.xi_ref_Z2[i_segment][j]
 
                 # Magnus expansion
-                ad_xi_Z1_j = lie.adjoint_se3(xi_Z1_j)
+                ad_xi_Z1_j = se3.small_adjoint(xi_Z1_j)
                 Magnus_p = (Hp / 2) * length_i * (xi_Z1_j + xi_Z2_j) + (
                     jnp.sqrt(3) * (length_i**2) * Hp**2 / 12
                 ) * (ad_xi_Z1_j @ xi_Z2_j)
 
-                g_p = lie.exp_gn_SE3(Magnus_p, self.global_eps)
+                g_p = se3.exp(Magnus_p, self.global_eps)
 
                 g_out = g_in @ g_p
                 return g_out
@@ -2074,9 +2082,7 @@ class GVS(SoftRobot):
             B_joint = self.B_joint[i_segment]
             xi_ref_joint = self.xi_ref_joint[i_segment]
             q_joint_i = q_gathered[i_segment, 0]
-            g_joint_i = lie.exp_gn_SE3(
-                B_joint @ q_joint_i + xi_ref_joint, self.global_eps
-            )
+            g_joint_i = se3.exp(B_joint @ q_joint_i + xi_ref_joint, self.global_eps)
             g_j = g_tip @ g_joint_i
 
             Xs_i = self.integration_points[i_segment]
@@ -2154,7 +2160,7 @@ class GVS(SoftRobot):
 
                 g_out = g_in @ g_step
                 eta_step_s = eta_step_H / length_i
-                return g_out, g_out @ lie.hat_SE3(eta_step_s)
+                return g_out, g_out @ se3.hat(eta_step_s)
 
             return lax.cond(
                 i_segment < segment_idx,
@@ -2252,11 +2258,11 @@ class GVS(SoftRobot):
                 Bp = self._eval_B_segment(i, Xp)
                 xi_Z1 = Bp[0] @ q_link + xi_ref_Z1_i[cell_idx]
                 xi_Z2 = Bp[1] @ q_link + xi_ref_Z2_i[cell_idx]
-                ad_xi_Z1 = lie.adjoint_se3(xi_Z1)
+                ad_xi_Z1 = se3.small_adjoint(xi_Z1)
                 Magnus = (ds / 2.0) * (xi_Z1 + xi_Z2) + (
                     jnp.sqrt(3.0) * ds * ds / 12.0
                 ) * (ad_xi_Z1 @ xi_Z2)
-                return lie.exp_gn_SE3(Magnus, self.global_eps)
+                return se3.exp(Magnus, self.global_eps)
 
             g_partial = lax.cond(
                 jnp.logical_or(
@@ -2814,7 +2820,7 @@ class GVS(SoftRobot):
                     .at[i_segment, 1]
                     .set(T_step_H @ B_Magnus_p + T_step @ B_Magnus_H_p)
                 )
-                Ad_step_inv_H = -lie.adjoint_se3(eta_step_H) @ Ad_step_inv
+                Ad_step_inv_H = -se3.small_adjoint(eta_step_H) @ Ad_step_inv
 
                 g_out = g_in @ g_step
                 J_out = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, J_in + T_block)
@@ -2822,7 +2828,7 @@ class GVS(SoftRobot):
                     "ij,nmjk->nmik", Ad_step_inv_H, J_in + T_block
                 ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv, T_block_H)
                 Js = J_H / length_i
-                gs = g_out @ lie.hat_SE3(eta_step_H / length_i)
+                gs = g_out @ se3.hat(eta_step_H / length_i)
                 return g_out, J_out, Js, gs
 
             return lax.cond(
@@ -3054,7 +3060,7 @@ class GVS(SoftRobot):
                 )
 
                 eta_step = Ad_step_inv @ (T_step @ B_Magnus @ qd_link)
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+                Ad_step_inv_dot = -se3.small_adjoint(eta_step) @ Ad_step_inv
 
                 J_blocks = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, J_blocks_base + T_block
@@ -3317,7 +3323,7 @@ class GVS(SoftRobot):
 
                 eta_step = Ad_step_inv @ (T_step @ B_Magnus_j @ qd_i)
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+                Ad_step_inv_dot = -se3.small_adjoint(eta_step) @ Ad_step_inv
 
                 g_next = g_prev @ g_step
                 J_next = jnp.einsum("ij,nmjk->nmik", Ad_step_inv, J_prev + T_block)
@@ -3503,7 +3509,7 @@ class GVS(SoftRobot):
                 eta_next = Ad_step_inv @ (eta_prev + T_step @ B_Magnus_j @ qd_i)
 
                 # compute the bodyframe Jacobian time derivative
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+                Ad_step_inv_dot = -se3.small_adjoint(eta_step) @ Ad_step_inv
                 Jd_next = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_prev + Td_block)
                 ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv_dot, J_prev + T_block)
@@ -3606,7 +3612,7 @@ class GVS(SoftRobot):
                 eta_out = Ad_step_inv @ (eta_in + T_step @ B_Magnus_p @ qd_i)
 
                 # compute the bodyframe Jacobian time derivative
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+                Ad_step_inv_dot = -se3.small_adjoint(eta_step) @ Ad_step_inv
                 Jd_out = jnp.einsum(
                     "ij,nmjk->nmik", Ad_step_inv, (Jd_in + Td_block)
                 ) + jnp.einsum("ij,nmjk->nmik", Ad_step_inv_dot, J_in + T_block)
@@ -4032,7 +4038,7 @@ class GVS(SoftRobot):
                 link_velocity = T_step @ B_Magnus_j @ qd_i
                 eta_step = Ad_step_inv @ link_velocity
                 eta_next = Ad_step_inv @ (eta_prev + link_velocity)
-                Ad_step_inv_dot = -lie.adjoint_se3(eta_step) @ Ad_step_inv
+                Ad_step_inv_dot = -se3.small_adjoint(eta_step) @ Ad_step_inv
 
                 T_active = T_step @ B_Magnus_j @ selector_link_i
                 Td_active = (
@@ -4328,7 +4334,7 @@ class GVS(SoftRobot):
                 """
                 Ws_ij = Ws_i[j]  # ()
                 g_ij = g_i[j]  # (4, 4)
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)  # (6, 6)
+                Ad_g_inv_ij = se3.adjoint_inverse(g_ij)  # (6, 6)
                 J_ij = J_i[j]  # (6, num_segments * 2 * max_dof)
                 M_ij = Ms_i[j]  # (6, 6)
 

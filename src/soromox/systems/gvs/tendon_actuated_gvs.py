@@ -7,7 +7,6 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
-import soromox.utils.lie_algebra as lie
 from soromox.systems.gvs.params import TendonActuatedGVSParams
 from soromox.systems.gvs.structures import GVSStructure
 from soromox.systems.params import (
@@ -15,6 +14,7 @@ from soromox.systems.params import (
     LinearTendonRoutingParams,
     PassiveTendonParams,
 )
+from soromox.utils.lie_algebra import se3
 
 from .core import GVS
 from .specs import GVSSegment
@@ -347,11 +347,11 @@ class TendonActuatedGVS(GVS):
         d_s = jnp.append(d_s_fn(single_tendon_routing_params, s), 1.0)
         dd_s = jnp.append(dd_s_ds_fn(single_tendon_routing_params, s), 1.0)
 
-        term = (dd_s + lie.hat_SE3(xi_j) @ d_s)[:-1]
+        term = (dd_s + se3.hat(xi_j) @ d_s)[:-1]
         norm = jnp.linalg.norm(term)
         t = term / norm
 
-        return cond * jnp.hstack([lie.tilde_SE3(d_s[:-1]) @ t, t])
+        return cond * jnp.hstack([se3.skew(d_s[:-1]) @ t, t])
 
     @eqx.filter_jit
     def _local_actuation_basis_single(

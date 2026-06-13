@@ -7,7 +7,6 @@ import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
-import soromox.utils.lie_algebra as lie
 from soromox.systems.pcs.params import PCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
@@ -20,6 +19,7 @@ from soromox.utils.integration import (
     scale_gaussian_quadrature,
     scale_interior_gaussian_quadrature,
 )
+from soromox.utils.lie_algebra import constant_strain, poses, se3
 
 
 class PCS(SoftRobot):
@@ -234,7 +234,7 @@ class PCS(SoftRobot):
         p0 = jnp.asarray(p0, dtype=jnp.float64)
         if p0.size != 7:
             raise ValueError(f"base_pose must have shape (7,), got {p0.size}")
-        self.g0 = lie.transform_from_quaternion_pose_SE3(p0)
+        self.g0 = poses.quaternion_pose_to_transform(p0)
 
         # Gravitational acceleration vector
         g = params.gravity
@@ -364,7 +364,7 @@ class PCS(SoftRobot):
             (
                 params if stored_params is None else stored_params,
                 base_pose,
-                lie.transform_from_quaternion_pose_SE3(base_pose),
+                poses.quaternion_pose_to_transform(base_pose),
                 jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
                 segment_lengths,
                 jnp.cumsum(
@@ -517,7 +517,7 @@ class PCS(SoftRobot):
             Magnus_i = length_i * xi_i
 
             # Compute the transformation matrix from the base of the segment until length_i using the exponential map
-            g_step = lie.exp_gn_SE3(Magnus_i, eps=self.global_eps)
+            g_step = se3.exp(Magnus_i, eps=self.global_eps)
 
             g_i = g_base_i @ g_step
 
@@ -564,7 +564,7 @@ class PCS(SoftRobot):
         segment_idx, _ = self.classify_segment(s)
         xi_i = xi[segment_idx]
         g_s = self._forward_kinematics(q, s)
-        return g_s, g_s @ lie.hat_SE3(xi_i)
+        return g_s, g_s @ se3.hat(xi_i)
 
     @eqx.filter_jit
     def forward_kinematics_tips(self, q: Array) -> Array:
@@ -586,7 +586,7 @@ class PCS(SoftRobot):
             Magnus_Li = self.L[i] * xi[i]
 
             # Compute the transformation matrix from the base until the tip of the segment using the exponential map
-            g_Li_rel = lie.exp_gn_SE3(Magnus_Li, eps=self.global_eps)
+            g_Li_rel = se3.exp(Magnus_Li, eps=self.global_eps)
 
             g_Li = g_base_i @ g_Li_rel
 
@@ -629,9 +629,7 @@ class PCS(SoftRobot):
         # compute the magnus expansion for each point
         magnus = s_local_ps.reshape(-1, 1) * xi[segment_indices]
         # compute the relative transform from the base of the segment to the point
-        g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(
-            magnus
-        )
+        g_rel = vmap(lambda magnus_i: se3.exp(magnus_i, eps=self.global_eps))(magnus)
         # get the base transform for each point
         g_base_points = g_bases[segment_indices]
 
@@ -714,7 +712,7 @@ class PCS(SoftRobot):
             Returns:
                 xi (Array): strain twist of shape (6,).
             """
-            xi_mag = lie.log_SE3(g_rel_i, eps=self.global_eps)
+            xi_mag = se3.log(g_rel_i, eps=self.global_eps)
             xi = jnp.where(
                 jnp.abs(length_i) < self.global_eps,
                 jnp.zeros_like(xi_mag),
@@ -768,8 +766,8 @@ class PCS(SoftRobot):
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(xi_i, L_i, eps=self.global_eps)
+            T = constant_strain.tangent_se3(xi_i, L_i, eps=self.tangent_eps)
 
             J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
 
@@ -825,8 +823,10 @@ class PCS(SoftRobot):
             s_local: Array,
             J_base: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.tangent_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, s_local, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, s_local, eps=self.tangent_eps)
 
             return self._update_body_jacobian_step(J_base, i, Ad_inv, T)
 
@@ -863,8 +863,10 @@ class PCS(SoftRobot):
             xi_i: Array,
             arc_len: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
 
             return self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
 
@@ -922,8 +924,8 @@ class PCS(SoftRobot):
             local segment transform and ``T`` is the SE(3) tangent operator.
             Both arrays have shape ``(6, 6)``.
         """
-        Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-        T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+        Ad_inv = constant_strain.adjoint_inverse_se3(xi_i, arc_len, eps=self.global_eps)
+        T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
         return Ad_inv, T
 
     def _pcs_jacobian_arc_length_step_terms(
@@ -942,8 +944,8 @@ class PCS(SoftRobot):
             analytical derivatives with respect to local arc length.
         """
         Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, arc_len)
-        dAd_inv_ds = -lie.adjoint_se3(xi_i) @ Ad_inv
-        dT_ds = lie.Adjoint_gi_se3(xi_i, arc_len, eps=self.global_eps)
+        dAd_inv_ds = -se3.small_adjoint(xi_i) @ Ad_inv
+        dT_ds = constant_strain.adjoint_se3(xi_i, arc_len, eps=self.global_eps)
         return Ad_inv, T, dAd_inv_ds, dT_ds
 
     def _pcs_relative_pose(self, xi_i: Array, arc_len: Array) -> Array:
@@ -958,7 +960,7 @@ class PCS(SoftRobot):
             Relative homogeneous transform ``exp(arc_len * hat(xi_i))`` with
             shape ``(4, 4)``.
         """
-        return lie.exp_gn_SE3(arc_len * xi_i, eps=self.global_eps)
+        return se3.exp(arc_len * xi_i, eps=self.global_eps)
 
     def _update_body_jacobian_step(
         self, J_prev: Array, i: Array, Ad_inv: Array, T: Array
@@ -1007,7 +1009,7 @@ class PCS(SoftRobot):
         """
         J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
         eta = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False) @ xid_i
-        Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
+        Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv
         Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_prev) + jnp.einsum(
             "ij, njk->nik", Ad_inv_dot, J_prev
         )
@@ -1191,7 +1193,7 @@ class PCS(SoftRobot):
                 arc_len = jnp.where(i == segment_idx, s_local, L_i)
 
                 Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, arc_len)
-                Td = lie.Tangent_derivative_gi_se3(
+                Td = constant_strain.tangent_derivative_se3(
                     xi_i, xid_i, arc_len, eps=self.global_eps
                 )
                 g_next = g_prev @ self._pcs_relative_pose(xi_i, arc_len)
@@ -1264,8 +1266,10 @@ class PCS(SoftRobot):
             xi_i: Array,
             arc_len: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
 
             return self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
 
@@ -1275,10 +1279,12 @@ class PCS(SoftRobot):
             xi_i: Array,
             arc_len: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
-            dAd_inv_ds = -lie.adjoint_se3(xi_i) @ Ad_inv
-            dT_ds = lie.Adjoint_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
+            dAd_inv_ds = -se3.small_adjoint(xi_i) @ Ad_inv
+            dT_ds = constant_strain.adjoint_se3(xi_i, arc_len, eps=self.global_eps)
 
             return self._update_body_jacobian_arc_length_derivative_step(
                 J_base, i, Ad_inv, T, dAd_inv_ds, dT_ds
@@ -1360,7 +1366,7 @@ class PCS(SoftRobot):
         g_rot = jnp.block(
             [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
         )
-        return lie.Adjoint_g_SE3(g_rot)
+        return se3.adjoint(g_rot)
 
     def _body_jacobian_to_inertial(self, g_s: Array, J_local: Array) -> Array:
         """Rotate a PCS body-frame Jacobian into the inertial frame."""
@@ -1396,7 +1402,7 @@ class PCS(SoftRobot):
         xi = self.strain(q).reshape(self.num_segments, 6)
         segment_idx, _ = self.classify_segment(s)
         eta_rot_s = jnp.concatenate([xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)])
-        Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
+        Ad_g_s = Ad_g @ se3.small_adjoint(eta_rot_s)
 
         J = Ad_g @ J_local
         Js = Ad_g_s @ J_local + Ad_g @ Js_local
@@ -1415,7 +1421,7 @@ class PCS(SoftRobot):
         xi = self.strain(q).reshape(self.num_segments, 6)
         segment_idx, _ = self.classify_segment(s)
         eta_rot_s = jnp.concatenate([xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)])
-        Ad_g_s = Ad_g @ lie.adjoint_se3(eta_rot_s)
+        Ad_g_s = Ad_g @ se3.small_adjoint(eta_rot_s)
         Js = Ad_g_s @ J_local + Ad_g @ Js_local
         return Js
 
@@ -1443,7 +1449,7 @@ class PCS(SoftRobot):
                 [jnp.zeros((g_ps.shape[0], 1, 3)), jnp.ones((g_ps.shape[0], 1, 1))],
             ]
         )  # shape (N, 4, 4)
-        Ad_g_ps = vmap(lie.Adjoint_g_SE3)(g_rot_ps)  # shape (N, 6, 6)
+        Ad_g_ps = vmap(se3.adjoint)(g_rot_ps)  # shape (N, 6, 6)
 
         J_global_ps = jnp.einsum(
             "nij, njk->nik", Ad_g_ps, J_local_ps
@@ -1474,7 +1480,7 @@ class PCS(SoftRobot):
                     [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
                 ]
             )
-            return lie.Adjoint_g_SE3(g_rot) @ J_i
+            return se3.adjoint(g_rot) @ J_i
 
         return vmap(rotate_pair)(g_tips, J_local_tips)
 
@@ -1497,13 +1503,17 @@ class PCS(SoftRobot):
 
         # precompute the Lie algebra expressions for all segment tips
         Ad_inv_tips = vmap(
-            lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: constant_strain.adjoint_inverse_se3(
+                xi_i, L_i, eps=self.global_eps
+            )
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+            lambda xi_i, L_i: constant_strain.tangent_se3(
+                xi_i, L_i, eps=self.tangent_eps
+            )
         )(xi, self.L)
         Td_tips = vmap(
-            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
+            lambda xi_i, xid_i, L_i: constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
@@ -1596,9 +1606,11 @@ class PCS(SoftRobot):
             J_base: Array,
             Jd_base: Array,
         ) -> tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.tangent_eps)
-            Td = lie.Tangent_derivative_gi_se3(
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, s_local, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, s_local, eps=self.tangent_eps)
+            Td = constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, s_local, eps=self.tangent_eps
             )
 
@@ -1651,9 +1663,11 @@ class PCS(SoftRobot):
             xid_i: Array,
             arc_len: Array,
         ) -> tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
+            Td = constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, arc_len, eps=self.global_eps
             )
 
@@ -1775,7 +1789,7 @@ class PCS(SoftRobot):
         # compute the time-derivative of the Adjoint transformation matrix
         omega = eta_body[:3]
         eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
-        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+        Ad_g_dot = Ad_g @ se3.small_adjoint(eta_rot)
 
         # rotate both J and Jd to the inertial frame
         J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
@@ -1812,7 +1826,7 @@ class PCS(SoftRobot):
                 [jnp.zeros((g_ps.shape[0], 1, 3)), jnp.ones((g_ps.shape[0], 1, 1))],
             ]
         )  # shape (N, 4, 4)
-        Ad_g_ps = vmap(lie.Adjoint_g_SE3)(g_rot_ps)  # shape (N, 6, 6)
+        Ad_g_ps = vmap(se3.adjoint)(g_rot_ps)  # shape (N, 6, 6)
 
         # compute the body twist eta for all points
         eta_body_ps = jnp.einsum("ijk, k->ij", J_local_ps, qd)  # shape (N, 6)
@@ -1824,7 +1838,7 @@ class PCS(SoftRobot):
             axis=1,
         )  # shape (N, 6)
         Ad_g_dot_ps = jnp.einsum(
-            "nij, njk->nik", Ad_g_ps, vmap(lie.adjoint_se3)(eta_rot_ps)
+            "nij, njk->nik", Ad_g_ps, vmap(se3.small_adjoint)(eta_rot_ps)
         )  # shape (N, 6, 6)
 
         # rotate both J and Jd to the inertial frame
@@ -2071,10 +2085,7 @@ class PCS(SoftRobot):
                 C_ij = (
                     Ws_ij
                     * J_ij.T
-                    @ (
-                        M_i @ Jd_ij
-                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
-                    )
+                    @ (M_i @ Jd_ij + se3.coadjoint(J_ij @ self.B_xi @ qd) @ M_i @ J_ij)
                 )
                 return C_ij
 
@@ -2156,7 +2167,7 @@ class PCS(SoftRobot):
                 J_ij = J_ps[i, j]
 
                 # compute the inverse Adjoint transformation matrix at point s
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = se3.adjoint_inverse(g_ij)
 
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
                 return G_ij
@@ -2400,13 +2411,17 @@ class PCS(SoftRobot):
     ) -> tuple[Array, Array]:
         """Compute active-coordinate local Jacobians at all segment tips."""
         Ad_inv_tips = vmap(
-            lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: constant_strain.adjoint_inverse_se3(
+                xi_i, L_i, eps=self.global_eps
+            )
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+            lambda xi_i, L_i: constant_strain.tangent_se3(
+                xi_i, L_i, eps=self.tangent_eps
+            )
         )(xi, self.L)
         Td_tips = vmap(
-            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
+            lambda xi_i, xid_i, L_i: constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
@@ -2429,7 +2444,7 @@ class PCS(SoftRobot):
             J_next = Ad_inv_i @ J_prev + J_segment
 
             eta = Ad_inv_T_i @ xid_i
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv_i
+            Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv_i
 
             if convective_only_jd:
                 Jd_segment = (Ad_inv_i @ Td_i) @ B_i
@@ -2505,7 +2520,7 @@ class PCS(SoftRobot):
         def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
-            g_tip = g_base @ lie.exp_gn_SE3(L_i * xi_i, eps=self.global_eps)
+            g_tip = g_base @ se3.exp(L_i * xi_i, eps=self.global_eps)
             return g_tip, g_base
 
         indices = jnp.arange(self.num_segments, dtype=jnp.int32)
@@ -2513,7 +2528,7 @@ class PCS(SoftRobot):
 
         def segment_poses(g_base_i: Array, xi_i: Array, s_local_i: Array) -> Array:
             def pose_at_s(s_local_ij: Array) -> Array:
-                g_rel = lie.exp_gn_SE3(s_local_ij * xi_i, eps=self.global_eps)
+                g_rel = se3.exp(s_local_ij * xi_i, eps=self.global_eps)
                 return g_base_i @ g_rel
 
             return vmap(pose_at_s)(s_local_i)
@@ -2536,9 +2551,11 @@ class PCS(SoftRobot):
             s_local_i: Array,
         ) -> tuple[Array, Array]:
             def jacobian_at_s(s_local_ij: Array) -> tuple[Array, Array]:
-                Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local_ij, eps=self.global_eps)
-                T = lie.Tangent_gi_se3(xi_i, s_local_ij, eps=self.tangent_eps)
-                Td = lie.Tangent_derivative_gi_se3(
+                Ad_inv = constant_strain.adjoint_inverse_se3(
+                    xi_i, s_local_ij, eps=self.global_eps
+                )
+                T = constant_strain.tangent_se3(xi_i, s_local_ij, eps=self.tangent_eps)
+                Td = constant_strain.tangent_derivative_se3(
                     xi_i, xid_i, s_local_ij, eps=self.tangent_eps
                 )
 
@@ -2547,7 +2564,7 @@ class PCS(SoftRobot):
                 J_next = Ad_inv @ J_base_i + J_segment
 
                 eta = Ad_inv_T @ xid_i
-                Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
+                Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv
 
                 if convective_only_jd:
                     Jd_segment = (Ad_inv @ Td) @ B_i
@@ -2599,12 +2616,11 @@ class PCS(SoftRobot):
                 Jd_ij = Jd_ps[i, j]
 
                 eta_ij = J_ij @ qd
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = se3.adjoint_inverse(g_ij)
 
                 B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
                 Cqd_ij = Ws_ij * (
-                    J_ij.T
-                    @ (M_i @ (Jd_ij @ qd) + lie.coadjoint_se3(eta_ij) @ M_i @ eta_ij)
+                    J_ij.T @ (M_i @ (Jd_ij @ qd) + se3.coadjoint(eta_ij) @ M_i @ eta_ij)
                 )
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 

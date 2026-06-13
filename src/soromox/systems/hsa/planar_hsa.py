@@ -1,6 +1,5 @@
 __all__ = ["PlanarHSA"]
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 import dill
@@ -9,7 +8,6 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
-import soromox.utils.lie_algebra as lie
 from soromox.systems.hsa.params import PlanarHSAParams
 from soromox.systems.hsa.structures import PlanarHSAStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
@@ -209,14 +207,14 @@ class PlanarHSA(SoftRobot):
         """Flatten typed params in the order expected by saved lambdified functions."""
         params_for_lambdify = []
         for params_key, params_vals in sorted(symbolic_expression_params.items()):
-            if params_key in params_syms.keys():
+            if params_key in params_syms:
                 if isinstance(params_vals, dict):
                     for _, nested_vals in sorted(params_vals.items()):
                         for param in jnp.asarray(nested_vals).flatten():
                             params_for_lambdify.append(param)
                 else:
                     for param in jnp.asarray(params_vals).flatten():
-                            params_for_lambdify.append(param)
+                        params_for_lambdify.append(param)
         return params_for_lambdify
 
     def _with_base_translation(self, chi: Array) -> Array:

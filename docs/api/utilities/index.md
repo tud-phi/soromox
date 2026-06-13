@@ -26,8 +26,16 @@ Symbolic mathematics and derivation utilities using SymPy for soft robot modelin
 - Verification of mathematical correctness
 - Reference implementations for new robot types
 
+### [Lie Algebra](lie-algebra.md)
+
+Explicit namespaces for rigid-body and constant-strain operators.
+
+- Pure ``SE(2)`` / ``se(2)`` and ``SE(3)`` / ``se(3)`` maps
+- Direct pose-coordinate transform helpers
+- Constant-strain adjoint and tangent operators
+
 ## Quick Links
 
 - [Parameters API Reference](parameters.md) - Parameter management utilities
 - [Symbolic Derivation API Reference](symbolic-derivation.md) - Symbolic math tools
-
+- [Lie Algebra API Reference](lie-algebra.md) - Lie group and constant-strain utilities

@@ -100,6 +100,7 @@ nav:
       - Utilities:
           - Overview: api/utilities/index.md
           - Parameters: api/utilities/parameters.md
+          - Lie Algebra: api/utilities/lie-algebra.md
           - Symbolic Derivation: api/utilities/symbolic-derivation.md
   - Development:
     - Contributing: development/contributing.md

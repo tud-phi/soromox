@@ -11,13 +11,13 @@ import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, vmap
 from jax import numpy as jnp
 
-import soromox.utils.lie_algebra as lie
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.params import (
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
+from soromox.utils.lie_algebra import poses
 
 
 class CrossSectionGeometry(IntEnum):
@@ -168,8 +168,8 @@ class SoftRobot(DynamicalSystem):
         ``(4, 4)``. Spatial quaternions are scalar-first Hamilton quaternions.
         """
         if self.is_planar:
-            return lie.transform_from_planar_pose_SE2(jnp.asarray(self.base_pose))
-        return lie.transform_from_quaternion_pose_SE3(jnp.asarray(self.base_pose))
+            return poses.planar_pose_to_transform(jnp.asarray(self.base_pose))
+        return poses.quaternion_pose_to_transform(jnp.asarray(self.base_pose))
 
     @abstractmethod
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
@@ -650,7 +650,7 @@ class SoftRobot(DynamicalSystem):
         """Convert the public pose representation to a homogeneous matrix."""
         if self.is_planar:
             if pose.ndim == 1 and pose.shape[0] == 3:
-                return lie.transform_from_planar_pose_SE2(pose)
+                return poses.planar_pose_to_transform(pose)
             if pose.shape == (3, 3):
                 return pose
             raise ValueError(
