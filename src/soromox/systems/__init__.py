@@ -3,7 +3,10 @@ from soromox.autodiff import (
     custom_jvp_mode,
     set_custom_jvp_enabled,
 )
-from soromox.systems.articulated.params import ArticulatedSoftRobotParams
+from soromox.systems.articulated.params import (
+    ArticulatedSoftRobotParams,
+    McKibbenActuatedUMArmParams,
+)
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.gvs.params import GVSLinkParams, GVSParams, TendonActuatedGVSParams
 from soromox.systems.gvs.structures import (
@@ -43,7 +46,7 @@ from soromox.systems.soft_robot import (
 )
 from soromox.systems.system_state import EnvironmentState, SystemState
 
-from .articulated import ArticulatedSoftRobot
+from .articulated import ArticulatedSoftRobot, McKibbenActuatedUMArm
 from .gvs import (
     GVS,
     GVSSegment,
@@ -83,6 +86,8 @@ __all__ = [
     # articulated systems
     "ArticulatedSoftRobot",
     "ArticulatedSoftRobotParams",
+    "McKibbenActuatedUMArm",
+    "McKibbenActuatedUMArmParams",
     # gvs systems
     "GVS",
     "GVSParams",

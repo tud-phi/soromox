@@ -10,7 +10,6 @@ from system_param_builders import (
     pcs_params,
     pendulum_params,
     planar_base_pose,
-    planar_hsa_params_from_legacy,
     planar_pcs_params,
     spatial_base_pose,
     tendon_actuated_pcs_params,
@@ -19,7 +18,6 @@ from system_param_builders import (
 )
 
 import soromox
-from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL
 from soromox.systems import (
     GVS,
     PCS,
@@ -30,6 +28,7 @@ from soromox.systems import (
     PCSStructure,
     Pendulum,
     PlanarHSA,
+    PlanarHSAParams,
     PlanarHSAStructure,
     PlanarPCS,
     PlanarPCSStructure,
@@ -170,7 +169,13 @@ def _isupport_robot():
 
 
 def _planar_hsa_robot():
-    params = planar_hsa_params_from_legacy(PARAMS_FPU_CONTROL)
+    params = PlanarHSAParams.from_npz(
+        Path(__file__).resolve().parents[2]
+        / "assets"
+        / "robot_parameters"
+        / "planar_hsa"
+        / "fpu_control.npz"
+    )
     path = (
         Path(soromox.__file__).parent
         / "symbolic_expressions"

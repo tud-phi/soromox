@@ -741,6 +741,27 @@ class ArticulatedSoftRobot(SoftRobot):
         """
         return self.actuation_matrix(q) @ u
 
+    def _joint_armature(self, q: Array) -> Array:
+        """
+        Return constant per-joint armature used by the ABA recursion.
+
+        The returned values are added to the scalar articulated joint inertia
+        ``d_i = S_i.T @ IA_i @ S_i`` during the backward pass. This represents
+        diagonal configuration-space inertia attached directly to each joint,
+        such as rotor armature, and follows the same generalized-coordinate
+        convention as :meth:`inertia_matrix`.
+
+        Args:
+            q: Joint coordinates, shape ``(num_dofs,)``. The base class ignores
+                the values and uses the argument only for dtype propagation.
+
+        Returns:
+            Per-joint armature inertia values, shape ``(num_dofs,)``. The base
+            implementation returns zeros, so standard articulated systems keep
+            the same dynamics unless a subclass overrides this hook.
+        """
+        return jnp.zeros((self.num_dofs,), dtype=q.dtype)
+
     def _aba_forward_accelerations(self, q: Array, qd: Array, tau: Array) -> Array:
         """
         Compute joint accelerations with the articulated-body algorithm.
@@ -761,6 +782,7 @@ class ArticulatedSoftRobot(SoftRobot):
         Xup = self._link_motion_transforms(q)
         spatial_inertias = self._spatial_inertias()
         S = self.joint_screw
+        joint_armature = self._joint_armature(q)
 
         def _velocity_step(
             v_parent: Array, inputs: tuple[Array, Array, Array, Array]
@@ -780,14 +802,14 @@ class ArticulatedSoftRobot(SoftRobot):
 
         def _backward_step(
             carry: tuple[Array, Array],
-            inputs: tuple[Array, Array, Array, Array, Array, Array],
+            inputs: tuple[Array, Array, Array, Array, Array, Array, Array],
         ) -> tuple[tuple[Array, Array], tuple[Array, Array, Array]]:
             IA_child, pA_child = carry
-            Xup_i, S_i, inertia_i, pA_base_i, c_i, tau_i = inputs
+            Xup_i, S_i, inertia_i, pA_base_i, c_i, tau_i, armature_i = inputs
             IA_i = inertia_i + IA_child
             pA_i = pA_base_i + pA_child
             U_i = IA_i @ S_i
-            d_i = S_i @ U_i
+            d_i = S_i @ U_i + armature_i
             u_i = tau_i - S_i @ pA_i
             Ia_i = IA_i - jnp.outer(U_i, U_i) / d_i
             pa_i = pA_i + Ia_i @ c_i + U_i * (u_i / d_i)
@@ -808,6 +830,7 @@ class ArticulatedSoftRobot(SoftRobot):
                 pA_base[::-1],
                 c[::-1],
                 tau_total[::-1],
+                joint_armature[::-1],
             ),
         )
         U = U_rev[::-1]

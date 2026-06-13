@@ -1,18 +1,25 @@
 # ruff: noqa: E402
+from pathlib import Path
+
 import jax
+import numpy as np
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from pathlib import Path
 
 from jax import grad, jacfwd, random
 from jax import numpy as jnp
-from system_param_builders import planar_hsa_params_from_legacy
 
 import soromox
-from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL as params
-from soromox.systems import PlanarHSA, PlanarHSAStructure
+from soromox.systems import PlanarHSA, PlanarHSAParams, PlanarHSAStructure
 
-typed_params = planar_hsa_params_from_legacy(params)
+HSA_PARAMS_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "assets"
+    / "robot_parameters"
+    / "planar_hsa"
+    / "fpu_control.npz"
+)
+typed_params = PlanarHSAParams.from_npz(HSA_PARAMS_PATH)
 num_segments = 1
 num_rods_per_segment = 2
 
@@ -71,7 +78,10 @@ def test_end_effector_kinematics(seed: int = 0):
 def test_planar_hsa_exposes_phi_max():
     robot = _create_robot()
 
-    assert jnp.allclose(typed_params.phi_max, params["phi_max"])
+    with np.load(HSA_PARAMS_PATH) as data:
+        assert str(data["schema_version"]) == "planar_hsa_params_v1"
+        assert str(data["robot_name"]) == "PlanarHSA"
+        assert jnp.allclose(typed_params.phi_max, data["phi_max"])
     assert jnp.allclose(robot.phi_max, typed_params.phi_max)
 
 

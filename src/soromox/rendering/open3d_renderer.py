@@ -1203,9 +1203,14 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         # Use camera config if provided, otherwise use defaults
         config = camera_config or CameraConfig()
-        camera_pos, look_at = config.compute_auto_position(center, extent)
+        camera_pos, look_at = config.compute_auto_position(
+            center,
+            extent,
+            reference_transform=np.asarray(self.base_transform),
+        )
+        up = config.compute_up()
 
-        render.setup_camera(config.fov, look_at, camera_pos, list(config.up))
+        render.setup_camera(config.fov, look_at, camera_pos, list(up))
 
         img = render.render_to_image()
         frame = np.asarray(img)
@@ -1395,17 +1400,22 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         # Use provided config or defaults
         config = camera_config or CameraConfig()
-        camera_pos, look_at = config.compute_auto_position(center, max_extent)
-        up = np.array(config.up, dtype=np.float64)
+        camera_pos, look_at = config.compute_auto_position(
+            center,
+            max_extent,
+            reference_transform=np.asarray(self.base_transform),
+        )
+        up = config.compute_up()
 
-        # Compute front direction (from camera toward look_at)
+        # Open3D ViewControl stores the front vector from the look-at target
+        # toward the camera eye, opposite to the eye-to-target viewing ray.
         front = look_at - camera_pos
         front_norm = np.linalg.norm(front)
         if front_norm > 1e-9:
             front = front / front_norm
 
         # Use ViewControl API for orientation
-        ctrl.set_front(-front)  # Open3D front points away from scene
+        ctrl.set_front(-front)
         ctrl.set_lookat(look_at)
         ctrl.set_up(up)
 

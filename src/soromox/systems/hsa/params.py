@@ -1,5 +1,9 @@
 __all__ = ["PlanarHSAParams"]
 
+from dataclasses import fields
+from pathlib import Path
+
+import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
@@ -54,6 +58,25 @@ class PlanarHSAParams(BaseSoftRobotParams):
     hysteresis_n: Array
     hysteresis_beta: Array
     hysteresis_gamma: Array
+
+    @classmethod
+    def from_npz(cls, path: str | Path) -> "PlanarHSAParams":
+        """Load planar HSA parameters from an explicit ``.npz`` file path."""
+        with np.load(path) as data:
+            field_names = [field.name for field in fields(cls)]
+            missing = sorted(name for name in field_names if name not in data)
+            if missing:
+                missing_names = ", ".join(missing)
+                raise KeyError(
+                    f"Planar HSA parameter file is missing field(s): {missing_names}."
+                )
+
+            return cls(
+                **{
+                    field_name: jnp.asarray(data[field_name])
+                    for field_name in field_names
+                }
+            )
 
     def validate(self) -> None:
         length = jnp.asarray(self.length)

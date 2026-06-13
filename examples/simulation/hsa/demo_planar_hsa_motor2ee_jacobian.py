@@ -9,9 +9,18 @@ from jax import Array, jacrev, jit, random
 from jax import numpy as jnp
 
 import soromox
-from soromox.parameters.hsa_params import PLANAR_HSA_FPU_CONTROL_PARAMS
 from soromox.systems import PlanarHSA, PlanarHSAParams, PlanarHSAStructure
 from soromox.utils.numerical_jacobian import approx_derivative
+
+
+def _repo_hsa_params_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "robot_parameters"
+        / "planar_hsa"
+        / "fpu_control.npz"
+    )
 
 
 def factory_fn(
@@ -155,7 +164,7 @@ if __name__ == "__main__":
 
     # activate all strains (i.e. bending, shear, and axial)
     strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
-    params = PLANAR_HSA_FPU_CONTROL_PARAMS
+    params = PlanarHSAParams.from_npz(_repo_hsa_params_path())
 
     # call the factory function
     phi2chi_static_model_fn, jac_phi2chi_static_model_fn = factory_fn(

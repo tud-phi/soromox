@@ -918,23 +918,25 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_zlabel("Z [m]")
-            if camera_config is not None:
-                center = (
-                    np.array(scene_center, dtype=np.float64)
-                    if scene_center is not None
-                    else np.array([0.0, 0.0, width_m * 0.5], dtype=np.float64)
-                )
-                extent = float(scene_extent) if scene_extent is not None else width_m
-                camera_pos, look_at = camera_config.compute_auto_position(
-                    center, extent
-                )
-                view_vec = np.asarray(camera_pos, dtype=np.float64) - np.asarray(
-                    look_at, dtype=np.float64
-                )
-                r_xy = float(np.hypot(view_vec[0], view_vec[1]))
-                azim = np.degrees(np.arctan2(view_vec[1], view_vec[0]))
-                elev = np.degrees(np.arctan2(view_vec[2], r_xy))
-                ax.view_init(elev=elev, azim=azim)
+            config = camera_config or CameraConfig()
+            center = (
+                np.array(scene_center, dtype=np.float64)
+                if scene_center is not None
+                else np.array([0.0, 0.0, width_m * 0.5], dtype=np.float64)
+            )
+            extent = float(scene_extent) if scene_extent is not None else width_m
+            camera_pos, look_at = config.compute_auto_position(
+                center,
+                extent,
+                reference_transform=np.asarray(self.base_transform),
+            )
+            view_vec = np.asarray(camera_pos, dtype=np.float64) - np.asarray(
+                look_at, dtype=np.float64
+            )
+            r_xy = float(np.hypot(view_vec[0], view_vec[1]))
+            azim = np.degrees(np.arctan2(view_vec[1], view_vec[0]))
+            elev = np.degrees(np.arctan2(view_vec[2], r_xy))
+            ax.view_init(elev=elev, azim=azim)
         else:
             ax.set_xlim(-width_m / 2, width_m / 2)
             if center_origin:

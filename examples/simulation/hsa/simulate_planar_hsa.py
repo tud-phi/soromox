@@ -9,20 +9,27 @@ jax.config.update("jax_enable_x64", True)  # double precision
 import jax.numpy as jnp
 
 import soromox
-from soromox.parameters.hsa_params import (
-    PLANAR_HSA_FPU_CONTROL_PARAMS,
-    PLANAR_HSA_FPU_HYSTERESIS_CONTROL_PARAMS,
-)
 from soromox.rendering.planar_hsa.opencv_renderer import (
     OpenCVPlanarHSARenderer,
 )
-from soromox.systems import PlanarHSA, PlanarHSAStructure, SystemState
+from soromox.systems import PlanarHSA, PlanarHSAParams, PlanarHSAStructure, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+
+
+def _repo_hsa_params_path(consider_hysteresis: bool) -> Path:
+    filename = "fpu_hysteresis_control.npz" if consider_hysteresis else "fpu_control.npz"
+    return (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "robot_parameters"
+        / "planar_hsa"
+        / filename
+    )
 
 
 if __name__ == "__main__":
@@ -40,11 +47,7 @@ if __name__ == "__main__":
     strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
     consider_hysteresis = True
 
-    params = (
-        PLANAR_HSA_FPU_HYSTERESIS_CONTROL_PARAMS
-        if consider_hysteresis
-        else PLANAR_HSA_FPU_CONTROL_PARAMS
-    )
+    params = PlanarHSAParams.from_npz(_repo_hsa_params_path(consider_hysteresis))
     # increase damping for simulation stability
     params = params.replace(
         bending_damping=5 * params.bending_damping,

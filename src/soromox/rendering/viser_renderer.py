@@ -538,27 +538,44 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
             self._scene_handles.backbone_points.append(robot_points)
 
-            # Create base plate perpendicular to the configured base-frame +x axis.
-            base_axis = self._base_tangent_axis(dim=3)
-            base_pos = curve[0].copy() - 0.5 * self._base_plate_thickness * base_axis
-            base_wxyz = _direction_to_quaternion(base_axis)
-            base_handle = self._server.scene.add_mesh_trimesh(
-                name=f"/robots/robot_{robot_idx}/base_plate",
-                mesh=self._make_cylinder_trimesh(
-                    length=self._base_plate_thickness,
-                    radius=self._robot_radius * self._base_plate_radius_scale,
-                    color=base_plate_color,
-                    direction=None,  # Already Z-aligned
-                ),
-                position=tuple(base_pos),
-                wxyz=base_wxyz,
-            )
+            base_handle = self._add_base_plate(robot_idx, curve[0], base_plate_color)
             self._scene_handles.base_plates.append(base_handle)
 
         # Mark geometry as initialized for efficient updates
         self._scene_handles.geometry_initialized = True
         self._scene_handles.num_robots = num_robots
         self._scene_handles.num_backbone_points = num_points
+
+    def _base_plate_pose(
+        self, base_point: np.ndarray
+    ) -> tuple[np.ndarray, tuple[float, float, float, float]]:
+        """Return base-plate position and orientation from the shared base transform."""
+        base_axis = self._base_tangent_axis(dim=3)
+        base_pos = (
+            np.asarray(base_point, dtype=np.float64)
+            - 0.5 * self._base_plate_thickness * base_axis
+        )
+        return base_pos, _direction_to_quaternion(base_axis)
+
+    def _add_base_plate(
+        self,
+        robot_idx: int,
+        base_point: np.ndarray,
+        base_plate_color: tuple[float, float, float],
+    ):
+        """Add a base plate using the standard renderer base transform convention."""
+        base_pos, base_wxyz = self._base_plate_pose(base_point)
+        return self._server.scene.add_mesh_trimesh(
+            name=f"/robots/robot_{robot_idx}/base_plate",
+            mesh=self._make_cylinder_trimesh(
+                length=self._base_plate_thickness,
+                radius=self._robot_radius * self._base_plate_radius_scale,
+                color=base_plate_color,
+                direction=None,  # Already Z-aligned
+            ),
+            position=tuple(base_pos),
+            wxyz=base_wxyz,
+        )
 
     def _build_tendon_geometry(
         self,
@@ -705,12 +722,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
             if robot_idx < len(self._scene_handles.base_plates):
-                base_axis = self._base_tangent_axis(dim=3)
                 base_handle = self._scene_handles.base_plates[robot_idx]
-                base_handle.position = tuple(
-                    curve[0] - 0.5 * self._base_plate_thickness * base_axis
-                )
-                base_handle.wxyz = _direction_to_quaternion(base_axis)
+                base_pos, base_wxyz = self._base_plate_pose(curve[0])
+                base_handle.position = tuple(base_pos)
+                base_handle.wxyz = base_wxyz
 
             robot_points = self._scene_handles.backbone_points[robot_idx]
 
@@ -838,15 +853,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
         """Configure camera to view the robot(s).
 
         Args:
-            curves: Backbone curves array of shape (N, num_points, 3)
+            curves: Backbone curves array with final dimension 3. Accepted
+                shapes include (N, num_points, 3) and (N, T, num_points, 3).
             camera_config: Optional camera configuration. If None, uses
                 default settings from renderer initialization.
         """
         if self._server is None:
             return
 
-        # Use provided config or create default
-        config = camera_config or CameraConfig(fov=self._camera_fov)
+        # Use a Viser-specific auto-distance. CameraConfig's default distance
+        # factor is tuned for backends with an additional zoom control, while
+        # Viser uses the camera position as a true perspective eye point.
+        config = camera_config or CameraConfig(fov=self._camera_fov, distance_factor=1.0)
 
         # Compute bounding box of all curves
         all_points = curves.reshape(-1, 3)
@@ -855,13 +873,19 @@ class ViserRenderer(BaseSoftRobotRenderer):
         max_extent = float(np.max(extent))
 
         # Compute camera position and look_at from config
-        camera_pos, look_at = config.compute_auto_position(center, max_extent)
+        camera_pos, look_at = config.compute_auto_position(
+            center,
+            max_extent,
+            reference_transform=np.asarray(self.base_transform),
+        )
+        up = config.compute_up()
 
         # Helper function to configure a client's camera
         def configure_camera(client: viser.ClientHandle) -> None:
             client.camera.position = tuple(camera_pos)
             client.camera.look_at = tuple(look_at)
-            client.camera.fov = config.fov
+            client.camera.up_direction = tuple(up)
+            client.camera.fov = float(np.deg2rad(config.fov))
 
         # Update already-connected clients
         for client in self._server.get_clients().values():
@@ -1227,10 +1251,22 @@ class ViserRenderer(BaseSoftRobotRenderer):
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
-        # Precompute all backbone curves for first frame
+        # Precompute backbone curves for the first frame used to build geometry.
         curves_0 = np.asarray(
             self.compute_backbone_curves_batched(q_ts[:, 0, :], base_offsets)
         )
+
+        # Fit the initial camera to the full animated trajectory, matching
+        # Open3DRenderer.render_sequence and avoiding under-framing on motion.
+        q_ts_time_first = q_ts.transpose(1, 0, 2)
+        camera_curves = np.asarray(
+            jax.vmap(
+                lambda q_batch: self.compute_backbone_curves_batched(
+                    q_batch,
+                    base_offsets,
+                )
+            )(q_ts_time_first)
+        ).transpose(1, 0, 2, 3)
 
         # Build initial scene
         self._clear_scene()
@@ -1277,7 +1313,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 ),
             )
 
-        self._setup_camera(curves_0, camera_config)
+        self._setup_camera(camera_curves, camera_config)
         self._setup_lighting()
 
         # Setup animation state
