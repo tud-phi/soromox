@@ -1,7 +1,7 @@
 __all__ = [
     "tilde_SE2",
     "hat_SE2",
-    "exp_SE2",
+    "transform_from_planar_pose_SE2",
     "log_SE2",
     "exp_gn_SE2",
     "adjoint_se2",
@@ -61,32 +61,30 @@ def hat_SE2(vec3: Array) -> Array:
     return hat
 
 
-def exp_SE2(vec3: Array) -> Array:
-    """
-    Construct an SE(2) homogeneous transform from raw pose coordinates.
+def transform_from_planar_pose_SE2(pose: Array) -> Array:
+    """Construct an SE(2) homogeneous transform from planar pose coordinates.
 
-    This helper keeps the historical ``exp_SE2`` name, but it is not the
-    matrix exponential of ``hat_SE2(vec3)`` for a general twist. The
-    translational entries are inserted directly into the homogeneous transform:
-    ``vec3 = [theta, x, y]`` maps to ``[[R(theta), [x, y]], [0, 0, 1]]``.
-
-    Use :func:`exp_gn_SE2` when ``vec3`` represents a Lie-algebra twist whose
-    translational component must be integrated by the SE(2) exponential.
+    This helper is not the matrix exponential of ``hat_SE2(pose)``. It treats
+    the input as direct pose coordinates, so the translational entries are
+    inserted directly into the homogeneous transform:
+    ``pose = [theta, x, y]`` maps to
+    ``[[R(theta), [x, y]], [0, 0, 1]]``. Use :func:`exp_gn_SE2` when the input
+    represents a Lie-algebra twist whose translational component must be
+    integrated by the SE(2) exponential.
 
     Args:
-        vec3 (Array): shape (3,) or (3, 1)
-            Pose coordinates ``[theta, x, y]`` where ``theta`` is the planar
-            rotation angle and ``(x, y)`` is the raw translation vector.
+        pose: Planar pose with shape ``(3,)`` in ``[theta, x, y]`` order.
+            ``theta`` is a right-handed rotation angle in radians about the
+            out-of-plane z-axis. ``x`` and ``y`` are direct translation
+            coordinates in the parent frame.
 
     Returns:
-        g: shape (3, 3)
-            Homogeneous pose with rotation ``R(theta)`` and translation
-            ``[x, y]``.
+        Array: Homogeneous SE(2) transform with shape ``(3, 3)``.
     """
-    vec3 = vec3.reshape(-1)  # Ensure vec3 is a 1D array
+    pose = jnp.asarray(pose).reshape(-1)
 
-    theta = vec3[0]
-    p = vec3[1:].reshape((2, 1))
+    theta = pose[0]
+    p = pose[1:3].reshape((2, 1))
 
     cos = jnp.cos(theta)
     sin = jnp.sin(theta)

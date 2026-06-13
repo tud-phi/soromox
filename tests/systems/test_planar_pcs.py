@@ -7,9 +7,10 @@ from numpy.testing import assert_allclose
 
 from soromox.systems import CrossSectionGeometry, PlanarPCS, PlanarPCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
-from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2, exp_SE2
+from soromox.utils import lie_algebra as lie
+from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import planar_pcs_params
+from system_param_builders import planar_base_pose, planar_pcs_params
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -46,7 +47,7 @@ def make_planar_pcs(
         ).flatten()
     )
     params = planar_pcs_params(
-        base_pose=jnp.array([th0, 0.0, 0.0]),
+        base_pose=planar_base_pose(th0),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,
@@ -489,7 +490,7 @@ def test_inverse_kinematics_relative_pose_computation():
     )
 
     # Manually compute the first relative pose (segment 1 w.r.t. base)
-    base_pose = model.base_pose
+    base_pose = model._base_planar_pose(chi_tips.dtype)
     expected_rel_0 = chi_tips[0] - base_pose
     expected_rel_0 = expected_rel_0.at[1:].set(
         jnp.array(
@@ -733,7 +734,7 @@ def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
         J_body = model.jacobian_bodyframe(q, s)
         chi = model.forward_kinematics(q, s)
         # only rotation
-        g = exp_SE2(jnp.array([chi[0], 0.0, 0.0]))
+        g = lie.transform_from_planar_pose_SE2(jnp.array([chi[0], 0.0, 0.0]))
         J_expected = Adjoint_g_SE2(g) @ J_body
 
         assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
@@ -1342,7 +1343,9 @@ def test_integration_kinematics_matches_existing_batched_path_planar(
     num_inner = model.num_gauss_points
 
     chi_expected = model.forward_kinematics_batched(q, s_points)
-    g_expected = jax.vmap(exp_SE2)(chi_expected).reshape(num_segments, num_inner, 3, 3)
+    g_expected = jax.vmap(lie.transform_from_planar_pose_SE2)(chi_expected).reshape(
+        num_segments, num_inner, 3, 3
+    )
     J_full, Jd_full = model._J_Jd_local_batched(q, qd, s_points)
     J_expected = (J_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
     Jd_expected = (Jd_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)

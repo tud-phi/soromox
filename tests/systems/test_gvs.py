@@ -4,7 +4,7 @@ import numpy as onp
 import pytest
 from jax import Array, jacfwd, jacrev, jvp
 from numpy.testing import assert_allclose
-from system_param_builders import gvs_params_from_segments, pcs_params
+from system_param_builders import gvs_params_from_segments, pcs_params, spatial_base_pose
 
 import soromox.utils.lie_algebra as lie
 from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSStructure
@@ -70,13 +70,13 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
 
     # initialize the GVS model
     gvs_params, gvs_structure = gvs_params_from_segments(
-        segments, gravity=g, base_pose=jnp.zeros(6)
+        segments, gravity=g, base_pose=spatial_base_pose()
     )
     robot_gvs = GVS(params=gvs_params, structure=gvs_structure)
 
     # PCS definition with identical geometry and material params
     params = pcs_params(
-        base_pose=jnp.zeros(6),
+        base_pose=spatial_base_pose(),
         length=Ls,
         radius=rs,
         density=rhos,
@@ -339,7 +339,7 @@ def build_constant_strain_gvs(
     params, structure = gvs_params_from_segments(
         segments,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        base_pose=jnp.zeros(6),
+        base_pose=spatial_base_pose(),
         max_dof=max_dof,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )
@@ -389,14 +389,14 @@ def test_gvs_segment_factories_match_explicit_constructor() -> None:
     params, structure = GVS.params_from_segments(
         segments,
         gravity=gravity,
-        base_pose=jnp.zeros(6),
+        base_pose=spatial_base_pose(),
         max_dof=6,
     )
     explicit = GVS(params=params, structure=structure)
     factory = GVS.from_segments(
         segments,
         gravity=gravity,
-        base_pose=jnp.zeros(6),
+        base_pose=spatial_base_pose(),
         max_dof=6,
     )
 

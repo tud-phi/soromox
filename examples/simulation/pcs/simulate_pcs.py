@@ -40,7 +40,7 @@ if __name__ == "__main__":
     )
     params = PCSParams(
         base_pose=jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
+            [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),

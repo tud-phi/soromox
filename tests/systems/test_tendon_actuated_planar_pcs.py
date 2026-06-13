@@ -7,7 +7,11 @@ from numpy.testing import assert_allclose
 
 from soromox.systems import TendonActuatedPlanarPCS
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import planar_pcs_params, tendon_actuated_planar_pcs_params
+from system_param_builders import (
+    planar_base_pose,
+    planar_pcs_params,
+    tendon_actuated_planar_pcs_params,
+)
 
 
 def _build_planar_robot(num_segments: int = 3) -> TendonActuatedPlanarPCS:
@@ -20,7 +24,7 @@ def _build_planar_robot(num_segments: int = 3) -> TendonActuatedPlanarPCS:
         ).flatten()
     )
     body = planar_pcs_params(
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        base_pose=planar_base_pose(jnp.pi / 2),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,

@@ -902,8 +902,8 @@ class GVS(SoftRobot):
         if gravity.shape != (3,):
             raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
         base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
-        if base_pose.shape != (6,):
-            raise ValueError(f"base_pose must have shape (6,), got {base_pose.shape}.")
+        if base_pose.shape != (7,):
+            raise ValueError(f"base_pose must have shape (7,), got {base_pose.shape}.")
 
         updated_self = eqx.tree_at(
             lambda model: (
@@ -938,7 +938,7 @@ class GVS(SoftRobot):
                 xi_ref_Z2,
                 joint_stiffness,
                 base_pose,
-                lie.exp_SE3(base_pose),
+                lie.transform_from_quaternion_pose_SE3(base_pose),
                 jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
             ),
         )

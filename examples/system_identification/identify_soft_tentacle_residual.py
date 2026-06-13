@@ -633,7 +633,7 @@ if __name__ == "__main__":
         ),
         attachment_segment_index=jnp.array([0, 0]),
     )
-    p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
+    p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
 
     robot = TendonActuatedGVS.from_segments(
         [
@@ -1064,4 +1064,3 @@ if __name__ == "__main__":
     # plt.savefig("violin_error_distribution_12markers.pdf", format="pdf", bbox_inches="tight")
     # plt.savefig("violin_error_distribution_12markers.jpg", format="jpg", dpi=300, bbox_inches="tight")
     plt.show()
-

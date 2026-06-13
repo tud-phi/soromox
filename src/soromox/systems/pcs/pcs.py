@@ -232,9 +232,9 @@ class PCS(SoftRobot):
         self.base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
         p0 = self.base_pose
         p0 = jnp.asarray(p0, dtype=jnp.float64)
-        if p0.size != 6:
-            raise ValueError(f"base_pose must have shape (6,), got {p0.size}")
-        self.g0 = lie.exp_SE3(p0)
+        if p0.size != 7:
+            raise ValueError(f"base_pose must have shape (7,), got {p0.size}")
+        self.g0 = lie.transform_from_quaternion_pose_SE3(p0)
 
         # Gravitational acceleration vector
         g = params.gravity
@@ -364,7 +364,7 @@ class PCS(SoftRobot):
             (
                 params if stored_params is None else stored_params,
                 base_pose,
-                lie.exp_SE3(base_pose),
+                lie.transform_from_quaternion_pose_SE3(base_pose),
                 jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
                 segment_lengths,
                 jnp.cumsum(

@@ -191,7 +191,7 @@ if __name__ == "__main__":
     # The robot is modeled as a two-segment piecewise-constant-strain body.
     # Each vector entry corresponds to one segment.
     params = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # base pose
+        "p0": jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),  # base pose
         "L": 15e-2
         * 2
         / num_segments

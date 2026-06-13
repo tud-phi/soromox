@@ -9,6 +9,7 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
+import soromox.utils.lie_algebra as lie
 from soromox.systems.hsa.params import PlanarHSAParams
 from soromox.systems.hsa.structures import PlanarHSAStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
@@ -223,7 +224,7 @@ class PlanarHSA(SoftRobot):
         base_offset = jnp.concatenate(
             [
                 jnp.zeros(1, dtype=chi.dtype),
-                jnp.asarray(self.base_pose[1:], dtype=chi.dtype),
+                jnp.asarray(self.base_pose[1:3], dtype=chi.dtype),
             ]
         )
         return chi + base_offset

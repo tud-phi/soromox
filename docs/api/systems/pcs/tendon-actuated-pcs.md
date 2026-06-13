@@ -32,7 +32,7 @@ body_params = PCSParams(
     shear_modulus=jnp.array([1e5, 1e5]),
     damping_matrix=jnp.eye(12),
     gravity=jnp.array([0.0, 0.0, -9.81]),
-    base_pose=jnp.zeros(6),
+    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
     reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 2),
 )
 

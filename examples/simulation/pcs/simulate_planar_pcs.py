@@ -29,7 +29,7 @@ if __name__ == "__main__":
         ).flatten()
     )
     params = PlanarPCSParams(
-        base_angle=jnp.array(jnp.pi / 2),  # initial orientation angle [rad]
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,

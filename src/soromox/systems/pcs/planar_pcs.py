@@ -33,7 +33,7 @@ class PlanarPCS(SoftRobot):
     Attributes:
         num_segments: Number of segments (constant strain sections) along the robot.
         num_actuators: Number of actuators (control inputs) for the robot.
-        base_pose: Initial planar base pose ``[theta, x, y]``.
+        base_pose: Initial planar pose ``[theta, x, y]`` with ``theta`` in radians.
         g: Gravitational acceleration vector (embedded in a 3D vector).
             [0, g_x, g_y]
         L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
@@ -476,7 +476,7 @@ class PlanarPCS(SoftRobot):
 
         segment_idx, s_local = self.classify_segment(s)
 
-        chi_0 = jnp.asarray(self.base_pose, dtype=xi.dtype)
+        chi_0 = self._base_planar_pose(xi.dtype)
 
         # Iteration function
         def chi_i(chi_prev: Array, i: Array) -> tuple[Array, Array]:
@@ -591,7 +591,7 @@ class PlanarPCS(SoftRobot):
         """
         xi = self.strain(q).reshape(self.num_segments, 3)
 
-        chi_base = jnp.asarray(self.base_pose, dtype=xi.dtype)
+        chi_base = self._base_planar_pose(xi.dtype)
 
         def integrate_segment(chi_prev: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
@@ -656,7 +656,7 @@ class PlanarPCS(SoftRobot):
         xi = self.strain(q).reshape(self.num_segments, 3)
 
         chi_tips = self.forward_kinematics_tips(q)
-        chi_base = jnp.asarray(self.base_pose, dtype=xi.dtype)
+        chi_base = self._base_planar_pose(xi.dtype)
         chi_bases = jnp.concatenate([chi_base[None, :], chi_tips[:-1]], axis=0)
 
         segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
@@ -724,7 +724,8 @@ class PlanarPCS(SoftRobot):
         chi_tips = chi_tips.reshape(self.num_segments, 3)
 
         # Create array of previous poses: base + all segment tips except the last
-        prev_poses = jnp.concatenate([self.base_pose[None, :], chi_tips[:-1]], axis=0)
+        chi_base = self._base_planar_pose(chi_tips.dtype)
+        prev_poses = jnp.concatenate([chi_base[None, :], chi_tips[:-1]], axis=0)
 
         # Compute relative poses vectorized
         # For SE(2), the relative transformation between poses chi_prev and chi_curr is:
@@ -1262,7 +1263,7 @@ class PlanarPCS(SoftRobot):
         segment_idx, s_local = self.classify_segment(s)
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
-        chi0 = jnp.asarray(self.base_pose, dtype=xi.dtype)
+        chi0 = self._base_planar_pose(xi.dtype)
 
         def scan_body(
             carry: tuple[Array, Array, Array, Array, Array, Array],
@@ -1332,7 +1333,7 @@ class PlanarPCS(SoftRobot):
         segment_idx, s_local = self.classify_segment(s)
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
-        chi0 = jnp.asarray(self.base_pose, dtype=xi.dtype)
+        chi0 = self._base_planar_pose(xi.dtype)
 
         def scan_body(
             carry: tuple[Array, Array, Array, Array, Array, Array, Array],
@@ -1515,7 +1516,7 @@ class PlanarPCS(SoftRobot):
         """Adjoint of the planar pose rotation, with zero translation."""
         theta = chi[0]
         zero = jnp.zeros((), dtype=theta.dtype)
-        g = lie.exp_SE2(jnp.stack([theta, zero, zero]))
+        g = lie.transform_from_planar_pose_SE2(jnp.stack([theta, zero, zero]))
         return lie.Adjoint_g_SE2(g)
 
     def _body_jacobian_to_inertial(self, chi: Array, J_local: Array) -> Array:
@@ -1596,7 +1597,7 @@ class PlanarPCS(SoftRobot):
 
         def lift_theta(th: Array) -> Array:
             zeros = jnp.zeros((), dtype=th.dtype)
-            return lie.exp_SE2(jnp.stack([th, zeros, zeros]))
+            return lie.transform_from_planar_pose_SE2(jnp.stack([th, zeros, zeros]))
 
         g_rot_ps = vmap(lift_theta)(thetas)
         Ad_g_ps = vmap(lie.Adjoint_g_SE2)(g_rot_ps)
@@ -1623,7 +1624,9 @@ class PlanarPCS(SoftRobot):
         def rotate_pair(chi_i: Array, J_i: Array) -> Array:
             theta = chi_i[0]
             zeros = jnp.zeros((), dtype=theta.dtype)
-            g_rot = lie.exp_SE2(jnp.stack([theta, zeros, zeros]))
+            g_rot = lie.transform_from_planar_pose_SE2(
+                jnp.stack([theta, zeros, zeros])
+            )
             return lie.Adjoint_g_SE2(g_rot) @ J_i
 
         return vmap(rotate_pair)(chi_tips, J_local_tips)
@@ -1936,7 +1939,7 @@ class PlanarPCS(SoftRobot):
 
         def lift_theta(th: Array) -> Array:
             zeros = jnp.zeros((), dtype=th.dtype)
-            return lie.exp_SE2(jnp.stack([th, zeros, zeros]))
+            return lie.transform_from_planar_pose_SE2(jnp.stack([th, zeros, zeros]))
 
         g_rot_ps = vmap(lift_theta)(thetas)
         Ad_g_ps = vmap(lie.Adjoint_g_SE2)(g_rot_ps)
@@ -2214,7 +2217,7 @@ class PlanarPCS(SoftRobot):
         )
 
         chi_ps = self.forward_kinematics_batched(q, Xs_scaled.flatten())
-        g_ps = vmap(lie.exp_SE2)(chi_ps.reshape(-1, 3))
+        g_ps = vmap(lie.transform_from_planar_pose_SE2)(chi_ps.reshape(-1, 3))
         g_ps = g_ps.reshape(self.num_segments, self.num_integration_points, 3, 3)
 
         J_ps = self._J_local_batched(q, Xs_scaled.flatten())
@@ -2538,7 +2541,9 @@ class PlanarPCS(SoftRobot):
         )
         s_local = Xs_scaled - self.L_cum[:-1, None]
 
-        g0 = lie.exp_SE2(jnp.asarray(self.base_pose, dtype=xi.dtype))
+        g0 = lie.transform_from_planar_pose_SE2(
+            jnp.asarray(self.base_pose, dtype=xi.dtype)
+        )
 
         def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)

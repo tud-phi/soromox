@@ -248,9 +248,9 @@ def test_default_integration_kinematics_uses_bodyframe_samples() -> None:
 
     s_ps = jnp.array([[0.5], [2.0]], dtype=jnp.float64)
     s_flat = s_ps.reshape(-1)
-    g_expected = jax.vmap(lambda s: lie.exp_SE2(robot.forward_kinematics(q, s)))(
-        s_flat
-    ).reshape(2, 1, 3, 3)
+    g_expected = jax.vmap(
+        lambda s: lie.transform_from_planar_pose_SE2(robot.forward_kinematics(q, s))
+    )(s_flat).reshape(2, 1, 3, 3)
     J_expected, Jd_expected = robot.jacobian_and_time_derivative_bodyframe_batched(
         q, qd, s_flat
     )

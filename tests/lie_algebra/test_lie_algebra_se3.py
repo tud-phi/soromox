@@ -4,7 +4,12 @@ from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
 import pytest
 
-from soromox.utils.lie_algebra.se2 import adjoint_se2, exp_SE2, tilde_SE2
+from soromox.utils.lie_algebra.se2 import (
+    adjoint_se2,
+    exp_gn_SE2,
+    tilde_SE2,
+    transform_from_planar_pose_SE2,
+)
 from soromox.utils.lie_algebra.se3 import (
     Adjoint_g_SE3,
     Adjoint_g_inv_SE3,
@@ -14,11 +19,11 @@ from soromox.utils.lie_algebra.se3 import (
     Tangent_gi_se3,
     adjoint_se3,
     coadjoint_se3,
-    exp_SE3,
     exp_gn_SE3,
     hat_SE3,
     log_SE3,
     tilde_SE3,
+    transform_from_quaternion_pose_SE3,
 )
 from soromox.utils.tolerance import Tolerance
 
@@ -41,6 +46,15 @@ def _embed_se2_transform(mat3):
     g = g.at[:2, :2].set(mat3[:2, :2])
     g = g.at[:2, 3].set(mat3[:2, 2])
     return g
+
+
+def _quaternion_z(theta):
+    half = 0.5 * theta
+    return jnp.array([jnp.cos(half), 0.0, 0.0, jnp.sin(half)])
+
+
+def _transform_from_planar_pose(vec2):
+    return transform_from_planar_pose_SE2(vec2)
 
 
 def test_tilde_se3_matches_z_axis_rotation():
@@ -70,21 +84,44 @@ def test_hat_se3_embeds_planar_hat():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_exp_se3_matches_planar_embedding():
+def test_exp_gn_se3_matches_planar_embedding():
     vec2 = jnp.array([jnp.pi / 4.0, 0.3, -0.5])
     vec6 = _embed_se2_twist(vec2)
 
-    g_se3 = exp_SE3(vec6)
-    g_expected = _embed_se2_transform(exp_SE2(vec2))
+    g_se3 = exp_gn_SE3(vec6, EPS)
+    g_expected = _embed_se2_transform(exp_gn_SE2(vec2, EPS))
 
     assert_allclose(g_se3, g_expected, rtol=RTOL, atol=ATOL)
+
+
+def test_transform_from_quaternion_pose_se3_matches_planar_embedding():
+    theta = jnp.pi / 4.0
+    translation = jnp.array([0.3, -0.5, 0.2])
+    pose = jnp.concatenate([_quaternion_z(theta), translation])
+
+    result = transform_from_quaternion_pose_SE3(pose)
+    expected = _embed_se2_transform(
+        _transform_from_planar_pose(jnp.array([theta, translation[0], translation[1]]))
+    ).at[2, 3].set(translation[2])
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_transform_from_quaternion_pose_se3_zero_quaternion_is_finite_identity():
+    pose = jnp.array([0.0, 0.0, 0.0, 0.0, 1.0, -2.0, 3.0])
+
+    result = transform_from_quaternion_pose_SE3(pose)
+
+    expected = jnp.eye(4).at[:3, 3].set(jnp.array([1.0, -2.0, 3.0]))
+    assert jnp.isfinite(result).all()
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
 def test_log_se3_recovers_planar_rotation_without_translation():
     vec2 = jnp.array([0.6, 0.0, 0.0])
     vec6 = _embed_se2_twist(vec2)
 
-    g = exp_SE3(vec6)
+    g = exp_gn_SE3(vec6, EPS)
     recovered = log_SE3(g, eps=EPS)
 
     assert_allclose(recovered, vec6, rtol=RTOL, atol=ATOL)
@@ -121,7 +158,7 @@ def test_log_se3_pure_rotation_about_x_axis():
 
 def test_log_se3_handles_near_identity_transform():
     vec = jnp.array([1e-9, -2e-9, 3e-9, 5e-4, -4e-4, 3e-4])
-    g = exp_SE3(vec)
+    g = exp_gn_SE3(vec, EPS)
 
     recovered = log_SE3(g, eps=EPS)
 
@@ -131,7 +168,7 @@ def test_log_se3_handles_near_identity_transform():
 
 def test_log_se3_handles_identity_transform():
     vec = jnp.array([0.0, 0.0, 0.0, 0.2, 0.0, 0.0])
-    g = exp_SE3(vec)
+    g = exp_gn_SE3(vec, EPS)
 
     recovered = log_SE3(g, eps=EPS)
 
@@ -196,7 +233,7 @@ def test_coadjoint_se3_matches_block_structure():
 
 def test_adjoint_g_se3_matches_planar_embedding():
     vec2 = jnp.array([jnp.pi / 6.0, 0.4, -0.7])
-    g2 = exp_SE2(vec2)
+    g2 = _transform_from_planar_pose(vec2)
     g3 = _embed_se2_transform(g2)
 
     result = Adjoint_g_SE3(g3)
@@ -210,7 +247,7 @@ def test_adjoint_g_se3_matches_planar_embedding():
 
 def test_adjoint_g_inv_se3_is_inverse():
     vec2 = jnp.array([jnp.pi / 5.0, -0.2, 0.6])
-    g3 = _embed_se2_transform(exp_SE2(vec2))
+    g3 = _embed_se2_transform(_transform_from_planar_pose(vec2))
 
     adj = Adjoint_g_SE3(g3)
     adj_inv = Adjoint_g_inv_SE3(g3)

@@ -122,7 +122,7 @@ Get up and running in minutes:
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
         damping_matrix=1e-3 * jnp.eye(3 * num_segments),
-        base_angle=jnp.array(jnp.pi / 2),
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     robot = PlanarPCS(params=params)
 

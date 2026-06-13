@@ -10,6 +10,7 @@ from soromox.systems.params import (
     BaseTendonRoutingParams,
     LinearTendonRoutingParams,
     PassiveTendonParams,
+    validate_quaternion_base_pose,
 )
 
 
@@ -79,6 +80,8 @@ class GVSParams(BaseSoftRobotParams):
     because it parameterizes the strain basis/reference configuration rather
     than link geometry or material properties. ``joint_stiffness`` has shape
     ``(num_segments, max_dof, max_dof)`` and is padded to the static GVS layout.
+    ``base_pose`` uses scalar-first quaternion SE(3) coordinates
+    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm.
     """
 
     link: GVSLinkParams
@@ -91,9 +94,7 @@ class GVSParams(BaseSoftRobotParams):
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (3,):
             raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
-        base_pose = jnp.asarray(self.base_pose)
-        if base_pose.shape != (6,):
-            raise ValueError(f"base_pose must have shape (6,), got {base_pose.shape}.")
+        validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
         reference_strain = jnp.asarray(self.reference_strain)
         if reference_strain.shape != (n_segments, 6):
             raise ValueError(

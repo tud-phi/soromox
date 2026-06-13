@@ -184,6 +184,13 @@ Each robot system expects a typed Equinox PyTree params object. Numeric fields a
 JAX arrays, so same-shape updates can flow through `jit`, `grad`, and `vmap`
 without changing the compiled structure.
 
+`base_pose` follows the dimensionality of the robot. Planar robots expect
+`[theta, x, y]`, where `theta` is a right-handed angle in radians about the
+out-of-plane z-axis. Spatial robots expect `[qw, qx, qy, qz, x, y, z]`, using
+scalar-first Hamilton quaternions. Zero base rotation means the undeformed
+backbone is aligned with the positive base-frame x-axis. Spatial quaternions
+must have nonzero finite norm and are normalized before transform construction.
+
 ```python title="Parameter Structure"
 params = PCSParams(
     length=link_lengths,
@@ -259,7 +266,7 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
         damping_matrix=damping_matrix,
-        base_angle=jnp.array(jnp.pi / 2),
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     # Note: Damping helps stabilize simulations and represents material dissipation.
     # For static analysis, you can omit this or set to zero.

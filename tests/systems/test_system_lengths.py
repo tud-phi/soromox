@@ -9,8 +9,10 @@ from system_param_builders import (
     linear_tendon_routing,
     pcs_params,
     pendulum_params,
+    planar_base_pose,
     planar_hsa_params_from_legacy,
     planar_pcs_params,
+    spatial_base_pose,
     tendon_actuated_pcs_params,
     tendon_actuated_pendulum_params,
     tendon_actuated_planar_pcs_params,
@@ -46,7 +48,7 @@ jax.config.update("jax_enable_x64", True)
 def _pcs_params(length):
     num_segments = len(length)
     return pcs_params(
-        base_pose=jnp.zeros((6,)),
+        base_pose=spatial_base_pose(),
         length=jnp.asarray(length, dtype=jnp.float64),
         radius=0.02 * jnp.ones((num_segments,), dtype=jnp.float64),
         density=1000.0 * jnp.ones((num_segments,), dtype=jnp.float64),
@@ -60,7 +62,7 @@ def _pcs_params(length):
 def _planar_pcs_params(length):
     num_segments = len(length)
     return planar_pcs_params(
-        base_pose=jnp.array([0.0, 0.0, 0.0]),
+        base_pose=planar_base_pose(),
         length=jnp.asarray(length, dtype=jnp.float64),
         radius=0.02 * jnp.ones((num_segments,), dtype=jnp.float64),
         density=1000.0 * jnp.ones((num_segments,), dtype=jnp.float64),

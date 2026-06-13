@@ -419,7 +419,7 @@ if __name__ == "__main__":
         ),
         attachment_segment_index=jnp.array([0, 0]),
     )
-    p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
+    p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
 
     segments = [
         GVSSegment(

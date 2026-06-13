@@ -99,15 +99,12 @@ class ISupport(PCS):
         Args:
             params (Dict[str, Array]): Dictionary containing the parameters of the robot.
                 Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
+                - "base_pose": (optional) List/Array of shape (7,)
+                    Scalar-first quaternion pose ``[qw, qx, qy, qz, x0, y0, z0]``
+                    in the inertial frame. The quaternion represents the base
+                    orientation and the translation is inserted directly into
+                    the homogeneous transform. Defaults to identity rotation
+                    and zero translation.
                 - "L": List/Array of num_segments floats
                     Length of each segment [m]
                 - "r": List/Array of num_segments floats

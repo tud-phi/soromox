@@ -6,7 +6,12 @@ from typing import List, Tuple
 
 from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import pcs_params, planar_pcs_params
+from system_param_builders import (
+    pcs_params,
+    planar_base_pose,
+    planar_pcs_params,
+    spatial_base_pose,
+)
 
 
 jax.config.update("jax_enable_x64", True)
@@ -29,7 +34,7 @@ def make_planar_model(
         * L[:, None]
     ).flatten()
     params = planar_pcs_params(
-        base_pose=jnp.array([0.0, 0.0, 0.0]),
+        base_pose=planar_base_pose(),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),
@@ -50,7 +55,7 @@ def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) ->
         * L[:, None]
     ).flatten()
     params = pcs_params(
-        base_pose=jnp.zeros((6,)),
+        base_pose=spatial_base_pose(),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),

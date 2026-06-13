@@ -6,6 +6,8 @@ __all__ = [
     "BaseTendonRoutingParams",
     "LinearTendonRoutingParams",
     "PassiveTendonParams",
+    "validate_planar_base_pose",
+    "validate_quaternion_base_pose",
 ]
 
 from dataclasses import fields
@@ -14,6 +16,83 @@ from typing import Any
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
+from jax.errors import ConcretizationTypeError, TracerBoolConversionError
+
+
+def _validate_finite_array(
+    name: str, value: Array, expected_shape: tuple[int, ...]
+) -> Array:
+    """Validate array shape and concrete finite values when available."""
+    array = jnp.asarray(value)
+    if array.shape != expected_shape:
+        raise ValueError(f"{name} must have shape {expected_shape}, got {array.shape}.")
+    try:
+        all_finite = bool(jnp.isfinite(array).all())
+    except (ConcretizationTypeError, TracerBoolConversionError):
+        return array
+    if not all_finite:
+        raise ValueError(f"{name} must contain only finite values.")
+    return array
+
+
+def validate_planar_base_pose(name: str, value: Array) -> None:
+    """Validate a planar base pose.
+
+    Args:
+        name: Parameter name used in error messages.
+        value: Planar pose array with shape ``(3,)`` in ``[theta, x, y]``
+            order. ``theta`` is a right-handed rotation angle in radians about
+            the out-of-plane z-axis. ``x`` and ``y`` are direct translation
+            coordinates in the parent frame.
+
+    Returns:
+        None.
+
+    Raises:
+        ValueError: If the shape is not ``(3,)`` or any concrete entry is
+            non-finite. During JAX tracing, only the static shape check is
+            performed.
+    """
+    _validate_finite_array(name, value, (3,))
+
+
+def validate_quaternion_base_pose(
+    name: str,
+    value: Array,
+    expected_shape: tuple[int, ...],
+    *,
+    min_norm: float = 1e-12,
+) -> None:
+    """Validate a scalar-first quaternion base pose.
+
+    Args:
+        name: Parameter name used in error messages.
+        value: Base pose array whose first four entries are a scalar-first
+            Hamilton quaternion in ``[qw, qx, qy, qz]`` order. Spatial systems
+            use shape ``(7,)`` with ``[qw, qx, qy, qz, x, y, z]``.
+        expected_shape: Required full pose shape, typically ``(7,)``.
+        min_norm: Minimum allowed Euclidean norm for the quaternion component.
+
+    Concrete parameter objects are checked for finite entries and nonzero
+    quaternion norm. During JAX tracing, only the static shape check is
+    performed; transform helpers still avoid zero-norm division to keep traced
+    code finite.
+
+    Raises:
+        ValueError: If the shape is wrong, any entry is non-finite, or the
+            quaternion component is zero or numerically too small to normalize
+            safely.
+    """
+    pose = _validate_finite_array(name, value, expected_shape)
+    try:
+        quaternion_norm = float(jnp.linalg.norm(pose[:4]))
+    except (ConcretizationTypeError, TracerBoolConversionError):
+        return
+    if quaternion_norm <= min_norm:
+        raise ValueError(
+            f"{name} quaternion must have norm greater than {min_norm}, "
+            f"got {quaternion_norm}."
+        )
 
 
 def _attachment_segment_index(value: Any) -> int | tuple[int, ...]:
@@ -68,10 +147,13 @@ class BaseSystemParams(eqx.Module):
 class BaseSoftRobotParams(BaseSystemParams):
     """Common dynamic parameters for soft robot systems.
 
-    ``base_pose`` and ``gravity`` are JAX arrays in the dimensional convention of
-    the concrete model. Planar robots use ``base_pose = [theta, x, y]`` and
-    2D gravity; spatial robots use ``base_pose = [phi, theta, psi, x, y, z]`` and
-    3D gravity.
+    ``base_pose`` and ``gravity`` are JAX arrays in the dimensional convention
+    of the concrete model. Planar robots use ``base_pose = [theta, x, y]`` with
+    2D gravity, where ``theta`` is a right-handed angle in radians about the
+    out-of-plane z-axis. Spatial robots use
+    ``base_pose = [qw, qx, qy, qz, x, y, z]`` with 3D gravity. Spatial
+    quaternions are scalar-first Hamilton quaternions, normalized before
+    transform construction, and must have nonzero finite norm.
     """
 
     base_pose: Array

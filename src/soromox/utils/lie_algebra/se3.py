@@ -1,7 +1,7 @@
 __all__ = [
     "tilde_SE3",
     "hat_SE3",
-    "exp_SE3",
+    "transform_from_quaternion_pose_SE3",
     "log_SE3",
     "exp_gn_SE3",
     "adjoint_se3",
@@ -16,6 +16,8 @@ __all__ = [
 
 import jax.numpy as jnp
 from jax import Array, lax
+
+from soromox.utils.rotations import quaternion_to_rotation_matrix
 
 
 def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
@@ -96,46 +98,30 @@ def hat_SE3(vec6: Array) -> Array:
     return hat
 
 
-def exp_SE3(vec6: Array) -> Array:
+def transform_from_quaternion_pose_SE3(pose: Array) -> Array:
     """
-    Construct an SE(3) homogeneous transform from raw pose coordinates.
+    Construct an SE(3) homogeneous transform from quaternion pose coordinates.
 
-    This helper keeps the historical ``exp_SE3`` name, but it is not the
-    matrix exponential of ``hat_SE3(vec6)`` for a general twist. The rotational
-    coordinates are interpreted as ZYX Euler angles and the translational
-    entries are inserted directly into the homogeneous transform:
-    ``vec6 = [phi, theta, psi, x, y, z]`` maps to
-    ``[[R_zyx(phi, theta, psi), [x, y, z]], [0, 0, 0, 1]]``.
-
-    Use :func:`exp_gn_SE3` when ``vec6`` represents a Lie-algebra twist whose
+    This helper is not the matrix exponential of ``hat_SE3(pose)``. The
+    translational entries are inserted directly into the homogeneous transform:
+    ``pose = [qw, qx, qy, qz, x, y, z]`` maps to
+    ``[[R(q), [x, y, z]], [0, 0, 0, 1]]``. Use :func:`exp_gn_SE3` when the input
+    represents a Lie-algebra twist whose
     translational component must be integrated by the SE(3) exponential.
 
     Args:
-        vec6 (Array): shape (6,) or (6, 1)
-            Pose coordinates ``[phi, theta, psi, x, y, z]`` with ZYX Euler
-            convention for the rotation part and raw translation ``(x, y, z)``.
+        pose: Pose coordinates with shape ``(7,)`` in
+            ``[qw, qx, qy, qz, x, y, z]`` order. The quaternion is scalar-first
+            and normalized before constructing the rotation matrix. The
+            translation ``(x, y, z)`` is inserted directly.
 
     Returns:
         g: shape (4, 4)
-            Homogeneous pose with ZYX Euler rotation and translation
-            ``[x, y, z]``.
+            Homogeneous pose with quaternion rotation and translation ``[x, y, z]``.
     """
-    vec6 = vec6.reshape(-1)  # Ensure vec6 is a 1D array
-
-    phi = vec6[0]
-    theta = vec6[1]
-    psi = vec6[2]
-    cosphi, sinphi = jnp.cos(phi), jnp.sin(phi)
-    costheta, sintheta = jnp.cos(theta), jnp.sin(theta)
-    cospsi, sinpsi = jnp.cos(psi), jnp.sin(psi)
-
-    p = vec6[3:].reshape((3, 1))
-
-    Rphi = jnp.array([[cosphi, -sinphi, 0], [sinphi, cosphi, 0], [0, 0, 1]])
-    Rtheta = jnp.array([[1, 0, 0], [0, costheta, -sintheta], [0, sintheta, costheta]])
-    Rpsi = jnp.array([[cospsi, -sinpsi, 0], [sinpsi, cospsi, 0], [0, 0, 1]])
-    # Combine the rotations
-    R = Rpsi @ Rtheta @ Rphi  # Rotation matrix
+    pose = jnp.asarray(pose).reshape(-1)
+    R = quaternion_to_rotation_matrix(pose[:4])
+    p = pose[4:].reshape((3, 1))
 
     g = jnp.block([[R, p], [jnp.zeros((1, 3)), jnp.ones((1, 1))]])
 

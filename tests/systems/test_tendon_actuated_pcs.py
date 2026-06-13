@@ -13,6 +13,7 @@ from system_param_builders import (
     linear_tendon_routing,
     passive_tendon_params,
     pcs_params,
+    spatial_base_pose,
     tendon_actuated_pcs_params,
 )
 
@@ -42,7 +43,7 @@ def _create_robot(
         ).flatten()
     )
     body = pcs_params(
-        base_pose=jnp.zeros(6),  # Initial position and orientation
+        base_pose=spatial_base_pose(),  # Initial position and orientation
         length=segment_lengths,
         radius=1.0 * jnp.ones((num_segments,)),  # default: 2e-2
         density=rho,

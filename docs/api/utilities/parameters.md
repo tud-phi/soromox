@@ -65,7 +65,7 @@ or `(num_links,)`.
 | `shear_modulus` | Per-segment shear modulus |
 | `damping_matrix` | Generalized damping matrix |
 | `gravity` | Gravity vector |
-| `base_pose` / `base_angle` | Base configuration |
+| `base_pose` | Base configuration as scalar-first quaternion pose |
 | `reference_strain` | Reference strain vector |
 | `joint_rest_configuration` | Joint coordinates where elastic joint force is zero |
 
@@ -128,13 +128,23 @@ params = PCSParams(
     shear_modulus=jnp.array([1e5, 1e5]),
     damping_matrix=jnp.eye(12),
     gravity=jnp.array([0.0, 0.0, -9.81]),
-    base_pose=jnp.zeros(6),
+    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
     reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 2),
 )
 
 robot = PCS(params=params, structure=PCSStructure(num_gauss_points=5))
 updated_robot = robot.update_params(length=jnp.array([0.12, 0.1]))
 ```
+
+`base_pose` convention:
+
+- Planar systems use shape `(3,)`: `[theta, x, y]`, where `theta` is a
+  right-handed angle in radians about the out-of-plane z-axis.
+- Spatial systems use shape `(7,)`: `[qw, qx, qy, qz, x, y, z]`.
+- Spatial quaternions are scalar-first Hamilton quaternions, normalized before
+  use, and must have nonzero finite norm.
+- Zero base rotation means the undeformed soft-robot backbone is aligned with
+  the positive base-frame x-axis.
 
 ## API Reference
 

@@ -18,6 +18,7 @@ from system_param_builders import (
     linear_tendon_routing,
     passive_tendon_params,
     pcs_params,
+    spatial_base_pose,
     tendon_actuated_pcs_params,
 )
 
@@ -94,7 +95,7 @@ def _make_tendon_pcs(
         ).flatten()
     )
     body = pcs_params(
-        base_pose=jnp.zeros((6,)) if base_pose is None else base_pose,
+        base_pose=spatial_base_pose() if base_pose is None else base_pose,
         length=segment_lengths,
         radius=jnp.full((num_segments,), 0.015),
         density=1300.0 * jnp.ones((num_segments,)),
@@ -722,7 +723,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
         segments=_segments([link1], [joint1], [basis1], num_gauss_points),
         gravity=g,
         tendon_params=tendon_params,
-        base_pose=jnp.zeros((6,)),
+        base_pose=spatial_base_pose(),
         scale_rotational_basis_by_length=False,
     )
 
@@ -736,7 +737,7 @@ def test_tendon_actatuated_gvs_vs_pcs():
         gravity=jnp.array([0.0, 0.0, 9.81]),
         tendon_params=tendon_params,
         strain_selector=strain_selector,
-        base_pose=jnp.zeros((6,)),
+        base_pose=spatial_base_pose(),
     )
 
     dof = sum(robotGVS.dofs_per_segment.reshape(-1))

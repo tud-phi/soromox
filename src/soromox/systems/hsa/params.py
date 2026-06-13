@@ -3,7 +3,7 @@ __all__ = ["PlanarHSAParams"]
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems.params import BaseSoftRobotParams
+from soromox.systems.params import BaseSoftRobotParams, validate_planar_base_pose
 
 
 class PlanarHSAParams(BaseSoftRobotParams):
@@ -12,7 +12,10 @@ class PlanarHSAParams(BaseSoftRobotParams):
     Field names denote one segment/platform quantity; leading axes store the
     batched values. Arrays store length, rod geometry, reference strain
     components, platform/cap dimensions, end-effector offset, and optional
-    hysteresis coefficients used by the symbolic HSA expressions.
+    hysteresis coefficients used by the symbolic HSA expressions. ``base_pose``
+    stores the planar pose ``[theta, x, y]`` with shape ``(3,)``. ``theta`` is
+    a right-handed angle in radians about the out-of-plane z-axis, and
+    ``x``/``y`` are direct translations in the parent frame.
     """
 
     length: Array
@@ -110,7 +113,6 @@ class PlanarHSAParams(BaseSoftRobotParams):
                 )
 
         scalar_shapes = {
-            "base_pose": (3,),
             "platform_mass": (),
             "platform_center_of_gravity": (2,),
             "gravity": (2,),
@@ -122,6 +124,7 @@ class PlanarHSAParams(BaseSoftRobotParams):
                 raise ValueError(
                     f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
+        validate_planar_base_pose("base_pose", self.base_pose)
 
         hysteresis_basis = jnp.asarray(self.hysteresis_basis)
         if hysteresis_basis.size == 0:

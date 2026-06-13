@@ -7,6 +7,7 @@ jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
 import pytest
+from system_param_builders import planar_base_pose, spatial_base_pose
 
 from soromox.systems import (
     ISupport,
@@ -20,7 +21,7 @@ from soromox.systems import (
 
 def make_pneumatic_planar_params():
     return PneumaticActuatedPlanarPCSParams(
-        base_pose=jnp.array([0.0, 0.0, 0.0]),
+        base_pose=planar_base_pose(),
         length=jnp.array([0.1]),
         radius=jnp.array([0.02]),
         density=jnp.array([1000.0]),
@@ -38,7 +39,7 @@ def make_pneumatic_planar_params():
 
 def make_isupport_params(num_segments=1):
     return ISupportParams(
-        base_pose=jnp.zeros((6,)),
+        base_pose=spatial_base_pose(),
         length=jnp.full((num_segments,), 0.1),
         radius=jnp.full((num_segments,), 0.02),
         density=jnp.full((num_segments,), 1000.0),

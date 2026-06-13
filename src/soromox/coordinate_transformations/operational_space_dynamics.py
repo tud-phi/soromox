@@ -505,7 +505,7 @@ class OperationalSpaceDynamics(eqx.Module):
         For 3D robots (PCS), forward_kinematics returns a 4x4 SE(3) matrix.
         We extract the pose using the configured rotation representation:
         - ROTATION_VECTOR: [omega_x, omega_y, omega_z, p_x, p_y, p_z] (6D)
-        - QUATERNION: [q_x, q_y, q_z, q_w, p_x, p_y, p_z] (7D)
+        - QUATERNION: [q_w, q_x, q_y, q_z, p_x, p_y, p_z] (7D)
         - ROTATION_MATRIX_6D: [r6d_0, ..., r6d_5, p_x, p_y, p_z] (9D)
 
         For planar robots (PlanarPCS, Pendulum), forward_kinematics returns
@@ -765,7 +765,7 @@ class OperationalSpaceDynamics(eqx.Module):
 
         For 3D robots, the FULL pose at each point depends on rotation_representation:
         - ROTATION_VECTOR: [rx, ry, rz, p_x, p_y, p_z] (6D per point)
-        - QUATERNION: [q_x, q_y, q_z, q_w, p_x, p_y, p_z] (7D per point)
+        - QUATERNION: [q_w, q_x, q_y, q_z, p_x, p_y, p_z] (7D per point)
         - ROTATION_MATRIX_6D: [r6d_0, ..., r6d_5, p_x, p_y, p_z] (9D per point)
 
         For planar robots, the pose at each point is [theta, x, y] (3D per point).
@@ -800,7 +800,7 @@ class OperationalSpaceDynamics(eqx.Module):
 
         For 3D robots, the pose at each point depends on rotation_representation:
         - ROTATION_VECTOR: [rx, ry, rz, p_x, p_y, p_z] (6D per point)
-        - QUATERNION: [q_x, q_y, q_z, q_w, p_x, p_y, p_z] (7D per point)
+        - QUATERNION: [q_w, q_x, q_y, q_z, p_x, p_y, p_z] (7D per point)
         - ROTATION_MATRIX_6D: [r6d_0, ..., r6d_5, p_x, p_y, p_z] (9D per point)
 
         For planar robots, the pose at each point is [theta, x, y] (3D per point).

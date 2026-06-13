@@ -9,7 +9,7 @@ from soromox.systems import PCS, CrossSectionGeometry, PCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra.se3 import Adjoint_g_SE3, log_SE3
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import pcs_params
+from system_param_builders import pcs_params, spatial_base_pose
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -39,7 +39,7 @@ def make_pcs(
     if xi_ref is None:
         xi_ref = jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments)
     params = pcs_params(
-        base_pose=jnp.zeros((6,)),
+        base_pose=spatial_base_pose(),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),
@@ -141,7 +141,7 @@ def test_constant_strain_call():
 
     num_segments = 1
     params = pcs_params(
-        base_pose=jnp.zeros(6),
+        base_pose=spatial_base_pose(),
         length=L,
         radius=jnp.array([2e-2]),
         density=1000 * jnp.ones((1,)),
@@ -247,7 +247,7 @@ def test_constant_strain_call():
     # test energies
     print("\nTesting energies... ------------------------")
     robot = robot.update_params(
-        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0])
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
     )
     q = jnp.zeros((6,))
     qd = jnp.zeros((6,))

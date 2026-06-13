@@ -13,11 +13,11 @@ from soromox.utils.lie_algebra.se2 import (
     Tangent_gi_se2,
     adjoint_se2,
     coadjoint_se2,
-    exp_SE2,
     hat_SE2,
     exp_gn_SE2,
     log_SE2,
     tilde_SE2,
+    transform_from_planar_pose_SE2,
 )
 from soromox.utils.tolerance import Tolerance
 
@@ -40,19 +40,19 @@ def test_tilde_se2_returns_skew_matrix():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_log_se2_inverts_exp_se2():
+def test_log_se2_inverts_planar_pose_transform_se2():
     vec = jnp.array([0.4, -0.7, 1.2])
 
-    g = exp_SE2(vec)
+    g = transform_from_planar_pose_SE2(vec)
     recovered = log_SE2(g, eps=EPS)
 
     assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
 
 
-def test_log_se2_inverts_exp_se2_zero_angle():
+def test_log_se2_inverts_planar_pose_transform_se2_zero_angle():
     vec = jnp.array([0.0, 0.3, -0.2])
 
-    g = exp_SE2(vec)
+    g = transform_from_planar_pose_SE2(vec)
     recovered = log_SE2(g, eps=EPS)
 
     assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
@@ -94,7 +94,7 @@ def test_log_se2_pure_rotation():
 
 def test_log_se2_handles_near_identity_transform():
     vec = jnp.array([1e-10, 2e-4, -3e-4])
-    g = exp_SE2(vec)
+    g = transform_from_planar_pose_SE2(vec)
 
     recovered = log_SE2(g, eps=EPS)
 
@@ -108,7 +108,7 @@ def test_log_se2_round_trip_random_vectors():
     for _ in range(5):
         key, subkey = jax.random.split(key)
         vec = jax.random.uniform(subkey, shape=(3,), minval=-0.9, maxval=0.9)
-        g = exp_SE2(vec)
+        g = transform_from_planar_pose_SE2(vec)
         recovered = log_SE2(g, eps=EPS)
 
         assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
@@ -143,7 +143,7 @@ def test_hat_se2_returns_expected_matrix():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_exp_se2_produces_rotation_and_translation():
+def test_transform_from_planar_pose_se2_produces_rotation_and_translation():
     vec = jnp.array([jnp.pi / 2.0, 1.0, -2.0])
     expected = jnp.array(
         [
@@ -153,7 +153,7 @@ def test_exp_se2_produces_rotation_and_translation():
         ]
     )
 
-    result = exp_SE2(vec)
+    result = transform_from_planar_pose_SE2(vec)
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
@@ -194,7 +194,7 @@ def test_coadjoint_se2_matches_closed_form():
 
 def test_adjoint_g_se2_matches_manual_construction():
     vec = jnp.array([jnp.pi / 3.0, 0.5, -0.2])
-    g = exp_SE2(vec)
+    g = transform_from_planar_pose_SE2(vec)
     R = g[:2, :2]
     t = g[:2, 2].reshape((2, 1))
     expected = jnp.concatenate(
@@ -212,7 +212,7 @@ def test_adjoint_g_se2_matches_manual_construction():
 
 def test_adjoint_g_inv_se2_is_matrix_inverse():
     vec = jnp.array([jnp.pi / 4.0, 0.2, -0.7])
-    g = exp_SE2(vec)
+    g = transform_from_planar_pose_SE2(vec)
 
     adj = Adjoint_g_SE2(g)
     adj_inv = Adjoint_g_inv_SE2(g)

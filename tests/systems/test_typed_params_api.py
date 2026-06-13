@@ -8,7 +8,9 @@ from system_param_builders import (
     passive_tendon_params,
     pcs_params,
     pendulum_params,
+    planar_base_pose,
     planar_pcs_params,
+    spatial_base_pose,
     tendon_actuated_pcs_params,
 )
 
@@ -137,6 +139,30 @@ def test_planar_pcs_params_validate_base_pose_shape():
 
     with pytest.raises(ValueError, match="base_pose"):
         params.validate()
+
+
+def test_spatial_params_validate_base_pose_quaternion_norm():
+    with pytest.raises(ValueError, match="quaternion"):
+        _pcs_params().replace(
+            base_pose=jnp.array(
+                [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0], dtype=jnp.float64
+            )
+        )
+
+
+def test_planar_params_validate_base_pose_finite_values():
+    planar = planar_pcs_params(
+        length=jnp.array([0.1], dtype=jnp.float64),
+        radius=jnp.array([0.02], dtype=jnp.float64),
+        density=jnp.array([1000.0], dtype=jnp.float64),
+        young_modulus=jnp.array([1e6], dtype=jnp.float64),
+        shear_modulus=jnp.array([1e5], dtype=jnp.float64),
+        damping_matrix=jnp.eye(3, dtype=jnp.float64),
+        gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
+        base_pose=jnp.array([jnp.nan, 1.0, 2.0], dtype=jnp.float64),
+    )
+    with pytest.raises(ValueError, match="finite"):
+        planar.validate()
 
 
 def test_tendon_attachment_indices_are_static_topology():
@@ -280,7 +306,7 @@ def test_removed_plural_typed_param_names_fail():
         "shear_modulus": jnp.array([1e5], dtype=jnp.float64),
         "damping_matrix": jnp.eye(6, dtype=jnp.float64),
         "gravity": jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        "base_pose": jnp.zeros(6, dtype=jnp.float64),
+        "base_pose": spatial_base_pose(),
         "reference_strain": jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
     }
     with pytest.raises(TypeError, match="segment_lengths"):
@@ -290,7 +316,7 @@ def test_removed_plural_typed_param_names_fail():
         )
 
     pendulum_kwargs = {
-        "base_pose": jnp.zeros(3, dtype=jnp.float64),
+        "base_pose": planar_base_pose(),
         "mass": jnp.array([1.0], dtype=jnp.float64),
         "moment_inertia": jnp.array([0.1], dtype=jnp.float64),
         "gravity": jnp.array([0.0, -9.81], dtype=jnp.float64),
@@ -321,7 +347,7 @@ def test_removed_plural_typed_param_names_fail():
         )
 
     articulated_kwargs = {
-        "base_pose": jnp.zeros(6, dtype=jnp.float64),
+        "base_pose": spatial_base_pose(),
         "parent_to_joint_transform": jnp.eye(4, dtype=jnp.float64)[None, :, :],
         "tip_position": jnp.array([[0.5, 0.0, 0.0]], dtype=jnp.float64),
         "center_of_mass_position": jnp.array([[0.25, 0.0, 0.0]], dtype=jnp.float64),

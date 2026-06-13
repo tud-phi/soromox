@@ -30,7 +30,7 @@ def params_and_structure_from_segments(
     input_segments = tuple(segments)
     n_segments = len(input_segments)
     if base_pose is None:
-        base_pose = jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0])
+        base_pose = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     dofs_joint = [
         Joint.DICT_JOINT_TYPE_DOF[segment.joint.type] for segment in input_segments

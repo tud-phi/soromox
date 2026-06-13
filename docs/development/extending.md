@@ -1046,7 +1046,7 @@ params = PlanarPCSParams(
     damping_matrix=jnp.eye(9),
     gravity=jnp.array([0.0, -9.81]),
     reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 3),
-    base_angle=jnp.array(jnp.pi / 2),
+    base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
 )
 robot = PlanarPCS(params=params)
 

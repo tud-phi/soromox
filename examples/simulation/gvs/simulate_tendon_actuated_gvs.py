@@ -102,7 +102,7 @@ active_tendon_routing = LinearTendonRoutingParams(
 )
 # attention: 0DEG -> Y+, 180DEG -> Y-, 90DEG -> Z+, 270DEG -> Z-
 
-p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
+p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
 
 # 2 link version
 segments = [
@@ -122,7 +122,7 @@ robot = TendonActuatedGVS.from_segments(
     scale_rotational_basis_by_length=True,
 )
 # debug: check g0
-# g0_test = lie.exp_SE3(p0)
+# g0_test = lie.transform_from_quaternion_pose_SE3(p0)
 # print("g0_test:\n", g0_test[:3,:3])
 
 ### MATRICES CHECKING AND PRINTING ###

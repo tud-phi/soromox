@@ -122,14 +122,14 @@ def twist_callable_from_pose_callable_factory(
                     angular_vel = orient_dot
 
                 elif rotation_representation == RotationRepresentation.QUATERNION:
-                    # For quaternion q = [x, y, z, w]:
+                    # For scalar-first quaternion q = [qw, qx, qy, qz]:
                     # ω = 2 * Im(q^{-1} ⊗ dq/dt)
                     # where q^{-1} = q* (conjugate) for unit quaternions
                     q_conj = quaternion_conjugate(orient)
                     # Note: orient_dot is dq/dt, not a unit quaternion
                     omega_quat = 2.0 * quaternion_multiply(q_conj, orient_dot)
                     # Angular velocity is the imaginary (vector) part
-                    angular_vel = omega_quat[:3]
+                    angular_vel = omega_quat[1:4]
 
                 elif (
                     rotation_representation == RotationRepresentation.ROTATION_MATRIX_6D

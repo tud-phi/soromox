@@ -49,7 +49,7 @@ if __name__ == "__main__":
         ).flatten()
     )
     params = ISupportParams(
-        base_pose=jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         length=segment_lengths,
         radius=35.6 * 1e-3 * jnp.ones((num_segments,)),
         density=1104 * jnp.ones((num_segments,)),

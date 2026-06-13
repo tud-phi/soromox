@@ -20,6 +20,18 @@ from soromox.systems import (
 )
 
 
+def spatial_base_pose(
+    x: float | Array = 0.0, y: float | Array = 0.0, z: float | Array = 0.0
+) -> Array:
+    return jnp.array([1.0, 0.0, 0.0, 0.0, x, y, z])
+
+
+def planar_base_pose(
+    theta: float | Array = 0.0, x: float | Array = 0.0, y: float | Array = 0.0
+) -> Array:
+    return jnp.array([theta, x, y])
+
+
 def pcs_params(
     *,
     length: Array,
@@ -35,7 +47,7 @@ def pcs_params(
     length = jnp.asarray(length)
     num_segments = length.shape[0]
     if base_pose is None:
-        base_pose = jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0])
+        base_pose = spatial_base_pose()
     if reference_strain is None:
         reference_strain = jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
@@ -70,7 +82,7 @@ def planar_pcs_params(
     if reference_strain is None:
         reference_strain = jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments)
     if base_pose is None:
-        base_pose = jnp.array([jnp.pi / 2, 0.0, 0.0])
+        base_pose = planar_base_pose(jnp.pi / 2)
     return PlanarPCSParams(
         length=length,
         radius=jnp.asarray(radius),
@@ -108,7 +120,7 @@ def pendulum_params(
     if radius is None:
         radius = 0.05 * jnp.asarray(length)
     if base_pose is None:
-        base_pose = jnp.zeros(3)
+        base_pose = planar_base_pose()
     return PendulumParams(
         base_pose=jnp.asarray(base_pose),
         mass=mass,
@@ -151,7 +163,7 @@ def articulated_params(
     if radius is None:
         radius = 0.05 * jnp.linalg.norm(jnp.asarray(tip_position), axis=1)
     if base_pose is None:
-        base_pose = jnp.zeros(6)
+        base_pose = spatial_base_pose()
     return ArticulatedSoftRobotParams(
         base_pose=jnp.asarray(base_pose),
         joint_screw=joint_screw,
@@ -304,9 +316,7 @@ def tendon_actuated_gvs_params(
 def planar_hsa_params_from_legacy(params: dict) -> PlanarHSAParams:
     hysteresis = params.get("hysteresis", {})
     return PlanarHSAParams(
-        base_pose=jnp.concatenate(
-            [jnp.asarray(params["th0"]).reshape(1), jnp.zeros(2)]
-        ),
+        base_pose=jnp.array([jnp.asarray(params["th0"]), 0.0, 0.0]),
         length=jnp.asarray(params["L"]),
         proximal_cap_length=jnp.asarray(params["lpc"]),
         distal_cap_length=jnp.asarray(params["ldc"]),
