@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 from numpy.testing import assert_allclose
 
 from soromox.rendering.base import BaseSoftRobotRenderer
@@ -67,6 +68,33 @@ def test_renderer_normalizes_base_offsets_to_curve_dimension():
 
     assert offsets.shape == (2, 3)
     assert_allclose(offsets, jnp.array([[0.1, -0.2, 0.0], [0.3, 0.4, 0.0]]))
+
+
+def test_renderer_can_slice_configured_base_offsets_to_batch_size():
+    robot = DummyPlanarRobot(jnp.array([0.0, 0.0, 0.0]))
+    renderer = DummyRenderer(robot)
+
+    offsets = renderer._normalize_base_offsets(
+        jnp.array([[0.1, -0.2], [0.3, 0.4], [0.5, 0.6]]),
+        num_robots=2,
+        target_dim=2,
+        allow_extra_rows=True,
+    )
+
+    assert offsets.shape == (2, 2)
+    assert_allclose(offsets, jnp.array([[0.1, -0.2], [0.3, 0.4]]))
+
+
+def test_renderer_rejects_extra_explicit_base_offsets_by_default():
+    robot = DummyPlanarRobot(jnp.array([0.0, 0.0, 0.0]))
+    renderer = DummyRenderer(robot)
+
+    with pytest.raises(ValueError, match="number of robots"):
+        renderer._normalize_base_offsets(
+            jnp.array([[0.1, -0.2], [0.3, 0.4]]),
+            num_robots=1,
+            target_dim=2,
+        )
 
 
 def test_matplotlib_2d_base_marker_is_perpendicular_to_base_tangent():

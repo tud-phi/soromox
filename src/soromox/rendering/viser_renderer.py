@@ -957,6 +957,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = q.shape[0]
 
+        uses_configured_offsets = (
+            base_offsets is None and self._base_offsets is not None
+        )
         offset_source = (
             base_offsets
             if base_offsets is not None
@@ -968,6 +971,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             offset_source,
             num_robots=int(num_robots),
             target_dim=3,
+            allow_extra_rows=uses_configured_offsets,
         )
 
         # Compute backbone curves
@@ -1053,6 +1057,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = q.shape[0]
 
+        uses_configured_offsets = (
+            base_offsets is None and self._base_offsets is not None
+        )
         offset_source = (
             base_offsets
             if base_offsets is not None
@@ -1064,6 +1071,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             offset_source,
             num_robots=int(num_robots),
             target_dim=3,
+            allow_extra_rows=uses_configured_offsets,
         )
 
         # Compute backbone curves
@@ -1197,7 +1205,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         if multi_robot_layout == "overlay":
             offset_source = jnp.zeros((num_robots, 3))
+            uses_configured_offsets = False
         else:
+            uses_configured_offsets = (
+                base_offsets is None and self._base_offsets is not None
+            )
             offset_source = (
                 base_offsets
                 if base_offsets is not None
@@ -1209,6 +1221,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             offset_source,
             num_robots=int(num_robots),
             target_dim=3,
+            allow_extra_rows=uses_configured_offsets,
         )
 
         cfg = color_config or self.color_config

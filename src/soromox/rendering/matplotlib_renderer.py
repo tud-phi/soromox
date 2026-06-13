@@ -117,12 +117,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         spacing = self.grid_spacing
         if batched:
             num_robots = int(q_arr.shape[0])
-            base_offsets_arr = (
+            uses_configured_offsets = (
+                base_offsets is None and self._base_offsets is not None
+            )
+            offset_source = (
                 self._compute_grid_offsets(num_robots, spacing)
                 if (base_offsets is None and self._base_offsets is None)
-                else jnp.asarray(
-                    base_offsets if base_offsets is not None else self._base_offsets
-                )
+                else base_offsets
+                if base_offsets is not None
+                else self._base_offsets
+            )
+            base_offsets_arr = self._normalize_base_offsets(
+                offset_source,
+                num_robots=num_robots,
+                target_dim=3 if self.is_3d else 2,
+                allow_extra_rows=uses_configured_offsets,
             )
 
             curves = self.compute_backbone_curves_batched(q_arr, base_offsets_arr)
@@ -138,6 +147,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             single_offset = self._single_base_offset(
                 offset_source,
                 target_dim=int(curves.shape[-1]),
+                allow_extra_rows=base_offsets is None
+                and self._base_offsets is not None,
             )
             if single_offset is not None:
                 curves = curves + single_offset
@@ -376,6 +387,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         single_offset = self._single_base_offset(
             offset_source,
             target_dim=int(curves.shape[-1]),
+            allow_extra_rows=base_offsets is None and self._base_offsets is not None,
         )
         if single_offset is not None:
             curves = curves + single_offset
@@ -455,12 +467,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             )
 
         spacing = self.grid_spacing
-        base_offsets_arr = (
+        uses_configured_offsets = (
+            base_offsets is None and self._base_offsets is not None
+        )
+        offset_source = (
             self._compute_grid_offsets(int(num_robots), spacing)
             if (base_offsets is None and self._base_offsets is None)
-            else jnp.asarray(
-                base_offsets if base_offsets is not None else self._base_offsets
-            )
+            else base_offsets
+            if base_offsets is not None
+            else self._base_offsets
+        )
+        base_offsets_arr = self._normalize_base_offsets(
+            offset_source,
+            num_robots=int(num_robots),
+            target_dim=3 if self.is_3d else 2,
+            allow_extra_rows=uses_configured_offsets,
         )
 
         # Precompute all backbone curves with offsets applied
@@ -782,10 +803,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         u = u / np.linalg.norm(u)
         v = np.cross(axis, u)
         angles = np.linspace(0.0, 2.0 * np.pi, 65)
-        return (
-            base[None, :]
-            + radius
-            * (np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v)
+        return base[None, :] + radius * (
+            np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v
         )
 
     def _plot_base_markers(

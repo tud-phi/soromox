@@ -177,6 +177,7 @@ class BaseSoftRobotRenderer(ABC):
         num_robots: int,
         target_dim: int,
         allow_single: bool = False,
+        allow_extra_rows: bool = False,
         name: str = "base_offsets",
     ) -> jax.Array:
         """Validate and dimension-match per-robot positional base offsets.
@@ -188,6 +189,10 @@ class BaseSoftRobotRenderer(ABC):
             num_robots: Required number of rows.
             target_dim: Desired spatial dimension, usually the curve dimension.
             allow_single: Whether to accept a one-dimensional single offset.
+            allow_extra_rows: Whether to accept more rows than ``num_robots``
+                and use the leading ``num_robots`` rows. Intended for
+                constructor-level layout configurations reused across smaller
+                batches.
             name: Name used in error messages.
 
         Returns:
@@ -199,6 +204,8 @@ class BaseSoftRobotRenderer(ABC):
             offsets = offsets.reshape(1, -1)
         if offsets.ndim != 2:
             raise ValueError(f"{name} must have shape (N, dim), got {offsets.shape}.")
+        if allow_extra_rows and offsets.shape[0] > num_robots:
+            offsets = offsets[:num_robots]
         if offsets.shape[0] != num_robots:
             raise ValueError(
                 f"{name} first dimension ({offsets.shape[0]}) must match "
@@ -219,6 +226,7 @@ class BaseSoftRobotRenderer(ABC):
         base_offsets: Array | np.ndarray | None,
         *,
         target_dim: int,
+        allow_extra_rows: bool = False,
     ) -> jax.Array | None:
         """Return a single normalized base offset or ``None``."""
         if base_offsets is None:
@@ -228,6 +236,7 @@ class BaseSoftRobotRenderer(ABC):
             num_robots=1,
             target_dim=target_dim,
             allow_single=True,
+            allow_extra_rows=allow_extra_rows,
         )[0]
 
     @property

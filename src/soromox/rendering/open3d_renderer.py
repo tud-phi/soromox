@@ -867,6 +867,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             ts_np = np.arange(T, dtype=np.float64)
 
         # Compute base offsets
+        uses_configured_offsets = (
+            base_offsets is None and self._base_offsets is not None
+        )
         offsets = base_offsets if base_offsets is not None else self._base_offsets
         if offsets is None:
             offsets = self._compute_grid_offsets(int(N), self.grid_spacing)
@@ -874,6 +877,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             offsets,
             num_robots=int(N),
             target_dim=3,
+            allow_extra_rows=uses_configured_offsets,
         )
 
         # Backbone curves (T, N, P, 3) -> (N, T, P, 3)
