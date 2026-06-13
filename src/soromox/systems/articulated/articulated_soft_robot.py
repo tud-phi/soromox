@@ -109,10 +109,10 @@ class ArticulatedSoftRobot(SoftRobot):
 
     def __init__(self, params: ArticulatedSoftRobotParams, **kwargs: Any) -> None:
         """Initialize an articulated soft robot from typed dynamic parameters."""
-        super().__init__(**kwargs)
         if not isinstance(params, ArticulatedSoftRobotParams):
             raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
         params.validate()
+        super().__init__(base_pose=params.base_pose, **kwargs)
         self.params = params
 
         joint_screw = jnp.asarray(params.joint_screw)
@@ -263,7 +263,7 @@ class ArticulatedSoftRobot(SoftRobot):
 
         _, frames = lax.scan(
             _step,
-            jnp.eye(4, dtype=q.dtype),
+            jnp.asarray(self.base_transform, dtype=q.dtype),
             (self.g_parent_joint, self.joint_screw, q, self.p_com, self.p_tip),
         )
         return frames
@@ -945,9 +945,11 @@ class ArticulatedSoftRobot(SoftRobot):
             joint_rest_configuration,
             radius,
         ) = self._validated_param_arrays(params)
+        base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
         return eqx.tree_at(
             lambda model: (
                 model.params,
+                model.base_pose,
                 model.joint_screw,
                 model.g_parent_joint,
                 model.p_tip,
@@ -963,6 +965,7 @@ class ArticulatedSoftRobot(SoftRobot):
             self,
             (
                 params,
+                base_pose,
                 joint_screw,
                 parent_to_joint_transform,
                 tip_position,

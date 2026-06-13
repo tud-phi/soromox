@@ -46,7 +46,7 @@ def make_planar_pcs(
         ).flatten()
     )
     params = planar_pcs_params(
-        base_angle=jnp.array(th0),  # initial orientation angle [rad]
+        base_pose=jnp.array([th0, 0.0, 0.0]),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,
@@ -113,7 +113,7 @@ def segment_tip_poses(model: PlanarPCS, q: Array) -> Array:
 def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     th, px, py = chi
-    th0 = params.base_angle.item()
+    th0 = params.base_pose[0].item()
     print("th0 = ", th0)
     xi = (
         (th - th0)
@@ -489,7 +489,7 @@ def test_inverse_kinematics_relative_pose_computation():
     )
 
     # Manually compute the first relative pose (segment 1 w.r.t. base)
-    base_pose = jnp.array([model.th0, 0.0, 0.0])
+    base_pose = model.base_pose
     expected_rel_0 = chi_tips[0] - base_pose
     expected_rel_0 = expected_rel_0.at[1:].set(
         jnp.array(

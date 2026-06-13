@@ -20,7 +20,7 @@ def _build_planar_robot(num_segments: int = 3) -> TendonActuatedPlanarPCS:
         ).flatten()
     )
     body = planar_pcs_params(
-        base_angle=jnp.array(jnp.pi / 2),
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,

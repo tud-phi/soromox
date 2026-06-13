@@ -82,7 +82,6 @@ class GVSParams(BaseSoftRobotParams):
     """
 
     link: GVSLinkParams
-    base_pose: Array
     reference_strain: Array
     joint_stiffness: Array
 

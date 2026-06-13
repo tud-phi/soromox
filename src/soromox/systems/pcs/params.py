@@ -59,8 +59,6 @@ class PCSParams(BaseContinuumSoftRobotParams):
     young_modulus: Array
     shear_modulus: Array
     damping_matrix: Array
-    base_pose: Array
-
     def validate(self) -> None:
         n_segments = _validate_continuum_base(self, strain_dim=6, gravity_dim=3)
         _require_shape("radius", self.radius, (n_segments,))
@@ -76,15 +74,13 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
     """Dynamic parameters for the planar PCS model.
 
     The leading axis of per-segment fields indexes planar constant-strain
-    segments. ``base_angle`` stores the planar base orientation.
+    segments. ``base_pose`` stores the planar base pose ``[theta, x, y]``.
     """
 
     radius: Array
     young_modulus: Array
     shear_modulus: Array
     damping_matrix: Array
-    base_angle: Array
-
     def validate(self) -> None:
         n_segments = _validate_continuum_base(self, strain_dim=3, gravity_dim=2)
         _require_shape("radius", self.radius, (n_segments,))
@@ -93,7 +89,7 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
         _require_shape(
             "damping_matrix", self.damping_matrix, (3 * n_segments, 3 * n_segments)
         )
-        _require_shape("base_angle", self.base_angle, ())
+        _require_shape("base_pose", self.base_pose, (3,))
 
 
 class TendonActuatedPCSParams(BaseSystemParams):

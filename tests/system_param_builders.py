@@ -62,13 +62,15 @@ def planar_pcs_params(
     shear_modulus: Array,
     damping_matrix: Array,
     gravity: Array,
-    base_angle: Array | float = jnp.pi / 2,
+    base_pose: Array | None = None,
     reference_strain: Array | None = None,
 ) -> PlanarPCSParams:
     length = jnp.asarray(length)
     num_segments = length.shape[0]
     if reference_strain is None:
         reference_strain = jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments)
+    if base_pose is None:
+        base_pose = jnp.array([jnp.pi / 2, 0.0, 0.0])
     return PlanarPCSParams(
         length=length,
         radius=jnp.asarray(radius),
@@ -77,7 +79,7 @@ def planar_pcs_params(
         shear_modulus=jnp.asarray(shear_modulus),
         damping_matrix=jnp.asarray(damping_matrix),
         gravity=jnp.asarray(gravity),
-        base_angle=jnp.asarray(base_angle),
+        base_pose=jnp.asarray(base_pose),
         reference_strain=jnp.asarray(reference_strain),
     )
 
@@ -93,6 +95,7 @@ def pendulum_params(
     joint_damping: Array | None = None,
     joint_rest_configuration: Array | None = None,
     radius: Array | None = None,
+    base_pose: Array | None = None,
 ) -> PendulumParams:
     mass = jnp.asarray(mass)
     n = mass.shape[0]
@@ -104,7 +107,10 @@ def pendulum_params(
         joint_rest_configuration = jnp.zeros((n,))
     if radius is None:
         radius = 0.05 * jnp.asarray(length)
+    if base_pose is None:
+        base_pose = jnp.zeros(3)
     return PendulumParams(
+        base_pose=jnp.asarray(base_pose),
         mass=mass,
         moment_inertia=jnp.asarray(moment_inertia),
         length=jnp.asarray(length),
@@ -130,6 +136,7 @@ def articulated_params(
     joint_damping: Array | None = None,
     joint_rest_configuration: Array | None = None,
     radius: Array | None = None,
+    base_pose: Array | None = None,
 ) -> ArticulatedSoftRobotParams:
     joint_screw = jnp.asarray(joint_screw)
     n = joint_screw.shape[0]
@@ -143,7 +150,10 @@ def articulated_params(
         joint_rest_configuration = jnp.zeros((n,))
     if radius is None:
         radius = 0.05 * jnp.linalg.norm(jnp.asarray(tip_position), axis=1)
+    if base_pose is None:
+        base_pose = jnp.zeros(6)
     return ArticulatedSoftRobotParams(
+        base_pose=jnp.asarray(base_pose),
         joint_screw=joint_screw,
         parent_to_joint_transform=jnp.asarray(parent_to_joint_transform),
         tip_position=jnp.asarray(tip_position),
@@ -215,7 +225,7 @@ def tendon_actuated_planar_pcs_params(
         shear_modulus=body.shear_modulus,
         damping_matrix=body.damping_matrix,
         gravity=body.gravity,
-        base_angle=body.base_angle,
+        base_pose=body.base_pose,
         reference_strain=body.reference_strain,
         tendon_distance=jnp.asarray(tendon_distance),
     )
@@ -294,7 +304,9 @@ def tendon_actuated_gvs_params(
 def planar_hsa_params_from_legacy(params: dict) -> PlanarHSAParams:
     hysteresis = params.get("hysteresis", {})
     return PlanarHSAParams(
-        base_angle=jnp.asarray(params["th0"]),
+        base_pose=jnp.concatenate(
+            [jnp.asarray(params["th0"]).reshape(1), jnp.zeros(2)]
+        ),
         length=jnp.asarray(params["L"]),
         proximal_cap_length=jnp.asarray(params["lpc"]),
         distal_cap_length=jnp.asarray(params["ldc"]),

@@ -68,10 +68,13 @@ class BaseSystemParams(eqx.Module):
 class BaseSoftRobotParams(BaseSystemParams):
     """Common dynamic parameters for soft robot systems.
 
-    ``gravity`` is a JAX array in the dimensional convention of the concrete
-    model, for example 2D planar gravity or 3D spatial gravity.
+    ``base_pose`` and ``gravity`` are JAX arrays in the dimensional convention of
+    the concrete model. Planar robots use ``base_pose = [theta, x, y]`` and
+    2D gravity; spatial robots use ``base_pose = [phi, theta, psi, x, y, z]`` and
+    3D gravity.
     """
 
+    base_pose: Array
     gravity: Array
 
 

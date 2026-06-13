@@ -288,4 +288,5 @@ def assign_gvs_runtime_arrays(
         p0_arr = jnp.asarray(p0, dtype=jnp.float64)
     if p0_arr.size != 6:
         raise ValueError("p0 must have shape (6,) when provided")
+    _set_model_field(model, "base_pose", p0_arr)
     _set_model_field(model, "g0", lie.exp_SE3(p0_arr))

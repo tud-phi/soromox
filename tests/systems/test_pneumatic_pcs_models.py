@@ -20,7 +20,7 @@ from soromox.systems import (
 
 def make_pneumatic_planar_params():
     return PneumaticActuatedPlanarPCSParams(
-        base_angle=jnp.array(0.0),
+        base_pose=jnp.array([0.0, 0.0, 0.0]),
         length=jnp.array([0.1]),
         radius=jnp.array([0.02]),
         density=jnp.array([1000.0]),

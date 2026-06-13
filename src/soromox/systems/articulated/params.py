@@ -35,6 +35,7 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
             "center_of_mass_position": (n_links, 3),
             "mass": (n_links,),
             "center_of_mass_inertia": (n_links, 3, 3),
+            "base_pose": (6,),
             "gravity": (3,),
             "joint_stiffness": (n_links, n_links),
             "joint_damping": (n_links, n_links),

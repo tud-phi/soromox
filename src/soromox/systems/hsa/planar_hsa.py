@@ -158,7 +158,7 @@ class PlanarHSA(SoftRobot):
     ) -> dict[str, Array | dict[str, Array]]:
         """Map typed HSA params to the symbolic-expression parameter names."""
         mapped: dict[str, Array | dict[str, Array]] = {
-            "th0": params.base_angle,
+            "th0": params.base_pose[0],
             "L": params.length,
             "lpc": params.proximal_cap_length,
             "ldc": params.distal_cap_length,
@@ -215,8 +215,18 @@ class PlanarHSA(SoftRobot):
                             params_for_lambdify.append(param)
                 else:
                     for param in jnp.asarray(params_vals).flatten():
-                        params_for_lambdify.append(param)
+                            params_for_lambdify.append(param)
         return params_for_lambdify
+
+    def _with_base_translation(self, chi: Array) -> Array:
+        """Apply the planar base translation to a symbolic pose."""
+        base_offset = jnp.concatenate(
+            [
+                jnp.zeros(1, dtype=chi.dtype),
+                jnp.asarray(self.base_pose[1:], dtype=chi.dtype),
+            ]
+        )
+        return chi + base_offset
 
     def __init__(
         self,
@@ -239,7 +249,7 @@ class PlanarHSA(SoftRobot):
         if not isinstance(structure, PlanarHSAStructure):
             raise TypeError("structure must be a PlanarHSAStructure instance.")
         params.validate()
-        super().__init__(eps=structure.eps, **kwargs)
+        super().__init__(eps=structure.eps, base_pose=params.base_pose, **kwargs)
         self.params = params
         symbolic_expression_params = self._symbolic_expression_params(
             params, structure.consider_hysteresis
@@ -759,6 +769,7 @@ class PlanarHSA(SoftRobot):
         params.validate()
 
         arrays = (
+            jnp.asarray(params.base_pose),
             jnp.asarray(params.length),
             jnp.asarray(params.rod_offset),
             jnp.asarray(params.bending_reference),
@@ -771,6 +782,7 @@ class PlanarHSA(SoftRobot):
             jnp.asarray(params.phi_max),
         )
         current_arrays = (
+            self.base_pose,
             self.L,
             self.roff,
             self.kappa_b_ref,
@@ -783,6 +795,7 @@ class PlanarHSA(SoftRobot):
             self.phi_max,
         )
         names = (
+            "base_pose",
             "length",
             "rod_offset",
             "bending_reference",
@@ -800,7 +813,7 @@ class PlanarHSA(SoftRobot):
                     f"{name} must have shape {current.shape}, got {value.shape}."
                 )
 
-        L = arrays[0]
+        L = arrays[1]
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1, dtype=L.dtype), L]))
         symbolic_expression_params = self._symbolic_expression_params(
             params, self.consider_hysteresis
@@ -855,6 +868,7 @@ class PlanarHSA(SoftRobot):
         return eqx.tree_at(
             lambda model: (
                 model.params,
+                model.base_pose,
                 model.params_for_lambdify,
                 model.L,
                 model.L_cum,
@@ -878,11 +892,11 @@ class PlanarHSA(SoftRobot):
             self,
             (
                 params,
+                arrays[0],
                 params_for_lambdify,
                 L,
                 L_cum,
                 L_cum[-1],
-                arrays[1],
                 arrays[2],
                 arrays[3],
                 arrays[4],
@@ -890,8 +904,9 @@ class PlanarHSA(SoftRobot):
                 arrays[6],
                 arrays[7],
                 arrays[8],
-                *hysteresis_arrays,
                 arrays[9],
+                *hysteresis_arrays,
+                arrays[10],
             ),
         )
 
@@ -1066,7 +1081,7 @@ class PlanarHSA(SoftRobot):
             chi, 1
         )  # shift from [p_x, p_y, theta] (symbolic derivation def) to [theta, p_x, p_y] (SE(2) convention)
 
-        return chi
+        return self._with_base_translation(chi)
 
     _forward_kinematics = forward_kinematics_virtual_backbone
 
@@ -1127,7 +1142,7 @@ class PlanarHSA(SoftRobot):
             chir, 1
         )  # shift from [p_x, p_y, theta] (symbolic derivation def) to [theta, p_x, p_y] (SE(2) convention)
 
-        return chir
+        return self._with_base_translation(chir)
 
     @eqx.filter_jit
     def forward_kinematics_platform(self, q: Array, segment_idx: Array) -> Array:
@@ -1157,7 +1172,7 @@ class PlanarHSA(SoftRobot):
             chip, 1
         )  # shift from [p_x, p_y, theta] (symbolic derivation def) to [theta, p_x, p_y] (SE(2) convention)
 
-        return chip
+        return self._with_base_translation(chip)
 
     @eqx.filter_jit
     def forward_kinematics_end_effector(self, q: Array) -> Array:
@@ -1184,7 +1199,7 @@ class PlanarHSA(SoftRobot):
             chiee, 1
         )  # shift from [p_x, p_y, theta] (symbolic derivation def) to [theta, p_x, p_y] (SE(2) convention)
 
-        return chiee
+        return self._with_base_translation(chiee)
 
     @eqx.filter_jit
     def jacobian_end_effector(self, q: Array) -> Array:

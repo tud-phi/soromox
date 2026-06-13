@@ -51,6 +51,9 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (2,):
             raise ValueError(f"gravity must have shape (2,), got {gravity.shape}.")
+        base_pose = jnp.asarray(self.base_pose)
+        if base_pose.shape != (3,):
+            raise ValueError(f"base_pose must have shape (3,), got {base_pose.shape}.")
 
 
 class TendonActuatedPendulumParams(BaseSystemParams):

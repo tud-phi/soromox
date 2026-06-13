@@ -60,7 +60,7 @@ def _pcs_params(length):
 def _planar_pcs_params(length):
     num_segments = len(length)
     return planar_pcs_params(
-        base_angle=jnp.array(0.0),
+        base_pose=jnp.array([0.0, 0.0, 0.0]),
         length=jnp.asarray(length, dtype=jnp.float64),
         radius=0.02 * jnp.ones((num_segments,), dtype=jnp.float64),
         density=1000.0 * jnp.ones((num_segments,), dtype=jnp.float64),

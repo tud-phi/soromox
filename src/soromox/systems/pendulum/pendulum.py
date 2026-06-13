@@ -91,10 +91,10 @@ class Pendulum(SoftRobot):
         **kwargs: Any,
     ) -> None:
         """Initialize the pendulum system with typed parameters."""
-        super().__init__(**kwargs)
         if not isinstance(params, PendulumParams):
             raise TypeError("params must be a PendulumParams instance.")
         params.validate()
+        super().__init__(base_pose=params.base_pose, **kwargs)
         self.params = params
 
         # Basic parameter extraction
@@ -169,6 +169,7 @@ class Pendulum(SoftRobot):
         return eqx.tree_at(
             lambda x: (
                 x.params,
+                x.base_pose,
                 x.m,
                 x.I,
                 x.L,
@@ -182,6 +183,7 @@ class Pendulum(SoftRobot):
             self,
             (
                 params if stored_params is None else stored_params,
+                jnp.asarray(params.base_pose),
                 jnp.asarray(params.mass),
                 jnp.asarray(params.moment_inertia),
                 jnp.asarray(params.length),
@@ -209,6 +211,7 @@ class Pendulum(SoftRobot):
             "joint_damping",
             "joint_rest_configuration",
             "radius",
+            "base_pose",
             "gravity",
         )
         for name in shape_locked_fields:
@@ -234,7 +237,7 @@ class Pendulum(SoftRobot):
         Returns:
             Array: Cumulative angles θ_i = Σ_{k=0..i} q[k], shape (N,) [rad]
         """
-        return jnp.cumsum(q)  # (n,)
+        return self.base_pose[0] + jnp.cumsum(q)  # (n,)
 
     def _directions(self, q: Array) -> Array:
         """
@@ -269,8 +272,8 @@ class Pendulum(SoftRobot):
         seg_vecs = self.L[:, None] * dirs  # (n,2)
         tips = jnp.cumsum(seg_vecs, axis=0)  # tip positions of each link
         # Proximal positions p_joint[i] = tip[i-1] with base at 0
-        zeros = jnp.zeros((1, 2), dtype=q.dtype)
-        p_joints = jnp.concatenate([zeros, tips[:-1]], axis=0)  # (n,2)
+        base_xy = jnp.asarray(self.base_pose[1:], dtype=q.dtype)
+        p_joints = jnp.concatenate([base_xy[None, :], base_xy + tips[:-1]], axis=0)
         return p_joints
 
     def _com_positions(self, q: Array) -> Array:
@@ -302,7 +305,8 @@ class Pendulum(SoftRobot):
         """
         dirs = self._directions(q)
         seg_vecs = self.L[:, None] * dirs
-        p_tips = jnp.cumsum(seg_vecs, axis=0)  # (n,2)
+        base_xy = jnp.asarray(self.base_pose[1:], dtype=q.dtype)
+        p_tips = base_xy + jnp.cumsum(seg_vecs, axis=0)  # (n,2)
         return p_tips
 
     @eqx.filter_jit

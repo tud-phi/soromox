@@ -29,7 +29,7 @@ def make_planar_model(
         * L[:, None]
     ).flatten()
     params = planar_pcs_params(
-        base_angle=jnp.array(0.0),
+        base_pose=jnp.array([0.0, 0.0, 0.0]),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),

@@ -33,7 +33,7 @@ class PlanarPCS(SoftRobot):
     Attributes:
         num_segments: Number of segments (constant strain sections) along the robot.
         num_actuators: Number of actuators (control inputs) for the robot.
-        th0: Initial orientation angle of the robot in radians.
+        base_pose: Initial planar base pose ``[theta, x, y]``.
         g: Gravitational acceleration vector (embedded in a 3D vector).
             [0, g_x, g_y]
         L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
@@ -67,7 +67,6 @@ class PlanarPCS(SoftRobot):
     params: PlanarPCSParams
 
     # Robot parameters
-    th0: Array  # Initial orientation angle [rad]
     g: Array  # Gravitational acceleration vector
 
     L: Array  # Length of the segments
@@ -104,10 +103,10 @@ class PlanarPCS(SoftRobot):
         **kwargs: Any,
     ):
         """Initialize the PlanarPCS class from typed dynamic parameters."""
-        super().__init__(**kwargs)
         if not isinstance(params, PlanarPCSParams):
             raise TypeError("params must be a PlanarPCSParams instance.")
         params.validate()
+        super().__init__(base_pose=params.base_pose, **kwargs)
         if structure is None:
             structure = PlanarPCSStructure()
         self.params = params
@@ -217,10 +216,7 @@ class PlanarPCS(SoftRobot):
 
     def _set_params(self, params: PlanarPCSParams) -> None:
         """Set cached runtime arrays from typed parameters."""
-        # Initial orientation angle
-        th0 = params.base_angle
-        th0 = jnp.asarray(th0, dtype=jnp.float64)
-        self.th0 = th0
+        self.base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
 
         # Gravitational acceleration vector
         g = params.gravity
@@ -315,7 +311,7 @@ class PlanarPCS(SoftRobot):
                 "reference_strain shape changes the model structure; construct a new PlanarPCS."
             )
 
-        base_angle = jnp.asarray(params.base_angle, dtype=jnp.float64)
+        base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
         gravity = jnp.asarray(params.gravity, dtype=jnp.float64)
         segment_lengths = jnp.asarray(params.length, dtype=jnp.float64)
         radius = jnp.asarray(params.radius, dtype=jnp.float64)
@@ -334,7 +330,7 @@ class PlanarPCS(SoftRobot):
         updated_self = eqx.tree_at(
             lambda m: (
                 m.params,
-                m.th0,
+                m.base_pose,
                 m.g,
                 m.L,
                 m.L_cum,
@@ -348,7 +344,7 @@ class PlanarPCS(SoftRobot):
             self,
             (
                 params if stored_params is None else stored_params,
-                base_angle,
+                base_pose,
                 jnp.concatenate([jnp.zeros(1, dtype=gravity.dtype), gravity]),
                 segment_lengths,
                 jnp.cumsum(
@@ -480,9 +476,7 @@ class PlanarPCS(SoftRobot):
 
         segment_idx, s_local = self.classify_segment(s)
 
-        chi_0 = jnp.concatenate(
-            [self.th0[None], jnp.zeros(2)]
-        )  # Initial configuration [theta, x, y]
+        chi_0 = jnp.asarray(self.base_pose, dtype=xi.dtype)
 
         # Iteration function
         def chi_i(chi_prev: Array, i: Array) -> tuple[Array, Array]:
@@ -597,13 +591,7 @@ class PlanarPCS(SoftRobot):
         """
         xi = self.strain(q).reshape(self.num_segments, 3)
 
-        # base configuration [theta, x, y]
-        chi_base = jnp.concatenate(
-            [
-                jnp.asarray(self.th0, dtype=xi.dtype)[None],
-                jnp.zeros(2, dtype=xi.dtype),
-            ]
-        )
+        chi_base = jnp.asarray(self.base_pose, dtype=xi.dtype)
 
         def integrate_segment(chi_prev: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
@@ -668,12 +656,7 @@ class PlanarPCS(SoftRobot):
         xi = self.strain(q).reshape(self.num_segments, 3)
 
         chi_tips = self.forward_kinematics_tips(q)
-        chi_base = jnp.concatenate(
-            [
-                jnp.asarray(self.th0, dtype=xi.dtype)[None],
-                jnp.zeros(2, dtype=xi.dtype),
-            ]
-        )
+        chi_base = jnp.asarray(self.base_pose, dtype=xi.dtype)
         chi_bases = jnp.concatenate([chi_base[None, :], chi_tips[:-1]], axis=0)
 
         segment_indices, s_local_ps = vmap(self.classify_segment)(s_ps)
@@ -735,16 +718,13 @@ class PlanarPCS(SoftRobot):
         Returns:
             chi_rel (Array): relative poses of shape (num_segments, 3) where each row is [delta_theta, delta_x, delta_y]
                             representing the relative pose change from the previous segment tip.
-                            The first segment's relative pose is computed w.r.t. the base at (0, 0, 0).
+                            The first segment's relative pose is computed w.r.t. ``base_pose``.
         """
         # Ensure chi_tips has the correct shape
         chi_tips = chi_tips.reshape(self.num_segments, 3)
 
-        # Base pose at the origin: [theta=self.th0, x=0, y=0]
-        base_pose = jnp.array([self.th0, 0.0, 0.0])
-
         # Create array of previous poses: base + all segment tips except the last
-        prev_poses = jnp.concatenate([base_pose[None, :], chi_tips[:-1]], axis=0)
+        prev_poses = jnp.concatenate([self.base_pose[None, :], chi_tips[:-1]], axis=0)
 
         # Compute relative poses vectorized
         # For SE(2), the relative transformation between poses chi_prev and chi_curr is:
@@ -1126,14 +1106,9 @@ class PlanarPCS(SoftRobot):
             dtype: Desired floating-point dtype of the returned array.
 
         Returns:
-            Planar base pose ``[theta0, 0, 0]`` with shape ``(3,)``.
+            Planar base pose ``[theta0, x0, y0]`` with shape ``(3,)``.
         """
-        return jnp.concatenate(
-            [
-                jnp.asarray(self.th0, dtype=dtype)[None],
-                jnp.zeros(2, dtype=dtype),
-            ]
-        )
+        return jnp.asarray(self.base_pose, dtype=dtype)
 
     def _update_body_jacobian_step(
         self, J_prev: Array, i: Array, Ad_inv: Array, T: Array
@@ -1287,12 +1262,7 @@ class PlanarPCS(SoftRobot):
         segment_idx, s_local = self.classify_segment(s)
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
-        chi0 = jnp.concatenate(
-            [
-                jnp.asarray(self.th0, dtype=xi.dtype)[None],
-                jnp.zeros(2, dtype=xi.dtype),
-            ]
-        )
+        chi0 = jnp.asarray(self.base_pose, dtype=xi.dtype)
 
         def scan_body(
             carry: tuple[Array, Array, Array, Array, Array, Array],
@@ -1362,12 +1332,7 @@ class PlanarPCS(SoftRobot):
         segment_idx, s_local = self.classify_segment(s)
 
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
-        chi0 = jnp.concatenate(
-            [
-                jnp.asarray(self.th0, dtype=xi.dtype)[None],
-                jnp.zeros(2, dtype=xi.dtype),
-            ]
-        )
+        chi0 = jnp.asarray(self.base_pose, dtype=xi.dtype)
 
         def scan_body(
             carry: tuple[Array, Array, Array, Array, Array, Array, Array],
@@ -2573,16 +2538,7 @@ class PlanarPCS(SoftRobot):
         )
         s_local = Xs_scaled - self.L_cum[:-1, None]
 
-        th0 = jnp.asarray(self.th0, dtype=xi.dtype)
-        g0 = lie.exp_SE2(
-            jnp.stack(
-                [
-                    th0,
-                    jnp.zeros((), dtype=xi.dtype),
-                    jnp.zeros((), dtype=xi.dtype),
-                ]
-            )
-        )
+        g0 = lie.exp_SE2(jnp.asarray(self.base_pose, dtype=xi.dtype))
 
         def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)

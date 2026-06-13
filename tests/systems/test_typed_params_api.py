@@ -123,7 +123,7 @@ def test_system_update_rejects_static_shape_changes():
         robot.update_params(unknown=jnp.array([0.0]))
 
 
-def test_planar_pcs_params_validate_scalar_base_angle():
+def test_planar_pcs_params_validate_base_pose_shape():
     params = planar_pcs_params(
         length=jnp.array([0.1], dtype=jnp.float64),
         radius=jnp.array([0.02], dtype=jnp.float64),
@@ -132,10 +132,10 @@ def test_planar_pcs_params_validate_scalar_base_angle():
         shear_modulus=jnp.array([1e5], dtype=jnp.float64),
         damping_matrix=jnp.eye(3, dtype=jnp.float64),
         gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
-        base_angle=jnp.array([0.0], dtype=jnp.float64),
+        base_pose=jnp.array([0.0], dtype=jnp.float64),
     )
 
-    with pytest.raises(ValueError, match="base_angle"):
+    with pytest.raises(ValueError, match="base_pose"):
         params.validate()
 
 
@@ -290,6 +290,7 @@ def test_removed_plural_typed_param_names_fail():
         )
 
     pendulum_kwargs = {
+        "base_pose": jnp.zeros(3, dtype=jnp.float64),
         "mass": jnp.array([1.0], dtype=jnp.float64),
         "moment_inertia": jnp.array([0.1], dtype=jnp.float64),
         "gravity": jnp.array([0.0, -9.81], dtype=jnp.float64),
@@ -320,6 +321,7 @@ def test_removed_plural_typed_param_names_fail():
         )
 
     articulated_kwargs = {
+        "base_pose": jnp.zeros(6, dtype=jnp.float64),
         "parent_to_joint_transform": jnp.eye(4, dtype=jnp.float64)[None, :, :],
         "tip_position": jnp.array([[0.5, 0.0, 0.0]], dtype=jnp.float64),
         "center_of_mass_position": jnp.array([[0.25, 0.0, 0.0]], dtype=jnp.float64),

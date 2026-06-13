@@ -3,10 +3,10 @@ __all__ = ["PlanarHSAParams"]
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems.params import BaseSystemParams
+from soromox.systems.params import BaseSoftRobotParams
 
 
-class PlanarHSAParams(BaseSystemParams):
+class PlanarHSAParams(BaseSoftRobotParams):
     """Dynamic parameters for planar HSA systems.
 
     Field names denote one segment/platform quantity; leading axes store the
@@ -15,7 +15,6 @@ class PlanarHSAParams(BaseSystemParams):
     hysteresis coefficients used by the symbolic HSA expressions.
     """
 
-    base_angle: Array
     length: Array
     proximal_cap_length: Array
     distal_cap_length: Array
@@ -111,7 +110,7 @@ class PlanarHSAParams(BaseSystemParams):
                 )
 
         scalar_shapes = {
-            "base_angle": (),
+            "base_pose": (3,),
             "platform_mass": (),
             "platform_center_of_gravity": (2,),
             "gravity": (2,),
