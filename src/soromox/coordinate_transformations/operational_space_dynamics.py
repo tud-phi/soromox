@@ -5,13 +5,15 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.systems.soft_robot import SoftRobot
-from soromox.utils.rotations import (
+from soromox.utils.geometry.errors import (
+    angle_geodesic_error,
+    rotation_matrix_geodesic_error,
+)
+from soromox.utils.geometry.rotations import (
     RotationRepresentation,
-    angle_error,
     quaternion_to_rotation_matrix,
     quaternion_to_rotation_vector,
     rotation_6d_to_rotation_matrix,
-    rotation_matrix_error,
     rotation_matrix_to_6d,
     rotation_matrix_to_quaternion,
     rotation_vector_to_rotation_matrix,
@@ -574,7 +576,7 @@ class OperationalSpaceDynamics(eqx.Module):
             pos_desired = pose_desired[1:]
 
             # Geometric angle error (shortest path)
-            theta_error = angle_error(theta_current, theta_desired)
+            theta_error = angle_geodesic_error(theta_current, theta_desired)
             pos_error = pos_desired - pos_current
 
             return jnp.concatenate([jnp.array([theta_error]), pos_error])
@@ -605,7 +607,7 @@ class OperationalSpaceDynamics(eqx.Module):
                 )
 
             # Compute geometric orientation error (always 3D rotation vector)
-            orient_error = rotation_matrix_error(R_current, R_desired)
+            orient_error = rotation_matrix_geodesic_error(R_current, R_desired)
             pos_error = pos_desired - pos_current
 
             return jnp.concatenate([orient_error, pos_error])

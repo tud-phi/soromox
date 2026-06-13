@@ -14,7 +14,7 @@ from soromox.systems.params import (
 from soromox.systems.pcs.params import TendonActuatedPCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.utils.integration import scale_gaussian_quadrature
-from soromox.utils.lie_algebra import se3
+from soromox.utils.lie_algebra import se3, so3
 
 from .pcs import PCS
 
@@ -392,7 +392,7 @@ class TendonActuatedPCS(PCS):
         norm = jnp.linalg.norm(term)  # ()
         t = term / norm  # (3,)
 
-        Phi_a_k = is_tendon_active * jnp.hstack([se3.skew(d_s[:-1]) @ t, t])  # (6,)
+        Phi_a_k = is_tendon_active * jnp.hstack([so3.skew(d_s[:-1]) @ t, t])  # (6,)
 
         return Phi_a_k
 

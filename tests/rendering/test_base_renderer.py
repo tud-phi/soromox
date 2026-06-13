@@ -7,7 +7,7 @@ from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.systems.soft_robot import CrossSectionGeometry
-from soromox.utils.lie_algebra import poses
+from soromox.utils.geometry import poses
 
 
 class DummyPlanarRobot:

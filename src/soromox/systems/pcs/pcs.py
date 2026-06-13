@@ -14,12 +14,13 @@ from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
 )
+from soromox.utils.geometry import poses
 from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
     scale_interior_gaussian_quadrature,
 )
-from soromox.utils.lie_algebra import constant_strain, poses, se3
+from soromox.utils.lie_algebra import constant_strain, se3
 
 
 class PCS(SoftRobot):

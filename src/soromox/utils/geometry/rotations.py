@@ -1,5 +1,4 @@
-"""
-Rotation utilities for converting between different rotation representations.
+"""Rotation utilities for converting between representation encodings.
 
 This module provides numerically stable conversions between rotation matrices,
 quaternions, and rotation vectors (axis-angle representation). The implementations
@@ -25,14 +24,6 @@ Rotation Representations:
     - ROTATION_MATRIX_6D (6D): Continuous representation using first two columns of
       the rotation matrix (Zhou et al. 2019). Excellent for neural networks as it has
       no discontinuities, but not suitable for direct error computation.
-
-Geometric Orientation Errors:
-    For control applications (especially PID), the orientation error should be
-    computed as the geometric (geodesic) error, not as a naive difference of
-    representations. The geometric error is:
-        e_orientation = log(R_des @ R_current^T)
-    This gives the rotation vector representing the shortest-path rotation from
-    the current orientation to the desired orientation.
 """
 
 __all__ = [
@@ -52,17 +43,15 @@ __all__ = [
     # Quaternion operations
     "quaternion_multiply",
     "quaternion_conjugate",
-    # Geometric error computation
-    "rotation_matrix_error",
-    "rotation_quat_error",
-    "angle_error",
-    "wrap_angle",
 ]
 
 from enum import Enum
 
 import jax.numpy as jnp
-from jax import Array
+from jax import Array, lax
+
+from soromox.utils._numerics import eps_for_dtype
+from soromox.utils.lie_algebra import so3
 
 
 class RotationRepresentation(Enum):
@@ -79,9 +68,9 @@ class RotationRepresentation(Enum):
       matrix). Continuous everywhere, ideal for neural networks.
 
     Note:
-        For computing orientation errors in control applications, the geometric error
-        should always be used regardless of the representation choice. See
-        `rotation_matrix_error` for details.
+        For computing orientation errors in control applications, use
+        ``soromox.utils.geometry.errors`` regardless of the representation
+        chosen for pose coordinates.
     """
 
     ROTATION_VECTOR = "rotation_vector"
@@ -116,14 +105,14 @@ def normalize_quaternion(
     """
     dtype = jnp.result_type(quaternion, 1.0)
     q = jnp.asarray(quaternion, dtype=dtype).reshape(-1)
-    norm = jnp.linalg.norm(q)
-    if eps is None:
-        eps_arr = jnp.asarray(jnp.finfo(q.dtype).eps, dtype=q.dtype)
-    else:
-        eps_arr = jnp.asarray(eps, dtype=q.dtype)
+    eps_arr = eps_for_dtype(eps, q.dtype)
     identity = jnp.array([1.0, 0.0, 0.0, 0.0], dtype=q.dtype)
-    safe_norm = jnp.where(norm > eps_arr, norm, jnp.ones((), dtype=q.dtype))
-    return jnp.where(norm > eps_arr, q / safe_norm, identity)
+    norm_sq = jnp.dot(q, q)
+
+    def _normalize(_: None) -> Array:
+        return q / jnp.sqrt(norm_sq)
+
+    return lax.cond(norm_sq > eps_arr**2, _normalize, lambda _: identity, operand=None)
 
 
 def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -> Array:
@@ -143,7 +132,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_matrix_to_quaternion
+        >>> from soromox.utils.geometry.rotations import rotation_matrix_to_quaternion
         >>> R = jnp.eye(3)  # Identity rotation
         >>> q = rotation_matrix_to_quaternion(R)
         >>> # q ≈ [1, 0, 0, 0] (identity quaternion)
@@ -220,7 +209,7 @@ def quaternion_to_rotation_matrix(quat: Array) -> Array:
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import quaternion_to_rotation_matrix
+        >>> from soromox.utils.geometry.rotations import quaternion_to_rotation_matrix
         >>> q = jnp.array([1.0, 0.0, 0.0, 0.0])  # Identity quaternion
         >>> R = quaternion_to_rotation_matrix(q)
         >>> # R ≈ eye(3) (identity rotation matrix)
@@ -277,7 +266,7 @@ def quaternion_to_rotation_vector(
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import quaternion_to_rotation_vector
+        >>> from soromox.utils.geometry.rotations import quaternion_to_rotation_vector
         >>> # 90-degree rotation around z-axis
         >>> q = jnp.array([jnp.cos(jnp.pi/4), 0, 0, jnp.sin(jnp.pi/4)])
         >>> omega = quaternion_to_rotation_vector(q)
@@ -286,23 +275,18 @@ def quaternion_to_rotation_vector(
     quat = normalize_quaternion(quat, eps=eps)
     q_w = quat[0]
     q_vec = quat[1:4]
+    eps_arr = eps_for_dtype(eps, quat.dtype)
+    q_vec_norm_sq = jnp.dot(q_vec, q_vec)
 
-    # Compute the rotation angle using atan2 for numerical stability
-    q_vec_norm = jnp.linalg.norm(q_vec)
-    half_angle = jnp.arctan2(q_vec_norm, q_w)
-    angle = 2.0 * half_angle
+    def _small(_: None) -> Array:
+        return 2.0 * q_vec
 
-    # Compute the rotation vector: omega = angle * axis
-    # For small rotations: angle ≈ 2 * q_vec_norm, so scale ≈ 2
-    # For general rotations: omega = (angle / q_vec_norm) * q_vec
-    scale = jnp.where(
-        q_vec_norm > eps,
-        angle / q_vec_norm,
-        2.0,  # Small angle approximation: angle ≈ 2 * ||q_vec||
-    )
+    def _general(_: None) -> Array:
+        q_vec_norm = jnp.sqrt(q_vec_norm_sq)
+        angle = 2.0 * jnp.arctan2(q_vec_norm, q_w)
+        return q_vec * (angle / q_vec_norm)
 
-    omega = q_vec * scale
-    return omega
+    return lax.cond(q_vec_norm_sq > eps_arr**2, _general, _small, operand=None)
 
 
 def rotation_vector_to_quaternion(
@@ -325,31 +309,29 @@ def rotation_vector_to_quaternion(
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_vector_to_quaternion
+        >>> from soromox.utils.geometry.rotations import rotation_vector_to_quaternion
         >>> # 90-degree rotation around z-axis
         >>> omega = jnp.array([0.0, 0.0, jnp.pi / 2])
         >>> q = rotation_vector_to_quaternion(omega)
         >>> # q ≈ [cos(π/4), 0, 0, sin(π/4)]
     """
-    angle = jnp.linalg.norm(omega)
-    half_angle = angle / 2.0
+    omega = jnp.asarray(omega).reshape(-1)
+    eps_arr = eps_for_dtype(eps, omega.dtype)
+    angle_sq = jnp.dot(omega, omega)
 
-    # For small angles, use Taylor expansion: sin(θ/2) ≈ θ/2, cos(θ/2) ≈ 1
-    # For general angles: q_vec = sin(θ/2) * (ω / ||ω||) = sin(θ/2) / ||ω|| * ω
-    scale = jnp.where(
-        angle > eps,
-        jnp.sin(half_angle) / angle,
-        0.5,  # Small angle approximation: sin(θ/2) / θ ≈ 0.5
-    )
+    def _small(_: None) -> Array:
+        return jnp.array(
+            [1.0, 0.5 * omega[0], 0.5 * omega[1], 0.5 * omega[2]],
+            dtype=omega.dtype,
+        )
 
-    q_vec = omega * scale
-    q_w = jnp.where(
-        angle > eps,
-        jnp.cos(half_angle),
-        1.0,  # Small angle approximation: cos(θ/2) ≈ 1
-    )
+    def _general(_: None) -> Array:
+        angle = jnp.sqrt(angle_sq)
+        half_angle = angle / 2.0
+        q_vec = omega * (jnp.sin(half_angle) / angle)
+        return jnp.array([jnp.cos(half_angle), q_vec[0], q_vec[1], q_vec[2]])
 
-    quat = jnp.array([q_w, q_vec[0], q_vec[1], q_vec[2]])
+    quat = lax.cond(angle_sq > eps_arr**2, _general, _small, operand=None)
 
     return normalize_quaternion(quat, eps=eps)
 
@@ -360,9 +342,9 @@ def rotation_matrix_to_rotation_vector(
     """
     Convert a rotation matrix to a rotation vector (axis-angle representation).
 
-    This is a convenience function that combines rotation_matrix_to_quaternion
-    and quaternion_to_rotation_vector. It correctly handles both small rotations
-    (θ ≈ 0) and near-180-degree rotations (θ ≈ π).
+    This is a convenience wrapper around ``soromox.utils.lie_algebra.so3.log``.
+    It correctly handles both small rotations (θ ≈ 0) and near-180-degree
+    rotations (θ ≈ π).
 
     The rotation vector ω has magnitude equal to the rotation angle θ and
     direction equal to the rotation axis. For a rotation by angle θ around
@@ -377,19 +359,17 @@ def rotation_matrix_to_rotation_vector(
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_matrix_to_rotation_vector
+        >>> from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
         >>> # 180-degree rotation around z-axis
         >>> R = jnp.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1.0]])
         >>> omega = rotation_matrix_to_rotation_vector(R)
         >>> # omega ≈ [0, 0, π]
 
     Note:
-        This function uses quaternions as an intermediate representation to
-        avoid the singularity at θ = π that affects direct rotation matrix
-        to rotation vector conversion methods.
+        This delegates to ``soromox.utils.lie_algebra.so3.log`` so that the
+        matrix logarithm has one canonical implementation.
     """
-    quat = rotation_matrix_to_quaternion(R, eps=eps)
-    return quaternion_to_rotation_vector(quat, eps=eps)
+    return so3.log(R, eps=eps)
 
 
 def rotation_vector_to_rotation_matrix(
@@ -398,9 +378,9 @@ def rotation_vector_to_rotation_matrix(
     """
     Convert a rotation vector (axis-angle representation) to a rotation matrix.
 
-    This is a convenience function that combines rotation_vector_to_quaternion
-    and quaternion_to_rotation_matrix. It correctly handles both small rotations
-    (θ ≈ 0) and all other rotation angles.
+    This is a convenience wrapper around ``soromox.utils.lie_algebra.so3.exp``.
+    It correctly handles both small rotations (θ ≈ 0) and all other rotation
+    angles.
 
     The rotation vector ω has magnitude equal to the rotation angle θ and
     direction equal to the rotation axis. For a rotation by angle θ around
@@ -415,19 +395,17 @@ def rotation_vector_to_rotation_matrix(
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_vector_to_rotation_matrix
+        >>> from soromox.utils.geometry.rotations import rotation_vector_to_rotation_matrix
         >>> # 90-degree rotation around z-axis
         >>> omega = jnp.array([0.0, 0.0, jnp.pi / 2])
         >>> R = rotation_vector_to_rotation_matrix(omega)
         >>> # R is the rotation matrix for 90° around z
 
     Note:
-        This function uses quaternions as an intermediate representation.
-        Alternatively, you can use Rodrigues' formula directly, which may
-        be slightly more efficient for this particular conversion.
+        This delegates to ``soromox.utils.lie_algebra.so3.exp`` so that
+        Rodrigues' formula has one canonical implementation.
     """
-    quat = rotation_vector_to_quaternion(omega, eps=eps)
-    return quaternion_to_rotation_matrix(quat)
+    return so3.exp(omega, eps=eps)
 
 
 # =============================================================================
@@ -451,7 +429,7 @@ def rotation_matrix_to_6d(R: Array) -> Array:
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_matrix_to_6d
+        >>> from soromox.utils.geometry.rotations import rotation_matrix_to_6d
         >>> R = jnp.eye(3)  # Identity rotation
         >>> r6d = rotation_matrix_to_6d(R)
         >>> # r6d = [1, 0, 0, 0, 1, 0]
@@ -481,7 +459,7 @@ def rotation_6d_to_rotation_matrix(r6d: Array) -> Array:
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_6d_to_rotation_matrix
+        >>> from soromox.utils.geometry.rotations import rotation_6d_to_rotation_matrix
         >>> r6d = jnp.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
         >>> R = rotation_6d_to_rotation_matrix(r6d)
         >>> # R ≈ eye(3)
@@ -532,7 +510,7 @@ def quaternion_multiply(q1: Array, q2: Array) -> Array:
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import quaternion_multiply
+        >>> from soromox.utils.geometry.rotations import quaternion_multiply
         >>> q1 = jnp.array([1, 0, 0, 0])  # Identity
         >>> q2 = jnp.array([jnp.cos(jnp.pi/4), 0, 0, jnp.sin(jnp.pi/4)])  # 90° around z
         >>> q = quaternion_multiply(q1, q2)
@@ -568,160 +546,9 @@ def quaternion_conjugate(q: Array) -> Array:
 
     Example:
         >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import quaternion_conjugate
+        >>> from soromox.utils.geometry.rotations import quaternion_conjugate
         >>> q = jnp.array([jnp.cos(jnp.pi/4), 0, 0, jnp.sin(jnp.pi/4)])  # 90° around z
         >>> q_conj = quaternion_conjugate(q)
         >>> # q_conj represents -90° around z
     """
     return jnp.array([q[0], -q[1], -q[2], -q[3]])
-
-
-# =============================================================================
-# Geometric Error Computation
-# =============================================================================
-
-
-def wrap_angle(angle: Array) -> Array:
-    """
-    Wrap an angle to the range [-π, π].
-
-    This is useful for computing the shortest angular difference between
-    two angles, particularly for planar systems.
-
-    Args:
-        angle: Angle in radians (scalar or array).
-
-    Returns:
-        wrapped: Angle wrapped to [-π, π].
-
-    Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import wrap_angle
-        >>> wrap_angle(jnp.array(3 * jnp.pi))  # Returns approximately π
-        >>> wrap_angle(jnp.array(-3 * jnp.pi))  # Returns approximately -π
-    """
-    return jnp.mod(angle + jnp.pi, 2 * jnp.pi) - jnp.pi
-
-
-def angle_error(theta_current: Array, theta_desired: Array) -> Array:
-    """
-    Compute the geometric angular error for planar rotations.
-
-    This computes the shortest angular path from the current angle to the
-    desired angle, properly handling angle wrapping. The result is always
-    in the range [-π, π].
-
-    Args:
-        theta_current: Current angle in radians (scalar or array).
-        theta_desired: Desired angle in radians (scalar or array).
-
-    Returns:
-        error: Angular error in radians, in range [-π, π].
-            Positive error means rotate counter-clockwise to reach desired.
-
-    Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import angle_error
-        >>> # Current: 10°, Desired: 350° → Error should be -20° (not +340°)
-        >>> e = angle_error(jnp.deg2rad(10), jnp.deg2rad(350))
-        >>> # e ≈ -0.349 rad (≈ -20°)
-
-    Note:
-        This is the proper error computation for planar PID control,
-        ensuring the controller takes the shortest path.
-    """
-    return wrap_angle(theta_desired - theta_current)
-
-
-def rotation_matrix_error(
-    R_current: Array,
-    R_desired: Array,
-    eps: float = DEFAULT_ROTATION_EPS,
-) -> Array:
-    """
-    Compute the geometric orientation error between two rotation matrices.
-
-    This computes the rotation vector representing the shortest-path rotation
-    from the current orientation to the desired orientation:
-        e = log(R_desired @ R_current^T)
-
-    The result is suitable for use in PID controllers as it:
-    - Represents the axis-angle of the required correction
-    - Always takes the shortest path (magnitude ≤ π)
-    - Is continuous for small perturbations
-    - Lives in the tangent space (same as angular velocity)
-
-    Args:
-        R_current: Current rotation matrix of shape (3, 3).
-        R_desired: Desired rotation matrix of shape (3, 3).
-        eps: Small value for numerical stability. Default is 1e-10.
-
-    Returns:
-        error: Rotation vector of shape (3,) representing the geometric error.
-            The magnitude is the angle to rotate, the direction is the axis.
-
-    Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_matrix_error, rotation_vector_to_rotation_matrix
-        >>> # Current: 10° around z, Desired: 350° around z
-        >>> R_current = rotation_vector_to_rotation_matrix(jnp.array([0, 0, jnp.deg2rad(10)]))
-        >>> R_desired = rotation_vector_to_rotation_matrix(jnp.array([0, 0, jnp.deg2rad(350)]))
-        >>> e = rotation_matrix_error(R_current, R_desired)
-        >>> # e ≈ [0, 0, -0.349] (≈ -20° around z, the shortest path)
-
-    Note:
-        This should be used instead of naive subtraction of rotation vectors
-        (ω_des - ω) in control applications, as the naive subtraction does
-        not represent the geometric error.
-    """
-    # Compute relative rotation: R_error = R_desired @ R_current^T
-    R_error = R_desired @ R_current.T
-
-    # Convert to rotation vector (log map)
-    return rotation_matrix_to_rotation_vector(R_error, eps=eps)
-
-
-def rotation_quat_error(
-    q_current: Array,
-    q_desired: Array,
-    eps: float = DEFAULT_ROTATION_EPS,
-) -> Array:
-    """
-    Compute the geometric orientation error between two quaternions.
-
-    This computes the rotation vector representing the shortest-path rotation
-    from the current orientation to the desired orientation using quaternion
-    arithmetic:
-        q_error = q_desired ⊗ q_current^{-1}
-        e = log(q_error)
-
-    The function automatically handles the antipodal ambiguity of quaternions
-    to ensure the shortest path is taken.
-
-    Args:
-        q_current: Current quaternion with shape ``(4,)`` in scalar-first
-            Hamilton ``[qw, qx, qy, qz]`` order.
-        q_desired: Desired quaternion with shape ``(4,)`` in scalar-first
-            Hamilton ``[qw, qx, qy, qz]`` order.
-        eps: Small value for numerical stability. Default is 1e-10.
-
-    Returns:
-        error: Rotation vector of shape (3,) representing the geometric error.
-
-    Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.rotations import rotation_quat_error, rotation_vector_to_quaternion
-        >>> q_current = rotation_vector_to_quaternion(jnp.array([0, 0, 0.1]))
-        >>> q_desired = rotation_vector_to_quaternion(jnp.array([0, 0, 0.2]))
-        >>> e = rotation_quat_error(q_current, q_desired)
-        >>> # e ≈ [0, 0, 0.1]
-    """
-    # Compute the error quaternion: q_error = q_desired * q_current^{-1}
-    q_current_inv = quaternion_conjugate(q_current)
-    q_error = quaternion_multiply(q_desired, q_current_inv)
-
-    # Ensure shortest path by flipping if scalar part is negative
-    q_error = jnp.where(q_error[0] < 0, -q_error, q_error)
-
-    # Convert to rotation vector
-    return quaternion_to_rotation_vector(q_error, eps=eps)

@@ -3,13 +3,13 @@ from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
-from soromox.utils.lie_algebra import poses
 from soromox.autodiff import (
     custom_jvp_enabled,
     custom_jvp_mode,
     set_custom_jvp_enabled,
 )
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)
 

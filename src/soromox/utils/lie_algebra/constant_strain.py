@@ -77,7 +77,9 @@ def _adjoint_powers_with_derivatives(ad_xi: Array, ad_xid: Array, dim: int):
     return powers, dot_powers
 
 
-def _constant_strain_adjoint(ad_xi: Array, theta: Array, s: Array, eps: float | Array) -> Array:
+def _constant_strain_adjoint(
+    ad_xi: Array, theta: Array, s: Array, eps: float | Array
+) -> Array:
     """Evaluate the shared closed form for constant-strain adjoint transport.
 
     This dimension-independent helper is used by both planar and spatial
@@ -118,9 +120,7 @@ def _constant_strain_adjoint(ad_xi: Array, theta: Array, s: Array, eps: float | 
             * ad_xi_square
         )
         term3 = (
-            (sin_theta - s * theta_val * cos_theta)
-            / (2 * theta_val**3)
-            * ad_xi_cube
+            (sin_theta - s * theta_val * cos_theta) / (2 * theta_val**3) * ad_xi_cube
         )
         term4 = (
             (2 - 2 * cos_theta - s * theta_val * sin_theta)
@@ -130,10 +130,17 @@ def _constant_strain_adjoint(ad_xi: Array, theta: Array, s: Array, eps: float | 
 
         return jnp.eye(dim, dtype=ad_xi.dtype) + term1 + term2 + term3 + term4
 
-    return lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
+    return lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
 
 
-def _constant_strain_tangent(ad_xi: Array, theta: Array, s: Array, eps: float | Array) -> Array:
+def _constant_strain_tangent(
+    ad_xi: Array, theta: Array, s: Array, eps: float | Array
+) -> Array:
     """Evaluate the shared closed form for the constant-strain tangent map.
 
     This helper implements the dimension-independent polynomial/trigonometric
@@ -167,9 +174,7 @@ def _constant_strain_tangent(ad_xi: Array, theta: Array, s: Array, eps: float | 
         ad_xi_quad = ad_xi_cube @ ad_xi
 
         term1 = (
-            (4 - 4 * cos_theta - s * theta_val * sin_theta)
-            / (2 * theta_val**2)
-            * ad_xi
+            (4 - 4 * cos_theta - s * theta_val * sin_theta) / (2 * theta_val**2) * ad_xi
         )
         term2 = (
             (4 * s * theta_val - 5 * sin_theta + s * theta_val * cos_theta)
@@ -189,7 +194,12 @@ def _constant_strain_tangent(ad_xi: Array, theta: Array, s: Array, eps: float | 
 
         return s * jnp.eye(dim, dtype=ad_xi.dtype) + term1 + term2 + term3 + term4
 
-    return lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
+    return lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
 
 
 def _constant_strain_tangent_derivative(
@@ -236,9 +246,7 @@ def _constant_strain_tangent_derivative(
         powers, dot_powers = _adjoint_powers_with_derivatives(ad_xi, ad_xid, dim)
 
         coeff_theta_common = (
-            -8
-            + (8 - s**2 * theta_val**2) * cos_theta
-            + 5 * s * theta_val * sin_theta
+            -8 + (8 - s**2 * theta_val**2) * cos_theta + 5 * s * theta_val * sin_theta
         )
         coeff_theta_alt = (
             -8 * s * theta_val
@@ -250,17 +258,17 @@ def _constant_strain_tangent_derivative(
         coeff1 = (4 - 4 * cos_theta - s * theta_val * sin_theta) / (2 * theta_val**2)
 
         coeff2_theta = theta_dot / (2 * theta_val**4) * coeff_theta_alt
-        coeff2 = (
-            4 * s * theta_val - 5 * sin_theta + s * theta_val * cos_theta
-        ) / (2 * theta_val**3)
+        coeff2 = (4 * s * theta_val - 5 * sin_theta + s * theta_val * cos_theta) / (
+            2 * theta_val**3
+        )
 
         coeff3_theta = theta_dot / (2 * theta_val**5) * coeff_theta_common
         coeff3 = (2 - 2 * cos_theta - s * theta_val * sin_theta) / (2 * theta_val**4)
 
         coeff4_theta = theta_dot / (2 * theta_val**6) * coeff_theta_alt
-        coeff4 = (
-            2 * s * theta_val - 3 * sin_theta + s * theta_val * cos_theta
-        ) / (2 * theta_val**5)
+        coeff4 = (2 * s * theta_val - 3 * sin_theta + s * theta_val * cos_theta) / (
+            2 * theta_val**5
+        )
 
         return (
             coeff1_theta * powers[1]
@@ -273,7 +281,12 @@ def _constant_strain_tangent_derivative(
             + coeff4 * dot_powers[4]
         )
 
-    return lax.cond(theta <= eps, lambda _: _series_branch(), lambda _: _general_branch(theta), operand=None)
+    return lax.cond(
+        theta <= eps,
+        lambda _: _series_branch(),
+        lambda _: _general_branch(theta),
+        operand=None,
+    )
 
 
 def adjoint_se2(xi: Array, s: Array, eps: float | Array) -> Array:
@@ -360,7 +373,9 @@ def tangent_se2(xi: Array, s: Array, eps: float | Array) -> Array:
     return _constant_strain_tangent(se2.small_adjoint(xi), theta, s, eps)
 
 
-def tangent_derivative_se2(xi: Array, xid: Array, s: Array, eps: float | Array) -> Array:
+def tangent_derivative_se2(
+    xi: Array, xid: Array, s: Array, eps: float | Array
+) -> Array:
     """Return the time derivative of the planar tangent operator.
 
     This differentiates :func:`tangent_se2` with respect to time through the
@@ -471,7 +486,9 @@ def tangent_se3(xi: Array, s: Array, eps: float | Array) -> Array:
     return _constant_strain_tangent(se3.small_adjoint(xi), theta, s, eps)
 
 
-def tangent_derivative_se3(xi: Array, xid: Array, s: Array, eps: float | Array) -> Array:
+def tangent_derivative_se3(
+    xi: Array, xid: Array, s: Array, eps: float | Array
+) -> Array:
     """Return the time derivative of the spatial tangent operator.
 
     This differentiates :func:`tangent_se3` with respect to time through the

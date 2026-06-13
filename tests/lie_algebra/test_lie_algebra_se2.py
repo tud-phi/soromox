@@ -4,7 +4,8 @@ from jax import numpy as jnp
 from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
 
-from soromox.utils.lie_algebra import constant_strain, poses, se2
+from soromox.utils.geometry import poses
+from soromox.utils.lie_algebra import constant_strain, se2
 from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)
@@ -14,33 +15,6 @@ RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
 EPS = float(jnp.finfo(jnp.float64).eps)
 J = jnp.array([[0.0, -1.0], [1.0, 0.0]])
-
-
-def test_skew_se2_returns_skew_matrix():
-    theta = jnp.array(0.5)
-    expected = theta * J
-
-    result = se2.skew(theta)
-
-    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
-
-
-def test_planar_pose_from_transform_inverts_planar_pose_transform():
-    vec = jnp.array([0.4, -0.7, 1.2])
-
-    g = poses.planar_pose_to_transform(vec)
-    recovered = poses.planar_pose_from_transform(g, eps=EPS)
-
-    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
-
-
-def test_planar_pose_from_transform_inverts_planar_pose_transform_zero_angle():
-    vec = jnp.array([0.0, 0.3, -0.2])
-
-    g = poses.planar_pose_to_transform(vec)
-    recovered = poses.planar_pose_from_transform(g, eps=EPS)
-
-    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
 
 
 def test_log_se2_pure_translation():
@@ -77,28 +51,6 @@ def test_log_se2_pure_rotation():
     assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_planar_pose_from_transform_handles_near_identity_transform():
-    vec = jnp.array([1e-10, 2e-4, -3e-4])
-    g = poses.planar_pose_to_transform(vec)
-
-    recovered = poses.planar_pose_from_transform(g, eps=EPS)
-
-    assert not jnp.isnan(recovered).any()
-    assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
-
-
-def test_planar_pose_from_transform_round_trip_random_vectors():
-    key = jax.random.PRNGKey(123)
-
-    for _ in range(5):
-        key, subkey = jax.random.split(key)
-        vec = jax.random.uniform(subkey, shape=(3,), minval=-0.9, maxval=0.9)
-        g = poses.planar_pose_to_transform(vec)
-        recovered = poses.planar_pose_from_transform(g, eps=EPS)
-
-        assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
-
-
 def test_log_se2_inverts_exp_se2():
     vec = jnp.array([0.4, -0.7, 1.2])
 
@@ -133,21 +85,6 @@ def test_hat_se2_returns_expected_matrix():
     )
 
     result = se2.hat(vec)
-
-    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
-
-
-def test_transform_from_planar_pose_se2_produces_rotation_and_translation():
-    vec = jnp.array([jnp.pi / 2.0, 1.0, -2.0])
-    expected = jnp.array(
-        [
-            [0.0, -1.0, 1.0],
-            [1.0, 0.0, -2.0],
-            [0.0, 0.0, 1.0],
-        ]
-    )
-
-    result = poses.planar_pose_to_transform(vec)
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 

@@ -4,7 +4,8 @@ from jax import numpy as jnp
 from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
 
-from soromox.utils.lie_algebra import constant_strain, poses, se2, se3
+from soromox.utils.geometry import poses
+from soromox.utils.lie_algebra import constant_strain, se2, se3, so3
 from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)
@@ -27,24 +28,16 @@ def _embed_se2_transform(mat3):
     return g
 
 
-def _quaternion_z(theta):
-    half = 0.5 * theta
-    return jnp.array([jnp.cos(half), 0.0, 0.0, jnp.sin(half)])
-
-
 def _transform_from_planar_pose(vec2):
     return poses.planar_pose_to_transform(vec2)
 
 
-def test_skew_se3_matches_z_axis_rotation():
-    theta = jnp.array(0.5)
-    omega = jnp.array([0.0, 0.0, theta])
+def _assert_forward_and_reverse_mode_finite(fn, arg):
+    jac_fwd = jax.jacfwd(fn)(arg)
+    jac_rev = jax.jacrev(fn)(arg)
 
-    result = se3.skew(omega)
-
-    assert_allclose(result[:2, :2], se2.skew(theta), rtol=RTOL, atol=ATOL)
-    assert_allclose(result[:, 2], jnp.array([0.0, 0.0, 0.0]), rtol=RTOL, atol=ATOL)
-    assert_allclose(result[2, :], jnp.array([0.0, 0.0, 0.0]), rtol=RTOL, atol=ATOL)
+    assert jnp.isfinite(jac_fwd).all()
+    assert jnp.isfinite(jac_rev).all()
 
 
 def test_hat_se3_embeds_planar_hat():
@@ -55,7 +48,7 @@ def test_hat_se3_embeds_planar_hat():
 
     expected = jnp.block(
         [
-            [se3.skew(vec6[:3]), vec6[3:].reshape((3, 1))],
+            [so3.skew(vec6[:3]), vec6[3:].reshape((3, 1))],
             [jnp.zeros((1, 3)), jnp.zeros((1, 1))],
         ]
     )
@@ -71,35 +64,6 @@ def test_exp_gn_se3_matches_planar_embedding():
     g_expected = _embed_se2_transform(se2.exp(vec2, EPS))
 
     assert_allclose(g_se3, g_expected, rtol=RTOL, atol=ATOL)
-
-
-def test_transform_from_quaternion_pose_se3_matches_planar_embedding():
-    theta = jnp.pi / 4.0
-    translation = jnp.array([0.3, -0.5, 0.2])
-    pose = jnp.concatenate([_quaternion_z(theta), translation])
-
-    result = poses.quaternion_pose_to_transform(pose)
-    expected = (
-        _embed_se2_transform(
-            _transform_from_planar_pose(
-                jnp.array([theta, translation[0], translation[1]])
-            )
-        )
-        .at[2, 3]
-        .set(translation[2])
-    )
-
-    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
-
-
-def test_transform_from_quaternion_pose_se3_zero_quaternion_is_finite_identity():
-    pose = jnp.array([0.0, 0.0, 0.0, 0.0, 1.0, -2.0, 3.0])
-
-    result = poses.quaternion_pose_to_transform(pose)
-
-    expected = jnp.eye(4).at[:3, 3].set(jnp.array([1.0, -2.0, 3.0]))
-    assert jnp.isfinite(result).all()
-    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
 def test_log_se3_recovers_planar_rotation_without_translation():
@@ -175,6 +139,36 @@ def test_log_se3_round_trip_random_vectors():
 
 
 @pytest.mark.parametrize(
+    "xi",
+    [
+        jnp.zeros(6),
+        jnp.array([1e-10, -2e-10, 3e-10, 1e-4, -2e-4, 3e-4]),
+        jnp.array([0.2, -0.3, 0.4, 0.1, -0.2, 0.3]),
+        jnp.array([0.0, 0.0, jnp.pi - 1e-7, 0.1, -0.2, 0.3]),
+    ],
+)
+def test_log_se3_forward_and_reverse_mode_autodiff_is_finite(xi):
+    """Test autodiff through identity, small, regular, and near-pi log branches."""
+    g = se3.exp(xi, EPS)
+
+    _assert_forward_and_reverse_mode_finite(
+        lambda g_flat: se3.log(g_flat.reshape((4, 4)), eps=EPS),
+        g.reshape(-1),
+    )
+
+
+def test_log_se3_exact_pi_rotation_is_finite_value_only():
+    """Check exact pi, where the logarithm value is finite but not unique."""
+    xi = jnp.array([jnp.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
+    g = se3.exp(xi, EPS)
+
+    recovered = se3.log(g, eps=EPS)
+
+    assert jnp.isfinite(recovered).all()
+    assert_allclose(se3.exp(recovered, EPS), g, rtol=1e-5, atol=1e-7)
+
+
+@pytest.mark.parametrize(
     "vec2",
     [
         jnp.array([0.2, -0.3, 0.4]),
@@ -196,8 +190,8 @@ def test_small_adjoint_se3_matches_block_structure():
 
     result = se3.small_adjoint(vec6)
 
-    omega_tilde = se3.skew(vec6[:3])
-    v_tilde = se3.skew(vec6[3:])
+    omega_tilde = so3.skew(vec6[:3])
+    v_tilde = so3.skew(vec6[3:])
     expected = jnp.block([[omega_tilde, jnp.zeros((3, 3))], [v_tilde, omega_tilde]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -209,8 +203,8 @@ def test_coadjoint_se3_matches_block_structure():
 
     result = se3.coadjoint(vec6)
 
-    omega_tilde = se3.skew(vec6[:3])
-    v_tilde = se3.skew(vec6[3:])
+    omega_tilde = so3.skew(vec6[:3])
+    v_tilde = so3.skew(vec6[3:])
     expected = jnp.block([[omega_tilde, v_tilde], [jnp.zeros((3, 3)), omega_tilde]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -224,7 +218,7 @@ def test_adjoint_g_se3_matches_planar_embedding():
     result = se3.adjoint(g3)
 
     R = g3[:3, :3]
-    ttilde = se3.skew(g3[:3, 3])
+    ttilde = so3.skew(g3[:3, 3])
     expected = jnp.block([[R, jnp.zeros((3, 3))], [ttilde @ R, R]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -248,8 +242,8 @@ def test_planar_adjoint_blocks_match_se2():
     adj_3 = se3.small_adjoint(vec6)
     adj_2 = se2.small_adjoint(vec2)
 
-    assert_allclose(adj_3[:3, :3], se3.skew(vec6[:3]), rtol=RTOL, atol=ATOL)
-    assert_allclose(adj_3[3:, :3], se3.skew(vec6[3:]), rtol=RTOL, atol=ATOL)
+    assert_allclose(adj_3[:3, :3], so3.skew(vec6[:3]), rtol=RTOL, atol=ATOL)
+    assert_allclose(adj_3[3:, :3], so3.skew(vec6[3:]), rtol=RTOL, atol=ATOL)
 
     embedding = jnp.array(
         [

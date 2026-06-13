@@ -18,23 +18,25 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from soromox.utils.rotations import (
+from soromox.utils.geometry.errors import (
+    angle_geodesic_error,
+    quaternion_geodesic_error,
+    rotation_matrix_geodesic_error,
+    wrap_angle,
+)
+from soromox.utils.geometry.rotations import (
     RotationRepresentation,
-    angle_error,
     normalize_quaternion,
     quaternion_conjugate,
     quaternion_multiply,
     quaternion_to_rotation_matrix,
     quaternion_to_rotation_vector,
     rotation_6d_to_rotation_matrix,
-    rotation_matrix_error,
     rotation_matrix_to_6d,
     rotation_matrix_to_quaternion,
     rotation_matrix_to_rotation_vector,
-    rotation_quat_error,
     rotation_vector_to_quaternion,
     rotation_vector_to_rotation_matrix,
-    wrap_angle,
 )
 
 
@@ -55,6 +57,15 @@ def rotation_matrix_from_axis_angle(axis, angle):
     )
     R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
     return jnp.array(R)
+
+
+def assert_forward_and_reverse_mode_finite(fn, arg):
+    """Assert that a vector-valued JAX function has finite forward/reverse Jacobians."""
+    jac_fwd = jax.jacfwd(fn)(arg)
+    jac_rev = jax.jacrev(fn)(arg)
+
+    assert jnp.isfinite(jac_fwd).all()
+    assert jnp.isfinite(jac_rev).all()
 
 
 def test_normalize_quaternion_uses_configurable_eps():
@@ -597,6 +608,37 @@ class TestJAXCompatibility:
         assert grad_q.shape == (4,)
         assert jnp.all(jnp.isfinite(grad_q))
 
+    def test_zero_quaternion_branch_is_forward_and_reverse_mode_finite(self):
+        """Test finite autodiff through the zero-quaternion identity fallback."""
+        zero_quat = jnp.zeros(4)
+
+        assert_forward_and_reverse_mode_finite(
+            lambda q: normalize_quaternion(q, eps=1e-6),
+            zero_quat,
+        )
+        assert_forward_and_reverse_mode_finite(
+            lambda q: quaternion_to_rotation_matrix(q).reshape(-1),
+            zero_quat,
+        )
+
+    def test_quaternion_identity_log_branch_is_forward_and_reverse_mode_finite(self):
+        """Test finite autodiff through the zero-vector branch of quaternion log."""
+        identity_quat = jnp.array([1.0, 0.0, 0.0, 0.0])
+
+        assert_forward_and_reverse_mode_finite(
+            lambda q: quaternion_to_rotation_vector(q, eps=1e-10),
+            identity_quat,
+        )
+
+    def test_rotation_vector_zero_branch_is_forward_and_reverse_mode_finite(self):
+        """Test finite autodiff through the zero-angle quaternion exponential."""
+        zero_omega = jnp.zeros(3)
+
+        assert_forward_and_reverse_mode_finite(
+            lambda omega: rotation_vector_to_quaternion(omega, eps=1e-10),
+            zero_omega,
+        )
+
 
 class TestRotationRepresentationEnum:
     """Tests for the RotationRepresentation enum."""
@@ -667,6 +709,24 @@ class TestRotationMatrix6D:
         # Output should be a valid rotation matrix
         assert_allclose(R @ R.T, jnp.eye(3), atol=1e-10)
         assert_allclose(jnp.linalg.det(R), 1.0, atol=1e-10)
+
+    def test_near_collinear_input_is_forward_and_reverse_mode_finite(self):
+        """Test finite autodiff for ill-conditioned but non-degenerate 6D inputs."""
+        r6d = jnp.array([1.0, 0.0, 0.0, 1.0, 1e-5, 0.0])
+
+        R = rotation_6d_to_rotation_matrix(r6d)
+
+        assert jnp.isfinite(R).all()
+        assert_forward_and_reverse_mode_finite(
+            lambda x: rotation_6d_to_rotation_matrix(x).reshape(-1),
+            r6d,
+        )
+
+    def test_degenerate_input_has_no_unique_rotation_matrix(self):
+        """Document that exact zero 6D inputs are outside the valid domain."""
+        R = rotation_6d_to_rotation_matrix(jnp.zeros(6))
+
+        assert jnp.isnan(R).any()
 
     def test_vmap_compatibility(self):
         """Test that 6D conversion works with vmap."""
@@ -779,21 +839,21 @@ class TestAngleError:
     def test_zero_error(self):
         """Test that same angle gives zero error."""
         theta = jnp.array(1.0)
-        error = angle_error(theta, theta)
+        error = angle_geodesic_error(theta, theta)
         assert_allclose(error, 0.0, atol=1e-10)
 
     def test_small_positive_error(self):
         """Test small positive error."""
         current = jnp.array(0.0)
         desired = jnp.array(0.5)
-        error = angle_error(current, desired)
+        error = angle_geodesic_error(current, desired)
         assert_allclose(error, 0.5, atol=1e-10)
 
     def test_small_negative_error(self):
         """Test small negative error."""
         current = jnp.array(0.5)
         desired = jnp.array(0.0)
-        error = angle_error(current, desired)
+        error = angle_geodesic_error(current, desired)
         assert_allclose(error, -0.5, atol=1e-10)
 
     def test_shortest_path_positive_wrap(self):
@@ -801,7 +861,7 @@ class TestAngleError:
         # Current: 10°, Desired: 350° → Should be -20°, not +340°
         current = jnp.deg2rad(jnp.array(10.0))
         desired = jnp.deg2rad(jnp.array(350.0))
-        error = angle_error(current, desired)
+        error = angle_geodesic_error(current, desired)
         expected = jnp.deg2rad(jnp.array(-20.0))
         assert_allclose(error, expected, atol=1e-6)
 
@@ -810,7 +870,7 @@ class TestAngleError:
         # Current: 350°, Desired: 10° → Should be +20°, not -340°
         current = jnp.deg2rad(jnp.array(350.0))
         desired = jnp.deg2rad(jnp.array(10.0))
-        error = angle_error(current, desired)
+        error = angle_geodesic_error(current, desired)
         expected = jnp.deg2rad(jnp.array(20.0))
         assert_allclose(error, expected, atol=1e-6)
 
@@ -818,14 +878,14 @@ class TestAngleError:
         """Test 180-degree error."""
         current = jnp.array(0.0)
         desired = jnp.array(np.pi)
-        error = angle_error(current, desired)
+        error = angle_geodesic_error(current, desired)
         assert_allclose(jnp.abs(error), np.pi, atol=1e-10)
 
     def test_vectorized(self):
         """Test vectorized angle error computation."""
         currents = jnp.array([0.0, np.pi / 2, np.pi])
         desireds = jnp.array([0.1, np.pi / 2, -np.pi])
-        errors = jax.vmap(angle_error)(currents, desireds)
+        errors = jax.vmap(angle_geodesic_error)(currents, desireds)
         expected = jnp.array([0.1, 0.0, 0.0])  # π and -π are the same
         assert_allclose(errors, expected, atol=1e-10)
 
@@ -836,7 +896,7 @@ class TestRotationMatrixError:
     def test_zero_error(self):
         """Test that same rotation gives zero error."""
         R = rotation_matrix_from_axis_angle([1, 2, 3], 1.0)
-        error = rotation_matrix_error(R, R)
+        error = rotation_matrix_geodesic_error(R, R)
         assert_allclose(error, jnp.zeros(3), atol=1e-10)
 
     def test_small_rotation_error(self):
@@ -845,7 +905,7 @@ class TestRotationMatrixError:
         omega_error = jnp.array([0.0, 0.0, 0.1])
         R_desired = rotation_vector_to_rotation_matrix(omega_error)
 
-        error = rotation_matrix_error(R_current, R_desired)
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
         assert_allclose(error, omega_error, atol=1e-6)
 
     def test_error_direction(self):
@@ -854,7 +914,7 @@ class TestRotationMatrixError:
         R_current = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(10))
         R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(30))
 
-        error = rotation_matrix_error(R_current, R_desired)
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
 
         # Error should be approximately 20° around z-axis
         expected = jnp.array([0.0, 0.0, np.radians(20)])
@@ -867,7 +927,7 @@ class TestRotationMatrixError:
         R_current = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(10))
         R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(350))
 
-        error = rotation_matrix_error(R_current, R_desired)
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
 
         # Error magnitude should be 20° (not 340°)
         error_magnitude = jnp.linalg.norm(error)
@@ -884,7 +944,7 @@ class TestRotationMatrixError:
         R_current = jnp.eye(3)
         R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(179))
 
-        error = rotation_matrix_error(R_current, R_desired)
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
         error_magnitude = jnp.linalg.norm(error)
 
         assert_allclose(error_magnitude, np.radians(179), atol=1e-4)
@@ -894,7 +954,7 @@ class TestRotationMatrixError:
         R_current = jnp.eye(3)
         R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.pi)
 
-        error = rotation_matrix_error(R_current, R_desired)
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
         error_magnitude = jnp.linalg.norm(error)
 
         assert_allclose(error_magnitude, np.pi, atol=1e-5)
@@ -905,7 +965,7 @@ class TestRotationMatrixError:
         R_current = rotation_matrix_from_axis_angle(axis, 0.5)
         R_desired = rotation_matrix_from_axis_angle(axis, 0.8)
 
-        error = rotation_matrix_error(R_current, R_desired)
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
 
         # Error should be 0.3 radians around the same axis
         error_magnitude = jnp.linalg.norm(error)
@@ -915,6 +975,38 @@ class TestRotationMatrixError:
         error_direction = error / error_magnitude
         assert_allclose(jnp.abs(error_direction), jnp.abs(axis), atol=1e-5)
 
+    @pytest.mark.parametrize(
+        "omega_error",
+        [
+            jnp.array([0.0, 0.0, 0.0]),
+            jnp.array([1e-9, -2e-9, 3e-9]),
+            jnp.array([0.2, -0.1, 0.3]),
+            jnp.array([0.0, 0.0, jnp.pi - 1e-7]),
+        ],
+    )
+    def test_forward_and_reverse_mode_autodiff_is_finite(self, omega_error):
+        """Test autodiff through identity, small, regular, and near-pi errors."""
+        R_current = jnp.eye(3)
+        R_desired = rotation_vector_to_rotation_matrix(omega_error)
+
+        assert_forward_and_reverse_mode_finite(
+            lambda R_flat: rotation_matrix_geodesic_error(
+                R_current,
+                R_flat.reshape((3, 3)),
+            ),
+            R_desired.reshape(-1),
+        )
+
+    def test_exact_pi_error_is_finite_value_only(self):
+        """Check exact pi, where the log value is finite but not uniquely differentiable."""
+        R_current = jnp.eye(3)
+        R_desired = rotation_vector_to_rotation_matrix(jnp.array([jnp.pi, 0.0, 0.0]))
+
+        error = rotation_matrix_geodesic_error(R_current, R_desired)
+
+        assert jnp.isfinite(error).all()
+        assert_allclose(jnp.linalg.norm(error), jnp.pi, atol=1e-6)
+
 
 class TestRotationQuatError:
     """Tests for geometric rotation error computation using quaternions."""
@@ -922,7 +1014,7 @@ class TestRotationQuatError:
     def test_zero_error(self):
         """Test that same quaternion gives zero error."""
         q = rotation_vector_to_quaternion(jnp.array([0.5, 0.3, 0.1]))
-        error = rotation_quat_error(q, q)
+        error = quaternion_geodesic_error(q, q)
         assert_allclose(error, jnp.zeros(3), atol=1e-10)
 
     def test_small_rotation_error(self):
@@ -931,7 +1023,7 @@ class TestRotationQuatError:
         omega_error = jnp.array([0.0, 0.0, 0.1])
         q_desired = rotation_vector_to_quaternion(omega_error)
 
-        error = rotation_quat_error(q_current, q_desired)
+        error = quaternion_geodesic_error(q_current, q_desired)
         assert_allclose(error, omega_error, atol=1e-6)
 
     def test_consistency_with_rotation_matrix_version(self):
@@ -952,8 +1044,8 @@ class TestRotationQuatError:
             q_current = rotation_matrix_to_quaternion(R_current)
             q_desired = rotation_matrix_to_quaternion(R_desired)
 
-            error_R = rotation_matrix_error(R_current, R_desired)
-            error_q = rotation_quat_error(q_current, q_desired)
+            error_R = rotation_matrix_geodesic_error(R_current, R_desired)
+            error_q = quaternion_geodesic_error(q_current, q_desired)
 
             assert_allclose(error_R, error_q, atol=1e-5)
 
@@ -965,8 +1057,37 @@ class TestRotationQuatError:
         # Antipodal quaternion represents the same rotation
         q_antipodal = -q
 
-        error = rotation_quat_error(q, q_antipodal)
+        error = quaternion_geodesic_error(q, q_antipodal)
         assert_allclose(error, jnp.zeros(3), atol=1e-10)
+
+    @pytest.mark.parametrize(
+        "omega_error",
+        [
+            jnp.array([0.0, 0.0, 0.0]),
+            jnp.array([1e-9, -2e-9, 3e-9]),
+            jnp.array([0.2, -0.1, 0.3]),
+            jnp.array([0.0, 0.0, jnp.pi - 1e-7]),
+        ],
+    )
+    def test_forward_and_reverse_mode_autodiff_is_finite(self, omega_error):
+        """Test autodiff through identity, small, regular, and near-pi errors."""
+        q_current = jnp.array([1.0, 0.0, 0.0, 0.0])
+        q_desired = rotation_vector_to_quaternion(omega_error)
+
+        assert_forward_and_reverse_mode_finite(
+            lambda q: quaternion_geodesic_error(q_current, q),
+            q_desired,
+        )
+
+    def test_exact_pi_error_is_finite_value_only(self):
+        """Check exact pi, where the axis sign is finite but not unique."""
+        q_current = jnp.array([1.0, 0.0, 0.0, 0.0])
+        q_desired = rotation_vector_to_quaternion(jnp.array([0.0, jnp.pi, 0.0]))
+
+        error = quaternion_geodesic_error(q_current, q_desired)
+
+        assert jnp.isfinite(error).all()
+        assert_allclose(jnp.linalg.norm(error), jnp.pi, atol=1e-6)
 
 
 class TestGeometricErrorForControl:
@@ -986,7 +1107,7 @@ class TestGeometricErrorForControl:
         assert jnp.abs(naive_error) > np.pi, "Naive error should be > π"
 
         # Correct (geometric) approach:
-        geometric_error = angle_error(theta_current, theta_desired)
+        geometric_error = angle_geodesic_error(theta_current, theta_desired)
         assert jnp.abs(geometric_error) < np.pi, "Geometric error should be < π"
         assert geometric_error < 0, "Should rotate clockwise (negative)"
 
@@ -1000,7 +1121,7 @@ class TestGeometricErrorForControl:
         R_desired = rotation_matrix_from_axis_angle([0, 0, 1], np.radians(350))
 
         # Geometric error: should be the shortest path
-        geometric_error = rotation_matrix_error(R_current, R_desired)
+        geometric_error = rotation_matrix_geodesic_error(R_current, R_desired)
         geometric_error_magnitude = jnp.linalg.norm(geometric_error)
 
         # The geometric error should be 20° (or -20°), not 340°
@@ -1014,13 +1135,13 @@ class TestGeometricErrorForControl:
 
     def test_jit_compatibility_of_errors(self):
         """Test that all error functions work with jit."""
-        jit_angle_error = jax.jit(angle_error)
-        jit_rotation_error = jax.jit(rotation_matrix_error)
-        jit_rotation_error_quat = jax.jit(rotation_quat_error)
+        jit_angle_geodesic_error = jax.jit(angle_geodesic_error)
+        jit_rotation_error = jax.jit(rotation_matrix_geodesic_error)
+        jit_rotation_error_quat = jax.jit(quaternion_geodesic_error)
 
         theta_c = jnp.array(0.1)
         theta_d = jnp.array(0.2)
-        assert jnp.isfinite(jit_angle_error(theta_c, theta_d))
+        assert jnp.isfinite(jit_angle_geodesic_error(theta_c, theta_d))
 
         R_c = rotation_matrix_from_axis_angle([1, 0, 0], 0.5)
         R_d = rotation_matrix_from_axis_angle([1, 0, 0], 0.8)
@@ -1038,7 +1159,7 @@ class TestGeometricErrorForControl:
         def loss_rotation_error(omega_d):
             R_c = jnp.eye(3)
             R_d = rotation_vector_to_rotation_matrix(omega_d)
-            error = rotation_matrix_error(R_c, R_d)
+            error = rotation_matrix_geodesic_error(R_c, R_d)
             return jnp.sum(error**2)
 
         omega_d = jnp.array([0.1, 0.2, 0.3])

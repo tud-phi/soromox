@@ -490,7 +490,11 @@ JVP rules in each system class. For example, a spatial PCS-like system can
 provide closed-form arc-length kinematics and energy gradients:
 
 ```python
-from soromox.utils.lie_algebra import se3
+from soromox.utils.lie_algebra import se3, so3
+
+
+def _angular_cross_matrix(self, xi_i):
+    return so3.skew(xi_i[:3])
 
 
 def _forward_kinematics_arc_length_derivative(self, q, s):

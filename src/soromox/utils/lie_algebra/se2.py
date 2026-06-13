@@ -1,5 +1,4 @@
 __all__ = [
-    "skew",
     "hat",
     "exp",
     "log",
@@ -12,42 +11,7 @@ __all__ = [
 import jax.numpy as jnp
 from jax import Array, lax
 
-
-def _skew_basis(dtype) -> Array:
-    """Return the canonical ``so(2)`` basis matrix with a requested dtype.
-
-    The matrix is ``J = [[0, -1], [1, 0]]`` and represents a unit positive
-    right-handed rotation about the out-of-plane z-axis. Keeping this as a
-    helper avoids creating integer constants that would otherwise interact
-    poorly with JAX dtype promotion in downstream computations.
-
-    Args:
-        dtype: JAX dtype to use for the returned floating-point matrix.
-
-    Returns:
-        Array with shape ``(2, 2)`` and the requested dtype.
-    """
-    return jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=dtype)
-
-
-def skew(angle: Array) -> Array:
-    """Return the planar skew-symmetric matrix for a scalar angle.
-
-    The planar Lie algebra ``so(2)`` is represented by ``theta * J`` with
-    ``J = [[0, -1], [1, 0]]``. This operator is used for the angular block of
-    ``se(2)`` matrices and follows the right-handed convention for positive
-    rotation about the out-of-plane z-axis.
-
-    Args:
-        angle: Scalar or array-like value broadcastable to a scalar. The first
-            flattened entry is interpreted as the angular coordinate ``theta``
-            in radians.
-
-    Returns:
-        Array with shape ``(2, 2)`` containing ``theta * J``.
-    """
-    theta = jnp.asarray(angle).reshape(-1)[0]
-    return theta * _skew_basis(theta.dtype)
+from . import so2
 
 
 def hat(xi: Array) -> Array:
@@ -56,8 +20,8 @@ def hat(xi: Array) -> Array:
     Twists use angular-first coordinates ``xi = [theta, v_x, v_y]``. The first
     entry is the scalar angular component and the last two entries are the
     translational twist coordinates. The resulting matrix is
-    ``[[skew(theta), v], [0, 0, 0]]`` and is suitable for use in the matrix
-    exponential.
+    ``[[so2.skew(theta), v], [0, 0, 0]]`` and is suitable for use in the
+    matrix exponential.
 
     Args:
         xi: Planar twist with shape ``(3,)`` or ``(3, 1)`` in
@@ -73,7 +37,10 @@ def hat(xi: Array) -> Array:
     v = xi[1:].reshape((2, 1))
 
     return jnp.block(
-        [[skew(omega), v], [jnp.zeros((1, 2), dtype=xi.dtype), jnp.zeros((1, 1), dtype=xi.dtype)]]
+        [
+            [so2.skew(omega), v],
+            [jnp.zeros((1, 2), dtype=xi.dtype), jnp.zeros((1, 1), dtype=xi.dtype)],
+        ]
     )
 
 
@@ -147,15 +114,9 @@ def log(g: Array, eps: float | Array) -> Array:
     R = g[:2, :2]
     p = g[:2, 2].reshape((2, 1))
 
-    theta_raw = jnp.arctan2(R[1, 0], R[0, 0])
-    theta = lax.cond(
-        jnp.abs(theta_raw) < eps,
-        lambda _: jnp.zeros((), dtype=R.dtype),
-        lambda _: theta_raw,
-        operand=None,
-    )
-    J = _skew_basis(R.dtype)
-    omega = theta * J
+    theta = so2.log(R, eps=eps)
+    J = so2.skew(jnp.ones((), dtype=R.dtype))
+    omega = so2.skew(theta)
 
     def _small(_: None) -> Array:
         omega_sq = omega @ omega
@@ -190,7 +151,7 @@ def small_adjoint(xi: Array) -> Array:
 
     omega = xi[0]
     v = xi[1:].reshape((2, 1))
-    J = _skew_basis(xi.dtype)
+    J = so2.skew(jnp.ones((), dtype=xi.dtype))
 
     return jnp.concatenate(
         [
@@ -220,7 +181,7 @@ def coadjoint(xi: Array) -> Array:
 
     omega = xi[0]
     v = xi[1:].reshape((2, 1))
-    J = _skew_basis(xi.dtype)
+    J = so2.skew(jnp.ones((), dtype=xi.dtype))
 
     return jnp.concatenate(
         [
@@ -248,7 +209,7 @@ def adjoint(g: Array) -> Array:
     """
     R = g[:2, :2]
     t = g[:2, 2].reshape((2, 1))
-    J = _skew_basis(g.dtype)
+    J = so2.skew(jnp.ones((), dtype=g.dtype))
 
     return jnp.concatenate(
         [

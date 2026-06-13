@@ -7,7 +7,9 @@ __all__ = [
 import jax.numpy as jnp
 from jax import Array, lax
 
-from soromox.utils.rotations import quaternion_to_rotation_matrix
+from soromox.utils.lie_algebra import so2
+
+from .rotations import quaternion_to_rotation_matrix
 
 
 def planar_pose_to_transform(pose: Array) -> Array:
@@ -33,12 +35,13 @@ def planar_pose_to_transform(pose: Array) -> Array:
     theta = pose[0]
     p = pose[1:3].reshape((2, 1))
 
-    cos = jnp.cos(theta)
-    sin = jnp.sin(theta)
-    R = jnp.array([[cos, -sin], [sin, cos]], dtype=pose.dtype)
+    R = so2.exp(theta)
 
     return jnp.block(
-        [[R, p], [jnp.zeros((1, 2), dtype=pose.dtype), jnp.ones((1, 1), dtype=pose.dtype)]]
+        [
+            [R, p],
+            [jnp.zeros((1, 2), dtype=pose.dtype), jnp.ones((1, 1), dtype=pose.dtype)],
+        ]
     )
 
 
@@ -98,5 +101,8 @@ def quaternion_pose_to_transform(pose: Array) -> Array:
     p = pose[4:].reshape((3, 1))
 
     return jnp.block(
-        [[R, p], [jnp.zeros((1, 3), dtype=pose.dtype), jnp.ones((1, 1), dtype=pose.dtype)]]
+        [
+            [R, p],
+            [jnp.zeros((1, 3), dtype=pose.dtype), jnp.ones((1, 1), dtype=pose.dtype)],
+        ]
     )

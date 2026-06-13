@@ -1,5 +1,4 @@
 __all__ = [
-    "skew",
     "hat",
     "exp",
     "log",
@@ -11,6 +10,10 @@ __all__ = [
 
 import jax.numpy as jnp
 from jax import Array, lax
+
+from soromox.utils._numerics import eps_for_dtype
+
+from . import so3
 
 
 def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
@@ -41,38 +44,13 @@ def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
     )
 
 
-def skew(vec: Array) -> Array:
-    """Return the skew-symmetric cross-product matrix for a 3-vector.
-
-    For a vector ``a = [x, y, z]``, the returned matrix ``a_hat`` satisfies
-    ``a_hat @ b == cross(a, b)`` for any 3-vector ``b``. This is the
-    ``so(3)`` matrix representation used in all spatial ``SE(3)`` operators in
-    this module.
-
-    Args:
-        vec: Vector with shape ``(3,)`` or ``(3, 1)`` in Cartesian
-            ``[x, y, z]`` order.
-
-    Returns:
-        Array with shape ``(3, 3)`` containing the skew-symmetric
-        cross-product matrix.
-    """
-    vec = jnp.asarray(vec).reshape(-1)
-    x, y, z = vec
-
-    return jnp.array(
-        [[0.0, -z, y], [z, 0.0, -x], [-y, x, 0.0]],
-        dtype=vec.dtype,
-    )
-
-
 def hat(xi: Array) -> Array:
     """Return the homogeneous matrix representation of an ``se(3)`` twist.
 
     Spatial twists use angular-first coordinates
     ``xi = [omega_x, omega_y, omega_z, v_x, v_y, v_z]``. The returned matrix is
-    ``[[skew(omega), v], [0, 0, 0, 0]]`` and is suitable for use in the matrix
-    exponential.
+    ``[[so3.skew(omega), v], [0, 0, 0, 0]]`` and is suitable for use in the
+    matrix exponential.
 
     Args:
         xi: Spatial twist with shape ``(6,)`` or ``(6, 1)``. The first three
@@ -89,7 +67,10 @@ def hat(xi: Array) -> Array:
     v = xi[3:].reshape((3, 1))
 
     return jnp.block(
-        [[skew(omega), v], [jnp.zeros((1, 3), dtype=xi.dtype), jnp.zeros((1, 1), dtype=xi.dtype)]]
+        [
+            [so3.skew(omega), v],
+            [jnp.zeros((1, 3), dtype=xi.dtype), jnp.zeros((1, 1), dtype=xi.dtype)],
+        ]
     )
 
 
@@ -104,9 +85,9 @@ def log(g: Array, eps: float | Array) -> Array:
     Args:
         g: Homogeneous ``SE(3)`` transform with shape ``(4, 4)``. The rotation
             is read from ``g[:3, :3]`` and the translation from ``g[:3, 3]``.
-        eps: Small positive scalar threshold used for the small-angle branch.
-            The implementation uses a conservative scaled threshold for the
-            rotation extraction to avoid divisions by nearly zero sine values.
+        eps: Small positive scalar threshold passed to ``so3.log`` for
+            rotation extraction. The inverse Jacobian uses a conservatively
+            scaled threshold to avoid cancellation in ``1 - cos(theta)``.
 
     Returns:
         Array with shape ``(6,)`` in
@@ -115,40 +96,17 @@ def log(g: Array, eps: float | Array) -> Array:
     R = g[:3, :3]
     p = g[:3, 3].reshape((3, 1))
 
-    trace_R = jnp.trace(R)
-    skew_part = R - R.T
-    skew_norm_sq = jnp.sum(jnp.square(skew_part))
-    cos_theta = (trace_R - 1.0) * 0.5
-    cos_theta = jnp.clip(cos_theta, -1.0, 1.0)
-    sin_theta = jnp.sqrt(jnp.maximum(0.0, skew_norm_sq) * 0.125)
-    eps_scalar = 1e8 * jnp.asarray(eps, dtype=R.dtype)
-    is_small_angle = sin_theta <= jnp.sin(eps_scalar)
-
+    omega = so3.log(R, eps=eps).reshape((3, 1))
+    omega_hat = so3.skew(omega)
+    theta_sq = jnp.dot(omega.reshape(-1), omega.reshape(-1))
     theta = lax.cond(
-        is_small_angle,
+        theta_sq <= eps**2,
         lambda _: jnp.zeros((), dtype=R.dtype),
-        lambda _: jnp.arctan2(sin_theta, cos_theta),
+        lambda _: jnp.sqrt(theta_sq),
         operand=None,
     )
-
-    def _omega_hat_small(args):
-        skew_matrix, _ = args
-        return 0.5 * skew_matrix
-
-    def _omega_hat_general(args):
-        skew_matrix, angle = args
-        return angle / (2.0 * jnp.sin(angle)) * skew_matrix
-
-    omega_hat = lax.cond(
-        is_small_angle,
-        _omega_hat_small,
-        _omega_hat_general,
-        (skew_part, theta),
-    )
-
-    omega = jnp.array(
-        [omega_hat[2, 1], omega_hat[0, 2], omega_hat[1, 0]], dtype=R.dtype
-    ).reshape((3, 1))
+    jacobian_eps = 1e8 * eps_for_dtype(eps, R.dtype)
+    is_small_angle = theta <= jacobian_eps
 
     def _compute_V_inv_small(args):
         omega_local, _ = args
@@ -245,10 +203,12 @@ def small_adjoint(xi: Array) -> Array:
     omega = xi[:3].reshape((3, 1))
     v = xi[3:].reshape((3, 1))
 
-    omega_hat = skew(omega)
-    v_hat = skew(v)
+    omega_hat = so3.skew(omega)
+    v_hat = so3.skew(v)
 
-    return jnp.block([[omega_hat, jnp.zeros((3, 3), dtype=xi.dtype)], [v_hat, omega_hat]])
+    return jnp.block(
+        [[omega_hat, jnp.zeros((3, 3), dtype=xi.dtype)], [v_hat, omega_hat]]
+    )
 
 
 def coadjoint(xi: Array) -> Array:
@@ -287,7 +247,7 @@ def adjoint(g: Array) -> Array:
     """
     R = g[:3, :3]
     t = g[:3, 3].reshape((3, 1))
-    t_hat = skew(t)
+    t_hat = so3.skew(t)
 
     return jnp.block([[R, jnp.zeros((3, 3), dtype=g.dtype)], [t_hat @ R, R]])
 
@@ -308,7 +268,9 @@ def adjoint_inverse(g: Array) -> Array:
     """
     R = g[:3, :3]
     t = g[:3, 3].reshape((3, 1))
-    t_hat = skew(t)
+    t_hat = so3.skew(t)
     R_inv = jnp.transpose(R)
 
-    return jnp.block([[R_inv, jnp.zeros((3, 3), dtype=g.dtype)], [-R_inv @ t_hat, R_inv]])
+    return jnp.block(
+        [[R_inv, jnp.zeros((3, 3), dtype=g.dtype)], [-R_inv @ t_hat, R_inv]]
+    )

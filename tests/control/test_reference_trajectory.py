@@ -6,7 +6,7 @@ import jax.numpy as jnp
 import pytest
 
 from soromox.control import ReferenceTrajectory
-from soromox.utils.rotations import RotationRepresentation
+from soromox.utils.geometry.rotations import RotationRepresentation
 
 
 class TestReferenceTrajectoryFromDiscrete:

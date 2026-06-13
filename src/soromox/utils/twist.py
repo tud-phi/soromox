@@ -13,7 +13,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from soromox.utils.rotations import (
+from soromox.utils.geometry.rotations import (
     RotationRepresentation,
     quaternion_conjugate,
     quaternion_multiply,

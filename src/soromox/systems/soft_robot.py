@@ -17,7 +17,7 @@ from soromox.systems.params import (
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
-from soromox.utils.lie_algebra import poses
+from soromox.utils.geometry import poses
 
 
 class CrossSectionGeometry(IntEnum):

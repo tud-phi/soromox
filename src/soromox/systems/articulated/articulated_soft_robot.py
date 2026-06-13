@@ -9,7 +9,7 @@ from jax import numpy as jnp
 
 from soromox.systems.articulated.params import ArticulatedSoftRobotParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
-from soromox.utils.lie_algebra import se3
+from soromox.utils.lie_algebra import se3, so3
 
 
 class ArticulatedSoftRobot(SoftRobot):
@@ -210,7 +210,7 @@ class ArticulatedSoftRobot(SoftRobot):
 
     def _spatial_inertia(self, m: Array, I_com: Array, p_com: Array) -> Array:
         """Return spatial inertia about the post-joint link-frame origin."""
-        p_tilde = se3.skew(p_com)
+        p_tilde = so3.skew(p_com)
         return jnp.block(
             [
                 [I_com + m * p_tilde.T @ p_tilde, m * p_tilde],

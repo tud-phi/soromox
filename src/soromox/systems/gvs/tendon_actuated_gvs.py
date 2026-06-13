@@ -14,7 +14,7 @@ from soromox.systems.params import (
     LinearTendonRoutingParams,
     PassiveTendonParams,
 )
-from soromox.utils.lie_algebra import se3
+from soromox.utils.lie_algebra import se3, so3
 
 from .core import GVS
 from .specs import GVSSegment
@@ -351,7 +351,7 @@ class TendonActuatedGVS(GVS):
         norm = jnp.linalg.norm(term)
         t = term / norm
 
-        return cond * jnp.hstack([se3.skew(d_s[:-1]) @ t, t])
+        return cond * jnp.hstack([so3.skew(d_s[:-1]) @ t, t])
 
     @eqx.filter_jit
     def _local_actuation_basis_single(

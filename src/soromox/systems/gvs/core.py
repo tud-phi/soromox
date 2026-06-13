@@ -45,8 +45,9 @@ from soromox.systems.gvs.structures import (
     GVSStructure,
 )
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
-from soromox.utils.lie_algebra import constant_strain, poses, se3
+from soromox.utils.lie_algebra import constant_strain, se3
 
 
 class GVS(SoftRobot):

@@ -4,12 +4,13 @@ import pytest
 from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
+from system_param_builders import planar_base_pose, planar_pcs_params
 
 from soromox.systems import CrossSectionGeometry, PlanarPCS, PlanarPCSStructure
+from soromox.utils.geometry import poses
 from soromox.utils.integration import scale_interior_gaussian_quadrature
-from soromox.utils.lie_algebra import poses, se2
+from soromox.utils.lie_algebra import se2
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import planar_base_pose, planar_pcs_params
 
 jax.config.update("jax_enable_x64", True)  # double precision
 

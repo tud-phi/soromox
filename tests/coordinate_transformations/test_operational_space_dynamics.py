@@ -9,7 +9,7 @@ from numpy.testing import assert_allclose
 
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems import PCS, Pendulum, PlanarPCS
-from soromox.utils.rotations import RotationRepresentation
+from soromox.utils.geometry.rotations import RotationRepresentation
 from soromox.utils.tolerance import Tolerance
 from system_param_builders import pcs_params, pendulum_params, planar_pcs_params
 
@@ -738,16 +738,16 @@ class TestGeometricVsNaiveError:
 
         # Naive error
         naive_error = x_desired - x_current
-        naive_angle_error = naive_error[0]
+        naive_theta_delta = naive_error[0]
 
         # Geometric error
         geometric_error = op_space.compute_pose_error(x_current, x_desired)
-        geometric_angle_error = geometric_error[0]
+        geometric_theta_delta = geometric_error[0]
 
         # Naive error is ~350°, geometric should be ~-10°
-        assert jnp.abs(naive_angle_error) > jnp.pi  # Long way around
-        assert jnp.abs(geometric_angle_error) < jnp.pi  # Short way around
-        assert jnp.abs(geometric_angle_error) < jnp.abs(naive_angle_error)
+        assert jnp.abs(naive_theta_delta) > jnp.pi  # Long way around
+        assert jnp.abs(geometric_theta_delta) < jnp.pi  # Short way around
+        assert jnp.abs(geometric_theta_delta) < jnp.abs(naive_theta_delta)
 
     def test_orientation_error_always_less_than_pi(self, planar_pcs_robot):
         """Test that geometric orientation error magnitude is always ≤ π."""

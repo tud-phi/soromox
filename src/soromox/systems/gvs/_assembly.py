@@ -9,7 +9,7 @@ from soromox.systems.gvs.primitives import Basis, Joint
 from soromox.systems.gvs.structures import GVSSegmentStructure, GVSStructure
 from soromox.systems.params import validate_quaternion_base_pose
 from soromox.utils.basic import compute_strain_basis
-from soromox.utils.lie_algebra import poses
+from soromox.utils.geometry import poses
 
 
 def _set_model_field(model: Any, name: str, value: Any) -> None:
