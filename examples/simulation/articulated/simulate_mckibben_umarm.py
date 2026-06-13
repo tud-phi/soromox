@@ -20,6 +20,7 @@ from soromox.systems import (
 )
 
 PSI_TO_PA = 6894.75729
+DEFAULT_VIDEO_PATH = Path("videos") / "mckibben_umarm.mp4"
 UMARM_Z_DOWN_BASE_POSE = jnp.array(
     [2**-0.5, 0.0, 2**-0.5, 0.0, 0.0, 0.0, 1.2],
     dtype=jnp.float64,
@@ -139,9 +140,21 @@ def render_robot(
     record_path: Path | None = None,
 ) -> None:
     """Render the UMArm trajectory with the selected backend."""
+    if record_path is not None:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+
     if backend == "matplotlib":
         renderer = MatplotlibRenderer(robot, num_points=80)
-        renderer.animate(ts=ts, q_ts=q_ts, mode="slider", interval=60)
+        if record_path is None:
+            renderer.animate(ts=ts, q_ts=q_ts, mode="slider", interval=60)
+        else:
+            renderer.render_sequence(
+                ts=ts,
+                q_ts=q_ts,
+                interval=60,
+                record_path=str(record_path),
+                show=False,
+            )
         return
 
     if backend == "viser":
@@ -179,7 +192,17 @@ def parse_args() -> argparse.Namespace:
         help="Renderer to launch after simulation.",
     )
     parser.add_argument("--no-plots", action="store_true", help="Skip plots.")
-    parser.add_argument("--record", type=Path, default=None, help="Optional video path.")
+    parser.add_argument(
+        "--record",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_VIDEO_PATH,
+        default=None,
+        help=(
+            "Optional video path. If provided without a path, saves to "
+            f"{DEFAULT_VIDEO_PATH}."
+        ),
+    )
     parser.add_argument(
         "--params",
         type=Path,
