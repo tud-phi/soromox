@@ -141,51 +141,71 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         Shepperd, S. W. (1978). Quaternion from rotation matrix.
         Journal of Guidance and Control, 1(3), 223-224.
     """
+    R = jnp.asarray(R, dtype=jnp.result_type(R, 1.0))
     trace = jnp.trace(R)
+    eps_arr = eps_for_dtype(eps, R.dtype)
 
-    # Compute all possible quaternion reconstructions
-    # Case 1: trace > 0 (best for small rotation angles)
-    s1 = jnp.sqrt(jnp.maximum(trace + 1.0, 0.0)) * 2  # s = 4 * q_w
-    q_w1 = 0.25 * s1
-    q_x1 = (R[2, 1] - R[1, 2]) / jnp.maximum(s1, eps)
-    q_y1 = (R[0, 2] - R[2, 0]) / jnp.maximum(s1, eps)
-    q_z1 = (R[1, 0] - R[0, 1]) / jnp.maximum(s1, eps)
-    quat1 = jnp.array([q_w1, q_x1, q_y1, q_z1])
+    def _trace_branch(_: None) -> Array:
+        s = jnp.sqrt(jnp.maximum(trace + 1.0, 0.0)) * 2.0
+        denom = jnp.maximum(s, eps_arr)
+        return jnp.array(
+            [
+                0.25 * s,
+                (R[2, 1] - R[1, 2]) / denom,
+                (R[0, 2] - R[2, 0]) / denom,
+                (R[1, 0] - R[0, 1]) / denom,
+            ],
+            dtype=R.dtype,
+        )
 
-    # Case 2: R[0,0] is largest diagonal (best for rotations around x-axis)
-    s2 = jnp.sqrt(jnp.maximum(1.0 + R[0, 0] - R[1, 1] - R[2, 2], 0.0)) * 2
-    q_w2 = (R[2, 1] - R[1, 2]) / jnp.maximum(s2, eps)
-    q_x2 = 0.25 * s2
-    q_y2 = (R[0, 1] + R[1, 0]) / jnp.maximum(s2, eps)
-    q_z2 = (R[0, 2] + R[2, 0]) / jnp.maximum(s2, eps)
-    quat2 = jnp.array([q_w2, q_x2, q_y2, q_z2])
+    def _x_branch(_: None) -> Array:
+        s = jnp.sqrt(jnp.maximum(1.0 + R[0, 0] - R[1, 1] - R[2, 2], 0.0)) * 2.0
+        denom = jnp.maximum(s, eps_arr)
+        return jnp.array(
+            [
+                (R[2, 1] - R[1, 2]) / denom,
+                0.25 * s,
+                (R[0, 1] + R[1, 0]) / denom,
+                (R[0, 2] + R[2, 0]) / denom,
+            ],
+            dtype=R.dtype,
+        )
 
-    # Case 3: R[1,1] is largest diagonal (best for rotations around y-axis)
-    s3 = jnp.sqrt(jnp.maximum(1.0 + R[1, 1] - R[0, 0] - R[2, 2], 0.0)) * 2
-    q_w3 = (R[0, 2] - R[2, 0]) / jnp.maximum(s3, eps)
-    q_x3 = (R[0, 1] + R[1, 0]) / jnp.maximum(s3, eps)
-    q_y3 = 0.25 * s3
-    q_z3 = (R[1, 2] + R[2, 1]) / jnp.maximum(s3, eps)
-    quat3 = jnp.array([q_w3, q_x3, q_y3, q_z3])
+    def _y_branch(_: None) -> Array:
+        s = jnp.sqrt(jnp.maximum(1.0 + R[1, 1] - R[0, 0] - R[2, 2], 0.0)) * 2.0
+        denom = jnp.maximum(s, eps_arr)
+        return jnp.array(
+            [
+                (R[0, 2] - R[2, 0]) / denom,
+                (R[0, 1] + R[1, 0]) / denom,
+                0.25 * s,
+                (R[1, 2] + R[2, 1]) / denom,
+            ],
+            dtype=R.dtype,
+        )
 
-    # Case 4: R[2,2] is largest diagonal (best for rotations around z-axis)
-    s4 = jnp.sqrt(jnp.maximum(1.0 + R[2, 2] - R[0, 0] - R[1, 1], 0.0)) * 2
-    q_w4 = (R[1, 0] - R[0, 1]) / jnp.maximum(s4, eps)
-    q_x4 = (R[0, 2] + R[2, 0]) / jnp.maximum(s4, eps)
-    q_y4 = (R[1, 2] + R[2, 1]) / jnp.maximum(s4, eps)
-    q_z4 = 0.25 * s4
-    quat4 = jnp.array([q_w4, q_x4, q_y4, q_z4])
+    def _z_branch(_: None) -> Array:
+        s = jnp.sqrt(jnp.maximum(1.0 + R[2, 2] - R[0, 0] - R[1, 1], 0.0)) * 2.0
+        denom = jnp.maximum(s, eps_arr)
+        return jnp.array(
+            [
+                (R[1, 0] - R[0, 1]) / denom,
+                (R[0, 2] + R[2, 0]) / denom,
+                (R[1, 2] + R[2, 1]) / denom,
+                0.25 * s,
+            ],
+            dtype=R.dtype,
+        )
 
-    # Select the most numerically stable case based on largest component
-    quat = jnp.where(
-        trace > 0,
-        quat1,
-        jnp.where(
+    def _diagonal_branch(_: None) -> Array:
+        return lax.cond(
             (R[0, 0] > R[1, 1]) & (R[0, 0] > R[2, 2]),
-            quat2,
-            jnp.where(R[1, 1] > R[2, 2], quat3, quat4),
-        ),
-    )
+            _x_branch,
+            lambda _: lax.cond(R[1, 1] > R[2, 2], _y_branch, _z_branch, operand=None),
+            operand=None,
+        )
+
+    quat = lax.cond(trace > 0.0, _trace_branch, _diagonal_branch, operand=None)
 
     # Ensure canonical form with positive scalar part (qw >= 0)
     quat = jnp.where(quat[0] < 0, -quat, quat)

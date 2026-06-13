@@ -122,7 +122,8 @@ robot = TendonActuatedGVS.from_segments(
     scale_rotational_basis_by_length=True,
 )
 # debug: check g0
-# g0_test = lie.transform_from_quaternion_pose_SE3(p0)
+# from soromox.utils.geometry import poses
+# g0_test = poses.quaternion_pose_to_transform(p0)
 # print("g0_test:\n", g0_test[:3,:3])
 
 ### MATRICES CHECKING AND PRINTING ###

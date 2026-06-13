@@ -556,12 +556,7 @@ class TestJAXCompatibility:
         assert Rs_from_q.shape == (batch_size, 3, 3)
 
     def test_grad_compatibility(self):
-        """Test that quaternion_to_rotation_vector is differentiable.
-
-        Note: rotation_matrix_to_quaternion uses jnp.where branches that
-        can produce NaN gradients at certain configurations. However,
-        quaternion_to_rotation_vector should be fully differentiable.
-        """
+        """Test that quaternion_to_rotation_vector is differentiable."""
 
         def loss_fn(q_vec_angle):
             # Create a quaternion from angle (rotation around z-axis)
@@ -607,6 +602,43 @@ class TestJAXCompatibility:
         grad_q = grad_fn(q)
         assert grad_q.shape == (4,)
         assert jnp.all(jnp.isfinite(grad_q))
+
+    @pytest.mark.parametrize(
+        "omega",
+        [
+            jnp.array([0.0, 0.0, 0.0]),
+            jnp.array([1e-9, -2e-9, 3e-9]),
+            jnp.array([0.2, -0.1, 0.3]),
+            jnp.array([0.0, 0.0, jnp.pi - 1e-7]),
+        ],
+    )
+    def test_rotation_matrix_to_quaternion_forward_and_reverse_mode_finite(
+        self, omega
+    ):
+        """Test finite autodiff through trace, regular, and near-pi branches."""
+        R = rotation_vector_to_rotation_matrix(omega)
+
+        assert_forward_and_reverse_mode_finite(
+            lambda R_flat: rotation_matrix_to_quaternion(R_flat.reshape((3, 3))),
+            R.reshape(-1),
+        )
+
+    @pytest.mark.parametrize(
+        "omega",
+        [
+            jnp.array([jnp.pi, 0.0, 0.0]),
+            jnp.array([0.0, jnp.pi, 0.0]),
+            jnp.array([0.0, 0.0, jnp.pi]),
+        ],
+    )
+    def test_rotation_matrix_to_quaternion_exact_pi_value_only(self, omega):
+        """Check exact pi cases, where branch ties are not uniquely differentiable."""
+        R = rotation_vector_to_rotation_matrix(omega)
+
+        quat = rotation_matrix_to_quaternion(R)
+
+        assert jnp.isfinite(quat).all()
+        assert_allclose(quaternion_to_rotation_matrix(quat), R, rtol=1e-6, atol=1e-8)
 
     def test_zero_quaternion_branch_is_forward_and_reverse_mode_finite(self):
         """Test finite autodiff through the zero-quaternion identity fallback."""
