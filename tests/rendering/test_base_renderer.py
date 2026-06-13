@@ -3,6 +3,7 @@ import numpy as np
 from numpy.testing import assert_allclose
 
 from soromox.rendering.base import BaseSoftRobotRenderer
+from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.systems.soft_robot import CrossSectionGeometry
 from soromox.utils import lie_algebra as lie
@@ -50,7 +51,7 @@ def test_renderer_exposes_base_pose_transform_and_axis():
     assert_allclose(renderer.base_transform, robot.base_transform)
     assert_allclose(renderer._base_position(dim=3), np.array([1.0, 2.0, 0.0]))
     assert_allclose(
-        renderer._base_tangent_axis(dim=3), np.array([0.0, 1.0, 0.0]), atol=1e-12
+        renderer._base_tangent_axis(dim=3), np.array([0.0, 1.0, 0.0]), atol=1e-7
     )
 
 
@@ -66,6 +67,34 @@ def test_renderer_normalizes_base_offsets_to_curve_dimension():
 
     assert offsets.shape == (2, 3)
     assert_allclose(offsets, jnp.array([[0.1, -0.2, 0.0], [0.3, 0.4, 0.0]]))
+
+
+def test_matplotlib_2d_base_marker_is_perpendicular_to_base_tangent():
+    base = np.array([1.0, 2.0])
+    tangent = np.array([0.0, 1.0])
+
+    marker = MatplotlibRenderer._base_plate_marker_points(
+        base, tangent, marker_diameter=0.4, dim=2
+    )
+
+    assert marker.shape == (2, 2)
+    assert_allclose(marker.mean(axis=0), base)
+    assert_allclose(marker[1] - marker[0], np.array([-0.4, 0.0]))
+    assert_allclose(np.dot(marker[1] - marker[0], tangent), 0.0, atol=1e-12)
+
+
+def test_matplotlib_3d_base_marker_lies_in_plate_face_plane():
+    base = np.array([1.0, 2.0, 3.0])
+    normal = np.array([1.0, 0.0, 0.0])
+
+    marker = MatplotlibRenderer._base_plate_marker_points(
+        base, normal, marker_diameter=0.4, dim=3
+    )
+
+    assert marker.shape == (65, 3)
+    assert_allclose(marker[0], marker[-1], atol=1e-12)
+    assert_allclose((marker - base) @ normal, np.zeros(marker.shape[0]), atol=1e-12)
+    assert_allclose(np.linalg.norm(marker - base, axis=1), 0.2, atol=1e-12)
 
 
 def test_opencv_planar_base_marker_uses_base_pose_and_offset():

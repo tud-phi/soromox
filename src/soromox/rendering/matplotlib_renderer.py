@@ -747,6 +747,47 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             return np.zeros((0, 2, curve.shape[1]), dtype=curve.dtype)
         return np.stack([curve[:-1], curve[1:]], axis=1)
 
+    @staticmethod
+    def _base_plate_marker_points(
+        base: np.ndarray,
+        axis: np.ndarray,
+        marker_diameter: float,
+        dim: int,
+    ) -> np.ndarray:
+        """Return points that represent the base plate face in Matplotlib."""
+        base = np.asarray(base, dtype=np.float64)
+        axis = np.asarray(axis, dtype=np.float64)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm <= 1e-12:
+            axis = np.zeros(dim, dtype=np.float64)
+            axis[0] = 1.0
+        else:
+            axis = axis / axis_norm
+
+        radius = 0.5 * marker_diameter
+        if dim == 2:
+            normal = np.array([-axis[1], axis[0]], dtype=np.float64)
+            return np.stack(
+                [
+                    base - radius * normal,
+                    base + radius * normal,
+                ],
+                axis=0,
+            )
+
+        reference = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        if abs(float(np.dot(axis, reference))) > 0.95:
+            reference = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        u = np.cross(axis, reference)
+        u = u / np.linalg.norm(u)
+        v = np.cross(axis, u)
+        angles = np.linspace(0.0, 2.0 * np.pi, 65)
+        return (
+            base[None, :]
+            + radius
+            * (np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v)
+        )
+
     def _plot_base_markers(
         self,
         ax,
@@ -762,34 +803,19 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         marker_len = max(0.04 * self.L_max, 1e-3)
         for curve in curves:
             base = np.asarray(curve[0], dtype=np.float64)
+            marker = self._base_plate_marker_points(base, axis, marker_len, dim)
             if dim == 3:
                 (artist,) = ax.plot(
-                    [
-                        base[0] - 0.5 * marker_len * axis[0],
-                        base[0] + 0.5 * marker_len * axis[0],
-                    ],
-                    [
-                        base[1] - 0.5 * marker_len * axis[1],
-                        base[1] + 0.5 * marker_len * axis[1],
-                    ],
-                    [
-                        base[2] - 0.5 * marker_len * axis[2],
-                        base[2] + 0.5 * marker_len * axis[2],
-                    ],
+                    marker[:, 0],
+                    marker[:, 1],
+                    marker[:, 2],
                     color=base_plate_color,
                     linewidth=max(self.line_width, 2.0),
                 )
             else:
-                normal = np.array([-axis[1], axis[0]], dtype=np.float64)
                 (artist,) = ax.plot(
-                    [
-                        base[0] - 0.5 * marker_len * normal[0],
-                        base[0] + 0.5 * marker_len * normal[0],
-                    ],
-                    [
-                        base[1] - 0.5 * marker_len * normal[1],
-                        base[1] + 0.5 * marker_len * normal[1],
-                    ],
+                    marker[:, 0],
+                    marker[:, 1],
                     color=base_plate_color,
                     linewidth=max(self.line_width, 2.0),
                 )
@@ -805,34 +831,17 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         marker_len = max(0.04 * self.L_max, 1e-3)
         for artist, curve in zip(artists, curves):
             base = np.asarray(curve[0], dtype=np.float64)
+            marker = self._base_plate_marker_points(base, axis, marker_len, dim)
             if dim == 3:
                 artist.set_data(
-                    [
-                        base[0] - 0.5 * marker_len * axis[0],
-                        base[0] + 0.5 * marker_len * axis[0],
-                    ],
-                    [
-                        base[1] - 0.5 * marker_len * axis[1],
-                        base[1] + 0.5 * marker_len * axis[1],
-                    ],
+                    marker[:, 0],
+                    marker[:, 1],
                 )
-                artist.set_3d_properties(
-                    [
-                        base[2] - 0.5 * marker_len * axis[2],
-                        base[2] + 0.5 * marker_len * axis[2],
-                    ]
-                )
+                artist.set_3d_properties(marker[:, 2])
             else:
-                normal = np.array([-axis[1], axis[0]], dtype=np.float64)
                 artist.set_data(
-                    [
-                        base[0] - 0.5 * marker_len * normal[0],
-                        base[0] + 0.5 * marker_len * normal[0],
-                    ],
-                    [
-                        base[1] - 0.5 * marker_len * normal[1],
-                        base[1] + 0.5 * marker_len * normal[1],
-                    ],
+                    marker[:, 0],
+                    marker[:, 1],
                 )
 
     @staticmethod
