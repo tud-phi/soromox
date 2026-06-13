@@ -11,7 +11,7 @@ def compute_coriolis_matrix(
         q: vector of generalized coordinates of shape (num_dof,)
         qd: vector of generalized velocities of shape (num_dof,)
         simplify: whether to simplify the result
-    
+
     Returns:
         C: matrix of shape (num_dof, num_dof) containing the coriolis and centrifugal terms
     """

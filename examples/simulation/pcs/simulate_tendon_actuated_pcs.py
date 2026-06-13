@@ -15,8 +15,8 @@ from soromox.rendering import (
 )
 from soromox.systems import (
     LinearTendonRoutingParams,
-    PCSParams,
     PassiveTendonParams,
+    PCSParams,
     SystemState,
     TendonActuatedPCS,
     TendonActuatedPCSParams,
@@ -41,9 +41,7 @@ if __name__ == "__main__":
         ).flatten()
     )
     body_params = PCSParams(
-        base_pose=jnp.array(
-            [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
-        ),
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,

@@ -1,16 +1,16 @@
+# ruff: noqa: E402
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from pathlib import Path
 
-from jax import jacfwd, grad
+from jax import grad, jacfwd, random
 from jax import numpy as jnp
-from jax import random
+from system_param_builders import planar_hsa_params_from_legacy
 
 import soromox
 from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL as params
 from soromox.systems import PlanarHSA, PlanarHSAStructure
-from system_param_builders import planar_hsa_params_from_legacy
 
 typed_params = planar_hsa_params_from_legacy(params)
 num_segments = 1
@@ -122,7 +122,9 @@ def test_jacobian_wrapper_matches_virtual_backbone(seed: int = 0):
     J1 = robot.jacobian(q, s)
     J2 = robot.jacobian_virtual_backbone(q, s)
 
-    assert jnp.allclose(J1, J2, atol=1e-12), "jacobian should match jacobian_virtual_backbone"
+    assert jnp.allclose(J1, J2, atol=1e-12), (
+        "jacobian should match jacobian_virtual_backbone"
+    )
 
 
 def test_jacobian_tips(seed: int = 0):
@@ -164,7 +166,9 @@ def test_jacobian_and_time_derivative_virtual_backbone(seed: int = 0):
 
         # Verify J matches the Jacobian method
         J_direct = robot.jacobian_virtual_backbone(q, s)
-        assert jnp.allclose(J, J_direct, atol=1e-10), "J from jacobian_and_time_derivative should match jacobian"
+        assert jnp.allclose(J, J_direct, atol=1e-10), (
+            "J from jacobian_and_time_derivative should match jacobian"
+        )
 
         # Verify Jd by numerical differentiation
         eps_t = 1e-6
@@ -196,8 +200,12 @@ def test_jacobian_and_time_derivative_wrapper_matches_virtual_backbone(seed: int
     J1, Jd1 = robot.jacobian_and_time_derivative(q, qd, s)
     J2, Jd2 = robot.jacobian_and_time_derivative_virtual_backbone(q, qd, s)
 
-    assert jnp.allclose(J1, J2, atol=1e-12), "jacobian_and_time_derivative J should match"
-    assert jnp.allclose(Jd1, Jd2, atol=1e-12), "jacobian_and_time_derivative Jd should match"
+    assert jnp.allclose(J1, J2, atol=1e-12), (
+        "jacobian_and_time_derivative J should match"
+    )
+    assert jnp.allclose(Jd1, Jd2, atol=1e-12), (
+        "jacobian_and_time_derivative Jd should match"
+    )
 
 
 def test_gravitational_energy(seed: int = 0):
@@ -223,7 +231,9 @@ def test_gravitational_energy(seed: int = 0):
             print(f"G = {G}")
             print(f"G_from_energy = {G_from_energy}")
             print(f"diff = {jnp.abs(G - G_from_energy)}")
-            raise ValueError("Gravitational force should be gradient of gravitational energy")
+            raise ValueError(
+                "Gravitational force should be gradient of gravitational energy"
+            )
 
 
 def test_kinetic_energy(seed: int = 0):
@@ -253,7 +263,9 @@ def test_kinetic_energy(seed: int = 0):
 
         # Zero velocity should give zero kinetic energy
         T_zero = robot.kinetic_energy(q, jnp.zeros_like(qd))
-        assert jnp.abs(T_zero) < 1e-15, "Kinetic energy with zero velocity should be zero"
+        assert jnp.abs(T_zero) < 1e-15, (
+            "Kinetic energy with zero velocity should be zero"
+        )
 
 
 def test_elastic_energy(seed: int = 0):
@@ -321,7 +333,9 @@ def test_stiffness_matrix(seed: int = 0):
 
     # Stiffness matrix should be positive semi-definite
     eigenvalues = jnp.linalg.eigvalsh(K)
-    assert jnp.all(eigenvalues >= -1e-10), "Stiffness matrix should be positive semi-definite"
+    assert jnp.all(eigenvalues >= -1e-10), (
+        "Stiffness matrix should be positive semi-definite"
+    )
 
 
 def test_potential_energy(seed: int = 0):
@@ -339,7 +353,9 @@ def test_potential_energy(seed: int = 0):
         U_K = robot.elastic_energy(q)
         U_G = robot.gravitational_energy(q)
 
-        assert jnp.allclose(U, U_K + U_G, atol=1e-10), "Potential energy should be U_K + U_G"
+        assert jnp.allclose(U, U_K + U_G, atol=1e-10), (
+            "Potential energy should be U_K + U_G"
+        )
 
 
 def test_total_energy(seed: int = 0):

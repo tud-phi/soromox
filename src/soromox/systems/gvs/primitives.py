@@ -190,7 +190,7 @@ class Link:
     G: Array  # Shear modulus [N/m²]
     rho: Array  # Density [kg/m³]
     eta: Array  # Material Damping [N·s/m]
-    l: Array  # Length of each divisions of the link (soft link) [m]
+    l: Array  # noqa: E741  # Length of each divisions of the link (soft link) [m]
 
     r: tuple[float, float]  # Initial and final value of the geometrical parameter
     h: tuple[float, float]  # Initial and final value of the geometrical parameter

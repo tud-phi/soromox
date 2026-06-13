@@ -221,8 +221,8 @@ def test_tangent_derivative_matches_autodiff(N: int = 10):
         xid = jax.random.uniform(subkey2, shape=(3,), minval=-1.0, maxval=1.0)
         s = jax.random.uniform(subkey3, shape=(), minval=0.1, maxval=1.0)
 
-        def tangent_map(xi_):
-            return constant_strain.tangent_se2(xi_, s, eps=EPS)
+        def tangent_map(xi_, s_current=s):
+            return constant_strain.tangent_se2(xi_, s_current, eps=EPS)
 
         _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
         closed_form = constant_strain.tangent_derivative_se2(xi, xid, s, eps=EPS)

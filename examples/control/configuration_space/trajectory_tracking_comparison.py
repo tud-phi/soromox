@@ -383,8 +383,6 @@ def main():
         "Gravity Cancellation": "#8EBA42",  # Green
     }
 
-    all_colors = {**tracker_colors, **regulator_colors}
-
     # =========================================================================
     # PART 1: Slow Trajectory - Compare Trackers and Regulators
     # =========================================================================
@@ -526,7 +524,7 @@ def main():
         rmse_values = [
             slow_results[name]["metrics"]["rmse"][i] for name in controller_names
         ]
-        bars = ax1.bar(x + i * width, rmse_values, width, label=strain_name)
+        ax1.bar(x + i * width, rmse_values, width, label=strain_name)
 
     ax1.set_xlabel("Controller")
     ax1.set_ylabel("RMSE")
@@ -545,7 +543,7 @@ def main():
         rmse_values = [
             fast_results[name]["metrics"]["rmse"][i] for name in tracker_names
         ]
-        bars = ax2.bar(x + i * width, rmse_values, width, label=strain_name)
+        ax2.bar(x + i * width, rmse_values, width, label=strain_name)
 
     ax2.set_xlabel("Controller")
     ax2.set_ylabel("RMSE")

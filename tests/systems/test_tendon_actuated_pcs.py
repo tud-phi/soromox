@@ -1,14 +1,12 @@
+# ruff: noqa: E402
 import jax
 import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
+
 from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
-from typing import Optional
-
-from soromox.systems import LinearTendonRoutingParams, PassiveTendonParams, PCSStructure, TendonActuatedPCS
-from soromox.utils.tolerance import Tolerance
 from system_param_builders import (
     linear_tendon_routing,
     passive_tendon_params,
@@ -17,6 +15,14 @@ from system_param_builders import (
     tendon_actuated_pcs_params,
 )
 
+from soromox.systems import (
+    LinearTendonRoutingParams,
+    PassiveTendonParams,
+    PCSStructure,
+    TendonActuatedPCS,
+)
+from soromox.utils.tolerance import Tolerance
+
 XI_REF = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64)
 
 
@@ -24,8 +30,8 @@ def _create_robot(
     segment_lengths: Array,
     tendon_params: LinearTendonRoutingParams,
     strain_selector=None,
-    passive_tendon_routing: Optional[LinearTendonRoutingParams] = None,
-    passive_tendon: Optional[PassiveTendonParams] = None,
+    passive_tendon_routing: LinearTendonRoutingParams | None = None,
+    passive_tendon: PassiveTendonParams | None = None,
 ) -> TendonActuatedPCS:
     """
     Helper that builds a TendonActuatedPCS instance with consistent material parameters.
@@ -627,9 +633,7 @@ def test_update_tendon_params():
         active_tendon_routing=active_params.replace(y_intercept=new_ry)
     )
 
-    assert_allclose(
-        updated_robot_active.active_tendon_routing.y_intercept, new_ry
-    )
+    assert_allclose(updated_robot_active.active_tendon_routing.y_intercept, new_ry)
     assert_allclose(
         updated_robot_active.active_tendon_routing.z_intercept,
         active_params.z_intercept,

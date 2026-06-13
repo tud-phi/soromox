@@ -4,11 +4,15 @@ import numpy as onp
 import pytest
 from jax import Array, jacfwd, jacrev, jvp
 from numpy.testing import assert_allclose
-from system_param_builders import gvs_params_from_segments, pcs_params, spatial_base_pose
+from system_param_builders import (
+    gvs_params_from_segments,
+    pcs_params,
+    spatial_base_pose,
+)
 
-from soromox.utils.lie_algebra import se3
 from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSStructure
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.utils.lie_algebra import se3
 from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)

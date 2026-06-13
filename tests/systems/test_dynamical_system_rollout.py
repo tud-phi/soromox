@@ -1,9 +1,9 @@
 import equinox as eqx
 import jax
 from jax import numpy as jnp
+from system_param_builders import pendulum_params
 
 from soromox.systems import Pendulum, SystemState
-from system_param_builders import pendulum_params
 
 
 def _pendulum_params():

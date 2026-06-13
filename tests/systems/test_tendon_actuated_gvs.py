@@ -1,10 +1,19 @@
+# ruff: noqa: E402
 import jax
 import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
 import numpy as onp
+import optimistix as optx
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
+from system_param_builders import (
+    linear_tendon_routing,
+    passive_tendon_params,
+    pcs_params,
+    spatial_base_pose,
+    tendon_actuated_pcs_params,
+)
 
 from soromox.systems import (
     CrossSectionGeometry,
@@ -14,15 +23,6 @@ from soromox.systems import (
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import (
-    linear_tendon_routing,
-    passive_tendon_params,
-    pcs_params,
-    spatial_base_pose,
-    tendon_actuated_pcs_params,
-)
-
-import optimistix as optx
 
 
 def _segments(
@@ -680,6 +680,7 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
             atol=Tolerance.atol(),
         )
         print("[Valid test]\n")
+
 
 def test_tendon_actatuated_gvs_vs_pcs():
     """

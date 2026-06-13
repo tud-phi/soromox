@@ -88,13 +88,11 @@ def _kinetic_energy_gradient_from_tangent(
     q_basis = _basis_like(q)
     qd_basis = _basis_like(qd)
     dT_dq = jax.vmap(
-        lambda q_tangent: system._kinetic_energy_jvp_tangent(
-            q, qd, q_tangent, None
-        )
+        lambda q_tangent: system._kinetic_energy_jvp_tangent(q, qd, q_tangent, None)
     )(q_basis)
-    dT_dqd = jax.vmap(
-        lambda qdd: system._kinetic_energy_jvp_tangent(q, qd, None, qdd)
-    )(qd_basis)
+    dT_dqd = jax.vmap(lambda qdd: system._kinetic_energy_jvp_tangent(q, qd, None, qdd))(
+        qd_basis
+    )
     return dT_dq, dT_dqd
 
 
@@ -106,9 +104,9 @@ def _total_energy_gradient_from_tangent(
     dE_dq = jax.vmap(
         lambda q_tangent: system._total_energy_jvp_tangent(q, qd, q_tangent, None)
     )(q_basis)
-    dE_dqd = jax.vmap(
-        lambda qdd: system._total_energy_jvp_tangent(q, qd, None, qdd)
-    )(qd_basis)
+    dE_dqd = jax.vmap(lambda qdd: system._total_energy_jvp_tangent(q, qd, None, qdd))(
+        qd_basis
+    )
     return dE_dq, dE_dqd
 
 
@@ -116,9 +114,7 @@ def _direct_jacobian(system: SoftRobot, ctx: Mapping[str, Array]) -> Array:
     return system._jacobian(ctx["q"], ctx["s"])
 
 
-def _protected_autograd_jacobian(
-    system: SoftRobot, ctx: Mapping[str, Array]
-) -> Array:
+def _protected_autograd_jacobian(system: SoftRobot, ctx: Mapping[str, Array]) -> Array:
     return SoftRobot._jacobian(system, ctx["q"], ctx["s"])
 
 
@@ -482,7 +478,9 @@ def _geomean(values: Sequence[float]) -> float:
     finite_values = [value for value in values if math.isfinite(value) and value > 0.0]
     if not finite_values:
         return float("nan")
-    return math.exp(sum(math.log(value) for value in finite_values) / len(finite_values))
+    return math.exp(
+        sum(math.log(value) for value in finite_values) / len(finite_values)
+    )
 
 
 def _format_ratio(value: float) -> str:
@@ -632,7 +630,10 @@ def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) ->
             and str(row["case"]) not in SYSTEM_SUMMARY_EXCLUDED_CASES
         ]
         system_groups = sorted(
-            {(str(row["case"]), str(row.get("gauss_points", ""))) for row in system_rows}
+            {
+                (str(row["case"]), str(row.get("gauss_points", "")))
+                for row in system_rows
+            }
         )
         public_ratios: list[float] = []
         public_ratios_largest: list[float] = []
@@ -733,7 +734,9 @@ def _write_markdown_summary(results: Sequence[Mapping[str, Any]], path: Path) ->
 
         max_abs_diff = max(float(row["max_abs_diff"]) for row in group_rows)
         max_rel_diff = max(float(row["max_rel_diff"]) for row in group_rows)
-        gauss_suffix = "" if gauss_values == ["None"] else f" ({','.join(gauss_values)})"
+        gauss_suffix = (
+            "" if gauss_values == ["None"] else f" ({','.join(gauss_values)})"
+        )
         lines.append(
             "| "
             f"{system}{gauss_suffix} | {case} | "
@@ -820,9 +823,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     if not 0.0 < args.arc_length_fraction < 1.0:
         parser.error("--arc-length-fraction must be strictly between 0 and 1.")
 
-    allowed_public = {
-        f"public_custom_jvp_{mode}" for mode in args.custom_jvp_modes
-    }
+    allowed_public = {f"public_custom_jvp_{mode}" for mode in args.custom_jvp_modes}
     args.strategies = [
         strategy
         for strategy in args.strategies

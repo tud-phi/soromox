@@ -12,9 +12,9 @@ from soromox.systems.gvs.structures import (
 )
 from soromox.systems.params import LinearTendonRoutingParams
 
-from .core import *
-from .specs import *
-from .tendon_actuated_gvs import *
+from .core import GVS
+from .specs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from .tendon_actuated_gvs import TendonActuatedGVS
 
 __all__ = [
     "GVS",

@@ -40,7 +40,9 @@ class _RolloutState:
     @classmethod
     def tree_unflatten(cls, aux, children):
         y, control_state, environment_state = children
-        return cls(y=y, control_state=control_state, environment_state=environment_state)
+        return cls(
+            y=y, control_state=control_state, environment_state=environment_state
+        )
 
 
 class DynamicalSystem(eqx.Module):
@@ -147,9 +149,7 @@ class DynamicalSystem(eqx.Module):
                 else zero_environment_state_dot
             )
 
-        tau_ext_total = self._combine_external_torques(
-            base_tau_ext, tau_environment
-        )
+        tau_ext_total = self._combine_external_torques(base_tau_ext, tau_environment)
         yd = self.forward_dynamics(t, ode_state.y, (base_u_val, tau_ext_total))
         return _RolloutState(
             y=yd,
@@ -235,9 +235,7 @@ class DynamicalSystem(eqx.Module):
                 else zero_environment_state_dot
             )
 
-        tau_ext_total = self._combine_external_torques(
-            base_tau_ext, tau_environment
-        )
+        tau_ext_total = self._combine_external_torques(base_tau_ext, tau_environment)
         yd = self.forward_dynamics(t, ode_state.y, (u_total, tau_ext_total))
         if track_control_state:
             control_state_dot = (
@@ -739,7 +737,8 @@ class DynamicalSystem(eqx.Module):
                     lambda c, c_next: jnp.concatenate(
                         [
                             jnp.broadcast_to(
-                                c, (sol.ts.shape[0] - 1,) + c.shape  # type: ignore[misc]
+                                c,
+                                (sol.ts.shape[0] - 1,) + c.shape,  # type: ignore[misc]
                             ),
                             c_next[None, ...],
                         ],

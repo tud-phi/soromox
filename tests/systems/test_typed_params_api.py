@@ -144,9 +144,7 @@ def test_planar_pcs_params_validate_base_pose_shape():
 def test_spatial_params_validate_base_pose_quaternion_norm():
     with pytest.raises(ValueError, match="quaternion"):
         _pcs_params().replace(
-            base_pose=jnp.array(
-                [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0], dtype=jnp.float64
-            )
+            base_pose=jnp.array([0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0], dtype=jnp.float64)
         )
 
 

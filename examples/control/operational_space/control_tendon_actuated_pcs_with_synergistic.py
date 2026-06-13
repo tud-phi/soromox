@@ -354,7 +354,7 @@ def main():
     if Open3DRenderer is None:
         print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
     else:
-        target_radius = float(jnp.mean(params["r"])) * 0.5
+        target_radius = float(jnp.mean(robot.params.r)) * 0.5
         target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
         renderer = Open3DRenderer(robot, num_points=50)
         renderer.render_sequence(

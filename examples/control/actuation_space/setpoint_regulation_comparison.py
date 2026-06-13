@@ -393,7 +393,7 @@ def main():
     print(header)
     print("-" * 70)
 
-    for name, results in all_results.items():
+    for name, _results in all_results.items():
         metrics = compute_metrics(results, q_des, strain_indices)
         all_results[name]["metrics"] = metrics
         rmse = metrics["rmse"]
@@ -411,7 +411,7 @@ def main():
     print(header)
     print("-" * 70)
 
-    for name, results in all_results.items():
+    for name in all_results:
         ss_error = all_results[name]["metrics"]["ss_error"]
         row = f"{name:<25}"
         for val in ss_error:
@@ -446,7 +446,7 @@ def main():
         ax = axes[idx]
 
         # Plot desired setpoint
-        t = all_results["PID (model-free)"]["t"]
+        all_results["PID (model-free)"]["t"]
         ax.axhline(
             y=q_des[strain_idx],
             color="k",
@@ -566,7 +566,7 @@ def main():
             all_results[name]["metrics"]["rmse"][strain_idx]
             for name in controller_names
         ]
-        bars = ax.bar(x + i * width, rmse_values, width, label=strain_name)
+        ax.bar(x + i * width, rmse_values, width, label=strain_name)
 
     ax.set_xlabel("Controller")
     ax.set_ylabel("RMSE")

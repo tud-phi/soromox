@@ -1,11 +1,8 @@
 import jax
-from jax import Array, numpy as jnp, random
-from numpy.testing import assert_allclose
 import pytest
-from typing import List, Tuple
-
-from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
-from soromox.utils.tolerance import Tolerance
+from jax import Array, random
+from jax import numpy as jnp
+from numpy.testing import assert_allclose
 from system_param_builders import (
     pcs_params,
     planar_base_pose,
@@ -13,6 +10,8 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
+from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
+from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)
 
@@ -30,8 +29,7 @@ def make_planar_model(
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
     diag_entries = (
-        jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-        * L[:, None]
+        jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0) * L[:, None]
     ).flatten()
     params = planar_pcs_params(
         base_pose=planar_base_pose(),
@@ -68,7 +66,7 @@ def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) ->
     return PCS(params=params, structure=PCSStructure(num_gauss_points=3))
 
 
-def planar_arc_lengths(model: PlanarPCS) -> List[float]:
+def planar_arc_lengths(model: PlanarPCS) -> list[float]:
     lengths = jnp.asarray(model.L)
     cumulative = jnp.cumsum(lengths)
     total = float(cumulative[-1])
@@ -81,8 +79,8 @@ def planar_arc_lengths(model: PlanarPCS) -> List[float]:
     return sorted({float(v) for v in values if 0.0 < float(v) <= total})
 
 
-def planar_to_spatial_index_pairs(num_segments: int) -> List[Tuple[int, int]]:
-    pairs: List[Tuple[int, int]] = []
+def planar_to_spatial_index_pairs(num_segments: int) -> list[tuple[int, int]]:
+    pairs: list[tuple[int, int]] = []
     for seg in range(num_segments):
         planar_offset = 3 * seg
         spatial_offset = 6 * seg
@@ -259,12 +257,16 @@ def test_jacobian_time_derivatives_coherence(num_segments):
             Jb_planar, Jbd_planar = planar_model.jacobian_and_time_derivative_bodyframe(
                 q_planar, qd_planar, s
             )
-            Ji_planar, Jid_planar = planar_model.jacobian_and_time_derivative_inertialframe(
-                q_planar, qd_planar, s
+            Ji_planar, Jid_planar = (
+                planar_model.jacobian_and_time_derivative_inertialframe(
+                    q_planar, qd_planar, s
+                )
             )
 
-            Jb_spatial, Jbd_spatial = spatial_model.jacobian_and_time_derivative_bodyframe(
-                q_spatial, qd_spatial, s
+            Jb_spatial, Jbd_spatial = (
+                spatial_model.jacobian_and_time_derivative_bodyframe(
+                    q_spatial, qd_spatial, s
+                )
             )
             Ji_spatial, Jid_spatial = (
                 spatial_model.jacobian_and_time_derivative_inertialframe(

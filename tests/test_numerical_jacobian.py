@@ -1,9 +1,12 @@
+# ruff: noqa: E402
 from functools import partial
+
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array, random
 from jax import numpy as jnp
+
 from soromox.utils.numerical_jacobian import approx_derivative
 
 
@@ -15,7 +18,7 @@ def test_finite_differences(method="2-point"):
     jac_numdiff_fn = partial(approx_derivative, fun, method=method)
 
     rng = random.PRNGKey(0)
-    for i in range(100):
+    for _i in range(100):
         rng, subrng = random.split(rng)
         x = random.uniform(subrng, (2,), minval=-1.0, maxval=1.0)
 

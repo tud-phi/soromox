@@ -138,8 +138,7 @@ class GVSParams(BaseSoftRobotParams):
         max_num_gauss_points = structure.max_num_gauss_points
         if max_num_gauss_points is not None and max_num_gauss_points < 5:
             raise ValueError(
-                "max_num_gauss_points must be at least 5, "
-                f"got {max_num_gauss_points}."
+                f"max_num_gauss_points must be at least 5, got {max_num_gauss_points}."
             )
 
         dofs_joint = [

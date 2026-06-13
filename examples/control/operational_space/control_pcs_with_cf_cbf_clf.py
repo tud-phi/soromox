@@ -351,7 +351,7 @@ if __name__ == "__main__":
             )
 
             # smooth minimum
-            h_all = (-1.0 / kappa) * jnp.log(jnp.sum(jnp.exp(-kappa * H)))
+            (-1.0 / kappa) * jnp.log(jnp.sum(jnp.exp(-kappa * H)))
             # return h_all.reshape(-1)/10
             force_min = 5 + 1000 * jnp.min(H).reshape(-1)
             # return jnp.min(H).reshape(-1) *1000

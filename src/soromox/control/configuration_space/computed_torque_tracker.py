@@ -1,7 +1,7 @@
 __all__ = ["ComputedTorqueTracker"]
 
 import warnings
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
@@ -145,14 +145,13 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
                 f"Pustina (2022), Della Santina (2023), and Pustina (2025)."
             )
 
-        if scenario == ActuationScenario.FULL_ACTUATION:
-            if rank < n_dof:
-                raise ValueError(
-                    f"ComputedTorqueTracker requires an invertible actuation matrix, but "
-                    f"the actuation matrix is singular (rank {rank} < {n_dof}). "
-                    f"The actuation matrix must be full rank (positive-definite) for "
-                    f"computed torque control."
-                )
+        if scenario == ActuationScenario.FULL_ACTUATION and rank < n_dof:
+            raise ValueError(
+                f"ComputedTorqueTracker requires an invertible actuation matrix, but "
+                f"the actuation matrix is singular (rank {rank} < {n_dof}). "
+                f"The actuation matrix must be full rank (positive-definite) for "
+                f"computed torque control."
+            )
 
         if scenario == ActuationScenario.OVERACTUATION:
             if rank < n_dof:
@@ -175,9 +174,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
 
         return scenario
 
-    def model_based_term(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for computed torque control.
 
@@ -228,7 +225,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
 
     def error_based_feedback_term(
         self, system_state: SystemState
-    ) -> Tuple[Array, Optional[PIDControllerState]]:
+    ) -> tuple[Array, PIDControllerState | None]:
         """
         Compute the PID-based feedback control term for computed torque control.
 
@@ -271,7 +268,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         ed = qd_des - qd  # Velocity error
 
         # Get integral error from control state (or zeros if not tracking)
-        control_state: Optional[PIDControllerState] = system_state.control_state
+        control_state: PIDControllerState | None = system_state.control_state
         if control_state is None:
             integral_error = jnp.zeros_like(q)
         else:
@@ -300,4 +297,3 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
             control_state_dot = None
 
         return u_feedback, control_state_dot
-

@@ -36,9 +36,7 @@ def sweep_actuation_mapping(
     # mark the points that are not controllable as the u1 and u2 terms share the same sign
     non_controllable_selector = A_pts[..., 0, 0] * A_pts[..., 0, 1] >= 0.0
     non_controllable_indices = jnp.where(non_controllable_selector)[0]
-    non_controllable_boundary_indices = jnp.where(
-        non_controllable_selector[:-1] != non_controllable_selector[1:]
-    )[0]
+    jnp.where(non_controllable_selector[:-1] != non_controllable_selector[1:])[0]
     # plot the mapping on the bending strain for various bending strains
     fig, ax = plt.subplots(
         num="pneumatic_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain"

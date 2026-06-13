@@ -11,12 +11,21 @@ References:
     PhD Thesis, Sapienza University of Rome.
 """
 
+# ruff: noqa: E402
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
+from system_param_builders import (
+    linear_tendon_routing,
+    pcs_params,
+    pendulum_params,
+    tendon_actuated_pcs_params,
+    tendon_actuated_pendulum_params,
+)
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations import ActuationSpaceDynamics
@@ -24,13 +33,6 @@ from soromox.systems import (
     PCSStructure,
     TendonActuatedPCS,
     TendonActuatedPendulum,
-)
-from system_param_builders import (
-    linear_tendon_routing,
-    pcs_params,
-    pendulum_params,
-    tendon_actuated_pcs_params,
-    tendon_actuated_pendulum_params,
 )
 
 # -----------------------
@@ -94,7 +96,6 @@ def fully_actuated_pcs():
     For a truly fully-actuated system, we use a single segment with 2 bending DOFs
     (kappa_y, kappa_z) and 2 tendons placed at different offsets.
     """
-    num_segments = 1
     # Note: D must be provided in full strain space (num_strains x num_strains = 6x6 for 1 segment)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
     body = pcs_params(
@@ -141,7 +142,6 @@ def fully_actuated_pcs():
 @pytest.fixture
 def underactuated_pcs():
     """Create a 2-segment underactuated TendonActuatedPCS (2 tendons on 4 DOFs)."""
-    num_segments = 2
     # Note: D must be provided in full strain space (num_strains x num_strains = 12x12)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
     body = pcs_params(
@@ -173,9 +173,13 @@ def underactuated_pcs():
     # 2 tendons for 4 DOFs (underactuated)
     # Use tendons at different offsets to ensure non-singular actuation matrix
     tendon_routing_params = linear_tendon_routing(
-        y_intercept=jnp.array([0.005, 0.0]),  # first tendon at +y, second at origin in y
+        y_intercept=jnp.array(
+            [0.005, 0.0]
+        ),  # first tendon at +y, second at origin in y
         y_slope=jnp.array([0.0, 0.0]),  # slope in y
-        z_intercept=jnp.array([0.0, 0.005]),  # first tendon at origin in z, second at +z
+        z_intercept=jnp.array(
+            [0.0, 0.005]
+        ),  # first tendon at origin in z, second at +z
         z_slope=jnp.array([0.0, 0.0]),  # slope in z
         attachment_segment_index=jnp.array([1, 1]),  # both tendons attach at distal end
     )
@@ -1162,8 +1166,8 @@ class TestActuationSpaceDynamicsSystemIndependent:
             J_qdd = J @ qdd
 
             # Compute Jd @ qd using JVP (same method as the implementation)
-            def J_times_qd(q_inner):
-                return asd.jacobian(q_inner) @ qd
+            def J_times_qd(q_inner, qd_current=qd):
+                return asd.jacobian(q_inner) @ qd_current
 
             Jd_qd = jax.jvp(J_times_qd, (q,), (qd,))[1]
 

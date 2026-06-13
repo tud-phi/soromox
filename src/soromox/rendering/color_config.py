@@ -290,9 +290,7 @@ def normalize_color_array(
     if colors.ndim == 1:
         colors = colors[None, :]
     if colors.shape[-1] not in (3, 4):
-        raise ValueError(
-            f"{name} must have 3 or 4 channels; got shape {colors.shape}"
-        )
+        raise ValueError(f"{name} must have 3 or 4 channels; got shape {colors.shape}")
     has_alpha = colors.shape[-1] == 4
     colors = ensure_rgba(colors)
     try:

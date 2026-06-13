@@ -113,7 +113,7 @@ def draw_robot(
     try:
         A_pt = onp.asarray(robot.A_pt)
         Np = A_pt.shape[1]
-    except:
+    except AttributeError:
         A_pt = onp.zeros((N, N))
 
     # Transform robot poses to pixel coordinates. Should be of shape (N, 2)
@@ -273,7 +273,7 @@ if __name__ == "__main__":
         (video_width, video_height),
     )
 
-    for time_idx, t in enumerate(video_ts):
+    for time_idx, _t in enumerate(video_ts):
         img = draw_robot(
             robot,
             qs[time_idx],

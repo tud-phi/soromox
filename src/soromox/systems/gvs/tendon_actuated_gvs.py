@@ -1,4 +1,3 @@
-__all__ = ["TendonActuatedGVS"]
 from collections.abc import Callable
 from typing import Any
 
@@ -18,6 +17,8 @@ from soromox.utils.lie_algebra import se3, so3
 
 from .core import GVS
 from .specs import GVSSegment
+
+__all__ = ["TendonActuatedGVS"]
 
 
 class TendonActuatedGVS(GVS):

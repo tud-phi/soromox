@@ -69,7 +69,11 @@ def analyze_actuation_matrix(
         return scenario, A.shape, rank
     except Exception:
         # If we can't analyze, assume full actuation
-        return ActuationScenario.FULL_ACTUATION, (num_dofs, num_actuators), num_actuators
+        return (
+            ActuationScenario.FULL_ACTUATION,
+            (num_dofs, num_actuators),
+            num_actuators,
+        )
 
 
 def emit_actuation_warnings(
@@ -210,4 +214,3 @@ def _emit_underactuation_warnings(
         )
 
     warnings.warn(warning_msg, UserWarning, stacklevel=stacklevel)
-

@@ -1,4 +1,4 @@
-__all__ = ["PlanarHSA"]
+# ruff: noqa: B904
 from collections.abc import Callable
 from typing import Any
 
@@ -15,6 +15,8 @@ from soromox.utils.basic import (
     compute_strain_basis,
     concatenate_params_syms,
 )
+
+__all__ = ["PlanarHSA"]
 
 
 class PlanarHSA(SoftRobot):
@@ -256,7 +258,8 @@ class PlanarHSA(SoftRobot):
 
         # Load saved symbolic data
         try:
-            sym_exps = dill.load(open(str(structure.symbolic_expression_path), "rb"))
+            with open(str(structure.symbolic_expression_path), "rb") as sym_exp_file:
+                sym_exps = dill.load(sym_exp_file)
         except FileNotFoundError:
             raise FileNotFoundError(
                 "Symbolic expressions file not found. Please generate the symbolic expressions first."

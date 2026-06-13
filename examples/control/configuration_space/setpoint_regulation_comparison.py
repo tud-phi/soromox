@@ -389,11 +389,11 @@ def main():
     x = jnp.arange(len(controller_names))
     width = 0.25
 
-    for i, (strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
+    for i, (_strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
         rmse_values = [
             all_results[name]["metrics"]["rmse"][i] for name in controller_names
         ]
-        bars = ax.bar(x + i * width, rmse_values, width, label=strain_name)
+        ax.bar(x + i * width, rmse_values, width, label=strain_name)
 
     ax.set_xlabel("Controller")
     ax.set_ylabel("RMSE")

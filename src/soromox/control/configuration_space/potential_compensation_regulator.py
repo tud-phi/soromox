@@ -1,6 +1,6 @@
 __all__ = ["PotentialCompensationRegulator"]
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
@@ -108,9 +108,7 @@ class PotentialCompensationRegulator(PIDController):
             stacklevel=4,
         )
 
-    def model_based_term(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for potential compensation.
 
@@ -158,4 +156,3 @@ class PotentialCompensationRegulator(PIDController):
             u_model = jnp.linalg.pinv(A) @ tau_model
 
         return u_model, None
-

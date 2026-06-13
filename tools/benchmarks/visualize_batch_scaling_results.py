@@ -353,7 +353,9 @@ def _plot(
         ax_per_env.legend()
 
     axes[0, 0].set_ylabel(r"Simulated time / wall time (per env)")
-    axes[1, 0].set_ylabel(r"Total simulated time / wall time ($r_{\mathrm{s}/\mathrm{w}}$)")
+    axes[1, 0].set_ylabel(
+        r"Total simulated time / wall time ($r_{\mathrm{s}/\mathrm{w}}$)"
+    )
     fig.tight_layout()
 
     if output is not None:
@@ -416,7 +418,9 @@ def _plot_total_throughput(
             ax.set_yscale("log")
         ax.legend()
 
-    axes[0, 0].set_ylabel(r"Total simulated time / wall time ($r_{\mathrm{s}/\mathrm{w}}$)")
+    axes[0, 0].set_ylabel(
+        r"Total simulated time / wall time ($r_{\mathrm{s}/\mathrm{w}}$)"
+    )
     fig.tight_layout()
 
     if output is not None:

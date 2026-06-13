@@ -1,6 +1,5 @@
-from pathlib import Path
 import sys
-
+from pathlib import Path
 
 TESTS_DIR = Path(__file__).resolve().parent
 if str(TESTS_DIR) not in sys.path:

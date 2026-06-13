@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -375,4 +376,3 @@ class TestPIDControlEquinoxModule:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

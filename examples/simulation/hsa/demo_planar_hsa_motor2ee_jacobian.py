@@ -88,11 +88,11 @@ def factory_fn(
         # configuration that minimizes the residual
         q = jnp.array(sol.x)
 
-        aux = dict(
-            phi=phi,
-            q=q,
-            residual=sol.fun,
-        )
+        aux = {
+            "phi": phi,
+            "q": q,
+            "residual": sol.fun,
+        }
 
         return q, aux
 

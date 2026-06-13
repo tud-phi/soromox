@@ -66,12 +66,9 @@ def _polynomial_slots(X: Array, max_dof: int, family: str) -> tuple[Array, Array
         m_float = m.astype(jnp.float64)
 
         if family == "legendre":
-            p_rec = ((2 * m_float + 1) * z * p_nm1 - m_float * p_nm2) / (
-                m_float + 1
-            )
+            p_rec = ((2 * m_float + 1) * z * p_nm1 - m_float * p_nm2) / (m_float + 1)
             dp_rec = (
-                (2 * m_float + 1) * (2 * p_nm1 + z * dp_nm1)
-                - m_float * dp_nm2
+                (2 * m_float + 1) * (2 * p_nm1 + z * dp_nm1) - m_float * dp_nm2
             ) / (m_float + 1)
         elif family == "chebychev":
             p_rec = 2 * z * p_nm1 - p_nm2
@@ -266,7 +263,9 @@ def _basis_pair(
 
 
 def _monomial_pair(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
-    return _basis_pair(X, Bdof, Bodr, max_dof, lambda x, _order, n: _monomial_slots(x, n))
+    return _basis_pair(
+        X, Bdof, Bodr, max_dof, lambda x, _order, n: _monomial_slots(x, n)
+    )
 
 
 def _monomial_basis(X: Array, Bdof: Array, Bodr: Array, max_dof: int):
@@ -482,9 +481,7 @@ def dB_Monomial(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     return _monomial_pair(X, Bdof, Bodr, max_dof)[1]
 
 
-def dB_LegendrePolynomial(
-    X: Array, Bdof: Array, Bodr: Array, max_dof: int
-) -> Array:
+def dB_LegendrePolynomial(X: Array, Bdof: Array, Bodr: Array, max_dof: int) -> Array:
     """Derivative of ``B_LegendrePolynomial`` with respect to ``X``."""
     return _legendre_pair(X, Bdof, Bodr, max_dof)[1]
 

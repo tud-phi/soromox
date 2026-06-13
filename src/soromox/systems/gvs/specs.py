@@ -1,11 +1,11 @@
-__all__ = ["GVSSegment", "LinkSpec", "JointSpec", "StrainBasisSpec"]
-
 from dataclasses import dataclass, field
 from typing import Literal
 
 from jax import Array
 
 from soromox.systems.soft_robot import CrossSectionGeometry
+
+__all__ = ["GVSSegment", "LinkSpec", "JointSpec", "StrainBasisSpec"]
 
 StrainComponent = Literal[
     "kappa_x",

@@ -221,7 +221,7 @@ def approx_derivative(
     f0=None,
     bounds=(-jnp.inf, jnp.inf),
     args=(),
-    kwargs={},
+    kwargs=None,
 ):
     """Compute finite difference approximation of the derivatives of a
     vector-valued function.
@@ -341,8 +341,10 @@ def approx_derivative(
     >>> approx_derivative(g, x0, bounds=(1.0, jnp.inf))
     array([ 2.])
     """
+    if kwargs is None:
+        kwargs = {}
     if method not in ["2-point", "3-point"]:
-        raise ValueError("Unknown method '%s'. " % method)
+        raise ValueError(f"Unknown method '{method}'. ")
 
     if x0.ndim > 1:
         raise ValueError("`x0` must have at most 1 dimension.")
@@ -409,13 +411,6 @@ def _dense_difference(fun, x0, f0, h, use_one_sided, method):
             dx = h[i]
             df = fun(x1) - f0
         elif method == "3-point" and use_one_sided[i]:
-            x1[i] += h[i]
-            x2[i] += 2 * h[i]
-            dx = x2[i] - x0[i]
-            f1 = fun(x1)
-            f2 = fun(x2)
-            df = -3.0 * f0 + 4 * f1 - f2
-
             dx01 = jnp.concatenate(
                 [
                     jnp.zeros((i,)),

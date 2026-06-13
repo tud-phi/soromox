@@ -310,8 +310,8 @@ def test_tangent_derivative_matches_autodiff_random(N: int = 10):
         if jnp.linalg.norm(xi[:3]) < 1e-3:
             continue
 
-        def tangent_map(xi_):
-            return constant_strain.tangent_se3(xi_, s, eps=EPS)
+        def tangent_map(xi_, s_current=s):
+            return constant_strain.tangent_se3(xi_, s_current, eps=EPS)
 
         _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
         closed_form = constant_strain.tangent_derivative_se3(xi, xid, s, eps=EPS)

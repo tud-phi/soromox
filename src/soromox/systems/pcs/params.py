@@ -62,6 +62,7 @@ class PCSParams(BaseContinuumSoftRobotParams):
     young_modulus: Array
     shear_modulus: Array
     damping_matrix: Array
+
     def validate(self) -> None:
         n_segments = _validate_continuum_base(self, strain_dim=6, gravity_dim=3)
         _require_shape("radius", self.radius, (n_segments,))
@@ -87,6 +88,7 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
     young_modulus: Array
     shear_modulus: Array
     damping_matrix: Array
+
     def validate(self) -> None:
         n_segments = _validate_continuum_base(self, strain_dim=3, gravity_dim=2)
         _require_shape("radius", self.radius, (n_segments,))

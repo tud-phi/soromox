@@ -1,17 +1,19 @@
 """Tests for OperationalSpaceDynamics class."""
 
+# ruff: noqa: E402
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
+from system_param_builders import pcs_params, pendulum_params, planar_pcs_params
 
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems import PCS, Pendulum, PlanarPCS
 from soromox.utils.geometry.rotations import RotationRepresentation
 from soromox.utils.tolerance import Tolerance
-from system_param_builders import pcs_params, pendulum_params, planar_pcs_params
 
 # -----------------------
 # Fixtures
@@ -210,9 +212,9 @@ class TestDynamicallyConsistentPseudoinverse:
         J, J_bar = op_space.jacobian_and_dynamically_consistent_pseudoinverse(q)
 
         J_Jbar = J @ J_bar
-        I = jnp.eye(op_space.n_operational_space)
+        identity = jnp.eye(op_space.n_operational_space)
 
-        assert_allclose(J_Jbar, I, rtol=1e-4, atol=1e-4)
+        assert_allclose(J_Jbar, identity, rtol=1e-4, atol=1e-4)
 
     def test_j_jbar_identity_pendulum(self, pendulum_robot):
         """Test J @ J_bar = I for Pendulum robot."""
@@ -223,9 +225,9 @@ class TestDynamicallyConsistentPseudoinverse:
         J, J_bar = op_space.jacobian_and_dynamically_consistent_pseudoinverse(q)
 
         J_Jbar = J @ J_bar
-        I = jnp.eye(op_space.n_operational_space)
+        identity = jnp.eye(op_space.n_operational_space)
 
-        assert_allclose(J_Jbar, I, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(J_Jbar, identity, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     def test_pseudoinverse_shape(self, pcs_robot):
         """Test shape of dynamically-consistent pseudo-inverse."""

@@ -91,9 +91,7 @@ body_params = PCSParams(
     young_modulus=2e3 * jnp.ones((num_segments,)),
     shear_modulus=1e3 * jnp.ones((num_segments,)),
     damping_matrix=damping_matrix,
-    reference_strain=jnp.tile(
-        jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-    ),
+    reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments),
 )
 
 # Tendon routing: 3 tendons at 120 degrees apart, parallel to backbone

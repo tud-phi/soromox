@@ -73,7 +73,7 @@ class Pendulum(SoftRobot):
 
     # Stored physical parameters
     m: Array
-    I: Array
+    I: Array  # noqa: E741
     L: Array
     Lc: Array
     r: Array
@@ -99,14 +99,14 @@ class Pendulum(SoftRobot):
 
         # Basic parameter extraction
         m = jnp.asarray(params.mass)  # (n,)
-        I = jnp.asarray(params.moment_inertia)  # (n,)
+        inertia = jnp.asarray(params.moment_inertia)  # (n,)
         L = jnp.asarray(params.length)  # (n,)
         Lc = jnp.asarray(params.center_of_mass_length)  # (n,)
         g = jnp.asarray(params.gravity)  # (2,)
 
         n_q = m.shape[0]
         # Consistency checks (lightweight; JIT friendly if shapes static)
-        assert I.shape[0] == n_q and L.shape[0] == n_q and Lc.shape[0] == n_q, (
+        assert inertia.shape[0] == n_q and L.shape[0] == n_q and Lc.shape[0] == n_q, (
             "Parameter length mismatch"
         )
         assert g.shape[0] == 2, "Gravity vector must be length 2"
@@ -117,7 +117,7 @@ class Pendulum(SoftRobot):
 
         # set parameters
         self.m = m
-        self.I = I
+        self.I = inertia
         self.L = L
         self.Lc = Lc
         self.g = g

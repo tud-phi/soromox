@@ -1,4 +1,3 @@
-__all__ = ["GVS"]
 import math
 from typing import Any
 
@@ -48,6 +47,8 @@ from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
 from soromox.utils.lie_algebra import constant_strain, se3
+
+__all__ = ["GVS"]
 
 
 class GVS(SoftRobot):

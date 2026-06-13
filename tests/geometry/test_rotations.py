@@ -9,6 +9,8 @@ The near-180-degree case is particularly important because sin(θ) ≈ 0 for bot
 θ ≈ 0 and θ ≈ π, but the correct behavior is different in each case.
 """
 
+# ruff: noqa: E402
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -612,9 +614,7 @@ class TestJAXCompatibility:
             jnp.array([0.0, 0.0, jnp.pi - 1e-7]),
         ],
     )
-    def test_rotation_matrix_to_quaternion_forward_and_reverse_mode_finite(
-        self, omega
-    ):
+    def test_rotation_matrix_to_quaternion_forward_and_reverse_mode_finite(self, omega):
         """Test finite autodiff through trace, regular, and near-pi branches."""
         R = rotation_vector_to_rotation_matrix(omega)
 

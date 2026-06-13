@@ -1,17 +1,18 @@
+# ruff: noqa: E402
 import jax
 
 jax.config.update("jax_enable_x64", True)
 
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
-
-from soromox.systems import TendonActuatedPlanarPCS
-from soromox.utils.tolerance import Tolerance
 from system_param_builders import (
     planar_base_pose,
     planar_pcs_params,
     tendon_actuated_planar_pcs_params,
 )
+
+from soromox.systems import TendonActuatedPlanarPCS
+from soromox.utils.tolerance import Tolerance
 
 
 def _build_planar_robot(num_segments: int = 3) -> TendonActuatedPlanarPCS:
