@@ -401,8 +401,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             center_origin=False,
             tendon_curves=tendon_curves,
             record_path=record_path,
-            tendon_color=cfg.tendon_color,
             base_plate_color=cfg.base_plate_color,
+            tendon_color=cfg.tendon_color,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -497,8 +497,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             center_origin=True,
             tendon_curves=tendon_curves,
             record_path=record_path,
-            tendon_color=cfg.tendon_color,
             base_plate_color=cfg.base_plate_color,
+            tendon_color=cfg.tendon_color,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -514,15 +514,15 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         center_origin: bool,
         tendon_curves: np.ndarray | None = None,
         record_path: str | None = None,
-        tendon_color: tuple[float, float, float] | None = None,
         base_plate_color: tuple[float, float, float] | None = None,
+        tendon_color: tuple[float, float, float] | None = None,
         playback_speed: float = 1.0,
         camera_config: CameraConfig | None = None,
     ):
         """Shared Matplotlib animation for one or more robots."""
         num_robots, num_steps, _, _ = all_curves.shape
-        tendon_color = tendon_color or self.color_config.tendon_color
         base_plate_color = base_plate_color or self.color_config.base_plate_color
+        tendon_color = tendon_color or self.color_config.tendon_color
 
         max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
         width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)

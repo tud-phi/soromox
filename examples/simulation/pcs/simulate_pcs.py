@@ -168,8 +168,8 @@ if __name__ == "__main__":
         q_demo,
         color_config=RendererColorConfig(
             backbone=BackboneColorConfig(point_palette="soromox:glacier"),
-            tendon_color=(0.2, 0.4, 0.8),
             base_plate_color=(0.15, 0.15, 0.15),
+            tendon_color=(0.2, 0.4, 0.8),
         ),
     )
 
