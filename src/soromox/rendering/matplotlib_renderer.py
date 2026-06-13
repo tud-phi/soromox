@@ -132,21 +132,15 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         else:
             num_robots = 1
             curves = self.compute_backbone_curve(q_arr)[None, ...]
-            if base_offsets is not None:
-                offs = np.asarray(base_offsets, dtype=np.float64)
-                if offs.ndim == 1:
-                    offs = offs.reshape(1, -1)
-                if offs.shape[0] != 1:
-                    raise ValueError(
-                        f"base_offsets must have shape (dim,) or (1, dim) for single robot; got {offs.shape}"
-                    )
-                if offs.shape[1] + 1 == curves.shape[-1]:
-                    offs = np.concatenate([offs, np.zeros((offs.shape[0], 1))], axis=1)
-                if offs.shape[1] != curves.shape[-1]:
-                    raise ValueError(
-                        f"base_offsets second dimension ({offs.shape[1]}) must match curve dimension ({curves.shape[-1]})"
-                    )
-                curves = curves + offs[0]
+            offset_source = (
+                base_offsets if base_offsets is not None else self._base_offsets
+            )
+            single_offset = self._single_base_offset(
+                offset_source,
+                target_dim=int(curves.shape[-1]),
+            )
+            if single_offset is not None:
+                curves = curves + single_offset
             resolved_colors = self.resolve_backbone_colors(1, color_config=cfg)
             width_m = self.L_max * 3
 
@@ -161,8 +155,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 tendon_curves_np = np.array(self.compute_tendon_curves(q_arr))[
                     None, ...
                 ]
-                if base_offsets is not None:
-                    tendon_curves_np = tendon_curves_np + offs[0]
+                if single_offset is not None:
+                    tendon_curves_np = tendon_curves_np + np.asarray(single_offset)
 
         fig = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         fig.patch.set_facecolor(self.background_color)
@@ -189,6 +183,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         )
 
         self._plot_backbone(ax, curves_np, resolved_colors.per_robot_point_rgba)
+        self._plot_base_markers(ax, curves_np, cfg.base_plate_color)
 
         if tendon_curves_np is not None:
             for idx in range(num_robots):
@@ -377,29 +372,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         curves = np.array(
             jax.vmap(self.compute_backbone_curve)(q_ts), dtype=np.float64
         )  # (T, P, dim)
-        if base_offsets is not None:
-            offs = np.asarray(base_offsets, dtype=np.float64)
-            if offs.ndim == 1:
-                offs = offs.reshape(1, -1)
-            if offs.shape[0] not in (1,):
-                raise ValueError(
-                    f"base_offsets must have shape (dim,) or (1, dim) for single robot; got {offs.shape}"
-                )
-            if offs.shape[1] + 1 == curves.shape[-1]:
-                offs = np.concatenate([offs, np.zeros((offs.shape[0], 1))], axis=1)
-            if offs.shape[1] != curves.shape[-1]:
-                raise ValueError(
-                    f"base_offsets second dimension ({offs.shape[1]}) must match curve dimension ({curves.shape[-1]})"
-                )
-            curves = curves + offs[0]
+        offset_source = base_offsets if base_offsets is not None else self._base_offsets
+        single_offset = self._single_base_offset(
+            offset_source,
+            target_dim=int(curves.shape[-1]),
+        )
+        if single_offset is not None:
+            curves = curves + single_offset
         all_curves = curves[None, ...]  # (1, T, P, dim)
         tendon_curves = None
         if render_tendons and self._has_tendons:
             tendon_curves = np.array(
                 jax.vmap(self.compute_tendon_curves)(q_ts), dtype=np.float64
             )[None, ...]  # (1, T, n_tendon, P, dim)
-            if base_offsets is not None:
-                tendon_curves = tendon_curves + offs[0]
+            if single_offset is not None:
+                tendon_curves = tendon_curves + np.asarray(single_offset)
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(1, color_config=cfg)
@@ -415,6 +402,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             tendon_curves=tendon_curves,
             record_path=record_path,
             tendon_color=cfg.tendon_color,
+            base_plate_color=cfg.base_plate_color,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -483,10 +471,6 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         all_curves_time_first = jax.vmap(curves_for_timestep)(q_ts_time_first)
         all_curves = np.asarray(all_curves_time_first.transpose(1, 0, 2, 3))
 
-        # Axis sizing based on geometry spread
-        max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
-        width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
-
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(
             int(num_robots), color_config=cfg
@@ -514,6 +498,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             tendon_curves=tendon_curves,
             record_path=record_path,
             tendon_color=cfg.tendon_color,
+            base_plate_color=cfg.base_plate_color,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -530,12 +515,14 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         tendon_curves: np.ndarray | None = None,
         record_path: str | None = None,
         tendon_color: tuple[float, float, float] | None = None,
+        base_plate_color: tuple[float, float, float] | None = None,
         playback_speed: float = 1.0,
         camera_config: CameraConfig | None = None,
     ):
         """Shared Matplotlib animation for one or more robots."""
         num_robots, num_steps, _, _ = all_curves.shape
         tendon_color = tendon_color or self.color_config.tendon_color
+        base_plate_color = base_plate_color or self.color_config.base_plate_color
 
         max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
         width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
@@ -588,9 +575,11 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 ax.add_collection(lc)
             lines.append(lc)
 
+        base_artists = self._plot_base_markers(ax, all_curves[:, 0], base_plate_color)
+
         tendon_lines: list[list] = []
         if tendon_curves is not None:
-            for idx in range(num_robots):
+            for _idx in range(num_robots):
                 robot_lines = []
                 n_tend = tendon_curves.shape[2]
                 for _ in range(n_tend):
@@ -617,6 +606,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             for idx, line in enumerate(lines):
                 segments = self._curve_to_segments(curves_frame[idx])
                 line.set_segments(segments)
+            self._update_base_markers(base_artists, curves_frame)
             if tendon_curves is not None:
                 for idx, tc in enumerate(tendon_curves):
                     tend_frame = tc[frame_idx]
@@ -640,14 +630,14 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                         if self.is_3d:
                             tl.set_3d_properties([])
                 flat_tendon = [tl for sub in tendon_lines for tl in sub]
-                return lines + flat_tendon + [title_text]
+                return lines + flat_tendon + base_artists + [title_text]
 
             def update(frame_idx):
                 frame_idx_int = int(frame_idx)
                 _update_lines(frame_idx_int)
                 title_text.set_text(f"t = {float(ts[frame_idx_int]):.2f} s")
                 flat_tendon = [tl for sub in tendon_lines for tl in sub]
-                return lines + flat_tendon + [title_text]
+                return lines + flat_tendon + base_artists + [title_text]
 
             actual_interval = max(1, int(round(interval / playback_speed)))
             ani = FuncAnimation(
@@ -756,6 +746,94 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         if curve.shape[0] < 2:
             return np.zeros((0, 2, curve.shape[1]), dtype=curve.dtype)
         return np.stack([curve[:-1], curve[1:]], axis=1)
+
+    def _plot_base_markers(
+        self,
+        ax,
+        curves: np.ndarray,
+        base_plate_color: tuple[float, float, float],
+    ) -> list:
+        """Draw compact base markers at the configured base positions."""
+        artists = []
+        if curves.size == 0:
+            return artists
+        dim = int(curves.shape[-1])
+        axis = self._base_tangent_axis(dim=dim)
+        marker_len = max(0.04 * self.L_max, 1e-3)
+        for curve in curves:
+            base = np.asarray(curve[0], dtype=np.float64)
+            if dim == 3:
+                (artist,) = ax.plot(
+                    [
+                        base[0] - 0.5 * marker_len * axis[0],
+                        base[0] + 0.5 * marker_len * axis[0],
+                    ],
+                    [
+                        base[1] - 0.5 * marker_len * axis[1],
+                        base[1] + 0.5 * marker_len * axis[1],
+                    ],
+                    [
+                        base[2] - 0.5 * marker_len * axis[2],
+                        base[2] + 0.5 * marker_len * axis[2],
+                    ],
+                    color=base_plate_color,
+                    linewidth=max(self.line_width, 2.0),
+                )
+            else:
+                normal = np.array([-axis[1], axis[0]], dtype=np.float64)
+                (artist,) = ax.plot(
+                    [
+                        base[0] - 0.5 * marker_len * normal[0],
+                        base[0] + 0.5 * marker_len * normal[0],
+                    ],
+                    [
+                        base[1] - 0.5 * marker_len * normal[1],
+                        base[1] + 0.5 * marker_len * normal[1],
+                    ],
+                    color=base_plate_color,
+                    linewidth=max(self.line_width, 2.0),
+                )
+            artists.append(artist)
+        return artists
+
+    def _update_base_markers(self, artists: list, curves: np.ndarray) -> None:
+        """Update animated Matplotlib base markers."""
+        if not artists:
+            return
+        dim = int(curves.shape[-1])
+        axis = self._base_tangent_axis(dim=dim)
+        marker_len = max(0.04 * self.L_max, 1e-3)
+        for artist, curve in zip(artists, curves):
+            base = np.asarray(curve[0], dtype=np.float64)
+            if dim == 3:
+                artist.set_data(
+                    [
+                        base[0] - 0.5 * marker_len * axis[0],
+                        base[0] + 0.5 * marker_len * axis[0],
+                    ],
+                    [
+                        base[1] - 0.5 * marker_len * axis[1],
+                        base[1] + 0.5 * marker_len * axis[1],
+                    ],
+                )
+                artist.set_3d_properties(
+                    [
+                        base[2] - 0.5 * marker_len * axis[2],
+                        base[2] + 0.5 * marker_len * axis[2],
+                    ]
+                )
+            else:
+                normal = np.array([-axis[1], axis[0]], dtype=np.float64)
+                artist.set_data(
+                    [
+                        base[0] - 0.5 * marker_len * normal[0],
+                        base[0] + 0.5 * marker_len * normal[0],
+                    ],
+                    [
+                        base[1] - 0.5 * marker_len * normal[1],
+                        base[1] + 0.5 * marker_len * normal[1],
+                    ],
+                )
 
     @staticmethod
     def _segment_colors_from_point_pairs(point_colors: np.ndarray) -> np.ndarray:

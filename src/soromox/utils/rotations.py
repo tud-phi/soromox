@@ -93,27 +93,37 @@ class RotationRepresentation(Enum):
 DEFAULT_ROTATION_EPS = 1e-10
 
 
-def normalize_quaternion(quaternion: Array) -> Array:
+def normalize_quaternion(
+    quaternion: Array,
+    eps: float | Array | None = None,
+) -> Array:
     """Normalize a scalar-first Hamilton quaternion.
 
     Args:
         quaternion: Quaternion with shape ``(4,)`` in ``[qw, qx, qy, qz]``
             order. ``qw`` is the scalar component and ``[qx, qy, qz]`` is the
             vector component.
+        eps: Optional nonnegative norm threshold. If the quaternion norm is
+            less than or equal to ``eps``, the identity quaternion is returned.
+            Defaults to machine epsilon for the quaternion dtype.
 
     Returns:
         Array: Unit quaternion with shape ``(4,)`` in ``[qw, qx, qy, qz]``
-        order. If the input norm is numerically zero, the identity quaternion
-        ``[1, 0, 0, 0]`` is returned to avoid division-by-zero NaNs in traced
-        computations. Parameter validators reject zero-norm configured poses.
+        order. If the input norm is numerically smaller than ``eps``, the
+        identity quaternion ``[1, 0, 0, 0]`` is returned to avoid
+        division-by-zero NaNs in traced computations. Parameter validators
+        reject zero-norm configured poses.
     """
     dtype = jnp.result_type(quaternion, 1.0)
     q = jnp.asarray(quaternion, dtype=dtype).reshape(-1)
     norm = jnp.linalg.norm(q)
-    eps = jnp.asarray(jnp.finfo(q.dtype).eps, dtype=q.dtype)
+    if eps is None:
+        eps_arr = jnp.asarray(jnp.finfo(q.dtype).eps, dtype=q.dtype)
+    else:
+        eps_arr = jnp.asarray(eps, dtype=q.dtype)
     identity = jnp.array([1.0, 0.0, 0.0, 0.0], dtype=q.dtype)
-    safe_norm = jnp.where(norm > eps, norm, jnp.ones((), dtype=q.dtype))
-    return jnp.where(norm > eps, q / safe_norm, identity)
+    safe_norm = jnp.where(norm > eps_arr, norm, jnp.ones((), dtype=q.dtype))
+    return jnp.where(norm > eps_arr, q / safe_norm, identity)
 
 
 def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -> Array:
@@ -191,7 +201,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
     # Ensure canonical form with positive scalar part (qw >= 0)
     quat = jnp.where(quat[0] < 0, -quat, quat)
 
-    quat = normalize_quaternion(quat)
+    quat = normalize_quaternion(quat, eps=eps)
 
     return quat
 
@@ -273,7 +283,7 @@ def quaternion_to_rotation_vector(
         >>> omega = quaternion_to_rotation_vector(q)
         >>> # omega ≈ [0, 0, π/2]
     """
-    quat = normalize_quaternion(quat)
+    quat = normalize_quaternion(quat, eps=eps)
     q_w = quat[0]
     q_vec = quat[1:4]
 
@@ -341,7 +351,7 @@ def rotation_vector_to_quaternion(
 
     quat = jnp.array([q_w, q_vec[0], q_vec[1], q_vec[2]])
 
-    return normalize_quaternion(quat)
+    return normalize_quaternion(quat, eps=eps)
 
 
 def rotation_matrix_to_rotation_vector(

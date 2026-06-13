@@ -18,6 +18,7 @@ import threading
 import time
 import webbrowser
 from collections.abc import Callable, Generator
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -411,10 +412,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             self._stop_live_mode_internal()
 
         # Close server - use stop() method instead of close()
-        try:
+        with suppress(Exception):
             self._server.stop()
-        except Exception:
-            pass  # Server may already be closed
         self._server = None
         self._scene_handles = None
 
@@ -539,9 +538,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
             self._scene_handles.backbone_points.append(robot_points)
 
-            # Create base plate (Z-aligned, no rotation needed)
-            base_pos = curve[0].copy()
-            base_pos[2] -= self._base_plate_thickness / 2
+            # Create base plate perpendicular to the configured base-frame +x axis.
+            base_axis = self._base_tangent_axis(dim=3)
+            base_pos = curve[0].copy() - 0.5 * self._base_plate_thickness * base_axis
+            base_wxyz = _direction_to_quaternion(base_axis)
             base_handle = self._server.scene.add_mesh_trimesh(
                 name=f"/robots/robot_{robot_idx}/base_plate",
                 mesh=self._make_cylinder_trimesh(
@@ -551,6 +551,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     direction=None,  # Already Z-aligned
                 ),
                 position=tuple(base_pos),
+                wxyz=base_wxyz,
             )
             self._scene_handles.base_plates.append(base_handle)
 
@@ -703,6 +704,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
+            if robot_idx < len(self._scene_handles.base_plates):
+                base_axis = self._base_tangent_axis(dim=3)
+                base_handle = self._scene_handles.base_plates[robot_idx]
+                base_handle.position = tuple(
+                    curve[0] - 0.5 * self._base_plate_thickness * base_axis
+                )
+                base_handle.wxyz = _direction_to_quaternion(base_axis)
+
             robot_points = self._scene_handles.backbone_points[robot_idx]
 
             if self._backbone_style == "discrete":
@@ -948,19 +957,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = q.shape[0]
 
-        # Compute base offsets
-        if base_offsets is not None:
-            base_offsets = jnp.asarray(base_offsets)
-        elif self._base_offsets is not None:
-            base_offsets = jnp.asarray(self._base_offsets)[:num_robots]
-        else:
-            base_offsets = self._compute_grid_offsets(num_robots, self._grid_spacing)
-
-        # Pad to 3D if needed
-        if base_offsets.shape[1] == 2:
-            base_offsets = jnp.concatenate(
-                [base_offsets, jnp.zeros((num_robots, 1))], axis=1
-            )
+        offset_source = (
+            base_offsets
+            if base_offsets is not None
+            else self._base_offsets
+            if self._base_offsets is not None
+            else self._compute_grid_offsets(num_robots, self._grid_spacing)
+        )
+        base_offsets = self._normalize_base_offsets(
+            offset_source,
+            num_robots=int(num_robots),
+            target_dim=3,
+        )
 
         # Compute backbone curves
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
@@ -1045,19 +1053,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = q.shape[0]
 
-        # Compute base offsets
-        if base_offsets is not None:
-            base_offsets = jnp.asarray(base_offsets)
-        elif self._base_offsets is not None:
-            base_offsets = jnp.asarray(self._base_offsets)[:num_robots]
-        else:
-            base_offsets = self._compute_grid_offsets(num_robots, self._grid_spacing)
-
-        # Pad to 3D if needed
-        if base_offsets.shape[1] == 2:
-            base_offsets = jnp.concatenate(
-                [base_offsets, jnp.zeros((num_robots, 1))], axis=1
-            )
+        offset_source = (
+            base_offsets
+            if base_offsets is not None
+            else self._base_offsets
+            if self._base_offsets is not None
+            else self._compute_grid_offsets(num_robots, self._grid_spacing)
+        )
+        base_offsets = self._normalize_base_offsets(
+            offset_source,
+            num_robots=int(num_robots),
+            target_dim=3,
+        )
 
         # Compute backbone curves
         curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
@@ -1188,22 +1195,21 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots, num_frames, num_dofs = q_ts.shape
 
-        # Compute base offsets
         if multi_robot_layout == "overlay":
-            # All robots at same position
-            base_offsets = jnp.zeros((num_robots, 3))
-        elif base_offsets is not None:
-            base_offsets = jnp.asarray(base_offsets)
-        elif self._base_offsets is not None:
-            base_offsets = jnp.asarray(self._base_offsets)[:num_robots]
+            offset_source = jnp.zeros((num_robots, 3))
         else:
-            base_offsets = self._compute_grid_offsets(num_robots, self._grid_spacing)
-
-        # Pad to 3D if needed
-        if base_offsets.shape[1] == 2:
-            base_offsets = jnp.concatenate(
-                [base_offsets, jnp.zeros((num_robots, 1))], axis=1
+            offset_source = (
+                base_offsets
+                if base_offsets is not None
+                else self._base_offsets
+                if self._base_offsets is not None
+                else self._compute_grid_offsets(num_robots, self._grid_spacing)
             )
+        base_offsets = self._normalize_base_offsets(
+            offset_source,
+            num_robots=int(num_robots),
+            target_dim=3,
+        )
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
@@ -1967,14 +1973,13 @@ class LiveModeController:
 
         num_robots = q.shape[0]
 
-        # Compute base offsets
-        base_offsets = self._renderer._compute_grid_offsets(
-            num_robots, self._renderer._grid_spacing
+        base_offsets = self._renderer._normalize_base_offsets(
+            self._renderer._compute_grid_offsets(
+                num_robots, self._renderer._grid_spacing
+            ),
+            num_robots=int(num_robots),
+            target_dim=3,
         )
-        if base_offsets.shape[1] == 2:
-            base_offsets = jnp.concatenate(
-                [base_offsets, jnp.zeros((num_robots, 1))], axis=1
-            )
 
         # Compute curves
         curves = np.asarray(

@@ -45,6 +45,11 @@ class BaseSoftRobotRenderer(ABC):
         background_color: RGB tuple for background color (0-1 range)
         color_config: Shared color configuration for renderers
         L_max: Total length of the robot backbone
+        base_pose: Robot base pose coordinates. Planar robots use
+            ``[theta, x, y]``; spatial robots use scalar-first quaternion pose
+            ``[qw, qx, qy, qz, x, y, z]``.
+        base_transform: Homogeneous base transform. Shape ``(3, 3)`` for
+            planar robots and ``(4, 4)`` for spatial robots.
     """
 
     def __init__(
@@ -73,6 +78,8 @@ class BaseSoftRobotRenderer(ABC):
         self.background_color = background_color
         self.color_config = color_config or RendererColorConfig()
         self._is_planar = bool(robot.is_planar)
+        self.base_pose = jnp.asarray(robot.base_pose)
+        self.base_transform = jnp.asarray(robot.base_transform)
 
         self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
         self._segment_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -86,6 +93,142 @@ class BaseSoftRobotRenderer(ABC):
             self._batched_fk_tendons = jax.vmap(
                 robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
             )
+
+    def _base_position(self, dim: int | None = None) -> np.ndarray:
+        """Return the configured base translation in renderer coordinates.
+
+        Args:
+            dim: Optional target dimension. ``2`` returns ``[x, y]``; ``3``
+                returns ``[x, y, z]`` with planar bases padded by ``z = 0``.
+                If omitted, the renderer dimensionality is used.
+
+        Returns:
+            Base position as a NumPy array with shape ``(dim,)``.
+        """
+        target_dim = 3 if (dim is None and self.is_3d) else 2 if dim is None else dim
+        transform = np.asarray(self.base_transform, dtype=np.float64)
+        if transform.shape == (3, 3):
+            pos = np.array([transform[0, 2], transform[1, 2]], dtype=np.float64)
+        elif transform.shape == (4, 4):
+            pos = np.asarray(transform[:3, 3], dtype=np.float64)
+        else:
+            raise ValueError(
+                "base_transform must have shape (3, 3) or (4, 4), "
+                f"got {transform.shape}."
+            )
+        return self._match_vector_dim(pos, target_dim, name="base position")
+
+    def _base_tangent_axis(self, dim: int | None = None) -> np.ndarray:
+        """Return the configured base-frame +x direction.
+
+        The soft-robot convention is that zero base rotation aligns the
+        undeformed backbone with the positive base-frame x-axis. This helper
+        returns that axis after applying ``base_transform``.
+
+        Args:
+            dim: Optional target dimension. ``2`` returns the planar xy axis;
+                ``3`` returns xyz, padding planar axes by ``z = 0``.
+
+        Returns:
+            Unit vector as a NumPy array with shape ``(dim,)``.
+        """
+        target_dim = 3 if (dim is None and self.is_3d) else 2 if dim is None else dim
+        transform = np.asarray(self.base_transform, dtype=np.float64)
+        if transform.shape == (3, 3):
+            axis = np.asarray(transform[:2, 0], dtype=np.float64)
+        elif transform.shape == (4, 4):
+            axis = np.asarray(transform[:3, 0], dtype=np.float64)
+        else:
+            raise ValueError(
+                "base_transform must have shape (3, 3) or (4, 4), "
+                f"got {transform.shape}."
+            )
+        axis = self._match_vector_dim(axis, target_dim, name="base tangent axis")
+        norm = np.linalg.norm(axis)
+        if norm <= 1e-12:
+            fallback = np.zeros(target_dim, dtype=np.float64)
+            fallback[0] = 1.0
+            return fallback
+        return axis / norm
+
+    @staticmethod
+    def _match_vector_dim(
+        value: np.ndarray,
+        target_dim: int,
+        *,
+        name: str,
+    ) -> np.ndarray:
+        """Return ``value`` with dimension ``target_dim`` by optional z-padding."""
+        vector = np.asarray(value, dtype=np.float64).reshape(-1)
+        if vector.shape[0] == target_dim:
+            return vector
+        if vector.shape[0] + 1 == target_dim:
+            return np.concatenate([vector, np.zeros(1, dtype=np.float64)])
+        if target_dim == 2 and vector.shape[0] == 3:
+            return vector[:2]
+        raise ValueError(
+            f"{name} must have dimension {target_dim}, got {vector.shape}."
+        )
+
+    def _normalize_base_offsets(
+        self,
+        base_offsets: Array | np.ndarray,
+        *,
+        num_robots: int,
+        target_dim: int,
+        allow_single: bool = False,
+        name: str = "base_offsets",
+    ) -> jax.Array:
+        """Validate and dimension-match per-robot positional base offsets.
+
+        Args:
+            base_offsets: Offset array. Expected shape is ``(N, dim)`` for
+                batched calls. If ``allow_single`` is true, ``(dim,)`` and
+                ``(1, dim)`` are accepted for a single robot.
+            num_robots: Required number of rows.
+            target_dim: Desired spatial dimension, usually the curve dimension.
+            allow_single: Whether to accept a one-dimensional single offset.
+            name: Name used in error messages.
+
+        Returns:
+            JAX array with shape ``(num_robots, target_dim)``. 2D offsets are
+            padded with ``z = 0`` when ``target_dim == 3``.
+        """
+        offsets = jnp.asarray(base_offsets)
+        if offsets.ndim == 1 and allow_single:
+            offsets = offsets.reshape(1, -1)
+        if offsets.ndim != 2:
+            raise ValueError(f"{name} must have shape (N, dim), got {offsets.shape}.")
+        if offsets.shape[0] != num_robots:
+            raise ValueError(
+                f"{name} first dimension ({offsets.shape[0]}) must match "
+                f"number of robots ({num_robots})."
+            )
+        if offsets.shape[1] == target_dim:
+            return offsets
+        if offsets.shape[1] + 1 == target_dim:
+            pad = jnp.zeros((offsets.shape[0], 1), dtype=offsets.dtype)
+            return jnp.concatenate([offsets, pad], axis=1)
+        raise ValueError(
+            f"{name} must have shape ({num_robots}, {target_dim}) or "
+            f"({num_robots}, {target_dim - 1}), got {offsets.shape}."
+        )
+
+    def _single_base_offset(
+        self,
+        base_offsets: Array | np.ndarray | None,
+        *,
+        target_dim: int,
+    ) -> jax.Array | None:
+        """Return a single normalized base offset or ``None``."""
+        if base_offsets is None:
+            return None
+        return self._normalize_base_offsets(
+            base_offsets,
+            num_robots=1,
+            target_dim=target_dim,
+            allow_single=True,
+        )[0]
 
     @property
     def is_planar(self) -> bool:
@@ -133,37 +276,18 @@ class BaseSoftRobotRenderer(ABC):
             return None
 
         q_batch = jnp.asarray(q_batch)
-        base_offsets = jnp.asarray(base_offsets)
-
         if q_batch.ndim != 2:
             raise ValueError(
                 f"q_batch must have shape (N, DOF), got {q_batch.shape} with ndim={q_batch.ndim}"
             )
-        if base_offsets.ndim != 2:
-            raise ValueError(
-                f"base_offsets must have shape (N, dim), got {base_offsets.shape}"
-            )
-        if base_offsets.shape[0] != q_batch.shape[0]:
-            raise ValueError(
-                f"base_offsets first dimension ({base_offsets.shape[0]}) must "
-                f"match batch size ({q_batch.shape[0]})"
-            )
-
         s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
         tendon_curves = jax.vmap(lambda q: self._batched_fk_tendons(q, s_ps))(q_batch)
-
-        if base_offsets.shape[1] == tendon_curves.shape[-1]:
-            offsets = base_offsets
-        elif base_offsets.shape[1] + 1 == tendon_curves.shape[-1]:
-            pad = jnp.zeros((base_offsets.shape[0], 1), dtype=tendon_curves.dtype)
-            offsets = jnp.concatenate([base_offsets, pad], axis=1)
-        else:
-            raise ValueError(
-                f"base_offsets must have shape (N, {tendon_curves.shape[-1]}) or "
-                f"(N, {tendon_curves.shape[-1] - 1}), got {base_offsets.shape}"
-            )
-
-        return tendon_curves + offsets[:, None, None, :]
+        base_offsets = self._normalize_base_offsets(
+            base_offsets,
+            num_robots=int(q_batch.shape[0]),
+            target_dim=int(tendon_curves.shape[-1]),
+        )
+        return tendon_curves + base_offsets[:, None, None, :]
 
     def _extract_positions(self, poses: Array) -> Array:
         """Extract xyz or xy positions from FK poses.
@@ -590,36 +714,18 @@ class BaseSoftRobotRenderer(ABC):
             Array of shape (N, num_points, dim) - batch-first
         """
         q_batch = jnp.asarray(q_batch)
-        base_offsets = jnp.asarray(base_offsets)
-
         if q_batch.ndim != 2:
             raise ValueError(
                 f"q_batch must have shape (N, DOF), got {q_batch.shape} with ndim={q_batch.ndim}"
             )
-        if base_offsets.ndim != 2:
-            raise ValueError(
-                f"base_offsets must have shape (N, dim), got {base_offsets.shape}"
-            )
-        if base_offsets.shape[0] != q_batch.shape[0]:
-            raise ValueError(
-                f"base_offsets first dimension ({base_offsets.shape[0]}) must "
-                f"match batch size ({q_batch.shape[0]})"
-            )
 
         # vmap over the configurations
         curves = jax.vmap(self.compute_backbone_curve)(q_batch)  # (N, num_points, dim)
-
-        # Match base offset dimensionality to curve dimensionality (2D vs 3D)
-        if base_offsets.shape[1] == curves.shape[-1]:
-            offsets = base_offsets
-        elif base_offsets.shape[1] + 1 == curves.shape[-1]:
-            pad = jnp.zeros((base_offsets.shape[0], 1), dtype=curves.dtype)
-            offsets = jnp.concatenate([base_offsets, pad], axis=1)
-        else:
-            raise ValueError(
-                f"base_offsets must have shape (N, {curves.shape[-1]}) or "
-                f"(N, {curves.shape[-1] - 1}), got {base_offsets.shape}"
-            )
+        offsets = self._normalize_base_offsets(
+            base_offsets,
+            num_robots=int(q_batch.shape[0]),
+            target_dim=int(curves.shape[-1]),
+        )
 
         # Add base offsets: (N, num_points, dim) + (N, 1, dim)
         return curves + offsets[:, None, :]

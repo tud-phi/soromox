@@ -53,7 +53,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             backbone_thickness: Line thickness for backbone (None = auto)
             base_radius_scale: Multiplier applied to the cross-section span for the base marker
             length_scale: Scale factor for robot in image (robot occupies height/length_scale)
-            origin_uv: Pixel coordinates of robot base (None = center of image)
+            origin_uv: Pixel coordinates of world origin (None = center of image)
         """
         super().__init__(robot, width, height, num_points, background_color)
 
@@ -116,11 +116,31 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             base_radius_m = 0.02 * self.L_max
         return max(2, int(base_radius_m * ppm))
 
-    def render_frame(self, q: Array) -> np.ndarray:
+    def _world_to_pixel(
+        self,
+        points: np.ndarray,
+        *,
+        origin_uv: np.ndarray,
+        ppm: float,
+    ) -> np.ndarray:
+        """Map planar world xy coordinates to OpenCV pixel coordinates."""
+        pts = np.asarray(points, dtype=float)
+        px = (pts * ppm).astype(np.int32)
+        px[..., 1] = -px[..., 1]
+        return origin_uv + px
+
+    def render_frame(
+        self,
+        q: Array,
+        *,
+        base_offsets: Array | None = None,
+    ) -> np.ndarray:
         """Render single configuration to BGR image array.
 
         Args:
             q: Robot configuration array of shape (DOF,) for a single robot.
+            base_offsets: Optional positional offset with shape ``(2,)`` or
+                ``(3,)``. The z component is ignored for this planar renderer.
 
         Returns:
             img (np.ndarray): BGR image of shape (height, width, 3), dtype uint8.
@@ -130,7 +150,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         # Pixel per meter
         ppm = h / (self.length_scale * self.L_max)
 
-        # Robot origin in pixel coordinates
+        # World origin in pixel coordinates
         if self.origin_uv is None:
             origin_uv = np.array([w // 2, h // 2], dtype=np.int32)
         else:
@@ -142,18 +162,16 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         )  # RGB to BGR
         img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
 
-        # Draw base marker
-        base_radius = self._base_radius_px(ppm, q)
-        cv2.circle(img, tuple(origin_uv), base_radius, self.base_color, -1)
-
         # Compute backbone curve in pixel coordinates (N, 2)
         curve = np.asarray(self.compute_backbone_curve(q), dtype=float)
         if curve.ndim != 2 or curve.shape[1] != 2:
             raise ValueError(
                 f"Expected planar backbone curve of shape (N, 2), got {curve.shape}"
             )
-        curve_px = (curve * ppm).astype(np.int32)
-        curve_px[:, 1] = -curve_px[:, 1]  # Invert y for image coordinates
+        offset = self._single_base_offset(base_offsets, target_dim=2)
+        if offset is not None:
+            curve = curve + np.asarray(offset)
+        curve_uv = self._world_to_pixel(curve, origin_uv=origin_uv, ppm=ppm)
 
         lengths = self.robot.segment_length
         thicknesses, uniform_thickness = self._auto_backbone_thickness(ppm, lengths, q)
@@ -170,7 +188,7 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                     selector = (s_ps >= L_cum[segment_idx]) & (
                         s_ps < L_cum[segment_idx + 1]
                     )
-                segment_curve = origin_uv + curve_px[selector]
+                segment_curve = curve_uv[selector]
                 if segment_curve.shape[0] > 1:
                     cv2.polylines(
                         img,
@@ -180,7 +198,6 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                         thickness=int(thicknesses[segment_idx]),
                     )
         else:
-            curve_uv = origin_uv + curve_px
             if curve_uv.shape[0] > 1:
                 cv2.polylines(
                     img,
@@ -190,15 +207,22 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                     thickness=int(uniform_thickness),
                 )
 
+        # Draw base marker at the transformed base position after the backbone
+        # so it remains visible.
+        base_radius = self._base_radius_px(ppm, q)
+        cv2.circle(img, tuple(curve_uv[0]), base_radius, self.base_color, -1)
+
         return img
 
-    def show(self, q: Array) -> None:
+    def show(self, q: Array, *, base_offsets: Array | None = None) -> None:
         """Display single frame in OpenCV window.
 
         Args:
             q: Robot configuration array of shape (DOF,).
+            base_offsets: Optional positional offset with shape ``(2,)`` or
+                ``(3,)``.
         """
-        img = self.render_frame(q)
+        img = self.render_frame(q, base_offsets=base_offsets)
         win = "Planar Renderer"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.imshow(win, img)

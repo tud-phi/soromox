@@ -79,11 +79,17 @@ def _make_base_plate(
     resolution: int = 48,
     apply_color: bool = True,
     apply_translation: bool = True,
+    normal_xyz: np.ndarray | None = None,
 ) -> o3d.geometry.TriangleMesh:
     """Create a base plate cylinder mesh."""
     mesh = o3d.geometry.TriangleMesh.create_cylinder(
         radius=float(radius), height=float(thickness), resolution=resolution, split=1
     )
+    if normal_xyz is not None:
+        R = _axis_alignment_rotation(normal_xyz)
+        transform = np.eye(4)
+        transform[:3, :3] = R
+        mesh.transform(transform)
     mesh.compute_vertex_normals()
     if apply_color:
         mesh.paint_uniform_color(np.array(color, dtype=np.float64))
@@ -864,11 +870,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         offsets = base_offsets if base_offsets is not None else self._base_offsets
         if offsets is None:
             offsets = self._compute_grid_offsets(int(N), self.grid_spacing)
-        offsets = jnp.asarray(offsets)
-        if offsets.ndim != 2 or offsets.shape[0] != N:
-            raise ValueError(
-                f"base_offsets must have shape (N, 2/3); got {offsets.shape}"
-            )
+        offsets = self._normalize_base_offsets(
+            offsets,
+            num_robots=int(N),
+            target_dim=3,
+        )
 
         # Backbone curves (T, N, P, 3) -> (N, T, P, 3)
         q_ts_time_first = q_ts_arr.transpose(1, 0, 2)
@@ -953,13 +959,15 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q_frame = scene_data.q_ts[robot_idx, frame_idx]
             sections, max_radius = self._cross_sections_for_points(q_frame, s_ps)
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
+            base_axis = self._base_tangent_axis(dim=3)
             base_mesh = _make_base_plate(
-                curve[0],
+                curve[0] - 0.5 * self.base_plate_thickness * base_axis,
                 radius=float(self.base_plate_radius_scale * max_radius),
                 thickness=self.base_plate_thickness,
                 color=tuple(base_color_rgba[:3]),
                 apply_color=False,
                 apply_translation=True,
+                normal_xyz=base_axis,
             )
             scene.add_geometry(f"base_{robot_idx}", base_mesh, mat_for(base_color_rgba))
 
@@ -1499,11 +1507,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     ) -> tuple[object, list[list[CachedMesh]]]:
         """Add base and backbone meshes for one robot; return handles."""
         base_color = self._blend_with_background(base_plate_color)
+        base_axis = self._base_tangent_axis(dim=3)
         base_mesh = _make_base_plate(
-            curve0[0],
+            curve0[0] - 0.5 * self.base_plate_thickness * base_axis,
             radius=float(self.base_plate_radius_scale * max_radius),
             thickness=self.base_plate_thickness,
             color=base_color,
+            normal_xyz=base_axis,
         )
         vis.add_geometry(base_mesh)
 
@@ -1570,7 +1580,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         layout: SegmentLayout,
     ) -> None:
         """Translate base and backbone geometry to a new curve position."""
-        delta = curve[0] - _mesh_center(base_mesh)
+        base_axis = self._base_tangent_axis(dim=3)
+        base_center = curve[0] - 0.5 * self.base_plate_thickness * base_axis
+        delta = base_center - _mesh_center(base_mesh)
         base_mesh.translate(delta, relative=True)
         vis.update_geometry(base_mesh)
 
@@ -1618,6 +1630,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 "Open3D viewer assumes cross_section_geometry is configuration-independent; "
                 "geometry is frozen to the first frame.",
                 RuntimeWarning,
+                stacklevel=2,
             )
             self._warned_dynamic_geometry = True
 

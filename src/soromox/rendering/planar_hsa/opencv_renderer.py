@@ -85,11 +85,18 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         """Extract xy from SE(2) poses [theta, x, y]."""
         return poses[:, 1:3]
 
-    def render_frame(self, q: Array) -> np.ndarray:
+    def render_frame(
+        self,
+        q: Array,
+        *,
+        base_offsets: Array | None = None,
+    ) -> np.ndarray:
         """Render single configuration to BGR image array.
 
         Args:
             q: Robot configuration array
+            base_offsets: Optional positional offset with shape ``(2,)`` or
+                ``(3,)``. The z component is ignored for this planar renderer.
 
         Returns:
             BGR image as numpy array of shape (height, width, 3), dtype uint8
@@ -109,13 +116,21 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
         chiR_ps = self._batched_fk_rod(q, s_ps, 1)  # right rod
         chip_ps = self._batched_fk_platform(q, jnp.arange(0, robot.num_segments))
 
+        offset = self._single_base_offset(base_offsets, target_dim=2)
+        if offset is not None:
+            offset_jax = jnp.asarray(offset, dtype=chiv_ps.dtype)
+            chiv_ps = chiv_ps.at[1:3, :].add(offset_jax[:, None])
+            chiL_ps = chiL_ps.at[1:3, :].add(offset_jax[:, None])
+            chiR_ps = chiR_ps.at[1:3, :].add(offset_jax[:, None])
+            chip_ps = chip_ps.at[:, 1:3].add(offset_jax[None, :])
+
         # Initialize white background
         bg_uint8 = tuple(
             int(c * 255) for c in self.background_color[::-1]
         )  # RGB to BGR
         img = np.full((h, w, 3), bg_uint8, dtype=np.uint8)
 
-        # Robot origin in pixel coordinates
+        # World origin in pixel coordinates
         uv_robot_origin = np.array([w // 2, int(h * 0.9)], dtype=np.int32)
         uv_robot_origin_jax = jnp.array(uv_robot_origin)
 
@@ -128,9 +143,14 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
 
         batched_chi2u = vmap(chi2u, in_axes=-1, out_axes=0)
 
-        # Draw base
+        base_xy = self._base_position(dim=2)
+        if offset is not None:
+            base_xy = base_xy + np.asarray(offset)
+        base_uv = np.asarray(chi2u(jnp.array([0.0, base_xy[0], base_xy[1]])))
+
+        # Draw base support below the transformed base position.
         cv2.rectangle(
-            img, (0, uv_robot_origin[1]), (w, h), color=self.base_color, thickness=-1
+            img, (0, int(base_uv[1])), (w, h), color=self.base_color, thickness=-1
         )
 
         # Add proximal and distal cap points to backbone
@@ -247,13 +267,15 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
 
         return img
 
-    def show(self, q: Array) -> None:
+    def show(self, q: Array, *, base_offsets: Array | None = None) -> None:
         """Display single frame in OpenCV window.
 
         Args:
             q: Robot configuration
+            base_offsets: Optional positional offset with shape ``(2,)`` or
+                ``(3,)``.
         """
-        img = self.render_frame(q)
+        img = self.render_frame(q, base_offsets=base_offsets)
         win = "Planar HSA"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.imshow(win, img)

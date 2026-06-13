@@ -21,6 +21,7 @@ from numpy.testing import assert_allclose
 from soromox.utils.rotations import (
     RotationRepresentation,
     angle_error,
+    normalize_quaternion,
     quaternion_conjugate,
     quaternion_multiply,
     quaternion_to_rotation_matrix,
@@ -54,6 +55,21 @@ def rotation_matrix_from_axis_angle(axis, angle):
     )
     R = np.eye(3) + np.sin(angle) * K + (1 - np.cos(angle)) * K @ K
     return jnp.array(R)
+
+
+def test_normalize_quaternion_uses_configurable_eps():
+    q = jnp.array([1e-8, 1e-8, 0.0, 0.0])
+
+    assert_allclose(
+        normalize_quaternion(q, eps=1e-6),
+        jnp.array([1.0, 0.0, 0.0, 0.0]),
+        atol=1e-12,
+    )
+    assert_allclose(
+        normalize_quaternion(q, eps=1e-10),
+        jnp.array([jnp.sqrt(0.5), jnp.sqrt(0.5), 0.0, 0.0]),
+        atol=1e-12,
+    )
 
 
 class TestRotationMatrixToQuaternion:
@@ -105,9 +121,7 @@ class TestRotationMatrixToQuaternion:
             for axis in [[1, 0, 0], [0, 1, 0], [0, 0, 1], [1, 1, 1]]:
                 R = rotation_matrix_from_axis_angle(axis, angle)
                 q = rotation_matrix_to_quaternion(R)
-                assert q[0] >= 0, (
-                    f"scalar component should be non-negative, got {q[0]}"
-                )
+                assert q[0] >= 0, f"scalar component should be non-negative, got {q[0]}"
 
     def test_custom_eps(self):
         """Test that custom eps parameter works."""
