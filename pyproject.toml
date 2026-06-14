@@ -154,6 +154,7 @@ examples = [
     "optimistix",
     "plotly",
     "seaborn",
+    "trimesh",
     "viser",
 ]
 rendering = [
@@ -162,6 +163,7 @@ rendering = [
     "open3d>=0.18",
     "opencv-python",
     "plotly",
+    "trimesh",
     "viser",
 ]
 test = [
@@ -195,6 +197,7 @@ all = [
     "ruff",
     "seaborn",
     "tox",
+    "trimesh",
     "viser",
 ]
 
