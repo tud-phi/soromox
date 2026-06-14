@@ -6,6 +6,7 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 import soromox.actuation.tendon_actuation as act
+from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.systems.gvs.params import TendonActuatedGVSParams
 from soromox.systems.gvs.structures import GVSStructure
 from soromox.systems.params import (
@@ -577,6 +578,40 @@ class TendonActuatedGVS(GVS):
         if passive_pos.size == 0:
             return active_pos
         return jnp.concatenate([active_pos, passive_pos], axis=0)
+
+    def actuator_visual_layers(
+        self,
+        q: Array,
+        s_points: Array,
+        *,
+        actuator_inputs: Array | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Return renderer-facing actuator geometry for active and passive tendons."""
+        del actuator_inputs
+        layers: list[ActuatorVisualLayer] = []
+        if self.active_tendon_routing.num_tendons > 0:
+            active_points = vmap(
+                lambda s: self.forward_kinematics_active_tendons(q, s)
+            )(s_points)
+            layers.append(
+                ActuatorVisualLayer(
+                    name="active_tendons",
+                    kind="tendon",
+                    points=active_points.transpose(1, 0, 2),
+                )
+            )
+        if self.passive_tendon_routing.num_tendons > 0:
+            passive_points = vmap(
+                lambda s: self.forward_kinematics_passive_tendons(q, s)
+            )(s_points)
+            layers.append(
+                ActuatorVisualLayer(
+                    name="passive_tendons",
+                    kind="tendon",
+                    points=passive_points.transpose(1, 0, 2),
+                )
+            )
+        return tuple(layers)
 
     @eqx.filter_jit
     def _forward_kinematics_tendons(

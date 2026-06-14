@@ -62,7 +62,7 @@ Alpha values in per-robot colors propagate to more specific colors when those om
 Main color configuration container for all renderers.
 
 ```python
-from soromox.rendering import BackboneColorConfig, RendererColorConfig
+from soromox.rendering import ActuatorStyleConfig, BackboneColorConfig, RendererColorConfig
 
 color_config = RendererColorConfig(
     backbone=BackboneColorConfig(
@@ -70,7 +70,7 @@ color_config = RendererColorConfig(
         segment_palette="soromox:ember",
     ),
     base_plate_color=(0.5, 0.5, 0.5),
-    tendon_color=(0.8, 0.2, 0.2),
+    actuators=ActuatorStyleConfig(default_color=(0.8, 0.2, 0.2)),
 )
 
 renderer.show(q, color_config=color_config)

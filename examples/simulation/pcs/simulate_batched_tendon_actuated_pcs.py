@@ -11,6 +11,7 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 from soromox.rendering import (
+    ActuatorStyleConfig,
     BackboneColorConfig,
     MatplotlibRenderer,
     Open3DRenderer,
@@ -133,10 +134,10 @@ def main():
         num_points=60,
         line_width=2.5,
         grid_spacing=grid_spacing,
-        tendon_line_width=2.0,
+        actuator_line_width=2.0,
         color_config=RendererColorConfig(
             backbone=BackboneColorConfig(robot_palette="plasma"),
-            tendon_color=(0.9, 0.1, 0.1),
+            actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1)),
         ),
     )
     # q_ts_batched is (N, T, DOF); animate in slider mode for quick inspection
@@ -174,7 +175,7 @@ def main():
         playback_speed=1.0,
         autoplay=True,
         loop=True,
-        render_tendons=True,
+        render_actuators=True,
         record_path="videos/batched_tendon_actuated_pcs_viser.mp4",
     )
 

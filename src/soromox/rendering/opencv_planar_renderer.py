@@ -36,6 +36,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         base_color: tuple[int, int, int] = (0, 255, 0),
         backbone_color: tuple[int, int, int] = (0, 0, 0),
         backbone_thickness: int | None = None,
+        actuator_color: tuple[int, int, int] = (40, 40, 230),
+        actuator_thickness: int = 2,
         base_radius_scale: float = 2.0,
         length_scale: float = 2.0,
         origin_uv: tuple[int, int] | None = None,
@@ -51,6 +53,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             base_color: BGR color for base marker
             backbone_color: BGR color for backbone
             backbone_thickness: Line thickness for backbone (None = auto)
+            actuator_color: BGR color for actuator visual layers
+            actuator_thickness: Line thickness for actuator visual layers
             base_radius_scale: Multiplier applied to the cross-section span for the base marker
             length_scale: Scale factor for robot in image (robot occupies height/length_scale)
             origin_uv: Pixel coordinates of world origin (None = center of image)
@@ -60,6 +64,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         self.base_color = base_color
         self.backbone_color = backbone_color
         self.backbone_thickness = backbone_thickness
+        self.actuator_color = actuator_color
+        self.actuator_thickness = int(actuator_thickness)
         self.base_radius_scale = float(base_radius_scale)
         self.length_scale = length_scale
         self.origin_uv = origin_uv
@@ -134,6 +140,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
         q: Array,
         *,
         base_offsets: Array | None = None,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
     ) -> np.ndarray:
         """Render single configuration to BGR image array.
 
@@ -141,6 +149,8 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
             q: Robot configuration array of shape (DOF,) for a single robot.
             base_offsets: Optional positional offset with shape ``(2,)`` or
                 ``(3,)``. The z component is ignored for this planar renderer.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
         Returns:
             img (np.ndarray): BGR image of shape (height, width, 3), dtype uint8.
@@ -207,6 +217,34 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
                     thickness=int(uniform_thickness),
                 )
 
+        if render_actuators and self._has_actuator_visuals:
+            actuator_offset = (
+                np.zeros((1, 2), dtype=float)
+                if offset is None
+                else np.asarray(offset, dtype=float).reshape(1, -1)
+            )
+            actuator_layers = self.compute_actuator_visual_layers_batched(
+                np.asarray(q).reshape(1, -1),
+                actuator_offset,
+                actuator_inputs=actuator_inputs,
+            )
+            for layer in actuator_layers:
+                points = np.asarray(layer.points, dtype=float)
+                for actuator_idx in range(points.shape[1]):
+                    path_uv = self._world_to_pixel(
+                        points[0, actuator_idx, :, :2],
+                        origin_uv=origin_uv,
+                        ppm=ppm,
+                    )
+                    if path_uv.shape[0] > 1:
+                        cv2.polylines(
+                            img,
+                            [path_uv],
+                            isClosed=False,
+                            color=self.actuator_color,
+                            thickness=max(1, self.actuator_thickness),
+                        )
+
         # Draw base marker at the transformed base position after the backbone
         # so it remains visible.
         base_radius = self._base_radius_px(ppm, q)
@@ -214,15 +252,29 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
 
         return img
 
-    def show(self, q: Array, *, base_offsets: Array | None = None) -> None:
+    def show(
+        self,
+        q: Array,
+        *,
+        base_offsets: Array | None = None,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
+    ) -> None:
         """Display single frame in OpenCV window.
 
         Args:
             q: Robot configuration array of shape (DOF,).
             base_offsets: Optional positional offset with shape ``(2,)`` or
                 ``(3,)``.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
         """
-        img = self.render_frame(q, base_offsets=base_offsets)
+        img = self.render_frame(
+            q,
+            base_offsets=base_offsets,
+            render_actuators=render_actuators,
+            actuator_inputs=actuator_inputs,
+        )
         win = "Planar Renderer"
         cv2.namedWindow(win, cv2.WINDOW_NORMAL)
         cv2.imshow(win, img)

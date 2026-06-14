@@ -601,6 +601,33 @@ def test_passive_tendons_contribute_to_elastic_terms():
     )
 
 
+def test_tendon_actuated_pcs_exposes_actuator_visual_layers():
+    active_params = _stacked_tendon_params(2, 3)
+    passive_routing_params = _stacked_tendon_params(2, 2)
+    passive_tendon_phys = passive_tendon_params(
+        stiffness=jnp.array([40.0, 60.0]),
+        damping=jnp.array([0.2, 0.4]),
+        rest_length_offset=jnp.array([0.0, 0.01]),
+    )
+    robot = _create_robot(
+        jnp.array([0.2, 0.25]),
+        active_params,
+        passive_tendon_routing=passive_routing_params,
+        passive_tendon=passive_tendon_phys,
+    )
+    q = jnp.zeros((int(robot.num_active_strains),), dtype=jnp.float64)
+    s_points = jnp.linspace(0.0, float(robot.length), 7)
+
+    layers = robot.actuator_visual_layers(q, s_points)
+
+    assert len(layers) == 2
+    assert layers[0].name == "active_tendons"
+    assert layers[0].kind == "tendon"
+    assert layers[0].points.shape == (3, 7, 3)
+    assert layers[1].name == "passive_tendons"
+    assert layers[1].points.shape == (2, 7, 3)
+
+
 def test_update_tendon_params():
     """Verify the update of active and passive tendon parameters."""
 

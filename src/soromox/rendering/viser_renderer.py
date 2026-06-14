@@ -42,6 +42,7 @@ except ImportError:
     VISER_AVAILABLE = False
     go = None
 
+from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
@@ -80,7 +81,8 @@ class SceneHandles:
     # Robot geometry handles - indexed [robot_idx][point_idx]
     base_plates: list = field(default_factory=list)
     backbone_points: list[list] = field(default_factory=list)
-    tendon_lines: list = field(default_factory=list)
+    actuator_lines: list = field(default_factory=list)
+    actuator_line_keys: list[str] = field(default_factory=list)
 
     # Track if geometry has been initially built (for efficient updates)
     geometry_initialized: bool = False
@@ -205,7 +207,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 0.06,
-        tendon_line_width: float = 3.0,
+        actuator_line_width: float = 3.0,
         camera_fov: float = 75.0,
         # Lighting parameters
         enable_default_lights: bool = True,
@@ -245,7 +247,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Explicit base position offsets (N, 3)
             base_plate_radius_scale: Base plate radius relative to robot radius
             base_plate_thickness: Base plate thickness in meters
-            tendon_line_width: Line width for tendon visualization
+            actuator_line_width: Line width for actuator visualization
             camera_fov: Camera field of view in degrees
             enable_default_lights: Enable Viser's default lighting
             add_directional_light: Add custom directional light
@@ -288,7 +290,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._base_offsets = base_offsets
         self._base_plate_radius_scale = base_plate_radius_scale
         self._base_plate_thickness = base_plate_thickness
-        self._tendon_line_width = tendon_line_width
+        self._actuator_line_width = actuator_line_width
         self._camera_fov = camera_fov
         self._open_browser = open_browser
 
@@ -577,71 +579,123 @@ class ViserRenderer(BaseSoftRobotRenderer):
             wxyz=base_wxyz,
         )
 
-    def _build_tendon_geometry(
+    def _build_actuator_geometry(
         self,
         q: Array,
         base_offsets: np.ndarray,
         num_robots: int,
         *,
-        tendon_color: tuple[float, float, float] | None = None,
+        color_config: RendererColorConfig | None = None,
+        actuator_inputs: Array | None = None,
     ) -> None:
-        """Build tendon line geometry in the scene.
+        """Build actuator line geometry in the scene.
 
         Args:
             q: Robot configurations (num_robots, DOF)
             base_offsets: Base position offsets (num_robots, 3)
             num_robots: Number of robots
+            color_config: Shared renderer color configuration.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
         """
-        if not self._has_tendons or self._server is None or self._scene_handles is None:
+        if (
+            not self._has_actuator_visuals
+            or self._server is None
+            or self._scene_handles is None
+        ):
             return
 
-        # Clear existing tendon geometry
-        self._scene_handles.tendon_lines = []
-
-        # Compute tendon curves for all robots at once using batched method
-        # Returns shape (num_robots, num_tendons, num_points, 3) or None
-        tendon_curves = self.compute_tendon_curves_batched(q, jnp.asarray(base_offsets))
-
-        if tendon_curves is None:
-            return
-
-        tendon_curves = np.asarray(
-            tendon_curves
-        )  # (num_robots, num_tendons, num_points, 3)
-
-        color_arr = (
-            np.array(tendon_color)
-            if tendon_color is not None
-            else np.array(self.color_config.tendon_color)
+        actuator_layers = self.compute_actuator_visual_layers_batched(
+            q,
+            jnp.asarray(base_offsets),
+            actuator_inputs=actuator_inputs,
         )
-        color = _rgb_to_viser_color(color_arr)
+        cfg = color_config or self.color_config
+        line_specs = []
 
-        # Process all robots and tendons
-        for robot_idx in range(num_robots):
-            robot_tendon_curves = tendon_curves[
-                robot_idx
-            ]  # (num_tendons, num_points, 3)
-            num_tendons = robot_tendon_curves.shape[0]
+        if len(self._scene_handles.actuator_line_keys) > len(
+            self._scene_handles.actuator_lines
+        ):
+            self._scene_handles.actuator_line_keys = (
+                self._scene_handles.actuator_line_keys[
+                    : len(self._scene_handles.actuator_lines)
+                ]
+            )
 
-            for tendon_idx in range(num_tendons):
-                tendon_curve = robot_tendon_curves[tendon_idx]  # (num_points, 3)
-
-                # Create line segments for each tendon
-                # Viser expects shape (N, 2, 3) for N line segments
-                num_segments = len(tendon_curve) - 1
-                if num_segments > 0:
-                    # Reshape to (N, 2, 3) where each segment has start and end points
+        for layer_idx, layer in enumerate(actuator_layers):
+            layer_points = np.asarray(layer.points)
+            layer_colors = resolve_actuator_rgba(
+                layer,
+                default_color=cfg.actuators.default_color,
+                scalar_colormap=cfg.actuators.scalar_colormap,
+            )
+            line_width = layer.line_width or self._actuator_line_width
+            for robot_idx in range(num_robots):
+                for actuator_idx in range(layer_points.shape[1]):
+                    curve = layer_points[robot_idx, actuator_idx]
+                    num_segments = len(curve) - 1
+                    if num_segments <= 0:
+                        continue
                     points = np.stack(
-                        [tendon_curve[:-1], tendon_curve[1:]], axis=1
-                    )  # (num_segments, 2, 3)
-
-                    handle = self._server.scene.add_line_segments(
-                        name=f"/robots/robot_{robot_idx}/tendons/tendon_{tendon_idx}",
-                        points=points,
-                        colors=np.tile(color, (num_segments, 2, 1)).astype(np.uint8),
-                        line_width=self._tendon_line_width,
+                        [curve[:-1], curve[1:]], axis=1
                     )
-                    self._scene_handles.tendon_lines.append(handle)
+                    color = _rgb_to_viser_color(
+                        layer_colors[robot_idx, actuator_idx, :3]
+                    )
+                    line_specs.append(
+                        (
+                            (
+                                f"/robots/robot_{robot_idx}/actuators/"
+                                f"{layer_idx}_{layer.name}_{actuator_idx}"
+                            ),
+                            points.astype(np.float32),
+                            np.tile(color, (num_segments, 2, 1)).astype(np.uint8),
+                            line_width,
+                        )
+                    )
+
+        if len(self._scene_handles.actuator_lines) > len(line_specs):
+            for handle in self._scene_handles.actuator_lines[len(line_specs) :]:
+                if hasattr(handle, "remove"):
+                    handle.remove()
+            self._scene_handles.actuator_lines = self._scene_handles.actuator_lines[
+                : len(line_specs)
+            ]
+            self._scene_handles.actuator_line_keys = (
+                self._scene_handles.actuator_line_keys[: len(line_specs)]
+            )
+
+        for line_idx, (name, points, colors, line_width) in enumerate(line_specs):
+            if (
+                line_idx < len(self._scene_handles.actuator_lines)
+                and line_idx < len(self._scene_handles.actuator_line_keys)
+                and self._scene_handles.actuator_line_keys[line_idx] == name
+            ):
+                handle = self._scene_handles.actuator_lines[line_idx]
+                handle.points = points
+                handle.colors = colors
+                handle.line_width = line_width
+                continue
+
+            if line_idx < len(self._scene_handles.actuator_lines):
+                handle = self._scene_handles.actuator_lines[line_idx]
+                if hasattr(handle, "remove"):
+                    handle.remove()
+
+            handle = self._server.scene.add_line_segments(
+                name=name,
+                points=points,
+                colors=colors,
+                line_width=line_width,
+            )
+            if line_idx < len(self._scene_handles.actuator_lines):
+                self._scene_handles.actuator_lines[line_idx] = handle
+                if line_idx < len(self._scene_handles.actuator_line_keys):
+                    self._scene_handles.actuator_line_keys[line_idx] = name
+                else:
+                    self._scene_handles.actuator_line_keys.append(name)
+            else:
+                self._scene_handles.actuator_lines.append(handle)
+                self._scene_handles.actuator_line_keys.append(name)
 
     def _make_cylinder_trimesh(
         self,
@@ -949,6 +1003,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -963,6 +1019,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 3)
             color_config: Shared renderer color configuration
             camera_config: Camera configuration (fov, position, look_at, etc.)
+            render_actuators: If True, render actuator visual layers.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1012,6 +1070,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_plate_color=cfg.base_plate_color,
         )
 
+        if render_actuators and self._has_actuator_visuals:
+            self._build_actuator_geometry(
+                q,
+                np.asarray(base_offsets),
+                num_robots,
+                color_config=cfg,
+                actuator_inputs=actuator_inputs,
+            )
+
         # Add static spheres if provided
         if static_spheres_positions is not None:
             self._build_static_spheres(
@@ -1050,7 +1117,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1065,7 +1133,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Base position offsets (N, 3)
             color_config: Shared renderer color configuration
             camera_config: Camera configuration (fov, position, look_at, etc.)
-            render_tendons: If True, render tendons (if available)
+            render_actuators: If True, render actuator visual layers.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             static_spheres_positions: Static sphere positions (M, 3)
             static_spheres_radii: Static sphere radii (M,)
             static_spheres_colors: Static sphere colors (M, 3)
@@ -1112,10 +1181,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_plate_color=cfg.base_plate_color,
         )
 
-        # Add tendon visualization if available and requested
-        if render_tendons and self._has_tendons:
-            self._build_tendon_geometry(
-                q, np.asarray(base_offsets), num_robots, tendon_color=cfg.tendon_color
+        if render_actuators and self._has_actuator_visuals:
+            self._build_actuator_geometry(
+                q,
+                np.asarray(base_offsets),
+                num_robots,
+                color_config=cfg,
+                actuator_inputs=actuator_inputs,
             )
 
         # Add static spheres if provided
@@ -1163,7 +1235,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         multi_robot_layout: Literal["grid", "overlay"] = "grid",
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
@@ -1173,7 +1246,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_colors: Array | None = None,
         blocking: bool = True,
         plot_configurations: bool = False,
-        plot_tendon_positions: bool = False,
+        plot_actuator_positions: bool = False,
         custom_plots: dict[str, tuple] | None = None,
         robot_name: str = "Robot",
     ) -> None:
@@ -1191,7 +1264,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
             color_config: Shared renderer color configuration
-            render_tendons: If True, render tendons (if available)
+            render_actuators: If True, render actuator visual layers.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             multi_robot_layout: "grid" for side-by-side, "overlay" for same position
             static_spheres_positions: Static sphere positions
             static_spheres_radii: Static sphere radii
@@ -1201,7 +1275,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             dynamic_spheres_colors: Time-varying sphere colors
             blocking: If True, block until viewer closes
             plot_configurations: If True, add configuration vs time plot to GUI
-            plot_tendon_positions: If True, add tendon position plot to GUI
+            plot_actuator_positions: If True, add actuator coordinate plot to GUI
             custom_plots: Dictionary mapping plot names to (figure, aspect) tuples
                          for custom plotly figures to add to the GUI
             robot_name: Name for plot titles
@@ -1212,9 +1286,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
 
-        if q_ts.ndim == 3 and (plot_configurations or plot_tendon_positions):
+        if q_ts.ndim == 3 and (plot_configurations or plot_actuator_positions):
             raise ValueError(
-                "Plotting configurations or tendon positions requires q_ts with shape "
+                "Plotting configurations or actuator positions requires q_ts with shape "
                 "(T, DOF); got batched (N, T, DOF)."
             )
 
@@ -1276,13 +1350,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_plate_color=cfg.base_plate_color,
         )
 
-        # Add tendon visualization if available and requested
-        if render_tendons and self._has_tendons:
-            self._build_tendon_geometry(
+        if render_actuators and self._has_actuator_visuals:
+            self._build_actuator_geometry(
                 q_ts[:, 0, :],
                 np.asarray(base_offsets),
                 num_robots,
-                tendon_color=cfg.tendon_color,
+                color_config=cfg,
+                actuator_inputs=self._actuator_inputs_for_timestep(
+                    actuator_inputs,
+                    num_robots=int(num_robots),
+                    num_steps=int(num_frames),
+                    frame_idx=0,
+                ),
             )
 
         # Add static spheres
@@ -1330,7 +1409,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._setup_playback_gui()
 
         # Add plots after playback controls (so they appear at the end)
-        if plot_configurations or plot_tendon_positions or custom_plots:
+        if plot_configurations or plot_actuator_positions or custom_plots:
             with self._server.gui.add_folder("Plots"):
                 if plot_configurations:
                     config_fig = self.create_configuration_plot(
@@ -1338,11 +1417,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     )
                     self.add_gui_plotly("Configurations", config_fig, aspect=2.0)
 
-                if plot_tendon_positions and hasattr(self.robot, "tendon_length"):
-                    tendon_fig = self.create_tendon_position_plot(
+                if plot_actuator_positions:
+                    actuator_fig = self.create_actuator_position_plot(
                         ts, q_ts_for_plots, self.robot, robot_name=robot_name
                     )
-                    self.add_gui_plotly("Tendon Positions", tendon_fig, aspect=2.0)
+                    self.add_gui_plotly("Actuator Coordinates", actuator_fig, aspect=2.0)
 
                 # Add custom plots
                 if custom_plots:
@@ -1404,8 +1483,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                     base_offsets,
                                     resolved_colors.per_robot_point_rgba,
                                     base_plate_color=cfg.base_plate_color,
-                                    tendon_color=cfg.tendon_color,
-                                    render_tendons=render_tendons,
+                                    render_actuators=render_actuators,
+                                    actuator_inputs=self._actuator_inputs_for_timestep(
+                                        actuator_inputs,
+                                        num_robots=int(num_robots),
+                                        num_steps=int(num_frames),
+                                        frame_idx=next_idx,
+                                    ),
+                                    color_config=cfg,
                                 )
 
                                 # Record frame
@@ -1446,8 +1531,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         point_colors: np.ndarray,
         *,
         base_plate_color: tuple[float, float, float],
-        tendon_color: tuple[float, float, float],
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
+        color_config: RendererColorConfig | None = None,
     ) -> None:
         """Update scene for given frame index.
 
@@ -1478,13 +1564,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 curves, point_colors, base_plate_color=base_plate_color
             )
 
-        # Update tendon geometry if available and requested
-        if render_tendons and self._has_tendons:
-            self._build_tendon_geometry(
+        if render_actuators and self._has_actuator_visuals:
+            self._build_actuator_geometry(
                 q_frame,
                 np.asarray(base_offsets),
                 num_robots,
-                tendon_color=tendon_color,
+                color_config=color_config,
+                actuator_inputs=actuator_inputs,
             )
 
         # Update dynamic spheres
@@ -1634,19 +1720,19 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         return fig
 
-    def create_tendon_position_plot(
+    def create_actuator_position_plot(
         self,
         ts: Array | np.ndarray,
         q_ts: Array | np.ndarray,
         robot: SoftRobot,
         robot_name: str = "Robot",
     ) -> PlotlyFigure:
-        """Create a plotly figure showing tendon positions over time.
+        """Create a plotly figure showing actuator coordinates over time.
 
         Args:
             ts: Time array (T,)
             q_ts: Configuration array (T, DOF)
-            robot: Robot instance with tendon_length method
+            robot: Robot instance with actuated_coordinates or tendon_length method
             robot_name: Name for the plot title
 
         Returns:
@@ -1655,33 +1741,39 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if go is None:
             raise ImportError("plotly is required. Install with: pip install plotly")
 
-        if not hasattr(robot, "tendon_length"):
-            raise AttributeError("Robot does not have tendon_length method")
+        if hasattr(robot, "actuated_coordinates"):
+            coordinate_fn = robot.actuated_coordinates
+            yaxis_title = "Actuated coordinate"
+        elif hasattr(robot, "tendon_length"):
+            coordinate_fn = robot.tendon_length
+            yaxis_title = "Actuator length [m]"
+        else:
+            raise AttributeError(
+                "Robot does not have actuated_coordinates or tendon_length method"
+            )
 
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
         fig = go.Figure()
 
-        # Compute tendon lengths for all timesteps using vmap
-        tendon_lengths_ts = jax.vmap(robot.tendon_length)(q_ts)
-        tendon_lengths_ts = np.asarray(tendon_lengths_ts)  # (T, num_tendons)
-        num_tendons = tendon_lengths_ts.shape[1]
+        actuator_coordinates_ts = jax.vmap(coordinate_fn)(q_ts)
+        actuator_coordinates_ts = np.asarray(actuator_coordinates_ts)
+        num_actuators = actuator_coordinates_ts.shape[1]
 
-        # Plot each tendon
-        for i in range(num_tendons):
+        for i in range(num_actuators):
             fig.add_trace(
                 go.Scatter(
                     x=ts,
-                    y=tendon_lengths_ts[:, i],
+                    y=actuator_coordinates_ts[:, i],
                     mode="lines",
-                    name=f"Tendon {i}",
+                    name=f"Actuator {i}",
                 )
             )
 
         fig.update_layout(
-            title=f"{robot_name} - Tendon Positions vs Time",
+            title=f"{robot_name} - Actuator Coordinates vs Time",
             xaxis_title="Time [s]",
-            yaxis_title="Tendon Length [m]",
+            yaxis_title=yaxis_title,
             height=400,
             margin={"l": 50, "r": 50, "t": 50, "b": 50},
         )

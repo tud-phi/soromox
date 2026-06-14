@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from diffrax import Tsit5
 
 from soromox.rendering import (
+    ActuatorStyleConfig,
     MatplotlibRenderer,
     Open3DRenderer,
     RendererColorConfig,
@@ -219,12 +220,14 @@ if __name__ == "__main__":
         robot,
         num_points=60,
         line_width=2.5,
-        tendon_line_width=2.0,
-        color_config=RendererColorConfig(tendon_color=(0.9, 0.1, 0.1)),
+        actuator_line_width=2.0,
+        color_config=RendererColorConfig(
+            actuators=ActuatorStyleConfig(default_color=(0.9, 0.1, 0.1))
+        ),
     )
     # q_ts is (T, DOF); animate in slider mode for quick inspection
     matplotlib_renderer.animate(
-        ts=ts, q_ts=q_ts, mode="slider", show=True, render_tendons=True
+        ts=ts, q_ts=q_ts, mode="slider", show=True, render_actuators=True
     )
 
     # render using the Open3DRenderer
@@ -291,9 +294,9 @@ if __name__ == "__main__":
         playback_speed=1.0,
         loop=True,
         autoplay=True,
-        render_tendons=True,
+        render_actuators=True,
         plot_configurations=False,
-        plot_tendon_positions=True,
+        plot_actuator_positions=True,
         custom_plots={
             "Rotational Strains": (fig_rot, 2.0),
             "Linear Strains": (fig_lin, 2.0),

@@ -171,9 +171,13 @@ def test_umarm_viser_renderer_smoke() -> None:
     robot = make_robot()
     renderer = UMArmViserRenderer(robot, auto_start=False, open_browser=False)
     q = jnp.zeros((robot.num_dofs,))
-    curves = renderer.compute_tendon_curves_batched(q[None, :], jnp.zeros((1, 3)))
-    assert curves is not None
-    assert curves.shape == (1, robot.num_actuators, 2, 3)
+    layers = renderer.compute_actuator_visual_layers_batched(
+        q[None, :], jnp.zeros((1, 3))
+    )
+    assert len(layers) == 1
+    assert layers[0].name == "mckibben_muscles"
+    assert layers[0].kind == "muscle"
+    assert layers[0].points.shape == (1, robot.num_actuators, 2, 3)
     backbone = np.asarray(
         renderer.compute_backbone_curves_batched(q[None, :], jnp.zeros((1, 3)))
     )
@@ -244,15 +248,15 @@ def test_umarm_viser_live_mode_smoke() -> None:
         assert renderer._current_geometry_q.shape == (1, robot.num_dofs)
         assert renderer._scene_handles is not None
         assert len(renderer._scene_handles.base_plates) == 1
-        assert len(renderer._scene_handles.tendon_lines) == 1
-        assert renderer._scene_handles.tendon_lines[0].points.shape == (
+        assert len(renderer._scene_handles.actuator_lines) == 1
+        assert renderer._scene_handles.actuator_lines[0].points.shape == (
             robot.num_actuators,
             2,
             3,
         )
         base_handle = renderer._scene_handles.base_plates[0]
         body_handle = renderer._scene_handles.backbone_points[0][0]
-        actuator_handle = renderer._scene_handles.tendon_lines[0]
+        actuator_handle = renderer._scene_handles.actuator_lines[0]
 
         q_next = q.copy()
         q_next[0] = 0.1
@@ -260,7 +264,7 @@ def test_umarm_viser_live_mode_smoke() -> None:
 
         assert renderer._scene_handles.base_plates[0] is base_handle
         assert renderer._scene_handles.backbone_points[0][0] is body_handle
-        assert renderer._scene_handles.tendon_lines[0] is actuator_handle
+        assert renderer._scene_handles.actuator_lines[0] is actuator_handle
     finally:
         controller.stop()
         renderer.stop()

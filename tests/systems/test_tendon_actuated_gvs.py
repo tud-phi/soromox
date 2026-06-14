@@ -949,6 +949,13 @@ def test_passive_tendon_params_are_batched_for_gvs():
     assert robot.forward_kinematics_active_tendons(q, 0.1).shape == (2, 3)
     assert robot.forward_kinematics_passive_tendons(q, 0.1).shape == (2, 3)
     assert robot.forward_kinematics_tendons(q, 0.1).shape == (4, 3)
+    layers = robot.actuator_visual_layers(q, jnp.linspace(0.0, float(robot.length), 6))
+    assert len(layers) == 2
+    assert layers[0].name == "active_tendons"
+    assert layers[0].kind == "tendon"
+    assert layers[0].points.shape == (2, 6, 3)
+    assert layers[1].name == "passive_tendons"
+    assert layers[1].points.shape == (2, 6, 3)
     assert jnp.all(jnp.isfinite(robot.passive_tendon_length(q)))
     assert jnp.all(jnp.isfinite(robot.elastic_force(q)))
     assert jnp.all(jnp.isfinite(robot.damping_matrix(q)))

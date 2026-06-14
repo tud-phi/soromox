@@ -10,9 +10,15 @@ This module provides various backends for visualizing robots:
 - OpenCVPlanarRenderer: Generic renderer for planar robots
 """
 
+from soromox.rendering.actuators import (
+    ActuatorVisualLayer,
+    BatchedActuatorVisualLayer,
+    TrajectoryActuatorVisualLayer,
+)
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import (
+    ActuatorStyleConfig,
     BackboneColorConfig,
     ColorLegend,
     RendererColorConfig,
@@ -56,6 +62,7 @@ __all__ = [
     "BaseSoftRobotRenderer",
     # Configuration
     "CameraConfig",
+    "ActuatorStyleConfig",
     "BackboneColorConfig",
     "RendererColorConfig",
     "ColorLegend",
@@ -63,6 +70,9 @@ __all__ = [
     "list_builtin_themes",
     "get_color_theme",
     "VideoEncodingConfig",
+    "ActuatorVisualLayer",
+    "BatchedActuatorVisualLayer",
+    "TrajectoryActuatorVisualLayer",
     # Generic renderers
     "MatplotlibRenderer",
     "Open3DRenderer",

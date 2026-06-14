@@ -48,7 +48,7 @@ class UMArmViserRenderer(ViserRenderer):
         end_effector_radius: float = 0.010,
         end_effector_sphere_radius: float = 0.019,
         ujoint_disk_thickness: float = 0.010,
-        tendon_disk_thickness: float = 0.010,
+        actuator_disk_thickness: float = 0.010,
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -56,7 +56,6 @@ class UMArmViserRenderer(ViserRenderer):
             raise TypeError(
                 "UMArmViserRenderer requires a robot with mckibben_actuator_segments(q)."
         )
-        self._has_tendons = True
         self._actuator_color_mode = actuator_color_mode
         self._actuator_radius = actuator_radius
         self._rod_core_radius_scale = rod_core_radius_scale
@@ -64,31 +63,16 @@ class UMArmViserRenderer(ViserRenderer):
         self._end_effector_radius = end_effector_radius
         self._end_effector_sphere_radius = end_effector_sphere_radius
         self._ujoint_disk_thickness = ujoint_disk_thickness
-        self._tendon_disk_thickness = tendon_disk_thickness
+        self._actuator_disk_thickness = actuator_disk_thickness
         self._actuator_line_width = (
             actuator_line_width
             if actuator_line_width is not None
-            else self._tendon_line_width
+            else self._actuator_line_width
         )
         self._actuator_pressures: Array | None = None
         self._actuator_frame_idx = 0
         self._current_geometry_q: Array | None = None
         self._umarm_rigid_specs: list[_UMArmRigidSpecs] = []
-
-    def compute_tendon_curves_batched(
-        self, q_batch: Array, base_offsets: Array
-    ) -> Array | None:
-        """Return McKibben actuator endpoint segments as two-point curves."""
-        q_batch = jnp.asarray(q_batch)
-        if q_batch.ndim != 2:
-            raise ValueError(f"q_batch must have shape (N, DOF), got {q_batch.shape}.")
-        segments = jax.vmap(self.robot.mckibben_actuator_segments)(q_batch)
-        offsets = self._normalize_base_offsets(
-            base_offsets,
-            num_robots=int(q_batch.shape[0]),
-            target_dim=int(segments.shape[-1]),
-        )
-        return segments + offsets[:, None, None, :]
 
     def show(self, q: Array, *, pressures: Array | None = None, **kwargs) -> None:
         """Display a UMArm frame, optionally coloring actuators by pressure or force."""
@@ -97,7 +81,9 @@ class UMArmViserRenderer(ViserRenderer):
         self._actuator_pressures = None if pressures is None else jnp.asarray(pressures)
         self._actuator_frame_idx = 0
         kwargs.setdefault("camera_config", self._default_umarm_camera_config())
-        kwargs.setdefault("render_tendons", True)
+        kwargs.setdefault("render_actuators", True)
+        if pressures is not None:
+            kwargs.setdefault("actuator_inputs", pressures)
         super().show(q, **kwargs)
 
     def render_sequence(
@@ -119,7 +105,9 @@ class UMArmViserRenderer(ViserRenderer):
             self._actuator_color_mode = actuator_color_mode
         try:
             kwargs.setdefault("camera_config", self._default_umarm_camera_config())
-            kwargs.setdefault("render_tendons", True)
+            kwargs.setdefault("render_actuators", True)
+            if pressures is not None:
+                kwargs.setdefault("actuator_inputs", pressures)
             super().render_sequence(ts, q_ts, **kwargs)
         finally:
             self._actuator_color_mode = old_mode
@@ -348,14 +336,14 @@ class UMArmViserRenderer(ViserRenderer):
                     self.robot.mckibben_fixed_points[group_idx + 1, 0, 2]
                 )
                 for label, z_center in (
-                    ("upper_tendon_disk", upper_disk_z),
-                    ("lower_tendon_disk", lower_disk_z),
+                    ("upper_actuator_disk", upper_disk_z),
+                    ("lower_actuator_disk", lower_disk_z),
                 ):
                     handle = self._add_local_z_cylinder(
                         f"/robots/robot_{robot_idx}/umarm/{label}_{rod_link_idx}",
                         link_frame,
                         z_center,
-                        length=self._tendon_disk_thickness,
+                        length=self._actuator_disk_thickness,
                         radius=rod_radius,
                         color=disk_color,
                         handles=robot_handles,
@@ -366,7 +354,7 @@ class UMArmViserRenderer(ViserRenderer):
                         link_indices.append(int(rod_link_idx))
                         local_endpoints.append(
                             self._local_z_endpoints(
-                                float(z_center), self._tendon_disk_thickness
+                                float(z_center), self._actuator_disk_thickness
                             )
                         )
 
@@ -540,7 +528,15 @@ class UMArmViserRenderer(ViserRenderer):
         controller.start()
         return controller
 
-    def _pressures_for_frame(self, q: Array) -> Array | None:
+    def _pressures_for_frame(
+        self, q: Array, actuator_inputs: Array | None = None
+    ) -> Array | None:
+        if actuator_inputs is not None:
+            pressures = jnp.asarray(actuator_inputs)
+            if pressures.ndim == 1:
+                return jnp.broadcast_to(pressures, (q.shape[0], pressures.shape[0]))
+            if pressures.ndim == 2:
+                return pressures
         if self._actuator_pressures is None:
             return None
         pressures = self._actuator_pressures
@@ -573,14 +569,15 @@ class UMArmViserRenderer(ViserRenderer):
         self,
         q: Array,
         fallback_color: tuple[float, float, float] | None,
+        actuator_inputs: Array | None = None,
     ) -> np.ndarray:
         fallback = (
             np.asarray(fallback_color, dtype=np.float64)
             if fallback_color is not None
-            else np.asarray(self.color_config.tendon_color, dtype=np.float64)
+            else np.asarray(self.color_config.actuators.default_color, dtype=np.float64)
         )
         uniform = np.tile(_rgb255(fallback), (q.shape[0], self.robot.num_actuators, 1))
-        pressures = self._pressures_for_frame(q)
+        pressures = self._pressures_for_frame(q, actuator_inputs=actuator_inputs)
         if pressures is None or self._actuator_color_mode == "uniform":
             return uniform
         if self._actuator_color_mode == "pressure":
@@ -592,29 +589,37 @@ class UMArmViserRenderer(ViserRenderer):
             "actuator_color_mode must be one of 'uniform', 'pressure', or 'force'."
         )
 
-    def _build_tendon_geometry(
+    def _build_actuator_geometry(
         self,
         q: Array,
         base_offsets: np.ndarray,
         num_robots: int,
         *,
-        tendon_color: tuple[float, float, float] | None = None,
+        color_config=None,
+        actuator_inputs: Array | None = None,
     ) -> None:
         if self._server is None or self._scene_handles is None:
             return
 
         q = jnp.asarray(q)
-        actuator_segments = self.compute_tendon_curves_batched(q, jnp.asarray(base_offsets))
-        if actuator_segments is None:
-            return
+        actuator_segments = self.compute_actuator_visual_layers_batched(
+            q,
+            jnp.asarray(base_offsets),
+            actuator_inputs=actuator_inputs,
+        )[0].points
         actuator_segments_np = np.asarray(actuator_segments)
-        colors = self._actuator_colors(q, tendon_color)
+        cfg = color_config or self.color_config
+        colors = self._actuator_colors(
+            q,
+            cfg.actuators.default_color,
+            actuator_inputs=actuator_inputs,
+        )
 
-        if len(self._scene_handles.tendon_lines) > num_robots:
-            for handle in self._scene_handles.tendon_lines[num_robots:]:
+        if len(self._scene_handles.actuator_lines) > num_robots:
+            for handle in self._scene_handles.actuator_lines[num_robots:]:
                 if hasattr(handle, "remove"):
                     handle.remove()
-            self._scene_handles.tendon_lines = self._scene_handles.tendon_lines[
+            self._scene_handles.actuator_lines = self._scene_handles.actuator_lines[
                 :num_robots
             ]
 
@@ -625,8 +630,8 @@ class UMArmViserRenderer(ViserRenderer):
                 2,
                 axis=1,
             )
-            if robot_idx < len(self._scene_handles.tendon_lines):
-                handle = self._scene_handles.tendon_lines[robot_idx]
+            if robot_idx < len(self._scene_handles.actuator_lines):
+                handle = self._scene_handles.actuator_lines[robot_idx]
                 handle.points = points
                 handle.colors = segment_colors
                 handle.line_width = self._actuator_line_width
@@ -637,7 +642,7 @@ class UMArmViserRenderer(ViserRenderer):
                     colors=segment_colors,
                     line_width=self._actuator_line_width,
                 )
-                self._scene_handles.tendon_lines.append(handle)
+                self._scene_handles.actuator_lines.append(handle)
 
 
 class UMArmLiveModeController(LiveModeController):
@@ -723,10 +728,11 @@ class UMArmLiveModeController(LiveModeController):
                 self._resolved_colors.per_robot_point_rgba,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )
-        if self._renderer._has_tendons:
-            self._renderer._build_tendon_geometry(
+        if self._renderer._has_actuator_visuals:
+            self._renderer._build_actuator_geometry(
                 q,
                 np.asarray(base_offsets),
                 num_robots,
-                tendon_color=self._renderer.color_config.tendon_color,
+                color_config=self._renderer.color_config,
+                actuator_inputs=self._renderer._pressures_for_frame(q),
             )

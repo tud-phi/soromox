@@ -2,7 +2,7 @@
 
 Provides 3D visualization with:
 - Backbone as spheres (per-segment colors & radii)
-- Tendons as polyline LineSets (if robot supports forward_kinematics_tendons)
+- Actuators as polyline LineSets (if robot exposes actuator visual layers)
 - Recording frames to PNGs
 - Interactive camera controls
 
@@ -25,7 +25,6 @@ import os
 import time
 import warnings
 from dataclasses import dataclass
-from typing import cast
 
 import jax
 import jax.numpy as jnp
@@ -39,6 +38,10 @@ try:
 except ImportError:
     OPEN3D_AVAILABLE = False
 
+from soromox.rendering.actuators import (
+    TrajectoryActuatorVisualLayer,
+    resolve_actuator_rgba,
+)
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
@@ -407,7 +410,7 @@ class SceneData:
     ts: np.ndarray  # (T,)
     layout: SegmentLayout
     segment_colors_rgba: np.ndarray  # (N, S, 4)
-    tendon_curves: np.ndarray | None = None  # (N, T, n_tend, P, 3)
+    actuator_layers: tuple[TrajectoryActuatorVisualLayer, ...] = ()
     static_spheres: SphereSet | None = None
     dynamic_spheres: DynamicSpheres | None = None
 
@@ -432,7 +435,7 @@ class RecordingConfig:
 class SceneHandles:
     base_meshes: list
     backbone_meshes: list[list[list[CachedMesh]]]
-    tendon_lines: list[list]
+    actuator_lines: list[list[list]]
     static_meshes: list
     dynamic_meshes: list
     dynamic_trajs: list[np.ndarray]
@@ -447,7 +450,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     """Open3D visualization for any continuum soft robot.
 
     Provides interactive 3D visualization with spheres for backbone,
-    optional tendon rendering, and keyboard controls.
+    optional actuator rendering, and keyboard controls.
 
     Example:
         >>> renderer = Open3DRenderer(robot)
@@ -472,7 +475,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_plate_thickness: float = 0.06,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
-        tendon_line_width: float = 2.0,
+        actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
     ):
         """Initialize Open3D renderer.
@@ -492,7 +495,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_plate_thickness: Absolute thickness of the base plate geometry
             grid_spacing: (x, y) spacing between robot bases for batched rendering
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
-            tendon_line_width: Width of tendon lines
+            actuator_line_width: Width of actuator lines
             camera_margin_ratio: Margin ratio for camera bounding box
         """
         if not OPEN3D_AVAILABLE:
@@ -517,7 +520,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.tube_resolution = int(tube_resolution)
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
-        self.tendon_line_width = tendon_line_width
+        self.actuator_line_width = actuator_line_width
         self.camera_margin_ratio = camera_margin_ratio
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
@@ -835,7 +838,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         *,
         base_offsets: Array | None,
         color_config: RendererColorConfig | None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         static_spheres_positions: Array | None,
         static_spheres_radii: Array | None,
         static_spheres_colors: Array | None,
@@ -843,7 +847,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_radii: Array | None,
         dynamics_spheres_colors: Array | None,
     ) -> SceneData:
-        """Compute curves/tendons and validate auxiliary geometry."""
+        """Compute curves/actuators and validate auxiliary geometry."""
         ts_np = np.asarray(ts, dtype=np.float64).reshape(-1)
         q_ts_arr = jnp.asarray(q_ts)
 
@@ -894,20 +898,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             int(N), color_config=color_config
         )
 
-        tendon_curves = None
-        if render_tendons and self._has_tendons:
-            # Use batched computation for all robots at each timestep
-            # Since _has_tendons is True, compute_tendon_curves_batched will not return None
-            def _compute_tendons_for_timestep(q_batch: jax.Array) -> jax.Array:
-                result = self.compute_tendon_curves_batched(q_batch, offsets)
-                # Type cast: result cannot be None when _has_tendons is True
-                return cast(jax.Array, result)
-
-            all_tendons_time_first = jax.vmap(_compute_tendons_for_timestep)(
-                q_ts_time_first
-            )
-            tendon_curves = np.array(
-                all_tendons_time_first.transpose(1, 0, 2, 3, 4), dtype=np.float64
+        actuator_layers = ()
+        if render_actuators and self._has_actuator_visuals:
+            actuator_layers = self.compute_actuator_visual_layers_trajectory(
+                q_ts_arr,
+                offsets,
+                actuator_inputs=actuator_inputs,
             )
 
         static_spheres = self._prepare_static_spheres(
@@ -926,7 +922,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             ts=ts_np,
             layout=layout,
             segment_colors_rgba=resolved_colors.per_robot_segment_rgba,
-            tendon_curves=tendon_curves,
+            actuator_layers=actuator_layers,
             static_spheres=static_spheres,
             dynamic_spheres=dynamic_spheres,
         )
@@ -1095,16 +1091,24 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 mat_for(raw_color_rgba),
                             )
 
-            if scene_data.tendon_curves is not None:
-                robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
-                for k in range(robot_tendons.shape[0]):
-                    ls = _make_polyline_lineset(
-                        robot_tendons[k], color=cfg.tendon_color
-                    )
+            for layer_idx, layer in enumerate(scene_data.actuator_layers):
+                colors = resolve_actuator_rgba(
+                    layer,
+                    default_color=cfg.actuators.default_color,
+                    scalar_colormap=cfg.actuators.scalar_colormap,
+                )
+                robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
+                for actuator_idx in range(robot_actuators.shape[0]):
+                    color = tuple(colors[robot_idx, frame_idx, actuator_idx, :3])
+                    ls = _make_polyline_lineset(robot_actuators[actuator_idx], color=color)
                     mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
-                    mat_line.line_width = self.tendon_line_width
-                    scene.add_geometry(f"tendon_{robot_idx}_{k}", ls, mat_line)
+                    mat_line.line_width = layer.line_width or self.actuator_line_width
+                    scene.add_geometry(
+                        f"actuator_{robot_idx}_{layer_idx}_{actuator_idx}",
+                        ls,
+                        mat_line,
+                    )
 
         if scene_data.static_spheres is not None:
             static_set = scene_data.static_spheres
@@ -1150,7 +1154,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1165,7 +1170,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Optional shared renderer color configuration.
             camera_config: Camera configuration (fov, position, look_at, etc.)
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1181,7 +1187,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q_ts=jnp.asarray(q),
             base_offsets=base_offsets,
             color_config=color_config,
-            render_tendons=render_tendons,
+            render_actuators=render_actuators,
+            actuator_inputs=actuator_inputs,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1227,7 +1234,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1242,7 +1250,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Optional shared renderer color configuration.
             camera_config: Camera configuration (fov, position, look_at, etc.)
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1264,7 +1273,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets=base_offsets,
             color_config=color_config,
             camera_config=camera_config,
-            render_tendons=render_tendons,
+            render_actuators=render_actuators,
+            actuator_inputs=actuator_inputs,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1288,7 +1298,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         static_spheres_positions: Array | None = None,
         static_spheres_radii: Array | None = None,
         static_spheres_colors: Array | None = None,
@@ -1313,7 +1324,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 Note: For interactive viewing, user can adjust camera with mouse.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Optional shared renderer color configuration.
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             static_spheres_positions: Optional static sphere centers, shape (M, 3).
             static_spheres_radii: Optional static sphere radii, length M.
             static_spheres_colors: Optional static sphere colors, shape (M, 3/4).
@@ -1335,7 +1347,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             q_ts=q_ts,
             base_offsets=base_offsets,
             color_config=color_config,
-            render_tendons=render_tendons,
+            render_actuators=render_actuators,
+            actuator_inputs=actuator_inputs,
             static_spheres_positions=static_spheres_positions,
             static_spheres_radii=static_spheres_radii,
             static_spheres_colors=static_spheres_colors,
@@ -1371,7 +1384,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         opt = vis.get_render_option()
         opt.background_color = np.array(self.background_color, dtype=np.float64)
-        opt.line_width = self.tendon_line_width
+        opt.line_width = self.actuator_line_width
         return vis, vis.get_view_control()
 
     def _setup_interactive_camera(
@@ -1664,18 +1677,26 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_meshes.append(base_mesh)
             backbone_meshes.append(groups)
 
-        tendon_lines: list[list] = []
-        if scene_data.tendon_curves is not None:
+        actuator_lines: list[list[list]] = []
+        for layer in scene_data.actuator_layers:
+            layer_lines: list[list] = []
+            colors = resolve_actuator_rgba(
+                layer,
+                default_color=cfg.actuators.default_color,
+                scalar_colormap=cfg.actuators.scalar_colormap,
+            )
             for robot_idx in range(scene_data.num_robots):
                 robot_lines: list = []
-                robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
-                for k in range(robot_tendons.shape[0]):
+                robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
+                for actuator_idx in range(robot_actuators.shape[0]):
+                    color = tuple(colors[robot_idx, frame_idx, actuator_idx, :3])
                     ls = _make_polyline_lineset(
-                        robot_tendons[k], color=cfg.tendon_color
+                        robot_actuators[actuator_idx], color=color
                     )
                     robot_lines.append(ls)
                     vis.add_geometry(ls)
-                tendon_lines.append(robot_lines)
+                layer_lines.append(robot_lines)
+            actuator_lines.append(layer_lines)
 
         static_meshes: list = []
         if scene_data.static_spheres is not None:
@@ -1713,7 +1734,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         return SceneHandles(
             base_meshes=base_meshes,
             backbone_meshes=backbone_meshes,
-            tendon_lines=tendon_lines,
+            actuator_lines=actuator_lines,
             static_meshes=static_meshes,
             dynamic_meshes=dynamic_meshes,
             dynamic_trajs=dynamic_trajs,
@@ -1725,8 +1746,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         scene_data: SceneData,
         handles: SceneHandles,
         frame_idx: int,
+        *,
+        color_config: RendererColorConfig | None = None,
     ) -> None:
         """Update geometry positions for a given frame."""
+        cfg = color_config or self.color_config
         layout = scene_data.layout
 
         for robot_idx in range(scene_data.num_robots):
@@ -1739,12 +1763,24 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 layout,
             )
 
-        if scene_data.tendon_curves is not None:
-            for robot_idx, robot_lines in enumerate(handles.tendon_lines):
-                robot_tendons = scene_data.tendon_curves[robot_idx, frame_idx]
-                for k, ls in enumerate(robot_lines):
-                    t_pts = np.array(robot_tendons[k], dtype=np.float64, copy=True)
+        for layer_idx, layer in enumerate(scene_data.actuator_layers):
+            colors = resolve_actuator_rgba(
+                layer,
+                default_color=cfg.actuators.default_color,
+                scalar_colormap=cfg.actuators.scalar_colormap,
+            )
+            for robot_idx, robot_lines in enumerate(handles.actuator_lines[layer_idx]):
+                robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
+                for actuator_idx, ls in enumerate(robot_lines):
+                    t_pts = np.array(
+                        robot_actuators[actuator_idx], dtype=np.float64, copy=True
+                    )
                     ls.points = o3d.utility.Vector3dVector(t_pts)
+                    color = colors[robot_idx, frame_idx, actuator_idx, :3]
+                    line_count = np.asarray(ls.lines).shape[0]
+                    ls.colors = o3d.utility.Vector3dVector(
+                        np.tile(color[None, :], (line_count, 1))
+                    )
                     vis.update_geometry(ls)
 
         for mesh, traj in zip(handles.dynamic_meshes, handles.dynamic_trajs):
@@ -1886,7 +1922,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             i = max(0, min(scene_data.num_frames - 1, i))
             state["idx"] = i
 
-            self._update_scene(vis, scene_data, handles, frame_idx=i)
+            self._update_scene(
+                vis,
+                scene_data,
+                handles,
+                frame_idx=i,
+                color_config=color_config,
+            )
 
             vis.poll_events()
             vis.update_renderer()

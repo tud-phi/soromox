@@ -18,6 +18,7 @@ import jax
 from jax import Array
 from jax import numpy as jnp
 
+from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.systems.articulated.articulated_soft_robot import ArticulatedSoftRobot
 from soromox.systems.articulated.params import McKibbenActuatedUMArmParams
 
@@ -312,6 +313,29 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
             + translations[:, None, None, :]
         )
         return world_segments.reshape((self.num_actuators, 2, 3))
+
+    def actuator_visual_layers(
+        self,
+        q: Array,
+        s_points: Array,
+        *,
+        actuator_inputs: Array | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Return renderer-facing McKibben muscle segments."""
+        del s_points
+        scalar_fields = {}
+        if actuator_inputs is not None:
+            pressures = jnp.asarray(actuator_inputs).reshape((self.num_actuators,))
+            scalar_fields["pressure"] = pressures
+            scalar_fields["force"] = self.actuator_forces(q, pressures)
+        return (
+            ActuatorVisualLayer(
+                name="mckibben_muscles",
+                kind="muscle",
+                points=self.mckibben_actuator_segments(q),
+                scalar_fields=scalar_fields,
+            ),
+        )
 
     @eqx.filter_jit
     def effective_lengths(self, q: Array) -> Array:

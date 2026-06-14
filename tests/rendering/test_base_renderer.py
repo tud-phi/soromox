@@ -3,6 +3,11 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
+from soromox.rendering.actuators import (
+    ActuatorVisualLayer,
+    BatchedActuatorVisualLayer,
+    TrajectoryActuatorVisualLayer,
+)
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
@@ -53,6 +58,137 @@ class DummySpatialRobot:
 
     def cross_section_geometry(self, q, s):
         return CrossSectionGeometry.CIRCULAR, jnp.array([0.02])
+
+
+class DummyActuatedPlanarRobot(DummyPlanarRobot):
+    def actuator_visual_layers(self, q, s_points, *, actuator_inputs=None):
+        del q, actuator_inputs
+        points = jnp.stack(
+            [
+                s_points,
+                jnp.full_like(s_points, 0.25),
+            ],
+            axis=1,
+        )[None, ...]
+        return (ActuatorVisualLayer(name="offset_cable", kind="cable", points=points),)
+
+
+class DummyActuatedSpatialRobot(DummySpatialRobot):
+    def actuator_visual_layers(self, q, s_points, *, actuator_inputs=None):
+        del q
+        tendon = jnp.stack(
+            [
+                s_points,
+                jnp.full_like(s_points, 0.1),
+                jnp.zeros_like(s_points),
+            ],
+            axis=1,
+        )[None, ...]
+        muscles = jnp.array(
+            [
+                [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                [[0.0, 0.2, 0.0], [1.0, 0.2, 0.0]],
+            ]
+        )
+        pressure = (
+            jnp.zeros((2,))
+            if actuator_inputs is None
+            else jnp.asarray(actuator_inputs).reshape((2,))
+        )
+        return (
+            ActuatorVisualLayer(name="sampled_tendon", kind="tendon", points=tendon),
+            ActuatorVisualLayer(
+                name="mckibben_pair",
+                kind="muscle",
+                points=muscles,
+                scalar_fields={"pressure": pressure},
+            ),
+        )
+
+
+class DummyBatchedActuatedSpatialRobot(DummySpatialRobot):
+    def __init__(self, base_pose: jnp.ndarray):
+        super().__init__(base_pose)
+        self.single_calls = 0
+        self.batched_calls = 0
+
+    def actuator_visual_layers(self, q, s_points, *, actuator_inputs=None):
+        del q, s_points, actuator_inputs
+        self.single_calls += 1
+        raise AssertionError("single actuator hook should not be used")
+
+    def actuator_visual_layers_batched(self, q_batch, s_points, *, actuator_inputs=None):
+        self.batched_calls += 1
+        num_robots = int(q_batch.shape[0])
+        base_paths = jnp.stack(
+            [
+                jnp.stack(
+                    [
+                        s_points,
+                        jnp.full_like(s_points, 0.1),
+                        jnp.zeros_like(s_points),
+                    ],
+                    axis=1,
+                ),
+                jnp.stack(
+                    [
+                        s_points,
+                        jnp.full_like(s_points, 0.2),
+                        jnp.zeros_like(s_points),
+                    ],
+                    axis=1,
+                ),
+            ],
+            axis=0,
+        )
+        points = jnp.broadcast_to(base_paths, (num_robots, *base_paths.shape))
+        pressure = (
+            jnp.zeros((num_robots, 2))
+            if actuator_inputs is None
+            else jnp.asarray(actuator_inputs).reshape((num_robots, 2))
+        )
+        return (
+            BatchedActuatorVisualLayer(
+                name="batched_cables",
+                kind="cable",
+                points=points,
+                scalar_fields={"pressure": pressure},
+            ),
+        )
+
+
+class DummyTrajectoryActuatedSpatialRobot(DummySpatialRobot):
+    def __init__(self, base_pose: jnp.ndarray):
+        super().__init__(base_pose)
+        self.trajectory_calls = 0
+
+    def actuator_visual_layers_trajectory(
+        self, q_ts, s_points, *, actuator_inputs=None
+    ):
+        self.trajectory_calls += 1
+        num_robots, num_steps = int(q_ts.shape[0]), int(q_ts.shape[1])
+        path = jnp.stack(
+            [
+                s_points,
+                jnp.full_like(s_points, 0.3),
+                jnp.zeros_like(s_points),
+            ],
+            axis=1,
+        )[None, ...]
+        points = jnp.broadcast_to(path, (num_robots, num_steps, *path.shape))
+        pressure = (
+            jnp.zeros((num_robots, num_steps, 1))
+            if actuator_inputs is None
+            else jnp.asarray(actuator_inputs).reshape((num_robots, num_steps, 1))
+        )
+        return (
+            TrajectoryActuatorVisualLayer(
+                name="trajectory_muscle",
+                kind="muscle",
+                points=points,
+                scalar_fields={"pressure": pressure},
+            ),
+        )
 
 
 class DummyRenderer(BaseSoftRobotRenderer):
@@ -152,6 +288,38 @@ class FakeViserServer:
     def on_client_connect(self, callback):
         self.on_client_connect_callback = callback
         return callback
+
+
+class FakeViserLineHandle:
+    def __init__(self, *, name, points, colors, line_width):
+        self.name = name
+        self.points = points
+        self.colors = colors
+        self.line_width = line_width
+        self.remove_count = 0
+
+    def remove(self):
+        self.remove_count += 1
+
+
+class FakeViserScene:
+    def __init__(self):
+        self.line_segments = []
+
+    def add_line_segments(self, *, name, points, colors, line_width):
+        handle = FakeViserLineHandle(
+            name=name,
+            points=points,
+            colors=colors,
+            line_width=line_width,
+        )
+        self.line_segments.append(handle)
+        return handle
+
+
+class FakeViserActuatorServer:
+    def __init__(self):
+        self.scene = FakeViserScene()
 
 
 def test_renderer_exposes_base_pose_transform_and_axis():
@@ -338,6 +506,40 @@ def test_viser_default_camera_uses_backend_specific_distance():
     assert_allclose(client.camera.fov, np.deg2rad(75.0), atol=1e-12)
 
 
+def test_viser_actuator_geometry_updates_existing_line_handles():
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummyActuatedSpatialRobot(
+        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    renderer = ViserRenderer(robot, auto_start=False)
+    renderer._server = FakeViserActuatorServer()
+    renderer._scene_handles = SceneHandles()
+
+    renderer._build_actuator_geometry(
+        jnp.zeros((1, 0)),
+        np.zeros((1, 3)),
+        1,
+    )
+
+    first_handles = tuple(renderer._scene_handles.actuator_lines)
+    assert len(first_handles) == 3
+    assert len(renderer._server.scene.line_segments) == 3
+
+    renderer._build_actuator_geometry(
+        jnp.zeros((1, 0)),
+        np.array([[1.0, 0.0, 0.0]]),
+        1,
+        actuator_inputs=jnp.array([[1.0, 2.0]]),
+    )
+
+    assert tuple(renderer._scene_handles.actuator_lines) == first_handles
+    assert len(renderer._server.scene.line_segments) == 3
+    assert all(handle.remove_count == 0 for handle in first_handles)
+    assert_allclose(first_handles[0].points[0, 0], np.array([1.0, 0.1, 0.0]))
+
+
 def test_renderer_normalizes_base_offsets_to_curve_dimension():
     robot = DummyPlanarRobot(jnp.array([0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot)
@@ -377,6 +579,132 @@ def test_renderer_rejects_extra_explicit_base_offsets_by_default():
             num_robots=1,
             target_dim=2,
         )
+
+
+def test_renderer_computes_actuator_visual_layers_single_and_batched():
+    robot = DummyActuatedSpatialRobot(
+        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    renderer = DummyRenderer(robot, num_points=5)
+
+    single = renderer.compute_actuator_visual_layers(jnp.array([]))
+
+    assert len(single) == 2
+    assert single[0].points.shape == (1, 5, 3)
+    assert single[1].points.shape == (2, 2, 3)
+
+    batched = renderer.compute_actuator_visual_layers_batched(
+        jnp.zeros((2, 0)),
+        jnp.array([[0.0, 0.0, 0.0], [1.0, -1.0, 0.5]]),
+        actuator_inputs=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
+    )
+
+    assert len(batched) == 2
+    assert batched[0].points.shape == (2, 1, 5, 3)
+    assert batched[1].points.shape == (2, 2, 2, 3)
+    assert_allclose(batched[0].points[1, 0, 0], jnp.array([1.0, -0.9, 0.5]))
+    assert_allclose(
+        batched[1].scalar_fields["pressure"],
+        jnp.array([[1.0, 2.0], [3.0, 4.0]]),
+    )
+
+
+def test_renderer_uses_batched_actuator_visual_fast_path():
+    robot = DummyBatchedActuatedSpatialRobot(
+        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    renderer = DummyRenderer(robot, num_points=5)
+
+    layers = renderer.compute_actuator_visual_layers_batched(
+        jnp.zeros((3, 0)),
+        jnp.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, -1.0, 0.5],
+                [2.0, 0.0, -0.5],
+            ]
+        ),
+        actuator_inputs=jnp.arange(6.0).reshape(3, 2),
+    )
+
+    assert robot.batched_calls == 1
+    assert robot.single_calls == 0
+    assert len(layers) == 1
+    assert layers[0].points.shape == (3, 2, 5, 3)
+    assert_allclose(layers[0].points[1, 0, 0], jnp.array([1.0, -0.9, 0.5]))
+    assert_allclose(layers[0].scalar_fields["pressure"], jnp.arange(6.0).reshape(3, 2))
+
+
+def test_renderer_computes_trajectory_actuator_visual_layers():
+    robot = DummyActuatedSpatialRobot(
+        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    renderer = DummyRenderer(robot, num_points=4)
+
+    layers = renderer.compute_actuator_visual_layers_trajectory(
+        jnp.zeros((2, 3, 0)),
+        jnp.zeros((2, 3)),
+        actuator_inputs=jnp.arange(12.0).reshape(2, 3, 2),
+    )
+
+    assert len(layers) == 2
+    assert layers[0].points.shape == (2, 3, 1, 4, 3)
+    assert layers[1].points.shape == (2, 3, 2, 2, 3)
+    assert_allclose(
+        layers[1].scalar_fields["pressure"], jnp.arange(12.0).reshape(2, 3, 2)
+    )
+
+
+def test_renderer_uses_trajectory_actuator_visual_fast_path():
+    robot = DummyTrajectoryActuatedSpatialRobot(
+        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    renderer = DummyRenderer(robot, num_points=4)
+
+    layers = renderer.compute_actuator_visual_layers_trajectory(
+        jnp.zeros((2, 3, 0)),
+        jnp.array([[0.0, 0.0, 0.0], [1.0, -1.0, 0.5]]),
+        actuator_inputs=jnp.arange(6.0).reshape(2, 3, 1),
+    )
+
+    assert robot.trajectory_calls == 1
+    assert len(layers) == 1
+    assert layers[0].points.shape == (2, 3, 1, 4, 3)
+    assert_allclose(layers[0].points[1, 2, 0, 0], jnp.array([1.0, -0.7, 0.5]))
+    assert_allclose(
+        layers[0].scalar_fields["pressure"], jnp.arange(6.0).reshape(2, 3, 1)
+    )
+
+
+def test_matplotlib_actuator_overlay_changes_rendered_frame():
+    robot = DummyActuatedSpatialRobot(
+        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    )
+    renderer = MatplotlibRenderer(robot, width=240, height=180, num_points=8)
+
+    without_actuators = renderer.render_frame(jnp.array([]), render_actuators=False)
+    with_actuators = renderer.render_frame(jnp.array([]), render_actuators=True)
+
+    assert without_actuators.shape == with_actuators.shape
+    assert np.any(without_actuators != with_actuators)
+
+
+def test_opencv_planar_actuator_overlay_draws_configured_color():
+    robot = DummyActuatedPlanarRobot(jnp.array([0.0, 0.0, 0.0]))
+    renderer = OpenCVPlanarRenderer(
+        robot,
+        width=100,
+        height=100,
+        num_points=5,
+        actuator_color=(0, 0, 255),
+        actuator_thickness=2,
+        length_scale=2.0,
+        origin_uv=(20, 50),
+    )
+
+    img = renderer.render_frame(jnp.array([]), render_actuators=True)
+
+    assert np.any(np.all(img == np.array([0, 0, 255], dtype=np.uint8), axis=-1))
 
 
 def test_matplotlib_2d_base_marker_is_perpendicular_to_base_tangent():

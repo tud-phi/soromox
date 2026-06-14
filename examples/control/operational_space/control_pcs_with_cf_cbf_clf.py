@@ -509,7 +509,7 @@ if __name__ == "__main__":
         width=1280,
         height=800,
         backbone_style="discrete",
-        tendon_line_width=2.0,
+        actuator_line_width=2.0,
     )
     renderer.render_sequence(
         ts=ts[::render_stride],
@@ -517,7 +517,7 @@ if __name__ == "__main__":
         playback_speed=1.0,
         loop=True,
         record_path="videos/clf_cbf_rollout.mp4",
-        render_tendons=True,
+        render_actuators=True,
         static_spheres_positions=static_spheres_positions,
         static_spheres_radii=static_spheres_radii,
         static_spheres_colors=static_spheres_colors,

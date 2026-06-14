@@ -647,8 +647,8 @@ class BaseSoftRobotRenderer:
         """Compute backbone points from configuration."""
         ...
 
-    def compute_tendon_curves(self, q):
-        """Compute tendon paths if supported."""
+    def compute_actuator_visual_layers(self, q):
+        """Compute actuator visual layers if supported."""
         ...
 
     # Abstract methods (must implement)
@@ -778,9 +778,14 @@ The base class provides useful helpers:
 backbone = self.compute_backbone_curve(q)
 # Returns: (num_points, 2) for 2D or (num_points, 3) for 3D
 
-# Get tendon curves (if robot supports tendons)
-tendons = self.compute_tendon_curves(q)
-# Returns: list of (num_points, 2/3) arrays
+# Get actuator visual layers (if robot exposes actuator_visual_layers)
+actuator_layers = self.compute_actuator_visual_layers(q)
+# Returns: tuple of ActuatorVisualLayer objects
+
+# Batched and trajectory actuator visual helpers use optional robot fast paths
+# named actuator_visual_layers_batched(...) and
+# actuator_visual_layers_trajectory(...) when available. Otherwise they fall
+# back to repeated calls to the single-configuration actuator_visual_layers(...).
 
 # Resolve colors with hierarchy
 colors = self.resolve_backbone_colors(num_robots=1, color_config=color_config)

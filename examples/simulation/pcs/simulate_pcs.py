@@ -8,6 +8,7 @@ from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
+    ActuatorStyleConfig,
     BackboneColorConfig,
     MatplotlibRenderer,
     Open3DRenderer,
@@ -169,7 +170,7 @@ if __name__ == "__main__":
         color_config=RendererColorConfig(
             backbone=BackboneColorConfig(point_palette="soromox:glacier"),
             base_plate_color=(0.15, 0.15, 0.15),
-            tendon_color=(0.2, 0.4, 0.8),
+            actuators=ActuatorStyleConfig(default_color=(0.2, 0.4, 0.8)),
         ),
     )
 

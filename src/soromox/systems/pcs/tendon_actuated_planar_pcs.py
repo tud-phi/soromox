@@ -6,6 +6,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.systems.pcs.params import TendonActuatedPlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
 
@@ -297,3 +298,38 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         tendon_lengths = cumulative_lengths[self.segment_indices_to_actuate]
 
         return tendon_lengths.reshape(-1)
+
+    def actuator_visual_layers(
+        self,
+        q: Array,
+        s_points: Array,
+        *,
+        actuator_inputs: Array | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Return renderer-facing actuator geometry for planar routed tendons."""
+        del actuator_inputs
+        num_tendons_per_segment = self.d.shape[1]
+        attachment_indices = jnp.repeat(
+            self.segment_indices_to_actuate, num_tendons_per_segment
+        )
+        distances = self.d[self.segment_indices_to_actuate].reshape(-1)
+
+        def tendon_path(segment_idx: Array, distance: Array) -> Array:
+            attachment_s = self.L_cum[segment_idx + 1]
+
+            def tendon_point(s: Array) -> Array:
+                pose = self.forward_kinematics(q, jnp.clip(s, 0.0, attachment_s))
+                theta = pose[0]
+                normal = jnp.array([-jnp.sin(theta), jnp.cos(theta)])
+                return pose[1:3] + distance * normal
+
+            return vmap(tendon_point)(s_points)
+
+        points = vmap(tendon_path)(attachment_indices, distances)
+        return (
+            ActuatorVisualLayer(
+                name="active_tendons",
+                kind="tendon",
+                points=points,
+            ),
+        )
