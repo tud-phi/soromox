@@ -3,20 +3,20 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from functools import partial
+from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
 
 import jax
+from jax import Array
 import jax.numpy as jnp
+from cbfpy.cbfs.clf_cbf import CLFCBFConfig
+
 import matplotlib.pyplot as plt
 import numpy as onp
-from cbfpy.cbfs.clf_cbf import CLFCBFConfig
-from jax import Array
-
-plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
+from functools import partial
+plt.rcParams['pdf.fonttype'] = 42  # For editable text in Illustrator
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
-    SystemState,
     TendonActuatedPCS,
     TendonActuatedPCSParams,
 )
@@ -35,10 +35,10 @@ jnp.set_printoptions(precision=4, suppress=True)
 # ======================================================
 @jax.jit
 def pairwise_h(
-    p: jnp.ndarray,  # (P, 3)
-    centers: jnp.ndarray,  # (N, 3)
-    r_obs: jnp.ndarray,  # (N,)
-    r_robot: jnp.ndarray | float = 0.0,  # scalar or (P,)
+    p: jnp.ndarray,                        # (P, 3)
+    centers: jnp.ndarray,                 # (N, 3)
+    r_obs: jnp.ndarray,                   # (N,)
+    r_robot: jnp.ndarray | float = 0.0,   # scalar or (P,)
     safety: float = 0.0,
 ) -> jnp.ndarray:
     p = jnp.asarray(p)
@@ -48,8 +48,8 @@ def pairwise_h(
     r_robot = jnp.asarray(r_robot)
     r_robot = r_robot + jnp.zeros((p.shape[0],), dtype=p.dtype)
 
-    diff = p[:, None, :] - centers[None, :, :]  # (P, N, 3)
-    dist = jnp.linalg.norm(diff, axis=-1)  # (P, N)
+    diff = p[:, None, :] - centers[None, :, :]   # (P, N, 3)
+    dist = jnp.linalg.norm(diff, axis=-1)        # (P, N)
     H = dist - (r_obs[None, :] + r_robot[:, None] + safety)
     return H
 
@@ -75,9 +75,9 @@ class SoftRobotDynamics:
     @partial(jax.jit, static_argnums=(0,))
     def g(self, y):
         u_zero = jnp.zeros(self.n_u)
-        return jax.jacfwd(lambda u: self.robot.forward_dynamics(0.0, y, (u, None)))(
-            u_zero
-        )
+        return jax.jacfwd(
+            lambda u: self.robot.forward_dynamics(0.0, y, (u, None))
+        )(u_zero)
 
 
 # ======================================================
@@ -188,7 +188,18 @@ if __name__ == "__main__":
     # Continuum body parameters
     # --------------------------------------------------
     # The robot is modeled as a two-segment piecewise-constant-strain body.
-    # Each vector entry corresponds to one segment.
+    # # Each vector entry corresponds to one segment.
+    # params = {
+    #     "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # base pose
+        
+    #     "L": 15e-2 * 2 / num_segments * jnp.ones((num_segments,)),      # segment lengths [m]
+    #     "r": 3.6e-2 * jnp.ones((num_segments,)),                        # backbone radius [m]
+    #     "rho": rho,                                                     # density [kg/m^3]
+    #     "g": jnp.array([0.0, 0.0, 9.81]),                                # gravity [m/s^2]
+    #     "E": 20e3 * jnp.ones((num_segments,)),                          # Young's modulus [Pa]
+    #     "G": 20e3 * jnp.ones((num_segments,)),                          # shear modulus [Pa]
+    # }
+
     params = {
         "p0": jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),  # base pose
         "L": 15e-2
@@ -210,8 +221,7 @@ if __name__ == "__main__":
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
                 num_segments,
                 axis=0,
-            )
-            * params["L"][:, None]
+            ) * params["L"][:, None]
         ).flatten()
     )
 
@@ -295,20 +305,18 @@ if __name__ == "__main__":
             self.safety_margin = 0.00
 
             self.obs = {
-                "centers": jnp.array(
-                    [
-                        [0.10, 0.08, 0.24],
-                        [0.12, 0.06, 0.32],
-                        [0.04, 0.055, 0.20],
-                    ]
-                ),
+                "centers": jnp.array([
+                    [0.10, 0.08, 0.24],
+                    [0.12, 0.06, 0.32],
+                    [0.04, 0.055, 0.20],
+                ]),
                 "radii": jnp.array([0.02, 0.02, 0.02]),
             }
 
             super().__init__(
-                n=2 * int(robot.num_active_strains),  # y = [q, qd]
+                n=2 * int(robot.num_active_strains),   # y = [q, qd]
                 m=int(robot.num_actuators),
-                relax_cbf=False,
+                relax_qp=False,
                 cbf_relaxation_penalty=1e6,
                 clf_relaxation_penalty=10,
             )
@@ -342,8 +350,8 @@ if __name__ == "__main__":
                 return jnp.array([0.0])
 
             q, qd = dyn.split(y)
-            g_ps = robot.forward_kinematics_batched(q, self.s_ps)  # (P,4,4)
-            p = g_ps[:, :3, 3]  # (P,3)
+            g_ps = robot.forward_kinematics_batched(q, self.s_ps)   # (P,4,4)
+            p = g_ps[:, :3, 3]                                      # (P,3)
 
             H = pairwise_h(
                 p,
@@ -389,16 +397,9 @@ if __name__ == "__main__":
     # Simulation
     # ======================================================
     t0 = 0.0
-    t1 = 4.0
+    t1 = 8.0
     solver_dt = 1e-3
     save_dt = 1e-3
-
-    initial_state = SystemState(
-        t=jnp.array(t0),
-        y=y0,
-        u=jnp.zeros((robot.num_actuators,)),
-        control_state=None,
-    )
 
     forward_kinematics_end_effector = jax.jit(
         partial(robot.forward_kinematics, s=jnp.sum(robot.L))
@@ -407,20 +408,24 @@ if __name__ == "__main__":
     def run_case(config, label):
         controller = ClosedFormHOCLFHOCBFController(config, dyn)
 
-        def closed_loop_controller(state: SystemState):
-            return controller.controller(state.y, z_des), None
+        def closed_loop_dyn(t, y, args):
+            u = controller.controller(y, args)
+            return robot.forward_dynamics(t, y, (u, None))
 
-        print(f"\nRunning {label} rollout ...")
-        trajectory = robot.rollout_closed_loop_to(
-            initial_state=initial_state,
-            controller=closed_loop_controller,
+        print(f"\nRunning {label} rollout via diffrax.diffeqsolve ...")
+        sol = diffeqsolve(
+            ODETerm(closed_loop_dyn),
+            Tsit5(),
+            t0=t0,
             t1=t1,
-            solver_dt=solver_dt,
-            save_ts=jnp.arange(t0, t1, save_dt),
+            dt0=solver_dt,
+            y0=y0,
+            args=z_des,
+            saveat=SaveAt(ts=jnp.arange(t0, t1, save_dt)),
             max_steps=None,
         )
 
-        q_ts, _ = jnp.split(trajectory.y, 2, axis=1)
+        q_ts, _ = jnp.split(sol.ys, 2, axis=1)
         g_body_ts = jax.vmap(
             lambda q: robot.forward_kinematics_batched(q, config.s_ps)
         )(q_ts)
@@ -436,7 +441,7 @@ if __name__ == "__main__":
         g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
         goal_distance = jnp.linalg.norm(g_ee_ts[:, :3, 3] - z_des[None, :], axis=1)
         return (
-            onp.asarray(trajectory.t),
+            onp.asarray(sol.ts),
             onp.asarray(max_force),
             onp.asarray(goal_distance),
         )
@@ -509,9 +514,15 @@ if __name__ == "__main__":
     ax2.spines["right"].set_color("tab:blue")
 
     lines = ax1.get_lines()[:2] + ax2.get_lines()
-    ax1.legend(lines, [line.get_label() for line in lines], fontsize=10)
+    ax1.legend(
+        lines,
+        [line.get_label() for line in lines],
+        loc="center left",
+        bbox_to_anchor=(1.18, 0.5),
+        fontsize=10,
+    )
 
-    plt.tight_layout()
+    fig.tight_layout()
     plt.savefig("force_goal_distance_plot.png", dpi=300, bbox_inches="tight")
     plt.savefig("force_goal_distance_plot.pdf", bbox_inches="tight")
     plt.show()
