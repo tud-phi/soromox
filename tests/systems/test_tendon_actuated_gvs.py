@@ -978,6 +978,69 @@ def test_passive_tendon_params_are_batched_for_gvs():
         )
 
 
+def test_tendon_gvs_infers_max_dof_for_higher_order_example_basis():
+    link1 = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3.04e5,
+        nu=0.45,
+        rho=1310.0,
+        eta=1e4,
+        L=0.0250 + 0.2550 + 0.0250,
+        r_i=0.01541,
+        r_f=0.00642,
+    )
+    link2 = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3.04e5,
+        nu=0.45,
+        rho=1310.0,
+        eta=1e4,
+        L=0.0550,
+        r_i=0.00642,
+        r_f=0.00480,
+    )
+    joint1 = JointSpec(type="fixed")
+    joint2 = JointSpec(type="fixed")
+    basis1 = StrainBasisSpec(
+        type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
+    )
+    basis2 = StrainBasisSpec(
+        type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
+    )
+    active_tendon_routing = linear_tendon_routing(
+        y_intercept=jnp.array(
+            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+        ),
+        y_slope=jnp.array(
+            [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
+        ),
+        z_intercept=jnp.array(
+            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
+        ),
+        z_slope=jnp.array(
+            [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
+        ),
+        attachment_segment_index=jnp.array([0, 0]),
+    )
+    robot = _make_tendon_gvs(
+        segments=_segments([link1, link2], [joint1, joint2], [basis1, basis2], [8, 8]),
+        gravity=[0.0, 0.0, -9.81],
+        tendon_params=active_tendon_routing,
+        base_pose=jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+        scale_rotational_basis_by_length=True,
+    )
+    q = jnp.zeros((robot.num_dofs,))
+
+    assert robot.max_dof == 8
+    assert robot.dofs_per_segment.tolist() == [[0, 8], [0, 2]]
+    assert robot.actuation_matrix(q).shape == (10, 2)
+    assert robot.jacobian_passive_tendon(q).shape == (0, 10)
+    assert robot.passive_tendon_length(q).shape == (0,)
+    assert jnp.all(jnp.isfinite(robot.tendon_length(q)))
+    assert jnp.all(jnp.isfinite(robot.stiffness_matrix()))
+    assert jnp.all(jnp.isfinite(robot.damping_matrix(q)))
+
+
 if __name__ == "__main__":
     # run pytest with activated stdout
     # pytest.main([__file__])

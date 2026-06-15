@@ -3746,6 +3746,7 @@ all = [
     { name = "ruff" },
     { name = "seaborn" },
     { name = "tox" },
+    { name = "trimesh" },
     { name = "viser" },
     { name = "zensical" },
 ]
@@ -3780,6 +3781,7 @@ examples = [
     { name = "optimistix", version = "0.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "plotly" },
     { name = "seaborn" },
+    { name = "trimesh" },
     { name = "viser" },
 ]
 rendering = [
@@ -3788,6 +3790,7 @@ rendering = [
     { name = "open3d" },
     { name = "opencv-python" },
     { name = "plotly" },
+    { name = "trimesh" },
     { name = "viser" },
 ]
 test = [
@@ -3864,6 +3867,9 @@ requires-dist = [
     { name = "tox", marker = "extra == 'dev'" },
     { name = "tox", marker = "extra == 'test'" },
     { name = "tqdm" },
+    { name = "trimesh", marker = "extra == 'all'" },
+    { name = "trimesh", marker = "extra == 'examples'" },
+    { name = "trimesh", marker = "extra == 'rendering'" },
     { name = "viser", marker = "extra == 'all'" },
     { name = "viser", marker = "extra == 'examples'" },
     { name = "viser", marker = "extra == 'rendering'" },

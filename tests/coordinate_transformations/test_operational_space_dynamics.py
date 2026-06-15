@@ -372,6 +372,49 @@ class TestOperationalSpaceForces:
             f_d, jnp.zeros_like(f_d), rtol=Tolerance.rtol(), atol=Tolerance.atol()
         )
 
+    def test_potential_force_sums_conservative_forces(self, pendulum_robot):
+        """Test that potential_force sums gravitational and elastic forces."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        f_pot = op_space.potential_force(q)
+        expected = op_space.gravitational_force(q) + op_space.elastic_force(q)
+
+        assert f_pot.shape == (3,)
+        assert_allclose(f_pot, expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    def test_dynamics_terms_match_individual_methods(self, pendulum_robot):
+        """Test dynamics_terms returns the individual operational-space terms."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        qd = jnp.linspace(0.6, -0.5, pendulum_robot.num_links)
+        Lambda, Cxd, G_x = op_space.dynamics_terms(q, qd)
+
+        assert Lambda.shape == (3, 3)
+        assert Cxd.shape == (3,)
+        assert G_x.shape == (3,)
+        assert_allclose(
+            Lambda,
+            op_space.inertia_matrix(q),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        assert_allclose(
+            Cxd,
+            op_space.coriolis_force(q, qd),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        assert_allclose(
+            G_x,
+            op_space.gravitational_force(q),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+
 
 # -----------------------
 # Null space projector tests

@@ -601,6 +601,18 @@ def test_passive_tendons_contribute_to_elastic_terms():
     )
 
 
+def test_empty_passive_tendons_preserve_pcs_dynamics_terms():
+    active_params = _stacked_tendon_params(2, 2)
+    robot = _create_robot(jnp.array([0.2, 0.25]), active_params)
+    q = jnp.linspace(-0.02, 0.03, int(robot.num_active_strains), dtype=jnp.float64)
+
+    assert robot.jacobian_passive_tendon(q).shape == (0, robot.num_active_strains)
+    assert robot.passive_tendon_length(q).shape == (0,)
+    assert jnp.all(jnp.isfinite(robot.elastic_force(q)))
+    assert jnp.all(jnp.isfinite(robot.damping_matrix(q)))
+    assert jnp.isfinite(robot.elastic_energy(q))
+
+
 def test_tendon_actuated_pcs_exposes_actuator_visual_layers():
     active_params = _stacked_tendon_params(2, 3)
     passive_routing_params = _stacked_tendon_params(2, 2)
