@@ -1,5 +1,6 @@
 import os
 import sys
+import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
@@ -23,11 +24,27 @@ from soromox.systems import (
 
 jax.config.update("jax_enable_x64", True)
 jnp.set_printoptions(
-    threshold=jnp.inf,
-    linewidth=jnp.inf,
+    threshold=10_000,
+    linewidth=10_000,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
 jnp.set_printoptions(precision=4, suppress=True)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Simulate a tendon-actuated PCS with HOCLF/HOCBF control."
+    )
+    parser.add_argument(
+        "--controller",
+        choices=("both", "with-cbf", "without-cbf"),
+        default="both",
+        help=(
+            "Controller mode to simulate. 'both' reproduces the comparison plot; "
+            "the other modes run a single controller."
+        ),
+    )
+    return parser.parse_args()
 
 
 # ======================================================
@@ -70,13 +87,13 @@ class SoftRobotDynamics:
     @partial(jax.jit, static_argnums=(0,))
     def f(self, y):
         u_zero = jnp.zeros(self.n_u)
-        return self.robot.forward_dynamics(0.0, y, (u_zero, None))
+        return self.robot.forward_dynamics(jnp.asarray(0.0), y, (u_zero, None))
 
     @partial(jax.jit, static_argnums=(0,))
     def g(self, y):
         u_zero = jnp.zeros(self.n_u)
         return jax.jacfwd(
-            lambda u: self.robot.forward_dynamics(0.0, y, (u, None))
+            lambda u: self.robot.forward_dynamics(jnp.asarray(0.0), y, (u, None))
         )(u_zero)
 
 
@@ -181,25 +198,16 @@ class ClosedFormHOCLFHOCBFController:
 
 
 if __name__ == "__main__":
+    args = parse_args()
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))
+    goal_position = jnp.array([0.10, 0.05, 0.32])
 
     # --------------------------------------------------
     # Continuum body parameters
     # --------------------------------------------------
     # The robot is modeled as a two-segment piecewise-constant-strain body.
-    # # Each vector entry corresponds to one segment.
-    # params = {
-    #     "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),  # base pose
-        
-    #     "L": 15e-2 * 2 / num_segments * jnp.ones((num_segments,)),      # segment lengths [m]
-    #     "r": 3.6e-2 * jnp.ones((num_segments,)),                        # backbone radius [m]
-    #     "rho": rho,                                                     # density [kg/m^3]
-    #     "g": jnp.array([0.0, 0.0, 9.81]),                                # gravity [m/s^2]
-    #     "E": 20e3 * jnp.ones((num_segments,)),                          # Young's modulus [Pa]
-    #     "G": 20e3 * jnp.ones((num_segments,)),                          # shear modulus [Pa]
-    # }
-
+    # Each vector entry corresponds to one segment.
     params = {
         "p0": jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),  # base pose
         "L": 15e-2
@@ -221,7 +229,8 @@ if __name__ == "__main__":
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
                 num_segments,
                 axis=0,
-            ) * params["L"][:, None]
+            )
+            * params["L"][:, None]
         ).flatten()
     )
 
@@ -297,7 +306,7 @@ if __name__ == "__main__":
     class TendonSoroConfig(CLFCBFConfig):
         def __init__(self, use_cbf=True):
             self.use_cbf = use_cbf
-            self.p_d_2 = jnp.array([0.10, 0.05, 0.32])
+            self.p_d_2 = goal_position
 
             self.s_ps = jnp.linspace(0.0, jnp.sum(params["L"]), 10 * num_segments)
 
@@ -314,9 +323,9 @@ if __name__ == "__main__":
             }
 
             super().__init__(
-                n=2 * int(robot.num_active_strains),   # y = [q, qd]
+                n=2 * int(robot.num_active_strains),  # y = [q, qd]
                 m=int(robot.num_actuators),
-                relax_qp=False,
+                relax_cbf=False,
                 cbf_relaxation_penalty=1e6,
                 clf_relaxation_penalty=10,
             )
@@ -339,7 +348,6 @@ if __name__ == "__main__":
             p_2 = g_ee_2[:3, 3]
             p_des = self.p_d_2 if z_des is None else z_des
             e_2 = jnp.linalg.norm(p_2 - p_des[:3])
-            # e_2 = (p_2 - p_des[:3])**2
             return e_2.reshape(-1)
 
         # --------------------------------------------------
@@ -350,8 +358,8 @@ if __name__ == "__main__":
                 return jnp.array([0.0])
 
             q, qd = dyn.split(y)
-            g_ps = robot.forward_kinematics_batched(q, self.s_ps)   # (P,4,4)
-            p = g_ps[:, :3, 3]                                      # (P,3)
+            g_ps = robot.forward_kinematics_batched(q, self.s_ps)  # (P,4,4)
+            p = g_ps[:, :3, 3]  # (P,3)
 
             H = pairwise_h(
                 p,
@@ -361,11 +369,7 @@ if __name__ == "__main__":
                 self.safety_margin,
             )
 
-            # smooth minimum
-            (-1.0 / kappa) * jnp.log(jnp.sum(jnp.exp(-kappa * H)))
-            # return h_all.reshape(-1)/10
             force_min = 5 + 1000 * jnp.min(H).reshape(-1)
-            # return jnp.min(H).reshape(-1) *1000
             return force_min
 
         def alpha_2(self, h_2):
@@ -373,13 +377,6 @@ if __name__ == "__main__":
 
         def gamma_2(self, V_2):
             return V_2 * 10.0
-
-    # ======================================================
-    # Build controllers
-    # ======================================================
-    config_with_cbf = TendonSoroConfig(use_cbf=True)
-    config_without_cbf = TendonSoroConfig(use_cbf=False)
-    z_des = config_with_cbf.p_d_2
 
     # ======================================================
     # Initial state
@@ -405,8 +402,10 @@ if __name__ == "__main__":
         partial(robot.forward_kinematics, s=jnp.sum(robot.L))
     )
 
-    def run_case(config, label):
+    def run_case(use_cbf: bool, label: str):
+        config = TendonSoroConfig(use_cbf=use_cbf)
         controller = ClosedFormHOCLFHOCBFController(config, dyn)
+        z_des = config.p_d_2
 
         def closed_loop_dyn(t, y, args):
             u = controller.controller(y, args)
@@ -425,6 +424,7 @@ if __name__ == "__main__":
             max_steps=None,
         )
 
+        assert sol.ys is not None
         q_ts, _ = jnp.split(sol.ys, 2, axis=1)
         g_body_ts = jax.vmap(
             lambda q: robot.forward_kinematics_batched(q, config.s_ps)
@@ -440,44 +440,48 @@ if __name__ == "__main__":
 
         g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
         goal_distance = jnp.linalg.norm(g_ee_ts[:, :3, 3] - z_des[None, :], axis=1)
-        return (
-            onp.asarray(sol.ts),
-            onp.asarray(max_force),
-            onp.asarray(goal_distance),
-        )
+        return {
+            "label": label,
+            "ts": onp.asarray(sol.ts),
+            "force": onp.asarray(max_force),
+            "distance": onp.asarray(goal_distance),
+        }
 
-    ts_with, force_with, distance_with = run_case(config_with_cbf, "with CBF")
-    ts_without, force_without, distance_without = run_case(
-        config_without_cbf, "without CBF"
-    )
+    selected_modes = {
+        "both": [("with CBF", True), ("without CBF", False)],
+        "with-cbf": [("with CBF", True)],
+        "without-cbf": [("without CBF", False)],
+    }[args.controller]
+
+    results = [run_case(use_cbf, label) for label, use_cbf in selected_modes]
 
     # ======================================================
     # Figure-style plot: max normal force boundary + goal distance
     # ======================================================
     force_limit = 5.0
-    force_axis_max = 1.08 * max(force_limit, force_with.max(), force_without.max())
+    force_axis_max = 1.08 * max(force_limit, *(result["force"].max() for result in results))
     fig, ax1 = plt.subplots(figsize=(8, 4))
 
-    # Left axis: maximum pairwise normal contact force.
-    ax1.plot(
-        ts_with,
-        force_with,
-        color="tab:red",
-        linewidth=2.5,
-        linestyle="-",
-        label="Force with CBF",
-    )
-    ax1.plot(
-        ts_without,
-        force_without,
-        color="tab:red",
-        linewidth=2.5,
-        linestyle="--",
-        label="Force without CBF",
-    )
+    force_lines = []
+    goal_distance_lines = []
+
+    for result in results:
+        linestyle = "-" if result["label"] == "with CBF" else "--"
+        force_suffix = "+HOCBF" if result["label"] == "with CBF" else ""
+        force_lines.append(
+            ax1.plot(
+                result["ts"],
+                result["force"],
+                color="tab:red",
+                linewidth=2.5,
+                linestyle=linestyle,
+                label=f"Force for HOCLF{force_suffix} controller",
+            )[0]
+        )
+
     ax1.axhline(force_limit, color="tab:red", linestyle=":", linewidth=2.0)
     ax1.fill_between(
-        ts_with,
+        results[0]["ts"],
         force_limit,
         force_axis_max,
         color="tab:red",
@@ -491,36 +495,45 @@ if __name__ == "__main__":
     ax1.grid(True, alpha=0.25)
     ax1.spines["left"].set_color("tab:red")
 
-    # Right axis: end-effector goal distance.
     ax2 = ax1.twinx()
-    ax2.plot(
-        ts_with,
-        distance_with,
-        color="tab:blue",
-        linewidth=2.5,
-        linestyle="-",
-        label="Goal distance with CBF",
-    )
-    ax2.plot(
-        ts_without,
-        distance_without,
-        color="tab:blue",
-        linewidth=2.5,
-        linestyle="--",
-        label="Goal distance without CBF",
-    )
+    for result in results:
+        linestyle = "-" if result["label"] == "with CBF" else "--"
+        goal_suffix = "+HOCBF" if result["label"] == "with CBF" else ""
+        goal_distance_lines.append(
+            ax2.plot(
+                result["ts"],
+                result["distance"],
+                color="tab:blue",
+                linewidth=2.5,
+                linestyle=linestyle,
+                label=f"Goal distance for HOCLF{goal_suffix} controller",
+            )[0]
+        )
+
     ax2.set_ylabel("Goal Distance [m]", color="tab:blue", fontsize=16)
     ax2.tick_params(axis="y", labelcolor="tab:blue", labelsize=13)
     ax2.spines["right"].set_color("tab:blue")
 
-    lines = ax1.get_lines()[:2] + ax2.get_lines()
-    ax1.legend(
-        lines,
-        [line.get_label() for line in lines],
-        loc="center left",
-        bbox_to_anchor=(1.18, 0.5),
-        fontsize=10,
-    )
+    if len(results) == 1:
+        ax1.legend(
+            [force_lines[0], goal_distance_lines[0]],
+            [force_lines[0].get_label(), goal_distance_lines[0].get_label()],
+            loc="center",
+            fontsize=10,
+        )
+    else:
+        lines = [
+            force_lines[1],
+            force_lines[0],
+            goal_distance_lines[1],
+            goal_distance_lines[0],
+        ]
+        ax1.legend(
+            lines,
+            [line.get_label() for line in lines],
+            loc="center",
+            fontsize=10,
+        )
 
     fig.tight_layout()
     plt.savefig("force_goal_distance_plot.png", dpi=300, bbox_inches="tight")

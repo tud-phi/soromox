@@ -148,4 +148,11 @@ site/
 
 # camera params saved during rendering
 DepthCamera_*.json
-DepthCapture_*.png
+DepthCapture_*.pngforce_goal_distance_plot.pdf
+force_goal_distance_plot.png
+videos/
+
+# Generated CLF-CBF outputs
+force_goal_distance_plot.pdf
+force_goal_distance_plot.png
+videos/
