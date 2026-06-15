@@ -405,6 +405,27 @@ class ActuationSpaceDynamics(eqx.Module):
         return eta_y
 
     @eqx.filter_jit
+    def coriolis_force(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the actuation space Coriolis/centrifugal force.
+
+        The actuation space Coriolis force is defined as:
+            tau_c_y = eta_y @ yd
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            qd: Generalized velocities of shape (num_dofs,).
+
+        Returns:
+            tau_c_y: Actuation space Coriolis force of shape (num_dofs,).
+        """
+        eta_y = self.coriolis_matrix(q, qd)
+        J = self.jacobian(q)
+        yd = J @ qd
+
+        return eta_y @ yd
+
+    @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:
         """
         Compute the actuation space damping matrix.
@@ -431,6 +452,26 @@ class ActuationSpaceDynamics(eqx.Module):
     # =========================================================================
     # Forces in actuation space
     # =========================================================================
+
+    @eqx.filter_jit
+    def damping_force(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the actuation space damping force.
+
+        The actuation space damping force is defined as:
+            tau_d_y = D_y @ yd = J^{-T} @ D @ qd
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            qd: Generalized velocities of shape (num_dofs,).
+
+        Returns:
+            tau_d_y: Actuation space damping force of shape (num_dofs,).
+        """
+        J_inv = self.jacobian_inverse(q)
+        D = self.robot.damping_matrix(q)
+
+        return J_inv.T @ D @ qd
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
@@ -475,45 +516,43 @@ class ActuationSpaceDynamics(eqx.Module):
         return J_inv.T @ G
 
     @eqx.filter_jit
-    def damping_force(self, q: Array, qd: Array) -> Array:
+    def potential_force(self, q: Array) -> Array:
         """
-        Compute the actuation space damping force.
+        Compute the total conservative actuation space force.
 
-        The actuation space damping force is defined as:
-            tau_d_y = D_y @ yd = J^{-T} @ D @ qd
+        This is the sum of gravitational and elastic forces.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
 
         Returns:
-            tau_d_y: Actuation space damping force of shape (num_dofs,).
+            tau_pot_y: Conservative actuation space force of shape (num_dofs,).
         """
-        J_inv = self.jacobian_inverse(q)
-        D = self.robot.damping_matrix(q)
-
-        return J_inv.T @ D @ qd
+        return self.gravitational_force(q) + self.elastic_force(q)
 
     @eqx.filter_jit
-    def coriolis_force(self, q: Array, qd: Array) -> Array:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Compute the actuation space Coriolis/centrifugal force.
+        Return actuation-space dynamics terms ``(M_y, Cyd, G_y)``.
 
-        The actuation space Coriolis force is defined as:
-            tau_c_y = eta_y @ yd
+        ``Cyd`` is the actuation-space Coriolis/centrifugal force vector.
+        ``G_y`` is the actuation-space gravitational force, matching the
+        ``SoftRobot.dynamics_terms`` convention of returning gravity separately
+        from elastic forces.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
             qd: Generalized velocities of shape (num_dofs,).
 
         Returns:
-            tau_c_y: Actuation space Coriolis force of shape (num_dofs,).
+            M_y: Actuation space inertia matrix of shape (num_dofs, num_dofs).
+            Cyd: Actuation space Coriolis/centrifugal force of shape (num_dofs,).
+            G_y: Actuation space gravitational force of shape (num_dofs,).
         """
-        eta_y = self.coriolis_matrix(q, qd)
-        J = self.jacobian(q)
-        yd = J @ qd
-
-        return eta_y @ yd
+        M_y = self.inertia_matrix(q)
+        Cyd = self.coriolis_force(q, qd)
+        G_y = self.gravitational_force(q)
+        return M_y, Cyd, G_y
 
     # =========================================================================
     # Actuation matrix in actuation space
