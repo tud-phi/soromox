@@ -118,7 +118,6 @@ robot = TendonActuatedGVS.from_segments(
     gravity=jnp.asarray(g),
     base_pose=p0,
     active_tendon_routing=active_tendon_routing,
-    max_dof=6,
     scale_rotational_basis_by_length=True,
 )
 # debug: check g0

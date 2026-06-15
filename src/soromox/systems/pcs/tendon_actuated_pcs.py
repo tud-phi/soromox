@@ -436,6 +436,8 @@ class TendonActuatedPCS(PCS):
 
         # number of tendons
         nt = tendon_routing_params.num_tendons
+        if nt == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
 
         def A_segment_i(i: Array):
             """
@@ -558,6 +560,9 @@ class TendonActuatedPCS(PCS):
         """
         # extract strains
         xi = self.strain(q).reshape((self.num_segments, 6))
+        num_tendons = tendon_routing_params.num_tendons
+        if num_tendons == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
 
         def tendon_length_density_segment_i(i: Array):
             """
