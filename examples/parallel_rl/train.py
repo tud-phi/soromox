@@ -10,9 +10,9 @@ import argparse
 import os
 
 if __package__:
-    from ._repo_path import ensure_repo_src_on_path
+    from ._repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
 else:
-    from _repo_path import ensure_repo_src_on_path
+    from _repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
 
 
 ensure_repo_src_on_path()
@@ -151,7 +151,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ball-surface-vmax", type=float, default=0.015)
     parser.add_argument("--success-threshold", type=float, default=0.01)
 
-    parser.add_argument("--save-dir", type=str, default="soromox_models")
+    parser.add_argument(
+        "--save-dir",
+        type=str,
+        default=str(PARALLEL_RL_DIR / "soromox_models"),
+    )
     parser.add_argument("--model-name", type=str, default="soromox_ppo_final")
     parser.add_argument(
         "--vecnormalize-name",

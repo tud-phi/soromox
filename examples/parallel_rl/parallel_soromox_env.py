@@ -26,7 +26,12 @@ import jax.random as rnd
 import numpy as np
 from diffrax import Tsit5
 from gymnasium import spaces
-from soromox.systems.pcs import TendonActuatedPCS
+from soromox.systems.pcs import (
+    LinearTendonRoutingParams,
+    PCSParams,
+    TendonActuatedPCS,
+    TendonActuatedPCSParams,
+)
 from soromox.systems.system_state import SystemState
 from stable_baselines3.common.vec_env import VecEnv
 
@@ -106,37 +111,43 @@ def build_arm(
     """
 
     shear_modulus = youngs_modulus / (2.0 * (1.0 + poisson_ratio))
-    params = {
-        "p0": jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]),
-        "L": jnp.ones((num_segments,)) * length,
-        "r": jnp.ones((num_segments,)) * radius,
-        "rho": jnp.ones((num_segments,)) * density,
-        "g": jnp.array([0.0, 0.0, 0.0]),
-        "E": jnp.ones((num_segments,)) * youngs_modulus,
-        "G": jnp.ones((num_segments,)) * shear_modulus,
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = jnp.ones((num_segments,)) * length
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
                 num_segments,
                 axis=0,
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
     )
 
-    active_tendon_routing_params = {
-        "ry": jnp.array([0.0, 0.0, 0.02, -0.02]),
-        "rz": jnp.array([0.02, -0.02, 0.0, 0.0]),
-        "my": jnp.array([0.0, 0.0, 0.0, 0.0]),
-        "mz": jnp.array([0.0, 0.0, 0.0, 0.0]),
-        "idx_seg_att": jnp.array([0, 0, 0, 0]),
-    }
+    body_params = PCSParams(
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=jnp.ones((num_segments,)) * radius,
+        density=jnp.ones((num_segments,)) * density,
+        gravity=jnp.array([0.0, 0.0, 0.0]),
+        young_modulus=jnp.ones((num_segments,)) * youngs_modulus,
+        shear_modulus=jnp.ones((num_segments,)) * shear_modulus,
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+    )
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=jnp.array([0.0, 0.0, 0.02, -0.02]),
+        z_intercept=jnp.array([0.02, -0.02, 0.0, 0.0]),
+        y_slope=jnp.array([0.0, 0.0, 0.0, 0.0]),
+        z_slope=jnp.array([0.0, 0.0, 0.0, 0.0]),
+        attachment_segment_index=jnp.array([0, 0, 0, 0]),
+    )
     return TendonActuatedPCS(
-        num_segments=num_segments,
-        params=params,
-        active_tendon_routing_params=active_tendon_routing_params,
+        params=TendonActuatedPCSParams(
+            body=body_params,
+            active_tendon_routing=active_tendon_routing,
+        ),
     )
 
 
@@ -548,18 +559,17 @@ class ParallelSoromoxEnv(VecEnv):
         self._last_actions: Optional[np.ndarray] = None
         self._rng_key = rnd.PRNGKey(int(kwargs.get("seed", 0)))
 
-    def reset(self) -> Tuple[np.ndarray, Sequence[dict]]:
+    def reset(self) -> np.ndarray:
         """Reset all vectorized environments.
 
         Returns:
-            Batch of observations with shape ``(num_envs, 16)`` and an empty
-            info dictionary for SB3 compatibility.
+            Batch of observations with shape ``(num_envs, 16)``.
         """
 
         keys = rnd.split(self._rng_key, self.num_envs + 1)
         keys_env, self._rng_key = keys[:-1], keys[-1]
         self._env_states, obs = self._reset_batch(keys_env)
-        return np.asarray(jax.device_get(obs), dtype=np.float32), {}
+        return np.asarray(jax.device_get(obs), dtype=np.float32)
 
     def step_async(self, actions: np.ndarray) -> None:
         """Store actions for the next synchronous vectorized step.

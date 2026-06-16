@@ -28,8 +28,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 
 
-DEFAULT_MODEL_PATH = str(PARALLEL_RL_DIR / "soromox_ppo_release.zip")
-DEFAULT_VECNORMALIZE_PATH = str(PARALLEL_RL_DIR / "soromox_ppo_vecnormalize_release.pkl")
+DEFAULT_MODEL_PATH = str(PARALLEL_RL_DIR / "soromox_models" / "soromox_ppo_final.zip")
+DEFAULT_VECNORMALIZE_PATH = str(PARALLEL_RL_DIR / "soromox_models" / "soromox_ppo_vecnormalize_final.pkl")
 
 
 def to_numpy(value, dtype=None) -> np.ndarray:
@@ -96,7 +96,7 @@ def run_fixed_episode(
         ``(num_envs, 3)``.
     """
 
-    obs, _ = raw_env.reset()
+    obs = raw_env.reset()
     obs = vec_env.normalize_obs(obs)
     final_diff = np.zeros((raw_env.num_envs, 3), dtype=np.float64)
 
