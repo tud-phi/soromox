@@ -1,23 +1,18 @@
-import os
-import sys
 import argparse
-
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
-
-from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
+from functools import partial
 
 import jax
-from jax import Array
 import jax.numpy as jnp
-from cbfpy.cbfs.clf_cbf import CLFCBFConfig
-
 import matplotlib.pyplot as plt
 import numpy as onp
-from functools import partial
-plt.rcParams['pdf.fonttype'] = 42  # For editable text in Illustrator
+from cbfpy.cbfs.clf_cbf import CLFCBFConfig
+from jax import Array
+
+plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
+    SystemState,
     TendonActuatedPCS,
     TendonActuatedPCSParams,
 )
@@ -52,10 +47,10 @@ def parse_args() -> argparse.Namespace:
 # ======================================================
 @jax.jit
 def pairwise_h(
-    p: jnp.ndarray,                        # (P, 3)
-    centers: jnp.ndarray,                 # (N, 3)
-    r_obs: jnp.ndarray,                   # (N,)
-    r_robot: jnp.ndarray | float = 0.0,   # scalar or (P,)
+    p: jnp.ndarray,  # (P, 3)
+    centers: jnp.ndarray,  # (N, 3)
+    r_obs: jnp.ndarray,  # (N,)
+    r_robot: jnp.ndarray | float = 0.0,  # scalar or (P,)
     safety: float = 0.0,
 ) -> jnp.ndarray:
     p = jnp.asarray(p)
@@ -65,8 +60,8 @@ def pairwise_h(
     r_robot = jnp.asarray(r_robot)
     r_robot = r_robot + jnp.zeros((p.shape[0],), dtype=p.dtype)
 
-    diff = p[:, None, :] - centers[None, :, :]   # (P, N, 3)
-    dist = jnp.linalg.norm(diff, axis=-1)        # (P, N)
+    diff = p[:, None, :] - centers[None, :, :]  # (P, N, 3)
+    dist = jnp.linalg.norm(diff, axis=-1)  # (P, N)
     H = dist - (r_obs[None, :] + r_robot[:, None] + safety)
     return H
 
@@ -208,29 +203,19 @@ if __name__ == "__main__":
     # --------------------------------------------------
     # The robot is modeled as a two-segment piecewise-constant-strain body.
     # Each vector entry corresponds to one segment.
-    params = {
-        "p0": jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),  # base pose
-        "L": 15e-2
-        * 2
-        / num_segments
-        * jnp.ones((num_segments,)),  # segment lengths [m]
-        "r": 3.6e-2 * jnp.ones((num_segments,)),  # backbone radius [m]
-        "rho": rho,  # density [kg/m^3]
-        "g": jnp.array([0.0, 0.0, 9.81]),  # gravity [m/s^2]
-        "E": 20e3 * jnp.ones((num_segments,)),  # Young's modulus [Pa]
-        "G": 20e3 * jnp.ones((num_segments,)),  # shear modulus [Pa]
-    }
+    segment_length = 15e-2 * 2 / num_segments * jnp.ones((num_segments,))
+    backbone_radius = 3.6e-2 * jnp.ones((num_segments,))
 
     # Diagonal strain damping matrix. Translational strain damping is kept
     # lower than rotational/shear-like entries, then scaled by segment length.
-    params["D"] = 1e-3 * jnp.diag(
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
                 num_segments,
                 axis=0,
             )
-            * params["L"][:, None]
+            * segment_length[:, None]
         ).flatten()
     )
 
@@ -240,7 +225,7 @@ if __name__ == "__main__":
     # Three straight tendons are attached to each segment. The y/z intercepts
     # place each tendon around the backbone cross-section, slightly inside the
     # outer radius.
-    r0, r1 = float(params["r"][0]) - 0.005, float(params["r"][1]) - 0.005
+    r0, r1 = float(backbone_radius[0]) - 0.005, float(backbone_radius[1]) - 0.005
     theta0 = jnp.deg2rad(jnp.array([120, 240, 0]))
     theta1 = jnp.deg2rad(jnp.array([180, 300, 60]))
     ry0, rz0 = r0 * jnp.cos(theta0), r0 * jnp.sin(theta0)
@@ -263,18 +248,15 @@ if __name__ == "__main__":
     # --------------------------------------------------
     # soromox system parameter objects
     # --------------------------------------------------
-    # The legacy params dict remains above because the controller, plots, and
-    # obstacle checks still read params["L"], params["r"], etc. These dataclasses
-    # are the system objects consumed by the current soromox API.
     body_params = PCSParams(
-        base_pose=params["p0"],
-        length=params["L"],
-        radius=params["r"],
-        density=params["rho"],
-        gravity=params["g"],
-        young_modulus=params["E"],
-        shear_modulus=params["G"],
-        damping_matrix=params["D"],
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        length=segment_length,
+        radius=backbone_radius,
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        young_modulus=20e3 * jnp.ones((num_segments,)),
+        shear_modulus=20e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
         reference_strain=jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),
@@ -308,24 +290,26 @@ if __name__ == "__main__":
             self.use_cbf = use_cbf
             self.p_d_2 = goal_position
 
-            self.s_ps = jnp.linspace(0.0, jnp.sum(params["L"]), 10 * num_segments)
+            self.s_ps = jnp.linspace(0.0, jnp.sum(segment_length), 10 * num_segments)
 
-            self.robot_radius = params["r"][0]
+            self.robot_radius = backbone_radius[0]
             self.safety_margin = 0.00
 
             self.obs = {
-                "centers": jnp.array([
-                    [0.10, 0.08, 0.24],
-                    [0.12, 0.06, 0.32],
-                    [0.04, 0.055, 0.20],
-                ]),
+                "centers": jnp.array(
+                    [
+                        [0.10, 0.08, 0.24],
+                        [0.12, 0.06, 0.32],
+                        [0.04, 0.055, 0.20],
+                    ]
+                ),
                 "radii": jnp.array([0.02, 0.02, 0.02]),
             }
 
             super().__init__(
                 n=2 * int(robot.num_active_strains),  # y = [q, qd]
                 m=int(robot.num_actuators),
-                relax_cbf=False,
+                relax_qp=False,
                 cbf_relaxation_penalty=1e6,
                 clf_relaxation_penalty=10,
             )
@@ -395,7 +379,7 @@ if __name__ == "__main__":
     # ======================================================
     t0 = 0.0
     t1 = 8.0
-    solver_dt = 1e-3
+    sim_dt = 1e-4
     save_dt = 1e-3
 
     forward_kinematics_end_effector = jax.jit(
@@ -407,25 +391,28 @@ if __name__ == "__main__":
         controller = ClosedFormHOCLFHOCBFController(config, dyn)
         z_des = config.p_d_2
 
-        def closed_loop_dyn(t, y, args):
-            u = controller.controller(y, args)
-            return robot.forward_dynamics(t, y, (u, None))
+        def closed_loop_controller(state: SystemState):
+            u = controller.controller(state.y, z_des)
+            return u, None
 
-        print(f"\nRunning {label} rollout via diffrax.diffeqsolve ...")
-        sol = diffeqsolve(
-            ODETerm(closed_loop_dyn),
-            Tsit5(),
-            t0=t0,
+        initial_state = SystemState(
+            t=jnp.array(t0),
+            y=y0,
+            u=jnp.zeros((robot.num_actuators,)),
+            control_state=None,
+        )
+
+        print(f"\nRunning {label} rollout via robot.rollout_closed_loop_to ...")
+        trajectory = robot.rollout_closed_loop_to(
+            initial_state=initial_state,
+            controller=closed_loop_controller,
             t1=t1,
-            dt0=solver_dt,
-            y0=y0,
-            args=z_des,
-            saveat=SaveAt(ts=jnp.arange(t0, t1, save_dt)),
+            solver_dt=sim_dt,
+            save_ts=jnp.arange(t0, t1, save_dt),
             max_steps=None,
         )
 
-        assert sol.ys is not None
-        q_ts, _ = jnp.split(sol.ys, 2, axis=1)
+        q_ts, _ = jnp.split(trajectory.y, 2, axis=1)
         g_body_ts = jax.vmap(
             lambda q: robot.forward_kinematics_batched(q, config.s_ps)
         )(q_ts)
@@ -442,7 +429,7 @@ if __name__ == "__main__":
         goal_distance = jnp.linalg.norm(g_ee_ts[:, :3, 3] - z_des[None, :], axis=1)
         return {
             "label": label,
-            "ts": onp.asarray(sol.ts),
+            "ts": onp.asarray(trajectory.t),
             "force": onp.asarray(max_force),
             "distance": onp.asarray(goal_distance),
         }
@@ -459,7 +446,9 @@ if __name__ == "__main__":
     # Figure-style plot: max normal force boundary + goal distance
     # ======================================================
     force_limit = 5.0
-    force_axis_max = 1.08 * max(force_limit, *(result["force"].max() for result in results))
+    force_axis_max = 1.08 * max(
+        force_limit, *(result["force"].max() for result in results)
+    )
     fig, ax1 = plt.subplots(figsize=(8, 4))
 
     force_lines = []
