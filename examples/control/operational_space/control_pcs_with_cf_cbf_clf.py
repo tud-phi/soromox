@@ -1,34 +1,50 @@
 import os
 import sys
+import argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
-from functools import partial
+from diffrax import ODETerm, SaveAt, Tsit5, diffeqsolve
 
 import jax
+from jax import Array
 import jax.numpy as jnp
+from cbfpy.cbfs.clf_cbf import CLFCBFConfig
+
 import matplotlib.pyplot as plt
 import numpy as onp
-from cbfpy.cbfs.clf_cbf import CLFCBFConfig
-from jax import Array
-
-plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
-from soromox.rendering import Open3DRenderer, RendererColorConfig
+from functools import partial
+plt.rcParams['pdf.fonttype'] = 42  # For editable text in Illustrator
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
-    SystemState,
     TendonActuatedPCS,
     TendonActuatedPCSParams,
 )
 
 jax.config.update("jax_enable_x64", True)
 jnp.set_printoptions(
-    threshold=jnp.inf,
-    linewidth=jnp.inf,
+    threshold=10_000,
+    linewidth=10_000,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
 jnp.set_printoptions(precision=4, suppress=True)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Simulate a tendon-actuated PCS with HOCLF/HOCBF control."
+    )
+    parser.add_argument(
+        "--controller",
+        choices=("both", "with-cbf", "without-cbf"),
+        default="both",
+        help=(
+            "Controller mode to simulate. 'both' reproduces the comparison plot; "
+            "the other modes run a single controller."
+        ),
+    )
+    return parser.parse_args()
 
 
 # ======================================================
@@ -36,10 +52,10 @@ jnp.set_printoptions(precision=4, suppress=True)
 # ======================================================
 @jax.jit
 def pairwise_h(
-    p: jnp.ndarray,  # (P, 3)
-    centers: jnp.ndarray,  # (N, 3)
-    r_obs: jnp.ndarray,  # (N,)
-    r_robot: jnp.ndarray | float = 0.0,  # scalar or (P,)
+    p: jnp.ndarray,                        # (P, 3)
+    centers: jnp.ndarray,                 # (N, 3)
+    r_obs: jnp.ndarray,                   # (N,)
+    r_robot: jnp.ndarray | float = 0.0,   # scalar or (P,)
     safety: float = 0.0,
 ) -> jnp.ndarray:
     p = jnp.asarray(p)
@@ -49,8 +65,8 @@ def pairwise_h(
     r_robot = jnp.asarray(r_robot)
     r_robot = r_robot + jnp.zeros((p.shape[0],), dtype=p.dtype)
 
-    diff = p[:, None, :] - centers[None, :, :]  # (P, N, 3)
-    dist = jnp.linalg.norm(diff, axis=-1)  # (P, N)
+    diff = p[:, None, :] - centers[None, :, :]   # (P, N, 3)
+    dist = jnp.linalg.norm(diff, axis=-1)        # (P, N)
     H = dist - (r_obs[None, :] + r_robot[:, None] + safety)
     return H
 
@@ -71,14 +87,14 @@ class SoftRobotDynamics:
     @partial(jax.jit, static_argnums=(0,))
     def f(self, y):
         u_zero = jnp.zeros(self.n_u)
-        return self.robot.forward_dynamics(0.0, y, (u_zero, None))
+        return self.robot.forward_dynamics(jnp.asarray(0.0), y, (u_zero, None))
 
     @partial(jax.jit, static_argnums=(0,))
     def g(self, y):
         u_zero = jnp.zeros(self.n_u)
-        return jax.jacfwd(lambda u: self.robot.forward_dynamics(0.0, y, (u, None)))(
-            u_zero
-        )
+        return jax.jacfwd(
+            lambda u: self.robot.forward_dynamics(jnp.asarray(0.0), y, (u, None))
+        )(u_zero)
 
 
 # ======================================================
@@ -182,8 +198,10 @@ class ClosedFormHOCLFHOCBFController:
 
 
 if __name__ == "__main__":
+    args = parse_args()
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))
+    goal_position = jnp.array([0.10, 0.05, 0.32])
 
     # --------------------------------------------------
     # Continuum body parameters
@@ -286,8 +304,9 @@ if __name__ == "__main__":
     # CLF-CBF config with REAL dynamics + V2/h2
     # ======================================================
     class TendonSoroConfig(CLFCBFConfig):
-        def __init__(self):
-            self.p_d_2 = jnp.array([0.10, 0.05, 0.32])
+        def __init__(self, use_cbf=True):
+            self.use_cbf = use_cbf
+            self.p_d_2 = goal_position
 
             self.s_ps = jnp.linspace(0.0, jnp.sum(params["L"]), 10 * num_segments)
 
@@ -295,20 +314,18 @@ if __name__ == "__main__":
             self.safety_margin = 0.00
 
             self.obs = {
-                "centers": jnp.array(
-                    [
-                        [0.10, 0.08, 0.24],
-                        [0.12, 0.06, 0.32],
-                        [0.04, 0.055, 0.20],
-                    ]
-                ),
+                "centers": jnp.array([
+                    [0.10, 0.08, 0.24],
+                    [0.12, 0.06, 0.32],
+                    [0.04, 0.055, 0.20],
+                ]),
                 "radii": jnp.array([0.02, 0.02, 0.02]),
             }
 
             super().__init__(
                 n=2 * int(robot.num_active_strains),  # y = [q, qd]
                 m=int(robot.num_actuators),
-                relax_qp=False,
+                relax_cbf=False,
                 cbf_relaxation_penalty=1e6,
                 clf_relaxation_penalty=10,
             )
@@ -331,13 +348,15 @@ if __name__ == "__main__":
             p_2 = g_ee_2[:3, 3]
             p_des = self.p_d_2 if z_des is None else z_des
             e_2 = jnp.linalg.norm(p_2 - p_des[:3])
-            # e_2 = (p_2 - p_des[:3])**2
             return e_2.reshape(-1)
 
         # --------------------------------------------------
         # CBF #2
         # --------------------------------------------------
         def h_2(self, y, kappa=2000.0):
+            if not self.use_cbf:
+                return jnp.array([0.0])
+
             q, qd = dyn.split(y)
             g_ps = robot.forward_kinematics_batched(q, self.s_ps)  # (P,4,4)
             p = g_ps[:, :3, 3]  # (P,3)
@@ -350,28 +369,14 @@ if __name__ == "__main__":
                 self.safety_margin,
             )
 
-            # smooth minimum
-            (-1.0 / kappa) * jnp.log(jnp.sum(jnp.exp(-kappa * H)))
-            # return h_all.reshape(-1)/10
             force_min = 5 + 1000 * jnp.min(H).reshape(-1)
-            # return jnp.min(H).reshape(-1) *1000
             return force_min
-
-            # return jnp.array([0.0]) # --- IGNORE ---
 
         def alpha_2(self, h_2):
             return h_2 * 20.0
 
         def gamma_2(self, V_2):
             return V_2 * 10.0
-
-    # ======================================================
-    # Build controller
-    # ======================================================
-    config = TendonSoroConfig()
-    controller = ClosedFormHOCLFHOCBFController(config, dyn)
-
-    z_des = config.p_d_2
 
     # ======================================================
     # Initial state
@@ -389,173 +394,96 @@ if __name__ == "__main__":
     # Simulation
     # ======================================================
     t0 = 0.0
-    t1 = 4.0
-    solver_dt = 1e-4
-    save_dt = 1e-4
+    t1 = 8.0
+    solver_dt = 1e-3
+    save_dt = 1e-3
 
-    def closed_loop_controller(state: SystemState):
-        # Closed-form controller:
-        #   1. project zero input onto the HOCLF half-space,
-        #   2. project that result onto the HOCBF half-space.
-        u_safe = controller.controller(state.y, z_des)
-        return u_safe, None
-
-    initial_state = SystemState(
-        t=jnp.array(t0),
-        y=y0,
-        u=jnp.zeros((robot.num_actuators,)),
-        control_state=None,
-    )
-
-    print("\nRunning closed-loop rollout via robot.rollout_closed_loop_to ...")
-
-    trajectory = robot.rollout_closed_loop_to(
-        initial_state=initial_state,
-        controller=closed_loop_controller,
-        t1=t1,
-        solver_dt=solver_dt,
-        save_ts=jnp.arange(t0, t1, save_dt),
-        max_steps=None,
-    )
-
-    ts = trajectory.t
-    y_ts = trajectory.y
-    q_ts, qd_ts = jnp.split(y_ts, 2, axis=1)
-
-    print("Simulation done.")
-    print("q_ts shape:", q_ts.shape)
-    print("qd_ts shape:", qd_ts.shape)
-
-    # ======================================================
-    # Clearance over time
-    # ======================================================
-    g_ee_tsp = jax.vmap(lambda q: robot.forward_kinematics_batched(q, config.s_ps))(
-        q_ts
-    )
-
-    p_tsp = g_ee_tsp[:, :, :3, 3]  # (T,P,3)
-    centers = config.obs["centers"]
-    radii = config.obs["radii"]
-
-    dist_tpN = jnp.linalg.norm(
-        p_tsp[:, :, None, :] - centers[None, None, :, :],
-        axis=-1,
-    ) - (radii[None, None, :] + config.robot_radius)
-
-    min_clearance_tN = dist_tpN.min(axis=1)
-    global_min_t = min_clearance_tN.min(axis=1)
-
-    ts_np = onp.asarray(ts)
-    global_min_np = onp.asarray(global_min_t)
-
-    plt.figure(figsize=(8, 4))
-    plt.plot(ts_np, global_min_np)
-    plt.axhline(0.0, linestyle="--", linewidth=1)
-    plt.xlabel("Time [s]")
-    plt.ylabel("Global min clearance [m]")
-    plt.title("Global minimum clearance over time")
-    plt.grid(True)
-    plt.tight_layout()
-    plt.show()
-
-    # ======================================================
-    # End-effector tracking
-    # ======================================================
     forward_kinematics_end_effector = jax.jit(
         partial(robot.forward_kinematics, s=jnp.sum(robot.L))
     )
-    g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
-    plt.figure()
-    plt.plot(ts, g_ee_ts[:, 0, 3], label="End-effector x [m]")
-    plt.plot(ts, g_ee_ts[:, 1, 3], label="End-effector y [m]")
-    plt.plot(ts, g_ee_ts[:, 2, 3], label="End-effector z [m]")
-    plt.axhline(z_des[0], linestyle="--", linewidth=1)
-    plt.axhline(z_des[1], linestyle="--", linewidth=1)
-    plt.axhline(z_des[2], linestyle="--", linewidth=1)
-    plt.xlabel("Time [s]")
-    plt.ylabel("End-effector position [m]")
-    plt.legend()
-    plt.grid(True)
-    plt.box(True)
-    plt.tight_layout()
-    plt.show()
+    def run_case(use_cbf: bool, label: str):
+        config = TendonSoroConfig(use_cbf=use_cbf)
+        controller = ClosedFormHOCLFHOCBFController(config, dyn)
+        z_des = config.p_d_2
 
-    # ======================================================
-    # Open3D render
-    # ======================================================
-    os.makedirs("videos", exist_ok=True)
+        def closed_loop_dyn(t, y, args):
+            u = controller.controller(y, args)
+            return robot.forward_dynamics(t, y, (u, None))
 
-    obs_centers = onp.asarray(config.obs["centers"], dtype=onp.float64)
-    obs_radii = onp.asarray(config.obs["radii"], dtype=onp.float64)
-    obs_colors = onp.tile(
-        onp.array([[0.5, 0.5, 0.5]], dtype=onp.float64),
-        (obs_radii.shape[0], 1),
-    )
+        print(f"\nRunning {label} rollout via diffrax.diffeqsolve ...")
+        sol = diffeqsolve(
+            ODETerm(closed_loop_dyn),
+            Tsit5(),
+            t0=t0,
+            t1=t1,
+            dt0=solver_dt,
+            y0=y0,
+            args=z_des,
+            saveat=SaveAt(ts=jnp.arange(t0, t1, save_dt)),
+            max_steps=None,
+        )
 
-    target_center = onp.asarray(config.p_d_2, dtype=onp.float64).reshape(1, 3)
-    target_radius = onp.array([0.01], dtype=onp.float64)
-    target_color = onp.array([[1.0, 0.1, 0.1]], dtype=onp.float64)
+        assert sol.ys is not None
+        q_ts, _ = jnp.split(sol.ys, 2, axis=1)
+        g_body_ts = jax.vmap(
+            lambda q: robot.forward_kinematics_batched(q, config.s_ps)
+        )(q_ts)
+        p_body_ts = g_body_ts[:, :, :3, 3]
+        clearances = jnp.linalg.norm(
+            p_body_ts[:, :, None, :] - config.obs["centers"][None, None, :, :],
+            axis=-1,
+        ) - (config.obs["radii"][None, None, :] + config.robot_radius)
 
-    static_spheres_positions = onp.concatenate([obs_centers, target_center], axis=0)
-    static_spheres_radii = onp.concatenate([obs_radii, target_radius], axis=0)
-    static_spheres_colors = onp.concatenate([obs_colors, target_color], axis=0)
+        # The contact model uses 1000 N/m after the clearance becomes negative.
+        max_force = jnp.maximum(0.0, -1000.0 * clearances.min(axis=(1, 2)))
 
-    render_stride = max(1, len(ts) // 300)
-    renderer = Open3DRenderer(
-        robot,
-        num_points=80,
-        color_config=RendererColorConfig(),
-        width=1280,
-        height=800,
-        backbone_style="discrete",
-        actuator_line_width=2.0,
-    )
-    renderer.render_sequence(
-        ts=ts[::render_stride],
-        q_ts=q_ts[::render_stride],
-        playback_speed=1.0,
-        loop=True,
-        record_path="videos/clf_cbf_rollout.mp4",
-        render_actuators=True,
-        static_spheres_positions=static_spheres_positions,
-        static_spheres_radii=static_spheres_radii,
-        static_spheres_colors=static_spheres_colors,
-    )
+        g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
+        goal_distance = jnp.linalg.norm(g_ee_ts[:, :3, 3] - z_des[None, :], axis=1)
+        return {
+            "label": label,
+            "ts": onp.asarray(sol.ts),
+            "force": onp.asarray(max_force),
+            "distance": onp.asarray(goal_distance),
+        }
+
+    selected_modes = {
+        "both": [("with CBF", True), ("without CBF", False)],
+        "with-cbf": [("with CBF", True)],
+        "without-cbf": [("without CBF", False)],
+    }[args.controller]
+
+    results = [run_case(use_cbf, label) for label, use_cbf in selected_modes]
 
     # ======================================================
     # Figure-style plot: max normal force boundary + goal distance
-    # NOTE:
-    #   Do NOT change h_2 logic.
-    #   h_2 is used only as the raw barrier/force-like quantity here.
-    #   For plotting force, we convert it as:
-    #       no contact / safe side  -> plotted force = 0
-    #       contact / violation     -> positive plotted force
     # ======================================================
-    h2_ts = jax.vmap(config.h_2)(y_ts)
-    h2_np = onp.asarray(h2_ts).squeeze()
-
-    # Plotting-only logic. Keep config.h_2 unchanged.
-    # Your current h_2 is force_min = 5 + 1000 * min_clearance.
-    # The boundary force is therefore 5 N.
-    # When h_2 is below the boundary, the amount below boundary is contact force.
     force_limit = 5.0
-    max_force_np = onp.maximum(0.0, force_limit - h2_np)
-
-    # End-effector distance to goal.
-    ee_pos_np = onp.asarray(g_ee_ts[:, :3, 3])
-    z_des_np = onp.asarray(z_des)
-    goal_dist_np = onp.linalg.norm(ee_pos_np - z_des_np[None, :], axis=1)
-
+    force_axis_max = 1.08 * max(force_limit, *(result["force"].max() for result in results))
     fig, ax1 = plt.subplots(figsize=(8, 4))
 
-    # Left axis: maximum pairwise normal contact force.
-    ax1.plot(ts_np, max_force_np, color="tab:red", linewidth=2.5)
-    ax1.axhline(force_limit, color="tab:red", linestyle="--", linewidth=2.0)
+    force_lines = []
+    goal_distance_lines = []
+
+    for result in results:
+        linestyle = "-" if result["label"] == "with CBF" else "--"
+        force_suffix = "+HOCBF" if result["label"] == "with CBF" else ""
+        force_lines.append(
+            ax1.plot(
+                result["ts"],
+                result["force"],
+                color="tab:red",
+                linewidth=2.5,
+                linestyle=linestyle,
+                label=f"Force for HOCLF{force_suffix} controller",
+            )[0]
+        )
+
+    ax1.axhline(force_limit, color="tab:red", linestyle=":", linewidth=2.0)
     ax1.fill_between(
-        ts_np,
+        results[0]["ts"],
         force_limit,
-        force_limit * 1.08,
+        force_axis_max,
         color="tab:red",
         alpha=0.12,
     )
@@ -563,18 +491,51 @@ if __name__ == "__main__":
     ax1.set_ylabel("Max Pairwise Normal Force [N]", color="tab:red", fontsize=16)
     ax1.tick_params(axis="x", labelsize=13)
     ax1.tick_params(axis="y", labelcolor="tab:red", labelsize=13)
-    ax1.set_ylim(0.0, force_limit * 1.08)
+    ax1.set_ylim(0.0, force_axis_max)
     ax1.grid(True, alpha=0.25)
     ax1.spines["left"].set_color("tab:red")
 
-    # Right axis: end-effector goal distance.
     ax2 = ax1.twinx()
-    ax2.plot(ts_np, goal_dist_np, color="tab:blue", linewidth=2.5)
+    for result in results:
+        linestyle = "-" if result["label"] == "with CBF" else "--"
+        goal_suffix = "+HOCBF" if result["label"] == "with CBF" else ""
+        goal_distance_lines.append(
+            ax2.plot(
+                result["ts"],
+                result["distance"],
+                color="tab:blue",
+                linewidth=2.5,
+                linestyle=linestyle,
+                label=f"Goal distance for HOCLF{goal_suffix} controller",
+            )[0]
+        )
+
     ax2.set_ylabel("Goal Distance [m]", color="tab:blue", fontsize=16)
     ax2.tick_params(axis="y", labelcolor="tab:blue", labelsize=13)
     ax2.spines["right"].set_color("tab:blue")
 
-    plt.tight_layout()
+    if len(results) == 1:
+        ax1.legend(
+            [force_lines[0], goal_distance_lines[0]],
+            [force_lines[0].get_label(), goal_distance_lines[0].get_label()],
+            loc="center",
+            fontsize=10,
+        )
+    else:
+        lines = [
+            force_lines[1],
+            force_lines[0],
+            goal_distance_lines[1],
+            goal_distance_lines[0],
+        ]
+        ax1.legend(
+            lines,
+            [line.get_label() for line in lines],
+            loc="center",
+            fontsize=10,
+        )
+
+    fig.tight_layout()
     plt.savefig("force_goal_distance_plot.png", dpi=300, bbox_inches="tight")
     plt.savefig("force_goal_distance_plot.pdf", bbox_inches="tight")
     plt.show()
