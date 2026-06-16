@@ -1,4 +1,5 @@
 import argparse
+import os
 from functools import partial
 
 import jax
@@ -9,6 +10,7 @@ from cbfpy.cbfs.clf_cbf import CLFCBFConfig
 from jax import Array
 
 plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
+from soromox.rendering import Open3DRenderer, RendererColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
@@ -379,7 +381,7 @@ if __name__ == "__main__":
     # ======================================================
     t0 = 0.0
     t1 = 8.0
-    sim_dt = 1e-4
+    sim_dt = 1e-3
     save_dt = 1e-3
 
     forward_kinematics_end_effector = jax.jit(
@@ -430,6 +432,8 @@ if __name__ == "__main__":
         return {
             "label": label,
             "ts": onp.asarray(trajectory.t),
+            "q_ts": q_ts,
+            "config": config,
             "force": onp.asarray(max_force),
             "distance": onp.asarray(goal_distance),
         }
@@ -441,6 +445,61 @@ if __name__ == "__main__":
     }[args.controller]
 
     results = [run_case(use_cbf, label) for label, use_cbf in selected_modes]
+
+    # ======================================================
+    # Open3D render
+    # ======================================================
+    if Open3DRenderer is None:
+        print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
+    else:
+        os.makedirs("videos", exist_ok=True)
+
+        render_result = next(
+            (result for result in results if result["label"] == "with CBF"),
+            results[0],
+        )
+        render_config = render_result["config"]
+        render_ts = render_result["ts"]
+        render_q_ts = render_result["q_ts"]
+
+        obs_centers = onp.asarray(render_config.obs["centers"], dtype=onp.float64)
+        obs_radii = onp.asarray(render_config.obs["radii"], dtype=onp.float64)
+        obs_colors = onp.tile(
+            onp.array([[0.5, 0.5, 0.5]], dtype=onp.float64),
+            (obs_radii.shape[0], 1),
+        )
+
+        target_center = onp.asarray(render_config.p_d_2, dtype=onp.float64).reshape(
+            1, 3
+        )
+        target_radius = onp.array([0.01], dtype=onp.float64)
+        target_color = onp.array([[1.0, 0.1, 0.1]], dtype=onp.float64)
+
+        static_spheres_positions = onp.concatenate([obs_centers, target_center], axis=0)
+        static_spheres_radii = onp.concatenate([obs_radii, target_radius], axis=0)
+        static_spheres_colors = onp.concatenate([obs_colors, target_color], axis=0)
+
+        render_stride = max(1, len(render_ts) // 300)
+        renderer = Open3DRenderer(
+            robot,
+            num_points=80,
+            color_config=RendererColorConfig(),
+            width=1280,
+            height=800,
+            backbone_style="discrete",
+            actuator_line_width=2.0,
+        )
+        renderer.render_sequence(
+            ts=render_ts[::render_stride],
+            q_ts=render_q_ts[::render_stride],
+            playback_speed=1.0,
+            loop=True,
+            record_path=f"videos/clf_cbf_rollout_{render_result['label'].lower().replace(' ', '_')}.mp4",
+            render_actuators=True,
+            static_spheres_positions=static_spheres_positions,
+            static_spheres_radii=static_spheres_radii,
+            static_spheres_colors=static_spheres_colors,
+        )
 
     # ======================================================
     # Figure-style plot: max normal force boundary + goal distance
