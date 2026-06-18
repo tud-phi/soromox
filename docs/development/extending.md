@@ -272,7 +272,7 @@ def actuation_matrix(self, q: jax.Array) -> jax.Array:
     Actuation matrix A(q) mapping control inputs to forces.
 
     For tendon-actuated: based on tendon routing geometry
-    For pneumatic: based on chamber geometry and pressure
+    For pressure chambers: based on chamber geometry and pressure
 
     Returns:
         A: Actuation matrix (num_dofs, num_actuators)

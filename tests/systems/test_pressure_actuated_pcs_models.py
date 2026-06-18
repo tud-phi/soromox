@@ -14,13 +14,13 @@ from soromox.systems import (
     ISupportParams,
     PCSStructure,
     PlanarPCSStructure,
-    PneumaticActuatedPlanarPCS,
-    PneumaticActuatedPlanarPCSParams,
+    PressureActuatedPlanarPCS,
+    PressureActuatedPlanarPCSParams,
 )
 
 
-def make_pneumatic_planar_params():
-    return PneumaticActuatedPlanarPCSParams(
+def make_pressure_planar_params():
+    return PressureActuatedPlanarPCSParams(
         base_pose=planar_base_pose(),
         length=jnp.array([0.1]),
         radius=jnp.array([0.02]),
@@ -80,9 +80,9 @@ def expected_isupport_segment_actuation(params, segment_idx, num_chambers=3):
     return jnp.stack(expected_columns, axis=-1)
 
 
-def test_pneumatic_planar_pcs_circular_geometry_and_actuation_matrix():
-    params = make_pneumatic_planar_params()
-    robot = PneumaticActuatedPlanarPCS(
+def test_pressure_planar_pcs_circular_geometry_and_actuation_matrix():
+    params = make_pressure_planar_params()
+    robot = PressureActuatedPlanarPCS(
         params=params, structure=PlanarPCSStructure(num_gauss_points=1)
     )
 
@@ -116,9 +116,9 @@ def test_pneumatic_planar_pcs_circular_geometry_and_actuation_matrix():
     assert jnp.allclose(robot.actuation_matrix(jnp.zeros((3,))), expected_actuation)
 
 
-def test_pneumatic_planar_pcs_concentric_geometry_and_updates():
-    params = make_pneumatic_planar_params()
-    robot = PneumaticActuatedPlanarPCS(
+def test_pressure_planar_pcs_concentric_geometry_and_updates():
+    params = make_pressure_planar_params()
+    robot = PressureActuatedPlanarPCS(
         params=params,
         structure=PlanarPCSStructure(num_gauss_points=1),
         chamber_cross_section_geometry="concentric",
@@ -153,19 +153,19 @@ def test_pneumatic_planar_pcs_concentric_geometry_and_updates():
     assert jnp.allclose(robot.d_chamber, params.chamber_distance)
 
 
-def test_pneumatic_planar_pcs_validates_chamber_parameters():
-    params = make_pneumatic_planar_params()
+def test_pressure_planar_pcs_validates_chamber_parameters():
+    params = make_pressure_planar_params()
     kwargs = {field.name: getattr(params, field.name) for field in fields(params)}
     kwargs.pop("chamber_inner_radius")
     with pytest.raises(TypeError, match="chamber_inner_radius"):
-        PneumaticActuatedPlanarPCSParams(**kwargs)
+        PressureActuatedPlanarPCSParams(**kwargs)
 
-    params = make_pneumatic_planar_params()
+    params = make_pressure_planar_params()
     kwargs = {field.name: getattr(params, field.name) for field in fields(params)}
     kwargs["chamber_outer_radius"] = jnp.array([0.004, 0.005])
-    params = PneumaticActuatedPlanarPCSParams(**kwargs)
+    params = PressureActuatedPlanarPCSParams(**kwargs)
     with pytest.raises(ValueError, match="chamber_outer_radius"):
-        PneumaticActuatedPlanarPCS(
+        PressureActuatedPlanarPCS(
             params=params, structure=PlanarPCSStructure(num_gauss_points=1)
         )
 

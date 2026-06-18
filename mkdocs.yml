@@ -77,7 +77,7 @@ nav:
             - Planar PCS: api/systems/pcs/planar-pcs.md
             - Tendon Actuated PCS: api/systems/pcs/tendon-actuated-pcs.md
             - Tendon Actuated Planar PCS: api/systems/pcs/tendon-actuated-planar-pcs.md
-            - Pneumatic Actuated Planar PCS: api/systems/pcs/pneumatic-actuated-planar-pcs.md
+            - Pressure Actuated Planar PCS: api/systems/pcs/pressure-actuated-planar-pcs.md
             - I-Support: api/systems/pcs/isupport.md
           - GVS Systems:
             - Overview: api/systems/gvs/index.md

@@ -21,7 +21,7 @@ The [Systems](systems/index.md) module contains implementations for various robo
 - Forward kinematics and Jacobians
 - Dynamics (mass matrices, Coriolis forces, gravitational effects)
 - Energy computation methods
-- Support for various actuation methods (direct torque, tendons, pneumatics)
+- Support for various actuation methods (direct torque, tendons, pressure chambers)
 
 SoRoMoX includes four main system categories:
 - **Articulated Systems**: Planar pendulums, tendon-actuated pendulums, and spatial articulated soft robots
@@ -59,7 +59,7 @@ All renderers inherit from a common base class and provide cached forward kinema
 
 ## Actuation
 
-The [Actuation](actuation.md) module provides utilities for modeling and working with different actuation methods, including tendon routing, pneumatic chambers, and direct torque actuation.
+The [Actuation](actuation.md) module provides utilities for modeling and working with different actuation methods, including tendon routing, pressure chambers, and direct torque actuation.
 
 ---
 

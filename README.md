@@ -29,7 +29,7 @@ SoRoMoX includes strain-based continuum models for slender structures (Cosserat 
 | System Type | Variants |
 |-------------|----------|
 | Articulated Systems | [Pendulum](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated Pendulum](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py), [Articulated Soft Robot](examples/simulation/articulated/simulate_articulated_soft_robot.py) |
-| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Tendon-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [Pneumatic-Actuated](examples/simulation/pcs/simulate_pneumatic_actuated_planar_pcs.py) |
+| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Tendon-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [Pressure-Actuated](examples/simulation/pcs/simulate_pressure_actuated_planar_pcs.py) |
 | GVS (Geometric Variable Strain) | [Spatial](examples/simulation/gvs/simulate_gvs.py), [Tendon-Actuated](examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
 | HSA (Handed Shearing Auxetics) | [Planar](examples/simulation/hsa/simulate_planar_hsa.py) |
 

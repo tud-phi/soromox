@@ -11,14 +11,14 @@ jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
 from soromox.systems import (
     PlanarPCSStructure,
-    PneumaticActuatedPlanarPCS,
-    PneumaticActuatedPlanarPCSParams,
+    PressureActuatedPlanarPCS,
+    PressureActuatedPlanarPCSParams,
     SystemState,
 )
 
 
 def sweep_actuation_mapping(
-    robot: PneumaticActuatedPlanarPCS,
+    robot: PressureActuatedPlanarPCS,
 ):
     # Actuation mapping for a straight backbone
     q = jnp.zeros(
@@ -39,7 +39,7 @@ def sweep_actuation_mapping(
     jnp.where(non_controllable_selector[:-1] != non_controllable_selector[1:])[0]
     # plot the mapping on the bending strain for various bending strains
     fig, ax = plt.subplots(
-        num="pneumatic_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain"
+        num="pressure_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain"
     )
     plt.title(r"Actuation mapping from $u$ to $\tau_\mathrm{be}$")
     # # shade the region where the actuation mapping is negative as we are not able to bend the robot further
@@ -69,7 +69,7 @@ def sweep_actuation_mapping(
     r_pts = jnp.linspace(1e-2, 1e-1, 10)
     r_chamber_out_pts = r_pts - 2e-3
     fig, ax = plt.subplots(
-        num="pneumatic_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain_4segment_radii"
+        num="pressure_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain_4segment_radii"
     )
     for r, r_chamber_out in zip(r_pts, r_chamber_out_pts):
         updated_robot = robot.update_params(
@@ -99,7 +99,7 @@ def sweep_actuation_mapping(
 
     # plot the mapping on the bending strain
     fig, ax = plt.subplots(
-        num="pneumatic_planar_pcs_actuation_mapping_bending_torque_vs_axial_vs_bending_strain"
+        num="pressure_planar_pcs_actuation_mapping_bending_torque_vs_axial_vs_bending_strain"
     )
     plt.title(r"Actuation mapping from $u_1$ to $\tau_\mathrm{be}$")
     # contourf plot
@@ -121,7 +121,7 @@ def sweep_actuation_mapping(
 
     # plot the mapping on the axial strain
     fig, ax = plt.subplots(
-        num="pneumatic_planar_pcs_actuation_mapping_axial_torque_vs_axial_vs_bending_strain"
+        num="pressure_planar_pcs_actuation_mapping_axial_torque_vs_axial_vs_bending_strain"
     )
     plt.title(r"Actuation mapping from $u_1$ to $\tau_\mathrm{ax}$")
     # contourf plot
@@ -154,7 +154,7 @@ if __name__ == "__main__":
             * segment_lengths[:, None]
         ).flatten()
     )
-    params = PneumaticActuatedPlanarPCSParams(
+    params = PressureActuatedPlanarPCSParams(
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
@@ -177,7 +177,7 @@ if __name__ == "__main__":
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PneumaticActuatedPlanarPCS(
+    robot = PressureActuatedPlanarPCS(
         params=params,
         structure=PlanarPCSStructure(strain_selector=strain_selector),
         chamber_cross_section_geometry="concentric",
