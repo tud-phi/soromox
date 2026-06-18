@@ -7,7 +7,7 @@ import jax
 import jax.numpy as jnp
 from jax import Array
 
-from soromox.utils.rotations import RotationRepresentation
+from soromox.utils.geometry.rotations import RotationRepresentation
 from soromox.utils.twist import twist_callable_from_pose_callable_factory
 
 

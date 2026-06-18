@@ -7,17 +7,20 @@ import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
-import soromox.utils.lie_algebra as lie
+from soromox.systems.pcs.params import PCSParams
+from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.basic import (
     compute_strain_basis,
 )
+from soromox.utils.geometry import poses
 from soromox.utils.integration import (
     gauss_quadrature,
     scale_gaussian_quadrature,
     scale_interior_gaussian_quadrature,
 )
+from soromox.utils.lie_algebra import constant_strain, se3
 
 
 class PCS(SoftRobot):
@@ -65,6 +68,8 @@ class PCS(SoftRobot):
 
     """
 
+    params: PCSParams
+
     # Robot parameters
     g0: Array  # Initial position and orientation of the rod
     g: Array  # Gravitational acceleration vector
@@ -98,67 +103,24 @@ class PCS(SoftRobot):
 
     def __init__(
         self,
-        num_segments: int,
-        params: dict[str, Array],
-        num_gauss_points: int = 5,
-        strain_selector: Array | None = None,
-        xi_ref: Array | None = None,
-        scale_rotational_basis_by_length: bool | None = False,
+        params: PCSParams,
+        structure: PCSStructure | None = None,
         **kwargs: Any,
     ):
-        """
-        Initialize the PCS class.
-
-        Args:
-            num_segments (int):
-                Number of segments in the robot.
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-            num_gauss_points (int, optional):
-                Number of nonzero Gauss-Legendre points per segment.
-                Defaults to 5.
-            strain_selector (Optional[Array], optional):
-                Boolean array of shape (6 * num_segments,) specifying which strain components are active.
-                Defaults to all strains active (i.e. all True).
-            xi_ref (Optional[Array], optional):
-                Reference strain of shape (6 * num_segments,).
-                Defaults to 0.0 for bending and shear strains, and 1.0 for axial strain (along local x-axis).
-            scale_rotational_basis_by_length (bool, optional):
-                If True, divide rotational rows of the active strain basis by
-                the corresponding segment length.
-            **kwargs: Additional keyword arguments for SoftRobot.__init__.
-        """
-        super().__init__(**kwargs)
-        self.scale_rotational_basis_by_length = bool(scale_rotational_basis_by_length)
+        """Initialize the PCS class from typed dynamic parameters."""
+        if not isinstance(params, PCSParams):
+            raise TypeError("params must be a PCSParams instance.")
+        params.validate()
+        super().__init__(base_pose=params.base_pose, **kwargs)
+        if structure is None:
+            structure = PCSStructure()
+        self.params = params
+        self.scale_rotational_basis_by_length = bool(
+            structure.scale_rotational_basis_by_length
+        )
 
         # Number of segments
-        if not isinstance(num_segments, int):
-            raise TypeError(
-                f"num_segments must be an integer, got {type(num_segments).__name__}"
-            )
+        num_segments = int(params.length.shape[0])
         if num_segments < 1:
             raise ValueError(f"num_segments must be at least 1, got {num_segments}")
         self.num_segments = num_segments
@@ -172,6 +134,7 @@ class PCS(SoftRobot):
 
         # ================================================================
         # Integration grid
+        num_gauss_points = structure.num_gauss_points
         if not isinstance(num_gauss_points, int):
             raise TypeError(
                 f"num_gauss_points must be an integer, got {type(num_gauss_points).__name__}"
@@ -190,6 +153,7 @@ class PCS(SoftRobot):
 
         # ================================================================
         # Strain basis matrix
+        strain_selector = structure.strain_selector
         if strain_selector is None:
             strain_selector = jnp.ones(num_strains, dtype=bool)
         else:
@@ -213,24 +177,13 @@ class PCS(SoftRobot):
         self.num_active_strains = jnp.sum(strain_selector)
         self.num_dofs = int(self.num_active_strains.item())
 
-        # Reference configuration strain
-        if xi_ref is None:
-            xi_ref = jnp.tile(
-                jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64),
-                (num_segments, 1),
-            ).reshape(num_strains)
-        else:
-            if not isinstance(xi_ref, (list, jnp.ndarray)):
-                raise TypeError(
-                    f"xi_ref must be a list or an array, got {type(xi_ref).__name__}"
-                )
-            xi_ref = jnp.asarray(xi_ref)
-            if xi_ref.size != num_strains:
-                raise ValueError(
-                    f"xi_ref must have {num_strains} elements, got {xi_ref.size}"
-                )
-            xi_ref = xi_ref.reshape(num_strains)
-        self.xi_ref = xi_ref
+        reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
+        if reference_strain.size != num_strains:
+            raise ValueError(
+                "reference_strain must have "
+                f"{num_strains} elements, got {reference_strain.size}."
+            )
+        self.xi_ref = reference_strain.reshape(num_strains)
 
         # Number of actuators
         self.num_actuators = int(self.num_active_strains.item())
@@ -241,11 +194,6 @@ class PCS(SoftRobot):
     def is_planar(self) -> bool:
         """PCS is a spatial (3D) model."""
         return False
-
-    @property
-    def length(self) -> Array:
-        """Total backbone length."""
-        return jnp.sum(self.L)
 
     @property
     def segment_length(self) -> Array:
@@ -279,261 +227,184 @@ class PCS(SoftRobot):
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
         return tag, jnp.array([radius])
 
-    def _set_params(self, params: dict[str, Array]) -> None:
-        """
-        Set the robot parameters from a dictionary.
-        Args:
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-        """
+    def _set_params(self, params: PCSParams) -> None:
+        """Set cached runtime arrays from typed parameters."""
         # Initial position and orientation angle
-        p0 = params.get("p0", jnp.array([jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]))
-        if not (isinstance(p0, (list, jnp.ndarray))):
-            raise TypeError(f"p0 must be a list or an array, got {type(p0).__name__}")
+        self.base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
+        p0 = self.base_pose
         p0 = jnp.asarray(p0, dtype=jnp.float64)
-        if p0.size != 6:
-            raise ValueError(f"p0 must have shape (6,), got {p0.size}")
-        self.g0 = lie.exp_SE3(p0)
+        if p0.size != 7:
+            raise ValueError(f"base_pose must have shape (7,), got {p0.size}")
+        self.g0 = poses.quaternion_pose_to_transform(p0)
 
         # Gravitational acceleration vector
-        try:
-            g = params["g"]
-        except KeyError:
-            raise KeyError("Parameter 'g' is required in params dictionary.")
-        if not (isinstance(g, (list, jnp.ndarray))):
-            raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
+        g = params.gravity
         g = jnp.asarray(g, dtype=jnp.float64)
         if g.size != 3:
-            raise ValueError(f"g must be a vector of shape (3,), got {g.size}")
+            raise ValueError(f"gravity must be a vector of shape (3,), got {g.size}")
         self.g = jnp.concatenate(
             [jnp.zeros(3), g]
         )  # Add zeros for the orientation angles
 
         # Lengths of the segments
-        try:
-            L = params["L"]
-        except KeyError:
-            raise KeyError("Parameter 'L' is required in params dictionary.")
-        if not (isinstance(L, (list, jnp.ndarray))):
-            raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
+        L = params.length
         L = jnp.asarray(L, dtype=jnp.float64)
         if L.shape != (self.num_segments,):
-            raise ValueError(f"L must have shape ({self.num_segments},), got {L.shape}")
+            raise ValueError(
+                f"length must have shape ({self.num_segments},), got {L.shape}"
+            )
         self.L = L
 
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
         self.L_cum = L_cum
 
         # Radius of the segments
-        try:
-            r = params["r"]
-        except KeyError:
-            raise KeyError("Parameter 'r' is required in params dictionary.")
-        if not (isinstance(r, (list, jnp.ndarray))):
-            raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
+        r = params.radius
         r = jnp.asarray(r, dtype=jnp.float64)
         if r.shape != (self.num_segments,):
-            raise ValueError(f"r must have shape ({self.num_segments},), got {r.shape}")
+            raise ValueError(
+                f"radius must have shape ({self.num_segments},), got {r.shape}"
+            )
         self.r = r
 
         # Densities of the segments
-        try:
-            rho = params["rho"]
-        except KeyError:
-            raise KeyError("Parameter 'rho' is required in params dictionary.")
-        if not (isinstance(rho, (list, jnp.ndarray))):
-            raise TypeError(f"rho must be a list or an array, got {type(rho).__name__}")
+        rho = params.density
         rho = jnp.asarray(rho, dtype=jnp.float64)
         if rho.shape != (self.num_segments,):
             raise ValueError(
-                f"rho must have shape ({self.num_segments},), got {rho.shape}"
+                f"density must have shape ({self.num_segments},), got {rho.shape}"
             )
         self.rho = rho
 
         # Elastic modulus of the segments
-        try:
-            E = params["E"]
-        except KeyError:
-            raise KeyError("Parameter 'E' is required in params dictionary.")
-        if not (isinstance(E, (list, jnp.ndarray))):
-            raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
+        E = params.young_modulus
         E = jnp.asarray(E, dtype=jnp.float64)
         if E.shape != (self.num_segments,):
-            raise ValueError(f"E must have shape ({self.num_segments},), got {E.shape}")
+            raise ValueError(
+                f"young_modulus must have shape ({self.num_segments},), got {E.shape}"
+            )
         self.E = E
 
         # Shear modulus of the segments
-        try:
-            G = params["G"]
-        except KeyError:
-            raise KeyError("Parameter 'G' is required in params dictionary.")
-        if not (isinstance(G, (list, jnp.ndarray))):
-            raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
+        G = params.shear_modulus
         G = jnp.asarray(G, dtype=jnp.float64)
         if G.shape != (self.num_segments,):
-            raise ValueError(f"G must have shape ({self.num_segments},), got {G.shape}")
+            raise ValueError(
+                f"shear_modulus must have shape ({self.num_segments},), got {G.shape}"
+            )
         self.G = G
 
         # Damping matrix of the robot
-        try:
-            D = params["D"]
-        except KeyError:
-            raise KeyError("Parameter 'D' is required in params dictionary.")
-        if not (isinstance(D, (list, jnp.ndarray))):
-            raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
+        D = params.damping_matrix
         D = jnp.asarray(D, dtype=jnp.float64)
         expected_D_shape = (self.num_strains, self.num_strains)
         if D.shape != expected_D_shape:
-            raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
+            raise ValueError(
+                f"damping_matrix must have shape {expected_D_shape}, got {D.shape}"
+            )
         self.D = D
 
-    def update_params(self, params: dict[str, Array]) -> "PCS":
-        """
-        Update the parameters of the PCS model.
+    def _current_body_params(self) -> PCSParams:
+        """Return the PCS body params, including for typed actuated wrappers."""
+        if isinstance(self.params, PCSParams):
+            return self.params
+        body = getattr(self.params, "body", None)
+        if isinstance(body, PCSParams):
+            return body
+        raise TypeError("model params do not contain PCSParams body fields.")
 
-        Args:
-            params (Dict[str, Array]):
-                Dictionary that contains the robot parameters to update:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (theta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-        """
-        # Apply updates sequentially
-        updated_self = self
-
-        if "p0" in params:
-            p0 = params["p0"]
-            if not (isinstance(p0, (list, jnp.ndarray))):
-                raise TypeError(
-                    f"p0 must be a list or an array, got {type(p0).__name__}"
-                )
-            p0 = jnp.asarray(p0, dtype=jnp.float64)
-            updated_self = eqx.tree_at(lambda m: m.g0, updated_self, lie.exp_SE3(p0))
-
-        if "g" in params:
-            g = params["g"]
-            if not (isinstance(g, (list, jnp.ndarray))):
-                raise TypeError(f"g must be a list or an array, got {type(g).__name__}")
-            g = jnp.asarray(g, dtype=jnp.float64)
-            if g.size != 3:
-                raise ValueError(f"g must be a vector of shape (3,), got {g.size}")
-            updated_self = eqx.tree_at(
-                lambda m: m.g, updated_self, jnp.concatenate([jnp.zeros(3), g])
+    def _with_pcs_params(
+        self, params: PCSParams, stored_params: Any | None = None
+    ) -> "PCS":
+        """Return a copy with PCS body caches refreshed from typed parameters."""
+        current_params = self._current_body_params()
+        if not isinstance(params, PCSParams):
+            raise TypeError("params must be a PCSParams instance.")
+        params.validate()
+        if params.length.shape != current_params.length.shape:
+            raise ValueError(
+                "length shape changes the model structure; construct a new PCS."
+            )
+        if params.reference_strain.shape != current_params.reference_strain.shape:
+            raise ValueError(
+                "reference_strain shape changes the model structure; construct a new PCS."
             )
 
-        if "L" in params:
-            L = params["L"]
-            if not (isinstance(L, (list, jnp.ndarray))):
-                raise TypeError(f"L must be a list or an array, got {type(L).__name__}")
-            L = jnp.asarray(L, dtype=jnp.float64)
-            if L.shape != (self.num_segments,):
-                raise ValueError(
-                    f"L must have shape ({self.num_segments},), got {L.shape}"
-                )
-            L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), L]))
-            updated_self = eqx.tree_at(
-                lambda m: (m.L, m.L_cum), updated_self, (L, L_cum)
+        base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
+        gravity = jnp.asarray(params.gravity, dtype=jnp.float64)
+        segment_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+        radius = jnp.asarray(params.radius, dtype=jnp.float64)
+        density = jnp.asarray(params.density, dtype=jnp.float64)
+        young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
+        shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
+        damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
+        reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
+
+        expected_D_shape = (self.num_strains, self.num_strains)
+        if damping_matrix.shape != expected_D_shape:
+            raise ValueError(
+                f"damping_matrix must have shape {expected_D_shape}, got {damping_matrix.shape}"
             )
 
-        if "r" in params:
-            r = params["r"]
-            if not (isinstance(r, (list, jnp.ndarray))):
-                raise TypeError(f"r must be a list or an array, got {type(r).__name__}")
-            r = jnp.asarray(r, dtype=jnp.float64)
-            if r.shape != (self.num_segments,):
-                raise ValueError(
-                    f"r must have shape ({self.num_segments},), got {r.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.r, updated_self, r)
-
-        if "rho" in params:
-            rho = params["rho"]
-            if not (isinstance(rho, (list, jnp.ndarray))):
-                raise TypeError(
-                    f"rho must be a list or an array, got {type(rho).__name__}"
-                )
-            rho = jnp.asarray(rho, dtype=jnp.float64)
-            if rho.shape != (self.num_segments,):
-                raise ValueError(
-                    f"rho must have shape ({self.num_segments},), got {rho.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.rho, updated_self, rho)
-
-        if "E" in params:
-            E = params["E"]
-            if not (isinstance(E, (list, jnp.ndarray))):
-                raise TypeError(f"E must be a list or an array, got {type(E).__name__}")
-            E = jnp.asarray(E, dtype=jnp.float64)
-            if E.shape != (self.num_segments,):
-                raise ValueError(
-                    f"E must have shape ({self.num_segments},), got {E.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.E, updated_self, E)
-
-        if "G" in params:
-            G = params["G"]
-            if not (isinstance(G, (list, jnp.ndarray))):
-                raise TypeError(f"G must be a list or an array, got {type(G).__name__}")
-            G = jnp.asarray(G, dtype=jnp.float64)
-            if G.shape != (self.num_segments,):
-                raise ValueError(
-                    f"G must have shape ({self.num_segments},), got {G.shape}"
-                )
-            updated_self = eqx.tree_at(lambda m: m.G, updated_self, G)
-
-        if "D" in params:
-            D = params["D"]
-            if not (isinstance(D, (list, jnp.ndarray))):
-                raise TypeError(f"D must be a list or an array, got {type(D).__name__}")
-            D = jnp.asarray(D, dtype=jnp.float64)
-            expected_D_shape = (self.num_strains, self.num_strains)
-            if D.shape != expected_D_shape:
-                raise ValueError(f"D must have shape {expected_D_shape}, got {D.shape}")
-            updated_self = eqx.tree_at(lambda m: m.D, updated_self, D)
-
+        updated_self = eqx.tree_at(
+            lambda m: (
+                m.params,
+                m.base_pose,
+                m.g0,
+                m.g,
+                m.L,
+                m.L_cum,
+                m.r,
+                m.rho,
+                m.E,
+                m.G,
+                m.D,
+                m.xi_ref,
+            ),
+            self,
+            (
+                params if stored_params is None else stored_params,
+                base_pose,
+                poses.quaternion_pose_to_transform(base_pose),
+                jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
+                segment_lengths,
+                jnp.cumsum(
+                    jnp.concatenate(
+                        [jnp.zeros(1, dtype=segment_lengths.dtype), segment_lengths]
+                    )
+                ),
+                radius,
+                density,
+                young_modulus,
+                shear_modulus,
+                damping_matrix,
+                reference_strain.reshape(self.num_strains),
+            ),
+        )
         return updated_self._with_refreshed_precomputed_matrices()
+
+    def with_params(self, params: PCSParams) -> "PCS":
+        """Return an updated copy with a full typed parameter object."""
+        return self._with_pcs_params(params)
+
+    def update_params(self, **updates: Array) -> "PCS":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        if (
+            "length" in updates
+            and jnp.asarray(updates["length"]).shape != self.params.length.shape
+        ):
+            raise ValueError(
+                "length shape changes the model structure; construct a new PCS."
+            )
+        if (
+            "reference_strain" in updates
+            and jnp.asarray(updates["reference_strain"]).shape
+            != self.params.reference_strain.shape
+        ):
+            raise ValueError(
+                "reference_strain shape changes the model structure; construct a new PCS."
+            )
+        return self.with_params(self.params.replace(**updates))
 
     def _precomputed_matrices(self) -> tuple[Array, Array, Array, Array, Array]:
         """Compute state-independent matrices cached by the model."""
@@ -611,7 +482,7 @@ class PCS(SoftRobot):
         return xi
 
     @eqx.filter_jit
-    def forward_kinematics(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a point s along the robot.
 
@@ -647,7 +518,7 @@ class PCS(SoftRobot):
             Magnus_i = length_i * xi_i
 
             # Compute the transformation matrix from the base of the segment until length_i using the exponential map
-            g_step = lie.exp_gn_SE3(Magnus_i, eps=self.global_eps)
+            g_step = se3.exp(Magnus_i, eps=self.global_eps)
 
             g_i = g_base_i @ g_step
 
@@ -673,6 +544,30 @@ class PCS(SoftRobot):
         return g_s
 
     @eqx.filter_jit
+    def _forward_kinematics_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the SE(3) pose at ``s``.
+
+        For PCS, the local segment strain is constant, so
+        ``d g(s) / ds = g(s) @ hat(xi_i)`` within segment ``i``.
+        """
+        _, gs = self._forward_kinematics_and_arc_length_derivative(q, s)
+        return gs
+
+    @eqx.filter_jit
+    def _forward_kinematics_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the SE(3) pose and its arc-length derivative at ``s``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        segment_idx, _ = self.classify_segment(s)
+        xi_i = xi[segment_idx]
+        g_s = self._forward_kinematics(q, s)
+        return g_s, g_s @ se3.hat(xi_i)
+
+    @eqx.filter_jit
     def forward_kinematics_tips(self, q: Array) -> Array:
         """
         Compute the forward kinematics of the robot at all segment tips.
@@ -692,7 +587,7 @@ class PCS(SoftRobot):
             Magnus_Li = self.L[i] * xi[i]
 
             # Compute the transformation matrix from the base until the tip of the segment using the exponential map
-            g_Li_rel = lie.exp_gn_SE3(Magnus_Li, eps=self.global_eps)
+            g_Li_rel = se3.exp(Magnus_Li, eps=self.global_eps)
 
             g_Li = g_base_i @ g_Li_rel
 
@@ -735,9 +630,7 @@ class PCS(SoftRobot):
         # compute the magnus expansion for each point
         magnus = s_local_ps.reshape(-1, 1) * xi[segment_indices]
         # compute the relative transform from the base of the segment to the point
-        g_rel = vmap(lambda magnus_i: lie.exp_gn_SE3(magnus_i, eps=self.global_eps))(
-            magnus
-        )
+        g_rel = vmap(lambda magnus_i: se3.exp(magnus_i, eps=self.global_eps))(magnus)
         # get the base transform for each point
         g_base_points = g_bases[segment_indices]
 
@@ -820,7 +713,7 @@ class PCS(SoftRobot):
             Returns:
                 xi (Array): strain twist of shape (6,).
             """
-            xi_mag = lie.log_SE3(g_rel_i, eps=self.global_eps)
+            xi_mag = se3.log(g_rel_i, eps=self.global_eps)
             xi = jnp.where(
                 jnp.abs(length_i) < self.global_eps,
                 jnp.zeros_like(xi_mag),
@@ -874,11 +767,10 @@ class PCS(SoftRobot):
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
 
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(xi_i, L_i, eps=self.global_eps)
+            T = constant_strain.tangent_se3(xi_i, L_i, eps=self.tangent_eps)
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[i].set(Ad_inv @ T)
+            J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
 
             return J_next, J_next
 
@@ -932,13 +824,12 @@ class PCS(SoftRobot):
             s_local: Array,
             J_base: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.tangent_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, s_local, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, s_local, eps=self.tangent_eps)
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
-            J_next = J_rot.at[i].set(Ad_inv @ T)
-
-            return J_next
+            return self._update_body_jacobian_step(J_base, i, Ad_inv, T)
 
         # vmap the segment integration over all points
         J_local_ps = vmap(integrate_segment)(idx_ps, xi_ps, s_local_ps, J_base_ps)
@@ -973,13 +864,12 @@ class PCS(SoftRobot):
             xi_i: Array,
             arc_len: Array,
         ) -> Array:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[i].set(Ad_inv @ T)
-
-            return J_next
+            return self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
 
         def scan_body(
             carry: tuple[Array, Array, Array],
@@ -1018,6 +908,440 @@ class PCS(SoftRobot):
 
         return J_local
 
+    def _pcs_jacobian_step_terms(
+        self, xi_i: Array, arc_len: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute shared constant-strain terms for one PCS Jacobian step.
+
+        Args:
+            xi_i: Constant SE(3) strain of segment ``i``, shape ``(6,)``.
+            arc_len: Local arc length over which the segment contribution is
+                integrated. For segments before the target this is the full
+                segment length; for the target segment this is ``s_local``.
+
+        Returns:
+            Tuple ``(Ad_inv, T)`` where ``Ad_inv`` is the inverse adjoint of the
+            local segment transform and ``T`` is the SE(3) tangent operator.
+            Both arrays have shape ``(6, 6)``.
+        """
+        Ad_inv = constant_strain.adjoint_inverse_se3(xi_i, arc_len, eps=self.global_eps)
+        T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
+        return Ad_inv, T
+
+    def _pcs_jacobian_arc_length_step_terms(
+        self, xi_i: Array, arc_len: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Compute shared PCS terms for ``J`` and ``dJ/ds`` propagation.
+
+        Args:
+            xi_i: Constant SE(3) strain of segment ``i``, shape ``(6,)``.
+            arc_len: Local arc length used for the segment step.
+
+        Returns:
+            Tuple ``(Ad_inv, T, dAd_inv_ds, dT_ds)``. ``Ad_inv`` and ``T`` are
+            the primal Jacobian step terms; ``dAd_inv_ds`` and ``dT_ds`` are the
+            analytical derivatives with respect to local arc length.
+        """
+        Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, arc_len)
+        dAd_inv_ds = -se3.small_adjoint(xi_i) @ Ad_inv
+        dT_ds = constant_strain.adjoint_se3(xi_i, arc_len, eps=self.global_eps)
+        return Ad_inv, T, dAd_inv_ds, dT_ds
+
+    def _pcs_relative_pose(self, xi_i: Array, arc_len: Array) -> Array:
+        """
+        Compute the relative SE(3) pose for one constant-strain segment slice.
+
+        Args:
+            xi_i: Constant SE(3) strain of segment ``i``, shape ``(6,)``.
+            arc_len: Local arc length of the slice.
+
+        Returns:
+            Relative homogeneous transform ``exp(arc_len * hat(xi_i))`` with
+            shape ``(4, 4)``.
+        """
+        return se3.exp(arc_len * xi_i, eps=self.global_eps)
+
+    def _update_body_jacobian_step(
+        self, J_prev: Array, i: Array, Ad_inv: Array, T: Array
+    ) -> Array:
+        """
+        Propagate the block body-frame Jacobian through one PCS segment step.
+
+        Args:
+            J_prev: Previous full block Jacobian, shape
+                ``(num_segments, 6, 6)``.
+            i: Current segment index.
+            Ad_inv: Inverse adjoint of the current relative transform.
+            T: Tangent operator of the current relative transform.
+
+        Returns:
+            Updated full block Jacobian with the active current-segment block
+            set to ``Ad_inv @ T``.
+        """
+        J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
+        return J_rot.at[i].set(Ad_inv @ T)
+
+    def _update_body_jacobian_time_derivative_step(
+        self,
+        J_prev: Array,
+        Jd_prev: Array,
+        i: Array,
+        xid_i: Array,
+        Ad_inv: Array,
+        T: Array,
+        Td: Array,
+    ) -> tuple[Array, Array]:
+        """
+        Propagate ``J`` and its time derivative through one PCS segment step.
+
+        Args:
+            J_prev: Previous full block body-frame Jacobian.
+            Jd_prev: Previous full block body-frame Jacobian time derivative.
+            i: Current segment index.
+            xid_i: Current segment strain time derivative.
+            Ad_inv: Inverse adjoint of the current relative transform.
+            T: Tangent operator of the current relative transform.
+            Td: Time derivative of ``T`` along ``xid_i``.
+
+        Returns:
+            Tuple ``(J_next, Jd_next)`` after the segment update.
+        """
+        J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
+        eta = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False) @ xid_i
+        Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv
+        Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_prev) + jnp.einsum(
+            "ij, njk->nik", Ad_inv_dot, J_prev
+        )
+        Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T + Ad_inv @ Td)
+        return J_next, Jd_next
+
+    def _update_body_jacobian_arc_length_derivative_step(
+        self,
+        J_prev: Array,
+        i: Array,
+        Ad_inv: Array,
+        T: Array,
+        dAd_inv_ds: Array,
+        dT_ds: Array,
+    ) -> Array:
+        """
+        Propagate the arc-length derivative of the block body Jacobian.
+
+        Args:
+            J_prev: Previous full block body-frame Jacobian.
+            i: Current segment index.
+            Ad_inv: Inverse adjoint of the current relative transform.
+            T: Tangent operator of the current relative transform.
+            dAd_inv_ds: Arc-length derivative of ``Ad_inv``.
+            dT_ds: Arc-length derivative of ``T``.
+
+        Returns:
+            Full block Jacobian arc-length derivative for the current step.
+        """
+        Js_next = jnp.einsum("ij, njk->nik", dAd_inv_ds, J_prev)
+        return Js_next.at[i].set(dAd_inv_ds @ T + Ad_inv @ dT_ds)
+
+    def _jacobian_bodyframe_with_pose(self, q: Array, s: Array) -> tuple[Array, Array]:
+        """
+        Compute body-frame Jacobian and SE(3) pose in a single segment scan.
+
+        Args:
+            q: Active generalized coordinates, shape ``(num_dofs,)``.
+            s: Backbone arc-length coordinate.
+
+        Returns:
+            Tuple ``(g_s, J_body)`` where ``g_s`` is the pose at ``s`` and
+            ``J_body`` maps active velocities to body-frame twists at ``s``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        segment_idx, s_local = self.classify_segment(s)
+
+        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
+
+        def scan_body(
+            carry: tuple[Array, Array, Array, Array, Array],
+            i: Array,
+        ) -> tuple[tuple[Array, Array, Array, Array, Array], None]:
+            g_prev, J_prev, g_target, J_target, done = carry
+
+            def compute_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], None]:
+                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+                arc_len = jnp.where(i == segment_idx, s_local, L_i)
+
+                Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, arc_len)
+                g_next = g_prev @ self._pcs_relative_pose(xi_i, arc_len)
+                J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
+
+                is_target = i == segment_idx
+                return (
+                    g_next,
+                    J_next,
+                    jnp.where(is_target, g_next, g_target),
+                    jnp.where(is_target, J_next, J_target),
+                    jnp.logical_or(done, is_target),
+                ), None
+
+            def skip_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array], None]:
+                return (g_prev, J_prev, g_target, J_target, done), None
+
+            return lax.cond(done, skip_branch, compute_branch, operand=None)
+
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        (_, _, g_target, J_target, _), _ = lax.scan(
+            scan_body,
+            (self.g0, zeros, self.g0, zeros, jnp.array(False, dtype=jnp.bool_)),
+            indices,
+        )
+        return g_target, self._final_size_jacobian(J_target) @ self.B_xi
+
+    def _jacobian_and_arc_length_derivative_bodyframe_with_pose(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Compute pose, body-frame Jacobian, and arc-length derivative together.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        segment_idx, s_local = self.classify_segment(s)
+
+        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
+
+        def scan_body(
+            carry: tuple[Array, Array, Array, Array, Array, Array],
+            i: Array,
+        ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], None]:
+            g_prev, J_prev, g_target, J_target, Js_target, done = carry
+
+            def compute_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], None]:
+                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+                arc_len = jnp.where(i == segment_idx, s_local, L_i)
+
+                Ad_inv, T, dAd_inv_ds, dT_ds = self._pcs_jacobian_arc_length_step_terms(
+                    xi_i, arc_len
+                )
+                g_next = g_prev @ self._pcs_relative_pose(xi_i, arc_len)
+                J_next = self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
+                Js_next = self._update_body_jacobian_arc_length_derivative_step(
+                    J_prev, i, Ad_inv, T, dAd_inv_ds, dT_ds
+                )
+
+                is_target = i == segment_idx
+                return (
+                    g_next,
+                    J_next,
+                    jnp.where(is_target, g_next, g_target),
+                    jnp.where(is_target, J_next, J_target),
+                    jnp.where(is_target, Js_next, Js_target),
+                    jnp.logical_or(done, is_target),
+                ), None
+
+            def skip_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array, Array], None]:
+                return (g_prev, J_prev, g_target, J_target, Js_target, done), None
+
+            return lax.cond(done, skip_branch, compute_branch, operand=None)
+
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        (_, _, g_target, J_target, Js_target, _), _ = lax.scan(
+            scan_body,
+            (
+                self.g0,
+                zeros,
+                self.g0,
+                zeros,
+                zeros,
+                jnp.array(False, dtype=jnp.bool_),
+            ),
+            indices,
+        )
+
+        J = self._final_size_jacobian(J_target) @ self.B_xi
+        Js = self._final_size_jacobian(Js_target) @ self.B_xi
+        return g_target, J, Js
+
+    def _jacobian_and_time_derivative_bodyframe_with_pose(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array, Array]:
+        """Compute pose, body-frame Jacobian, and time derivative together."""
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
+        segment_idx, s_local = self.classify_segment(s)
+
+        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
+
+        def scan_body(
+            carry: tuple[Array, Array, Array, Array, Array, Array, Array],
+            i: Array,
+        ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], None]:
+            g_prev, J_prev, Jd_prev, g_target, J_target, Jd_target, done = carry
+
+            def compute_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], None]:
+                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+                xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
+                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+                arc_len = jnp.where(i == segment_idx, s_local, L_i)
+
+                Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, arc_len)
+                Td = constant_strain.tangent_derivative_se3(
+                    xi_i, xid_i, arc_len, eps=self.global_eps
+                )
+                g_next = g_prev @ self._pcs_relative_pose(xi_i, arc_len)
+
+                J_next, Jd_next = self._update_body_jacobian_time_derivative_step(
+                    J_prev, Jd_prev, i, xid_i, Ad_inv, T, Td
+                )
+
+                is_target = i == segment_idx
+                return (
+                    g_next,
+                    J_next,
+                    Jd_next,
+                    jnp.where(is_target, g_next, g_target),
+                    jnp.where(is_target, J_next, J_target),
+                    jnp.where(is_target, Jd_next, Jd_target),
+                    jnp.logical_or(done, is_target),
+                ), None
+
+            def skip_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], None]:
+                return (
+                    g_prev,
+                    J_prev,
+                    Jd_prev,
+                    g_target,
+                    J_target,
+                    Jd_target,
+                    done,
+                ), None
+
+            return lax.cond(done, skip_branch, compute_branch, operand=None)
+
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        (_, _, _, g_target, J_target, Jd_target, _), _ = lax.scan(
+            scan_body,
+            (
+                self.g0,
+                zeros,
+                zeros,
+                self.g0,
+                zeros,
+                zeros,
+                jnp.array(False, dtype=jnp.bool_),
+            ),
+            indices,
+        )
+
+        J = self._final_size_jacobian(J_target) @ self.B_xi
+        Jd = self._final_size_jacobian(Jd_target) @ self.B_xi
+        return g_target, J, Jd
+
+    @eqx.filter_jit
+    def jacobian_and_arc_length_derivative_bodyframe(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the body-frame Jacobian and its arc-length derivative at ``s``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        segment_idx, s_local = self.classify_segment(s)
+
+        zeros = jnp.zeros((self.num_segments, 6, 6), dtype=xi.dtype)
+        zero_slice = jnp.zeros((6, 6), dtype=xi.dtype)
+
+        def integrate_segment(
+            J_prev: Array,
+            i: Array,
+            xi_i: Array,
+            arc_len: Array,
+        ) -> Array:
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
+
+            return self._update_body_jacobian_step(J_prev, i, Ad_inv, T)
+
+        def integrate_segment_arc_length_derivative(
+            J_base: Array,
+            i: Array,
+            xi_i: Array,
+            arc_len: Array,
+        ) -> Array:
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
+            dAd_inv_ds = -se3.small_adjoint(xi_i) @ Ad_inv
+            dT_ds = constant_strain.adjoint_se3(xi_i, arc_len, eps=self.global_eps)
+
+            return self._update_body_jacobian_arc_length_derivative_step(
+                J_base, i, Ad_inv, T, dAd_inv_ds, dT_ds
+            )
+
+        def scan_body(
+            carry: tuple[Array, Array, Array, Array],
+            i: Array,
+        ) -> tuple[tuple[Array, Array, Array, Array], Array]:
+            J_prev, J_target, Js_target, done = carry
+
+            def compute_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array], Array]:
+                xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
+                L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
+                arc_len = jnp.where(i == segment_idx, s_local, L_i)
+
+                J_next = integrate_segment(J_prev, i, xi_i, arc_len)
+                Js_next = integrate_segment_arc_length_derivative(
+                    J_prev, i, xi_i, arc_len
+                )
+
+                is_target = i == segment_idx
+                J_target_next = jnp.where(is_target, J_next, J_target)
+                Js_target_next = jnp.where(is_target, Js_next, Js_target)
+                done_next = jnp.logical_or(done, is_target)
+
+                return (J_next, J_target_next, Js_target_next, done_next), zero_slice
+
+            def skip_branch(
+                _: None,
+            ) -> tuple[tuple[Array, Array, Array, Array], Array]:
+                return (J_prev, J_target, Js_target, done), zero_slice
+
+            return lax.cond(done, skip_branch, compute_branch, operand=None)
+
+        indices = jnp.arange(self.num_segments, dtype=segment_idx.dtype)
+        (_, J_target, Js_target, _), _ = lax.scan(
+            scan_body,
+            (zeros, zeros, zeros, jnp.array(False, dtype=jnp.bool_)),
+            indices,
+        )
+
+        J = self._final_size_jacobian(J_target) @ self.B_xi
+        Js = self._final_size_jacobian(Js_target) @ self.B_xi
+        return J, Js
+
+    @eqx.filter_jit
+    def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the body-frame Jacobian at ``s``.
+        """
+        _, Js = self.jacobian_and_arc_length_derivative_bodyframe(q, s)
+        return Js
+
     @eqx.filter_jit
     def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
         """
@@ -1038,6 +1362,17 @@ class PCS(SoftRobot):
 
         return J_local_ps
 
+    def _rotation_adjoint_from_pose(self, g_s: Array) -> Array:
+        """Adjoint of the pose rotation, with zero translational coupling."""
+        g_rot = jnp.block(
+            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
+        )
+        return se3.adjoint(g_rot)
+
+    def _body_jacobian_to_inertial(self, g_s: Array, J_local: Array) -> Array:
+        """Rotate a PCS body-frame Jacobian into the inertial frame."""
+        return self._rotation_adjoint_from_pose(g_s) @ J_local
+
     @eqx.filter_jit
     def jacobian_inertialframe(self, q: Array, s: Array) -> Array:
         """
@@ -1050,19 +1385,46 @@ class PCS(SoftRobot):
         Returns:
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
         """
-        # compute the Jacobian in the body frame
-        J_local = self.jacobian_bodyframe(q, s)  # shape (6, num_active_strains)
+        g_s, J_local = self._jacobian_bodyframe_with_pose(q, s)
+        return self._body_jacobian_to_inertial(g_s, J_local)
 
-        g_s = self.forward_kinematics(q, s)
-        # construct g with zero translation for the Adjoint transformation
-        g_rot = jnp.block(
-            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
+    @eqx.filter_jit
+    def jacobian_and_arc_length_derivative_inertialframe(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """
+        Compute the inertial-frame Jacobian and its arc-length derivative at ``s``.
+        """
+        g_s, J_local, Js_local = (
+            self._jacobian_and_arc_length_derivative_bodyframe_with_pose(q, s)
         )
-        Ad_g = lie.Adjoint_g_SE3(g_rot)
+        Ad_g = self._rotation_adjoint_from_pose(g_s)
 
-        J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        segment_idx, _ = self.classify_segment(s)
+        eta_rot_s = jnp.concatenate([xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)])
+        Ad_g_s = Ad_g @ se3.small_adjoint(eta_rot_s)
 
-        return J_global
+        J = Ad_g @ J_local
+        Js = Ad_g_s @ J_local + Ad_g @ Js_local
+        return J, Js
+
+    @eqx.filter_jit
+    def jacobian_arc_length_derivative_inertialframe(self, q: Array, s: Array) -> Array:
+        """
+        Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
+        """
+        g_s, J_local, Js_local = (
+            self._jacobian_and_arc_length_derivative_bodyframe_with_pose(q, s)
+        )
+        Ad_g = self._rotation_adjoint_from_pose(g_s)
+
+        xi = self.strain(q).reshape(self.num_segments, 6)
+        segment_idx, _ = self.classify_segment(s)
+        eta_rot_s = jnp.concatenate([xi[segment_idx, :3], jnp.zeros(3, dtype=xi.dtype)])
+        Ad_g_s = Ad_g @ se3.small_adjoint(eta_rot_s)
+        Js = Ad_g_s @ J_local + Ad_g @ Js_local
+        return Js
 
     @eqx.filter_jit
     def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
@@ -1088,7 +1450,7 @@ class PCS(SoftRobot):
                 [jnp.zeros((g_ps.shape[0], 1, 3)), jnp.ones((g_ps.shape[0], 1, 1))],
             ]
         )  # shape (N, 4, 4)
-        Ad_g_ps = vmap(lie.Adjoint_g_SE3)(g_rot_ps)  # shape (N, 6, 6)
+        Ad_g_ps = vmap(se3.adjoint)(g_rot_ps)  # shape (N, 6, 6)
 
         J_global_ps = jnp.einsum(
             "nij, njk->nik", Ad_g_ps, J_local_ps
@@ -1119,7 +1481,7 @@ class PCS(SoftRobot):
                     [jnp.zeros((1, 3), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
                 ]
             )
-            return lie.Adjoint_g_SE3(g_rot) @ J_i
+            return se3.adjoint(g_rot) @ J_i
 
         return vmap(rotate_pair)(g_tips, J_local_tips)
 
@@ -1142,13 +1504,17 @@ class PCS(SoftRobot):
 
         # precompute the Lie algebra expressions for all segment tips
         Ad_inv_tips = vmap(
-            lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: constant_strain.adjoint_inverse_se3(
+                xi_i, L_i, eps=self.global_eps
+            )
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+            lambda xi_i, L_i: constant_strain.tangent_se3(
+                xi_i, L_i, eps=self.tangent_eps
+            )
         )(xi, self.L)
         Td_tips = vmap(
-            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
+            lambda xi_i, xid_i, L_i: constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
@@ -1168,18 +1534,9 @@ class PCS(SoftRobot):
             T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
             Td_i = lax.dynamic_index_in_dim(Td_tips, i, axis=0, keepdims=False)
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv_i, J_prev)
-            J_next = J_rot.at[i].set(Ad_inv_i @ T_i)
-
-            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            eta = jnp.matmul(J_next_slice, xid_i)
-
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv_i
-
-            Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv_i, Jd_prev) + jnp.einsum(
-                "ij, njk->nik", Ad_inv_dot, J_prev
+            J_next, Jd_next = self._update_body_jacobian_time_derivative_step(
+                J_prev, Jd_prev, i, xid_i, Ad_inv_i, T_i, Td_i
             )
-            Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T_i + Ad_inv_i @ Td_i)
 
             return (J_next, Jd_next), (J_next, Jd_next)
 
@@ -1250,24 +1607,17 @@ class PCS(SoftRobot):
             J_base: Array,
             Jd_base: Array,
         ) -> tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, s_local, eps=self.tangent_eps)
-            Td = lie.Tangent_derivative_gi_se3(
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, s_local, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, s_local, eps=self.tangent_eps)
+            Td = constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, s_local, eps=self.tangent_eps
             )
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_base)
-            J_next = J_rot.at[i].set(Ad_inv @ T)
-
-            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            eta = jnp.matmul(J_next_slice, xid_i)
-
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
-
-            Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_base) + jnp.einsum(
-                "ij, njk->nik", Ad_inv_dot, J_base
+            J_next, Jd_next = self._update_body_jacobian_time_derivative_step(
+                J_base, Jd_base, i, xid_i, Ad_inv, T, Td
             )
-            Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T + Ad_inv @ Td)
 
             return J_next, Jd_next
 
@@ -1283,7 +1633,7 @@ class PCS(SoftRobot):
         return J_local_ps, Jd_local_ps
 
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe(
+    def jacobian_and_time_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -1314,26 +1664,17 @@ class PCS(SoftRobot):
             xid_i: Array,
             arc_len: Array,
         ) -> tuple[Array, Array]:
-            Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, arc_len, eps=self.global_eps)
-            T = lie.Tangent_gi_se3(xi_i, arc_len, eps=self.global_eps)
-            Td = lie.Tangent_derivative_gi_se3(
+            Ad_inv = constant_strain.adjoint_inverse_se3(
+                xi_i, arc_len, eps=self.global_eps
+            )
+            T = constant_strain.tangent_se3(xi_i, arc_len, eps=self.global_eps)
+            Td = constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, arc_len, eps=self.global_eps
             )
 
-            J_rot = jnp.einsum("ij, njk->nik", Ad_inv, J_prev)
-            J_next = J_rot.at[i].set(Ad_inv @ T)
-
-            J_next_slice = lax.dynamic_index_in_dim(J_next, i, axis=0, keepdims=False)
-            eta = jnp.matmul(J_next_slice, xid_i)
-
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
-
-            Jd_rot = jnp.einsum("ij, njk->nik", Ad_inv, Jd_prev) + jnp.einsum(
-                "ij, njk->nik", Ad_inv_dot, J_prev
+            return self._update_body_jacobian_time_derivative_step(
+                J_prev, Jd_prev, i, xid_i, Ad_inv, T, Td
             )
-            Jd_next = Jd_rot.at[i].set(Ad_inv_dot @ T + Ad_inv @ Td)
-
-            return J_next, Jd_next
 
         def scan_body(
             carry: tuple[Array, Array, Array, Array, Array],
@@ -1395,7 +1736,7 @@ class PCS(SoftRobot):
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def jacobian_and_derivative_bodyframe_batched(
+    def jacobian_and_time_derivative_bodyframe_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -1424,7 +1765,7 @@ class PCS(SoftRobot):
         return J_local_ps, Jd_local_ps
 
     @eqx.filter_jit
-    def jacobian_and_derivative_inertialframe(
+    def jacobian_and_time_derivative_inertialframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -1439,14 +1780,9 @@ class PCS(SoftRobot):
             J_global (Array): Jacobian of the forward kinematics at point s in the inertial frame, shape (6, num_active_strains)
             Jd_global (Array): Time-derivative of the Jacobian at point s in the inertial frame, shape (6, num_active_strains)
         """
-        J_local, Jd_local = self.jacobian_and_derivative_bodyframe(q, qd, s)
-
-        # compute the Adjoint transformation matrix at point s
-        g_s = self.forward_kinematics(q, s)
-        g_rot = jnp.block(
-            [[g_s[:3, :3], jnp.zeros((3, 1))], [jnp.zeros((1, 3)), jnp.ones((1, 1))]]
-        )
-        Ad_g = lie.Adjoint_g_SE3(g_rot)
+        J_local, Jd_local = self.jacobian_and_time_derivative_bodyframe(q, qd, s)
+        g_s = self._forward_kinematics(q, s)
+        Ad_g = self._rotation_adjoint_from_pose(g_s)
 
         # compute the body twist eta
         eta_body = J_local @ qd
@@ -1454,7 +1790,7 @@ class PCS(SoftRobot):
         # compute the time-derivative of the Adjoint transformation matrix
         omega = eta_body[:3]
         eta_rot = jnp.concatenate([omega, jnp.zeros(3, dtype=eta_body.dtype)])
-        Ad_g_dot = Ad_g @ lie.adjoint_se3(eta_rot)
+        Ad_g_dot = Ad_g @ se3.small_adjoint(eta_rot)
 
         # rotate both J and Jd to the inertial frame
         J_global = jnp.einsum("ij, jk->ik", Ad_g, J_local)
@@ -1464,7 +1800,7 @@ class PCS(SoftRobot):
 
         return J_global, Jd_global
 
-    def jacobian_and_derivative_inertialframe_batched(
+    def jacobian_and_time_derivative_inertialframe_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -1479,7 +1815,7 @@ class PCS(SoftRobot):
             J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
             Jd_global_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_active_strains)
         """
-        J_local_ps, Jd_local_ps = self.jacobian_and_derivative_bodyframe_batched(
+        J_local_ps, Jd_local_ps = self.jacobian_and_time_derivative_bodyframe_batched(
             q, qd, s_ps
         )  # shape (N, 6, num_active_strains)
 
@@ -1491,7 +1827,7 @@ class PCS(SoftRobot):
                 [jnp.zeros((g_ps.shape[0], 1, 3)), jnp.ones((g_ps.shape[0], 1, 1))],
             ]
         )  # shape (N, 4, 4)
-        Ad_g_ps = vmap(lie.Adjoint_g_SE3)(g_rot_ps)  # shape (N, 6, 6)
+        Ad_g_ps = vmap(se3.adjoint)(g_rot_ps)  # shape (N, 6, 6)
 
         # compute the body twist eta for all points
         eta_body_ps = jnp.einsum("ijk, k->ij", J_local_ps, qd)  # shape (N, 6)
@@ -1503,7 +1839,7 @@ class PCS(SoftRobot):
             axis=1,
         )  # shape (N, 6)
         Ad_g_dot_ps = jnp.einsum(
-            "nij, njk->nik", Ad_g_ps, vmap(lie.adjoint_se3)(eta_rot_ps)
+            "nij, njk->nik", Ad_g_ps, vmap(se3.small_adjoint)(eta_rot_ps)
         )  # shape (N, 6, 6)
 
         # rotate both J and Jd to the inertial frame
@@ -1515,10 +1851,41 @@ class PCS(SoftRobot):
         )  # shape (N, 6, num_active_strains)
         return J_global_ps, Jd_global_ps
 
-    jacobian = jacobian_inertialframe
-    jacobian_batched = jacobian_inertialframe_batched
-    jacobian_and_derivative = jacobian_and_derivative_inertialframe
-    jacobian_and_derivative_batched = jacobian_and_derivative_inertialframe_batched
+    @eqx.filter_jit
+    def _jacobian(self, q: Array, s: Array) -> Array:
+        """Protected SoftRobot hook for the inertial-frame Jacobian."""
+        return self.jacobian_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def _jacobian_arc_length_derivative(self, q: Array, s: Array) -> Array:
+        """Protected SoftRobot hook for the inertial-frame Jacobian arc-length derivative."""
+        return self.jacobian_arc_length_derivative_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def _jacobian_and_arc_length_derivative(
+        self, q: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected SoftRobot hook for inertial-frame Jacobian arc-length derivative."""
+        return self.jacobian_and_arc_length_derivative_inertialframe(q, s)
+
+    @eqx.filter_jit
+    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+        """Compute inertial-frame Jacobians at multiple arc-length positions."""
+        return self.jacobian_inertialframe_batched(q, s_ps)
+
+    @eqx.filter_jit
+    def _jacobian_and_time_derivative(
+        self, q: Array, qd: Array, s: Array
+    ) -> tuple[Array, Array]:
+        """Protected SoftRobot hook for the inertial-frame Jacobian time derivative."""
+        return self.jacobian_and_time_derivative_inertialframe(q, qd, s)
+
+    @eqx.filter_jit
+    def jacobian_and_time_derivative_batched(
+        self, q: Array, qd: Array, s_ps: Array
+    ) -> tuple[Array, Array]:
+        """Compute inertial-frame Jacobians and time derivatives at multiple arc-length positions."""
+        return self.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
 
     # ==========================================
     # Useful functions for the system
@@ -1719,10 +2086,7 @@ class PCS(SoftRobot):
                 C_ij = (
                     Ws_ij
                     * J_ij.T
-                    @ (
-                        M_i @ Jd_ij
-                        + lie.coadjoint_se3(J_ij @ self.B_xi @ qd) @ M_i @ J_ij
-                    )
+                    @ (M_i @ Jd_ij + se3.coadjoint(J_ij @ self.B_xi @ qd) @ M_i @ J_ij)
                 )
                 return C_ij
 
@@ -1804,7 +2168,7 @@ class PCS(SoftRobot):
                 J_ij = J_ps[i, j]
 
                 # compute the inverse Adjoint transformation matrix at point s
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = se3.adjoint_inverse(g_ij)
 
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
                 return G_ij
@@ -1835,7 +2199,7 @@ class PCS(SoftRobot):
         return G_full
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array) -> Array:
+    def _gravitational_force(self, q: Array) -> Array:
         """
         Compute the gravitational force acting on the robot.
 
@@ -1971,7 +2335,7 @@ class PCS(SoftRobot):
         return A
 
     @eqx.filter_jit
-    def gravitational_energy(self, q: Array) -> Array:
+    def _gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational energy of the robot.
 
@@ -2048,13 +2412,17 @@ class PCS(SoftRobot):
     ) -> tuple[Array, Array]:
         """Compute active-coordinate local Jacobians at all segment tips."""
         Ad_inv_tips = vmap(
-            lambda xi_i, L_i: lie.Adjoint_gi_se3_inv(xi_i, L_i, eps=self.global_eps)
+            lambda xi_i, L_i: constant_strain.adjoint_inverse_se3(
+                xi_i, L_i, eps=self.global_eps
+            )
         )(xi, self.L)
         T_tips = vmap(
-            lambda xi_i, L_i: lie.Tangent_gi_se3(xi_i, L_i, eps=self.tangent_eps)
+            lambda xi_i, L_i: constant_strain.tangent_se3(
+                xi_i, L_i, eps=self.tangent_eps
+            )
         )(xi, self.L)
         Td_tips = vmap(
-            lambda xi_i, xid_i, L_i: lie.Tangent_derivative_gi_se3(
+            lambda xi_i, xid_i, L_i: constant_strain.tangent_derivative_se3(
                 xi_i, xid_i, L_i, eps=self.tangent_eps
             )
         )(xi, xid, self.L)
@@ -2077,7 +2445,7 @@ class PCS(SoftRobot):
             J_next = Ad_inv_i @ J_prev + J_segment
 
             eta = Ad_inv_T_i @ xid_i
-            Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv_i
+            Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv_i
 
             if convective_only_jd:
                 Jd_segment = (Ad_inv_i @ Td_i) @ B_i
@@ -2093,16 +2461,42 @@ class PCS(SoftRobot):
         return J_tips, Jd_tips
 
     @eqx.filter_jit
-    def _active_quadrature_kinematics(
-        self, q: Array, qd: Array, convective_only_jd: bool = False
-    ) -> tuple[Array, Array, Array, Array]:
+    def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Return weights, poses, active Jacobians, and derivatives at quadrature points.
+        Return integration-point kinematics in active generalized coordinates.
+
+        The stored quadrature grid includes zero-weight endpoint nodes; this
+        method ignores those endpoints and evaluates only the nonzero-weight
+        interior quadrature nodes. The coordinates are generalized coordinates
+        for active strain components only.
 
         Args:
             q: Active generalized coordinates, shape ``(self.num_dofs,)``.
             qd: Active generalized velocities, shape ``(self.num_dofs,)``.
-            convective_only_jd: If true, compute a Jacobian derivative that is
+
+        Returns:
+            Tuple ``(g_ps, J_ps, Jd_ps)``. ``g_ps`` contains SE(3) poses with
+            shape ``(self.num_segments, self.num_gauss_points, 4, 4)``.
+            ``J_ps`` contains body-frame Jacobians in active generalized
+            coordinates with shape
+            ``(self.num_segments, self.num_gauss_points, 6, self.num_dofs)``.
+            ``Jd_ps`` contains their time derivatives with the same shape as
+            ``J_ps``.
+        """
+        _, g_ps, J_ps, Jd_ps = self._integration_kinematics(q, qd)
+        return g_ps, J_ps, Jd_ps
+
+    @eqx.filter_jit
+    def _integration_kinematics(
+        self, q: Array, qd: Array, convective_only_jd: bool = False
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Return weights, poses, active Jacobians, and derivatives at integration points.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            convective_only_jd: If true, compute a Jacobian time derivative that is
                 only guaranteed to be equivalent after multiplication by ``qd``.
 
         When ``convective_only_jd`` is true, the returned derivative is only
@@ -2127,7 +2521,7 @@ class PCS(SoftRobot):
         def scan_fk(g_base: Array, i: Array) -> tuple[Array, Array]:
             xi_i = lax.dynamic_index_in_dim(xi, i, axis=0, keepdims=False)
             L_i = lax.dynamic_index_in_dim(self.L, i, axis=0, keepdims=False)
-            g_tip = g_base @ lie.exp_gn_SE3(L_i * xi_i, eps=self.global_eps)
+            g_tip = g_base @ se3.exp(L_i * xi_i, eps=self.global_eps)
             return g_tip, g_base
 
         indices = jnp.arange(self.num_segments, dtype=jnp.int32)
@@ -2135,7 +2529,7 @@ class PCS(SoftRobot):
 
         def segment_poses(g_base_i: Array, xi_i: Array, s_local_i: Array) -> Array:
             def pose_at_s(s_local_ij: Array) -> Array:
-                g_rel = lie.exp_gn_SE3(s_local_ij * xi_i, eps=self.global_eps)
+                g_rel = se3.exp(s_local_ij * xi_i, eps=self.global_eps)
                 return g_base_i @ g_rel
 
             return vmap(pose_at_s)(s_local_i)
@@ -2158,9 +2552,11 @@ class PCS(SoftRobot):
             s_local_i: Array,
         ) -> tuple[Array, Array]:
             def jacobian_at_s(s_local_ij: Array) -> tuple[Array, Array]:
-                Ad_inv = lie.Adjoint_gi_se3_inv(xi_i, s_local_ij, eps=self.global_eps)
-                T = lie.Tangent_gi_se3(xi_i, s_local_ij, eps=self.tangent_eps)
-                Td = lie.Tangent_derivative_gi_se3(
+                Ad_inv = constant_strain.adjoint_inverse_se3(
+                    xi_i, s_local_ij, eps=self.global_eps
+                )
+                T = constant_strain.tangent_se3(xi_i, s_local_ij, eps=self.tangent_eps)
+                Td = constant_strain.tangent_derivative_se3(
                     xi_i, xid_i, s_local_ij, eps=self.tangent_eps
                 )
 
@@ -2169,7 +2565,7 @@ class PCS(SoftRobot):
                 J_next = Ad_inv @ J_base_i + J_segment
 
                 eta = Ad_inv_T @ xid_i
-                Ad_inv_dot = -lie.adjoint_se3(eta) @ Ad_inv
+                Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv
 
                 if convective_only_jd:
                     Jd_segment = (Ad_inv @ Td) @ B_i
@@ -2188,16 +2584,25 @@ class PCS(SoftRobot):
         return Ws_inner, g_ps, J_ps, Jd_ps
 
     @eqx.filter_jit
-    def _active_quadrature_forward_dynamics_terms(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Assemble active-coordinate inertia, Coriolis-vector, and gravity terms.
+        Assemble forward-dynamics terms in active generalized coordinates.
 
-        The endpoint quadrature nodes have zero weight and are dropped before the
-        kinematics/Jacobian batch evaluation.
+        The coordinates and returned generalized forces correspond only to the
+        active strain components selected by the strain basis.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(B, Cqd, G)``. ``B`` is the active-coordinate inertia
+            matrix with shape ``(self.num_dofs, self.num_dofs)``. ``Cqd`` is
+            the active Coriolis/centrifugal force vector with shape
+            ``(self.num_dofs,)``. ``G`` is the active generalized gravity
+            vector with shape ``(self.num_dofs,)``.
         """
-        Ws_inner, g_ps, J_ps, Jd_ps = self._active_quadrature_kinematics(
+        Ws_inner, g_ps, J_ps, Jd_ps = self._integration_kinematics(
             q, qd, convective_only_jd=True
         )
         num_inner_points = self.num_gauss_points
@@ -2212,12 +2617,11 @@ class PCS(SoftRobot):
                 Jd_ij = Jd_ps[i, j]
 
                 eta_ij = J_ij @ qd
-                Ad_g_inv_ij = lie.Adjoint_g_inv_SE3(g_ij)
+                Ad_g_inv_ij = se3.adjoint_inverse(g_ij)
 
                 B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
                 Cqd_ij = Ws_ij * (
-                    J_ij.T
-                    @ (M_i @ (Jd_ij @ qd) + lie.coadjoint_se3(eta_ij) @ M_i @ eta_ij)
+                    J_ij.T @ (M_i @ (Jd_ij @ qd) + se3.coadjoint(eta_ij) @ M_i @ eta_ij)
                 )
                 G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
 
@@ -2271,7 +2675,7 @@ class PCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[-1],))
 
-        B, Cqd, G = self._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
 

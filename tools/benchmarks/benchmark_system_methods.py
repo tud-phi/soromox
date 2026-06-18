@@ -2,8 +2,8 @@
 
 """Benchmark the core dynamics routines for Soromox soft robot systems.
 
-This script measures both the ahead-of-time JIT compilation cost and the steady-state
-execution time (after compilation) for selected systems and core methods. It supports
+This script measures both first-call JIT compilation cost and steady-state
+execution time after compilation for selected systems and core methods. It supports
 benchmarking articulated, Pendulum, PlanarPCS, PCS, and GVS implementations over a sweep
 of link or segment counts, and can optionally visualise the results.
 """
@@ -45,6 +45,7 @@ from tools.benchmarks._benchmark_common import (
     gauss_point_sweep_values,
     get_system_registry,
     normalize_gauss_point_values,
+    normalize_system_names,
     system_gauss_point_metadata,
 )
 
@@ -141,15 +142,21 @@ def _measure_jitted_call(
     if repeats < 1:
         raise ValueError("execution repeats must be at least 1")
 
+    # JIT a closure around the benchmark callable instead of jitting bound
+    # methods directly. Bound Equinox methods carry ``self`` as part of the
+    # callable object, and JAX may try to hash the module if the bound method is
+    # passed straight to ``jax.jit``.
+    jitted_fn = jax.jit(lambda *call_args: fn(*call_args))
+
     start = time.perf_counter()
-    first = fn(*args)
+    first = jitted_fn(*args)
     block_until_ready(first)
     first_time = time.perf_counter() - start
 
     exec_times: list[float] = []
     for _ in range(repeats):
         loop_start = time.perf_counter()
-        out = fn(*args)
+        out = jitted_fn(*args)
         block_until_ready(out)
         exec_times.append(time.perf_counter() - loop_start)
 
@@ -172,10 +179,10 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobians_tips, (ctx["q"],)),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
-            description="Tip Jacobians and their derivatives",
+            name="jacobian_and_time_derivative",
+            description="Tip Jacobians and their time derivatives",
             builder=lambda sys, ctx, _: (
-                sys.jacobians_and_derivatives_tips,
+                sys.jacobian_and_time_derivatives_tips,
                 (ctx["q"], ctx["qd"]),
             ),
         ),
@@ -227,10 +234,10 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobians_tips, (ctx["q"],)),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
-            description="Tip Jacobians and their derivatives",
+            name="jacobian_and_time_derivative",
+            description="Tip Jacobians and their time derivatives",
             builder=lambda sys, ctx, _: (
-                sys.jacobians_and_derivatives_tips,
+                sys.jacobian_and_time_derivatives_tips,
                 (ctx["q"], ctx["qd"]),
             ),
         ),
@@ -297,9 +304,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobian, (ctx["q"], ctx["s_tip"])),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
+            name="jacobian_and_time_derivative",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative,
+                sys.jacobian_and_time_derivative,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
@@ -364,9 +371,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.jacobian, (ctx["q"], ctx["s_tip"])),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative",
+            name="jacobian_and_time_derivative",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative,
+                sys.jacobian_and_time_derivative,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
@@ -429,16 +436,16 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             ),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative_bodyframe",
+            name="jacobian_and_time_derivative_bodyframe",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative_bodyframe,
+                sys.jacobian_and_time_derivative_bodyframe,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
         BenchmarkCase(
-            name="jacobian_and_derivative_inertialframe",
+            name="jacobian_and_time_derivative_inertialframe",
             builder=lambda sys, ctx, _: (
-                sys.jacobian_and_derivative_inertialframe,
+                sys.jacobian_and_time_derivative_inertialframe,
                 (ctx["q"], ctx["qd"], ctx["s_tip"]),
             ),
         ),
@@ -698,6 +705,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Display the plot window after benchmarking",
     )
     args = parser.parse_args(argv)
+    try:
+        args.systems = normalize_system_names(args.systems, registry)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.gauss_points is not None:
         if any(value < 1 for value in args.gauss_points):
             parser.error("All --gauss-points entries must be >= 1.")

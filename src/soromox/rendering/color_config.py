@@ -40,12 +40,20 @@ class BackboneColorConfig:
 
 
 @dataclass(frozen=True)
+class ActuatorStyleConfig:
+    """Default style configuration for rendered actuator visual layers."""
+
+    default_color: tuple[float, float, float] = (0.9, 0.15, 0.15)
+    scalar_colormap: str = "viridis"
+
+
+@dataclass(frozen=True)
 class RendererColorConfig:
     """Shared renderer colors with sensible defaults."""
 
     backbone: BackboneColorConfig = field(default_factory=BackboneColorConfig)
     base_plate_color: tuple[float, float, float] = (0.2, 0.2, 0.2)
-    tendon_color: tuple[float, float, float] = (0.9, 0.15, 0.15)
+    actuators: ActuatorStyleConfig = field(default_factory=ActuatorStyleConfig)
 
 
 @dataclass(frozen=True)
@@ -163,7 +171,7 @@ BUILTIN_THEMES: dict[str, RendererColorConfig] = {
             robot_palette="soromox:okabe-ito",
         ),
         base_plate_color=(0.2, 0.2, 0.2),
-        tendon_color=(0.8, 0.2, 0.2),
+        actuators=ActuatorStyleConfig(default_color=(0.8, 0.2, 0.2)),
     ),
     "soromox:cool": RendererColorConfig(
         backbone=BackboneColorConfig(
@@ -171,7 +179,7 @@ BUILTIN_THEMES: dict[str, RendererColorConfig] = {
             robot_palette="soromox:tol-muted",
         ),
         base_plate_color=(0.15, 0.2, 0.25),
-        tendon_color=(0.2, 0.45, 0.7),
+        actuators=ActuatorStyleConfig(default_color=(0.2, 0.45, 0.7)),
     ),
     "soromox:mono": RendererColorConfig(
         backbone=BackboneColorConfig(
@@ -179,7 +187,7 @@ BUILTIN_THEMES: dict[str, RendererColorConfig] = {
             robot_palette="soromox:slate",
         ),
         base_plate_color=(0.2, 0.2, 0.2),
-        tendon_color=(0.35, 0.35, 0.35),
+        actuators=ActuatorStyleConfig(default_color=(0.35, 0.35, 0.35)),
     ),
 }
 
@@ -290,9 +298,7 @@ def normalize_color_array(
     if colors.ndim == 1:
         colors = colors[None, :]
     if colors.shape[-1] not in (3, 4):
-        raise ValueError(
-            f"{name} must have 3 or 4 channels; got shape {colors.shape}"
-        )
+        raise ValueError(f"{name} must have 3 or 4 channels; got shape {colors.shape}")
     has_alpha = colors.shape[-1] == 4
     colors = ensure_rgba(colors)
     try:

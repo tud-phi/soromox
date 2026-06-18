@@ -1,27 +1,12 @@
 import jax
+import pytest
 from jax import numpy as jnp
 from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
-import pytest
 
-from soromox.utils.lie_algebra.se2 import adjoint_se2, exp_SE2, tilde_SE2
-from soromox.utils.lie_algebra.se3 import (
-    Adjoint_g_SE3,
-    Adjoint_g_inv_SE3,
-    Adjoint_gi_se3,
-    Adjoint_gi_se3_inv,
-    Tangent_derivative_gi_se3,
-    Tangent_gi_se3,
-    adjoint_se3,
-    coadjoint_se3,
-    exp_SE3,
-    exp_gn_SE3,
-    hat_SE3,
-    log_SE3,
-    tilde_SE3,
-)
+from soromox.utils.geometry import poses
+from soromox.utils.lie_algebra import constant_strain, se2, se3, so3
 from soromox.utils.tolerance import Tolerance
-
 
 jax.config.update("jax_enable_x64", True)
 
@@ -43,26 +28,27 @@ def _embed_se2_transform(mat3):
     return g
 
 
-def test_tilde_se3_matches_z_axis_rotation():
-    theta = jnp.array(0.5)
-    omega = jnp.array([0.0, 0.0, theta])
+def _transform_from_planar_pose(vec2):
+    return poses.planar_pose_to_transform(vec2)
 
-    result = tilde_SE3(omega)
 
-    assert_allclose(result[:2, :2], tilde_SE2(theta), rtol=RTOL, atol=ATOL)
-    assert_allclose(result[:, 2], jnp.array([0.0, 0.0, 0.0]), rtol=RTOL, atol=ATOL)
-    assert_allclose(result[2, :], jnp.array([0.0, 0.0, 0.0]), rtol=RTOL, atol=ATOL)
+def _assert_forward_and_reverse_mode_finite(fn, arg):
+    jac_fwd = jax.jacfwd(fn)(arg)
+    jac_rev = jax.jacrev(fn)(arg)
+
+    assert jnp.isfinite(jac_fwd).all()
+    assert jnp.isfinite(jac_rev).all()
 
 
 def test_hat_se3_embeds_planar_hat():
     vec2 = jnp.array([0.4, -0.7, 1.2])
     vec6 = _embed_se2_twist(vec2)
 
-    result = hat_SE3(vec6)
+    result = se3.hat(vec6)
 
     expected = jnp.block(
         [
-            [tilde_SE3(vec6[:3]), vec6[3:].reshape((3, 1))],
+            [so3.skew(vec6[:3]), vec6[3:].reshape((3, 1))],
             [jnp.zeros((1, 3)), jnp.zeros((1, 1))],
         ]
     )
@@ -70,12 +56,12 @@ def test_hat_se3_embeds_planar_hat():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_exp_se3_matches_planar_embedding():
+def test_exp_gn_se3_matches_planar_embedding():
     vec2 = jnp.array([jnp.pi / 4.0, 0.3, -0.5])
     vec6 = _embed_se2_twist(vec2)
 
-    g_se3 = exp_SE3(vec6)
-    g_expected = _embed_se2_transform(exp_SE2(vec2))
+    g_se3 = se3.exp(vec6, EPS)
+    g_expected = _embed_se2_transform(se2.exp(vec2, EPS))
 
     assert_allclose(g_se3, g_expected, rtol=RTOL, atol=ATOL)
 
@@ -84,8 +70,8 @@ def test_log_se3_recovers_planar_rotation_without_translation():
     vec2 = jnp.array([0.6, 0.0, 0.0])
     vec6 = _embed_se2_twist(vec2)
 
-    g = exp_SE3(vec6)
-    recovered = log_SE3(g, eps=EPS)
+    g = se3.exp(vec6, EPS)
+    recovered = se3.log(g, eps=EPS)
 
     assert_allclose(recovered, vec6, rtol=RTOL, atol=ATOL)
 
@@ -94,7 +80,7 @@ def test_log_se3_pure_translation():
     translation = jnp.array([0.2, -0.15, 0.05])
     g = jnp.eye(4).at[:3, 3].set(translation)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = se3.log(g, eps=EPS)
     expected = jnp.concatenate([jnp.zeros(3), translation])
 
     assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
@@ -113,7 +99,7 @@ def test_log_se3_pure_rotation_about_x_axis():
     )
     g = jnp.eye(4).at[:3, :3].set(R)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = se3.log(g, eps=EPS)
     expected = jnp.array([theta, 0.0, 0.0, 0.0, 0.0, 0.0])
 
     assert_allclose(recovered, expected, rtol=RTOL, atol=ATOL)
@@ -121,9 +107,9 @@ def test_log_se3_pure_rotation_about_x_axis():
 
 def test_log_se3_handles_near_identity_transform():
     vec = jnp.array([1e-9, -2e-9, 3e-9, 5e-4, -4e-4, 3e-4])
-    g = exp_SE3(vec)
+    g = se3.exp(vec, EPS)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = se3.log(g, eps=EPS)
 
     assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
     assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
@@ -131,9 +117,9 @@ def test_log_se3_handles_near_identity_transform():
 
 def test_log_se3_handles_identity_transform():
     vec = jnp.array([0.0, 0.0, 0.0, 0.2, 0.0, 0.0])
-    g = exp_SE3(vec)
+    g = se3.exp(vec, EPS)
 
-    recovered = log_SE3(g, eps=EPS)
+    recovered = se3.log(g, eps=EPS)
 
     assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
     assert_allclose(recovered, vec, rtol=RTOL, atol=ATOL)
@@ -145,11 +131,41 @@ def test_log_se3_round_trip_random_vectors():
     for _ in range(5):
         key, subkey = jax.random.split(key)
         vec = jax.random.uniform(subkey, shape=(6,), minval=-0.5, maxval=0.5)
-        g = exp_gn_SE3(vec, EPS)
-        recovered = log_SE3(g, eps=EPS)
+        g = se3.exp(vec, EPS)
+        recovered = se3.log(g, eps=EPS)
 
         assert not jnp.isnan(recovered).any(), "Logarithm returned NaN values"
         assert_allclose(recovered, vec, rtol=1e-5, atol=1e-7)
+
+
+@pytest.mark.parametrize(
+    "xi",
+    [
+        jnp.zeros(6),
+        jnp.array([1e-10, -2e-10, 3e-10, 1e-4, -2e-4, 3e-4]),
+        jnp.array([0.2, -0.3, 0.4, 0.1, -0.2, 0.3]),
+        jnp.array([0.0, 0.0, jnp.pi - 1e-7, 0.1, -0.2, 0.3]),
+    ],
+)
+def test_log_se3_forward_and_reverse_mode_autodiff_is_finite(xi):
+    """Test autodiff through identity, small, regular, and near-pi log branches."""
+    g = se3.exp(xi, EPS)
+
+    _assert_forward_and_reverse_mode_finite(
+        lambda g_flat: se3.log(g_flat.reshape((4, 4)), eps=EPS),
+        g.reshape(-1),
+    )
+
+
+def test_log_se3_exact_pi_rotation_is_finite_value_only():
+    """Check exact pi, where the logarithm value is finite but not unique."""
+    xi = jnp.array([jnp.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
+    g = se3.exp(xi, EPS)
+
+    recovered = se3.log(g, eps=EPS)
+
+    assert jnp.isfinite(recovered).all()
+    assert_allclose(se3.exp(recovered, EPS), g, rtol=1e-5, atol=1e-7)
 
 
 @pytest.mark.parametrize(
@@ -162,20 +178,20 @@ def test_log_se3_round_trip_random_vectors():
 def test_exp_gn_se3_matches_matrix_exponential(vec2):
     vec6 = _embed_se2_twist(vec2)
 
-    result = exp_gn_SE3(vec6, EPS)
-    expected = expm(hat_SE3(vec6))
+    result = se3.exp(vec6, EPS)
+    expected = expm(se3.hat(vec6))
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
-def test_adjoint_se3_matches_block_structure():
+def test_small_adjoint_se3_matches_block_structure():
     vec2 = jnp.array([0.5, 0.2, -0.3])
     vec6 = _embed_se2_twist(vec2)
 
-    result = adjoint_se3(vec6)
+    result = se3.small_adjoint(vec6)
 
-    omega_tilde = tilde_SE3(vec6[:3])
-    v_tilde = tilde_SE3(vec6[3:])
+    omega_tilde = so3.skew(vec6[:3])
+    v_tilde = so3.skew(vec6[3:])
     expected = jnp.block([[omega_tilde, jnp.zeros((3, 3))], [v_tilde, omega_tilde]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -185,10 +201,10 @@ def test_coadjoint_se3_matches_block_structure():
     vec2 = jnp.array([0.3, -0.4, 0.1])
     vec6 = _embed_se2_twist(vec2)
 
-    result = coadjoint_se3(vec6)
+    result = se3.coadjoint(vec6)
 
-    omega_tilde = tilde_SE3(vec6[:3])
-    v_tilde = tilde_SE3(vec6[3:])
+    omega_tilde = so3.skew(vec6[:3])
+    v_tilde = so3.skew(vec6[3:])
     expected = jnp.block([[omega_tilde, v_tilde], [jnp.zeros((3, 3)), omega_tilde]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -196,13 +212,13 @@ def test_coadjoint_se3_matches_block_structure():
 
 def test_adjoint_g_se3_matches_planar_embedding():
     vec2 = jnp.array([jnp.pi / 6.0, 0.4, -0.7])
-    g2 = exp_SE2(vec2)
+    g2 = _transform_from_planar_pose(vec2)
     g3 = _embed_se2_transform(g2)
 
-    result = Adjoint_g_SE3(g3)
+    result = se3.adjoint(g3)
 
     R = g3[:3, :3]
-    ttilde = tilde_SE3(g3[:3, 3])
+    ttilde = so3.skew(g3[:3, 3])
     expected = jnp.block([[R, jnp.zeros((3, 3))], [ttilde @ R, R]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -210,10 +226,10 @@ def test_adjoint_g_se3_matches_planar_embedding():
 
 def test_adjoint_g_inv_se3_is_inverse():
     vec2 = jnp.array([jnp.pi / 5.0, -0.2, 0.6])
-    g3 = _embed_se2_transform(exp_SE2(vec2))
+    g3 = _embed_se2_transform(_transform_from_planar_pose(vec2))
 
-    adj = Adjoint_g_SE3(g3)
-    adj_inv = Adjoint_g_inv_SE3(g3)
+    adj = se3.adjoint(g3)
+    adj_inv = se3.adjoint_inverse(g3)
 
     assert_allclose(adj @ adj_inv, jnp.eye(6), rtol=RTOL, atol=ATOL)
     assert_allclose(adj_inv @ adj, jnp.eye(6), rtol=RTOL, atol=ATOL)
@@ -223,11 +239,11 @@ def test_planar_adjoint_blocks_match_se2():
     vec2 = jnp.array([0.1, -0.2, 0.3])
     vec6 = _embed_se2_twist(vec2)
 
-    adj_3 = adjoint_se3(vec6)
-    adj_2 = adjoint_se2(vec2)
+    adj_3 = se3.small_adjoint(vec6)
+    adj_2 = se2.small_adjoint(vec2)
 
-    assert_allclose(adj_3[:3, :3], tilde_SE3(vec6[:3]), rtol=RTOL, atol=ATOL)
-    assert_allclose(adj_3[3:, :3], tilde_SE3(vec6[3:]), rtol=RTOL, atol=ATOL)
+    assert_allclose(adj_3[:3, :3], so3.skew(vec6[:3]), rtol=RTOL, atol=ATOL)
+    assert_allclose(adj_3[3:, :3], so3.skew(vec6[3:]), rtol=RTOL, atol=ATOL)
 
     embedding = jnp.array(
         [
@@ -250,8 +266,8 @@ def test_adjoint_gi_se3_inverse_matches_identity():
     xi = jnp.array([0.2, -0.1, 0.4, 0.3, -0.5, 0.1])
     s = jnp.array(0.45)
 
-    adj = Adjoint_gi_se3(xi, s, eps=EPS)
-    adj_inv = Adjoint_gi_se3_inv(xi, s, eps=EPS)
+    adj = constant_strain.adjoint_se3(xi, s, eps=EPS)
+    adj_inv = constant_strain.adjoint_inverse_se3(xi, s, eps=EPS)
 
     assert_allclose(adj @ adj_inv, jnp.eye(6), rtol=RTOL, atol=ATOL)
     assert_allclose(adj_inv @ adj, jnp.eye(6), rtol=RTOL, atol=ATOL)
@@ -261,9 +277,9 @@ def test_tangent_gi_se3_zero_theta_matches_truncated_series():
     xi = jnp.array([0.0, 0.0, 0.0, 0.4, -0.3, 0.2])
     s = jnp.array(0.35)
 
-    expected = s * jnp.eye(6) + 0.5 * s**2 * adjoint_se3(xi)
+    expected = s * jnp.eye(6) + 0.5 * s**2 * se3.small_adjoint(xi)
 
-    result = Tangent_gi_se3(xi, s, eps=EPS)
+    result = constant_strain.tangent_se3(xi, s, eps=EPS)
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
@@ -273,7 +289,7 @@ def test_tangent_derivative_gi_se3_zero_without_motion():
     xid = jnp.zeros((6,))
     s = jnp.array(0.6)
 
-    result = Tangent_derivative_gi_se3(xi, xid, s, eps=EPS)
+    result = constant_strain.tangent_derivative_se3(xi, xid, s, eps=EPS)
     expected = jnp.zeros((6, 6))
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
@@ -294,11 +310,11 @@ def test_tangent_derivative_matches_autodiff_random(N: int = 10):
         if jnp.linalg.norm(xi[:3]) < 1e-3:
             continue
 
-        def tangent_map(xi_):
-            return Tangent_gi_se3(xi_, s, eps=EPS)
+        def tangent_map(xi_, s_current=s):
+            return constant_strain.tangent_se3(xi_, s_current, eps=EPS)
 
         _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
-        closed_form = Tangent_derivative_gi_se3(xi, xid, s, eps=EPS)
+        closed_form = constant_strain.tangent_derivative_se3(xi, xid, s, eps=EPS)
 
         assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
         samples += 1
@@ -313,34 +329,38 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
         jac_rev = jax.jacrev(fn)(arg)
         jac_fwd = jax.jacfwd(fn)(arg)
         assert jnp.isfinite(jac_rev).all(), (
-            "Jacobian (reverse) is not finite of fn {}".format(fn_name)
+            f"Jacobian (reverse) is not finite of fn {fn_name}"
         )
         assert jnp.isfinite(jac_fwd).all(), (
-            "Jacobian (forward) is not finite of fn {}".format(fn_name)
+            f"Jacobian (forward) is not finite of fn {fn_name}"
         )
 
     def tangent_fn(xi):
-        return Tangent_gi_se3(xi, s, eps=EPS).reshape(-1)
+        return constant_strain.tangent_se3(xi, s, eps=EPS).reshape(-1)
 
-    assert_autodiff_finite(tangent_fn, xi_zero, fn_name="Tangent_gi_se3")
+    assert_autodiff_finite(tangent_fn, xi_zero, fn_name="constant_strain.tangent_se3")
 
     def tangent_dot_wrt_xi(xi):
-        return Tangent_derivative_gi_se3(xi, xid_zero, s, eps=EPS).reshape(-1)
+        return constant_strain.tangent_derivative_se3(xi, xid_zero, s, eps=EPS).reshape(
+            -1
+        )
 
     def tangent_dot_wrt_xid(xid):
-        return Tangent_derivative_gi_se3(xi_zero, xid, s, eps=EPS).reshape(-1)
+        return constant_strain.tangent_derivative_se3(xi_zero, xid, s, eps=EPS).reshape(
+            -1
+        )
 
     for fn, arg in ((tangent_dot_wrt_xi, xi_zero), (tangent_dot_wrt_xid, xid_zero)):
         assert_autodiff_finite(fn, arg, fn_name=fn.__name__)
 
     def exp_gn_fn(xi):
-        return exp_gn_SE3(xi, eps=EPS).reshape(-1)
+        return se3.exp(xi, eps=EPS).reshape(-1)
 
-    assert_autodiff_finite(exp_gn_fn, xi_zero, fn_name="exp_gn_SE3")
+    assert_autodiff_finite(exp_gn_fn, xi_zero, fn_name="se3.exp")
 
     def log_fn(g_flat):
         g = g_flat.reshape((4, 4))
-        return log_SE3(g, eps=EPS)
+        return se3.log(g, eps=EPS)
 
     g_identity = jnp.eye(4).reshape(-1)
     log_at_identity = log_fn(g_identity)

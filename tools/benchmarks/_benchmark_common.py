@@ -233,35 +233,65 @@ def _pcs_context(system: PCS) -> MutableMapping[str, Array]:
     return ctx
 
 
+def _gvs_segment(strain_basis_order: int, gauss_points: int) -> GVSSegment:
+    if strain_basis_order < 0:
+        raise ValueError("GVS strain-basis order must be non-negative.")
+
+    return GVSSegment(
+        link=LinkSpec(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=1.0e6,
+            nu=0.45,
+            rho=980.0,
+            eta=2.5e3,
+            L=0.25,
+            r_i=0.02,
+            r_f=0.02,
+        ),
+        joint=JointSpec(type="fixed"),
+        basis=StrainBasisSpec(
+            type="legendre",
+            active=[1, 1, 1, 1, 1, 1],
+            orders=int(strain_basis_order),
+            xi_ref=[0, 0, 0, 1, 0, 0],
+        ),
+        num_gauss_points=gauss_points,
+    )
+
+
 def _gvs_factory(num_segments: int, gauss_points: int = 5) -> GVS:
     segments: list[GVSSegment] = []
     for _ in range(num_segments):
-        segments.append(
-            GVSSegment(
-                link=LinkSpec(
-                    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                    E=1.0e6,
-                    nu=0.45,
-                    rho=980.0,
-                    eta=2.5e3,
-                    L=0.25,
-                    r_i=0.02,
-                    r_f=0.02,
-                ),
-                joint=JointSpec(type="fixed"),
-                basis=StrainBasisSpec(
-                    type="monomial",
-                    active=[1, 1, 1, 1, 1, 1],
-                    orders=[1, 1, 1, 1, 1, 1],
-                    xi_ref=[0, 0, 0, 1, 0, 0],
-                ),
-                num_gauss_points=gauss_points,
-            )
-        )
+        segments.append(_gvs_segment(strain_basis_order=0, gauss_points=gauss_points))
 
     return GVS(
         segments=segments,
         g=[0.0, 0.0, 9.81],
+    )
+
+
+def _gvs_basis_order_factory(strain_basis_order: int, gauss_points: int = 5) -> GVS:
+    return GVS(
+        segments=[
+            _gvs_segment(
+                strain_basis_order=strain_basis_order,
+                gauss_points=gauss_points,
+            )
+        ],
+        g=[0.0, 0.0, 9.81],
+    )
+
+
+def get_gvs_basis_order_system_config() -> SystemConfig:
+    """Return the GVS configuration that sweeps basis order for one link."""
+
+    return SystemConfig(
+        factory=_gvs_basis_order_factory,
+        size_label="strain_basis_order",
+        build_context=_gvs_context,
+        gauss_factory=_gvs_basis_order_factory,
+        default_gauss_points=5,
+        min_gauss_points=5,
     )
 
 
@@ -325,16 +355,22 @@ def add_system_selection_args(
     registry: Mapping[str, Any],
     *,
     default_segment_counts: Sequence[int],
+    default_systems: Sequence[str] | None = None,
 ) -> None:
     """Attach shared --systems/--segment-counts arguments to a parser."""
 
     systems = list(registry.keys())
+    selected_systems = systems if default_systems is None else list(default_systems)
+    selected_systems = normalize_system_names(selected_systems, registry)
     parser.add_argument(
         "--systems",
         nargs="*",
-        default=systems,
-        choices=systems,
-        help="Systems to benchmark (default: all)",
+        default=selected_systems,
+        metavar="SYSTEM",
+        help=(
+            "Systems to benchmark. Available: "
+            f"{', '.join(systems)}. CamelCase names such as PCS and GVS are accepted."
+        ),
     )
     parser.add_argument(
         "--segment-counts",
@@ -343,6 +379,38 @@ def add_system_selection_args(
         default=list(default_segment_counts),
         help="Sequence of link/segment counts to benchmark",
     )
+
+
+def normalize_system_names(
+    values: Sequence[str],
+    registry: Mapping[str, Any],
+) -> list[str]:
+    """Normalize CLI system names while accepting snake_case and CamelCase."""
+
+    normalized: list[str] = []
+    unknown: list[str] = []
+    compact_registry = {name.replace("_", "").lower(): name for name in registry}
+    for value in values:
+        name = str(value)
+        snake = name.strip().replace("-", "_").lower()
+        if snake in registry:
+            canonical = snake
+        else:
+            canonical = compact_registry.get(snake.replace("_", ""))
+
+        if canonical is None:
+            unknown.append(name)
+            continue
+        if canonical not in normalized:
+            normalized.append(canonical)
+
+    if unknown:
+        available = ", ".join(registry.keys())
+        raise ValueError(
+            "Unknown system name(s): "
+            f"{', '.join(unknown)}. Available systems: {available}."
+        )
+    return normalized
 
 
 def add_gauss_point_args(parser: argparse.ArgumentParser) -> None:
@@ -416,6 +484,8 @@ def system_gauss_point_metadata(system: Any) -> tuple[int | None, int | None]:
     if hasattr(system, "num_gauss_points") and hasattr(
         system, "num_integration_points"
     ):
+        if system.num_gauss_points is None or system.num_integration_points is None:
+            return None, None
         return int(system.num_gauss_points), int(system.num_integration_points)
     return None, None
 

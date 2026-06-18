@@ -1,6 +1,7 @@
 __all__ = ["blk_diag", "blk_concat"]
-from jax import numpy as jnp
 from jax import Array, lax
+from jax import numpy as jnp
+
 
 def blk_diag(a: Array) -> Array:
     """

@@ -231,7 +231,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         xd_des = osd.B_task.T @ xd_des_full
 
         # Compute operational space quantities
-        J, Jd = osd.jacobian_and_derivative(q, qd)
+        J, Jd = osd.jacobian_and_time_derivative(q, qd)
         J_bar = osd.dynamically_consistent_pseudoinverse(q)
 
         # Current operational space FULL pose (for error computation) and task-selected velocity

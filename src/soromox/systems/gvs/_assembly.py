@@ -4,38 +4,45 @@ from typing import Any
 
 import jax.numpy as jnp
 
-import soromox.utils.lie_algebra as lie
+from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint
-from soromox.systems.gvs.specs import GVSSegment
+from soromox.systems.gvs.structures import GVSSegmentStructure, GVSStructure
+from soromox.systems.params import validate_quaternion_base_pose
 from soromox.utils.basic import compute_strain_basis
+from soromox.utils.geometry import poses
 
 
 def _set_model_field(model: Any, name: str, value: Any) -> None:
     object.__setattr__(model, name, value)
 
 
-def _validate_segments(segments: list[GVSSegment] | tuple[GVSSegment, ...]) -> None:
-    if not segments:
-        raise ValueError("GVS requires at least one segment.")
-    for idx, segment in enumerate(segments):
-        if segment.num_gauss_points < 5:
-            raise ValueError(
-                "Each GVS segment requires at least 5 Gauss points; "
-                f"segment {idx} has {segment.num_gauss_points}."
-            )
+def _validate_segments(
+    segments: list[GVSSegmentStructure] | tuple[GVSSegmentStructure, ...],
+    params: GVSParams,
+    max_dof: int | None,
+    max_num_gauss_points: int | None,
+) -> None:
+    params.validate_against_structure(
+        GVSStructure(
+            segments=tuple(segments),
+            max_dof=max_dof,
+            max_num_gauss_points=max_num_gauss_points,
+        )
+    )
 
 
 def assign_gvs_runtime_arrays(
     model: Any,
     *,
-    segments: list[GVSSegment] | tuple[GVSSegment, ...],
+    segments: list[GVSSegmentStructure] | tuple[GVSSegmentStructure, ...],
+    params: GVSParams,
     max_dof: int | None,
     max_num_gauss_points: int | None,
     g: list[float] | jnp.ndarray,
     p0: jnp.ndarray | None,
 ) -> None:
     """Assemble padded runtime arrays from public GVS segment specs."""
-    _validate_segments(segments)
+    _validate_segments(segments, params, max_dof, max_num_gauss_points)
 
     _set_model_field(model, "num_segments", len(segments))
     num_gauss_points_per_segment = [segment.num_gauss_points for segment in segments]
@@ -131,13 +138,38 @@ def assign_gvs_runtime_arrays(
     semi_minor_params = jnp.empty((n_segments, 2))
 
     for i_segment, segment in enumerate(segments):
+        joint_dof = Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
+        if (
+            params.joint_stiffness.shape[1] < joint_dof
+            or params.joint_stiffness.shape[2] < joint_dof
+        ):
+            raise ValueError(
+                "joint_stiffness trailing dimensions must cover every joint DOF."
+            )
         segment_data = model._build_segment_i(
             max_dof=max_dof,
             max_num_integration_points=max_num_integration_points,
-            link_spec=segment.link,
-            joint_spec=segment.joint,
-            basis_spec=segment.basis,
+            link_structure=segment.link,
+            joint_structure=segment.joint,
+            basis_structure=segment.basis,
             num_gauss_points=segment.num_gauss_points,
+            length=params.link.length[i_segment],
+            young_modulus=params.link.young_modulus[i_segment],
+            poisson_ratio=params.link.poisson_ratio[i_segment],
+            density=params.link.density[i_segment],
+            damping_coefficient=params.link.damping_coefficient[i_segment],
+            radius_initial=params.link.radius_initial[i_segment],
+            radius_final=params.link.radius_final[i_segment],
+            height_initial=params.link.height_initial[i_segment],
+            height_final=params.link.height_final[i_segment],
+            width_initial=params.link.width_initial[i_segment],
+            width_final=params.link.width_final[i_segment],
+            semi_major_initial=params.link.semi_major_initial[i_segment],
+            semi_major_final=params.link.semi_major_final[i_segment],
+            semi_minor_initial=params.link.semi_minor_initial[i_segment],
+            semi_minor_final=params.link.semi_minor_final[i_segment],
+            reference_strain=params.reference_strain[i_segment],
+            joint_stiffness=params.joint_stiffness[i_segment, :joint_dof, :joint_dof],
         )
 
         segment_lengths = segment_lengths.at[i_segment].set(segment_data.L)
@@ -175,7 +207,6 @@ def assign_gvs_runtime_arrays(
             segment_data.strain_selector
         )
 
-        link = segment.link
         basis = segment.basis
         basis_type_index = basis_type_index.at[i_segment].set(
             Basis.BASISTYPE_MAP[basis.type]
@@ -183,13 +214,29 @@ def assign_gvs_runtime_arrays(
         basis_active_params = basis_active_params.at[i_segment].set(basis.active)
         basis_order_params = basis_order_params.at[i_segment].set(basis.orders)
         cross_section_geometry = cross_section_geometry.at[i_segment].set(
-            int(link.cross_section_geometry)
+            int(segment.link.cross_section_geometry)
         )
-        radius_params = radius_params.at[i_segment].set([link.r_i, link.r_f])
-        height_params = height_params.at[i_segment].set([link.h_i, link.h_f])
-        width_params = width_params.at[i_segment].set([link.w_i, link.w_f])
-        semi_major_params = semi_major_params.at[i_segment].set([link.a_i, link.a_f])
-        semi_minor_params = semi_minor_params.at[i_segment].set([link.b_i, link.b_f])
+        radius_params = radius_params.at[i_segment].set(
+            [params.link.radius_initial[i_segment], params.link.radius_final[i_segment]]
+        )
+        height_params = height_params.at[i_segment].set(
+            [params.link.height_initial[i_segment], params.link.height_final[i_segment]]
+        )
+        width_params = width_params.at[i_segment].set(
+            [params.link.width_initial[i_segment], params.link.width_final[i_segment]]
+        )
+        semi_major_params = semi_major_params.at[i_segment].set(
+            [
+                params.link.semi_major_initial[i_segment],
+                params.link.semi_major_final[i_segment],
+            ]
+        )
+        semi_minor_params = semi_minor_params.at[i_segment].set(
+            [
+                params.link.semi_minor_initial[i_segment],
+                params.link.semi_minor_final[i_segment],
+            ]
+        )
 
     _set_model_field(model, "segment_lengths", segment_lengths)
     _set_model_field(model, "num_integration_points", num_integration_points)
@@ -235,11 +282,9 @@ def assign_gvs_runtime_arrays(
     )
 
     if p0 is None:
-        p0_arr = jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64
-        )
+        p0_arr = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
     else:
         p0_arr = jnp.asarray(p0, dtype=jnp.float64)
-    if p0_arr.size != 6:
-        raise ValueError("p0 must have shape (6,) when provided")
-    _set_model_field(model, "g0", lie.exp_SE3(p0_arr))
+    validate_quaternion_base_pose("p0", p0_arr, (7,))
+    _set_model_field(model, "base_pose", p0_arr)
+    _set_model_field(model, "g0", poses.quaternion_pose_to_transform(p0_arr))

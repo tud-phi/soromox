@@ -9,7 +9,12 @@ from jax import vmap
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems import PneumaticActuatedPlanarPCS, SystemState
+from soromox.systems import (
+    PlanarPCSStructure,
+    PneumaticActuatedPlanarPCS,
+    PneumaticActuatedPlanarPCSParams,
+    SystemState,
+)
 
 
 def sweep_actuation_mapping(
@@ -31,9 +36,7 @@ def sweep_actuation_mapping(
     # mark the points that are not controllable as the u1 and u2 terms share the same sign
     non_controllable_selector = A_pts[..., 0, 0] * A_pts[..., 0, 1] >= 0.0
     non_controllable_indices = jnp.where(non_controllable_selector)[0]
-    non_controllable_boundary_indices = jnp.where(
-        non_controllable_selector[:-1] != non_controllable_selector[1:]
-    )[0]
+    jnp.where(non_controllable_selector[:-1] != non_controllable_selector[1:])[0]
     # plot the mapping on the bending strain for various bending strains
     fig, ax = plt.subplots(
         num="pneumatic_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain"
@@ -69,10 +72,10 @@ def sweep_actuation_mapping(
         num="pneumatic_planar_pcs_actuation_mapping_bending_torque_vs_bending_strain_4segment_radii"
     )
     for r, r_chamber_out in zip(r_pts, r_chamber_out_pts):
-        _params = {}
-        _params["r"] = r * jnp.ones((robot.num_segments,))
-        _params["r_chamber_out"] = r_chamber_out * jnp.ones((robot.num_segments,))
-        updated_robot = robot.update_params(_params)
+        updated_robot = robot.update_params(
+            radius=r * jnp.ones((robot.num_segments,)),
+            chamber_outer_radius=r_chamber_out * jnp.ones((robot.num_segments,)),
+        )
         A_pts = vmap(updated_robot.actuation_matrix)(q_pts)
         ax.plot(kappa_be_pts, A_pts[:, 0, 0], label=r"$R = " + str(r) + "$")
     ax.set_xlabel(r"$\kappa_\mathrm{be}$ [rad/m]")
@@ -144,23 +147,27 @@ if __name__ == "__main__":
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-    params = {
-        "th0": jnp.array(jnp.pi / 2),  # initial orientation angle [rad]
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "r_chamber_in": 5e-3 * jnp.ones((num_segments,)),
-        "r_chamber_out": 2e-2 - 2e-3 * jnp.ones((num_segments,)),
-        "phi_chamber": jnp.pi / 2 * jnp.ones((num_segments,)),
-    }
-    params["D"] = 5e-4 * jnp.diag(
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 5e-4 * jnp.diag(
         (
             jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    params = PneumaticActuatedPlanarPCSParams(
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
+        chamber_inner_radius=5e-3 * jnp.ones((num_segments,)),
+        chamber_outer_radius=(2e-2 - 2e-3) * jnp.ones((num_segments,)),
+        chamber_angle=jnp.pi / 2 * jnp.ones((num_segments,)),
+        chamber_distance=jnp.zeros((num_segments,)),
     )
 
     strain_selector = (
@@ -171,9 +178,8 @@ if __name__ == "__main__":
     # Robot initialization
     # ======================================================
     robot = PneumaticActuatedPlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
         chamber_cross_section_geometry="concentric",
     )
 

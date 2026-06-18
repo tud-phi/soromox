@@ -245,7 +245,7 @@ Set `segment_palette=None` to fall back to solid per-robot colors.
 `RendererColorConfig` also provides renderer-specific colors:
 
 - `base_plate_color` (Open3D, Viser)
-- `tendon_color` (Matplotlib, Open3D, Viser)
+- `actuators.default_color` and `actuators.scalar_colormap`
 
 ### Camera configuration
 
@@ -299,9 +299,20 @@ Matplotlib, Open3D, and Viser accept batched inputs:
 Use `base_offsets` or `grid_spacing` to control placement. Viser additionally
 supports `multi_robot_layout="overlay"` to stack robots at the same base pose.
 
-### Tendons and helper geometry
+### Actuators and helper geometry
 
-If the robot exposes `forward_kinematics_tendons`, tendon rendering can be enabled with `render_tendons=True`.
+If the robot exposes `actuator_visual_layers(q, s_points, *, actuator_inputs=None)`,
+actuator rendering can be enabled with `render_actuators=True`. The hook should
+return one or more `ActuatorVisualLayer` objects with points shaped
+`(num_actuators_in_layer, num_points, dim)`.
+
+For large batches or trajectories, robots can optionally provide
+`actuator_visual_layers_batched(q_batch, s_points, *, actuator_inputs=None)` with
+points shaped `(N, num_actuators_in_layer, num_points, dim)` or
+`actuator_visual_layers_trajectory(q_ts, s_points, *, actuator_inputs=None)` with
+points shaped `(N, T, num_actuators_in_layer, num_points, dim)`. The base
+renderer uses these hooks directly when available and falls back to the single
+hook otherwise.
 
 Open3D and Viser also support helper spheres:
 
@@ -320,7 +331,7 @@ sizing is controlled with `base_plate_radius_scale` and `base_plate_thickness`.
 `ViserRenderer.render_sequence()` can add Plotly panels:
 
 - `plot_configurations=True`
-- `plot_tendon_positions=True`
+- `plot_actuator_positions=True`
 - `custom_plots={"My Plot": (figure, aspect)}`
 
 Plot panels require `plotly`. `ViserRenderer.render_frame()` also requires at

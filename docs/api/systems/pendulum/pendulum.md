@@ -12,18 +12,22 @@ The pendulum system implements classical rigid-body dynamics for articulated rob
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import Pendulum
+from soromox.systems import Pendulum, PendulumParams
 
 # Parameters for an N-link planar pendulum
-params = {
-    "m": jnp.array([1.0, 0.8]),          # Masses per link [kg]
-    "I": jnp.array([0.1, 0.05]),         # COM inertias [kg·m²]
-    "L": jnp.array([0.5, 0.3]),          # Link lengths [m]
-    "Lc": jnp.array([0.25, 0.15]),       # COM offsets from proximal joint [m]
-    "g": jnp.array([0.0, -9.81]),        # Gravity vector [m/s²]
-}
+params = PendulumParams(
+    mass=jnp.array([1.0, 0.8]),
+    moment_inertia=jnp.array([0.1, 0.05]),
+    length=jnp.array([0.5, 0.3]),
+    center_of_mass_length=jnp.array([0.25, 0.15]),
+    gravity=jnp.array([0.0, -9.81]),
+    joint_stiffness=jnp.zeros((2, 2)),
+    joint_damping=jnp.zeros((2, 2)),
+    joint_rest_configuration=jnp.zeros(2),
+    radius=jnp.array([0.025, 0.015]),
+)
 
-robot = Pendulum(params)
+robot = Pendulum(params=params)
 q = jnp.array([0.2, -0.3])
 qd = jnp.array([0.0, 0.0])
 

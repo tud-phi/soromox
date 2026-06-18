@@ -13,7 +13,7 @@ def concatenate_params_syms(
 ) -> list[sp.Symbol]:
     # concatenate the robot params symbols
     params_syms_cat: list[sp.Symbol] = []
-    for params_key, params_sym in sorted(params_syms.items()):
+    for _params_key, params_sym in sorted(params_syms.items()):
         if type(params_sym) in [list, tuple]:
             params_syms_cat += params_sym
         else:
@@ -29,7 +29,7 @@ def compute_strain_basis(
     Args:
         strain_selector (Array):
             boolean array of shape (n_xi, ) specifying which strain components are active
-    
+
     Returns:
         strain_basis (Array):
             strain basis matrix of shape (n_xi, n_q) where n_q is the number of configuration variables

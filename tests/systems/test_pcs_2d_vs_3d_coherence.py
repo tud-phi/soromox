@@ -1,12 +1,17 @@
 import jax
-from jax import Array, numpy as jnp, random
-from numpy.testing import assert_allclose
 import pytest
-from typing import List, Tuple
+from jax import Array, random
+from jax import numpy as jnp
+from numpy.testing import assert_allclose
+from system_param_builders import (
+    pcs_params,
+    planar_base_pose,
+    planar_pcs_params,
+    spatial_base_pose,
+)
 
-from soromox.systems import PlanarPCS, PCS
+from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
 from soromox.utils.tolerance import Tolerance
-
 
 jax.config.update("jax_enable_x64", True)
 
@@ -23,46 +28,45 @@ def make_planar_model(
 ) -> PlanarPCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
-    params = {
-        "th0": jnp.array(0.0),
-        "L": L,
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": 1070 * jnp.ones((num_segments,)),
-        "g": jnp.array([0.0, -9.81]),
-        "E": 2e3 * jnp.ones((num_segments,)),
-        "G": 1e3 * jnp.ones((num_segments,)),
-    }
     diag_entries = (
-        jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-        * params["L"][:, None]
+        jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0) * L[:, None]
     ).flatten()
-    params["D"] = 1e-3 * jnp.diag(diag_entries)
+    params = planar_pcs_params(
+        base_pose=planar_base_pose(),
+        length=L,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=1070 * jnp.ones((num_segments,)),
+        gravity=jnp.array([0.0, -9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=1e-3 * jnp.diag(diag_entries),
+    )
 
-    return PlanarPCS(num_segments=num_segments, params=params, num_gauss_points=3)
+    return PlanarPCS(params=params, structure=PlanarPCSStructure(num_gauss_points=3))
 
 
 def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) -> PCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
-    params = {
-        "p0": jnp.zeros((6,)),
-        "L": L,
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": 1070 * jnp.ones((num_segments,)),
-        "g": jnp.array([0.0, -9.81, 0.0]),
-        "E": 2e3 * jnp.ones((num_segments,)),
-        "G": 1e3 * jnp.ones((num_segments,)),
-    }
     diag_entries = (
         jnp.repeat(jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0)
-        * params["L"][:, None]
+        * L[:, None]
     ).flatten()
-    params["D"] = 1e-3 * jnp.diag(diag_entries)
+    params = pcs_params(
+        base_pose=spatial_base_pose(),
+        length=L,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=1070 * jnp.ones((num_segments,)),
+        gravity=jnp.array([0.0, -9.81, 0.0]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=1e-3 * jnp.diag(diag_entries),
+    )
 
-    return PCS(num_segments=num_segments, params=params, num_gauss_points=3)
+    return PCS(params=params, structure=PCSStructure(num_gauss_points=3))
 
 
-def planar_arc_lengths(model: PlanarPCS) -> List[float]:
+def planar_arc_lengths(model: PlanarPCS) -> list[float]:
     lengths = jnp.asarray(model.L)
     cumulative = jnp.cumsum(lengths)
     total = float(cumulative[-1])
@@ -75,8 +79,8 @@ def planar_arc_lengths(model: PlanarPCS) -> List[float]:
     return sorted({float(v) for v in values if 0.0 < float(v) <= total})
 
 
-def planar_to_spatial_index_pairs(num_segments: int) -> List[Tuple[int, int]]:
-    pairs: List[Tuple[int, int]] = []
+def planar_to_spatial_index_pairs(num_segments: int) -> list[tuple[int, int]]:
+    pairs: list[tuple[int, int]] = []
     for seg in range(num_segments):
         planar_offset = 3 * seg
         spatial_offset = 6 * seg
@@ -233,7 +237,7 @@ def test_jacobians_coherence(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_jacobian_derivatives_coherence(num_segments):
+def test_jacobian_time_derivatives_coherence(num_segments):
     planar_model = make_planar_model(num_segments)
     spatial_model = make_spatial_model(num_segments)
     arc_lengths = planar_arc_lengths(planar_model)
@@ -250,18 +254,22 @@ def test_jacobian_derivatives_coherence(num_segments):
         qd_spatial = lift_planar_velocity(planar_model, spatial_model, qd_planar)
 
         for s in arc_lengths:
-            Jb_planar, Jbd_planar = planar_model.jacobian_and_derivative_bodyframe(
+            Jb_planar, Jbd_planar = planar_model.jacobian_and_time_derivative_bodyframe(
                 q_planar, qd_planar, s
             )
-            Ji_planar, Jid_planar = planar_model.jacobian_and_derivative_inertialframe(
-                q_planar, qd_planar, s
+            Ji_planar, Jid_planar = (
+                planar_model.jacobian_and_time_derivative_inertialframe(
+                    q_planar, qd_planar, s
+                )
             )
 
-            Jb_spatial, Jbd_spatial = spatial_model.jacobian_and_derivative_bodyframe(
-                q_spatial, qd_spatial, s
+            Jb_spatial, Jbd_spatial = (
+                spatial_model.jacobian_and_time_derivative_bodyframe(
+                    q_spatial, qd_spatial, s
+                )
             )
             Ji_spatial, Jid_spatial = (
-                spatial_model.jacobian_and_derivative_inertialframe(
+                spatial_model.jacobian_and_time_derivative_inertialframe(
                     q_spatial, qd_spatial, s
                 )
             )

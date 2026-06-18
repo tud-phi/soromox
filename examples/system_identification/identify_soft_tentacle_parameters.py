@@ -1,3 +1,5 @@
+import os
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -9,12 +11,10 @@ import pandas as pd
 
 from soromox.systems import (
     CrossSectionGeometry,
-    GVSSegment,
-    JointSpec,
-    LinkSpec,
-    StrainBasisSpec,
+    LinearTendonRoutingParams,
     TendonActuatedGVS,
 )
+from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jax.config.update("jax_enable_x64", True)
 
@@ -65,136 +65,140 @@ def _transform_points(
     }
 
 
-### EXCEL DATA READING ###
-Rot = jnp.array([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float64)
-R_alg1 = jnp.array(
-    [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]], dtype=jnp.float64
-)
-R_alg2 = jnp.array(
-    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float64
-)
-offset = jnp.array([-0.03, -0.013, 0.0], dtype=jnp.float64)
+def _load_marker_data():
+    ### EXCEL DATA READING ###
+    Rot = jnp.array(
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float64
+    )
+    R_alg1 = jnp.array(
+        [[1.0, 0.0, 0.0], [0.0, 0.0, 1.0], [0.0, -1.0, 0.0]], dtype=jnp.float64
+    )
+    R_alg2 = jnp.array(
+        [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]], dtype=jnp.float64
+    )
+    offset = jnp.array([-0.03, -0.013, 0.0], dtype=jnp.float64)
 
+    df = pd.read_csv("data/m1_u01.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[12:15]
+    p1 = filtered[0:3]
+    p2 = filtered[9:12]
+    p3 = filtered[3:6]
+    p4 = filtered[6:9]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m1u01 = res["pb_tr"]
+    p1_m1u01 = res["p1_tr"]
+    p2_m1u01 = res["p2_tr"]
+    p3_m1u01 = res["p3_tr"]
+    p4_m1u01 = res["p4_tr"]
 
-df = pd.read_csv("data/m1_u01.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[12:15]
-p1 = filtered[0:3]
-p2 = filtered[9:12]
-p3 = filtered[3:6]
-p4 = filtered[6:9]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m1u01 = res["pb_tr"]
-p1_m1u01 = res["p1_tr"]
-p2_m1u01 = res["p2_tr"]
-p3_m1u01 = res["p3_tr"]
-p4_m1u01 = res["p4_tr"]
+    df = pd.read_csv("data/m1_u015.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[9:12]
+    p1 = filtered[6:9]
+    p2 = filtered[12:15]
+    p3 = filtered[3:6]
+    p4 = filtered[0:3]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m1u015 = res["pb_tr"]
+    p1_m1u015 = res["p1_tr"]
+    p2_m1u015 = res["p2_tr"]
+    p3_m1u015 = res["p3_tr"]
+    p4_m1u015 = res["p4_tr"]
 
-df = pd.read_csv("data/m1_u015.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[9:12]
-p1 = filtered[6:9]
-p2 = filtered[12:15]
-p3 = filtered[3:6]
-p4 = filtered[0:3]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m1u015 = res["pb_tr"]
-p1_m1u015 = res["p1_tr"]
-p2_m1u015 = res["p2_tr"]
-p3_m1u015 = res["p3_tr"]
-p4_m1u015 = res["p4_tr"]
+    df = pd.read_csv("data/m1_u02.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[9:12]
+    p1 = filtered[6:9]
+    p2 = filtered[12:15]
+    p3 = filtered[3:6]
+    p4 = filtered[0:3]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m1u02 = res["pb_tr"]
+    p1_m1u02 = res["p1_tr"]
+    p2_m1u02 = res["p2_tr"]
+    p3_m1u02 = res["p3_tr"]
+    p4_m1u02 = res["p4_tr"]
 
-df = pd.read_csv("data/m1_u02.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[9:12]
-p1 = filtered[6:9]
-p2 = filtered[12:15]
-p3 = filtered[3:6]
-p4 = filtered[0:3]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m1u02 = res["pb_tr"]
-p1_m1u02 = res["p1_tr"]
-p2_m1u02 = res["p2_tr"]
-p3_m1u02 = res["p3_tr"]
-p4_m1u02 = res["p4_tr"]
+    df = pd.read_csv("data/m1_u025.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[12:15]
+    p1 = filtered[9:12]
+    p2 = filtered[0:3]
+    p3 = filtered[6:9]
+    p4 = filtered[3:6]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m1u025 = res["pb_tr"]
+    p1_m1u025 = res["p1_tr"]
+    p2_m1u025 = res["p2_tr"]
+    p3_m1u025 = res["p3_tr"]
+    p4_m1u025 = res["p4_tr"]
 
-df = pd.read_csv("data/m1_u025.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[12:15]
-p1 = filtered[9:12]
-p2 = filtered[0:3]
-p3 = filtered[6:9]
-p4 = filtered[3:6]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m1u025 = res["pb_tr"]
-p1_m1u025 = res["p1_tr"]
-p2_m1u025 = res["p2_tr"]
-p3_m1u025 = res["p3_tr"]
-p4_m1u025 = res["p4_tr"]
+    df = pd.read_csv("data/m2_u01.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[6:9]
+    p1 = filtered[0:3]
+    p2 = filtered[12:15]
+    p3 = filtered[9:12]
+    p4 = filtered[3:6]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m2u01 = res["pb_tr"]
+    p1_m2u01 = res["p1_tr"]
+    p2_m2u01 = res["p2_tr"]
+    p3_m2u01 = res["p3_tr"]
+    p4_m2u01 = res["p4_tr"]
 
-df = pd.read_csv("data/m2_u01.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[6:9]
-p1 = filtered[0:3]
-p2 = filtered[12:15]
-p3 = filtered[9:12]
-p4 = filtered[3:6]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m2u01 = res["pb_tr"]
-p1_m2u01 = res["p1_tr"]
-p2_m2u01 = res["p2_tr"]
-p3_m2u01 = res["p3_tr"]
-p4_m2u01 = res["p4_tr"]
+    df = pd.read_csv("data/m2_u015.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[9:12]
+    p1 = filtered[6:9]
+    p2 = filtered[12:15]
+    p3 = filtered[3:6]
+    p4 = filtered[0:3]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m2u015 = res["pb_tr"]
+    p1_m2u015 = res["p1_tr"]
+    p2_m2u015 = res["p2_tr"]
+    p3_m2u015 = res["p3_tr"]
+    p4_m2u015 = res["p4_tr"]
 
-df = pd.read_csv("data/m2_u015.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[9:12]
-p1 = filtered[6:9]
-p2 = filtered[12:15]
-p3 = filtered[3:6]
-p4 = filtered[0:3]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m2u015 = res["pb_tr"]
-p1_m2u015 = res["p1_tr"]
-p2_m2u015 = res["p2_tr"]
-p3_m2u015 = res["p3_tr"]
-p4_m2u015 = res["p4_tr"]
+    df = pd.read_csv("data/m2_u02.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[9:12]
+    p1 = filtered[6:9]
+    p2 = filtered[12:15]
+    p3 = filtered[3:6]
+    p4 = filtered[0:3]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m2u02 = res["pb_tr"]
+    p1_m2u02 = res["p1_tr"]
+    p2_m2u02 = res["p2_tr"]
+    p3_m2u02 = res["p3_tr"]
+    p4_m2u02 = res["p4_tr"]
 
-df = pd.read_csv("data/m2_u02.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[9:12]
-p1 = filtered[6:9]
-p2 = filtered[12:15]
-p3 = filtered[3:6]
-p4 = filtered[0:3]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m2u02 = res["pb_tr"]
-p1_m2u02 = res["p1_tr"]
-p2_m2u02 = res["p2_tr"]
-p3_m2u02 = res["p3_tr"]
-p4_m2u02 = res["p4_tr"]
+    df = pd.read_csv("data/m2_u025.csv", header=None)
+    vals = df.iloc[:, 2:].to_numpy(dtype=float)
+    filtered = jnp.asarray(vals.mean(axis=0))
+    pb = filtered[6:9]
+    p1 = filtered[3:6]
+    p2 = filtered[9:12]
+    p3 = filtered[0:3]
+    p4 = filtered[12:15]
+    res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
+    pb_m2u025 = res["pb_tr"]
+    p1_m2u025 = res["p1_tr"]
+    p2_m2u025 = res["p2_tr"]
+    p3_m2u025 = res["p3_tr"]
+    p4_m2u025 = res["p4_tr"]
 
-df = pd.read_csv("data/m2_u025.csv", header=None)
-vals = df.iloc[:, 2:].to_numpy(dtype=float)
-filtered = jnp.asarray(vals.mean(axis=0))
-pb = filtered[6:9]
-p1 = filtered[3:6]
-p2 = filtered[9:12]
-p3 = filtered[0:3]
-p4 = filtered[12:15]
-res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset)
-pb_m2u025 = res["pb_tr"]
-p1_m2u025 = res["p1_tr"]
-p2_m2u025 = res["p2_tr"]
-p3_m2u025 = res["p3_tr"]
-p4_m2u025 = res["p4_tr"]
+    return locals()
 
 
 def compute_marker_errors(robot, u_batch, q0, measured_markers_batch, E, nu, rho):
@@ -236,6 +240,26 @@ def draw_robot_curve(
     return curve  # (N, 3)
 
 
+def draw_robot_curve(
+    robot: TendonActuatedGVS,
+    q: jnp.ndarray,
+    num_points: int = 50,
+):
+    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
+    L_max = robot.length
+
+    s_ps = jnp.linspace(0, L_max, num_points)
+    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
+
+    # q_gathered = robot._min_size_gathered(q)
+    # V_g = robot._forward_kinematics_gauss(q_gathered)
+
+    # g_ps = jnp.concatenate(V_g[:, :, :-1, -1:], axis=0)
+
+    curve = onp.array(g_ps, dtype=onp.float64)
+    return curve  # (N, 3)
+
+
 # ---- Marker prediction for a fixed q  ----
 def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
     """
@@ -255,7 +279,7 @@ def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
     p1 = tip_at_s(0.1291, jnp.array([0.0, 0.0, 0.025]))
     p2 = tip_at_s(0.2195, jnp.array([0.0, 0.0, -0.021]))
     p3 = tip_at_s(0.2800, jnp.array([0.0, 0.0, 0.020]))
-    p4 = tip_at_s(jnp.sum(robot.segment_lengths), jnp.array([0.008, 0.0, 0.0]))
+    p4 = tip_at_s(jnp.sum(robot.length), jnp.array([0.008, 0.0, 0.0]))
     return jnp.concatenate([p1, p2, p3, p4], axis=0)  # (12,)
 
 
@@ -360,460 +384,551 @@ def make_loss_fn(
 
     return loss_fn
 
-### BODY DEFINITION OF THE SOFT ROBOT ###
 
-# 2 link version
-# Link 1
-link1 = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=5.05e5,
-    nu=0.45,
-    rho=1500.0,
-    eta=1e4,
-    L=0.0250 + 0.2550 + 0.0250,
-    r_i=0.01541,
-    r_f=0.00642,
-)
+if __name__ == "__main__":
+    globals().update(_load_marker_data())
 
-# Link 2
-link2 = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=5.05e5,
-    nu=0.45,
-    rho=1500.0,
-    eta=1e4,
-    L=0.0550,
-    r_i=0.00642,
-    r_f=0.00480,
-)
-joint1 = JointSpec(type="fixed")
-joint2 = JointSpec(type="fixed")
-basis1 = StrainBasisSpec(
-    type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[0, 1, 1, 1, 0, 0]
-)
-basis2 = StrainBasisSpec(
-    type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
-)
+    ### BODY DEFINITION OF THE SOFT ROBOT ###
 
-num_gauss_points = [8, 8]
-g = [0.0, 0.0, -9.81]
+    # 2 link version
+    # Link 1
+    link1 = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=5.05e5,
+        nu=0.45,
+        rho=1500.0,
+        eta=1e4,
+        L=0.0250 + 0.2550 + 0.0250,
+        r_i=0.01541,
+        r_f=0.00642,
+    )
 
-active_tendon_routing_params = {
-    "ry": jnp.array(
-        [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
-    ),
-    "my": jnp.array(
-        [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
-    ),
-    "rz": jnp.array(
-        [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
-    ),
-    "mz": jnp.array(
-        [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
-    ),
-    "idx_seg_att": jnp.array([0, 0]),
-}
-p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
+    # Link 2
+    link2 = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=5.05e5,
+        nu=0.45,
+        rho=1500.0,
+        eta=1e4,
+        L=0.0550,
+        r_i=0.00642,
+        r_f=0.00480,
+    )
+    joint1 = JointSpec(type="fixed")
+    joint2 = JointSpec(type="fixed")
+    basis1 = StrainBasisSpec(
+        type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[0, 1, 1, 1, 0, 0]
+    )
+    basis2 = StrainBasisSpec(
+        type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
+    )
 
-robot = TendonActuatedGVS(
-    segments=[
+    num_gauss_points = [8, 8]
+    g = [0.0, 0.0, -9.81]
+
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=jnp.array(
+            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+        ),
+        y_slope=jnp.array(
+            [
+                -0.0295 * jnp.cos(jnp.pi / 180 * 30),
+                -0.0295 * jnp.cos(jnp.pi / 180 * 150),
+            ]
+        ),
+        z_intercept=jnp.array(
+            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
+        ),
+        z_slope=jnp.array(
+            [
+                -0.0295 * jnp.sin(jnp.pi / 180 * 30),
+                -0.0295 * jnp.sin(jnp.pi / 180 * 150),
+            ]
+        ),
+        attachment_segment_index=jnp.array([0, 0]),
+    )
+    p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
+
+    segments = [
         GVSSegment(
             link=link1, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
         ),
         GVSSegment(
             link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
         ),
-    ],
-    g=g,
-    active_tendon_routing_params=active_tendon_routing_params,
-    p0=p0,
-    scale_rotational_basis_by_length=True,
-)
+    ]
+    robot = TendonActuatedGVS.from_segments(
+        segments,
+        gravity=jnp.asarray(g),
+        base_pose=p0,
+        active_tendon_routing=active_tendon_routing,
+        scale_rotational_basis_by_length=True,
+    )
 
-# Initialize parameters
-n_links = int(robot.num_segments)
+    # Initialize parameters
+    n_links = int(robot.num_segments)
 
-# E and nu initial values (same for all links)
-E0 = float(link1.E)
-nu0 = float(link1.nu)
-rho0 = float(link1.rho)
-E_init = jnp.asarray(E0, dtype=jnp.float64)  # shape: ()
-nu_init = jnp.asarray(nu0, dtype=jnp.float64)  # shape: ()
-rho_init = jnp.asarray(rho0, dtype=jnp.float64)  # shape: ()
+    # E and nu initial values (same for all links)
+    E0 = float(link1.E)
+    nu0 = float(link1.nu)
+    rho0 = float(link1.rho)
+    E_init = jnp.asarray(E0, dtype=jnp.float64)  # shape: ()
+    nu_init = jnp.asarray(nu0, dtype=jnp.float64)  # shape: ()
+    rho_init = jnp.asarray(rho0, dtype=jnp.float64)  # shape: ()
 
+    # E_log_min = jnp.log(1e4)
+    # E_log_max = jnp.log(1e6)
+    E_min = 1e4
+    E_max = 1e6
 
-# E_log_min = jnp.log(1e4)
-# E_log_max = jnp.log(1e6)
-E_min = 1e4
-E_max = 1e6
+    nu_min, nu_max = 0.4, 0.5
+    rho_min, rho_max = 1000.0, 2000.0
 
-nu_min, nu_max = 0.4, 0.5
-rho_min, rho_max = 1000.0, 2000.0
+    # helper to avoid going outside (-1,1)
+    def _atanh_clipped(x, eps=1e-6):
+        return jnp.arctanh(jnp.clip(x, -1 + eps, 1 - eps))
 
+    # inverse E mapping
+    # mu_E = 0.5 * (E_log_max + E_log_min)
+    # r_E  = 0.5 * (E_log_max - E_log_min)
+    # x_E  = (jnp.log(E_init) - mu_E) / r_E
+    mu_E = 0.5 * (E_max + E_min)
+    r_E = 0.5 * (E_max - E_min)
+    x_E = (E_init - mu_E) / r_E
+    raw_E0 = _atanh_clipped(x_E)
 
-# helper to avoid going outside (-1,1)
-def _atanh_clipped(x, eps=1e-6):
-    return jnp.arctanh(jnp.clip(x, -1 + eps, 1 - eps))
+    # inverse nu mapping
+    mu_nu = 0.5 * (nu_min + nu_max)
+    r_nu = 0.5 * (nu_max - nu_min)
+    x_nu = (nu_init - mu_nu) / r_nu
+    raw_nu0 = _atanh_clipped(x_nu)
 
+    # inverse rho mapping
+    mu_rho = 0.5 * (rho_min + rho_max)
+    r_rho = 0.5 * (rho_max - rho_min)
+    x_rho = (rho_init - mu_rho) / r_rho
+    raw_rho0 = _atanh_clipped(x_rho)
 
-# inverse E mapping
-# mu_E = 0.5 * (E_log_max + E_log_min)
-# r_E  = 0.5 * (E_log_max - E_log_min)
-# x_E  = (jnp.log(E_init) - mu_E) / r_E
-mu_E = 0.5 * (E_max + E_min)
-r_E = 0.5 * (E_max - E_min)
-x_E = (E_init - mu_E) / r_E
-raw_E0 = _atanh_clipped(x_E)
+    params = (raw_E0, raw_nu0, raw_rho0)
 
-# inverse nu mapping
-mu_nu = 0.5 * (nu_min + nu_max)
-r_nu = 0.5 * (nu_max - nu_min)
-x_nu = (nu_init - mu_nu) / r_nu
-raw_nu0 = _atanh_clipped(x_nu)
+    # Prepare batch data (measured coordinates and inputs)
+    marker_data = _load_marker_data()
 
-# inverse rho mapping
-mu_rho = 0.5 * (rho_min + rho_max)
-r_rho = 0.5 * (rho_max - rho_min)
-x_rho = (rho_init - mu_rho) / r_rho
-raw_rho0 = _atanh_clipped(x_rho)
+    def _pack_markers(p1, p2, p3, p4):
+        return jnp.concatenate([p1, p2, p3, p4], axis=0)  # (12,)
 
-params = (raw_E0, raw_nu0, raw_rho0)
+    marker_samples = (
+        "m1u01",
+        "m1u015",
+        "m1u02",
+        "m1u025",
+        "m2u01",
+        "m2u015",
+        "m2u02",
+        "m2u025",
+    )
+    measured_list = [
+        _pack_markers(
+            marker_data[f"p1_{sample}"],
+            marker_data[f"p2_{sample}"],
+            marker_data[f"p3_{sample}"],
+            marker_data[f"p4_{sample}"],
+        )
+        for sample in marker_samples
+    ]
+    measured_markers_batch = jnp.stack(measured_list, axis=1)
+    radius = 0.0325
+    levels = jnp.array([-0.1, -0.15, -0.2, -0.25], dtype=jnp.float64) / radius  # (4,)
 
+    u_m1 = jnp.stack(
+        [jnp.array([lvl, 0.0], dtype=jnp.float64) for lvl in levels], axis=1
+    )  # (2,4)
+    u_m2 = jnp.stack(
+        [jnp.array([0.0, lvl], dtype=jnp.float64) for lvl in levels], axis=1
+    )  # (2,4)
+    u_batch = jnp.concatenate([u_m1, u_m2], axis=1)  # shape (2, 8)
 
-# Prepare batch data (measured coordinates and inputs)
-def _pack_markers(p1, p2, p3, p4):
-    return jnp.concatenate([p1, p2, p3, p4], axis=0)  # (12,)
+    print("u_batch:", u_batch)
+    print("measured_markers_batch:", measured_markers_batch)
 
+    dof = sum(robot.dofs_per_segment.reshape(-1))
+    q0 = jnp.zeros((dof,), dtype=jnp.float64)
 
-measured_list = [
-    _pack_markers(p1_m1u01, p2_m1u01, p3_m1u01, p4_m1u01),
-    _pack_markers(p1_m1u015, p2_m1u015, p3_m1u015, p4_m1u015),
-    _pack_markers(p1_m1u02, p2_m1u02, p3_m1u02, p4_m1u02),
-    _pack_markers(p1_m1u025, p2_m1u025, p3_m1u025, p4_m1u025),
-    _pack_markers(p1_m2u01, p2_m2u01, p3_m2u01, p4_m2u01),
-    _pack_markers(p1_m2u015, p2_m2u015, p3_m2u015, p4_m2u015),
-    _pack_markers(p1_m2u02, p2_m2u02, p3_m2u02, p4_m2u02),
-    _pack_markers(p1_m2u025, p2_m2u025, p3_m2u025, p4_m2u025),
-]
-measured_markers_batch = jnp.stack(measured_list, axis=1)
-radius = 0.0325
-levels = jnp.array([-0.1, -0.15, -0.2, -0.25], dtype=jnp.float64) / radius  # (4,)
+    ### GRADIENT-BASED OPTIMIZATION LOOP ###
+    loss_fn = make_loss_fn(
+        u_batch=u_batch, q0=q0, measured_markers_batch=measured_markers_batch
+    )
+    loss_and_grad = eqx.filter_value_and_grad(loss_fn)
 
-u_m1 = jnp.stack(
-    [jnp.array([lvl, 0.0], dtype=jnp.float64) for lvl in levels], axis=1
-)  # (2,4)
-u_m2 = jnp.stack(
-    [jnp.array([0.0, lvl], dtype=jnp.float64) for lvl in levels], axis=1
-)  # (2,4)
-u_batch = jnp.concatenate([u_m1, u_m2], axis=1)  # shape (2, 8)
+    opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-2))
+    opt_state = opt.init(params)
 
-print("u_batch:", u_batch)
-print("measured_markers_batch:", measured_markers_batch)
+    # best checkpoint
+    best_loss = jnp.inf
+    best_params = params
+    best_step = -1
+    loss_history = []
 
-dof = sum(robot.dofs_per_segment.reshape(-1))
-q0 = jnp.zeros((dof,), dtype=jnp.float64)
+    num_optimization_steps = int(os.environ.get("SOROMOX_SYSID_STEPS", "100"))
+    for step in range(num_optimization_steps):
+        loss_val, grads = loss_and_grad(params)
+        loss_history.append(float(loss_val))
+        updates, opt_state = opt.update(grads, opt_state, params)
 
+        print(f"[step {step:03d}] loss={float(loss_val):.6e}")
 
-### GRADIENT-BASED OPTIMIZATION LOOP ###
-loss_fn = make_loss_fn(
-    u_batch=u_batch, q0=q0, measured_markers_batch=measured_markers_batch
-)
-loss_and_grad = eqx.filter_value_and_grad(loss_fn)
+        raw_E_hat, raw_nu_hat, raw_rho_hat = params
+        # E_hat = jnp.exp(mu_E + r_E * jnp.tanh(raw_E_hat))
+        E_hat = mu_E + r_E * jnp.tanh(raw_E_hat)
+        nu_hat = mu_nu + r_nu * jnp.tanh(raw_nu_hat)
+        rho_hat = mu_rho + r_rho * jnp.tanh(raw_rho_hat)
+        print("Current values:")
+        print("E_hat:", E_hat)
+        print("nu_hat:", nu_hat)
+        print("rho_hat:", rho_hat)
 
-opt = optax.chain(optax.clip_by_global_norm(1.0), optax.adam(1e-2))
-opt_state = opt.init(params)
+        if float(loss_val) < float(best_loss):
+            best_loss = loss_val
+            best_params = params
+            best_step = step
 
+        params = optax.apply_updates(params, updates)
 
-# best checkpoint
-best_loss = jnp.inf
-best_params = params
-best_step = -1
-loss_history = []
-
-
-for step in range(100):
+    # Final parameter values
+    params = best_params
     loss_val, grads = loss_and_grad(params)
-    loss_history.append(float(loss_val))
-    updates, opt_state = opt.update(grads, opt_state, params)
-
-    print(f"[step {step:03d}] loss={float(loss_val):.6e}")
-
     raw_E_hat, raw_nu_hat, raw_rho_hat = params
     # E_hat = jnp.exp(mu_E + r_E * jnp.tanh(raw_E_hat))
     E_hat = mu_E + r_E * jnp.tanh(raw_E_hat)
     nu_hat = mu_nu + r_nu * jnp.tanh(raw_nu_hat)
     rho_hat = mu_rho + r_rho * jnp.tanh(raw_rho_hat)
-    print("Current values:")
+    print("Final estimated parameters:")
     print("E_hat:", E_hat)
     print("nu_hat:", nu_hat)
     print("rho_hat:", rho_hat)
+    print("Final loss:", best_loss)
+    print("best_step:", best_step)
 
-    if float(loss_val) < float(best_loss):
-        best_loss = loss_val
-        best_params = params
-        best_step = step
+    # save results
+    # onp.save("data/E_hat.npy", onp.asarray(E_hat))
+    # onp.save("data/nu_hat.npy", onp.asarray(nu_hat))
+    # onp.save("data/rho_hat.npy", onp.asarray(rho_hat))
+    # onp.save("data/loss_history.npy", onp.asarray(loss_history))
 
-    params = optax.apply_updates(params, updates)
+    # load results
+    # E_hat = jnp.array(onp.load("data/E_hat.npy"))
+    # nu_hat = jnp.array(onp.load("data/nu_hat.npy"))
+    # rho_hat = jnp.array(onp.load("data/rho_hat.npy"))
+    # loss_history = onp.load("data/loss_history.npy").tolist()
 
+    # ### PLOTTING RESULTS ###
 
-# Final parameter values
-params = best_params
-loss_val, grads = loss_and_grad(params)
-raw_E_hat, raw_nu_hat, raw_rho_hat = params
-# E_hat = jnp.exp(mu_E + r_E * jnp.tanh(raw_E_hat))
-E_hat = mu_E + r_E * jnp.tanh(raw_E_hat)
-nu_hat = mu_nu + r_nu * jnp.tanh(raw_nu_hat)
-rho_hat = mu_rho + r_rho * jnp.tanh(raw_rho_hat)
-print("Final estimated parameters:")
-print("E_hat:", E_hat)
-print("nu_hat:", nu_hat)
-print("rho_hat:", rho_hat)
-print("Final loss:", best_loss)
-print("best_step:", best_step)
+    errors_before = compute_marker_errors(
+        robot, u_batch, q0, measured_markers_batch, E0, nu0, rho0
+    )
+    errors_after = compute_marker_errors(
+        robot, u_batch, q0, measured_markers_batch, E_hat, nu_hat, rho_hat
+    )
 
-# save results
-# onp.save("data/E_hat.npy", onp.asarray(E_hat))
-# onp.save("data/nu_hat.npy", onp.asarray(nu_hat))
-# onp.save("data/rho_hat.npy", onp.asarray(rho_hat))
-# onp.save("data/loss_history.npy", onp.asarray(loss_history))
+    def marker_rmse(errors):
+        # errors shape: (M, 12)
+        errors_reshaped = errors.reshape(errors.shape[0], 4, 3)  # (M, 4, 3)
+        rms_per_marker = jnp.sqrt(jnp.mean(jnp.sum(errors_reshaped**2, axis=2), axis=0))
+        return rms_per_marker  # (4,)
 
-#load results
-# E_hat = jnp.array(onp.load("data/E_hat.npy"))
-# nu_hat = jnp.array(onp.load("data/nu_hat.npy"))
-# rho_hat = jnp.array(onp.load("data/rho_hat.npy"))
-# loss_history = onp.load("data/loss_history.npy").tolist()
+    rmse_before = marker_rmse(errors_before)
+    rmse_after = marker_rmse(errors_after)
+    # onp.save("data/rmse_before.npy", onp.asarray(rmse_before))
+    # onp.save("data/errors_before.npy", onp.asarray(errors_before))
+    # onp.save("data/rmse_after.npy", onp.asarray(rmse_after))
+    # onp.save("data/errors_after.npy", onp.asarray(errors_after))
 
-# ### PLOTTING RESULTS ###
+    marker_names = [f"M{i + 1}" for i in range(4)]
+    x = onp.arange(len(marker_names))
+    width = 0.35
 
-errors_before = compute_marker_errors(
-    robot, u_batch, q0, measured_markers_batch, E0, nu0, rho0
-)
-errors_after = compute_marker_errors(
-    robot, u_batch, q0, measured_markers_batch, E_hat, nu_hat, rho_hat
-)
+    plt.figure(figsize=(12, 9))
+    plt.plot(loss_history, "o-", color="blue", label="Loss")
+    plt.xlabel("Optimization step", fontsize=16)
+    plt.ylabel("Loss", fontsize=16)
+    # plt.title("Loss evolution during optimization")
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.legend(fontsize=16)
+    plt.tick_params(axis="both", labelsize=16)
+    plt.tight_layout()
+    # plt.savefig("loss_over_time.svg", format="svg", bbox_inches="tight")
+    # plt.savefig("loss_over_time.pdf", format="pdf", bbox_inches="tight")
+    # plt.savefig("loss_over_time.jpg", format="jpg", dpi=300, bbox_inches="tight")
+    plt.show()
 
-def marker_rmse(errors):
-    # errors shape: (M, 12)
-    errors_reshaped = errors.reshape(errors.shape[0], 4, 3)  # (M, 4, 3)
-    rms_per_marker = jnp.sqrt(jnp.mean(jnp.sum(errors_reshaped**2, axis=2), axis=0))
-    return rms_per_marker  # (4,)
+    plt.figure(figsize=(12, 9))
+    plt.bar(x - width / 2, rmse_before, width, label="Initial param.", alpha=0.8)
+    plt.bar(x + width / 2, rmse_after, width, label="Optimized param.", alpha=0.8)
+    plt.xticks(x, marker_names, fontsize=16)
+    plt.ylabel("RMS Position Error [m]", fontsize=16)
+    # plt.title("Marker position errors before vs after optimization")
+    plt.legend(fontsize=16)
+    plt.tick_params(axis="both", labelsize=16)
+    plt.grid(True, linestyle="--", alpha=0.5)
+    plt.tight_layout()
+    # plt.savefig("rmse_per_marker.svg", format="svg", bbox_inches="tight")
+    # plt.savefig("rmse_per_marker.pdf", format="pdf", bbox_inches="tight")
+    # plt.savefig("rmse_per_marker.jpg", format="jpg", dpi=300, bbox_inches="tight")
+    plt.show()
 
+    plt.figure(figsize=(12, 9))
+    plt.plot(jnp.sqrt(jnp.sum(errors_before**2, axis=1)), "o-", label="Before")
+    plt.plot(jnp.sqrt(jnp.sum(errors_after**2, axis=1)), "s-", label="After")
+    plt.xlabel("Sample index")
+    plt.ylabel("Total position error norm [m]")
+    plt.title("Total marker error per configuration")
+    plt.legend()
+    plt.grid(True)
+    # plt.savefig("error_per_configuration.svg", format="svg", bbox_inches="tight")
+    # plt.savefig("error_per_configuration.pdf", format="pdf", bbox_inches="tight")
+    # plt.savefig("error_per_configuration.jpg", format="jpg", dpi=300, bbox_inches="tight")
+    plt.show()
 
-rmse_before = marker_rmse(errors_before)
-rmse_after = marker_rmse(errors_after)
-# onp.save("data/rmse_before.npy", onp.asarray(rmse_before))
-# onp.save("data/errors_before.npy", onp.asarray(errors_before))
-# onp.save("data/rmse_after.npy", onp.asarray(rmse_after))
-# onp.save("data/errors_after.npy", onp.asarray(errors_after))
+    # Markers comparison visualization
+    link1_hat = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=float(E_hat),
+        nu=float(nu_hat),
+        rho=float(rho_hat),
+        eta=1e4,
+        L=0.0250 + 0.2550 + 0.0250,
+        r_i=0.01541,
+        r_f=0.00642,
+    )
+    link2_hat = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=float(E_hat),
+        nu=float(nu_hat),
+        rho=float(rho_hat),
+        eta=1e4,
+        L=0.0550,
+        r_i=0.00642,
+        r_f=0.00480,
+    )
+    robot_hat = TendonActuatedGVS.from_segments(
+        [
+            GVSSegment(
+                link=link1_hat,
+                joint=joint1,
+                basis=basis1,
+                num_gauss_points=num_gauss_points[0],
+            ),
+            GVSSegment(
+                link=link2_hat,
+                joint=joint2,
+                basis=basis2,
+                num_gauss_points=num_gauss_points[1],
+            ),
+        ],
+        gravity=jnp.asarray(g),
+        base_pose=p0,
+        active_tendon_routing=active_tendon_routing,
+        scale_rotational_basis_by_length=True,
+    )
 
-marker_names = [f"M{i + 1}" for i in range(4)]
-x = onp.arange(len(marker_names))
-width = 0.35
+    # For each input in u_batch, solve statics and plot original vs optimized shapes
+    M = int(u_batch.shape[1])
 
-plt.figure(figsize=(12, 9))
-plt.plot(loss_history, "o-", color="blue", label="Loss")
-plt.xlabel("Optimization step", fontsize=16)
-plt.ylabel("Loss", fontsize=16)
-# plt.title("Loss evolution during optimization")
-plt.grid(True, linestyle="--", alpha=0.5)
-plt.legend(fontsize=16)
-plt.tick_params(axis='both', labelsize=16)
-plt.tight_layout()
-# plt.savefig("loss_over_time.svg", format="svg", bbox_inches="tight")
-# plt.savefig("loss_over_time.pdf", format="pdf", bbox_inches="tight")
-# plt.savefig("loss_over_time.jpg", format="jpg", dpi=300, bbox_inches="tight")
-plt.show()
+    # Precompute solutions, curves and markers for all samples
+    curves_orig = []
+    curves_hat = []
+    markers_orig = []
+    markers_hat = []
+    measured_pts = []
 
-plt.figure(figsize=(12, 9))
-plt.bar(x - width / 2, rmse_before, width, label="Initial param.", alpha=0.8)
-plt.bar(x + width / 2, rmse_after, width, label="Optimized param.", alpha=0.8)
-plt.xticks(x, marker_names, fontsize=16)
-plt.ylabel("RMS Position Error [m]", fontsize=16)
-# plt.title("Marker position errors before vs after optimization")
-plt.legend(fontsize=16)
-plt.tick_params(axis='both', labelsize=16)
-plt.grid(True, linestyle="--", alpha=0.5)
-plt.tight_layout()
-# plt.savefig("rmse_per_marker.svg", format="svg", bbox_inches="tight")
-# plt.savefig("rmse_per_marker.pdf", format="pdf", bbox_inches="tight")
-# plt.savefig("rmse_per_marker.jpg", format="jpg", dpi=300, bbox_inches="tight")
-plt.show()
+    for m in range(M):
+        # solve static equilibrium for this input
+        res0 = solve_equilibrium(robot, u_batch[:, m], q0)
+        res_hat = solve_equilibrium(robot_hat, u_batch[:, m], q0)
 
+        q_stat0_m = res0.value
+        q_statHat_m = res_hat.value
 
-plt.figure(figsize=(12, 9))
-plt.plot(jnp.sqrt(jnp.sum(errors_before**2, axis=1)), "o-", label="Before")
-plt.plot(jnp.sqrt(jnp.sum(errors_after**2, axis=1)), "s-", label="After")
-plt.xlabel("Sample index")
-plt.ylabel("Total position error norm [m]")
-plt.title("Total marker error per configuration")
-plt.legend()
-plt.grid(True)
-# plt.savefig("error_per_configuration.svg", format="svg", bbox_inches="tight")
-# plt.savefig("error_per_configuration.pdf", format="pdf", bbox_inches="tight")
-# plt.savefig("error_per_configuration.jpg", format="jpg", dpi=300, bbox_inches="tight")
-plt.show()
+        # sample backbone curves (use a finer resolution for nicer plots)
+        curve0 = draw_robot_curve(robot, q_stat0_m, num_points=200)
+        curve_hat = draw_robot_curve(robot_hat, q_statHat_m, num_points=200)
 
-# Markers comparison visualization
-link1_hat = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=float(E_hat),
-    nu=float(nu_hat),
-    rho=float(rho_hat),
-    eta=1e4,
-    L=0.0250 + 0.2550 + 0.0250,
-    r_i=0.01541,
-    r_f=0.00642,
-)
-link2_hat = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=float(E_hat),
-    nu=float(nu_hat),
-    rho=float(rho_hat),
-    eta=1e4,
-    L=0.0550,
-     r_i=0.00642,
-    r_f=0.00480,
-)
-robot_hat = TendonActuatedGVS(
-    segments=[
-        GVSSegment(
-            link=link1_hat, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
-        ),
-        GVSSegment(
-            link=link2_hat, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
-        ),
-    ],
-    g=g,
-    active_tendon_routing_params=active_tendon_routing_params,
-    p0=p0,
-    scale_rotational_basis_by_length=True,
-)
+        curves_orig.append(onp.asarray(curve0))
+        curves_hat.append(onp.asarray(curve_hat))
 
+        # predicted marker positions
+        markers0 = onp.asarray(markers_from_q(robot, q_stat0_m).reshape(4, 3))
+        markersH = onp.asarray(markers_from_q(robot_hat, q_statHat_m).reshape(4, 3))
+        markers_orig.append(markers0)
+        markers_hat.append(markersH)
 
+        # measured markers from your dataset: measured_markers_batch shape (12, M)
+        meas = onp.asarray(measured_markers_batch[:, m].reshape(4, 3))
+        measured_pts.append(meas)
 
-# For each input in u_batch, solve statics and plot original vs optimized shapes
-M = int(u_batch.shape[1])
+    # compute plot bounds from all points
+    all_pts = []
+    for c0, ch, m0, mh, mm in zip(
+        curves_orig, curves_hat, markers_orig, markers_hat, measured_pts
+    ):
+        all_pts.append(c0)
+        all_pts.append(ch)
+        all_pts.append(m0)
+        all_pts.append(mh)
+        all_pts.append(mm)
+    all_pts = onp.vstack(all_pts)
+    mins = all_pts.min(axis=0)
+    maxs = all_pts.max(axis=0)
+    ranges = maxs - mins
+    max_range = ranges.max()
+    center = 0.5 * (maxs + mins)
 
-# Precompute solutions, curves and markers for all samples
-curves_orig = []
-curves_hat = []
-markers_orig = []
-markers_hat = []
-measured_pts = []
+    fig, ax = plt.subplots(figsize=(12, 9), subplot_kw={"projection": "3d"})
 
-for m in range(M):
-    # solve static equilibrium for this input
-    res0 = solve_equilibrium(robot, u_batch[:, m], q0)
-    res_hat = solve_equilibrium(robot_hat, u_batch[:, m], q0)
+    # choose colors for each sample but avoid pure red/blue for the backbone shapes
+    tab10 = plt.get_cmap("tab10")
+    allowed_indices = [1, 2, 4, 5, 6, 7, 8, 9]  # skip 0 (blue) and 3 (red)
+    colors = [tab10(allowed_indices[i % len(allowed_indices)]) for i in range(M)]
 
-    q_stat0_m = res0.value
-    q_statHat_m = res_hat.value
+    alpha_orig = 0.25  # transparency for original (less prominent)
+    alpha_hat = 1.0  # optimized more opaque
 
-    # sample backbone curves (use a finer resolution for nicer plots)
-    curve0 = draw_robot_curve(robot, q_stat0_m, num_points=200)
-    curve_hat = draw_robot_curve(robot_hat, q_statHat_m, num_points=200)
+    for m in range(M):
+        c = colors[m]
+        c_rgb = (c[0], c[1], c[2])
 
-    curves_orig.append(onp.asarray(curve0))
-    curves_hat.append(onp.asarray(curve_hat))
+        curve0 = curves_orig[m]
+        curve_hat = curves_hat[m]
 
-    # predicted marker positions
-    markers0 = onp.asarray(markers_from_q(robot, q_stat0_m).reshape(4, 3))
-    markersH = onp.asarray(markers_from_q(robot_hat, q_statHat_m).reshape(4, 3))
-    markers_orig.append(markers0)
-    markers_hat.append(markersH)
-
-    # measured markers from your dataset: measured_markers_batch shape (12, M)
-    meas = onp.asarray(measured_markers_batch[:, m].reshape(4, 3))
-    measured_pts.append(meas)
-
-# compute plot bounds from all points
-all_pts = []
-for c0, ch, m0, mh, mm in zip(curves_orig, curves_hat, markers_orig, markers_hat, measured_pts):
-    all_pts.append(c0)
-    all_pts.append(ch)
-    all_pts.append(m0)
-    all_pts.append(mh)
-    all_pts.append(mm)
-all_pts = onp.vstack(all_pts)
-mins = all_pts.min(axis=0)
-maxs = all_pts.max(axis=0)
-ranges = maxs - mins
-max_range = ranges.max()
-center = 0.5 * (maxs + mins)
-
-fig, ax = plt.subplots(figsize=(12, 9), subplot_kw={"projection": "3d"})
-
-# choose colors for each sample but avoid pure red/blue for the backbone shapes
-tab10 = plt.get_cmap("tab10")
-allowed_indices = [1, 2, 4, 5, 6, 7, 8, 9]  # skip 0 (blue) and 3 (red)
-colors = [tab10(allowed_indices[i % len(allowed_indices)]) for i in range(M)]
-
-alpha_orig = 0.25  # transparency for original (less prominent)
-alpha_hat = 1.0    # optimized more opaque
-
-for m in range(M):
-    c = colors[m]
-    c_rgb = (c[0], c[1], c[2])
-
-    curve0 = curves_orig[m]
-    curve_hat = curves_hat[m]
-
-    # plot backbones with same color but different alpha
-    ax.plot(curve0[:, 0], curve0[:, 1], curve0[:, 2], lw=3, color=c_rgb, alpha=alpha_orig)
-    ax.plot(curve_hat[:, 0], curve_hat[:, 1], curve_hat[:, 2], lw=3, color=c_rgb, alpha=alpha_hat)
-
-    # predicted markers: use orange for original, red for optimized
-    m0 = markers_orig[m]
-    mh = markers_hat[m]
-    # measured markers
-    mm = measured_pts[m]
-
-    # per-marker alpha gradient from marker1 -> marker4 (0.25 -> 1.0)
-    grad_alphas = onp.linspace(0.25, 1.0, 4)
-    red_col = (0.8, 0.1, 0.1)
-    orange_col = (1.0, 0.55, 0.0)
-    blue_col = (0.0, 0.2, 0.8)
-
-    for i in range(4):
-        a = float(grad_alphas[i])
-        # original predicted marker (orange), scaled by original alpha factor
-        ax.scatter(
-            m0[i, 0], m0[i, 1], m0[i, 2], marker="x", color=orange_col, s=50, alpha= a
+        # plot backbones with same color but different alpha
+        ax.plot(
+            curve0[:, 0],
+            curve0[:, 1],
+            curve0[:, 2],
+            lw=3,
+            color=c_rgb,
+            alpha=alpha_orig,
         )
-        # optimized predicted marker (red)
-        ax.scatter(mh[i, 0], mh[i, 1], mh[i, 2], marker="x", color=red_col, s=90, alpha=a)
-        # measured marker (blue circle) with gradient alpha
-        ax.scatter(
-            mm[i, 0], mm[i, 1], mm[i, 2], marker="o", facecolors="none", edgecolors=blue_col, s=90, alpha=a
+        ax.plot(
+            curve_hat[:, 0],
+            curve_hat[:, 1],
+            curve_hat[:, 2],
+            lw=3,
+            color=c_rgb,
+            alpha=alpha_hat,
         )
 
-# Set axis labels and title (larger font)
-ax.set_xlabel("X [m]", fontsize=14)
-ax.set_ylabel("Y [m]", fontsize=14)
-ax.set_zlabel("Z [m]", fontsize=14)
-ax.view_init(elev=20, azim=15)
-#ax.set_title("Shape comparison across inputs", fontsize=14)
+        # predicted markers: use orange for original, red for optimized
+        m0 = markers_orig[m]
+        mh = markers_hat[m]
+        # measured markers
+        mm = measured_pts[m]
 
-# enforce equal aspect ratio for 3D plot
-ax.set_xlim(center[0] - max_range / 2, center[0] + max_range / 2)
-ax.set_ylim(center[1] - max_range / 2, center[1] + max_range / 2)
-ax.set_zlim(center[2] - max_range / 2, center[2] + max_range / 2)
-ax.set_box_aspect([1, 1, 1])
+        # per-marker alpha gradient from marker1 -> marker4 (0.25 -> 1.0)
+        grad_alphas = onp.linspace(0.25, 1.0, 4)
+        red_col = (0.8, 0.1, 0.1)
+        orange_col = (1.0, 0.55, 0.0)
+        blue_col = (0.0, 0.2, 0.8)
 
-# create a custom legend: show division Original vs Optimized plus markers
-from matplotlib.lines import Line2D
-legend_elems = [
-    Line2D([0], [0], color='k', lw=2.5, linestyle='-', alpha=alpha_orig, label='Original Backbone'),
-    Line2D([0], [0], color='k', lw=3.0, linestyle='-', alpha=alpha_hat, label='Optimized Backbone'),
-    Line2D([0], [0], marker='x', color='w', markerfacecolor='orange', markeredgecolor='orange', markersize=8, label='Predicted markers (Original)'),
-    Line2D([0], [0], marker='x', color='w', markerfacecolor='red', markeredgecolor='red', markersize=8, label='Predicted markers (Optimized)'),
-    Line2D([0], [0], marker='o', color='w', markeredgecolor='blue', markerfacecolor='none', markersize=8, label='Measured markers'),
-]
-ax.legend(handles=legend_elems, loc='upper left', fontsize=14)
+        for i in range(4):
+            a = float(grad_alphas[i])
+            # original predicted marker (orange), scaled by original alpha factor
+            ax.scatter(
+                m0[i, 0],
+                m0[i, 1],
+                m0[i, 2],
+                marker="x",
+                color=orange_col,
+                s=50,
+                alpha=a,
+            )
+            # optimized predicted marker (red)
+            ax.scatter(
+                mh[i, 0], mh[i, 1], mh[i, 2], marker="x", color=red_col, s=90, alpha=a
+            )
+            # measured marker (blue circle) with gradient alpha
+            ax.scatter(
+                mm[i, 0],
+                mm[i, 1],
+                mm[i, 2],
+                marker="o",
+                facecolors="none",
+                edgecolors=blue_col,
+                s=90,
+                alpha=a,
+            )
 
-plt.tight_layout()
-plt.tick_params(axis='both', labelsize=12)
+    # Set axis labels and title (larger font)
+    ax.set_xlabel("X [m]", fontsize=14)
+    ax.set_ylabel("Y [m]", fontsize=14)
+    ax.set_zlabel("Z [m]", fontsize=14)
+    ax.view_init(elev=20, azim=15)
+    # ax.set_title("Shape comparison across inputs", fontsize=14)
 
-# plt.savefig("MARKERS_CONFIG_ss.pdf", format="pdf", bbox_inches="tight")
-# plt.savefig("MARKERS_CONFIG_ss.jpg", format="jpg", dpi=300, bbox_inches="tight")
-plt.show()
+    # enforce equal aspect ratio for 3D plot
+    ax.set_xlim(center[0] - max_range / 2, center[0] + max_range / 2)
+    ax.set_ylim(center[1] - max_range / 2, center[1] + max_range / 2)
+    ax.set_zlim(center[2] - max_range / 2, center[2] + max_range / 2)
+    ax.set_box_aspect([1, 1, 1])
+
+    # create a custom legend: show division Original vs Optimized plus markers
+    from matplotlib.lines import Line2D
+
+    legend_elems = [
+        Line2D(
+            [0],
+            [0],
+            color="k",
+            lw=2.5,
+            linestyle="-",
+            alpha=alpha_orig,
+            label="Original Backbone",
+        ),
+        Line2D(
+            [0],
+            [0],
+            color="k",
+            lw=3.0,
+            linestyle="-",
+            alpha=alpha_hat,
+            label="Optimized Backbone",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="x",
+            color="w",
+            markerfacecolor="orange",
+            markeredgecolor="orange",
+            markersize=8,
+            label="Predicted markers (Original)",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="x",
+            color="w",
+            markerfacecolor="red",
+            markeredgecolor="red",
+            markersize=8,
+            label="Predicted markers (Optimized)",
+        ),
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="w",
+            markeredgecolor="blue",
+            markerfacecolor="none",
+            markersize=8,
+            label="Measured markers",
+        ),
+    ]
+    ax.legend(handles=legend_elems, loc="upper left", fontsize=14)
+
+    plt.tight_layout()
+    plt.tick_params(axis="both", labelsize=12)
+
+    # plt.savefig("MARKERS_CONFIG_ss.pdf", format="pdf", bbox_inches="tight")
+    # plt.savefig("MARKERS_CONFIG_ss.jpg", format="jpg", dpi=300, bbox_inches="tight")
+    plt.show()

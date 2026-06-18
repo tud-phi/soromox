@@ -4,36 +4,59 @@
 
 ## Overview
 
-`GVS` extends the PCS approach by letting each segment declare its own link, joint, strain basis, and quadrature resolution. The public construction API is based on segment specifications rather than preassembled internal arrays.
+`GVS` extends the PCS approach by letting each segment declare its own link,
+joint, strain basis, and quadrature resolution. For ordinary use, construct from
+segment specs with `GVS.from_segments(...)`. The factory splits those specs into
+`GVSStructure`, which stores only static choices, and `GVSParams`, which stores
+all dynamic numeric arrays. The explicit `GVS(params=..., structure=...)`
+constructor remains available for advanced optimization and
+system-identification workflows.
 
 ## Quick Start
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import GVS, GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.systems import (
+    GVS,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    StrainBasisSpec,
+)
 
 segment = GVSSegment(
     link=LinkSpec.circular(E=1e6, nu=0.45, rho=1000.0, eta=1e4, L=0.3, r=0.03),
     joint=JointSpec.fixed(),
     basis=StrainBasisSpec(
-        type="legendre",
-        active=["kappa_y", "kappa_z"],
-        orders=[0, 1, 1, 0, 0, 0],
+        type="monomial",
+        active=[1, 1, 1, 1, 0, 0],
+        orders=[1, 1, 1, 1, 0, 0],
         xi_ref=[0, 0, 0, 1, 0, 0],
     ),
     num_gauss_points=5,
 )
 
-robot = GVS(segments=[segment], g=[0.0, 0.0, -9.81], p0=jnp.zeros(6))
+robot = GVS.from_segments(
+    [segment],
+    gravity=jnp.array([0.0, 0.0, -9.81]),
+    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    max_dof=4,
+)
 q = jnp.zeros(robot.num_dofs)
-g = robot.forward_kinematics(q, s=robot.segment_end_positions[-1])
+base_transform = robot.forward_kinematics(q, s=robot.segment_end_positions[-1])
 ```
+
+`GVS.from_segments(...)` creates typed `GVSParams` and `GVSStructure`
+internally, so `robot.params` can be optimized or partially replaced later.
+Static structure contains no copied material constants, lengths, joint
+stiffness, or reference strains. For workflows that need the split without
+constructing a robot, use `GVS.params_from_segments(...)`.
 
 ## Segment Specs
 
-- `LinkSpec`: link geometry, material properties, and length. Use `LinkSpec.circular`, `LinkSpec.rectangular`, or `LinkSpec.elliptical` for common cross sections.
-- `JointSpec`: joint type and optional axis, plane, pitch, and stiffness. Factory methods include `fixed`, `revolute`, `prismatic`, `helical`, `cylindrical`, `planar`, `spherical`, and `free`.
-- `StrainBasisSpec`: basis family, active strain components, basis orders, and reference strain.
+- `LinkSpec`: construction input for link geometry, material properties, and length. Its numeric values are copied into `GVSParams.link`; only the cross-section family remains static.
+- `JointSpec`: construction input for joint type and optional axis, plane, pitch, and stiffness. Stiffness is copied into `GVSParams.joint_stiffness`.
+- `StrainBasisSpec`: construction input for basis family, active strain components, basis orders, and reference strain. Reference strain is copied into `GVSParams.reference_strain`.
 - `GVSSegment`: combines one link, one preceding joint, one strain basis, and `num_gauss_points`.
 
 ## Basis And Joint Names
@@ -98,3 +121,11 @@ After construction, GVS exposes canonical runtime arrays:
       show_root_heading: true
       show_source: false
       heading_level: 3
+
+## References
+
+Key literature on the geometric variable-strain formulation and its applications:
+
+- Renda, F., Armanini, C., Lebastard, V., Candelier, F., & Boyer, F. (2020). A geometric variable-strain approach for static modeling of soft manipulators with tendon and fluidic actuation. *IEEE Robotics and Automation Letters*, 5(3), 4006-4013.
+- Mathew, A. T., Hmida, I. B., Armanini, C., Boyer, F., & Renda, F. (2022). Sorosim: A MATLAB toolbox for hybrid rigid-soft robots based on the geometric variable-strain approach. *IEEE Robotics & Automation Magazine*, 30(3), 106-122.
+- Boyer, F., Lebastard, V., Candelier, F., & Renda, F. (2020). Dynamics of continuum and soft robots: A strain parameterization based approach. *IEEE Transactions on Robotics*, 37(3), 847-863.

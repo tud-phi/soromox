@@ -1,6 +1,6 @@
 __all__ = ["GravityCancellationRegulator"]
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
@@ -104,9 +104,7 @@ class GravityCancellationRegulator(PIDController):
             stacklevel=4,
         )
 
-    def model_based_term(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for gravity cancellation.
 
@@ -155,4 +153,3 @@ class GravityCancellationRegulator(PIDController):
             u_model = jnp.linalg.pinv(A) @ tau_model
 
         return u_model, None
-

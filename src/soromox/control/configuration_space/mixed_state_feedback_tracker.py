@@ -1,7 +1,7 @@
 __all__ = ["MixedStateFeedbackTracker"]
 
 import warnings
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
@@ -138,9 +138,7 @@ class MixedStateFeedbackTracker(PIDController):
             stacklevel=3,
         )
 
-    def model_based_term(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for trajectory tracking.
 
@@ -187,13 +185,7 @@ class MixedStateFeedbackTracker(PIDController):
         # Compute the model-based torque
         # Inertial, Coriolis, and damping use current matrices with desired velocity/acceleration
         # Elastic force is evaluated at desired configuration
-        tau_model = (
-            B @ qdd_des
-            + C @ qd_des
-            + G
-            + tau_el_des
-            + D @ qd_des
-        )
+        tau_model = B @ qdd_des + C @ qd_des + G + tau_el_des + D @ qd_des
 
         # Get the actuation matrix at current configuration
         A = self.robot.actuation_matrix(q)
@@ -205,4 +197,3 @@ class MixedStateFeedbackTracker(PIDController):
             u_model = jnp.linalg.pinv(A) @ tau_model
 
         return u_model, None
-

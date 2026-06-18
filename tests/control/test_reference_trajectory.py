@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -6,7 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from soromox.control import ReferenceTrajectory
-from soromox.utils.rotations import RotationRepresentation
+from soromox.utils.geometry.rotations import RotationRepresentation
 
 
 class TestReferenceTrajectoryFromDiscrete:

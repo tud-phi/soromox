@@ -8,6 +8,7 @@ from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import (
+    ActuatorStyleConfig,
     BackboneColorConfig,
     MatplotlibRenderer,
     Open3DRenderer,
@@ -15,7 +16,7 @@ from soromox.rendering import (
     ViserRenderer,
     get_color_theme,
 )
-from soromox.systems import PCS, SystemState
+from soromox.systems import PCS, PCSParams, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -29,33 +30,35 @@ if __name__ == "__main__":
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-    params = {
-        "p0": jnp.array(
-            [jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
-        "L": 1e-1 * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    params = PCSParams(
+        base_pose=jnp.array(
+            [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
+        ),  # Initial position and orientation
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
+        young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
     )
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PCS(
-        num_segments=num_segments,
-        params=params,
-    )
+    robot = PCS(params=params)
 
     # =====================================================
     # Simulation upon time
@@ -166,8 +169,8 @@ if __name__ == "__main__":
         q_demo,
         color_config=RendererColorConfig(
             backbone=BackboneColorConfig(point_palette="soromox:glacier"),
-            tendon_color=(0.2, 0.4, 0.8),
             base_plate_color=(0.15, 0.15, 0.15),
+            actuators=ActuatorStyleConfig(default_color=(0.2, 0.4, 0.8)),
         ),
     )
 

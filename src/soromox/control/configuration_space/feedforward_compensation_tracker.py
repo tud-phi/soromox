@@ -1,6 +1,6 @@
 __all__ = ["FeedforwardCompensationTracker"]
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import jax.numpy as jnp
 from jax import Array
@@ -107,9 +107,7 @@ class FeedforwardCompensationTracker(PIDController):
             stacklevel=4,
         )
 
-    def model_based_term(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term for trajectory tracking.
 
@@ -152,11 +150,7 @@ class FeedforwardCompensationTracker(PIDController):
         # Compute inverse dynamics at desired trajectory
         # tau = B @ qdd + C @ qd + G + tau_el + D @ qd
         tau_model = (
-            B_des @ qdd_des
-            + C_des @ qd_des
-            + G_des
-            + tau_el_des
-            + D_des @ qd_des
+            B_des @ qdd_des + C_des @ qd_des + G_des + tau_el_des + D_des @ qd_des
         )
 
         # Get the actuation matrix at current configuration
@@ -169,4 +163,3 @@ class FeedforwardCompensationTracker(PIDController):
             u_model = jnp.linalg.pinv(A) @ tau_model
 
         return u_model, None
-

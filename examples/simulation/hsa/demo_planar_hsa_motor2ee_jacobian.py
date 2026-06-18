@@ -9,14 +9,23 @@ from jax import Array, jacrev, jit, random
 from jax import numpy as jnp
 
 import soromox
-from soromox.parameters.hsa_params import PARAMS_FPU_CONTROL
-from soromox.systems import PlanarHSA
+from soromox.systems import PlanarHSA, PlanarHSAParams, PlanarHSAStructure
 from soromox.utils.numerical_jacobian import approx_derivative
+
+
+def _repo_hsa_params_path() -> Path:
+    return (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "robot_parameters"
+        / "planar_hsa"
+        / "fpu_control.npz"
+    )
 
 
 def factory_fn(
     sym_exp_filepath: Path,
-    params: dict[str, Array],
+    params: PlanarHSAParams,
     strain_selector: Array,
     verbose: bool = False,
 ) -> tuple[Callable, Callable]:
@@ -24,18 +33,20 @@ def factory_fn(
     Factory function for the planar HSA.
     Args:
         sym_exp_filepath: path to the symbolic expressions file
-        params: dictionary with robot parameters
+        params: typed planar HSA parameters
         strain_selector: boolean array to select the strains to be activated
         verbose: flag to print additional information
-    
+
     Returns:
         phi2chi_static_model_fn: function that maps motor angles to the end-effector pose
         jac_phi2chi_static_model_fn: function that computes the Jacobian between the actuation space and the task-space
     """
     robot = PlanarHSA(
-        sym_exp_filepath=sym_exp_filepath,
         params=params,
-        strain_selector=strain_selector,
+        structure=PlanarHSAStructure(
+            symbolic_expression_path=str(sym_exp_filepath),
+            strain_selector=strain_selector,
+        ),
     )
 
     def residual_fn(q: Array, phi: Array) -> Array:
@@ -63,7 +74,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
-        
+
         Returns:
             q: planar HSA configuration consisting of (k_be, sigma_sh, sigma_ax)
             aux: dictionary with auxiliary data
@@ -86,11 +97,11 @@ def factory_fn(
         # configuration that minimizes the residual
         q = jnp.array(sol.x)
 
-        aux = dict(
-            phi=phi,
-            q=q,
-            residual=sol.fun,
-        )
+        aux = {
+            "phi": phi,
+            "q": q,
+            "residual": sol.fun,
+        }
 
         return q, aux
 
@@ -102,7 +113,7 @@ def factory_fn(
         Arguments:
             phi: motor angles
             q0: initial guess for the configuration
-        
+
         Returns:
             chi: end-effector pose
             aux: dictionary with auxiliary data
@@ -153,7 +164,7 @@ if __name__ == "__main__":
 
     # activate all strains (i.e. bending, shear, and axial)
     strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
-    params = PARAMS_FPU_CONTROL
+    params = PlanarHSAParams.from_npz(_repo_hsa_params_path())
 
     # call the factory function
     phi2chi_static_model_fn, jac_phi2chi_static_model_fn = factory_fn(
@@ -162,7 +173,7 @@ if __name__ == "__main__":
         strain_selector=strain_selector,
     )
 
-    phi_max = params["phi_max"].flatten()
+    phi_max = params.phi_max.flatten()
 
     # define initial configuration
     q0 = jnp.array([0.0, 0.0, 0.0])

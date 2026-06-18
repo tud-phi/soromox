@@ -11,16 +11,26 @@ References:
     PhD Thesis, Sapienza University of Rome.
 """
 
+# ruff: noqa: E402
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
+from system_param_builders import (
+    linear_tendon_routing,
+    pcs_params,
+    pendulum_params,
+    tendon_actuated_pcs_params,
+    tendon_actuated_pendulum_params,
+)
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 from soromox.systems import (
+    PCSStructure,
     TendonActuatedPCS,
     TendonActuatedPendulum,
 )
@@ -32,43 +42,51 @@ from soromox.systems import (
 
 @pytest.fixture
 def fully_actuated_pendulum():
-    """Create a 3-link fully actuated tendon pendulum (identity routing)."""
-    params = {
-        "m": jnp.array([1.0, 1.0, 1.0]),
-        "I": jnp.array([0.1, 0.1, 0.1]),
-        "L": jnp.array([0.5, 0.5, 0.5]),
-        "Lc": jnp.array([0.25, 0.25, 0.25]),
-        "g": jnp.array([0.0, -9.81]),
-        "K": jnp.eye(3) * 10.0,
-        "D": jnp.eye(3) * 0.5,
-    }
-    return TendonActuatedPendulum(params)
+    """Create a 3-link fully actuated tendon pendulum."""
+    body = pendulum_params(
+        mass=jnp.array([1.0, 1.0, 1.0]),
+        moment_inertia=jnp.array([0.1, 0.1, 0.1]),
+        length=jnp.array([0.5, 0.5, 0.5]),
+        center_of_mass_length=jnp.array([0.25, 0.25, 0.25]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.eye(3) * 10.0,
+        joint_damping=jnp.eye(3) * 0.5,
+    )
+    return TendonActuatedPendulum(
+        tendon_actuated_pendulum_params(
+            body=body,
+            active_routing_matrix=jnp.tril(jnp.ones((3, 3))),
+        )
+    )
 
 
 @pytest.fixture
 def underactuated_pendulum():
     """Create a 3-link underactuated tendon pendulum (2 tendons on 3 joints)."""
-    params = {
-        "m": jnp.array([1.0, 1.0, 1.0]),
-        "I": jnp.array([0.1, 0.1, 0.1]),
-        "L": jnp.array([0.5, 0.5, 0.5]),
-        "Lc": jnp.array([0.25, 0.25, 0.25]),
-        "g": jnp.array([0.0, -9.81]),
-        "K": jnp.eye(3) * 10.0,
-        "D": jnp.eye(3) * 0.5,
-    }
+    body = pendulum_params(
+        mass=jnp.array([1.0, 1.0, 1.0]),
+        moment_inertia=jnp.array([0.1, 0.1, 0.1]),
+        length=jnp.array([0.5, 0.5, 0.5]),
+        center_of_mass_length=jnp.array([0.25, 0.25, 0.25]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.eye(3) * 10.0,
+        joint_damping=jnp.eye(3) * 0.5,
+    )
     # Valid underactuated tendon routing (tendons can't skip joints)
     # Tendon 1: routes through joints 0 and 1 only (attaches at joint 1)
     # Tendon 2: routes through all 3 joints (attaches at joint 2)
-    tendon_params = {
-        "R_at": jnp.array(
-            [
-                [1.0, 1.0, 0.0],  # Tendon 1: routes through joints 0,1
-                [1.0, 1.0, 1.0],  # Tendon 2: routes through all 3 joints
-            ]
+    active_routing_matrix = jnp.array(
+        [
+            [1.0, 1.0, 0.0],  # Tendon 1: routes through joints 0,1
+            [1.0, 1.0, 1.0],  # Tendon 2: routes through all 3 joints
+        ]
+    )
+    return TendonActuatedPendulum(
+        tendon_actuated_pendulum_params(
+            body=body,
+            active_routing_matrix=active_routing_matrix,
         )
-    }
-    return TendonActuatedPendulum(params, tendon_params)
+    )
 
 
 @pytest.fixture
@@ -78,18 +96,17 @@ def fully_actuated_pcs():
     For a truly fully-actuated system, we use a single segment with 2 bending DOFs
     (kappa_y, kappa_z) and 2 tendons placed at different offsets.
     """
-    num_segments = 1
     # Note: D must be provided in full strain space (num_strains x num_strains = 6x6 for 1 segment)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
-    params = {
-        "L": jnp.array([0.1]),
-        "r": jnp.array([0.01]),
-        "rho": jnp.array([1000.0]),
-        "E": jnp.array([1e6]),
-        "G": jnp.array([1e5]),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "D": jnp.eye(6) * 0.01,  # Full strain space (6 strains × 1 segment)
-    }
+    body = pcs_params(
+        length=jnp.array([0.1]),
+        radius=jnp.array([0.01]),
+        density=jnp.array([1000.0]),
+        young_modulus=jnp.array([1e6]),
+        shear_modulus=jnp.array([1e5]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        damping_matrix=jnp.eye(6) * 0.01,  # Full strain space (6 strains x 1 segment)
+    )
     # Select only bending strains (kappa_y, kappa_z = 2 DOFs total)
     # Strain components per segment: [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]
     strain_selector = jnp.array(
@@ -105,36 +122,37 @@ def fully_actuated_pcs():
     # 2 tendons for 2 DOFs (fully actuated bending)
     # Tendon at +y creates moment around z (affects kappa_z)
     # Tendon at +z creates moment around y (affects kappa_y)
-    tendon_routing_params = {
-        "ry": jnp.array([0.005, 0.0]),  # first tendon at +y
-        "my": jnp.array([0.0, 0.0]),  # slope in y
-        "rz": jnp.array([0.0, 0.005]),  # second tendon at +z
-        "mz": jnp.array([0.0, 0.0]),  # slope in z
-        "idx_seg_att": jnp.array([0, 0]),  # both attach at segment 0
-    }
+    tendon_routing_params = linear_tendon_routing(
+        y_intercept=jnp.array([0.005, 0.0]),  # first tendon at +y
+        y_slope=jnp.array([0.0, 0.0]),  # slope in y
+        z_intercept=jnp.array([0.0, 0.005]),  # second tendon at +z
+        z_slope=jnp.array([0.0, 0.0]),  # slope in z
+        attachment_segment_index=jnp.array([0, 0]),  # both attach at segment 0
+    )
+    params = tendon_actuated_pcs_params(
+        body=body,
+        active_tendon_routing=tendon_routing_params,
+    )
     return TendonActuatedPCS(
-        num_segments,
         params,
-        strain_selector=strain_selector,
-        active_tendon_routing_params=tendon_routing_params,
+        structure=PCSStructure(strain_selector=strain_selector),
     )
 
 
 @pytest.fixture
 def underactuated_pcs():
     """Create a 2-segment underactuated TendonActuatedPCS (2 tendons on 4 DOFs)."""
-    num_segments = 2
     # Note: D must be provided in full strain space (num_strains x num_strains = 12x12)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
-    params = {
-        "L": jnp.array([0.1, 0.1]),
-        "r": jnp.array([0.01, 0.01]),
-        "rho": jnp.array([1000.0, 1000.0]),
-        "E": jnp.array([1e6, 1e6]),
-        "G": jnp.array([1e5, 1e5]),
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "D": jnp.eye(12) * 0.01,  # Full strain space (6 strains × 2 segments)
-    }
+    body = pcs_params(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([1e5, 1e5]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        damping_matrix=jnp.eye(12) * 0.01,  # Full strain space (6 strains x 2 segments)
+    )
     # Select only bending strains (kappa_y, kappa_z per segment = 4 DOFs total)
     strain_selector = jnp.array(
         [
@@ -154,18 +172,24 @@ def underactuated_pcs():
     )
     # 2 tendons for 4 DOFs (underactuated)
     # Use tendons at different offsets to ensure non-singular actuation matrix
-    tendon_routing_params = {
-        "ry": jnp.array([0.005, 0.0]),  # first tendon at +y, second at origin in y
-        "my": jnp.array([0.0, 0.0]),  # slope in y
-        "rz": jnp.array([0.0, 0.005]),  # first tendon at origin in z, second at +z
-        "mz": jnp.array([0.0, 0.0]),  # slope in z
-        "idx_seg_att": jnp.array([1, 1]),  # both tendons attach at distal end
-    }
+    tendon_routing_params = linear_tendon_routing(
+        y_intercept=jnp.array(
+            [0.005, 0.0]
+        ),  # first tendon at +y, second at origin in y
+        y_slope=jnp.array([0.0, 0.0]),  # slope in y
+        z_intercept=jnp.array(
+            [0.0, 0.005]
+        ),  # first tendon at origin in z, second at +z
+        z_slope=jnp.array([0.0, 0.0]),  # slope in z
+        attachment_segment_index=jnp.array([1, 1]),  # both tendons attach at distal end
+    )
+    params = tendon_actuated_pcs_params(
+        body=body,
+        active_tendon_routing=tendon_routing_params,
+    )
     return TendonActuatedPCS(
-        num_segments,
         params,
-        strain_selector=strain_selector,
-        active_tendon_routing_params=tendon_routing_params,
+        structure=PCSStructure(strain_selector=strain_selector),
     )
 
 
@@ -467,6 +491,18 @@ class TestForces:
         expected = J_inv.T @ D @ qd
         assert_allclose(tau_d_y, expected, rtol=1e-10)
 
+    def test_potential_force_sums_conservative_forces(self, underactuated_pendulum):
+        """Test that potential_force sums gravitational and elastic forces."""
+        robot = underactuated_pendulum
+        asd = ActuationSpaceDynamics(robot)
+
+        q = jnp.array([0.1, 0.2, 0.3])
+        tau_pot_y = asd.potential_force(q)
+        expected = asd.gravitational_force(q) + asd.elastic_force(q)
+
+        assert tau_pot_y.shape == (robot.num_dofs,)
+        assert_allclose(tau_pot_y, expected, rtol=1e-10)
+
 
 # -----------------------
 # Actuation matrix tests
@@ -556,6 +592,22 @@ class TestIntegration:
         assert G_y.shape == (3,)
         assert tau_el_y.shape == (3,)
 
+    def test_dynamics_terms_match_individual_methods(self, underactuated_pendulum):
+        """Test dynamics_terms returns the individual actuation-space terms."""
+        robot = underactuated_pendulum
+        asd = ActuationSpaceDynamics(robot)
+
+        q = jnp.array([0.1, 0.2, 0.3])
+        qd = jnp.array([0.01, 0.02, 0.03])
+        M_y, Cyd, G_y = asd.dynamics_terms(q, qd)
+
+        assert M_y.shape == (3, 3)
+        assert Cyd.shape == (3,)
+        assert G_y.shape == (3,)
+        assert_allclose(M_y, asd.inertia_matrix(q), rtol=1e-10)
+        assert_allclose(Cyd, asd.coriolis_force(q, qd), rtol=1e-10)
+        assert_allclose(G_y, asd.gravitational_force(q), rtol=1e-10)
+
     def test_jit_compilation(self, underactuated_pendulum):
         """Test that all methods work correctly (they are already JIT-compiled via @eqx.filter_jit)."""
         robot = underactuated_pendulum
@@ -575,8 +627,10 @@ class TestIntegration:
         _ = asd.damping_matrix(q)
         _ = asd.elastic_force(q)
         _ = asd.gravitational_force(q)
+        _ = asd.potential_force(q)
         _ = asd.damping_force(q, qd)
         _ = asd.coriolis_force(q, qd)
+        _ = asd.dynamics_terms(q, qd)
         _ = asd.actuation_matrix(q)
 
 
@@ -1142,8 +1196,8 @@ class TestActuationSpaceDynamicsSystemIndependent:
             J_qdd = J @ qdd
 
             # Compute Jd @ qd using JVP (same method as the implementation)
-            def J_times_qd(q_inner):
-                return asd.jacobian(q_inner) @ qd
+            def J_times_qd(q_inner, qd_current=qd):
+                return asd.jacobian(q_inner) @ qd_current
 
             Jd_qd = jax.jvp(J_times_qd, (q,), (qd,))[1]
 
@@ -1197,8 +1251,10 @@ class TestActuationSpaceDynamicsSystemIndependent:
         _ = asd.damping_matrix(q)
         _ = asd.elastic_force(q)
         _ = asd.gravitational_force(q)
+        _ = asd.potential_force(q)
         _ = asd.damping_force(q, qd)
         _ = asd.coriolis_force(q, qd)
+        _ = asd.dynamics_terms(q, qd)
         _ = asd.actuation_matrix(q)
 
     def test_dynamics_shapes_consistent(self, robot):
@@ -1213,9 +1269,15 @@ class TestActuationSpaceDynamicsSystemIndependent:
         D_y = asd.damping_matrix(q)
         G_y = asd.gravitational_force(q)
         tau_el_y = asd.elastic_force(q)
+        tau_pot_y = asd.potential_force(q)
+        M_terms, Cyd, G_terms = asd.dynamics_terms(q, qd)
 
         assert M_y.shape == (n_dof, n_dof)
         assert eta_y.shape == (n_dof, n_dof)
         assert D_y.shape == (n_dof, n_dof)
         assert G_y.shape == (n_dof,)
         assert tau_el_y.shape == (n_dof,)
+        assert tau_pot_y.shape == (n_dof,)
+        assert M_terms.shape == (n_dof, n_dof)
+        assert Cyd.shape == (n_dof,)
+        assert G_terms.shape == (n_dof,)

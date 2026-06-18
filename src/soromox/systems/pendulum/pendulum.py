@@ -7,6 +7,7 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from soromox.systems.pendulum.params import PendulumParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
 
@@ -72,7 +73,7 @@ class Pendulum(SoftRobot):
 
     # Stored physical parameters
     m: Array
-    I: Array
+    I: Array  # noqa: E741
     L: Array
     Lc: Array
     r: Array
@@ -82,39 +83,30 @@ class Pendulum(SoftRobot):
     K: Array
     D: Array
     q_ref_k: Array
+    params: PendulumParams
 
     def __init__(
         self,
-        params: dict[str, Array],
+        params: PendulumParams,
         **kwargs: Any,
     ) -> None:
-        """
-        Initialize the pendulum system with the given parameters.
-        Args:
-            params: Dictionary with robot parameters with keys
-                - "m": Masses of the links (N,)
-                - "I": Planar inertias about COM (N,)
-                - "L": Link lengths (N,)
-                - "Lc": COM offset from prior joint (N,)
-                - "g": Planar gravity vector (2,)
-                - "r": Link radii for visualization (N,) (optional)
-                - "K": stiffness matrix (N,N) (optional)
-                - "D": damping matrix (N,N) (optional)
-                - "q_ref_k": rest configuration of the torsional springs defined in K (N,) (optional)
-            **kwargs: Additional keyword arguments for SoftRobot.__init__.
-        """
-        super().__init__(**kwargs)
+        """Initialize the pendulum system with typed parameters."""
+        if not isinstance(params, PendulumParams):
+            raise TypeError("params must be a PendulumParams instance.")
+        params.validate()
+        super().__init__(base_pose=params.base_pose, **kwargs)
+        self.params = params
 
         # Basic parameter extraction
-        m = jnp.asarray(params["m"])  # (n,)
-        I = jnp.asarray(params["I"])  # (n,)
-        L = jnp.asarray(params["L"])  # (n,)
-        Lc = jnp.asarray(params["Lc"])  # (n,)
-        g = jnp.asarray(params["g"])  # (2,)
+        m = jnp.asarray(params.mass)  # (n,)
+        inertia = jnp.asarray(params.moment_inertia)  # (n,)
+        L = jnp.asarray(params.length)  # (n,)
+        Lc = jnp.asarray(params.center_of_mass_length)  # (n,)
+        g = jnp.asarray(params.gravity)  # (2,)
 
         n_q = m.shape[0]
         # Consistency checks (lightweight; JIT friendly if shapes static)
-        assert I.shape[0] == n_q and L.shape[0] == n_q and Lc.shape[0] == n_q, (
+        assert inertia.shape[0] == n_q and L.shape[0] == n_q and Lc.shape[0] == n_q, (
             "Parameter length mismatch"
         )
         assert g.shape[0] == 2, "Gravity vector must be length 2"
@@ -125,25 +117,20 @@ class Pendulum(SoftRobot):
 
         # set parameters
         self.m = m
-        self.I = I
+        self.I = inertia
         self.L = L
         self.Lc = Lc
         self.g = g
-        self.r = jnp.asarray(params.get("r", 0.05 * L))
+        self.r = jnp.asarray(params.radius)
 
-        self.K = jnp.asarray(params.get("K", jnp.zeros((n_q, n_q))))
-        self.D = jnp.asarray(params.get("D", jnp.zeros((n_q, n_q))))
-        self.q_ref_k = jnp.asarray(params.get("q_ref_k", jnp.zeros((n_q,))))
+        self.K = jnp.asarray(params.joint_stiffness)
+        self.D = jnp.asarray(params.joint_damping)
+        self.q_ref_k = jnp.asarray(params.joint_rest_configuration)
 
     @property
     def is_planar(self) -> bool:
         """Pendulum is a planar (2D) model."""
         return True
-
-    @property
-    def length(self) -> Array:
-        """Total chain length."""
-        return jnp.sum(self.L)
 
     @property
     def segment_length(self) -> Array:
@@ -158,50 +145,84 @@ class Pendulum(SoftRobot):
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
         return tag, jnp.array([radius])
 
-    def update_params(self, params: dict[str, Array]) -> "Pendulum":
-        """
-        Update the system parameters and return a new instance (functional style).
+    def _current_body_params(self) -> PendulumParams:
+        """Return pendulum body params, including typed actuated wrappers."""
+        if isinstance(self.params, PendulumParams):
+            return self.params
+        body = getattr(self.params, "body", None)
+        if isinstance(body, PendulumParams):
+            return body
+        raise TypeError("model params do not contain PendulumParams body fields.")
 
-        This method creates a new Pendulum instance with updated parameters while
-        preserving the original instance (immutable update pattern for JAX compatibility).
-
-        Args:
-            params (Dict[str, Array]): Dictionary with robot parameters. Supported keys:
-                - "m": Masses of the links, shape (N,) [kg]
-                - "I": Planar inertias about COM, shape (N,) [kg⋅m²]
-                - "L": Link lengths, shape (N,) [m]
-                - "Lc": COM offset from proximal joint, shape (N,) [m]
-                - "g": Planar gravity vector, shape (2,) [m/s²]
-                - "K": Joint stiffness matrix, shape (N,N) [N⋅m/rad] (optional)
-                - "D": Joint damping matrix, shape (N,N) [N⋅m⋅s/rad] (optional)
-                - "q_ref_k": rest configuration of the torsional springs defined in K (N,) [rad] (optional)
-                - "r": Link radii for visualization (N,) (optional)
-
-        Returns:
-            Pendulum: New instance with updated parameters.
-        """
-        updated = self
-        if "m" in params:
-            updated = eqx.tree_at(lambda x: x.m, updated, jnp.asarray(params["m"]))
-        if "I" in params:
-            updated = eqx.tree_at(lambda x: x.I, updated, jnp.asarray(params["I"]))
-        if "L" in params:
-            updated = eqx.tree_at(lambda x: x.L, updated, jnp.asarray(params["L"]))
-        if "Lc" in params:
-            updated = eqx.tree_at(lambda x: x.Lc, updated, jnp.asarray(params["Lc"]))
-        if "g" in params:
-            updated = eqx.tree_at(lambda x: x.g, updated, jnp.asarray(params["g"]))
-        if "K" in params:
-            updated = eqx.tree_at(lambda x: x.K, updated, jnp.asarray(params["K"]))
-        if "D" in params:
-            updated = eqx.tree_at(lambda x: x.D, updated, jnp.asarray(params["D"]))
-        if "q_ref_k" in params:
-            updated = eqx.tree_at(
-                lambda x: x.q_ref_k, updated, jnp.asarray(params["q_ref_k"])
+    def _with_pendulum_params(
+        self, params: PendulumParams, stored_params: Any | None = None
+    ) -> "Pendulum":
+        """Return a copy with pendulum body caches refreshed."""
+        current_params = self._current_body_params()
+        if not isinstance(params, PendulumParams):
+            raise TypeError("params must be a PendulumParams instance.")
+        params.validate()
+        if params.mass.shape != current_params.mass.shape:
+            raise ValueError(
+                "mass shape changes the model structure; construct a new Pendulum."
             )
-        if "r" in params:
-            updated = eqx.tree_at(lambda x: x.r, updated, jnp.asarray(params["r"]))
-        return updated
+        return eqx.tree_at(
+            lambda x: (
+                x.params,
+                x.base_pose,
+                x.m,
+                x.I,
+                x.L,
+                x.Lc,
+                x.g,
+                x.r,
+                x.K,
+                x.D,
+                x.q_ref_k,
+            ),
+            self,
+            (
+                params if stored_params is None else stored_params,
+                jnp.asarray(params.base_pose),
+                jnp.asarray(params.mass),
+                jnp.asarray(params.moment_inertia),
+                jnp.asarray(params.length),
+                jnp.asarray(params.center_of_mass_length),
+                jnp.asarray(params.gravity),
+                jnp.asarray(params.radius),
+                jnp.asarray(params.joint_stiffness),
+                jnp.asarray(params.joint_damping),
+                jnp.asarray(params.joint_rest_configuration),
+            ),
+        )
+
+    def with_params(self, params: PendulumParams) -> "Pendulum":
+        """Return an updated copy with a full typed parameter object."""
+        return self._with_pendulum_params(params)
+
+    def update_params(self, **updates: Array) -> "Pendulum":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        shape_locked_fields = (
+            "mass",
+            "moment_inertia",
+            "length",
+            "center_of_mass_length",
+            "joint_stiffness",
+            "joint_damping",
+            "joint_rest_configuration",
+            "radius",
+            "base_pose",
+            "gravity",
+        )
+        for name in shape_locked_fields:
+            if (
+                name in updates
+                and jnp.asarray(updates[name]).shape != getattr(self.params, name).shape
+            ):
+                raise ValueError(
+                    f"{name} shape changes the model structure; construct a new Pendulum."
+                )
+        return self.with_params(self.params.replace(**updates))
 
     # -------------------------------------------------
     # Internal helpers (geometry & Jacobians, pure JAX)
@@ -216,7 +237,12 @@ class Pendulum(SoftRobot):
         Returns:
             Array: Cumulative angles θ_i = Σ_{k=0..i} q[k], shape (N,) [rad]
         """
-        return jnp.cumsum(q)  # (n,)
+        base_theta = jnp.asarray(self.base_pose[0], dtype=q.dtype)
+        return base_theta + jnp.cumsum(q)  # (n,)
+
+    def _base_xy(self, dtype: jnp.dtype) -> Array:
+        """Return the planar base translation stored in ``base_pose``."""
+        return jnp.asarray(self.base_pose[1:3], dtype=dtype)
 
     def _directions(self, q: Array) -> Array:
         """
@@ -251,8 +277,8 @@ class Pendulum(SoftRobot):
         seg_vecs = self.L[:, None] * dirs  # (n,2)
         tips = jnp.cumsum(seg_vecs, axis=0)  # tip positions of each link
         # Proximal positions p_joint[i] = tip[i-1] with base at 0
-        zeros = jnp.zeros((1, 2), dtype=q.dtype)
-        p_joints = jnp.concatenate([zeros, tips[:-1]], axis=0)  # (n,2)
+        base_xy = self._base_xy(q.dtype)
+        p_joints = jnp.concatenate([base_xy[None, :], base_xy + tips[:-1]], axis=0)
         return p_joints
 
     def _com_positions(self, q: Array) -> Array:
@@ -284,7 +310,8 @@ class Pendulum(SoftRobot):
         """
         dirs = self._directions(q)
         seg_vecs = self.L[:, None] * dirs
-        p_tips = jnp.cumsum(seg_vecs, axis=0)  # (n,2)
+        base_xy = self._base_xy(q.dtype)
+        p_tips = base_xy + jnp.cumsum(seg_vecs, axis=0)  # (n,2)
         return p_tips
 
     @eqx.filter_jit
@@ -451,7 +478,9 @@ class Pendulum(SoftRobot):
         return J_tips
 
     @eqx.filter_jit
-    def jacobian_and_derivatives_tips(self, q: Array, qd: Array) -> tuple[Array, Array]:
+    def jacobian_and_time_derivatives_tips(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array]:
         """
         Spatial Jacobians and their time-derivatives at all link tips.
 
@@ -550,7 +579,7 @@ class Pendulum(SoftRobot):
         return link_idx, s_local
 
     @eqx.filter_jit
-    def forward_kinematics(self, q: Array, s: Array) -> Array:
+    def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics at arc-length position s along the pendulum.
 
@@ -601,7 +630,7 @@ class Pendulum(SoftRobot):
         return vmap(lambda s: self.forward_kinematics(q, s))(s_ps)
 
     @eqx.filter_jit
-    def jacobian(self, q: Array, s: Array) -> Array:
+    def _jacobian(self, q: Array, s: Array) -> Array:
         """
         Compute the Jacobian at arc-length position s along the pendulum.
 
@@ -622,7 +651,7 @@ class Pendulum(SoftRobot):
         J_omega = (j_indices <= link_idx).astype(q.dtype)
 
         # Position at s
-        chi = self.forward_kinematics(q, s)
+        chi = self._forward_kinematics(q, s)
         p_s = chi[1:]
 
         # Joint positions
@@ -657,7 +686,7 @@ class Pendulum(SoftRobot):
         return vmap(lambda s: self.jacobian(q, s))(s_ps)
 
     @eqx.filter_jit
-    def jacobian_and_derivative(
+    def _jacobian_and_time_derivative(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
         """
@@ -677,13 +706,10 @@ class Pendulum(SoftRobot):
         j_indices = jnp.arange(N)
 
         # Get Jacobian
-        J = self.jacobian(q, s)
+        J = self._jacobian(q, s)
 
-        # Angular Jacobian derivative is zero (planar revolute)
+        # Angular Jacobian time derivative is zero (planar revolute)
         Jd_omega = jnp.zeros(N, dtype=q.dtype)
-
-        # Position and velocity at s
-        chi = self.forward_kinematics(q, s)
 
         # Joint positions and velocities
         J_joints = self.jacobian_joints(q)  # (N, 3, N)
@@ -708,11 +734,11 @@ class Pendulum(SoftRobot):
         return J, Jd
 
     @eqx.filter_jit
-    def jacobian_and_derivative_batched(
+    def jacobian_and_time_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
-        Compute Jacobians and their derivatives at multiple arc-length positions.
+        Compute Jacobians and their time derivatives at multiple arc-length positions.
 
         Args:
             q: Joint angles, shape (N,) [rad].
@@ -721,9 +747,9 @@ class Pendulum(SoftRobot):
 
         Returns:
             J_ps: Jacobians at all positions, shape (M, 3, N).
-            Jd_ps: Jacobian derivatives at all positions, shape (M, 3, N).
+            Jd_ps: Jacobian time derivatives at all positions, shape (M, 3, N).
         """
-        return vmap(lambda s: self.jacobian_and_derivative(q, qd, s))(s_ps)
+        return vmap(lambda s: self.jacobian_and_time_derivative(q, qd, s))(s_ps)
 
     # -------------------------------
     # Standardized dynamics interface
@@ -799,7 +825,7 @@ class Pendulum(SoftRobot):
         return C
 
     @eqx.filter_jit
-    def gravitational_force(self, q: Array) -> Array:
+    def _gravitational_force(self, q: Array) -> Array:
         """
         Compute the generalized gravitational force vector.
 
@@ -919,7 +945,7 @@ class Pendulum(SoftRobot):
 
         B = self.inertia_matrix(q)
         C = self.coriolis_matrix(q, qd)
-        G = self.gravitational_force(q)
+        G = self._gravitational_force(q)
         D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u)
@@ -932,7 +958,7 @@ class Pendulum(SoftRobot):
     # ---------------------
 
     @eqx.filter_jit
-    def gravitational_energy(self, q: Array) -> Array:
+    def _gravitational_energy(self, q: Array) -> Array:
         """
         Compute the gravitational potential energy of the pendulum system.
 
@@ -953,7 +979,7 @@ class Pendulum(SoftRobot):
         return U_g
 
     @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
+    def _elastic_energy(self, q: Array) -> Array:
         """
         Compute the elastic potential energy stored in joint springs.
 

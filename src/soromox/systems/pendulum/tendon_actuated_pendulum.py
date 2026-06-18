@@ -6,6 +6,8 @@ import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
+from soromox.systems.pendulum.params import TendonActuatedPendulumParams
+
 from .pendulum import Pendulum
 
 
@@ -93,6 +95,7 @@ class TendonActuatedPendulum(Pendulum):
         to Robotic Manipulation (Chapter 6: Tendon-driven actuation). CRC Press.
     """
 
+    params: TendonActuatedPendulumParams
     R_at: Array
     A_at: Array
     q_ref_at: Array
@@ -106,9 +109,7 @@ class TendonActuatedPendulum(Pendulum):
 
     def __init__(
         self,
-        params: dict[str, Array],
-        tendon_params: dict[str, Array] = {},
-        *args,
+        params: TendonActuatedPendulumParams,
         **kwargs: Any,
     ):
         """
@@ -128,84 +129,49 @@ class TendonActuatedPendulum(Pendulum):
                 - "k_pt": stiffnesses of the springs attached to the passive tendons (Np,) (optional)
                 - "d_pt": damping coefficients of the dampers attached to the passive tendons (Np,) (optional)
                 - "l_pt0": initial length of the passive tendons (Np,) (optional)
-                - "q_ref_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
-                - "q_ref_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
+                - "active_tendon_reference_configuration": joint configuration at which active tendon displacement is zero (N,) (optional)
+                - "passive_tendon_reference_configuration": joint configuration at which passive tendon displacement is zero before rest-length offset (N,) (optional)
         """
-        super().__init__(params)
-
-        N = self.num_links
+        if not isinstance(params, TendonActuatedPendulumParams):
+            raise TypeError("params must be a TendonActuatedPendulumParams instance.")
+        super().__init__(params.body, **kwargs)
+        self.params = params
 
         # Actuation matrix of active tendons
-        self.R_at = jnp.asarray(tendon_params.get("R_at", jnp.identity(N)))
+        self.R_at = jnp.asarray(params.active_routing_matrix)
         self.A_at = self.R_at.T
         self.num_actuators = self.R_at.shape[0]
 
         # Actuation matrix of passive tendons
-        self.R_pt = jnp.asarray(tendon_params.get("R_pt", jnp.zeros((N, N))))
+        self.R_pt = jnp.asarray(params.passive_routing_matrix)
         self.A_pt = self.R_pt.T
-        Np = len(self.R_pt)
 
         # Stiffness matrix of the passive tendons
-        kp_t = jnp.asarray(tendon_params.get("k_pt", jnp.zeros(Np)))
+        kp_t = jnp.asarray(params.passive_tendon.stiffness)
         self.K_pt = jnp.diag(kp_t)
 
         # Damping amtrix of the passive tendons
-        d_pt = jnp.asarray(tendon_params.get("d_pt", jnp.zeros(Np)))
+        d_pt = jnp.asarray(params.passive_tendon.damping)
         self.D_pt = jnp.diag(d_pt)
 
         # Initial displacement of the passive tendons
-        self.l_pt0 = jnp.asarray(tendon_params.get("l_pt0", jnp.zeros(Np)))
+        self.l_pt0 = jnp.asarray(params.passive_tendon.rest_length_offset)
 
         # Rest configuration of the active and passive tendons
-        self.q_ref_at = jnp.asarray(tendon_params.get("q_ref_at", self.q_ref_k))
-        self.q_ref_pt = jnp.asarray(tendon_params.get("q_ref_pt", self.q_ref_k))
+        self.q_ref_at = jnp.asarray(params.active_tendon_reference_configuration)
+        self.q_ref_pt = jnp.asarray(params.passive_tendon_reference_configuration)
 
         # Elastic force due to pre-stretch of the passive tendons
         self.tau_pt0 = self.A_pt @ self.K_pt @ self.l_pt0
 
-        # Consistency checks (lightweight; JIT friendly if shapes static)
-        assert (
-            self.R_pt.shape[0] == Np
-            and self.K_pt.shape[0] == Np
-            and self.D_pt.shape[0] == Np
-            and self.l_pt0.shape[0] == Np
-        ), "Mismatch among the size of the tendon parameters."
-
-        assert self.R_at.shape[1] == N and self.R_pt.shape[1] == N, (
-            f"R_at and R_pt must have second dimension equal to the number of links = {N}; "
-            + f"got R_at = (., {self.R_at.shape[1]}), R_pt = (., {self.R_pt.shape[1]})."
-        )
-
-        assert jnp.linalg.matrix_rank(self.R_at) == self.R_at.shape[0], (
-            f"R_at must be full rank. Got shape(R_at) = {self.R_at.shape}, "
-            + f"rank(R_at) = {jnp.linalg.matrix_rank(self.R_at)}."
-        )
-
-        assert "R_pt" not in tendon_params or jnp.linalg.matrix_rank(self.R_pt) == Np, (
-            f"R_pt must be full rank. Got shape(R_pt) = {self.R_pt.shape}, "
-            + f"rank(R_pt) = {jnp.linalg.matrix_rank(self.R_pt)}."
-        )
-
-        assert "R_at" not in tendon_params or self._check_routing_feasibility(
-            self.R_at
-        ), (
-            "Tendons cannot skip joints. For each row in R_at, after the first zero all entries must be zero."
-        )
-
-        assert "R_pt" not in tendon_params or self._check_routing_feasibility(
-            self.R_pt
-        ), (
-            "Tendons cannot skip joints. For each row in R_pt, after the first zero all entries must be zero."
-        )
-
-        assert ("R_pt" in tendon_params and "k_pt" in tendon_params) or (
-            "R_pt" not in tendon_params and "k_pt" not in tendon_params
-        ), (
-            "'R_pt' and 'k_pt' are mutually dependent. If one of them is specified, the other must be specified too."
-        )
-
-        assert self.q_ref_at.shape[0] == N and self.q_ref_pt.shape[0] == N, (
-            "q_ref_at and q_ref_pt must have length equal to the number of links."
+        self._validate_tendon_params(
+            self.R_at,
+            self.R_pt,
+            kp_t,
+            d_pt,
+            self.l_pt0,
+            self.q_ref_at,
+            self.q_ref_pt,
         )
 
     def _check_routing_feasibility(self, A: Array) -> bool:
@@ -242,57 +208,142 @@ class TendonActuatedPendulum(Pendulum):
         flag = bool(jnp.all(cond))
         return flag
 
-    def update_tendon_params(
-        self, tendon_params: dict[str, Array]
+    def _validate_routing_matrix(self, matrix: Array, name: str) -> None:
+        """Validate shape, rank, and no-joint-skipping routing invariants."""
+        if matrix.ndim != 2:
+            raise ValueError(f"{name} must be two-dimensional.")
+        if matrix.shape[1] != self.num_links:
+            raise ValueError(
+                f"{name} must have one column per link; expected {self.num_links}, "
+                f"got {matrix.shape[1]}."
+            )
+        num_tendons = matrix.shape[0]
+        if num_tendons > 0:
+            rank = int(jnp.linalg.matrix_rank(matrix))
+            if rank != num_tendons:
+                raise ValueError(
+                    f"{name} must be full row rank. Got shape {matrix.shape} "
+                    f"and rank {rank}."
+                )
+        if not self._check_routing_feasibility(matrix):
+            raise ValueError(
+                "Tendons cannot skip joints. For each row in "
+                f"{name}, after the first zero all entries must be zero."
+            )
+
+    def _validate_tendon_params(
+        self,
+        active_routing_matrix: Array,
+        passive_routing_matrix: Array,
+        passive_stiffness: Array,
+        passive_damping: Array,
+        passive_rest_length_offset: Array,
+        active_reference_configuration: Array,
+        passive_reference_configuration: Array,
+    ) -> None:
+        """Validate tendon-actuated pendulum routing and passive tendon sizes."""
+        self._validate_routing_matrix(active_routing_matrix, "active_routing_matrix")
+        self._validate_routing_matrix(passive_routing_matrix, "passive_routing_matrix")
+        num_passive_tendons = passive_routing_matrix.shape[0]
+        if passive_stiffness.shape != (num_passive_tendons,):
+            raise ValueError(
+                "passive_tendon stiffness must have one entry per passive routing row."
+            )
+        if passive_damping.shape != (num_passive_tendons,):
+            raise ValueError(
+                "passive_tendon damping must have one entry per passive routing row."
+            )
+        if passive_rest_length_offset.shape != (num_passive_tendons,):
+            raise ValueError(
+                "passive_tendon rest_length_offset must have one entry per passive routing row."
+            )
+        if active_reference_configuration.shape != (self.num_links,):
+            raise ValueError(
+                "active_tendon_reference_configuration must have length equal "
+                "to the number of links."
+            )
+        if passive_reference_configuration.shape != (self.num_links,):
+            raise ValueError(
+                "passive_tendon_reference_configuration must have length equal "
+                "to the number of links."
+            )
+
+    def with_params(
+        self, params: TendonActuatedPendulumParams
     ) -> "TendonActuatedPendulum":
-        """
-        Update the tendon parameters and return a new instance (functional style).
-
-        This method creates a new TendonActuatedPendulum instance with updated parameters
-        while preserving the original instance (immutable update pattern for JAX compatibility).
-
-        Args:
-           tendon_params: Dictionary with tendon parameters with keys
-                - "R_at": radii of the pulleys that route the active tendons (Na,N) (optional)
-                - "R_pt": radii of the pulleys that route the passive tendons (Np,N) (optional)
-                - "k_pt": stiffnesses of the springs attached to the passive tendons (Np,) (optional)
-                - "d_pt": damping coefficients of the dampers attached to the passive tendons (Np,) (optional)
-                - "l_pt0": initial length of the passive tendons (Np,) (optional)
-                - "q_ref_at": configuration at which the active tendons are considered zero displacement (Na,) (optional)
-                - "q_ref_pt": configuration at which the passive tendons are considered zero displacement (Np,) (optional)
-
-        Returns:
-            TendonActuatedPendulum: new instance with updated parameters.
-        """
-        updated = self
-        if "R_at" in tendon_params:
-            R_at = jnp.asarray(tendon_params["R_at"])
-            updated = eqx.tree_at(lambda x: x.R_at, updated, R_at)
-            updated = eqx.tree_at(lambda x: x.A_at, updated, R_at.T)
-        if "R_pt" in tendon_params:
-            R_pt = jnp.asarray(tendon_params["R_pt"])
-            updated = eqx.tree_at(lambda x: x.R_pt, updated, R_pt)
-            updated = eqx.tree_at(lambda x: x.A_pt, updated, R_pt.T)
-        if "k_pt" in tendon_params:
-            k_pt = jnp.asarray(tendon_params["k_pt"])
-            updated = eqx.tree_at(lambda x: x.K_pt, updated, jnp.diag(k_pt))
-        if "d_pt" in tendon_params:
-            d_pt = jnp.asarray(tendon_params["d_pt"])
-            updated = eqx.tree_at(lambda x: x.D_pt, updated, jnp.diag(d_pt))
-        if "l_pt0" in tendon_params:
-            l_pt0 = jnp.asarray(tendon_params["l_pt0"])
-            tau_pt0 = updated.A_pt @ updated.K_pt @ l_pt0
-            updated = eqx.tree_at(lambda x: x.l_pt0, updated, l_pt0)
-            updated = eqx.tree_at(lambda x: x.tau_pt0, updated, tau_pt0)
-        if "q_ref_at" in tendon_params:
-            updated = eqx.tree_at(
-                lambda x: x.q_ref_at, updated, tendon_params["q_ref_at"]
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, TendonActuatedPendulumParams):
+            raise TypeError("params must be a TendonActuatedPendulumParams instance.")
+        params.validate()
+        if params.active_routing_matrix.shape != self.R_at.shape:
+            raise ValueError(
+                "active_routing_matrix shape changes the actuation layout; construct a new TendonActuatedPendulum."
             )
-        if "q_ref_pt" in tendon_params:
-            updated = eqx.tree_at(
-                lambda x: x.q_ref_pt, updated, tendon_params["q_ref_pt"]
+        if params.passive_routing_matrix.shape != self.R_pt.shape:
+            raise ValueError(
+                "passive_routing_matrix shape changes the passive tendon layout; construct a new TendonActuatedPendulum."
             )
-        return updated
+
+        updated = self._with_pendulum_params(params.body, stored_params=params)
+
+        R_at = jnp.asarray(params.active_routing_matrix)
+        R_pt = jnp.asarray(params.passive_routing_matrix)
+        k_pt = jnp.asarray(params.passive_tendon.stiffness)
+        d_pt = jnp.asarray(params.passive_tendon.damping)
+        l_pt0 = jnp.asarray(params.passive_tendon.rest_length_offset)
+        q_ref_at = jnp.asarray(params.active_tendon_reference_configuration)
+        q_ref_pt = jnp.asarray(params.passive_tendon_reference_configuration)
+
+        if R_at.shape[1] != self.num_links or R_pt.shape[1] != self.num_links:
+            raise ValueError("routing matrices must have one column per link.")
+        if k_pt.shape != (R_pt.shape[0],) or d_pt.shape != (R_pt.shape[0],):
+            raise ValueError(
+                "passive_tendon stiffness and damping must match R_pt rows."
+            )
+        if l_pt0.shape != (R_pt.shape[0],):
+            raise ValueError("passive_tendon rest_length_offset must match R_pt rows.")
+        if q_ref_at.shape != (self.num_links,) or q_ref_pt.shape != (self.num_links,):
+            raise ValueError(
+                "active_tendon_reference_configuration and "
+                "passive_tendon_reference_configuration must match num_links."
+            )
+        self._validate_tendon_params(R_at, R_pt, k_pt, d_pt, l_pt0, q_ref_at, q_ref_pt)
+
+        A_pt = R_pt.T
+        K_pt = jnp.diag(k_pt)
+        tau_pt0 = A_pt @ K_pt @ l_pt0
+
+        return eqx.tree_at(
+            lambda model: (
+                model.R_at,
+                model.A_at,
+                model.R_pt,
+                model.A_pt,
+                model.K_pt,
+                model.D_pt,
+                model.l_pt0,
+                model.q_ref_at,
+                model.q_ref_pt,
+                model.tau_pt0,
+            ),
+            updated,
+            (
+                R_at,
+                R_at.T,
+                R_pt,
+                A_pt,
+                K_pt,
+                jnp.diag(d_pt),
+                l_pt0,
+                q_ref_at,
+                q_ref_pt,
+                tau_pt0,
+            ),
+        )
+
+    def update_params(self, **updates: Array) -> "TendonActuatedPendulum":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     # -------------------------------------------------
     # Internal helpers (geometry & Jacobians, pure JAX)
@@ -433,7 +484,7 @@ class TendonActuatedPendulum(Pendulum):
     # Energy methods
     # ---------------------
     @eqx.filter_jit
-    def elastic_energy(self, q: Array) -> Array:
+    def _elastic_energy(self, q: Array) -> Array:
         """
         Compute the elastic potential energy stored in joint and tendon springs.
 

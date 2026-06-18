@@ -109,10 +109,22 @@ Get up and running in minutes:
 
     ```python
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS, SystemState
+    from soromox.systems import PlanarPCS, PlanarPCSParams, SystemState
 
     # Create a planar PCS soft robot
-    robot = PlanarPCS(num_segments=3, params=params)
+    num_segments = 3
+    params = PlanarPCSParams(
+        length=0.1 * jnp.ones((num_segments,)),
+        radius=0.02 * jnp.ones((num_segments,)),
+        density=1070.0 * jnp.ones((num_segments,)),
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
+        gravity=jnp.array([0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=1e-3 * jnp.eye(3 * num_segments),
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+    )
+    robot = PlanarPCS(params=params)
 
     # Initialize state
     q0 = jnp.zeros(robot.n_q)
@@ -232,10 +244,10 @@ All renderers support:
 
 ## Quick Links
 
-- **📦 [Installation Guide](installation/)**: Get SoRoMoX installed and configured on your system.
-- **🚀 [Quick Start](user-guide/quick-start/)**: Jump right in with hands-on tutorials and examples.
-- **📖 [Examples](user-guide/examples/)**: Explore examples for simulation, control, and visualization.
-- **📋 [API Reference](api/overview/)**: Complete documentation of all classes and functions.
+- **📦 [Installation Guide](installation.md)**: Get SoRoMoX installed and configured on your system.
+- **🚀 [Quick Start](user-guide/quick-start.md)**: Jump right in with hands-on tutorials and examples.
+- **📖 [Examples](user-guide/examples.md)**: Explore examples for simulation, control, and visualization.
+- **📋 [API Reference](api/overview.md)**: Complete documentation of all classes and functions.
 
 ---
 

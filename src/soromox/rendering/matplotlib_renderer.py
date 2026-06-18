@@ -21,6 +21,10 @@ if TYPE_CHECKING:
 else:
     AnimateReturn = Any | FuncAnimation | None
 
+from soromox.rendering.actuators import (
+    TrajectoryActuatorVisualLayer,
+    resolve_actuator_rgba,
+)
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig
@@ -51,7 +55,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         line_width: float = 4.0,
         grid_spacing: tuple[float, float] = (0.3, 0.3),
         base_offsets: Array | None = None,
-        tendon_line_width: float = 2.0,
+        actuator_line_width: float = 2.0,
     ):
         """Initialize Matplotlib renderer.
 
@@ -65,7 +69,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             line_width: Width of backbone line
             grid_spacing: (x, y) spacing for batched layouts
             base_offsets: Optional explicit base offsets for batched layouts
-            tendon_line_width: Line width for tendon polylines
+            actuator_line_width: Line width for actuator polylines
         """
         super().__init__(
             robot,
@@ -78,7 +82,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         self.line_width = line_width
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
-        self.tendon_line_width = tendon_line_width
+        self.actuator_line_width = actuator_line_width
 
     def render_frame(
         self,
@@ -87,7 +91,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
     ) -> np.ndarray:
         """Render configuration(s) to an RGB image array.
 
@@ -100,7 +105,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             camera_config: Camera configuration. Note: For Matplotlib, only position
                 and look_at are used to set view angle for 3D plots.
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
         Returns:
             img (np.ndarray): RGB image of shape (height, width, 3), dtype uint8.
@@ -117,12 +123,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         spacing = self.grid_spacing
         if batched:
             num_robots = int(q_arr.shape[0])
-            base_offsets_arr = (
+            uses_configured_offsets = (
+                base_offsets is None and self._base_offsets is not None
+            )
+            offset_source = (
                 self._compute_grid_offsets(num_robots, spacing)
                 if (base_offsets is None and self._base_offsets is None)
-                else jnp.asarray(
-                    base_offsets if base_offsets is not None else self._base_offsets
-                )
+                else base_offsets
+                if base_offsets is not None
+                else self._base_offsets
+            )
+            base_offsets_arr = self._normalize_base_offsets(
+                offset_source,
+                num_robots=num_robots,
+                target_dim=3 if self.is_3d else 2,
+                allow_extra_rows=uses_configured_offsets,
             )
 
             curves = self.compute_backbone_curves_batched(q_arr, base_offsets_arr)
@@ -132,37 +147,40 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         else:
             num_robots = 1
             curves = self.compute_backbone_curve(q_arr)[None, ...]
-            if base_offsets is not None:
-                offs = np.asarray(base_offsets, dtype=np.float64)
-                if offs.ndim == 1:
-                    offs = offs.reshape(1, -1)
-                if offs.shape[0] != 1:
-                    raise ValueError(
-                        f"base_offsets must have shape (dim,) or (1, dim) for single robot; got {offs.shape}"
-                    )
-                if offs.shape[1] + 1 == curves.shape[-1]:
-                    offs = np.concatenate([offs, np.zeros((offs.shape[0], 1))], axis=1)
-                if offs.shape[1] != curves.shape[-1]:
-                    raise ValueError(
-                        f"base_offsets second dimension ({offs.shape[1]}) must match curve dimension ({curves.shape[-1]})"
-                    )
-                curves = curves + offs[0]
+            offset_source = (
+                base_offsets if base_offsets is not None else self._base_offsets
+            )
+            single_offset = self._single_base_offset(
+                offset_source,
+                target_dim=int(curves.shape[-1]),
+                allow_extra_rows=base_offsets is None
+                and self._base_offsets is not None,
+            )
+            if single_offset is not None:
+                curves = curves + single_offset
             resolved_colors = self.resolve_backbone_colors(1, color_config=cfg)
             width_m = self.L_max * 3
 
         curves_np = np.array(curves)
-        tendon_curves_np = None
-        if render_tendons and self._has_tendons:
+        actuator_layers = ()
+        if render_actuators and self._has_actuator_visuals:
             if batched:
-                tendon_curves_np = np.array(
-                    self.compute_tendon_curves_batched(q_arr, base_offsets_arr)
+                actuator_layers = self.compute_actuator_visual_layers_batched(
+                    q_arr,
+                    base_offsets_arr,
+                    actuator_inputs=actuator_inputs,
                 )
             else:
-                tendon_curves_np = np.array(self.compute_tendon_curves(q_arr))[
-                    None, ...
-                ]
-                if base_offsets is not None:
-                    tendon_curves_np = tendon_curves_np + offs[0]
+                actuator_offsets = (
+                    jnp.zeros((1, int(curves.shape[-1])), dtype=q_arr.dtype)
+                    if single_offset is None
+                    else jnp.asarray(single_offset).reshape(1, -1)
+                )
+                actuator_layers = self.compute_actuator_visual_layers_batched(
+                    q_arr[None, :],
+                    actuator_offsets,
+                    actuator_inputs=actuator_inputs,
+                )
 
         fig = plt.figure(figsize=(self.width / 100, self.height / 100), dpi=100)
         fig.patch.set_facecolor(self.background_color)
@@ -189,26 +207,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         )
 
         self._plot_backbone(ax, curves_np, resolved_colors.per_robot_point_rgba)
+        self._plot_base_markers(ax, curves_np, cfg.base_plate_color)
 
-        if tendon_curves_np is not None:
-            for idx in range(num_robots):
-                tc = tendon_curves_np[idx]
-                for k in range(tc.shape[0]):
-                    if self.is_3d:
-                        ax.plot(
-                            tc[k, :, 0],
-                            tc[k, :, 1],
-                            tc[k, :, 2],
-                            lw=self.tendon_line_width,
-                            color=cfg.tendon_color,
-                        )
-                    else:
-                        ax.plot(
-                            tc[k, :, 0],
-                            tc[k, :, 1],
-                            lw=self.tendon_line_width,
-                            color=cfg.tendon_color,
-                        )
+        self._plot_actuator_layers(ax, actuator_layers, cfg)
 
         ax.set_facecolor(self.background_color)
         plt.tight_layout()
@@ -236,7 +237,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
     ) -> None:  # type: ignore[override]
         """Display a single frame interactively (supports batched inputs).
 
@@ -247,7 +249,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             camera_config: Camera configuration. Note: For Matplotlib, only position
                 and look_at are used to set view angle for 3D plots.
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
         Returns:
             None
@@ -257,7 +260,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             base_offsets=base_offsets,
             color_config=color_config,
             camera_config=camera_config,
-            render_tendons=render_tendons,
+            render_actuators=render_actuators,
+            actuator_inputs=actuator_inputs,
         )
         plt.figure(figsize=(self.width / 100, self.height / 100))
         plt.imshow(img)
@@ -277,7 +281,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         color_config: RendererColorConfig | None = None,
         camera_config: CameraConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
     ) -> AnimateReturn:
         """Interactive matplotlib animation with slider or auto-play.
 
@@ -293,7 +298,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration.
             camera_config: Camera configuration. Note: For Matplotlib, only position
                 and look_at are used to set view angle for 3D plots.
-            render_tendons: Whether to render tendons if available
+            render_actuators: Whether to render actuator visual layers if available
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
         Returns:
             HTML object for Jupyter display (animation mode only)
@@ -317,7 +323,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 show=show,
                 base_offsets=base_offsets,
                 color_config=color_config,
-                render_tendons=render_tendons,
+                render_actuators=render_actuators,
+                actuator_inputs=actuator_inputs,
                 record_path=record_path,
                 playback_speed=playback_speed,
                 camera_config=camera_config,
@@ -331,7 +338,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 show=show,
                 base_offsets=base_offsets,
                 color_config=color_config,
-                render_tendons=render_tendons,
+                render_actuators=render_actuators,
+                actuator_inputs=actuator_inputs,
                 record_path=record_path,
                 playback_speed=playback_speed,
                 camera_config=camera_config,
@@ -350,7 +358,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         show: bool,
         base_offsets: Array | None,
         color_config: RendererColorConfig | None,
-        render_tendons: bool,
+        render_actuators: bool,
+        actuator_inputs: Array | None,
         record_path: str | None,
         playback_speed: float,
         camera_config: CameraConfig | None,
@@ -365,7 +374,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             show: Whether to display the plot.
             base_offsets: Optional base offset of shape (dim,) or (1, dim) applied to the robot.
             color_config: Shared renderer color configuration.
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             record_path: Optional path to save animation (mp4/gif depending on writer).
             playback_speed: Playback speed multiplier (>0).
 
@@ -377,29 +387,27 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         curves = np.array(
             jax.vmap(self.compute_backbone_curve)(q_ts), dtype=np.float64
         )  # (T, P, dim)
-        if base_offsets is not None:
-            offs = np.asarray(base_offsets, dtype=np.float64)
-            if offs.ndim == 1:
-                offs = offs.reshape(1, -1)
-            if offs.shape[0] not in (1,):
-                raise ValueError(
-                    f"base_offsets must have shape (dim,) or (1, dim) for single robot; got {offs.shape}"
-                )
-            if offs.shape[1] + 1 == curves.shape[-1]:
-                offs = np.concatenate([offs, np.zeros((offs.shape[0], 1))], axis=1)
-            if offs.shape[1] != curves.shape[-1]:
-                raise ValueError(
-                    f"base_offsets second dimension ({offs.shape[1]}) must match curve dimension ({curves.shape[-1]})"
-                )
-            curves = curves + offs[0]
+        offset_source = base_offsets if base_offsets is not None else self._base_offsets
+        single_offset = self._single_base_offset(
+            offset_source,
+            target_dim=int(curves.shape[-1]),
+            allow_extra_rows=base_offsets is None and self._base_offsets is not None,
+        )
+        if single_offset is not None:
+            curves = curves + single_offset
         all_curves = curves[None, ...]  # (1, T, P, dim)
-        tendon_curves = None
-        if render_tendons and self._has_tendons:
-            tendon_curves = np.array(
-                jax.vmap(self.compute_tendon_curves)(q_ts), dtype=np.float64
-            )[None, ...]  # (1, T, n_tendon, P, dim)
-            if base_offsets is not None:
-                tendon_curves = tendon_curves + offs[0]
+        actuator_layers = ()
+        if render_actuators and self._has_actuator_visuals:
+            actuator_offsets = (
+                jnp.zeros((1, int(curves.shape[-1])), dtype=q_ts.dtype)
+                if single_offset is None
+                else jnp.asarray(single_offset).reshape(1, -1)
+            )
+            actuator_layers = self.compute_actuator_visual_layers_trajectory(
+                q_ts[None, ...],
+                actuator_offsets,
+                actuator_inputs=actuator_inputs,
+            )
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(1, color_config=cfg)
@@ -412,9 +420,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             mode=mode,
             show=show,
             center_origin=False,
-            tendon_curves=tendon_curves,
+            actuator_layers=actuator_layers,
             record_path=record_path,
-            tendon_color=cfg.tendon_color,
+            base_plate_color=cfg.base_plate_color,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -428,7 +436,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         show: bool,
         base_offsets: Array | None,
         color_config: RendererColorConfig | None,
-        render_tendons: bool,
+        render_actuators: bool,
+        actuator_inputs: Array | None,
         record_path: str | None,
         playback_speed: float,
         camera_config: CameraConfig | None,
@@ -443,7 +452,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             show: Whether to display the plot.
             base_offsets: Optional base offsets of shape (N, 2/3) for batched layouts.
             color_config: Shared renderer color configuration.
-            render_tendons: Whether to render tendons if available.
+            render_actuators: Whether to render actuator visual layers if available.
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             record_path: Optional path to save animation (mp4/gif depending on writer).
             playback_speed: Playback speed multiplier (>0).
 
@@ -467,12 +477,21 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             )
 
         spacing = self.grid_spacing
-        base_offsets_arr = (
+        uses_configured_offsets = (
+            base_offsets is None and self._base_offsets is not None
+        )
+        offset_source = (
             self._compute_grid_offsets(int(num_robots), spacing)
             if (base_offsets is None and self._base_offsets is None)
-            else jnp.asarray(
-                base_offsets if base_offsets is not None else self._base_offsets
-            )
+            else base_offsets
+            if base_offsets is not None
+            else self._base_offsets
+        )
+        base_offsets_arr = self._normalize_base_offsets(
+            offset_source,
+            num_robots=int(num_robots),
+            target_dim=3 if self.is_3d else 2,
+            allow_extra_rows=uses_configured_offsets,
         )
 
         # Precompute all backbone curves with offsets applied
@@ -483,25 +502,18 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         all_curves_time_first = jax.vmap(curves_for_timestep)(q_ts_time_first)
         all_curves = np.asarray(all_curves_time_first.transpose(1, 0, 2, 3))
 
-        # Axis sizing based on geometry spread
-        max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
-        width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
-
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(
             int(num_robots), color_config=cfg
         )
 
-        tendon_curves = None
-        if render_tendons and self._has_tendons:
-            tendons = np.array(
-                jax.vmap(
-                    lambda q_batch: self.compute_tendon_curves_batched(
-                        q_batch, base_offsets_arr
-                    )
-                )(q_ts_time_first)
-            )  # (T, N, n_t, P, dim)
-            tendon_curves = tendons.transpose(1, 0, 2, 3, 4)  # (N, T, n_t, P, dim)
+        actuator_layers = ()
+        if render_actuators and self._has_actuator_visuals:
+            actuator_layers = self.compute_actuator_visual_layers_trajectory(
+                q_ts,
+                base_offsets_arr,
+                actuator_inputs=actuator_inputs,
+            )
 
         return self._animate_backbone_curves(
             ts=np.asarray(ts),
@@ -511,9 +523,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             mode=mode,
             show=show,
             center_origin=True,
-            tendon_curves=tendon_curves,
+            actuator_layers=actuator_layers,
             record_path=record_path,
-            tendon_color=cfg.tendon_color,
+            base_plate_color=cfg.base_plate_color,
             playback_speed=playback_speed,
             camera_config=camera_config,
         )
@@ -527,15 +539,15 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         mode: str,
         show: bool,
         center_origin: bool,
-        tendon_curves: np.ndarray | None = None,
+        actuator_layers: tuple[TrajectoryActuatorVisualLayer, ...] = (),
         record_path: str | None = None,
-        tendon_color: tuple[float, float, float] | None = None,
+        base_plate_color: tuple[float, float, float] | None = None,
         playback_speed: float = 1.0,
         camera_config: CameraConfig | None = None,
     ):
         """Shared Matplotlib animation for one or more robots."""
         num_robots, num_steps, _, _ = all_curves.shape
-        tendon_color = tendon_color or self.color_config.tendon_color
+        base_plate_color = base_plate_color or self.color_config.base_plate_color
 
         max_extent = float(np.max(np.abs(all_curves))) if all_curves.size else 0.0
         width_m = max(self.L_max * 3, 2.0 * max_extent * 1.1)
@@ -588,42 +600,43 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 ax.add_collection(lc)
             lines.append(lc)
 
-        tendon_lines: list[list] = []
-        if tendon_curves is not None:
-            for idx in range(num_robots):
-                robot_lines = []
-                n_tend = tendon_curves.shape[2]
-                for _ in range(n_tend):
+        base_artists = self._plot_base_markers(ax, all_curves[:, 0], base_plate_color)
+
+        actuator_artists = []
+        actuator_colors = [
+            resolve_actuator_rgba(
+                layer,
+                default_color=self.color_config.actuators.default_color,
+                scalar_colormap=self.color_config.actuators.scalar_colormap,
+            )
+            for layer in actuator_layers
+        ]
+        for layer_idx, layer in enumerate(actuator_layers):
+            points = np.asarray(layer.points)
+            line_width = layer.line_width or self.actuator_line_width
+            for robot_idx in range(num_robots):
+                for actuator_idx in range(points.shape[2]):
                     if self.is_3d:
-                        (tl,) = ax.plot(
-                            [],
-                            [],
-                            [],
-                            lw=self.tendon_line_width,
-                            color=tendon_color,
-                        )
+                        (artist,) = ax.plot([], [], [], lw=line_width)
                     else:
-                        (tl,) = ax.plot(
-                            [],
-                            [],
-                            lw=self.tendon_line_width,
-                            color=tendon_color,
-                        )
-                    robot_lines.append(tl)
-                tendon_lines.append(robot_lines)
+                        (artist,) = ax.plot([], [], lw=line_width)
+                    actuator_artists.append(
+                        (layer_idx, robot_idx, actuator_idx, artist)
+                    )
 
         def _update_lines(frame_idx: int):
             curves_frame = all_curves[:, frame_idx]  # (N, P, dim)
             for idx, line in enumerate(lines):
                 segments = self._curve_to_segments(curves_frame[idx])
                 line.set_segments(segments)
-            if tendon_curves is not None:
-                for idx, tc in enumerate(tendon_curves):
-                    tend_frame = tc[frame_idx]
-                    for k, tl in enumerate(tendon_lines[idx]):
-                        tl.set_data(tend_frame[k, :, 0], tend_frame[k, :, 1])
-                        if self.is_3d:
-                            tl.set_3d_properties(tend_frame[k, :, 2])
+            self._update_base_markers(base_artists, curves_frame)
+            for layer_idx, robot_idx, actuator_idx, artist in actuator_artists:
+                layer = actuator_layers[layer_idx]
+                pts = np.asarray(layer.points)[robot_idx, frame_idx, actuator_idx]
+                artist.set_data(pts[:, 0], pts[:, 1])
+                if self.is_3d:
+                    artist.set_3d_properties(pts[:, 2])
+                artist.set_color(actuator_colors[layer_idx][robot_idx, frame_idx, actuator_idx])
 
         if mode == "animation":
 
@@ -634,20 +647,19 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     else:
                         line.set_segments(np.zeros((0, 2, 2)))
                 title_text.set_text("t = 0.00 s")
-                for robot_lines in tendon_lines:
-                    for tl in robot_lines:
-                        tl.set_data([], [])
-                        if self.is_3d:
-                            tl.set_3d_properties([])
-                flat_tendon = [tl for sub in tendon_lines for tl in sub]
-                return lines + flat_tendon + [title_text]
+                for _, _, _, artist in actuator_artists:
+                    artist.set_data([], [])
+                    if self.is_3d:
+                        artist.set_3d_properties([])
+                flat_actuators = [artist for _, _, _, artist in actuator_artists]
+                return lines + flat_actuators + base_artists + [title_text]
 
             def update(frame_idx):
                 frame_idx_int = int(frame_idx)
                 _update_lines(frame_idx_int)
                 title_text.set_text(f"t = {float(ts[frame_idx_int]):.2f} s")
-                flat_tendon = [tl for sub in tendon_lines for tl in sub]
-                return lines + flat_tendon + [title_text]
+                flat_actuators = [artist for _, _, _, artist in actuator_artists]
+                return lines + flat_actuators + base_artists + [title_text]
 
             actual_interval = max(1, int(round(interval / playback_speed)))
             ani = FuncAnimation(
@@ -719,7 +731,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         playback_speed: float = 1.0,
         camera_config: CameraConfig | None = None,
         color_config: RendererColorConfig | None = None,
-        render_tendons: bool = True,
+        render_actuators: bool = True,
+        actuator_inputs: Array | None = None,
         show: bool = False,
     ) -> None:
         """Render an animated sequence (optionally saving to disk).
@@ -735,7 +748,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             camera_config: Camera configuration. Note: For Matplotlib, only position
                 and look_at are used to set view angle for 3D plots.
             color_config: Shared renderer color configuration.
-            render_tendons: Whether to render tendons if available
+            render_actuators: Whether to render actuator visual layers if available
+            actuator_inputs: Optional actuator inputs for scalar-colored layers.
             show: Whether to display the animation
         """
         self.animate(
@@ -748,7 +762,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             playback_speed=playback_speed,
             camera_config=camera_config,
             color_config=color_config,
-            render_tendons=render_tendons,
+            render_actuators=render_actuators,
+            actuator_inputs=actuator_inputs,
         )
 
     @staticmethod
@@ -756,6 +771,136 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         if curve.shape[0] < 2:
             return np.zeros((0, 2, curve.shape[1]), dtype=curve.dtype)
         return np.stack([curve[:-1], curve[1:]], axis=1)
+
+    @staticmethod
+    def _base_plate_marker_points(
+        base: np.ndarray,
+        axis: np.ndarray,
+        marker_diameter: float,
+        dim: int,
+    ) -> np.ndarray:
+        """Return points that represent the base plate face in Matplotlib."""
+        base = np.asarray(base, dtype=np.float64)
+        axis = np.asarray(axis, dtype=np.float64)
+        axis_norm = np.linalg.norm(axis)
+        if axis_norm <= 1e-12:
+            axis = np.zeros(dim, dtype=np.float64)
+            axis[0] = 1.0
+        else:
+            axis = axis / axis_norm
+
+        radius = 0.5 * marker_diameter
+        if dim == 2:
+            normal = np.array([-axis[1], axis[0]], dtype=np.float64)
+            return np.stack(
+                [
+                    base - radius * normal,
+                    base + radius * normal,
+                ],
+                axis=0,
+            )
+
+        reference = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+        if abs(float(np.dot(axis, reference))) > 0.95:
+            reference = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+        u = np.cross(axis, reference)
+        u = u / np.linalg.norm(u)
+        v = np.cross(axis, u)
+        angles = np.linspace(0.0, 2.0 * np.pi, 65)
+        return base[None, :] + radius * (
+            np.cos(angles)[:, None] * u[None, :] + np.sin(angles)[:, None] * v
+        )
+
+    def _plot_actuator_layers(
+        self,
+        ax,
+        actuator_layers,
+        color_config: RendererColorConfig,
+    ) -> None:
+        """Plot batched actuator visual layers on a Matplotlib axis."""
+        for layer in actuator_layers:
+            points = np.asarray(layer.points, dtype=np.float64)
+            colors = resolve_actuator_rgba(
+                layer,
+                default_color=color_config.actuators.default_color,
+                scalar_colormap=color_config.actuators.scalar_colormap,
+            )
+            line_width = layer.line_width or self.actuator_line_width
+            for robot_idx in range(points.shape[0]):
+                for actuator_idx in range(points.shape[1]):
+                    pts = points[robot_idx, actuator_idx]
+                    color = colors[robot_idx, actuator_idx]
+                    if self.is_3d:
+                        ax.plot(
+                            pts[:, 0],
+                            pts[:, 1],
+                            pts[:, 2],
+                            lw=line_width,
+                            color=color,
+                        )
+                    else:
+                        ax.plot(
+                            pts[:, 0],
+                            pts[:, 1],
+                            lw=line_width,
+                            color=color,
+                        )
+
+    def _plot_base_markers(
+        self,
+        ax,
+        curves: np.ndarray,
+        base_plate_color: tuple[float, float, float],
+    ) -> list:
+        """Draw compact base markers at the configured base positions."""
+        artists = []
+        if curves.size == 0:
+            return artists
+        dim = int(curves.shape[-1])
+        axis = self._base_tangent_axis(dim=dim)
+        marker_len = max(0.04 * self.L_max, 1e-3)
+        for curve in curves:
+            base = np.asarray(curve[0], dtype=np.float64)
+            marker = self._base_plate_marker_points(base, axis, marker_len, dim)
+            if dim == 3:
+                (artist,) = ax.plot(
+                    marker[:, 0],
+                    marker[:, 1],
+                    marker[:, 2],
+                    color=base_plate_color,
+                    linewidth=max(self.line_width, 2.0),
+                )
+            else:
+                (artist,) = ax.plot(
+                    marker[:, 0],
+                    marker[:, 1],
+                    color=base_plate_color,
+                    linewidth=max(self.line_width, 2.0),
+                )
+            artists.append(artist)
+        return artists
+
+    def _update_base_markers(self, artists: list, curves: np.ndarray) -> None:
+        """Update animated Matplotlib base markers."""
+        if not artists:
+            return
+        dim = int(curves.shape[-1])
+        axis = self._base_tangent_axis(dim=dim)
+        marker_len = max(0.04 * self.L_max, 1e-3)
+        for artist, curve in zip(artists, curves):
+            base = np.asarray(curve[0], dtype=np.float64)
+            marker = self._base_plate_marker_points(base, axis, marker_len, dim)
+            if dim == 3:
+                artist.set_data(
+                    marker[:, 0],
+                    marker[:, 1],
+                )
+                artist.set_3d_properties(marker[:, 2])
+            else:
+                artist.set_data(
+                    marker[:, 0],
+                    marker[:, 1],
+                )
 
     @staticmethod
     def _segment_colors_from_point_pairs(point_colors: np.ndarray) -> np.ndarray:
@@ -812,23 +957,25 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_zlabel("Z [m]")
-            if camera_config is not None:
-                center = (
-                    np.array(scene_center, dtype=np.float64)
-                    if scene_center is not None
-                    else np.array([0.0, 0.0, width_m * 0.5], dtype=np.float64)
-                )
-                extent = float(scene_extent) if scene_extent is not None else width_m
-                camera_pos, look_at = camera_config.compute_auto_position(
-                    center, extent
-                )
-                view_vec = np.asarray(camera_pos, dtype=np.float64) - np.asarray(
-                    look_at, dtype=np.float64
-                )
-                r_xy = float(np.hypot(view_vec[0], view_vec[1]))
-                azim = np.degrees(np.arctan2(view_vec[1], view_vec[0]))
-                elev = np.degrees(np.arctan2(view_vec[2], r_xy))
-                ax.view_init(elev=elev, azim=azim)
+            config = camera_config or CameraConfig()
+            center = (
+                np.array(scene_center, dtype=np.float64)
+                if scene_center is not None
+                else np.array([0.0, 0.0, width_m * 0.5], dtype=np.float64)
+            )
+            extent = float(scene_extent) if scene_extent is not None else width_m
+            camera_pos, look_at = config.compute_auto_position(
+                center,
+                extent,
+                reference_transform=np.asarray(self.base_transform),
+            )
+            view_vec = np.asarray(camera_pos, dtype=np.float64) - np.asarray(
+                look_at, dtype=np.float64
+            )
+            r_xy = float(np.hypot(view_vec[0], view_vec[1]))
+            azim = np.degrees(np.arctan2(view_vec[1], view_vec[0]))
+            elev = np.degrees(np.arctan2(view_vec[2], r_xy))
+            ax.view_init(elev=elev, azim=azim)
         else:
             ax.set_xlim(-width_m / 2, width_m / 2)
             if center_origin:

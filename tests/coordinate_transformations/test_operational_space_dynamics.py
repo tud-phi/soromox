@@ -1,15 +1,18 @@
 """Tests for OperationalSpaceDynamics class."""
 
+# ruff: noqa: E402
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
+from system_param_builders import pcs_params, pendulum_params, planar_pcs_params
 
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.systems import PCS, Pendulum, PlanarPCS
-from soromox.utils.rotations import RotationRepresentation
+from soromox.utils.geometry.rotations import RotationRepresentation
 from soromox.utils.tolerance import Tolerance
 
 # -----------------------
@@ -20,45 +23,45 @@ from soromox.utils.tolerance import Tolerance
 @pytest.fixture
 def pcs_robot():
     """Create a 2-segment PCS robot."""
-    params = {
-        "L": [0.1, 0.1],
-        "r": [0.01, 0.01],
-        "rho": [1000.0, 1000.0],
-        "E": [1e6, 1e6],
-        "G": [0.5e6, 0.5e6],
-        "D": jnp.eye(12) * 0.1,
-        "g": [0.0, 0.0, -9.81],
-    }
-    return PCS(num_segments=2, params=params)
+    params = pcs_params(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([0.5e6, 0.5e6]),
+        damping_matrix=jnp.eye(12) * 0.1,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+    )
+    return PCS(params=params)
 
 
 @pytest.fixture
 def planar_pcs_robot():
     """Create a 2-segment PlanarPCS robot."""
-    params = {
-        "L": [0.1, 0.1],
-        "r": [0.01, 0.01],
-        "rho": [1000.0, 1000.0],
-        "E": [1e6, 1e6],
-        "G": [0.5e6, 0.5e6],
-        "D": jnp.eye(6) * 0.1,
-        "g": [0.0, -9.81],
-    }
-    return PlanarPCS(num_segments=2, params=params)
+    params = planar_pcs_params(
+        length=jnp.array([0.1, 0.1]),
+        radius=jnp.array([0.01, 0.01]),
+        density=jnp.array([1000.0, 1000.0]),
+        young_modulus=jnp.array([1e6, 1e6]),
+        shear_modulus=jnp.array([0.5e6, 0.5e6]),
+        damping_matrix=jnp.eye(6) * 0.1,
+        gravity=jnp.array([0.0, -9.81]),
+    )
+    return PlanarPCS(params=params)
 
 
 @pytest.fixture
 def pendulum_robot():
     """Create a 3-link pendulum robot."""
-    params = {
-        "m": jnp.array([1.0, 2.0, 0.8]),
-        "I": jnp.array([0.1, 0.2, 0.05]),
-        "L": jnp.array([1.0, 1.5, 0.8]),
-        "Lc": jnp.array([0.5, 0.75, 0.4]),
-        "g": jnp.array([0.0, -9.81]),
-        "K": jnp.eye(3) * 10.0,
-        "D": jnp.eye(3) * 0.5,
-    }
+    params = pendulum_params(
+        mass=jnp.array([1.0, 2.0, 0.8]),
+        moment_inertia=jnp.array([0.1, 0.2, 0.05]),
+        length=jnp.array([1.0, 1.5, 0.8]),
+        center_of_mass_length=jnp.array([0.5, 0.75, 0.4]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.eye(3) * 10.0,
+        joint_damping=jnp.eye(3) * 0.5,
+    )
     return Pendulum(params)
 
 
@@ -178,7 +181,7 @@ class TestOperationalSpaceJacobian:
 
         assert J.shape == (2, planar_pcs_robot.num_dofs)
 
-    def test_jacobian_and_derivative_shapes(self, pendulum_robot):
+    def test_jacobian_and_time_derivative_shapes(self, pendulum_robot):
         """Test shapes of Jacobian and its derivative."""
         s_ps = jnp.array([float(pendulum_robot.total_length)])
         op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
@@ -186,7 +189,7 @@ class TestOperationalSpaceJacobian:
         q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
         qd = jnp.linspace(0.6, -0.5, pendulum_robot.num_links)
 
-        J, Jd = op_space.jacobian_and_derivative(q, qd)
+        J, Jd = op_space.jacobian_and_time_derivative(q, qd)
 
         assert J.shape == (3, pendulum_robot.num_dofs)
         assert Jd.shape == (3, pendulum_robot.num_dofs)
@@ -209,9 +212,9 @@ class TestDynamicallyConsistentPseudoinverse:
         J, J_bar = op_space.jacobian_and_dynamically_consistent_pseudoinverse(q)
 
         J_Jbar = J @ J_bar
-        I = jnp.eye(op_space.n_operational_space)
+        identity = jnp.eye(op_space.n_operational_space)
 
-        assert_allclose(J_Jbar, I, rtol=1e-4, atol=1e-4)
+        assert_allclose(J_Jbar, identity, rtol=1e-4, atol=1e-4)
 
     def test_j_jbar_identity_pendulum(self, pendulum_robot):
         """Test J @ J_bar = I for Pendulum robot."""
@@ -222,9 +225,9 @@ class TestDynamicallyConsistentPseudoinverse:
         J, J_bar = op_space.jacobian_and_dynamically_consistent_pseudoinverse(q)
 
         J_Jbar = J @ J_bar
-        I = jnp.eye(op_space.n_operational_space)
+        identity = jnp.eye(op_space.n_operational_space)
 
-        assert_allclose(J_Jbar, I, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+        assert_allclose(J_Jbar, identity, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     def test_pseudoinverse_shape(self, pcs_robot):
         """Test shape of dynamically-consistent pseudo-inverse."""
@@ -367,6 +370,49 @@ class TestOperationalSpaceForces:
 
         assert_allclose(
             f_d, jnp.zeros_like(f_d), rtol=Tolerance.rtol(), atol=Tolerance.atol()
+        )
+
+    def test_potential_force_sums_conservative_forces(self, pendulum_robot):
+        """Test that potential_force sums gravitational and elastic forces."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        f_pot = op_space.potential_force(q)
+        expected = op_space.gravitational_force(q) + op_space.elastic_force(q)
+
+        assert f_pot.shape == (3,)
+        assert_allclose(f_pot, expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
+
+    def test_dynamics_terms_match_individual_methods(self, pendulum_robot):
+        """Test dynamics_terms returns the individual operational-space terms."""
+        s_ps = jnp.array([float(pendulum_robot.total_length)])
+        op_space = OperationalSpaceDynamics(robot=pendulum_robot, s_ps=s_ps)
+
+        q = jnp.linspace(-0.3, 0.4, pendulum_robot.num_links)
+        qd = jnp.linspace(0.6, -0.5, pendulum_robot.num_links)
+        Lambda, Cxd, G_x = op_space.dynamics_terms(q, qd)
+
+        assert Lambda.shape == (3, 3)
+        assert Cxd.shape == (3,)
+        assert G_x.shape == (3,)
+        assert_allclose(
+            Lambda,
+            op_space.inertia_matrix(q),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        assert_allclose(
+            Cxd,
+            op_space.coriolis_force(q, qd),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        assert_allclose(
+            G_x,
+            op_space.gravitational_force(q),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
         )
 
 
@@ -737,16 +783,16 @@ class TestGeometricVsNaiveError:
 
         # Naive error
         naive_error = x_desired - x_current
-        naive_angle_error = naive_error[0]
+        naive_theta_delta = naive_error[0]
 
         # Geometric error
         geometric_error = op_space.compute_pose_error(x_current, x_desired)
-        geometric_angle_error = geometric_error[0]
+        geometric_theta_delta = geometric_error[0]
 
         # Naive error is ~350°, geometric should be ~-10°
-        assert jnp.abs(naive_angle_error) > jnp.pi  # Long way around
-        assert jnp.abs(geometric_angle_error) < jnp.pi  # Short way around
-        assert jnp.abs(geometric_angle_error) < jnp.abs(naive_angle_error)
+        assert jnp.abs(naive_theta_delta) > jnp.pi  # Long way around
+        assert jnp.abs(geometric_theta_delta) < jnp.pi  # Short way around
+        assert jnp.abs(geometric_theta_delta) < jnp.abs(naive_theta_delta)
 
     def test_orientation_error_always_less_than_pi(self, planar_pcs_robot):
         """Test that geometric orientation error magnitude is always ≤ π."""

@@ -124,7 +124,7 @@ started.
 
 | Capability | Motivation |
 |------------|------------|
-| Floating-base functionality across all systems | Support robots whose base pose is part of the system state, rather than assuming a fixed base. |
-| Closed-chain kinematics, particularly for GVS | Enable modeling of closed-loop mechanisms and parallel soft robots. |
 | `PlanarGVS` | Provide a faster planar setting for prototyping controllers and algorithms that use higher-order geometric shape parametrizations before moving to full spatial GVS models. |
+| Floating-base functionality across all systems | Support robots whose base pose is part of the system state, rather than assuming a fixed base. |
 | Kinematic trees, particularly for GVS | Extend beyond serial kinematic chains to support branched soft robot architectures. |
+| Closed-chain kinematics, particularly for GVS | Enable modeling of closed-loop mechanisms and parallel soft robots. |

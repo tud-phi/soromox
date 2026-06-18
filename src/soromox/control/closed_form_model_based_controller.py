@@ -1,6 +1,6 @@
 __all__ = ["ClosedFormModelBasedController"]
 
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -22,9 +22,7 @@ class ClosedFormModelBasedController(BaseController):
         u_control = model_based_term + error_based_feedback_term
     """
 
-    def model_based_term(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def model_based_term(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the model-based feedforward control term.
 
@@ -47,7 +45,7 @@ class ClosedFormModelBasedController(BaseController):
 
     def error_based_feedback_term(
         self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    ) -> tuple[Array, Any | None]:
         """
         Compute the error-based feedback control term.
 
@@ -67,9 +65,7 @@ class ClosedFormModelBasedController(BaseController):
         """
         return jnp.zeros((self.robot.num_actuators,)), None
 
-    def __call__(
-        self, system_state: SystemState
-    ) -> Tuple[Array, Optional[Any]]:
+    def __call__(self, system_state: SystemState) -> tuple[Array, Any | None]:
         """
         Compute the combined control action.
 

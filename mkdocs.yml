@@ -6,6 +6,7 @@ site_url: https://tud-phi.github.io/soromox
 repo_name: tud-phi/soromox
 repo_url: https://github.com/tud-phi/soromox
 edit_uri: edit/main/docs/
+not_in_nav: 404.md
 
 copyright: Copyright &copy; 2020-2026 Physical Intelligence (PhI) Lab @ TU Delft
 
@@ -99,6 +100,8 @@ nav:
       - Utilities:
           - Overview: api/utilities/index.md
           - Parameters: api/utilities/parameters.md
+          - Geometry: api/utilities/geometry.md
+          - Lie Algebra: api/utilities/lie-algebra.md
           - Symbolic Derivation: api/utilities/symbolic-derivation.md
   - Development:
     - Contributing: development/contributing.md

@@ -1,13 +1,15 @@
 import jax
 import numpy as onp
 import pytest
-from jax import Array, jacfwd, jacrev
+from jax import Array, jacfwd, jacrev, jvp
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
+from system_param_builders import planar_base_pose, planar_pcs_params
 
-from soromox.systems import CrossSectionGeometry, PlanarPCS
+from soromox.systems import CrossSectionGeometry, PlanarPCS, PlanarPCSStructure
+from soromox.utils.geometry import poses
 from soromox.utils.integration import scale_interior_gaussian_quadrature
-from soromox.utils.lie_algebra.se2 import Adjoint_g_SE2, exp_SE2
+from soromox.utils.lie_algebra import se2
 from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -37,29 +39,32 @@ def make_planar_pcs(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     segment_length = 1e-1 if total_length is None else total_length / num_segments
-    params = {
-        "th0": jnp.array(th0),  # initial orientation angle [rad]
-        "L": segment_length * jnp.ones((num_segments,)),
-        "r": 2e-2 * jnp.ones((num_segments,)),
-        "rho": rho,
-        "g": jnp.array([0.0, -9.81]),  # gravity vector [m/s^2] UP!
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-    }
-    params["D"] = 1e-3 * jnp.diag(
+    segment_lengths = segment_length * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
+    )
+    params = planar_pcs_params(
+        base_pose=planar_base_pose(th0),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, -9.81]),  # gravity vector [m/s^2] UP!
+        young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        damping_matrix=damping_matrix,
+        reference_strain=xi_ref,
     )
 
     model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=xi_ref,
-        num_gauss_points=num_gauss_points,
-        strain_selector=strain_selector,
-        scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        structure=PlanarPCSStructure(
+            num_gauss_points=num_gauss_points,
+            strain_selector=strain_selector,
+            scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+        ),
     )
 
     return model, params
@@ -78,6 +83,11 @@ def sample_arc_lengths(model: PlanarPCS) -> list[float]:
     values = [near_zero] + mids + boundaries
     unique_sorted = sorted({float(v) for v in values if 0.0 < float(v) <= total})
     return unique_sorted
+
+
+def strict_interior_arc_lengths(model: PlanarPCS) -> jnp.ndarray:
+    fractions = jnp.asarray([0.37, 0.73], dtype=jnp.float64)
+    return (model.L_cum[:-1, None] + model.L[:, None] * fractions).reshape(-1)
 
 
 def random_q(model, key=jax.random.PRNGKey(0), scale=0.1):
@@ -104,7 +114,7 @@ def segment_tip_poses(model: PlanarPCS, q: Array) -> Array:
 def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     th, px, py = chi
-    th0 = params["th0"].item()
+    th0 = params.base_pose[0].item()
     print("th0 = ", th0)
     xi = (
         (th - th0)
@@ -250,7 +260,7 @@ def test_planar_constant_strain_call():
     # Test the differential relation: delta_chi ≈ J * delta_q
     print("Testing differential relation: delta_chi ≈ J * delta_q")
     delta_q = jnp.array([EPS, -EPS, 2 * EPS])
-    chi_plus = robot.forward_kinematics(q=q + delta_q, s=params["L"][0])
+    chi_plus = robot.forward_kinematics(q=q + delta_q, s=params.length[0])
     chi_pred = chi + J @ delta_q
     assert_allclose(chi_plus, chi_pred, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
@@ -260,10 +270,8 @@ def test_planar_constant_strain_call():
     q = jnp.zeros((3,))
     qd = jnp.zeros((3,))
     u = jnp.zeros((3,))  # no external forces
-    params_bis = params.copy()
-    params_bis["g"] = jnp.zeros((2,))  # no gravity for this test
-    robot = robot.update_params(params_bis)
-    print("q = ", q, "qd = ", qd, "u = ", u, "g = ", params_bis["g"])
+    robot = robot.update_params(gravity=jnp.zeros((2,)))  # no gravity for this test
+    print("q = ", q, "qd = ", qd, "u = ", u, "g = ", robot.params.gravity)
     y = jnp.concatenate([q, qd])
     yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
     qdd, qdres = jnp.split(yd, 2)
@@ -278,17 +286,17 @@ def test_public_planar_pcs_accessors_geometry_and_chi() -> None:
     q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
 
     assert model.is_planar is True
-    assert_allclose(model.length, jnp.sum(params["L"]), rtol=RTOL, atol=ATOL)
-    assert_allclose(model.segment_length, params["L"], rtol=RTOL, atol=ATOL)
+    assert_allclose(model.length, jnp.sum(params.length), rtol=RTOL, atol=ATOL)
+    assert_allclose(model.segment_length, params.length, rtol=RTOL, atol=ATOL)
 
-    s_second = params["L"][0] + 0.25 * params["L"][1]
+    s_second = params.length[0] + 0.25 * params.length[1]
     segment_idx, s_local = model.classify_segment(s_second)
     assert int(segment_idx) == 1
-    assert_allclose(s_local, 0.25 * params["L"][1], rtol=RTOL, atol=ATOL)
+    assert_allclose(s_local, 0.25 * params.length[1], rtol=RTOL, atol=ATOL)
 
     tag, geom = model.cross_section_geometry(q, s_second)
     assert int(tag) == CrossSectionGeometry.CIRCULAR
-    assert_allclose(geom, jnp.array([params["r"][1]]), rtol=RTOL, atol=ATOL)
+    assert_allclose(geom, jnp.array([params.radius[1]]), rtol=RTOL, atol=ATOL)
 
     xi = model.strain(q)
     assert_allclose(model.chi(xi, s_second), model.forward_kinematics(q, s_second))
@@ -324,7 +332,7 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments):
 
     for q in (zero_cfg, random_cfg):
         chi_batched = model.forward_kinematics_batched(q, s_ps)
-        chi_expected = jax.vmap(lambda s: model.forward_kinematics(q, s))(s_ps)
+        chi_expected = jax.vmap(lambda s, q=q: model.forward_kinematics(q, s))(s_ps)
 
         assert_allclose(chi_batched, chi_expected, rtol=RTOL, atol=ATOL)
 
@@ -482,7 +490,7 @@ def test_inverse_kinematics_relative_pose_computation():
     )
 
     # Manually compute the first relative pose (segment 1 w.r.t. base)
-    base_pose = jnp.array([model.th0, 0.0, 0.0])
+    base_pose = model._base_planar_pose(chi_tips.dtype)
     expected_rel_0 = chi_tips[0] - base_pose
     expected_rel_0 = expected_rel_0.at[1:].set(
         jnp.array(
@@ -520,7 +528,8 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments):
 
     model, params = make_planar_pcs(num_segments=num_segments)
     model_reduced = PlanarPCS(
-        num_segments=num_segments, params=params, strain_selector=strain_selector
+        params=params,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
 
     # Test with multiple random configurations
@@ -570,9 +579,8 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments):
     )
 
     model_no_curvature = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector_no_curvature,
+        structure=PlanarPCSStructure(strain_selector=strain_selector_no_curvature),
     )
 
     # Test one configuration with no curvature model
@@ -605,9 +613,8 @@ def test_inverse_kinematics_strain_selector_edge_cases():
         jnp.array([True, False, False]), num_segments
     )
     model_curvature_only = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector_curvature_only,
+        structure=PlanarPCSStructure(strain_selector=strain_selector_curvature_only),
     )
 
     # Test with a simple configuration
@@ -632,9 +639,8 @@ def test_inverse_kinematics_strain_selector_edge_cases():
         jnp.array([False, True, False]), num_segments
     )
     model_extension_only = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        strain_selector=strain_selector_extension_only,
+        structure=PlanarPCSStructure(strain_selector=strain_selector_extension_only),
     )
 
     q_test2 = random_q(model_extension_only, key=jax.random.PRNGKey(222), scale=0.05)
@@ -702,6 +708,20 @@ def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_jacobian_bodyframe_with_pose_matches_forward_kinematics(
+    num_segments: int,
+) -> None:
+    model, _ = make_planar_pcs(num_segments=num_segments)
+    q = random_q(model, jax.random.PRNGKey(987), scale=0.05)
+
+    for s in sample_arc_lengths(model):
+        chi, J_body = model._jacobian_bodyframe_with_pose(q, s)
+
+        assert_allclose(chi, model.forward_kinematics(q, s), rtol=RTOL, atol=ATOL)
+        assert_allclose(J_body, model.jacobian_bodyframe(q, s), rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
     model, _ = make_planar_pcs(
         num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH
@@ -714,8 +734,8 @@ def test_jacobian_bodyframe_inertialframe_coherence(num_segments: int):
         J_body = model.jacobian_bodyframe(q, s)
         chi = model.forward_kinematics(q, s)
         # only rotation
-        g = exp_SE2(jnp.array([chi[0], 0.0, 0.0]))
-        J_expected = Adjoint_g_SE2(g) @ J_body
+        g = poses.planar_pose_to_transform(jnp.array([chi[0], 0.0, 0.0]))
+        J_expected = se2.adjoint(g) @ J_body
 
         assert jnp.allclose(J_impl, J_expected, rtol=1e-6, atol=1e-7), (
             f"num_segments={num_segments}, s={s}\nJ_impl:\n{J_impl}\nJ_expected:\n{J_expected}"
@@ -735,7 +755,7 @@ def test_jacobian_inertialframe_matches_autodiff(num_segments):
         for s in sample_arc_lengths(model):
             J_impl = model.jacobian_inertialframe(q, s)
 
-            def fk(q_):
+            def fk(q_, s=s):
                 return model.forward_kinematics(q_, s)  # [theta, x, y]
 
             J_ad = jax.jacfwd(fk)(q)
@@ -848,7 +868,7 @@ def test_jacobian_tips_matches_pointwise_inertialframe_evaluation(
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments):
+def test_jacobian_time_derivative_bodyframe_matches_autograd_jvp(num_segments):
     model, _ = make_planar_pcs(
         num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH
     )
@@ -862,9 +882,9 @@ def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments):
         qd = random_q(model, qd_key, scale=0.2)
 
         for s in sample_arc_lengths(model):
-            J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+            J_impl, Jd_impl = model.jacobian_and_time_derivative_bodyframe(q, qd, s)
 
-            def J_of_q(q_):
+            def J_of_q(q_, s=s):
                 return model.jacobian_bodyframe(q_, s)
 
             _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
@@ -875,7 +895,7 @@ def test_jacobian_derivative_bodyframe_matches_autograd_jvp(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments):
+def test_jacobian_time_derivative_bodyframe_matches_central_differences(num_segments):
     model, _ = make_planar_pcs(
         num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH
     )
@@ -891,7 +911,7 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments)
         qd = random_q(model, qd_key, scale=0.2)
 
         for s in sample_arc_lengths(model):
-            J_impl, Jd_impl = model.jacobian_and_derivative_bodyframe(q, qd, s)
+            J_impl, Jd_impl = model.jacobian_and_time_derivative_bodyframe(q, qd, s)
 
             eye = jnp.eye(q.shape[0])
             dJ_cols = []
@@ -910,7 +930,7 @@ def test_jacobian_derivative_bodyframe_matches_central_differences(num_segments)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3, 5])
-def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
+def test_jacobian_time_derivative_inertialframe_matches_autograd_jvp(num_segments):
     model, _ = make_planar_pcs(
         num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH
     )
@@ -924,9 +944,9 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
         qd = random_q(model, qd_key, scale=0.2)
 
         for s in sample_arc_lengths(model):
-            J_impl, Jd_impl = model.jacobian_and_derivative_inertialframe(q, qd, s)
+            J_impl, Jd_impl = model.jacobian_and_time_derivative_inertialframe(q, qd, s)
 
-            def J_of_q(q_):
+            def J_of_q(q_, s=s):
                 return model.jacobian_inertialframe(q_, s)
 
             _, Jd_jvp = jax.jvp(J_of_q, (q,), (qd,))
@@ -937,7 +957,7 @@ def test_jacobian_derivative_inertialframe_matches_autograd_jvp(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluation(
+def test_jacobian_and_time_derivative_inertialframe_batched_matches_pointwise_evaluation(
     num_segments: int,
 ) -> None:
     model, _ = make_planar_pcs(num_segments=num_segments)
@@ -953,12 +973,12 @@ def test_jacobian_and_derivative_inertialframe_batched_matches_pointwise_evaluat
     s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = model.jacobian_and_derivative_inertialframe_batched(
+        J_batch, Jd_batch = model.jacobian_and_time_derivative_inertialframe_batched(
             q, qd, s_points
         )
 
         for idx, s_val in enumerate(s_points):
-            J_single, Jd_single = model.jacobian_and_derivative_inertialframe(
+            J_single, Jd_single = model.jacobian_and_time_derivative_inertialframe(
                 q, qd, s_val
             )
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
@@ -983,7 +1003,9 @@ def test_J_Jd_local_tips_matches_pointwise_evaluation(num_segments: int):
         J_local_tips, Jd_local_tips = model._J_Jd_local_tips(q, qd)
 
         for idx, s_tip in enumerate(s_tips):
-            J_local, Jd_local = model.jacobian_and_derivative_bodyframe(q, qd, s_tip)
+            J_local, Jd_local = model.jacobian_and_time_derivative_bodyframe(
+                q, qd, s_tip
+            )
 
             assert_allclose(
                 J_local,
@@ -1014,17 +1036,19 @@ def test_J_Jd_local_batched_matches_pointwise_evaluation(num_segments: int):
     s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = model.jacobian_and_derivative_bodyframe_batched(
+        J_batch, Jd_batch = model.jacobian_and_time_derivative_bodyframe_batched(
             q, qd, s_points
         )
 
         for idx, s_val in enumerate(s_points):
-            J_single, Jd_single = model.jacobian_and_derivative_bodyframe(q, qd, s_val)
+            J_single, Jd_single = model.jacobian_and_time_derivative_bodyframe(
+                q, qd, s_val
+            )
             assert_allclose(J_batch[idx], J_single, rtol=RTOL, atol=ATOL)
             assert_allclose(Jd_batch[idx], Jd_single, rtol=RTOL, atol=ATOL)
 
 
-def test_public_planar_pcs_jacobian_aliases_match_inertialframe_methods() -> None:
+def test_public_planar_pcs_jacobian_wrappers_match_inertialframe_methods() -> None:
     model, _ = make_planar_pcs(num_segments=2)
     key_q, key_qd = jax.random.split(jax.random.PRNGKey(2028))
     q = random_q(model, key_q, scale=0.03)
@@ -1045,17 +1069,79 @@ def test_public_planar_pcs_jacobian_aliases_match_inertialframe_methods() -> Non
         atol=ATOL,
     )
 
-    J, Jd = model.jacobian_and_derivative(q, qd, s)
-    J_expected, Jd_expected = model.jacobian_and_derivative_inertialframe(q, qd, s)
+    J, Jd = model.jacobian_and_time_derivative(q, qd, s)
+    J_expected, Jd_expected = model.jacobian_and_time_derivative_inertialframe(q, qd, s)
     assert_allclose(J, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd, Jd_expected, rtol=RTOL, atol=ATOL)
 
-    J_batch, Jd_batch = model.jacobian_and_derivative_batched(q, qd, s_ps)
+    J_batch, Jd_batch = model.jacobian_and_time_derivative_batched(q, qd, s_ps)
     J_batch_expected, Jd_batch_expected = (
-        model.jacobian_and_derivative_inertialframe_batched(q, qd, s_ps)
+        model.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
     )
     assert_allclose(J_batch, J_batch_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)
+
+
+def test_planar_pcs_arc_length_derivatives_match_autodiff() -> None:
+    model, _ = make_planar_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(2029), scale=0.03)
+
+    for s in strict_interior_arc_lengths(model):
+        _, fk_s_autodiff = jvp(
+            lambda s_: model._forward_kinematics(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            model.forward_kinematics_arc_length_derivative(q, s),
+            fk_s_autodiff,
+            rtol=RTOL,
+            atol=ATOL,
+        )
+
+        _, Js_autodiff = jvp(
+            lambda s_: model._jacobian(q, s_),
+            (s,),
+            (jnp.ones_like(s),),
+        )
+        assert_allclose(
+            model.jacobian_arc_length_derivative(q, s),
+            Js_autodiff,
+            rtol=1e-6,
+            atol=1e-7,
+        )
+
+
+def test_planar_pcs_custom_jvps_include_arc_length_derivative() -> None:
+    model, _ = make_planar_pcs(num_segments=2)
+    q = random_q(model, jax.random.PRNGKey(2030), scale=0.03)
+    qd = random_q(model, jax.random.PRNGKey(2031), scale=0.02)
+    s = strict_interior_arc_lengths(model)[1]
+    sd = jnp.array(0.37, dtype=jnp.float64)
+
+    _, posed = jvp(
+        lambda q_, s_: model.forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    _, expected_posed = jvp(
+        lambda q_, s_: model._forward_kinematics(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    assert_allclose(posed, expected_posed, rtol=RTOL, atol=ATOL)
+
+    _, Jd = jvp(
+        lambda q_, s_: model.jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    _, expected_Jd = jvp(
+        lambda q_, s_: model._jacobian(q_, s_),
+        (q, s),
+        (qd, sd),
+    )
+    assert_allclose(Jd, expected_Jd, rtol=1e-6, atol=1e-7)
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -1071,7 +1157,7 @@ def test_inertia_matrix_matches_kinetic_energy_autodiff(num_segments: int):
 
         B_impl = robot.inertia_matrix(q)
 
-        def T_of_qd(qd_):
+        def T_of_qd(qd_, q=q):
             return robot.kinetic_energy(q, qd_)
 
         dT_dqdsq = jacfwd(jax.grad(T_of_qd))(qd)
@@ -1138,7 +1224,7 @@ def test_coriolis_force_matches_kinetic_energy_autograd(num_segments):
         tau_cor_impl = robot.coriolis_matrix(q, qd) @ qd
 
         grad_T_q = dT_dq(q, qd)
-        jac_T_q = jax.jacobian(lambda qq: dT_dqd(qq, qd))(q)
+        jac_T_q = jax.jacobian(lambda qq, qd=qd: dT_dqd(qq, qd))(q)
         tau_cor_autograd = jac_T_q @ qd - grad_T_q
 
         print("tau_cor_impl:\n", tau_cor_impl)
@@ -1225,7 +1311,7 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         (False, True, False),
     ],
 )
-def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
+def test_integration_kinematics_matches_existing_batched_path_planar(
     num_segments: int, selector_per_segment: tuple[bool, ...] | None
 ):
     base_model, params = make_planar_pcs(num_segments=num_segments)
@@ -1235,10 +1321,8 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
         else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
     )
     model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
     dof = int(model.num_active_strains.item())
 
@@ -1246,8 +1330,8 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
     q = random_q(model, key_q, scale=0.05)
     qd = random_q(model, key_qd, scale=0.1)
 
-    weights, g_quads, J_quads, Jd_quads = model._active_quadrature_kinematics(q, qd)
-    Xs_scaled, weights_expected = jax.vmap(
+    g_quads, J_quads, Jd_quads = model.integration_kinematics(q, qd)
+    Xs_scaled, _ = jax.vmap(
         scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
     )(
         model.integration_points,
@@ -1259,29 +1343,16 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
     num_inner = model.num_gauss_points
 
     chi_expected = model.forward_kinematics_batched(q, s_points)
-    g_expected = jax.vmap(exp_SE2)(chi_expected).reshape(num_segments, num_inner, 3, 3)
+    g_expected = jax.vmap(poses.planar_pose_to_transform)(chi_expected).reshape(
+        num_segments, num_inner, 3, 3
+    )
     J_full, Jd_full = model._J_Jd_local_batched(q, qd, s_points)
     J_expected = (J_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
     Jd_expected = (Jd_full @ model.B_xi).reshape(num_segments, num_inner, 3, dof)
 
-    assert_allclose(weights, weights_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(g_quads, g_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(J_quads, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_quads, Jd_expected, rtol=RTOL, atol=ATOL)
-
-    weights_fast, g_fast, J_fast, Jd_fast = model._active_quadrature_kinematics(
-        q, qd, convective_only_jd=True
-    )
-
-    assert_allclose(weights_fast, weights_expected, rtol=RTOL, atol=ATOL)
-    assert_allclose(g_fast, g_expected, rtol=RTOL, atol=ATOL)
-    assert_allclose(J_fast, J_expected, rtol=RTOL, atol=ATOL)
-    assert_allclose(
-        jnp.einsum("ijkl,l->ijk", Jd_fast, qd),
-        jnp.einsum("ijkl,l->ijk", Jd_expected, qd),
-        rtol=RTOL,
-        atol=ATOL,
-    )
 
 
 @pytest.mark.parametrize("num_segments", [1, 3])
@@ -1293,7 +1364,7 @@ def test_active_quadrature_kinematics_matches_existing_batched_path_planar(
         (False, True, False),
     ],
 )
-def test_active_quadrature_forward_dynamics_terms_match_public_matrices_planar(
+def test_dynamics_terms_match_public_matrices_planar(
     num_segments: int, selector_per_segment: tuple[bool, ...] | None
 ):
     base_model, params = make_planar_pcs(num_segments=num_segments)
@@ -1303,10 +1374,8 @@ def test_active_quadrature_forward_dynamics_terms_match_public_matrices_planar(
         else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
     )
     model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
     dof = int(model.num_active_strains.item())
 
@@ -1319,7 +1388,7 @@ def test_active_quadrature_forward_dynamics_terms_match_public_matrices_planar(
     tau_ext = random_q(model, key_tau, scale=0.03)
 
     for q, qd in ((zero_q, zero_qd), (random_q_, random_qd)):
-        B, Cqd, G = model._active_quadrature_forward_dynamics_terms(q, qd)
+        B, Cqd, G = model.dynamics_terms(q, qd)
         C = model.coriolis_matrix(q, qd)
 
         assert_allclose(B, model.inertia_matrix(q), rtol=RTOL, atol=ATOL)
@@ -1341,20 +1410,16 @@ def test_cached_constant_matrices_refresh_after_update_params_planar():
     selector_per_segment = jnp.array([True, True, False], dtype=bool)
     base_model, params = make_planar_pcs(num_segments=2)
     model = PlanarPCS(
-        num_segments=2,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=jnp.tile(selector_per_segment, 2),
+        structure=PlanarPCSStructure(strain_selector=jnp.tile(selector_per_segment, 2)),
     )
 
     updated = model.update_params(
-        {
-            "r": 1.1 * model.r,
-            "rho": 0.9 * model.rho,
-            "E": 1.25 * model.E,
-            "G": 0.75 * model.G,
-            "D": 2.0 * model.D,
-        }
+        radius=1.1 * model.r,
+        density=0.9 * model.rho,
+        young_modulus=1.25 * model.E,
+        shear_modulus=0.75 * model.G,
+        damping_matrix=2.0 * model.D,
     )
     segment_ids = jnp.arange(updated.num_segments)
     expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
@@ -1394,11 +1459,11 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(
     dg_dq = jacfwd(model.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacfwd(model.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacfwd(model.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe = jacfwd(model.jacobian_and_derivative_bodyframe, argnums=0)(
+    _, dJd_bodyframe = jacfwd(model.jacobian_and_time_derivative_bodyframe, argnums=0)(
         q, qd, s
     )
     _, dJd_inertialframe = jacfwd(
-        model.jacobian_and_derivative_inertialframe, argnums=0
+        model.jacobian_and_time_derivative_inertialframe, argnums=0
     )(q, qd, s)
 
     assert not jnp.isnan(dg_dq).any()
@@ -1454,11 +1519,11 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration() -> Non
     dg_dq = jacrev(model.forward_kinematics, argnums=0)(q, s)
     dJ_bodyframe_dq = jacrev(model.jacobian_bodyframe, argnums=0)(q, s)
     dJ_inertialframe_dq = jacrev(model.jacobian_inertialframe, argnums=0)(q, s)
-    _, dJd_bodyframe = jacrev(model.jacobian_and_derivative_bodyframe, argnums=0)(
+    _, dJd_bodyframe = jacrev(model.jacobian_and_time_derivative_bodyframe, argnums=0)(
         q, qd, s
     )
     _, dJd_inertialframe = jacrev(
-        model.jacobian_and_derivative_inertialframe, argnums=0
+        model.jacobian_and_time_derivative_inertialframe, argnums=0
     )(q, qd, s)
 
     assert not jnp.isnan(dg_dq).any()
@@ -1513,10 +1578,8 @@ def test_strain_basis_creation_matches_selector_order_planar():
         [True, False, True, False, True, False, True, True, False], dtype=bool
     )
     model = PlanarPCS(
-        num_segments=3,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
 
     expected_B = expected_selection_basis(9, (0, 2, 4, 6, 7))
@@ -1578,10 +1641,10 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates_pla
         J_unscaled = unscaled.jacobian_bodyframe(q_unscaled, s)
         assert_allclose(J_scaled, J_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
 
-        J_scaled, Jd_scaled = scaled.jacobian_and_derivative_bodyframe(
+        J_scaled, Jd_scaled = scaled.jacobian_and_time_derivative_bodyframe(
             q_scaled, qd_scaled, s
         )
-        J_unscaled, Jd_unscaled = unscaled.jacobian_and_derivative_bodyframe(
+        J_unscaled, Jd_unscaled = unscaled.jacobian_and_time_derivative_bodyframe(
             q_unscaled, qd_unscaled, s
         )
         assert_allclose(J_scaled, J_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
@@ -1612,7 +1675,7 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates_pla
         atol=ATOL,
     )
 
-    updated = scaled.update_params({"L": jnp.array([0.2, 0.3])})
+    updated = scaled.update_params(length=jnp.array([0.2, 0.3]))
     updated_scale = jnp.array([5.0, 1.0, 1.0, 10 / 3, 1.0, 1.0])
     assert_allclose(
         updated.B_xi,
@@ -1628,16 +1691,12 @@ def _make_full_and_reduced_planar(num_segments: int, selector_per_segment: Array
     # Build a base model and copy its params for both full and reduced variants
     base_model, params = make_planar_pcs(num_segments=num_segments)
     full_model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=None,
+        structure=PlanarPCSStructure(strain_selector=None),
     )
     reduced_model = PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        xi_ref=base_model.xi_ref,
-        strain_selector=strain_selector,
+        structure=PlanarPCSStructure(strain_selector=strain_selector),
     )
     return full_model, reduced_model, reduced_model.B_xi
 
@@ -1684,7 +1743,9 @@ def test_strain_basis_consistency_strain_and_kinematics_planar(num_segments: int
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_strain_basis_consistency_jacobians_and_derivatives_planar(num_segments: int):
+def test_strain_basis_consistency_jacobians_and_time_derivatives_planar(
+    num_segments: int,
+):
     selector_per_segment = jnp.array([True, True, False], dtype=bool)
     full, reduced, B = _make_full_and_reduced_planar(num_segments, selector_per_segment)
 
@@ -1718,10 +1779,12 @@ def test_strain_basis_consistency_jacobians_and_derivatives_planar(num_segments:
 
     # Body-frame (J, Jd)
     for s in s_points:
-        J_small, Jd_small = reduced.jacobian_and_derivative_bodyframe(
+        J_small, Jd_small = reduced.jacobian_and_time_derivative_bodyframe(
             q_small, qd_small, s
         )
-        J_full, Jd_full = full.jacobian_and_derivative_bodyframe(q_full, qd_full, s)
+        J_full, Jd_full = full.jacobian_and_time_derivative_bodyframe(
+            q_full, qd_full, s
+        )
         assert J_small.shape == (3, n_small_act)
         assert Jd_small.shape == (3, n_small_act)
         assert J_full.shape == (3, int(full.num_active_strains.item()))
@@ -1731,10 +1794,12 @@ def test_strain_basis_consistency_jacobians_and_derivatives_planar(num_segments:
 
     # Inertial-frame (J, Jd)
     for s in s_points:
-        J_small, Jd_small = reduced.jacobian_and_derivative_inertialframe(
+        J_small, Jd_small = reduced.jacobian_and_time_derivative_inertialframe(
             q_small, qd_small, s
         )
-        J_full, Jd_full = full.jacobian_and_derivative_inertialframe(q_full, qd_full, s)
+        J_full, Jd_full = full.jacobian_and_time_derivative_inertialframe(
+            q_full, qd_full, s
+        )
         assert J_small.shape == (3, n_small_act)
         assert Jd_small.shape == (3, n_small_act)
         assert J_full.shape == (3, int(full.num_active_strains.item()))

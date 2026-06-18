@@ -1,13 +1,26 @@
+# ruff: noqa: E402
 import jax
 import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
+
 from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
-from typing import Dict, Optional
+from system_param_builders import (
+    linear_tendon_routing,
+    passive_tendon_params,
+    pcs_params,
+    spatial_base_pose,
+    tendon_actuated_pcs_params,
+)
 
-from soromox.systems import TendonActuatedPCS
+from soromox.systems import (
+    LinearTendonRoutingParams,
+    PassiveTendonParams,
+    PCSStructure,
+    TendonActuatedPCS,
+)
 from soromox.utils.tolerance import Tolerance
 
 XI_REF = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64)
@@ -15,10 +28,10 @@ XI_REF = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64)
 
 def _create_robot(
     segment_lengths: Array,
-    tendon_params: Dict[str, Array],
+    tendon_params: LinearTendonRoutingParams,
     strain_selector=None,
-    passive_tendon_routing_params: Optional[Dict[str, Array]] = None,
-    passive_tendon_params: Optional[Dict[str, Array]] = None,
+    passive_tendon_routing: LinearTendonRoutingParams | None = None,
+    passive_tendon: PassiveTendonParams | None = None,
 ) -> TendonActuatedPCS:
     """
     Helper that builds a TendonActuatedPCS instance with consistent material parameters.
@@ -27,42 +40,40 @@ def _create_robot(
     rho = 1070 * jnp.ones(
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
-    params = {
-        "p0": jnp.zeros(6),  # Initial position and orientation
-        "r": 1.0 * jnp.ones((num_segments,)),  # default: 2e-2
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "L": segment_lengths,
-    }
-
-    params["D"] = 1e-3 * jnp.diag(
+    damping_matrix = 1e-3 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
             )
-            * params["L"][:, None]
+            * segment_lengths[:, None]
         ).flatten()
     )
-
-    robot_kwargs = dict(
-        num_segments=num_segments,
-        params=params,
-        num_gauss_points=5,
-        active_tendon_routing_params=tendon_params,
+    body = pcs_params(
+        base_pose=spatial_base_pose(),  # Initial position and orientation
+        length=segment_lengths,
+        radius=1.0 * jnp.ones((num_segments,)),  # default: 2e-2
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
+        young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
+        shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
+        damping_matrix=damping_matrix,
     )
-    if strain_selector is not None:
-        robot_kwargs["strain_selector"] = strain_selector
-    if passive_tendon_routing_params is not None:
-        robot_kwargs["passive_tendon_routing_params"] = passive_tendon_routing_params
-    if passive_tendon_params is not None:
-        robot_kwargs["passive_tendon_params"] = passive_tendon_params
+    params = tendon_actuated_pcs_params(
+        body=body,
+        active_tendon_routing=tendon_params,
+        passive_tendon_routing=passive_tendon_routing,
+        passive_tendon=passive_tendon,
+    )
 
-    return TendonActuatedPCS(**robot_kwargs)
+    return TendonActuatedPCS(
+        params=params,
+        structure=PCSStructure(num_gauss_points=5, strain_selector=strain_selector),
+    )
 
 
-def _stacked_tendon_params(num_segments: int, num_tendons: int) -> Dict[str, Array]:
+def _stacked_tendon_params(
+    num_segments: int, num_tendons: int
+) -> LinearTendonRoutingParams:
     """
     Build a set of tendon routing parameters covering multiple attachments and slopes.
     """
@@ -78,16 +89,18 @@ def _stacked_tendon_params(num_segments: int, num_tendons: int) -> Dict[str, Arr
     my = 0.01 * (jnp.mod(idx, 3).astype(jnp.float64) - 1.0)
     mz = 0.012 * (jnp.mod(idx + 1, 3).astype(jnp.float64) - 1.0)
 
-    return {
-        "ry": ry,
-        "rz": rz,
-        "my": my,
-        "mz": mz,
-        "idx_seg_att": attachment,
-    }
+    return linear_tendon_routing(
+        y_intercept=ry,
+        z_intercept=rz,
+        y_slope=my,
+        z_slope=mz,
+        attachment_segment_index=attachment,
+    )
 
 
-def reference_actuation_matrix(tendon_params: Dict[str, Array], l_tot: Array) -> Array:
+def reference_actuation_matrix(
+    tendon_params: LinearTendonRoutingParams, l_tot: Array
+) -> Array:
     """
     Compute the actuation matrix of a soft robot of length l_tot w.r.t. one
     linear tendon at the straight configuration corresponding to vector state
@@ -103,10 +116,10 @@ def reference_actuation_matrix(tendon_params: Dict[str, Array], l_tot: Array) ->
         A (Array): actuation matrix at straight configuration
     """
     ry, rz, my, mz = (
-        tendon_params["ry"][0],
-        tendon_params["rz"][0],
-        tendon_params["my"][0],
-        tendon_params["mz"][0],
+        tendon_params.y_intercept[0],
+        tendon_params.z_intercept[0],
+        tendon_params.y_slope[0],
+        tendon_params.z_slope[0],
     )
     A = jnp.array(
         [
@@ -123,7 +136,7 @@ def reference_actuation_matrix(tendon_params: Dict[str, Array], l_tot: Array) ->
 
 
 def reference_actuation_basis(
-    tendon_params: Dict[str, Array], q: Array, s: Array
+    tendon_params: LinearTendonRoutingParams, q: Array, s: Array
 ) -> Array:
     """
     Computes the vector representing the actuation basis of the given tendon
@@ -140,10 +153,10 @@ def reference_actuation_basis(
     """
     xi = jnp.eye(q.shape[0]) @ q + XI_REF
     ry, rz, my, mz = (
-        tendon_params["ry"][0],
-        tendon_params["rz"][0],
-        tendon_params["my"][0],
-        tendon_params["mz"][0],
+        tendon_params.y_intercept[0],
+        tendon_params.z_intercept[0],
+        tendon_params.y_slope[0],
+        tendon_params.z_slope[0],
     )
     xi_1, xi_2, xi_3, xi_4, xi_5, xi_6 = xi[0], xi[1], xi[2], xi[3], xi[4], xi[5]
     Phi_a = jnp.array(
@@ -179,33 +192,33 @@ def test_actuation_matrix_pcs():
     test_cases = [
         (
             jnp.array([0.5]),
-            {
-                "ry": jnp.array([0.1]),
-                "rz": jnp.array([0.05]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.1]),
+                z_intercept=jnp.array([0.05]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
         (
             jnp.array([0.5, 0.6]),
-            {
-                "ry": jnp.array([0.15]),
-                "rz": jnp.array([0.0]),
-                "my": jnp.array([0.01]),
-                "mz": jnp.array([0.01]),
-                "idx_seg_att": jnp.array([1]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.15]),
+                z_intercept=jnp.array([0.0]),
+                y_slope=jnp.array([0.01]),
+                z_slope=jnp.array([0.01]),
+                attachment_segment_index=jnp.array([1]),
+            ),
         ),
         (
             jnp.array([0.5, 0.6, 0.7]),
-            {
-                "ry": jnp.array([0.1]),
-                "rz": jnp.array([-0.05]),
-                "my": jnp.array([0.01]),
-                "mz": jnp.array([-0.05]),
-                "idx_seg_att": jnp.array([2]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.1]),
+                z_intercept=jnp.array([-0.05]),
+                y_slope=jnp.array([0.01]),
+                z_slope=jnp.array([-0.05]),
+                attachment_segment_index=jnp.array([2]),
+            ),
         ),
     ]
 
@@ -233,13 +246,13 @@ def test_actuation_matrix_pcs():
 
     # test actuation basis
     print("\nTesting actuation basis... ------------------------")
-    tendon_params = {
-        "ry": jnp.array([0.1]),
-        "rz": jnp.array([-0.05]),
-        "my": jnp.array([0.01]),
-        "mz": jnp.array([-0.05]),
-        "idx_seg_att": jnp.array([0]),
-    }
+    tendon_params = linear_tendon_routing(
+        y_intercept=jnp.array([0.1]),
+        z_intercept=jnp.array([-0.05]),
+        y_slope=jnp.array([0.01]),
+        z_slope=jnp.array([-0.05]),
+        attachment_segment_index=jnp.array([0]),
+    )
     robot = _create_robot(jnp.array([0.5]), tendon_params)
 
     test_cases = [
@@ -263,7 +276,7 @@ def test_actuation_matrix_pcs():
 
     for q, s in test_cases:
         xi = robot.strain(q).reshape((robot.num_segments, 6))
-        tendon_params_0 = jax.tree.map(lambda x: x[0], tendon_params)
+        tendon_params_0 = tendon_params.routing_for_tendon(0)
         target_actuation_basis = robot._local_actuation_basis(
             0,
             xi[0],
@@ -291,13 +304,13 @@ def test_actuation_matrix_with_inactive_strains():
     """
 
     segment_lengths = jnp.array([0.4, 0.6])
-    tendon_params = {
-        "ry": jnp.array([0.12]),
-        "rz": jnp.array([0.02]),
-        "my": jnp.array([0.02]),
-        "mz": jnp.array([-0.03]),
-        "idx_seg_att": jnp.array([1]),
-    }
+    tendon_params = linear_tendon_routing(
+        y_intercept=jnp.array([0.12]),
+        z_intercept=jnp.array([0.02]),
+        y_slope=jnp.array([0.02]),
+        z_slope=jnp.array([-0.03]),
+        attachment_segment_index=jnp.array([1]),
+    )
     strain_selector = jnp.array(
         [
             True,
@@ -363,13 +376,13 @@ def test_constant_curvature_segment_actuation_matches_closed_form_expression_fro
     segment_lengths = jnp.array([1.0], dtype=jnp.float64)
     d = 1.0e-2  # tendon distance/radius from centerline
     tendon_angles = jnp.array([0.0, 2 * jnp.pi / 3, 4 * jnp.pi / 3], dtype=jnp.float64)
-    tendon_params = {
-        "ry": d * jnp.cos(tendon_angles),
-        "rz": d * jnp.sin(tendon_angles),
-        "my": jnp.zeros_like(tendon_angles),
-        "mz": jnp.zeros_like(tendon_angles),
-        "idx_seg_att": jnp.zeros((3,), dtype=jnp.int32),
-    }
+    tendon_params = linear_tendon_routing(
+        y_intercept=d * jnp.cos(tendon_angles),
+        z_intercept=d * jnp.sin(tendon_angles),
+        y_slope=jnp.zeros_like(tendon_angles),
+        z_slope=jnp.zeros_like(tendon_angles),
+        attachment_segment_index=jnp.zeros((3,), dtype=jnp.int32),
+    )
     # activate bending about y and z plus axial elongation
     strain_selector = jnp.array([False, True, True, True, False, False], dtype=bool)
 
@@ -492,26 +505,26 @@ def test_passive_tendon_length_gradient_matches_jacobian(
     )
     active_params = _stacked_tendon_params(num_segments, max(1, num_passive_tendons))
     passive_routing_params = _stacked_tendon_params(num_segments, num_passive_tendons)
-    passive_tendon_params = {
-        "k_pt": jnp.linspace(
+    passive_tendon_phys = passive_tendon_params(
+        stiffness=jnp.linspace(
             70.0,
             70.0 + 10.0 * (num_passive_tendons - 1),
             num_passive_tendons,
             dtype=jnp.float64,
         ),
-        "d_pt": jnp.linspace(
+        damping=jnp.linspace(
             0.6,
             0.6 + 0.2 * (num_passive_tendons - 1),
             num_passive_tendons,
             dtype=jnp.float64,
         ),
-        "l_pt0": -0.004 * jnp.arange(num_passive_tendons, dtype=jnp.float64),
-    }
+        rest_length_offset=-0.004 * jnp.arange(num_passive_tendons, dtype=jnp.float64),
+    )
     robot = _create_robot(
         segment_lengths,
         active_params,
-        passive_tendon_routing_params=passive_routing_params,
-        passive_tendon_params=passive_tendon_params,
+        passive_tendon_routing=passive_routing_params,
+        passive_tendon=passive_tendon_phys,
     )
 
     key = jax.random.PRNGKey(11 + num_segments * 7 + num_passive_tendons)
@@ -538,17 +551,17 @@ def test_passive_tendons_contribute_to_elastic_terms():
     segment_lengths = jnp.array([0.45, 0.55], dtype=jnp.float64)
     active_params = _stacked_tendon_params(2, 2)
     passive_routing_params = _stacked_tendon_params(2, 2)
-    passive_tendon_params = {
-        "k_pt": jnp.array([60.0, 85.0], dtype=jnp.float64),
-        "d_pt": jnp.array([0.7, 1.1], dtype=jnp.float64),
-        "l_pt0": jnp.array([-0.012, 0.008], dtype=jnp.float64),
-    }
+    passive_tendon_phys = passive_tendon_params(
+        stiffness=jnp.array([60.0, 85.0], dtype=jnp.float64),
+        damping=jnp.array([0.7, 1.1], dtype=jnp.float64),
+        rest_length_offset=jnp.array([-0.012, 0.008], dtype=jnp.float64),
+    )
     robot_base = _create_robot(segment_lengths, active_params)
     robot_passive = _create_robot(
         segment_lengths,
         active_params,
-        passive_tendon_routing_params=passive_routing_params,
-        passive_tendon_params=passive_tendon_params,
+        passive_tendon_routing=passive_routing_params,
+        passive_tendon=passive_tendon_phys,
     )
 
     q = jnp.linspace(
@@ -588,6 +601,45 @@ def test_passive_tendons_contribute_to_elastic_terms():
     )
 
 
+def test_empty_passive_tendons_preserve_pcs_dynamics_terms():
+    active_params = _stacked_tendon_params(2, 2)
+    robot = _create_robot(jnp.array([0.2, 0.25]), active_params)
+    q = jnp.linspace(-0.02, 0.03, int(robot.num_active_strains), dtype=jnp.float64)
+
+    assert robot.jacobian_passive_tendon(q).shape == (0, robot.num_active_strains)
+    assert robot.passive_tendon_length(q).shape == (0,)
+    assert jnp.all(jnp.isfinite(robot.elastic_force(q)))
+    assert jnp.all(jnp.isfinite(robot.damping_matrix(q)))
+    assert jnp.isfinite(robot.elastic_energy(q))
+
+
+def test_tendon_actuated_pcs_exposes_actuator_visual_layers():
+    active_params = _stacked_tendon_params(2, 3)
+    passive_routing_params = _stacked_tendon_params(2, 2)
+    passive_tendon_phys = passive_tendon_params(
+        stiffness=jnp.array([40.0, 60.0]),
+        damping=jnp.array([0.2, 0.4]),
+        rest_length_offset=jnp.array([0.0, 0.01]),
+    )
+    robot = _create_robot(
+        jnp.array([0.2, 0.25]),
+        active_params,
+        passive_tendon_routing=passive_routing_params,
+        passive_tendon=passive_tendon_phys,
+    )
+    q = jnp.zeros((int(robot.num_active_strains),), dtype=jnp.float64)
+    s_points = jnp.linspace(0.0, float(robot.length), 7)
+
+    layers = robot.actuator_visual_layers(q, s_points)
+
+    assert len(layers) == 2
+    assert layers[0].name == "active_tendons"
+    assert layers[0].kind == "tendon"
+    assert layers[0].points.shape == (3, 7, 3)
+    assert layers[1].name == "passive_tendons"
+    assert layers[1].points.shape == (2, 7, 3)
+
+
 def test_update_tendon_params():
     """Verify the update of active and passive tendon parameters."""
 
@@ -601,63 +653,71 @@ def test_update_tendon_params():
     k_init = jnp.array([100.0, 100.0])
     d_init = jnp.array([1.0, 1.0])
     l0_init = jnp.array([0.0, 0.0])
-    passive_phys = {
-        "k_pt": k_init,
-        "d_pt": d_init,
-        "l_pt0": l0_init,
-    }
+    passive_phys = passive_tendon_params(
+        stiffness=k_init,
+        damping=d_init,
+        rest_length_offset=l0_init,
+    )
 
     robot = _create_robot(
         segment_lengths,
         active_params,
-        passive_tendon_routing_params=passive_routing,
-        passive_tendon_params=passive_phys,
+        passive_tendon_routing=passive_routing,
+        passive_tendon=passive_phys,
     )
 
-    # 1. update_active_tendon_routing_params
-    new_ry = active_params["ry"] + 0.05
-    update_dict_active = {"ry": new_ry}
-    updated_robot_active = robot.update_active_tendon_routing_params(update_dict_active)
+    # 1. active tendon routing update
+    new_ry = active_params.y_intercept + 0.05
+    updated_robot_active = robot.update_params(
+        active_tendon_routing=active_params.replace(y_intercept=new_ry)
+    )
 
-    assert_allclose(updated_robot_active.active_tendon_routing_params["ry"], new_ry)
+    assert_allclose(updated_robot_active.active_tendon_routing.y_intercept, new_ry)
     assert_allclose(
-        updated_robot_active.active_tendon_routing_params["rz"], active_params["rz"]
+        updated_robot_active.active_tendon_routing.z_intercept,
+        active_params.z_intercept,
     )
-    assert_allclose(robot.active_tendon_routing_params["ry"], active_params["ry"])
+    assert_allclose(robot.active_tendon_routing.y_intercept, active_params.y_intercept)
 
-    with pytest.raises(KeyError, match="Attempted to update unknown"):
-        robot.update_active_tendon_routing_params({"invalid_param": jnp.array([1.0])})
+    with pytest.raises(KeyError, match="Unknown parameter field"):
+        active_params.replace(invalid_param=jnp.array([1.0]))
 
-    # 2. update_passive_tendon_routing_params
-    new_rz = passive_routing["rz"] - 0.02
-    update_dict_passive_routing = {"rz": new_rz}
-
-    updated_robot_passive_routing = robot.update_passive_tendon_routing_params(
-        update_dict_passive_routing
+    # 2. passive tendon routing update
+    new_rz = passive_routing.z_intercept - 0.02
+    updated_robot_passive_routing = robot.update_params(
+        passive_tendon_routing=passive_routing.replace(z_intercept=new_rz)
     )
 
     assert_allclose(
-        updated_robot_passive_routing.passive_tendon_routing_params["rz"], new_rz
+        updated_robot_passive_routing.passive_tendon_routing.z_intercept, new_rz
     )
-    assert_allclose(robot.passive_tendon_routing_params["rz"], passive_routing["rz"])
+    assert_allclose(
+        robot.passive_tendon_routing.z_intercept, passive_routing.z_intercept
+    )
 
-    with pytest.raises(KeyError, match="Attempted to update unknown"):
-        robot.update_passive_tendon_routing_params({"invalid_param": jnp.array([1.0])})
+    with pytest.raises(KeyError, match="Unknown parameter field"):
+        passive_routing.replace(invalid_param=jnp.array([1.0]))
 
-    # 3. update_passive_tendon_params
+    # 3. passive tendon impedance update
     new_k = jnp.array([250.0, 300.0])
     new_d = jnp.array([5.0, 6.0])
     new_l0 = jnp.array([0.01, 0.02])
 
     # Case A: partial update
-    updated_robot_phys_k = robot.update_passive_tendon_params({"k_pt": new_k})
+    updated_robot_phys_k = robot.update_params(
+        passive_tendon=passive_phys.replace(stiffness=new_k)
+    )
 
     assert_allclose(updated_robot_phys_k.K_pt, jnp.diag(new_k))
     assert_allclose(updated_robot_phys_k.D_pt, jnp.diag(d_init))
 
     # Case B: full update
-    updated_robot_phys_all = robot.update_passive_tendon_params(
-        {"k_pt": new_k, "d_pt": new_d, "l_pt0": new_l0}
+    updated_robot_phys_all = robot.update_params(
+        passive_tendon=PassiveTendonParams(
+            stiffness=new_k,
+            damping=new_d,
+            rest_length_offset=new_l0,
+        )
     )
 
     assert_allclose(updated_robot_phys_all.K_pt, jnp.diag(new_k))

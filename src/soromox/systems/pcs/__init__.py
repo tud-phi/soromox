@@ -1,3 +1,17 @@
+from soromox.systems.params import (
+    LinearTendonRoutingParams,
+    PassiveTendonParams,
+)
+from soromox.systems.pcs.params import (
+    ISupportParams,
+    PCSParams,
+    PlanarPCSParams,
+    PneumaticActuatedPlanarPCSParams,
+    TendonActuatedPCSParams,
+    TendonActuatedPlanarPCSParams,
+)
+from soromox.systems.pcs.structures import PCSStructure, PlanarPCSStructure
+
 from .isupport import ISupport
 from .pcs import PCS
 from .planar_pcs import PlanarPCS
@@ -13,4 +27,14 @@ __all__ = [
     "TendonActuatedPlanarPCS",
     "ISupport",
     "PneumaticActuatedPlanarPCS",
+    "PCSParams",
+    "PCSStructure",
+    "PlanarPCSParams",
+    "PlanarPCSStructure",
+    "TendonActuatedPCSParams",
+    "TendonActuatedPlanarPCSParams",
+    "PneumaticActuatedPlanarPCSParams",
+    "ISupportParams",
+    "LinearTendonRoutingParams",
+    "PassiveTendonParams",
 ]

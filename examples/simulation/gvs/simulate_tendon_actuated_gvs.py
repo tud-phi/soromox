@@ -8,13 +8,11 @@ import optimistix as optx
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     CrossSectionGeometry,
-    GVSSegment,
-    JointSpec,
-    LinkSpec,
-    StrainBasisSpec,
+    LinearTendonRoutingParams,
     SystemState,
     TendonActuatedGVS,
 )
+from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
@@ -87,42 +85,44 @@ num_gauss_points = [8, 8]
 g = [0.0, 0.0, -9.81]
 
 
-active_tendon_routing_params = {
-    "ry": jnp.array(
+active_tendon_routing = LinearTendonRoutingParams(
+    y_intercept=jnp.array(
         [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
     ),
-    "my": jnp.array(
+    y_slope=jnp.array(
         [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
     ),
-    "rz": jnp.array(
+    z_intercept=jnp.array(
         [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
     ),
-    "mz": jnp.array(
+    z_slope=jnp.array(
         [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
     ),
-    "idx_seg_att": jnp.array([0, 0]),
-}
+    attachment_segment_index=jnp.array([0, 0]),
+)
 # attention: 0DEG -> Y+, 180DEG -> Y-, 90DEG -> Z+, 270DEG -> Z-
 
-p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
+p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
 
 # 2 link version
-robot = TendonActuatedGVS(
-    segments=[
-        GVSSegment(
-            link=link1, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
-        ),
-        GVSSegment(
-            link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
-        ),
-    ],
-    g=g,
-    active_tendon_routing_params=active_tendon_routing_params,
-    p0=p0,
+segments = [
+    GVSSegment(
+        link=link1, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
+    ),
+    GVSSegment(
+        link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
+    ),
+]
+robot = TendonActuatedGVS.from_segments(
+    segments,
+    gravity=jnp.asarray(g),
+    base_pose=p0,
+    active_tendon_routing=active_tendon_routing,
     scale_rotational_basis_by_length=True,
 )
 # debug: check g0
-# g0_test = lie.exp_SE3(p0)
+# from soromox.utils.geometry import poses
+# g0_test = poses.quaternion_pose_to_transform(p0)
 # print("g0_test:\n", g0_test[:3,:3])
 
 ### MATRICES CHECKING AND PRINTING ###
@@ -175,7 +175,7 @@ u = jnp.asarray([-1, -0.00], dtype=q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 
-print("body lengths per segment:", robot.segment_lengths)
+print("total body length:", robot.length)
 # print("L_cum:", L_cum)
 # print("total length:", total_length)
 print("s_end:", s_end)

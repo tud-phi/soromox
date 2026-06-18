@@ -33,12 +33,18 @@ from tools.benchmarks._benchmark_common import (  # noqa: E402
     block_until_ready,
     build_system_with_gauss_points,
     gauss_point_sweep_values,
+    get_gvs_basis_order_system_config,
     get_system_registry,
     normalize_gauss_point_values,
+    normalize_system_names,
     system_gauss_point_metadata,
 )
 
 Array = jax.Array
+
+DEFAULT_SYSTEMS = ["articulated_soft_robot", "planar_pcs", "pcs", "gvs"]
+DEFAULT_SEGMENT_COUNTS = [1, 2, 4, 8, 16, 32]
+DEFAULT_GVS_BASIS_ORDERS = [0, 1, 2, 3, 4, 5]
 
 
 @dataclass
@@ -128,7 +134,9 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     headers = [
         "system",
+        "gvs_scaling",
         "size_label",
+        "size_value",
         "segment_count",
         "gauss_points",
         "integration_points",
@@ -170,6 +178,10 @@ def _write_npz(results: Sequence[Mapping[str, Any]], path: Path) -> None:
     print(f"[+] Wrote NPZ results to {path}")
 
 
+def _size_value(row: Mapping[str, Any]) -> int:
+    return int(row.get("size_value", row["segment_count"]))
+
+
 def _plot_results(
     results: Sequence[Mapping[str, Any]],
     path: Path | None,
@@ -200,7 +212,7 @@ def _plot_results(
         ax_total = axes[1, col]
         subset = [row for row in results if row["system"] == system]
         size_label = subset[0]["size_label"]
-        segment_values = sorted({row["segment_count"] for row in subset})
+        segment_values = sorted({_size_value(row) for row in subset})
         gauss_values = sorted(
             {
                 row.get("gauss_points")
@@ -215,7 +227,7 @@ def _plot_results(
                     (
                         row
                         for row in subset
-                        if row["segment_count"] == seg
+                        if _size_value(row) == seg
                         and (
                             gauss_points is None
                             or row.get("gauss_points") == gauss_points
@@ -269,9 +281,35 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Measure Soromox simulation throughput vs. batched environments."
     )
-    add_system_selection_args(parser, registry, default_segment_counts=[1, 3, 5])
+    add_system_selection_args(
+        parser,
+        registry,
+        default_segment_counts=DEFAULT_SEGMENT_COUNTS,
+        default_systems=DEFAULT_SYSTEMS,
+    )
     add_gauss_point_args(parser)
     add_integration_args(parser)
+    parser.add_argument(
+        "--gvs-scaling",
+        "--gvs-variant",
+        choices=("segments", "basis-order"),
+        default="segments",
+        help=(
+            "GVS sweep to benchmark. 'segments' scales the number of zero-order "
+            "GVS segments. 'basis-order' keeps one GVS segment and sweeps the "
+            "Legendre polynomial strain-basis order from --gvs-basis-orders."
+        ),
+    )
+    parser.add_argument(
+        "--gvs-basis-orders",
+        nargs="+",
+        type=int,
+        default=DEFAULT_GVS_BASIS_ORDERS,
+        help=(
+            "Strain-basis orders used when --gvs-scaling=basis-order "
+            f"(default: {' '.join(str(v) for v in DEFAULT_GVS_BASIS_ORDERS)})"
+        ),
+    )
     parser.add_argument(
         "--batch-sizes",
         nargs="+",
@@ -336,6 +374,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         help="Use a logarithmic scale for the speed ratio axis",
     )
     args = parser.parse_args(argv)
+    try:
+        args.systems = normalize_system_names(args.systems, registry)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     if args.duration <= 0.0:
         parser.error("--duration must be positive.")
@@ -349,6 +391,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         parser.error("All --segment-counts entries must be >= 1.")
     if args.gauss_points is not None and any(value < 1 for value in args.gauss_points):
         parser.error("All --gauss-points entries must be >= 1.")
+    if any(order < 0 for order in args.gvs_basis_orders):
+        parser.error("All --gvs-basis-orders entries must be >= 0.")
     if args.repeats < 1:
         parser.error("--repeats must be at least 1.")
     if args.warmup_runs < 0:
@@ -356,6 +400,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
     args.batch_sizes = sorted(dict.fromkeys(args.batch_sizes))
     args.segment_counts = sorted(dict.fromkeys(args.segment_counts))
+    args.gvs_basis_orders = sorted(dict.fromkeys(args.gvs_basis_orders))
     args.gauss_points = normalize_gauss_point_values(args.gauss_points)
     return args
 
@@ -367,7 +412,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         solver_dt=args.solver_dt,
         save_dt=args.save_dt,
     )
-    registry = get_system_registry()
+    registry = dict(get_system_registry())
+    if args.gvs_scaling == "basis-order":
+        registry["gvs"] = get_gvs_basis_order_system_config()
     key = jax.random.PRNGKey(args.seed)
     device = jax.devices()[0]
     device_name = getattr(device, "device_kind", getattr(device, "device_type", ""))
@@ -376,6 +423,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     results: list[dict[str, Any]] = []
     for system_name in args.systems:
         config = registry[system_name]
+        size_values = (
+            args.gvs_basis_orders
+            if system_name == "gvs" and args.gvs_scaling == "basis-order"
+            else args.segment_counts
+        )
         gauss_values = gauss_point_sweep_values(config, args.gauss_points)
         if not gauss_values:
             print(
@@ -384,7 +436,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             continue
         print(f"\n=== {system_name} ({config.size_label} sweep) ===")
-        for size in args.segment_counts:
+        for size in size_values:
             for requested_gauss_points in gauss_values:
                 system = build_system_with_gauss_points(
                     config, size, requested_gauss_points
@@ -439,8 +491,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                     results.append(
                         {
                             "system": system_name,
+                            "gvs_scaling": (
+                                args.gvs_scaling if system_name == "gvs" else ""
+                            ),
                             "size_label": config.size_label,
-                            "segment_count": size,
+                            "size_value": size,
+                            "segment_count": int(getattr(system, "num_segments", size)),
                             "gauss_points": gauss_points,
                             "integration_points": integration_points,
                             "dof": dof,

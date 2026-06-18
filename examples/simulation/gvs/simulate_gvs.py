@@ -16,12 +16,9 @@ from soromox.rendering import (
 from soromox.systems import (
     GVS,
     CrossSectionGeometry,
-    GVSSegment,
-    JointSpec,
-    LinkSpec,
-    StrainBasisSpec,
     SystemState,
 )
+from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -112,12 +109,14 @@ if __name__ == "__main__":
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = GVS(
-        segments=[
-            GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
-            for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
-        ],
-        g=[0, 0, -9.81],
+    segments = [
+        GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
+        for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
+    ]
+    robot = GVS.from_segments(
+        segments,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        max_dof=6,
     )
 
     print(f"System initialized with {robot.num_segments} segments")

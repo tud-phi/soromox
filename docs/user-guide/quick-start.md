@@ -14,27 +14,32 @@ Let's dive right in with a classic example - simulating a double pendulum to und
 === "🔧 Setup"
 
     ```python
+    import jax
     import jax.numpy as jnp
     import matplotlib.pyplot as plt
-    from soromox.systems import Pendulum, SystemState
+    from soromox.systems import Pendulum, PendulumParams, SystemState
     from soromox.rendering import ViserRenderer
 
     # Define parameters for a double pendulum
     num_links = 2
-    params = {
-        "L": jnp.array([0.5, 0.3]),      # Link lengths [m]
-        "Lc": jnp.array([0.25, 0.15]),   # Center of mass positions [m]
-        "m": jnp.array([1.0, 0.5]),      # Masses [kg]
-        "I": jnp.array([0.1, 0.05]),     # Moments of inertia [kg⋅m²]
-        "g": jnp.array([0.0, -9.81]),    # Planar gravity vector [m/s²]
-    }
+    params = PendulumParams(
+        length=jnp.array([0.5, 0.3]),
+        center_of_mass_length=jnp.array([0.25, 0.15]),
+        mass=jnp.array([1.0, 0.5]),
+        moment_inertia=jnp.array([0.1, 0.05]),
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=jnp.zeros((num_links, num_links)),
+        joint_damping=jnp.zeros((num_links, num_links)),
+        joint_rest_configuration=jnp.zeros((num_links,)),
+        radius=jnp.array([0.025, 0.015]),
+    )
     ```
 
 === "🏗️ Initialize"
 
     ```python
     # Create the system using the class API
-    robot = Pendulum(params)
+    robot = Pendulum(params=params)
 
     # Set initial conditions
     q0 = jnp.array([jnp.pi/4, jnp.pi/6])   # Initial angles [rad]
@@ -152,13 +157,15 @@ SoRoMoX uses an object-oriented design based on Equinox dataclasses. Systems are
 ```python title="System Creation"
 from soromox.systems import (
     ArticulatedSoftRobot,
+    ArticulatedSoftRobotParams,
     PCS,
+    PCSParams,
 )
 # For spatial articulated soft robots
-robot = ArticulatedSoftRobot(params)
+robot = ArticulatedSoftRobot(params=ArticulatedSoftRobotParams(...))
 
 # For soft continuum robots (PCS, GVS, HSA)
-robot = PCS(num_segments=3, params=params)
+robot = PCS(params=PCSParams(...))
 ```
 
 **Key Benefits:**
@@ -171,18 +178,33 @@ robot = PCS(num_segments=3, params=params)
 !!! note "Migration from Factory Pattern"
     SoRoMoX previously used a factory pattern, but has migrated to object-oriented classes for better extensibility and maintainability. All systems now inherit from `DynamicalSystem` or `SoftRobot` base classes. See the [API Reference](../api/overview.md) for details.
 
-### 📋 Parameter Dictionary
+### 📋 Typed Parameters
 
-Each robot system expects a structured parameter dictionary:
+Each robot system expects a typed Equinox PyTree params object. Numeric fields are
+JAX arrays, so same-shape updates can flow through `jit`, `grad`, and `vmap`
+without changing the compiled structure.
+
+`base_pose` follows the dimensionality of the robot. Planar robots expect
+`[theta, x, y]`, where `theta` is a right-handed angle in radians about the
+out-of-plane z-axis. Spatial robots expect `[qw, qx, qy, qz, x, y, z]`, using
+scalar-first Hamilton quaternions. Zero base rotation means the undeformed
+backbone is aligned with the positive base-frame x-axis. Spatial quaternions
+must have nonzero finite norm and are normalized before transform construction.
 
 ```python title="Parameter Structure"
-params = {
-    "L": link_lengths,        # Physical dimensions
-    "m": masses,             # Inertial properties  
-    "I": inertias,          # Rotational inertia
-    "g": gravity,           # Environmental forces
-    # ... system-specific parameters
-}
+params = PCSParams(
+    length=link_lengths,
+    radius=radii,
+    density=densities,
+    reference_strain=reference_strain,
+    gravity=gravity,
+    young_modulus=young_modulus,
+    shear_modulus=shear_modulus,
+    damping_matrix=damping_matrix,
+    base_pose=base_pose,
+)
+robot = PCS(params=params)
+robot = robot.update_params(length=new_lengths)
 ```
 
 !!! note "Units Matter"
@@ -223,34 +245,34 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 === "🌊 Continuum Robot"
 
     ```python
-    from soromox.systems import PlanarPCS
+    from soromox.systems import PlanarPCS, PlanarPCSParams
 
     # Create a 3-segment soft robot
     num_segments = 3
-    params = {
-        "L": 0.1 * jnp.ones((num_segments,)),  # Segment lengths [m]
-        "r": 0.02 * jnp.ones((num_segments,)),  # Segment radii [m]
-        "rho": 1070.0 * jnp.ones((num_segments,)),  # Density [kg/m³]
-        "E": 2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        "G": 1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        "g": jnp.array([0.0, 9.81]),  # Gravity vector [m/s²]
-        "th0": jnp.pi / 2,  # Initial orientation [rad]
-    }
+    segment_lengths = 0.1 * jnp.ones((num_segments,))
     # Damping matrix (optional but recommended for stability)
     # Structure: diagonal matrix with damping coefficients for each strain component
     # [bending, shear_x, shear_y] per segment, scaled by segment length
-    params["D"] = 1e-3 * jnp.diag(
+    damping_matrix = 1e-3 * jnp.diag(
         jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0).flatten()
-        * params["L"][:, None].flatten()
+        * segment_lengths[:, None].flatten()
+    )
+    params = PlanarPCSParams(
+        length=segment_lengths,
+        radius=0.02 * jnp.ones((num_segments,)),
+        density=1070.0 * jnp.ones((num_segments,)),
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
+        gravity=jnp.array([0.0, 9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     # Note: Damping helps stabilize simulations and represents material dissipation.
     # For static analysis, you can omit this or set to zero.
 
     # Initialize the PCS robot
-    robot = PlanarPCS(
-        num_segments=num_segments,
-        params=params,
-    )
+    robot = PlanarPCS(params=params)
 
     # Define configuration (strains)
     # Each segment has 3 strain components: [curvature, shear_x, shear_y]
@@ -331,9 +353,9 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
 ## 🎯 Next Steps
 
-- **📚 [Explore Examples](../examples/)**: Dive deeper with examples and tutorials covering all robot types and use cases.
-- **📖 [API Reference](../../api/overview/)**: Complete documentation of all classes, methods, and functions.
-- **🤝 [Contributing](../../development/contributing/)**: Learn how to contribute to SoRoMoX.
+- **📚 [Explore Examples](examples.md)**: Dive deeper with examples and tutorials covering all robot types and use cases.
+- **📖 [API Reference](../api/overview.md)**: Complete documentation of all classes, methods, and functions.
+- **🤝 [Contributing](../development/contributing.md)**: Learn how to contribute to SoRoMoX.
 - **🔬 Advanced Topics**: Control theory, optimization, and machine learning applications with SoRoMoX.
 
 ---

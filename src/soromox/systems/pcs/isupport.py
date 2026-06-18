@@ -4,6 +4,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from soromox.systems.pcs.params import ISupportParams
+from soromox.systems.pcs.structures import PCSStructure
+from soromox.utils.array_math import blk_diag
+
 from .pcs import PCS
 
 
@@ -46,7 +50,7 @@ class ISupport(PCS):
 
     """
 
-    actuation_basis: Array  # actuation basis, shape (num_segments * 2, num_actuators)
+    params: ISupportParams
 
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
     r_chamber_out: (
@@ -61,10 +65,8 @@ class ISupport(PCS):
 
     def __init__(
         self,
-        num_segments: int,
-        params: dict[str, Array],
-        *args,
-        segment_actuation_selector: Array | None = None,
+        params: ISupportParams,
+        structure: PCSStructure | None = None,
         num_chambers_per_segment: int = 3,
         **kwargs: Any,
     ):
@@ -72,84 +74,37 @@ class ISupport(PCS):
         Initialize the ISupport class
 
         Args:
-            num_segments (int):
-                Number of segments in the robot.
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-            segment_actuation_selector (Optional[Array], optional):
-                Boolean array of shape (num_segments,) specifying which segments are actively controlled.
-                Defaults to all segments active (i.e. all True).
-            num_chambers_per_segment (int, optional):
+            params: Dynamic I-SUPPORT parameters.
+            structure: Static PCS layout. If omitted, the default PCS structure
+                is used.
+            num_chambers_per_segment:
                 Number of pneumatic chambers per segment. Defaults to 3.
             **kwargs: Additional keyword arguments.
         """
-        super().__init__(
-            num_segments,
-            params,
-            *args,
-            **kwargs,
-        )
+        if not isinstance(params, ISupportParams):
+            raise TypeError("params must be an ISupportParams instance.")
+        super().__init__(params, structure=structure, **kwargs)
 
-        if segment_actuation_selector is None:
-            segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)
         self.num_chambers_per_segment = num_chambers_per_segment
-
         self.num_actuators = (
-            int(jnp.sum(segment_actuation_selector)) * self.num_chambers_per_segment
-        )  # each segment has three control inputs (u1, u2, u3)
-
-        actuation_basis = jnp.zeros(
-            (self.num_chambers_per_segment * self.num_segments, self.num_actuators)
-        )
-        actuation_basis_cumsum = jnp.cumsum(segment_actuation_selector)
-        for i in range(self.num_segments):
-            j = int(actuation_basis_cumsum[i].item()) - 1
-            if segment_actuation_selector[i].item() is True:
-                actuation_basis = actuation_basis.at[2 * i, j].set(1.0)
-                actuation_basis = actuation_basis.at[2 * i + 1, j + 1].set(1.0)
-        self.actuation_basis = actuation_basis
+            self.num_segments * self.num_chambers_per_segment
+        )  # each segment has one pressure input per chamber
 
         self._set_params(params)
 
-    def _set_params(self, params: dict[str, Array]):
+    def _set_params(self, params: ISupportParams):
         """
         Set the parameters of the ISupport class.
 
         Args:
             params (Dict[str, Array]): Dictionary containing the parameters of the robot.
                 Dictionary containing the robot parameters:
-                - "p0": (optional) List/Array of shape (6,)
-                    Initial orientation angle and position in the inertial frame [rad, m]
-                    [ψ, θ, φ, x0, y0, z0]
-                        [ψ, θ, φ] are the Euler angles in the ZXZ convention:
-                            ψ (psi) : Rotation around Z axis (fixed axis)
-                            θ (thêta) : Rotation around X' axis (movable axis after first rotation)
-                            φ (phi) : Rotation about the Z' axis (movable axis after the first two rotations)
-                        [x0, y0, z0] : Position of the robot in the inertial frame
-                    Defaults to [pi/2, pi/2, 0.0, 0.0, 0.0, 0.0] (i.e. aligned with the z-axis and at the origin).
+                - "base_pose": (optional) List/Array of shape (7,)
+                    Scalar-first quaternion pose ``[qw, qx, qy, qz, x0, y0, z0]``
+                    in the inertial frame. The quaternion represents the base
+                    orientation and the translation is inserted directly into
+                    the homogeneous transform. Defaults to identity rotation
+                    and zero translation.
                 - "L": List/Array of num_segments floats
                     Length of each segment [m]
                 - "r": List/Array of num_segments floats
@@ -177,171 +132,76 @@ class ISupport(PCS):
         super()._set_params(params)
 
         # Pneumatic chamber parameters
-        try:
-            r_chamber_in = params["r_chamber_in"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'r_chamber_in' (inner radius of each segment's pneumatic chamber) is required for the pneumatically actuated planar PCS."
-            )
-        if not isinstance(r_chamber_in, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'r_chamber_in' must be a list or a jnp.ndarray."
-            )
-        if len(r_chamber_in) != self.num_segments:
+        r_chamber_in = jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64)
+        if r_chamber_in.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'r_chamber_in' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_inner_radius must have shape "
+                f"({self.num_segments},), got {r_chamber_in.shape}."
             )
-        self.r_chamber_in = jnp.asarray(r_chamber_in, dtype=jnp.float64)
+        self.r_chamber_in = r_chamber_in
 
-        try:
-            r_chamber_out = params["r_chamber_out"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'r_chamber_out' (outer radius of each segment's pneumatic chamber) is required for the pneumatically actuated planar PCS."
-            )
-        if not isinstance(r_chamber_out, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'r_chamber_out' must be a list or a jnp.ndarray."
-            )
-        if len(r_chamber_out) != self.num_segments:
+        r_chamber_out = jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64)
+        if r_chamber_out.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'r_chamber_out' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_outer_radius must have shape "
+                f"({self.num_segments},), got {r_chamber_out.shape}."
             )
-        self.r_chamber_out = jnp.asarray(r_chamber_out, dtype=jnp.float64)
+        self.r_chamber_out = r_chamber_out
 
-        try:
-            d_chamber = params["d_chamber"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'd_chamber' (radial distance of the center of the chambers from the centerline of the backbone) is required for the pneumatically actuated planar PCS."
-            )
-        if not isinstance(d_chamber, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'd_chamber' must be a list or a jnp.ndarray."
-            )
-        if len(d_chamber) != self.num_segments:
+        d_chamber = jnp.asarray(params.chamber_distance, dtype=jnp.float64)
+        if d_chamber.shape != (self.num_segments,):
             raise ValueError(
-                f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
+                "chamber_distance must have shape "
+                f"({self.num_segments},), got {d_chamber.shape}."
             )
-        self.d_chamber = jnp.asarray(d_chamber, dtype=jnp.float64)
+        self.d_chamber = d_chamber
 
-        varphi_chamber_off = params.get(
-            "varphi_chamber_off", jnp.zeros(self.num_segments)
+        varphi_chamber_off = jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64)
+        if varphi_chamber_off.shape != (self.num_segments,):
+            raise ValueError(
+                "chamber_angle_offset must have shape "
+                f"({self.num_segments},), got {varphi_chamber_off.shape}."
+            )
+        self.varphi_chamber_off = varphi_chamber_off
+
+    def with_params(self, params: ISupportParams) -> "ISupport":
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, ISupportParams):
+            raise TypeError("params must be an ISupportParams instance.")
+        chamber_arrays = (
+            jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64),
+            jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64),
+            jnp.asarray(params.chamber_distance, dtype=jnp.float64),
+            jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64),
         )
-        if not isinstance(varphi_chamber_off, (list, jnp.ndarray)):
-            raise TypeError(
-                "The parameter 'varphi_chamber_off' must be a list or a jnp.ndarray."
-            )
-        if len(varphi_chamber_off) != self.num_segments:
-            raise ValueError(
-                f"The parameter 'varphi_chamber_off' must have the same length as the number of segments ({self.num_segments})."
-            )
-        self.varphi_chamber_off = jnp.asarray(varphi_chamber_off, dtype=jnp.float64)
-
-    def update_params(self, params: dict[str, Array]) -> "ISupport":
-        """
-        Update the parameters of the ISupport class.
-
-        Args:
-            params (Dict[str, Array]):
-                Dictionary that contains the robot parameters to update:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "r_chamber_in" : Array of num_segments floats
-                    Inner radius of each segment's pneumatic chamber [m]
-                - "r_chamber_out" : Array of num_segments floats
-                    Outer radius of each segment's pneumatic chamber [m]
-                - "d_chamber" : Array of num_segments floats
-                    Radial distance of the center of the chambers from the centerline of the backbone [m]
-                - "varphi_chamber_off" : Array of num_segments floats
-                    Angular offset of the first actuator from the local z-axis [rad]
-
-        Returns:
-            updated_self (PneumaticallyActuatedPlanarPCS):
-                A new instance of PneumaticallyActuatedPlanarPCS with updated parameters.
-        """
-        # Apply updates sequentially
-        updated_self = super().update_params(params)
-
-        if "r_chamber_in" in params:
-            r_chamber_in = params["r_chamber_in"]
-            if not isinstance(r_chamber_in, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'r_chamber_in' must be a list or a jnp.ndarray."
-                )
-            if len(r_chamber_in) != self.num_segments:
+        for name, value in zip(
+            (
+                "chamber_inner_radius",
+                "chamber_outer_radius",
+                "chamber_distance",
+                "chamber_angle_offset",
+            ),
+            chamber_arrays,
+        ):
+            if value.shape != (self.num_segments,):
                 raise ValueError(
-                    f"The parameter 'r_chamber_in' must have the same length as the number of segments ({self.num_segments})."
+                    f"{name} must have shape ({self.num_segments},), got {value.shape}."
                 )
-            updated_self = eqx.tree_at(
-                lambda x: x.r_chamber_in,
-                updated_self,
-                jnp.asarray(r_chamber_in, dtype=jnp.float64),
-            )
+        updated_self = self._with_pcs_params(params)
+        return eqx.tree_at(
+            lambda model: (
+                model.r_chamber_in,
+                model.r_chamber_out,
+                model.d_chamber,
+                model.varphi_chamber_off,
+            ),
+            updated_self,
+            chamber_arrays,
+        )
 
-        if "r_chamber_out" in params:
-            r_chamber_out = params["r_chamber_out"]
-            if not isinstance(r_chamber_out, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'r_chamber_out' must be a list or a jnp.ndarray."
-                )
-            if len(r_chamber_out) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'r_chamber_out' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.r_chamber_out,
-                updated_self,
-                jnp.asarray(r_chamber_out, dtype=jnp.float64),
-            )
-
-        if "d_chamber" in params:
-            d_chamber = params["d_chamber"]
-            if not isinstance(d_chamber, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'd_chamber' must be a list or a jnp.ndarray."
-                )
-            if len(d_chamber) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'd_chamber' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.d_chamber,
-                updated_self,
-                jnp.asarray(d_chamber, dtype=jnp.float64),
-            )
-
-        if "varphi_chamber_off" in params:
-            varphi_chamber_off = params["varphi_chamber_off"]
-            if not isinstance(varphi_chamber_off, (list, jnp.ndarray)):
-                raise TypeError(
-                    "The parameter 'varphi_chamber_off' must be a list or a jnp.ndarray."
-                )
-            if len(varphi_chamber_off) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'varphi_chamber_off' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.varphi_chamber_off,
-                updated_self,
-                jnp.asarray(varphi_chamber_off, dtype=jnp.float64),
-            )
-
-        return updated_self
+    def update_params(self, **updates: Array) -> "ISupport":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
     def _local_actuator_polar_angles(self, i: Array) -> Array:
@@ -549,16 +409,10 @@ class ISupport(PCS):
             jnp.arange(self.num_segments),
         )
 
-        # # For debugging purposes, we can use a for loop instead of vmap
-        # A_blocks_tot = jnp.stack(
-        #     [A_segment_i(i) for i in range(self.num_segments)],
-        #     axis=0
-        # )
-
-        # we need to sum the contributions of the actuation of each segment
-        A = jnp.concatenate(A_blocks_tot, axis=-1)
-
-        # apply the actuation_basis
-        A = A @ self.actuation_basis
+        # assemble the contributions of the actuation of each segment
+        A_full = blk_diag(
+            A_blocks_tot
+        )  # shape (6 * num_segments, num_segments * num_chambers_per_segment)
+        A = self.B_xi.T @ A_full  # shape (num_active_strains, num_actuators)
 
         return A

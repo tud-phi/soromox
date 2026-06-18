@@ -6,6 +6,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from soromox.rendering.actuators import ActuatorVisualLayer
+from soromox.systems.pcs.params import TendonActuatedPlanarPCSParams
+from soromox.systems.pcs.structures import PlanarPCSStructure
+
 from .planar_pcs import PlanarPCS
 
 
@@ -53,14 +57,14 @@ class TendonActuatedPlanarPCS(PlanarPCS):
 
     """
 
+    params: TendonActuatedPlanarPCSParams
     d: Array  # distance of the tendons from the segment's backbone, shape (num_segments,)
     segment_indices_to_actuate: Array  # indices of the segments that are actuated, shape (num_actuated_segments,)
 
     def __init__(
         self,
-        num_segments: int,
-        params: dict[str, Array],
-        *args,
+        params: TendonActuatedPlanarPCSParams,
+        structure: PlanarPCSStructure | None = None,
         segment_actuation_selector: Array | None = None,
         **kwargs: Any,
     ):
@@ -68,46 +72,29 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         Initialize the TendonActuatedPlanarPCS class
 
         Args:
-            num_segments (int): number of segments in the robot
-            params (Dict[str, Array]):
-                Dictionary containing the robot parameters:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                    Default is 90 degrees (1.57 radians).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "d": List/Array of num_segments floats
-                    Distance of the tendons from the segment's backbone [m]
-            segment_actuation_selector (Optional[Array]): array to select the segments to be actuated
+            params: Dynamic tendon-actuated planar PCS parameters.
+            structure: Static planar PCS layout. If omitted, the default planar
+                PCS structure is used.
+            segment_actuation_selector: Boolean array selecting the actuated
+                segments. Defaults to all segments active.
+            **kwargs: Additional keyword arguments.
         """
-        super().__init__(num_segments, params, *args, **kwargs)
+        if not isinstance(params, TendonActuatedPlanarPCSParams):
+            raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")
+        super().__init__(params, structure=structure, **kwargs)
 
         if segment_actuation_selector is None:
-            segment_actuation_selector = jnp.ones(num_segments, dtype=bool)
+            segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)
 
         self.segment_indices_to_actuate = jnp.array(
             [i for i, act in enumerate(segment_actuation_selector) if act]
         )
 
-        self.num_actuators = (
-            int(jnp.sum(segment_actuation_selector)) * 2
-        )  # each segment has two tendons
+        self.num_actuators = int(jnp.sum(segment_actuation_selector)) * self.d.shape[1]
 
         self._set_params(params)
 
-    def _set_params(self, params: dict[str, Array]):
+    def _set_params(self, params: TendonActuatedPlanarPCSParams):
         """
         Set the parameters of the tendon-driven planar PCS.
 
@@ -137,66 +124,31 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         super()._set_params(params)
 
         # Distance of the tendons from the segment's backbone
-        try:
-            d = params["d"]
-        except KeyError:
-            raise KeyError(
-                "The parameter 'd' (distance of the tendons from the segment's backbone) is required for the tendon-driven planar PCS."
-            )
-        if not isinstance(d, (list, jnp.ndarray)):
-            raise TypeError("The parameter 'd' must be a list or a jnp.ndarray.")
-        if len(d) != self.num_segments:
+        d = jnp.asarray(params.tendon_distance, dtype=jnp.float64)
+        if d.ndim != 2 or d.shape[0] != self.num_segments:
             raise ValueError(
-                f"The parameter 'd' must have the same length as the number of segments ({self.num_segments})."
+                "tendon_distance must have shape "
+                f"({self.num_segments}, num_tendons_per_segment), got {d.shape}."
             )
-        self.d = jnp.asarray(d, dtype=jnp.float64)
+        self.d = d
 
-    def update_params(self, params: dict[str, Array]) -> "TendonActuatedPlanarPCS":
-        """
-        Update the parameters of the tendon-driven planar PCS.
-
-        Args:
-            params (Dict[str, Array]):
-                Dictionary that contains the robot parameters to update:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "d": List/Array of num_segments floats
-                    Distance of the tendons from the segment's backbone [m]
-
-        Returns:
-            updated_self (TendonActuatedPlanarPCS):
-                A new instance of TendonActuatedPlanarPCS with updated parameters.
-        """
-        # Apply updates sequentially
-        updated_self = super().update_params(params)
-
-        if "d" in params:
-            d = params["d"]
-            if not isinstance(d, (list, jnp.ndarray)):
-                raise TypeError("The parameter 'd' must be a list or a jnp.ndarray.")
-            if len(d) != self.num_segments:
-                raise ValueError(
-                    f"The parameter 'd' must have the same length as the number of segments ({self.num_segments})."
-                )
-            updated_self = eqx.tree_at(
-                lambda x: x.d, updated_self, jnp.asarray(d, dtype=jnp.float64)
+    def with_params(
+        self, params: TendonActuatedPlanarPCSParams
+    ) -> "TendonActuatedPlanarPCS":
+        """Return an updated copy with a full typed parameter object."""
+        if not isinstance(params, TendonActuatedPlanarPCSParams):
+            raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")
+        d = jnp.asarray(params.tendon_distance, dtype=jnp.float64)
+        if d.shape != self.d.shape:
+            raise ValueError(
+                "tendon_distance shape changes the actuation layout; construct a new TendonActuatedPlanarPCS."
             )
+        updated_self = self._with_planar_pcs_params(params)
+        return eqx.tree_at(lambda model: model.d, updated_self, d)
 
-        return updated_self
+    def update_params(self, **updates: Array) -> "TendonActuatedPlanarPCS":
+        """Return an updated copy with selected typed parameter fields replaced."""
+        return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:
@@ -346,3 +298,38 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         tendon_lengths = cumulative_lengths[self.segment_indices_to_actuate]
 
         return tendon_lengths.reshape(-1)
+
+    def actuator_visual_layers(
+        self,
+        q: Array,
+        s_points: Array,
+        *,
+        actuator_inputs: Array | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Return renderer-facing actuator geometry for planar routed tendons."""
+        del actuator_inputs
+        num_tendons_per_segment = self.d.shape[1]
+        attachment_indices = jnp.repeat(
+            self.segment_indices_to_actuate, num_tendons_per_segment
+        )
+        distances = self.d[self.segment_indices_to_actuate].reshape(-1)
+
+        def tendon_path(segment_idx: Array, distance: Array) -> Array:
+            attachment_s = self.L_cum[segment_idx + 1]
+
+            def tendon_point(s: Array) -> Array:
+                pose = self.forward_kinematics(q, jnp.clip(s, 0.0, attachment_s))
+                theta = pose[0]
+                normal = jnp.array([-jnp.sin(theta), jnp.cos(theta)])
+                return pose[1:3] + distance * normal
+
+            return vmap(tendon_point)(s_points)
+
+        points = vmap(tendon_path)(attachment_indices, distances)
+        return (
+            ActuatorVisualLayer(
+                name="active_tendons",
+                kind="tendon",
+                points=points,
+            ),
+        )

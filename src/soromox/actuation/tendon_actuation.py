@@ -1,51 +1,66 @@
-__all__ = ["linear_routing", "linear_routing_derivative"]
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from jax import Array
 from jax import numpy as jnp
 
+if TYPE_CHECKING:
+    from soromox.systems.params import LinearTendonRoutingParams
 
-def linear_routing(tendon_routing_params, s):
+__all__ = ["linear_routing", "linear_routing_arc_length_derivative"]
+
+
+def linear_routing(tendon_routing_params: LinearTendonRoutingParams, s: Array) -> Array:
     """
     Routing of linear tendons as a function of ``s``.
 
-    Specifically, ``d_s`` is the vector between the centerline of the robot and the
-    tendon position in the cross-sectional plane at abscissa ``s``.
+    ``LinearTendonRoutingParams`` stores a leading tendon axis. System classes
+    evaluate this function through ``jax.vmap`` so each tendon may have distinct
+    intercepts and slopes. Attachment segment indices are static topology
+    metadata and are not used by the local routing law. Direct batched calls are
+    also supported when the parameter fields and ``s`` are broadcast-compatible.
 
     Args:
-        tendon_routing_params (Dict[str, Array]): Parameters of the linear tendons.
-                ry: y-coordinate of the pulling point of the tendons [m]
-                my: slope coefficient in the x-y plane of the tendons [-]
-                rz: z-coordinate of the pulling point of the tendons [m]
-                mz: slope coefficient in the x-z plane of the tendons [-]
-        s (Array): Abscissa points ``(num_gauss_points,)``.
+        tendon_routing_params: Single-tendon or batched ``LinearTendonRoutingParams``.
+        s: Abscissa value or broadcast-compatible array.
 
     Returns:
-        d_s (Array): Position of the tendon at ``s`` w.r.t. the centerline ``(3,)``.
+        Position of the tendon at ``s`` w.r.t. the centerline. The final axis stores
+        ``[0, y, z]``.
     """
 
-    ry = tendon_routing_params["ry"]
-    my = tendon_routing_params["my"]
-    rz = tendon_routing_params["rz"]
-    mz = tendon_routing_params["mz"]
-    d_s = jnp.array([0.0, ry + my * s, rz + mz * s])
-    return d_s
+    ry = jnp.asarray(tendon_routing_params.y_intercept)
+    my = jnp.asarray(tendon_routing_params.y_slope)
+    rz = jnp.asarray(tendon_routing_params.z_intercept)
+    mz = jnp.asarray(tendon_routing_params.z_slope)
+    s = jnp.asarray(s)
+    y = ry + my * s
+    z = rz + mz * s
+    return jnp.stack([jnp.zeros_like(y), y, z], axis=-1)
 
 
-def linear_routing_derivative(tendon_routing_params, s):
+def linear_routing_arc_length_derivative(
+    tendon_routing_params: LinearTendonRoutingParams, s: Array
+) -> Array:
     """
-    Spatial derivative of the linear tendon routing as a function of ``s``.
+    Arc-length derivative of the linear tendon routing as a function of ``s``.
 
-    Specifically, ``dd_s_ds`` is the derivative of ``d_s`` with respect to ``s``.
+    The final axis stores the derivative of ``[0, y, z]``. As with
+    ``linear_routing``, system classes evaluate this per tendon through
+    ``jax.vmap`` and direct broadcast-compatible batched calls are supported.
 
     Args:
-        tendon_routing_params (Dict[str, Array]): Parameters of the linear tendons.
-                my: slope coefficient in the x-y plane of the tendons [-]
-                mz: slope coefficient in the x-z plane of the tendons [-]
-        s (Array): Abscissa points ``(num_gauss_points,)``.
+        tendon_routing_params: Single-tendon or batched ``LinearTendonRoutingParams``.
+        s: Abscissa value or broadcast-compatible array. It is accepted so custom
+            routing derivatives can share the same signature.
 
     Returns:
-        dd_s_ds (Array): Path of the tendon at ``s`` w.r.t. the centerline ``(3,)``.
+        Arc-length derivative of the tendon routing.
     """
 
-    my = tendon_routing_params["my"]
-    mz = tendon_routing_params["mz"]
-    dd_s_ds = jnp.array([0.0, my, mz])
-    return dd_s_ds
+    my = jnp.asarray(tendon_routing_params.y_slope)
+    mz = jnp.asarray(tendon_routing_params.z_slope)
+    s = jnp.asarray(s)
+    zeros = jnp.zeros_like(my + 0.0 * s)
+    return jnp.stack([zeros, my + zeros, mz + zeros], axis=-1)

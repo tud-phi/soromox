@@ -19,7 +19,7 @@ def symbolically_derive_planar_hsa_model(
         num_segments: number of constant strain segments
         filepath: path to save the derived model
         num_rods_per_segment: number of HSA rods per segment
-    
+
     Returns:
         sym_exps: dictionary with entries
             params_syms: dictionary of robot parameters
@@ -142,7 +142,7 @@ def symbolically_derive_planar_hsa_model(
     )  # twist angles
 
     # construct the symbolic matrices
-    l = sp.Matrix(l_syms)  # length of each segment
+    l = sp.Matrix(l_syms)  # noqa: E741  # length of each segment
     lpc = sp.Matrix(
         [lpc_syms]
     )  # length of the rigid proximal caps of the rods connecting to the base
@@ -204,7 +204,7 @@ def symbolically_derive_planar_hsa_model(
     # configuration variables and their derivatives
     xi = sp.Matrix(xi_syms)  # strains
     xid = sp.Matrix(xid_syms)  # strain time derivatives
-    xidd = sp.Matrix(xidd_syms)  # strain accelerations
+    sp.Matrix(xidd_syms)  # strain accelerations
     # twist angle of rods
     phi = sp.Matrix(phi_syms)
 
@@ -462,7 +462,7 @@ def symbolically_derive_planar_hsa_model(
         chiCoGp[:2, 0] = pCoGp  # the x and y position
         chiCoGp[2, 0] = th.subs(s, l[i])  # the orientation angle theta
         # Jacobians of the CoG of the platform
-        JCoGp = chiCoGp.jacobian(xi)
+        chiCoGp.jacobian(xi)
         JpCoGp = pCoGp.jacobian(xi)  # positional Jacobian of the platform
         JpCoGo = sp.simplify(sp.Matrix([[chiCoGp[2, 0]]]).jacobian(xi))
         # mass matrix of the platform
@@ -622,7 +622,7 @@ def _sym_beta_fn(vxi: sp.Matrix, roff: sp.Expr) -> sp.Matrix:
     Symbolically map the generalized coordinates to the strains in the physical rods
     Args:
         vxi: strains of the virtual backbone of shape (3, )
-    
+
     Returns:
         pxi: strains in the physical rods of shape (3, )
     """

@@ -10,6 +10,14 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.rendering.actuators import (
+    ActuatorVisualLayer,
+    BatchedActuatorVisualLayer,
+    TrajectoryActuatorVisualLayer,
+    normalize_actuator_layers,
+    normalize_batched_actuator_layers,
+    normalize_trajectory_actuator_layers,
+)
 from soromox.rendering.color_config import (
     DEFAULT_ROBOT_PALETTE,
     DEFAULT_SEGMENT_PALETTE,
@@ -45,6 +53,11 @@ class BaseSoftRobotRenderer(ABC):
         background_color: RGB tuple for background color (0-1 range)
         color_config: Shared color configuration for renderers
         L_max: Total length of the robot backbone
+        base_pose: Robot base pose coordinates. Planar robots use
+            ``[theta, x, y]``; spatial robots use scalar-first quaternion pose
+            ``[qw, qx, qy, qz, x, y, z]``.
+        base_transform: Homogeneous base transform. Shape ``(3, 3)`` for
+            planar robots and ``(4, 4)`` for spatial robots.
     """
 
     def __init__(
@@ -73,6 +86,8 @@ class BaseSoftRobotRenderer(ABC):
         self.background_color = background_color
         self.color_config = color_config or RendererColorConfig()
         self._is_planar = bool(robot.is_planar)
+        self.base_pose = jnp.asarray(robot.base_pose)
+        self.base_transform = jnp.asarray(robot.base_transform)
 
         self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
         self._segment_cache: dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -80,12 +95,163 @@ class BaseSoftRobotRenderer(ABC):
         # Total robot length
         self.L_max = float(jnp.asarray(robot.length))
 
-        # Cache tendon FK if available
-        self._has_tendons = hasattr(robot, "forward_kinematics_tendons")
-        if self._has_tendons:
-            self._batched_fk_tendons = jax.vmap(
-                robot.forward_kinematics_tendons, in_axes=(None, 0), out_axes=1
+        self._has_actuator_visual_layers = hasattr(robot, "actuator_visual_layers")
+        self._has_batched_actuator_visual_layers = hasattr(
+            robot, "actuator_visual_layers_batched"
+        )
+        self._has_trajectory_actuator_visual_layers = hasattr(
+            robot, "actuator_visual_layers_trajectory"
+        )
+        self._has_actuator_visuals = (
+            self._has_actuator_visual_layers
+            or self._has_batched_actuator_visual_layers
+            or self._has_trajectory_actuator_visual_layers
+        )
+
+    def _base_position(self, dim: int | None = None) -> np.ndarray:
+        """Return the configured base translation in renderer coordinates.
+
+        Args:
+            dim: Optional target dimension. ``2`` returns ``[x, y]``; ``3``
+                returns ``[x, y, z]`` with planar bases padded by ``z = 0``.
+                If omitted, the renderer dimensionality is used.
+
+        Returns:
+            Base position as a NumPy array with shape ``(dim,)``.
+        """
+        target_dim = 3 if (dim is None and self.is_3d) else 2 if dim is None else dim
+        transform = np.asarray(self.base_transform, dtype=np.float64)
+        if transform.shape == (3, 3):
+            pos = np.array([transform[0, 2], transform[1, 2]], dtype=np.float64)
+        elif transform.shape == (4, 4):
+            pos = np.asarray(transform[:3, 3], dtype=np.float64)
+        else:
+            raise ValueError(
+                "base_transform must have shape (3, 3) or (4, 4), "
+                f"got {transform.shape}."
             )
+        return self._match_vector_dim(pos, target_dim, name="base position")
+
+    def _base_tangent_axis(self, dim: int | None = None) -> np.ndarray:
+        """Return the configured base-frame +x direction.
+
+        The soft-robot convention is that zero base rotation aligns the
+        undeformed backbone with the positive base-frame x-axis. This helper
+        returns that axis after applying ``base_transform``.
+
+        Args:
+            dim: Optional target dimension. ``2`` returns the planar xy axis;
+                ``3`` returns xyz, padding planar axes by ``z = 0``.
+
+        Returns:
+            Unit vector as a NumPy array with shape ``(dim,)``.
+        """
+        target_dim = 3 if (dim is None and self.is_3d) else 2 if dim is None else dim
+        transform = np.asarray(self.base_transform, dtype=np.float64)
+        if transform.shape == (3, 3):
+            axis = np.asarray(transform[:2, 0], dtype=np.float64)
+        elif transform.shape == (4, 4):
+            axis = np.asarray(transform[:3, 0], dtype=np.float64)
+        else:
+            raise ValueError(
+                "base_transform must have shape (3, 3) or (4, 4), "
+                f"got {transform.shape}."
+            )
+        axis = self._match_vector_dim(axis, target_dim, name="base tangent axis")
+        norm = np.linalg.norm(axis)
+        if norm <= 1e-12:
+            fallback = np.zeros(target_dim, dtype=np.float64)
+            fallback[0] = 1.0
+            return fallback
+        return axis / norm
+
+    @staticmethod
+    def _match_vector_dim(
+        value: np.ndarray,
+        target_dim: int,
+        *,
+        name: str,
+    ) -> np.ndarray:
+        """Return ``value`` with dimension ``target_dim`` by optional z-padding."""
+        vector = np.asarray(value, dtype=np.float64).reshape(-1)
+        if vector.shape[0] == target_dim:
+            return vector
+        if vector.shape[0] + 1 == target_dim:
+            return np.concatenate([vector, np.zeros(1, dtype=np.float64)])
+        if target_dim == 2 and vector.shape[0] == 3:
+            return vector[:2]
+        raise ValueError(
+            f"{name} must have dimension {target_dim}, got {vector.shape}."
+        )
+
+    def _normalize_base_offsets(
+        self,
+        base_offsets: Array | np.ndarray,
+        *,
+        num_robots: int,
+        target_dim: int,
+        allow_single: bool = False,
+        allow_extra_rows: bool = False,
+        name: str = "base_offsets",
+    ) -> jax.Array:
+        """Validate and dimension-match per-robot positional base offsets.
+
+        Args:
+            base_offsets: Offset array. Expected shape is ``(N, dim)`` for
+                batched calls. If ``allow_single`` is true, ``(dim,)`` and
+                ``(1, dim)`` are accepted for a single robot.
+            num_robots: Required number of rows.
+            target_dim: Desired spatial dimension, usually the curve dimension.
+            allow_single: Whether to accept a one-dimensional single offset.
+            allow_extra_rows: Whether to accept more rows than ``num_robots``
+                and use the leading ``num_robots`` rows. Intended for
+                constructor-level layout configurations reused across smaller
+                batches.
+            name: Name used in error messages.
+
+        Returns:
+            JAX array with shape ``(num_robots, target_dim)``. 2D offsets are
+            padded with ``z = 0`` when ``target_dim == 3``.
+        """
+        offsets = jnp.asarray(base_offsets)
+        if offsets.ndim == 1 and allow_single:
+            offsets = offsets.reshape(1, -1)
+        if offsets.ndim != 2:
+            raise ValueError(f"{name} must have shape (N, dim), got {offsets.shape}.")
+        if allow_extra_rows and offsets.shape[0] > num_robots:
+            offsets = offsets[:num_robots]
+        if offsets.shape[0] != num_robots:
+            raise ValueError(
+                f"{name} first dimension ({offsets.shape[0]}) must match "
+                f"number of robots ({num_robots})."
+            )
+        if offsets.shape[1] == target_dim:
+            return offsets
+        if offsets.shape[1] + 1 == target_dim:
+            pad = jnp.zeros((offsets.shape[0], 1), dtype=offsets.dtype)
+            return jnp.concatenate([offsets, pad], axis=1)
+        raise ValueError(
+            f"{name} must have shape ({num_robots}, {target_dim}) or "
+            f"({num_robots}, {target_dim - 1}), got {offsets.shape}."
+        )
+
+    def _single_base_offset(
+        self,
+        base_offsets: Array | np.ndarray | None,
+        *,
+        target_dim: int,
+        allow_extra_rows: bool = False,
+    ) -> jax.Array | None:
+        """Return a single normalized base offset or ``None``."""
+        if base_offsets is None:
+            return None
+        return self._normalize_base_offsets(
+            base_offsets,
+            num_robots=1,
+            target_dim=target_dim,
+            allow_single=True,
+            allow_extra_rows=allow_extra_rows,
+        )[0]
 
     @property
     def is_planar(self) -> bool:
@@ -118,52 +284,315 @@ class BaseSoftRobotRenderer(ABC):
 
         return curve
 
-    def compute_tendon_curves(self, q: Array) -> Array | None:
-        """Compute tendon paths if the robot supports tendon kinematics."""
-        if not self._has_tendons:
-            return None
+    def compute_actuator_visual_layers(
+        self,
+        q: Array,
+        *,
+        actuator_inputs: Array | None = None,
+    ) -> tuple[ActuatorVisualLayer, ...]:
+        """Compute renderer-facing actuator visual layers for one robot."""
+        if not self._has_actuator_visual_layers:
+            return ()
         s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        return self._batched_fk_tendons(q, s_ps)
+        layers = self.robot.actuator_visual_layers(  # type: ignore[attr-defined]
+            q, s_ps, actuator_inputs=actuator_inputs
+        )
+        return normalize_actuator_layers(layers)
 
-    def compute_tendon_curves_batched(
-        self, q_batch: Array, base_offsets: Array
+    def _offset_batched_actuator_layers(
+        self,
+        layers: tuple[BatchedActuatorVisualLayer, ...],
+        base_offsets: Array | np.ndarray,
+    ) -> tuple[BatchedActuatorVisualLayer, ...]:
+        """Apply per-robot base offsets to batched actuator layer points."""
+        offset_layers: list[BatchedActuatorVisualLayer] = []
+        for layer in layers:
+            points = jnp.asarray(layer.points)
+            offsets = self._normalize_base_offsets(
+                base_offsets,
+                num_robots=int(points.shape[0]),
+                target_dim=int(points.shape[-1]),
+            )
+            offset_layers.append(
+                layer.with_points(points + offsets[:, None, None, :])
+            )
+        return tuple(offset_layers)
+
+    def _offset_trajectory_actuator_layers(
+        self,
+        layers: tuple[TrajectoryActuatorVisualLayer, ...],
+        base_offsets: Array | np.ndarray,
+    ) -> tuple[TrajectoryActuatorVisualLayer, ...]:
+        """Apply per-robot base offsets to trajectory actuator layer points."""
+        offset_layers: list[TrajectoryActuatorVisualLayer] = []
+        for layer in layers:
+            points = jnp.asarray(layer.points)
+            offsets = self._normalize_base_offsets(
+                base_offsets,
+                num_robots=int(points.shape[0]),
+                target_dim=int(points.shape[-1]),
+            )
+            offset_layers.append(
+                layer.with_points(points + offsets[:, None, None, None, :])
+            )
+        return tuple(offset_layers)
+
+    @staticmethod
+    def _stack_optional_arrays(
+        values: list[Array | np.ndarray | list | tuple | None],
+        *,
+        name: str,
+        layer_name: str,
     ) -> Array | None:
-        """Compute tendon paths for multiple robots with base offsets."""
-        if not self._has_tendons:
+        if all(value is None for value in values):
             return None
+        if any(value is None for value in values):
+            raise ValueError(
+                f"{name} for actuator layer {layer_name!r} must be provided for "
+                "all robots/timesteps or none."
+            )
+        return jnp.stack([jnp.asarray(value) for value in values])
+
+    @staticmethod
+    def _stack_radius(values: list[float | Array | None]) -> float | Array | None:
+        if all(value is None for value in values):
+            return None
+        first = values[0]
+        if first is None:
+            return None
+        if np.asarray(first).ndim == 0:
+            return first
+        return jnp.stack([jnp.asarray(value) for value in values])
+
+    @staticmethod
+    def _stack_scalar_fields(
+        layers: list[ActuatorVisualLayer | BatchedActuatorVisualLayer],
+    ) -> dict[str, Array]:
+        first_keys = tuple(layers[0].scalar_fields.keys())
+        stacked: dict[str, Array] = {}
+        for layer in layers[1:]:
+            if tuple(layer.scalar_fields.keys()) != first_keys:
+                raise ValueError(
+                    f"Actuator layer {layers[0].name!r} scalar field keys must "
+                    "match across robots/timesteps."
+                )
+        for key in first_keys:
+            stacked[key] = jnp.stack(
+                [jnp.asarray(layer.scalar_fields[key]) for layer in layers]
+            )
+        return stacked
+
+    @staticmethod
+    def _validate_matching_layers(
+        reference: tuple[ActuatorVisualLayer, ...],
+        candidate: tuple[ActuatorVisualLayer, ...],
+    ) -> None:
+        if len(candidate) != len(reference):
+            raise ValueError(
+                "All robots must expose the same number of actuator visual layers."
+            )
+        for ref_layer, layer in zip(reference, candidate):
+            if (layer.name, layer.kind) != (ref_layer.name, ref_layer.kind):
+                raise ValueError(
+                    "Actuator visual layer names and kinds must match across "
+                    "robots/timesteps."
+                )
+            if jnp.asarray(layer.points).shape != jnp.asarray(ref_layer.points).shape:
+                raise ValueError(
+                    f"Actuator visual layer {layer.name!r} shape changed from "
+                    f"{jnp.asarray(ref_layer.points).shape} to "
+                    f"{jnp.asarray(layer.points).shape}."
+                )
+
+    @staticmethod
+    def _actuator_inputs_for_batch(
+        actuator_inputs: Array | np.ndarray | None,
+        *,
+        num_robots: int,
+    ) -> list[Array | None]:
+        if actuator_inputs is None:
+            return [None] * num_robots
+        inputs = jnp.asarray(actuator_inputs)
+        if inputs.ndim >= 2 and inputs.shape[0] == num_robots:
+            return [inputs[i] for i in range(num_robots)]
+        if num_robots == 1:
+            return [inputs]
+        raise ValueError(
+            "Batched actuator_inputs must have leading dimension matching the "
+            f"number of robots ({num_robots}), got {inputs.shape}."
+        )
+
+    @staticmethod
+    def _actuator_inputs_for_timestep(
+        actuator_inputs: Array | np.ndarray | None,
+        *,
+        num_robots: int,
+        num_steps: int,
+        frame_idx: int,
+    ) -> Array | np.ndarray | None:
+        if actuator_inputs is None:
+            return None
+        inputs = jnp.asarray(actuator_inputs)
+        if inputs.ndim >= 3 and inputs.shape[:2] == (num_robots, num_steps):
+            return inputs[:, frame_idx]
+        if inputs.ndim >= 2 and inputs.shape[0] == num_steps:
+            return inputs[frame_idx]
+        return inputs
+
+    def compute_actuator_visual_layers_batched(
+        self,
+        q_batch: Array,
+        base_offsets: Array,
+        *,
+        actuator_inputs: Array | np.ndarray | None = None,
+    ) -> tuple[BatchedActuatorVisualLayer, ...]:
+        """Compute actuator visual layers for multiple robots with base offsets."""
+        if not self._has_actuator_visuals:
+            return ()
 
         q_batch = jnp.asarray(q_batch)
-        base_offsets = jnp.asarray(base_offsets)
-
         if q_batch.ndim != 2:
             raise ValueError(
                 f"q_batch must have shape (N, DOF), got {q_batch.shape} with ndim={q_batch.ndim}"
             )
-        if base_offsets.ndim != 2:
-            raise ValueError(
-                f"base_offsets must have shape (N, dim), got {base_offsets.shape}"
-            )
-        if base_offsets.shape[0] != q_batch.shape[0]:
-            raise ValueError(
-                f"base_offsets first dimension ({base_offsets.shape[0]}) must "
-                f"match batch size ({q_batch.shape[0]})"
-            )
+        num_robots = int(q_batch.shape[0])
 
-        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        tendon_curves = jax.vmap(lambda q: self._batched_fk_tendons(q, s_ps))(q_batch)
-
-        if base_offsets.shape[1] == tendon_curves.shape[-1]:
-            offsets = base_offsets
-        elif base_offsets.shape[1] + 1 == tendon_curves.shape[-1]:
-            pad = jnp.zeros((base_offsets.shape[0], 1), dtype=tendon_curves.dtype)
-            offsets = jnp.concatenate([base_offsets, pad], axis=1)
-        else:
-            raise ValueError(
-                f"base_offsets must have shape (N, {tendon_curves.shape[-1]}) or "
-                f"(N, {tendon_curves.shape[-1] - 1}), got {base_offsets.shape}"
+        if self._has_batched_actuator_visual_layers:
+            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            raw_layers = self.robot.actuator_visual_layers_batched(  # type: ignore[attr-defined]
+                q_batch,
+                s_ps,
+                actuator_inputs=actuator_inputs,
             )
+            layers = normalize_batched_actuator_layers(
+                raw_layers, num_robots=num_robots
+            )
+            return self._offset_batched_actuator_layers(layers, base_offsets)
 
-        return tendon_curves + offsets[:, None, None, :]
+        if not self._has_actuator_visual_layers:
+            return ()
+
+        inputs_by_robot = self._actuator_inputs_for_batch(
+            actuator_inputs, num_robots=num_robots
+        )
+        layers_by_robot = [
+            self.compute_actuator_visual_layers(
+                q_batch[i], actuator_inputs=inputs_by_robot[i]
+            )
+            for i in range(num_robots)
+        ]
+        if not layers_by_robot or not layers_by_robot[0]:
+            return ()
+        reference = layers_by_robot[0]
+        for layers in layers_by_robot[1:]:
+            self._validate_matching_layers(reference, layers)
+
+        batched_layers: list[BatchedActuatorVisualLayer] = []
+        for layer_idx, ref_layer in enumerate(reference):
+            robot_layers = [layers[layer_idx] for layers in layers_by_robot]
+            points = jnp.stack([jnp.asarray(layer.points) for layer in robot_layers])
+            colors = self._stack_optional_arrays(
+                [layer.colors for layer in robot_layers],
+                name="colors",
+                layer_name=ref_layer.name,
+            )
+            scalar_fields = self._stack_scalar_fields(robot_layers)
+            batched_layers.append(
+                BatchedActuatorVisualLayer(
+                    name=ref_layer.name,
+                    kind=ref_layer.kind,
+                    points=points,
+                    radius=self._stack_radius([layer.radius for layer in robot_layers]),
+                    line_width=ref_layer.line_width,
+                    colors=colors,
+                    scalar_fields=scalar_fields,
+                )
+            )
+        return self._offset_batched_actuator_layers(tuple(batched_layers), base_offsets)
+
+    def compute_actuator_visual_layers_trajectory(
+        self,
+        q_ts: Array,
+        base_offsets: Array,
+        *,
+        actuator_inputs: Array | np.ndarray | None = None,
+    ) -> tuple[TrajectoryActuatorVisualLayer, ...]:
+        """Compute actuator visual layers for ``(N, T, DOF)`` trajectories."""
+        q_ts = jnp.asarray(q_ts)
+        if q_ts.ndim != 3:
+            raise ValueError(
+                f"q_ts must have shape (N, T, DOF), got {q_ts.shape} with ndim={q_ts.ndim}"
+            )
+        num_robots, num_steps, _ = q_ts.shape
+
+        if self._has_trajectory_actuator_visual_layers:
+            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            raw_layers = self.robot.actuator_visual_layers_trajectory(  # type: ignore[attr-defined]
+                q_ts,
+                s_ps,
+                actuator_inputs=actuator_inputs,
+            )
+            layers = normalize_trajectory_actuator_layers(
+                raw_layers,
+                num_robots=int(num_robots),
+                num_steps=int(num_steps),
+            )
+            return self._offset_trajectory_actuator_layers(layers, base_offsets)
+
+        if not (
+            self._has_batched_actuator_visual_layers
+            or self._has_actuator_visual_layers
+        ):
+            return ()
+
+        layers_by_time = []
+        for frame_idx in range(int(num_steps)):
+            frame_inputs = self._actuator_inputs_for_timestep(
+                actuator_inputs,
+                num_robots=int(num_robots),
+                num_steps=int(num_steps),
+                frame_idx=frame_idx,
+            )
+            layers_by_time.append(
+                self.compute_actuator_visual_layers_batched(
+                    q_ts[:, frame_idx, :],
+                    base_offsets,
+                    actuator_inputs=frame_inputs,
+                )
+            )
+        if not layers_by_time or not layers_by_time[0]:
+            return ()
+
+        trajectory_layers: list[TrajectoryActuatorVisualLayer] = []
+        for layer_idx, ref_layer in enumerate(layers_by_time[0]):
+            time_layers = [layers[layer_idx] for layers in layers_by_time]
+            points = jnp.stack([layer.points for layer in time_layers], axis=1)
+            colors = self._stack_optional_arrays(
+                [layer.colors for layer in time_layers],
+                name="colors",
+                layer_name=ref_layer.name,
+            )
+            if colors is not None:
+                colors = jnp.moveaxis(colors, 0, 1)
+            scalar_fields = {
+                key: jnp.stack(
+                    [jnp.asarray(layer.scalar_fields[key]) for layer in time_layers],
+                    axis=1,
+                )
+                for key in ref_layer.scalar_fields
+            }
+            trajectory_layers.append(
+                TrajectoryActuatorVisualLayer(
+                    name=ref_layer.name,
+                    kind=ref_layer.kind,
+                    points=points,
+                    radius=ref_layer.radius,
+                    line_width=ref_layer.line_width,
+                    colors=colors,
+                    scalar_fields=scalar_fields,
+                )
+            )
+        return tuple(trajectory_layers)
 
     def _extract_positions(self, poses: Array) -> Array:
         """Extract xyz or xy positions from FK poses.
@@ -590,36 +1019,18 @@ class BaseSoftRobotRenderer(ABC):
             Array of shape (N, num_points, dim) - batch-first
         """
         q_batch = jnp.asarray(q_batch)
-        base_offsets = jnp.asarray(base_offsets)
-
         if q_batch.ndim != 2:
             raise ValueError(
                 f"q_batch must have shape (N, DOF), got {q_batch.shape} with ndim={q_batch.ndim}"
             )
-        if base_offsets.ndim != 2:
-            raise ValueError(
-                f"base_offsets must have shape (N, dim), got {base_offsets.shape}"
-            )
-        if base_offsets.shape[0] != q_batch.shape[0]:
-            raise ValueError(
-                f"base_offsets first dimension ({base_offsets.shape[0]}) must "
-                f"match batch size ({q_batch.shape[0]})"
-            )
 
         # vmap over the configurations
         curves = jax.vmap(self.compute_backbone_curve)(q_batch)  # (N, num_points, dim)
-
-        # Match base offset dimensionality to curve dimensionality (2D vs 3D)
-        if base_offsets.shape[1] == curves.shape[-1]:
-            offsets = base_offsets
-        elif base_offsets.shape[1] + 1 == curves.shape[-1]:
-            pad = jnp.zeros((base_offsets.shape[0], 1), dtype=curves.dtype)
-            offsets = jnp.concatenate([base_offsets, pad], axis=1)
-        else:
-            raise ValueError(
-                f"base_offsets must have shape (N, {curves.shape[-1]}) or "
-                f"(N, {curves.shape[-1] - 1}), got {base_offsets.shape}"
-            )
+        offsets = self._normalize_base_offsets(
+            base_offsets,
+            num_robots=int(q_batch.shape[0]),
+            target_dim=int(curves.shape[-1]),
+        )
 
         # Add base offsets: (N, num_points, dim) + (N, 1, dim)
         return curves + offsets[:, None, :]

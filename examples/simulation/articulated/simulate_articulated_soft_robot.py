@@ -19,7 +19,11 @@ from soromox.rendering import (
     ViserRenderer,
     get_color_theme,
 )
-from soromox.systems import ArticulatedSoftRobot, SystemState
+from soromox.systems import (
+    ArticulatedSoftRobot,
+    ArticulatedSoftRobotParams,
+    SystemState,
+)
 
 
 def build_robot() -> ArticulatedSoftRobot:
@@ -42,8 +46,8 @@ def build_robot() -> ArticulatedSoftRobot:
         jnp.stack([transverse_inertia, transverse_inertia, axial_inertia], axis=1)
     )
 
-    params = {
-        "joint_screws": jnp.array(
+    params = ArticulatedSoftRobotParams(
+        joint_screw=jnp.array(
             [
                 [0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
                 [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
@@ -51,17 +55,18 @@ def build_robot() -> ArticulatedSoftRobot:
                 [0.0, 1.0, 0.0, 0.0, 0.0, 0.0],
             ]
         ),
-        "p_tip": p_tip,
-        "p_com": p_com,
-        "m": masses,
-        "I_com": I_com,
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "K": jnp.diag(jnp.array([18.0, 13.0, 8.0, 4.5])),
-        "D": jnp.diag(jnp.array([1.4, 1.1, 0.75, 0.45])),
-        "q_ref_k": jnp.zeros((4,)),
-        "r": radii,
-    }
-    return ArticulatedSoftRobot(params)
+        tip_position=p_tip,
+        center_of_mass_position=p_com,
+        mass=masses,
+        center_of_mass_inertia=I_com,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        joint_stiffness=jnp.diag(jnp.array([18.0, 13.0, 8.0, 4.5])),
+        joint_damping=jnp.diag(jnp.array([1.4, 1.1, 0.75, 0.45])),
+        joint_rest_configuration=jnp.zeros((4,)),
+        parent_to_joint_transform=jnp.broadcast_to(jnp.eye(4), (4, 4, 4)),
+        radius=radii,
+    )
+    return ArticulatedSoftRobot(params=params)
 
 
 def simulate(

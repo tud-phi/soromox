@@ -1,16 +1,28 @@
+# ruff: noqa: E402
 import jax
 import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
 import numpy as onp
+import optimistix as optx
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
+from system_param_builders import (
+    linear_tendon_routing,
+    passive_tendon_params,
+    pcs_params,
+    spatial_base_pose,
+    tendon_actuated_pcs_params,
+)
 
-from soromox.systems import CrossSectionGeometry, TendonActuatedGVS, TendonActuatedPCS
+from soromox.systems import (
+    CrossSectionGeometry,
+    PCSStructure,
+    TendonActuatedGVS,
+    TendonActuatedPCS,
+)
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.tolerance import Tolerance
-
-import optimistix as optx
 
 
 def _segments(
@@ -23,6 +35,82 @@ def _segments(
         GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
         for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
     ]
+
+
+def _make_tendon_gvs(
+    *,
+    segments: list[GVSSegment],
+    gravity,
+    tendon_params,
+    passive_tendon_routing=None,
+    passive_tendon=None,
+    base_pose=None,
+    max_dof=None,
+    scale_rotational_basis_by_length: bool = False,
+) -> TendonActuatedGVS:
+    return TendonActuatedGVS.from_segments(
+        segments,
+        gravity=jnp.asarray(gravity),
+        active_tendon_routing=tendon_params,
+        passive_tendon_routing=passive_tendon_routing,
+        passive_tendon=passive_tendon,
+        base_pose=base_pose,
+        max_dof=max_dof,
+        scale_rotational_basis_by_length=scale_rotational_basis_by_length,
+    )
+
+
+def _make_tendon_pcs(
+    *,
+    length,
+    gravity,
+    tendon_params,
+    strain_selector,
+    base_pose=None,
+) -> TendonActuatedPCS:
+    segment_lengths = jnp.asarray(length)
+    num_segments = int(segment_lengths.shape[0])
+    E_val = 3e5
+    nu = 0.45
+    G_val = E_val / (2.0 * (1.0 + nu))
+    damping_matrix = 1e4 * jnp.diag(
+        (
+            jnp.repeat(
+                jnp.array(
+                    [
+                        [
+                            jnp.pi / 2 * (0.015**4),
+                            3 * jnp.pi / 4 * (0.015**4),
+                            3 * jnp.pi / 4 * (0.015**4),
+                            3 * jnp.pi * (0.015**2),
+                            jnp.pi * (0.015**2),
+                            jnp.pi * (0.015**2),
+                        ]
+                    ]
+                ),
+                num_segments,
+                axis=0,
+            )
+            * segment_lengths[:, None]
+        ).flatten()
+    )
+    body = pcs_params(
+        base_pose=spatial_base_pose() if base_pose is None else base_pose,
+        length=segment_lengths,
+        radius=jnp.full((num_segments,), 0.015),
+        density=1300.0 * jnp.ones((num_segments,)),
+        gravity=jnp.asarray(gravity),
+        young_modulus=E_val * jnp.ones((num_segments,)),
+        shear_modulus=G_val * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+    )
+    return TendonActuatedPCS(
+        params=tendon_actuated_pcs_params(
+            body=body,
+            active_tendon_routing=tendon_params,
+        ),
+        structure=PCSStructure(strain_selector=strain_selector),
+    )
 
 
 def test_actuation_matrix_gvs():
@@ -42,34 +130,34 @@ def test_actuation_matrix_gvs():
         (
             # the tendon only affects the bending in z
             jnp.array([0.2]),
-            {
-                "ry": jnp.array([0.005]),
-                "rz": jnp.array([0.0]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.005]),
+                z_intercept=jnp.array([0.0]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
         (
             jnp.array([0.2]),
-            {
-                "ry": jnp.array([0.002]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.002]),
+                z_intercept=jnp.array([0.002]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
         (
             # only first segment affected
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([-0.002]),
-                "rz": jnp.array([-0.002]),
-                "my": jnp.array([0.001]),
-                "mz": jnp.array([-0.001]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([-0.002]),
+                z_intercept=jnp.array([-0.002]),
+                y_slope=jnp.array([0.001]),
+                z_slope=jnp.array([-0.001]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
     ]
 
@@ -81,7 +169,7 @@ def test_actuation_matrix_gvs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -93,10 +181,10 @@ def test_actuation_matrix_gvs():
             num_gauss_points = [10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
             )
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkSpec(
@@ -105,7 +193,7 @@ def test_actuation_matrix_gvs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -115,7 +203,7 @@ def test_actuation_matrix_gvs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[1],
+                L=float(segment_lengths[1]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -132,12 +220,12 @@ def test_actuation_matrix_gvs():
             num_gauss_points = [10, 10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments(
                     [link1, link2], [joint1, joint2], [basis1, basis2], num_gauss_points
                 ),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
             )
 
         dof = sum(robotGVS.dofs_per_segment.reshape(-1))
@@ -146,7 +234,7 @@ def test_actuation_matrix_gvs():
         print("Actuation matrix A:\n", A)
         if segment_lengths.shape[0] > 1:
             print("No contributions from the second segment.")
-        elif tendon_params["rz"][0] == 0.0:
+        elif tendon_params.z_intercept[0] == 0.0:
             print("No contributions along the y axis.")
         else:
             print("Contributions along both y and z axes.")
@@ -172,35 +260,35 @@ def test_tendon_length_gvs():
             # the tendon length must coincide with the hypotenuse of the triangle formed
             # by the segment length and 2*ry_distance
             jnp.array([0.2]),
-            {
-                "ry": jnp.array([0.005]),
-                "rz": jnp.array([0.0]),
-                "my": jnp.array([-0.05]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.005]),
+                z_intercept=jnp.array([0.0]),
+                y_slope=jnp.array([-0.05]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
         (
             # the tendon length must coincide with the sum of both segment lengths
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([0.0]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([1]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.0]),
+                z_intercept=jnp.array([0.002]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([1]),
+            ),
         ),
         (
             # the tendon length must coincide with the length of the first segment
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([0.0]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.0]),
+                z_intercept=jnp.array([0.002]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
     ]
 
@@ -212,7 +300,7 @@ def test_tendon_length_gvs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -224,10 +312,10 @@ def test_tendon_length_gvs():
             num_gauss_points = [10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
             )
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkSpec(
@@ -236,7 +324,7 @@ def test_tendon_length_gvs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -246,7 +334,7 @@ def test_tendon_length_gvs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[1],
+                L=float(segment_lengths[1]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -263,12 +351,12 @@ def test_tendon_length_gvs():
             num_gauss_points = [10, 10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments(
                     [link1, link2], [joint1, joint2], [basis1, basis2], num_gauss_points
                 ),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
             )
 
         dof = sum(robotGVS.dofs_per_segment.reshape(-1))
@@ -280,7 +368,7 @@ def test_tendon_length_gvs():
                 "The lenght coincide with the length of the hypotenuse of the triangle formed by the segment length and 2*ry_distance."
             )
             hypotenuse = onp.sqrt(
-                (segment_lengths[0] ** 2) + ((2 * tendon_params["ry"][0]) ** 2)
+                (segment_lengths[0] ** 2) + ((2 * tendon_params.y_intercept[0]) ** 2)
             )
             assert_allclose(
                 l_tendons,
@@ -288,7 +376,7 @@ def test_tendon_length_gvs():
                 rtol=Tolerance.rtol(),
                 atol=Tolerance.atol(),
             )
-        elif tendon_params["idx_seg_att"][0] == 1:
+        elif tendon_params.attachment_segment_index[0] == 1:
             print("The length coincide with the sum of the segments length.")
             assert_allclose(
                 l_tendons,
@@ -321,35 +409,35 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
             # the tendon length must coincide with the hypotenuse of the triangle formed
             # by the segment length and 2*ry_distance
             jnp.array([0.2]),
-            {
-                "ry": jnp.array([0.005]),
-                "rz": jnp.array([0.0]),
-                "my": jnp.array([-0.05]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.005]),
+                z_intercept=jnp.array([0.0]),
+                y_slope=jnp.array([-0.05]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
         (
             # the tendon length must coincide with the sum of both segment lengths
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([0.0]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([1]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.0]),
+                z_intercept=jnp.array([0.002]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([1]),
+            ),
         ),
         (
             # the tendon length must coincide with the length of the first segment
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([0.0]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.0]),
+                z_intercept=jnp.array([0.002]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
     ]
     for segment_lengths, tendon_params in test_cases:
@@ -360,7 +448,7 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -372,10 +460,10 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
             num_gauss_points = [10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
             )
         else:  # segment_lengths.shape[0] == 2
             link1 = LinkSpec(
@@ -384,7 +472,7 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -394,7 +482,7 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[1],
+                L=float(segment_lengths[1]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -411,12 +499,12 @@ def test_tendon_length_gradient_matches_actuation_matrix_random_configs():
             num_gauss_points = [10, 10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments(
                     [link1, link2], [joint1, joint2], [basis1, basis2], num_gauss_points
                 ),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
             )
 
         dof = sum(robotGVS.dofs_per_segment.reshape(-1))
@@ -454,35 +542,35 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
         (
             # the tendon only affects the bending in z
             jnp.array([0.2]),
-            {
-                "ry": jnp.array([0.005]),
-                "rz": jnp.array([0.0]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.005]),
+                z_intercept=jnp.array([0.0]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
         (
             # the tendon only affects the bending in y
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([0.002]),
-                "rz": jnp.array([0.002]),
-                "my": jnp.array([0.0]),
-                "mz": jnp.array([0.0]),
-                "idx_seg_att": jnp.array([1]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([0.002]),
+                z_intercept=jnp.array([0.002]),
+                y_slope=jnp.array([0.0]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([1]),
+            ),
         ),
         (
             # only first segment affected
             jnp.array([0.2, 0.05]),
-            {
-                "ry": jnp.array([-0.002]),
-                "rz": jnp.array([-0.002]),
-                "my": jnp.array([0.001]),
-                "mz": jnp.array([-0.001]),
-                "idx_seg_att": jnp.array([0]),
-            },
+            linear_tendon_routing(
+                y_intercept=jnp.array([-0.002]),
+                z_intercept=jnp.array([-0.002]),
+                y_slope=jnp.array([0.001]),
+                z_slope=jnp.array([-0.001]),
+                attachment_segment_index=jnp.array([0]),
+            ),
         ),
     ]
 
@@ -494,7 +582,7 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -506,10 +594,10 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
             num_gauss_points = [10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
                 scale_rotational_basis_by_length=False,
             )
 
@@ -520,7 +608,7 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[0],
+                L=float(segment_lengths[0]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -530,7 +618,7 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
                 nu=0.45,
                 rho=1300.0,
                 eta=1e4,
-                L=segment_lengths[1],
+                L=float(segment_lengths[1]),
                 r_i=0.015,
                 r_f=0.015,
             )
@@ -547,60 +635,23 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
             num_gauss_points = [10, 10]
             g = [0.0, 0.0, -9.81]
 
-            robotGVS = TendonActuatedGVS(
+            robotGVS = _make_tendon_gvs(
                 segments=_segments(
                     [link1, link2], [joint1, joint2], [basis1, basis2], num_gauss_points
                 ),
-                g=g,
-                active_tendon_routing_params=tendon_params,
+                gravity=g,
+                tendon_params=tendon_params,
                 scale_rotational_basis_by_length=False,
             )
 
         num_segments = int(segment_lengths.shape[0])
-        E_val = 3e5
-        nu = 0.45
-        G_val = E_val / (2.0 * (1.0 + nu))
-        params_pcs = {
-            "p0": jnp.zeros((6,)),
-            "L": jnp.asarray(segment_lengths),
-            "r": jnp.full((num_segments,), 0.015),
-            "rho": 1300.0 * jnp.ones((num_segments,)),
-            "g": jnp.array([0.0, 0.0, 9.81]),
-            "E": E_val * jnp.ones((num_segments,)),
-            "G": G_val * jnp.ones((num_segments,)),
-        }
-
-        # params_pcs["D"] = 1e4 * jnp.diag(
-        #    (jnp.repeat(jnp.array([[jnp.pi/2*(0.015 ** 4), 3*jnp.pi/4*(0.015 ** 4), 3*jnp.pi/4*(0.015 ** 4), 3*jnp.pi*(0.015 ** 2),jnp.pi*(0.015 ** 2),jnp.pi*(0.015 ** 2)]]), num_segments, axis=0) * params_pcs["L"][:, None]).flatten()
-        # )
-        params_pcs["D"] = 1e4 * jnp.diag(
-            (
-                jnp.repeat(
-                    jnp.array(
-                        [
-                            [
-                                jnp.pi / 2 * (0.015**4),
-                                3 * jnp.pi / 4 * (0.015**4),
-                                3 * jnp.pi / 4 * (0.015**4),
-                                3 * jnp.pi * (0.015**2),
-                                jnp.pi * (0.015**2),
-                                jnp.pi * (0.015**2),
-                            ]
-                        ]
-                    ),
-                    num_segments,
-                    axis=0,
-                )
-                * params_pcs["L"][:, None]
-            ).flatten()
-        )
         per_segment = jnp.array([1, 1, 1, 1, 0, 0], dtype=bool)
         strain_selector = jnp.tile(per_segment, num_segments)
 
-        robotPCS = TendonActuatedPCS(
-            num_segments=num_segments,
-            params=params_pcs,
-            active_tendon_routing_params=tendon_params,
+        robotPCS = _make_tendon_pcs(
+            length=segment_lengths,
+            gravity=jnp.array([0.0, 0.0, 9.81]),
+            tendon_params=tendon_params,
             strain_selector=strain_selector,
         )
 
@@ -614,7 +665,7 @@ def test_tendon_actatuated_ActMatrix_gvs_vs_pcs():
         if segment_lengths.shape[0] == 1:
             print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
             print("No contributions along the y axis.")
-        elif tendon_params["idx_seg_att"][0] == 1:
+        elif tendon_params.attachment_segment_index[0] == 1:
             print("PCS Actuation matrix A (scaled for consistency):\n", A_PCS)
 
             print("Mixed contributions along y and z axes.")
@@ -660,66 +711,33 @@ def test_tendon_actatuated_gvs_vs_pcs():
 
     num_gauss_points = [10]
     g = [0.0, 0.0, -9.81]
-    tendon_params = {
-        "ry": jnp.array([-0.002]),
-        "rz": jnp.array([-0.002]),
-        "my": jnp.array([0.001]),
-        "mz": jnp.array([-0.001]),
-        "idx_seg_att": jnp.array([0]),
-    }
+    tendon_params = linear_tendon_routing(
+        y_intercept=jnp.array([-0.002]),
+        z_intercept=jnp.array([-0.002]),
+        y_slope=jnp.array([0.001]),
+        z_slope=jnp.array([-0.001]),
+        attachment_segment_index=jnp.array([0]),
+    )
 
-    robotGVS = TendonActuatedGVS(
+    robotGVS = _make_tendon_gvs(
         segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-        g=g,
-        active_tendon_routing_params=tendon_params,
-        p0=jnp.zeros((6,)),
+        gravity=g,
+        tendon_params=tendon_params,
+        base_pose=spatial_base_pose(),
         scale_rotational_basis_by_length=False,
     )
 
     segment_lengths = jnp.array([0.2])
     num_segments = int(segment_lengths.shape[0])
-    E_val = 3e5
-    nu = 0.45
-    G_val = E_val / (2.0 * (1.0 + nu))
-    params_pcs = {
-        "p0": jnp.zeros((6,)),
-        "L": jnp.asarray(segment_lengths),
-        "r": jnp.full((num_segments,), 0.015),
-        "rho": 1300.0 * jnp.ones((num_segments,)),
-        "g": jnp.array([0.0, 0.0, 9.81]),
-        "E": E_val * jnp.ones((num_segments,)),
-        "G": G_val * jnp.ones((num_segments,)),
-    }
-
-    params_pcs["D"] = 1e4 * jnp.diag(
-        (
-            jnp.repeat(
-                jnp.array(
-                    [
-                        [
-                            jnp.pi / 2 * (0.015**4),
-                            3 * jnp.pi / 4 * (0.015**4),
-                            3 * jnp.pi / 4 * (0.015**4),
-                            3 * jnp.pi * (0.015**2),
-                            jnp.pi * (0.015**2),
-                            jnp.pi * (0.015**2),
-                        ]
-                    ]
-                ),
-                num_segments,
-                axis=0,
-            )
-            * params_pcs["L"][:, None]
-        ).flatten()
-    )
     per_segment = jnp.array([1, 1, 1, 1, 0, 0], dtype=bool)
     strain_selector = jnp.tile(per_segment, num_segments)
 
-    robotPCS = TendonActuatedPCS(
-        num_segments=num_segments,
-        params=params_pcs,
-        active_tendon_routing_params=tendon_params,
+    robotPCS = _make_tendon_pcs(
+        length=segment_lengths,
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        tendon_params=tendon_params,
         strain_selector=strain_selector,
+        base_pose=spatial_base_pose(),
     )
 
     dof = sum(robotGVS.dofs_per_segment.reshape(-1))
@@ -818,23 +836,23 @@ def test_angular_strain_basis_scaling_gvs():
 
     num_gauss_points = [10]
     g = [0.0, 0.0, -9.81]
-    tendon_params = {
-        "ry": jnp.array([-0.002]),
-        "rz": jnp.array([-0.002]),
-        "my": jnp.array([0.001]),
-        "mz": jnp.array([-0.001]),
-        "idx_seg_att": jnp.array([0]),
-    }
-    robot_noScale = TendonActuatedGVS(
+    tendon_params = linear_tendon_routing(
+        y_intercept=jnp.array([-0.002]),
+        z_intercept=jnp.array([-0.002]),
+        y_slope=jnp.array([0.001]),
+        z_slope=jnp.array([-0.001]),
+        attachment_segment_index=jnp.array([0]),
+    )
+    robot_noScale = _make_tendon_gvs(
         segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-        g=g,
-        active_tendon_routing_params=tendon_params,
+        gravity=g,
+        tendon_params=tendon_params,
         scale_rotational_basis_by_length=False,
     )
-    robot_Scale = TendonActuatedGVS(
+    robot_Scale = _make_tendon_gvs(
         segments=_segments([link1], [joint1], [basis1], num_gauss_points),
-        g=g,
-        active_tendon_routing_params=tendon_params,
+        gravity=g,
+        tendon_params=tendon_params,
         scale_rotational_basis_by_length=True,
     )
 
@@ -878,6 +896,148 @@ def test_angular_strain_basis_scaling_gvs():
         p_end_noScale, p_end_Scale, rtol=Tolerance.rtol(), atol=Tolerance.atol()
     )
     print("[Valid test]\n")
+
+
+def test_passive_tendon_params_are_batched_for_gvs():
+    link = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3e5,
+        nu=0.45,
+        rho=1300.0,
+        eta=1e4,
+        L=0.2,
+        r_i=0.015,
+        r_f=0.015,
+    )
+    joint = JointSpec(type="fixed")
+    basis = StrainBasisSpec(
+        type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
+    )
+    active_routing = linear_tendon_routing(
+        y_intercept=jnp.array([0.004, -0.004]),
+        z_intercept=jnp.array([0.003, 0.003]),
+        y_slope=jnp.array([0.0, 0.001]),
+        z_slope=jnp.array([0.0, -0.001]),
+        attachment_segment_index=jnp.array([0, 0]),
+    )
+    passive_routing = linear_tendon_routing(
+        y_intercept=jnp.array([0.002, -0.002]),
+        z_intercept=jnp.array([-0.004, -0.004]),
+        y_slope=jnp.array([0.001, 0.0]),
+        z_slope=jnp.array([0.0, 0.001]),
+        attachment_segment_index=jnp.array([0, 0]),
+    )
+    passive_tendon = passive_tendon_params(
+        stiffness=jnp.array([10.0, 25.0]),
+        damping=jnp.array([0.1, 0.3]),
+        rest_length_offset=jnp.array([0.0, 0.01]),
+    )
+    robot = _make_tendon_gvs(
+        segments=_segments([link], [joint], [basis], [8]),
+        gravity=[0.0, 0.0, -9.81],
+        tendon_params=active_routing,
+        passive_tendon_routing=passive_routing,
+        passive_tendon=passive_tendon,
+    )
+    q = jnp.zeros((robot.num_dofs,))
+
+    assert robot.num_actuators == 2
+    assert robot.n_p == 2
+    assert robot.actuation_matrix(q).shape == (robot.num_dofs, 2)
+    assert robot.jacobian_passive_tendon(q).shape == (2, robot.num_dofs)
+    assert robot.forward_kinematics_active_tendons(q, 0.1).shape == (2, 3)
+    assert robot.forward_kinematics_passive_tendons(q, 0.1).shape == (2, 3)
+    assert robot.forward_kinematics_tendons(q, 0.1).shape == (4, 3)
+    layers = robot.actuator_visual_layers(q, jnp.linspace(0.0, float(robot.length), 6))
+    assert len(layers) == 2
+    assert layers[0].name == "active_tendons"
+    assert layers[0].kind == "tendon"
+    assert layers[0].points.shape == (2, 6, 3)
+    assert layers[1].name == "passive_tendons"
+    assert layers[1].points.shape == (2, 6, 3)
+    assert jnp.all(jnp.isfinite(robot.passive_tendon_length(q)))
+    assert jnp.all(jnp.isfinite(robot.elastic_force(q)))
+    assert jnp.all(jnp.isfinite(robot.damping_matrix(q)))
+    assert jnp.isfinite(robot.elastic_energy(q))
+
+    updated_passive = passive_tendon.replace(damping=passive_tendon.damping + 1.0)
+    updated_robot = robot.update_params(passive_tendon=updated_passive)
+    assert_allclose(jnp.diag(robot.D_pt), jnp.array([0.1, 0.3]))
+    assert_allclose(jnp.diag(updated_robot.D_pt), jnp.array([1.1, 1.3]))
+
+    with pytest.raises(ValueError, match="passive_tendon"):
+        robot.update_params(
+            passive_tendon_routing=linear_tendon_routing(
+                y_intercept=jnp.array([0.002]),
+                z_intercept=jnp.array([-0.004]),
+                y_slope=jnp.array([0.001]),
+                z_slope=jnp.array([0.0]),
+                attachment_segment_index=jnp.array([0]),
+            )
+        )
+
+
+def test_tendon_gvs_infers_max_dof_for_higher_order_example_basis():
+    link1 = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3.04e5,
+        nu=0.45,
+        rho=1310.0,
+        eta=1e4,
+        L=0.0250 + 0.2550 + 0.0250,
+        r_i=0.01541,
+        r_f=0.00642,
+    )
+    link2 = LinkSpec(
+        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+        E=3.04e5,
+        nu=0.45,
+        rho=1310.0,
+        eta=1e4,
+        L=0.0550,
+        r_i=0.00642,
+        r_f=0.00480,
+    )
+    joint1 = JointSpec(type="fixed")
+    joint2 = JointSpec(type="fixed")
+    basis1 = StrainBasisSpec(
+        type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
+    )
+    basis2 = StrainBasisSpec(
+        type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
+    )
+    active_tendon_routing = linear_tendon_routing(
+        y_intercept=jnp.array(
+            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+        ),
+        y_slope=jnp.array(
+            [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
+        ),
+        z_intercept=jnp.array(
+            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
+        ),
+        z_slope=jnp.array(
+            [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
+        ),
+        attachment_segment_index=jnp.array([0, 0]),
+    )
+    robot = _make_tendon_gvs(
+        segments=_segments([link1, link2], [joint1, joint2], [basis1, basis2], [8, 8]),
+        gravity=[0.0, 0.0, -9.81],
+        tendon_params=active_tendon_routing,
+        base_pose=jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+        scale_rotational_basis_by_length=True,
+    )
+    q = jnp.zeros((robot.num_dofs,))
+
+    assert robot.max_dof == 8
+    assert robot.dofs_per_segment.tolist() == [[0, 8], [0, 2]]
+    assert robot.actuation_matrix(q).shape == (10, 2)
+    assert robot.jacobian_passive_tendon(q).shape == (0, 10)
+    assert robot.passive_tendon_length(q).shape == (0,)
+    assert jnp.all(jnp.isfinite(robot.tendon_length(q)))
+    assert jnp.all(jnp.isfinite(robot.stiffness_matrix()))
+    assert jnp.all(jnp.isfinite(robot.damping_matrix(q)))
 
 
 if __name__ == "__main__":

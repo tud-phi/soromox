@@ -9,20 +9,27 @@ jax.config.update("jax_enable_x64", True)  # double precision
 import jax.numpy as jnp
 
 import soromox
-from soromox.parameters.hsa_params import (
-    PARAMS_FPU_CONTROL,
-    PARAMS_FPU_HYSTERESIS_CONTROL,
-)
 from soromox.rendering.planar_hsa.opencv_renderer import (
     OpenCVPlanarHSARenderer,
 )
-from soromox.systems import PlanarHSA, SystemState
+from soromox.systems import PlanarHSA, PlanarHSAParams, PlanarHSAStructure, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+
+
+def _repo_hsa_params_path(consider_hysteresis: bool) -> Path:
+    filename = "fpu_hysteresis_control.npz" if consider_hysteresis else "fpu_control.npz"
+    return (
+        Path(__file__).resolve().parents[3]
+        / "assets"
+        / "robot_parameters"
+        / "planar_hsa"
+        / filename
+    )
 
 
 if __name__ == "__main__":
@@ -40,23 +47,25 @@ if __name__ == "__main__":
     strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
     consider_hysteresis = True
 
-    params = (
-        PARAMS_FPU_HYSTERESIS_CONTROL if consider_hysteresis else PARAMS_FPU_CONTROL
-    )
+    params = PlanarHSAParams.from_npz(_repo_hsa_params_path(consider_hysteresis))
     # increase damping for simulation stability
-    params["zetab"] = 5 * params["zetab"]
-    params["zetash"] = 5 * params["zetash"]
-    params["zetaa"] = 5 * params["zetaa"]
+    params = params.replace(
+        bending_damping=5 * params.bending_damping,
+        shear_damping=5 * params.shear_damping,
+        axial_damping=5 * params.axial_damping,
+    )
 
     # ======================================================
     # Robot initialization
     # ======================================================
     robot = PlanarHSA(
-        sym_exp_filepath=sym_exp_filepath,
         params=params,
-        strain_selector=strain_selector,
-        consider_underactuation=True,
-        consider_hysteresis=consider_hysteresis,
+        structure=PlanarHSAStructure(
+            symbolic_expression_path=str(sym_exp_filepath),
+            strain_selector=strain_selector,
+            consider_underactuation=True,
+            consider_hysteresis=consider_hysteresis,
+        ),
     )
     print(
         f"Planar HSA with {num_segments} segments and {num_rods_per_segment} rods per segment initialized."
