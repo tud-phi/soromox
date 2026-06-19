@@ -285,7 +285,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--reward-csv",
         type=str,
-        default=str(RL_DIR / "reward_csv_exports" / "training_reward.csv"),
+        default=str(RL_DIR / "reward_logs" / "training_reward.csv"),
         help="CSV file created for wall_time and episode_reward_mean records.",
     )
     parser.add_argument(

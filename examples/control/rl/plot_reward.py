@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Plot reward curves from local CSV exports.
 
-By default this script reads all ``*.csv`` files from ``reward_csv_exports``.
+By default this script reads all ``*.csv`` files from ``reward_logs``.
 Each CSV is expected to contain ``wall_time`` and ``episode_reward_mean`` columns.
 Files are grouped by their names, for example
 ``SoRoMoX_64_envs_1bqkkr1d.csv`` is grouped as ``SoRoMoX 64 envs``.
@@ -252,7 +252,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--csv-dir",
         type=Path,
-        default=SCRIPT_DIR / "reward_csv_exports",
+        default=SCRIPT_DIR / "reward_logs",
         help="Directory containing reward CSV exports.",
     )
     parser.add_argument(
