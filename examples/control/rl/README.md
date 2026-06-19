@@ -6,6 +6,8 @@ reinforcement-learning workflow:
 - `parallel_soromox_env.py`: JAX-vectorized Stable-Baselines3 `VecEnv`.
 - `train.py`: PPO training file.
 - `test.py`: model evaluation file.
+- `visualize.py`: run the checkpointed PPO model, render the parallel rollout,
+  and save one MP4 video.
 
 Training saves the final PPO model and the final SB3 `VecNormalize` state.
 Testing will print the final-step end-effector tracking error and success rate.
@@ -21,6 +23,8 @@ The scripts assume the project environment already provides:
 - `gymnasium`
 - `stable-baselines3`
 - `numpy`
+- `open3d`
+- `ffmpeg`
 
 Please use `pip install soromox[examples]` to get all dependencies.
 
@@ -58,7 +62,7 @@ dt: 1e-4 s
 From the repository root:
 
 ```bash
-python examples/parallel_rl/train.py \
+python examples/control/rl/train.py \
   --num-envs 64 \
   --total-timesteps 1000000 \
   --n-steps 200
@@ -67,14 +71,14 @@ python examples/parallel_rl/train.py \
 The training script saves:
 
 ```text
-examples/parallel_rl/soromox_models/soromox_ppo_final.zip
-examples/parallel_rl/soromox_models/soromox_ppo_vecnormalize_final.pkl
+examples/control/rl/soromox_models/soromox_ppo_final.zip
+examples/control/rl/soromox_models/soromox_ppo_vecnormalize_final.pkl
 ```
 
 You can change the artifact names:
 
 ```bash
-python examples/parallel_rl/train.py \
+python examples/control/rl/train.py \
   --model-name my_model \
   --vecnormalize-name my_vecnormalize.pkl
 ```
@@ -82,20 +86,20 @@ python examples/parallel_rl/train.py \
 ## Evaluation
 
 ```bash
-python examples/parallel_rl/test.py
+python examples/control/rl/test.py
 ```
 
 By default, the test script loads the packaged release model:
 
 ```text
-examples/parallel_rl/soromox_models/soromox_ppo_final.zip
-examples/parallel_rl/soromox_models/soromox_ppo_vecnormalize_final.pkl
+examples/control/rl/soromox_models/soromox_ppo_final.zip
+examples/control/rl/soromox_models/soromox_ppo_vecnormalize_final.pkl
 ```
 
 To test a newly trained model, pass explicit paths:
 
 ```bash
-python examples/parallel_rl/test.py \
+python examples/control/rl/test.py \
   --model-path your_model \
   --vecnormalize-path your_vecnormalize.pkl
 ```
@@ -119,3 +123,42 @@ ee_pos - ball_pos
 ```python
 np.linalg.norm(ee_pos - ball_pos, axis=1).mean()
 ```
+
+## Visualization
+
+The release includes checkpoint files in:
+
+```text
+examples/control/rl/checkpoints/ppo_model.zip
+examples/control/rl/checkpoints/env_vecnormalize.pkl
+```
+
+Render a parallel rollout directly to MP4:
+
+```bash
+python examples/control/rl/visualize.py
+```
+
+By default this runs 64 environments for 105 control steps, renders them in one
+Open3D grid scene, and saves only:
+
+```text
+examples/control/rl/visualizations/soromox_rollout.mp4
+```
+
+No NPZ rollout files or PNG frame folders are kept. The script prints progress
+bars for the rollout stage and the render/encode stage.
+
+Optional smaller preview:
+
+```bash
+python examples/control/rl/visualize.py \
+  --num-envs 16 \
+  --max-envs 16 \
+  --n-steps 45 \
+  --width 960 \
+  --height 960 \
+  --output examples/control/rl/visualizations/soromox_preview.mp4
+```
+
+<video src="visualizations/soromox_rollout.mp4" controls width="720"></video>

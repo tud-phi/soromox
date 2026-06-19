@@ -12,7 +12,7 @@ import os
 if __package__:
     from ._repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
 else:
-    from _repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
+    from examples.control.rl._repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
 
 
 ensure_repo_src_on_path()
@@ -20,7 +20,7 @@ ensure_repo_src_on_path()
 if __package__:
     from .parallel_soromox_env import ParallelSoromoxEnv
 else:
-    from parallel_soromox_env import ParallelSoromoxEnv
+    from examples.control.rl.parallel_soromox_env import ParallelSoromoxEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 
