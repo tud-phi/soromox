@@ -1,16 +1,11 @@
+import time
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import numpy as np
-import time
-
-jax.config.update("jax_enable_x64", True)
-# jax.config.update("jax_platform_name", "gpu")
-# print("JAX default backend:", jax.default_backend())
-# print("JAX devices:", jax.devices())
-
 import matplotlib.pyplot as plt
+import numpy as np
 
 from soromox.rendering import (
     BackboneColorConfig,
@@ -25,11 +20,18 @@ from soromox.systems import (
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
+jax.config.update("jax_enable_x64", True)
+# jax.config.update("jax_platform_name", "gpu")
+# print("JAX default backend:", jax.default_backend())
+# print("JAX devices:", jax.devices())
+
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
 if __name__ == "__main__":
@@ -128,12 +130,10 @@ if __name__ == "__main__":
     ]
     robot = GVS.from_segments(
         segments,
-        gravity=jnp.array([-9.81, -9.81, -9.81*0]),
+        gravity=jnp.array([-9.81, -9.81, -9.81 * 0]),
         max_dof=6,
-        base_pose=jnp.array(
-            [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
     )
-
 
     print(f"System initialized with {robot.num_segments} segments")
     print(f"max DOFs: {robot.max_dof}, max Gauss points: {robot.max_num_gauss_points}.")
@@ -163,7 +163,7 @@ if __name__ == "__main__":
     t0 = 0.0
     t1 = 3
     solver_dt = 1e-4
-    skip_step = 10   # how many time steps to skip in between video frames
+    skip_step = 10  # how many time steps to skip in between video frames
     save_dt = solver_dt * skip_step
 
     t_start = time.perf_counter()
@@ -194,25 +194,26 @@ if __name__ == "__main__":
     )
     g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
-
     # build [t, x, y, z]
-    data_jnp = jnp.column_stack((
-        ts,
-        g_ee_ts[:, 0, 3],
-        g_ee_ts[:, 1, 3],
-        g_ee_ts[:, 2, 3],
-    ))
+    data_jnp = jnp.column_stack(
+        (
+            ts,
+            g_ee_ts[:, 0, 3],
+            g_ee_ts[:, 1, 3],
+            g_ee_ts[:, 2, 3],
+        )
+    )
 
     # convert to numpy before saving
     data_np = np.array(data_jnp)
 
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     np.savetxt(
-       # r"C:\Users\Usuario\Desktop\Simulation_Mechatronics\end_effector_position_GVS.csv",
-        "end_effector_position_Complex_GVS_SoRoMoX.csv",
+        DATA_DIR / "end_effector_position_complex_gvs_soromox.csv",
         data_np,
         delimiter=",",
         header="t,x,y,z",
-        comments=""
+        comments="",
     )
 
     plt.figure()

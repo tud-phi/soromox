@@ -2,7 +2,8 @@ clear all;
 close all;
 clc;
 
-addpath('Data_Simulations')
+script_dir = fileparts(mfilename('fullpath'));
+data_dir = fullfile(script_dir, '..', '..', 'data');
 
 FontLabels      = 32;
 % axes1 = axes('FontSize',34);box(axes1,'on');hold(axes1,'on');
@@ -21,7 +22,7 @@ colors = [0 0.6 1;  % blue
 %%
 kk=1;
 
-load("end_effector_position_Complex_GVS_SoRoSim.mat")
+load(fullfile(data_dir, 'end_effector_position_complex_gvs_sorosim.mat'))
 plot(t(1:kk:end),Pos_EE_all(1,(1:kk:end)),'LineWidth',3,'Color', colors(1,:));hold on;grid on;
 plot(t(1:kk:end),Pos_EE_all(2,(1:kk:end)),'LineWidth',3,'Color', colors(2,:));hold on;grid on;
 plot(t(1:kk:end),Pos_EE_all(3,(1:kk:end)),'LineWidth',3,'Color', colors(3,:));hold on;grid on;
@@ -31,7 +32,7 @@ ylabel('Tip Coordinates $(\mathrm{m})$','Interpreter','latex','FontName','Times 
 
 % kk=20;
 
-T = readtable("end_effector_position_Spatial_PyElastica.xlsx");
+T = readtable(fullfile(data_dir, 'end_effector_position_spatial_pyelastica.xlsx'));
 kkk=15;
 hold on;plot(T.time(1:kk:end),T.x(1:kk:end),'LineWidth',4,'Color', colors(1,:),'LineStyle','--');hold on;
 hold on;plot(T.time(1:kk:end),T.y(1:kk:end),'LineWidth',4,'Color', colors(2,:),'LineStyle','--');hold on;
@@ -40,7 +41,7 @@ plot(T.time(1:kk:end),T.z(1:kk:end),'LineWidth',4,'Color', colors(3,:),'LineStyl
 
 % kk=10;
 
-T1 = readtable("end_effector_position_Complex_GVS_SoRoMoX.csv");
+T1 = readtable(fullfile(data_dir, 'end_effector_position_complex_gvs_soromox.csv'));
 kkk=10;
 
 hold on;plot(T1.t(1:kk:end),T1.x(1:kk:end),'LineWidth',4,'Color', colors(1,:),'LineStyle','-.');hold on;
@@ -54,4 +55,3 @@ legend({'$x_t$ (SoRoSim)', '$y_t$ (SoRoSim)','$z_t$ (SoRoSim)', ...
         'Location','north', ...
         'Orientation','horizontal', ...
         'NumColumns',3);
-

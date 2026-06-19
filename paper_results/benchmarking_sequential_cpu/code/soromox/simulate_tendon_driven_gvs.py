@@ -1,14 +1,13 @@
+import time
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
-import optimistix as optx
-import time
-
 import numpy as np
+import optimistix as optx
 
-from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     CrossSectionGeometry,
     LinearTendonRoutingParams,
@@ -45,6 +44,8 @@ jnp.set_printoptions(
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 ### BODY DEFINITION OF THE SOFT ROBOT ###
 
@@ -83,22 +84,14 @@ basis2 = StrainBasisSpec(
 )
 
 
-num_gauss_points  = [5, 5]
+num_gauss_points = [5, 5]
 g = [0.0, 0.0, -9.81]
 
 active_tendon_routing = LinearTendonRoutingParams(
-    y_intercept=jnp.array(
-        [0, 0.02*1]
-    ),
-    y_slope=jnp.array(
-        [0, 0]
-    ),
-    z_intercept=jnp.array(
-        [0.02*1, 0.0]
-    ),
-    z_slope=jnp.array(
-        [0, 0]
-    ),
+    y_intercept=jnp.array([0, 0.02 * 1]),
+    y_slope=jnp.array([0, 0]),
+    z_intercept=jnp.array([0.02 * 1, 0.0]),
+    z_slope=jnp.array([0, 0]),
     attachment_segment_index=jnp.array([1, 1]),
 )
 
@@ -261,23 +254,25 @@ g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
 
 # build [t, x, y, z]
-data_jnp = jnp.column_stack((
-    ts,
-    g_ee_ts[:, 0, 3],
-    g_ee_ts[:, 1, 3],
-    g_ee_ts[:, 2, 3],
-))
+data_jnp = jnp.column_stack(
+    (
+        ts,
+        g_ee_ts[:, 0, 3],
+        g_ee_ts[:, 1, 3],
+        g_ee_ts[:, 2, 3],
+    )
+)
 
 # convert to numpy before saving
 data_np = np.array(data_jnp)
 
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 np.savetxt(
-    # r"C:\Users\Usuario\Desktop\Simulation_Mechatronics\end_effector_position_GVS_tendons.csv",
-    "end_effector_position_Tendon_driven_GVS_SoRoMoX.csv",
+    DATA_DIR / "end_effector_position_tendon_driven_gvs_soromox.csv",
     data_np,
     delimiter=",",
     header="t,x,y,z",
-    comments=""
+    comments="",
 )
 
 
@@ -292,5 +287,3 @@ plt.grid(True)
 plt.box(True)
 plt.tight_layout()
 plt.show()
-
-

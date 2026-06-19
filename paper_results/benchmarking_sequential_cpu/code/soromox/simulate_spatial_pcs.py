@@ -1,21 +1,24 @@
+import time
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
-from diffrax import Tsit5
 import numpy as np
-import time
+from diffrax import Tsit5
+
+from soromox.rendering import MatplotlibRenderer
+from soromox.systems import PCS, PCSParams, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
-from soromox.systems import PCS, PCSParams, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
     linewidth=jnp.inf,
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
+
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 if __name__ == "__main__":
     num_segments = 2
@@ -25,7 +28,9 @@ if __name__ == "__main__":
     segment_lengths = 3e-1 * jnp.ones((num_segments,))
     damping_matrix = 1e-2 * jnp.diag(
         (
-            jnp.repeat(jnp.array([[2e0, 2e0, 2e0, 1e3, 1e3, 1e3]]), num_segments, axis=0)
+            jnp.repeat(
+                jnp.array([[2e0, 2e0, 2e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
+            )
             * segment_lengths[:, None]
         ).flatten()
     )
@@ -36,7 +41,7 @@ if __name__ == "__main__":
         length=segment_lengths,
         radius=3e-2 * jnp.ones((num_segments,)),
         density=rho,
-        gravity=jnp.array([-9.81*1, -9.81*1, 9.81*0]),  # Gravity vector [m/s^2]
+        gravity=jnp.array([-9.81 * 1, -9.81 * 1, 9.81 * 0]),  # Gravity vector [m/s^2]
         young_modulus=1e6 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         shear_modulus=3.333333e5 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
         damping_matrix=damping_matrix,
@@ -44,7 +49,6 @@ if __name__ == "__main__":
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),
     )
-
 
     # ======================================================
     # Robot initialization
@@ -54,7 +58,7 @@ if __name__ == "__main__":
     # =====================================================
     # Simulation upon time
     # =====================================================
-       # Initial configuration
+    # Initial configuration
     q0 = jnp.repeat(
         jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0])[None, :],
         num_segments,
@@ -104,22 +108,25 @@ if __name__ == "__main__":
     g_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
 
     # build [t, x, y, z]
-    data_jnp = jnp.column_stack((
-        ts,
-        g_ee_ts[:, 0, 3],
-        g_ee_ts[:, 1, 3],
-        g_ee_ts[:, 2, 3],
-    ))
+    data_jnp = jnp.column_stack(
+        (
+            ts,
+            g_ee_ts[:, 0, 3],
+            g_ee_ts[:, 1, 3],
+            g_ee_ts[:, 2, 3],
+        )
+    )
 
     # convert to numpy before saving
     data_np = np.array(data_jnp)
 
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
     np.savetxt(
-        "end_effector_position_Spatial_PCS_SoRoMoX.csv",
+        DATA_DIR / "end_effector_position_spatial_pcs_soromox.csv",
         data_np,
         delimiter=",",
         header="t,x,y,z",
-        comments=""
+        comments="",
     )
 
     # plt.figure()

@@ -4,6 +4,9 @@ clear all;
 close all;
 clc;
 
+script_dir = fileparts(mfilename('fullpath'));
+data_dir = fullfile(script_dir, '..', '..', 'data');
+
 FontLabels      = 32;
 set(groot, 'defaultAxesFontName', 'Times New Roman');
 set(groot, 'defaultAxesFontSize', FontLabels);
@@ -26,12 +29,16 @@ Case = 4;
 switch Case
    case 1
       load 'System_Planar_PCS.mat';
+      output_file = 'end_effector_position_planar_pcs_sorosim.mat';
    case 2
       load 'System_Spatial_PCS.mat';
+      output_file = 'end_effector_position_spatial_pcs_sorosim.mat';
    case 3
       load 'System_Complex_GVS.mat';
+      output_file = 'end_effector_position_complex_gvs_sorosim.mat';
    otherwise
       load 'System_Tendon_driven_GVS.mat';
+      output_file = 'end_effector_position_tendon_driven_gvs_sorosim.mat';
 end
 
 S1.PlotParameters.CameraPosition = [0 -6.235382907247957 0];
@@ -67,6 +74,10 @@ for i=1:length(t)
     Pos_EE_all              = [Pos_EE_all Pos_EE];
 end
 
+if ~exist(data_dir, 'dir')
+    mkdir(data_dir);
+end
+save(fullfile(data_dir, output_file), 't', 'Pos_EE_all');
 
 %%
 
@@ -81,7 +92,6 @@ legend({'$x_t$ (SoRoSim)', '$y_t$ (SoRoSim)','$z_t$ (SoRoSim)'}, ...
         'Location','north', ...
         'Orientation','horizontal', ...
         'NumColumns',3);
-
 
 
 

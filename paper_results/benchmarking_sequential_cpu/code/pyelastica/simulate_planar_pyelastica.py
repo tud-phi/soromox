@@ -21,36 +21,42 @@ Notes:
 
 from __future__ import annotations  # MUST be first (after docstring)
 
+import time
 from collections import defaultdict
 from dataclasses import dataclass
-import numpy as np
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
-import time
 from elastica import (
-    BaseSystemCollection,
-    Constraints,
-    Forcing,
-    CallBacks,
-    Damping,
-    Contact,
-    Connections,
-    CosseratRod,
-    OneEndFixedBC,
     AnalyticalLinearDamper,
-    PositionVerlet,
+    BaseSystemCollection,
     CallBackBaseClass,
-    RodSelfContact,
+    CallBacks,
+    Connections,
+    Constraints,
+    Contact,
+    CosseratRod,
+    Damping,
+    Forcing,
     GravityForces,
     NoForces,
+    OneEndFixedBC,
+    PositionVerlet,
+    RodSelfContact,
 )
 from elastica.timestepper import extend_stepper_interface
+
+DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 
 # -----------------------------
 # System definition
 # -----------------------------
-class RodSimulator(BaseSystemCollection, Constraints, Connections, Forcing, CallBacks, Damping, Contact):
+class RodSimulator(
+    BaseSystemCollection, Constraints, Connections, Forcing, CallBacks, Damping, Contact
+):
     pass
 
 
@@ -94,7 +100,9 @@ class SimpleTendonLikeActuation(NoForces):
             return system.external_torques
         if hasattr(system, "external_torques_collection"):
             return system.external_torques_collection
-        raise AttributeError("Could not find external torques array on system (external_torques / external_torques_collection).")
+        raise AttributeError(
+            "Could not find external torques array on system (external_torques / external_torques_collection)."
+        )
 
     def apply_torques(self, system, time: float = 0.0):
         # director_collection is shape (3,3,n_elems)
@@ -119,7 +127,9 @@ class SimpleTendonLikeActuation(NoForces):
         v_world = d[:, 1, :]  # (3, n_elems)
 
         # world torque vector per element
-        torque_world = (tau_u * tau_elem)[None, :] * u_world + (tau_v * tau_elem)[None, :] * v_world  # (3,n_elems)
+        torque_world = (tau_u * tau_elem)[None, :] * u_world + (tau_v * tau_elem)[
+            None, :
+        ] * v_world  # (3,n_elems)
 
         # Apply to external torques
         ext_tau = self._get_external_torques(system)
@@ -132,7 +142,9 @@ class SimpleTendonLikeActuation(NoForces):
         elif ext_tau.shape[1] == n_elems:
             ext_tau += torque_world
         else:
-            raise RuntimeError(f"Unexpected external torques shape: {ext_tau.shape} (expected (3,{n_elems}) or (3,{n_elems+1}))")
+            raise RuntimeError(
+                f"Unexpected external torques shape: {ext_tau.shape} (expected (3,{n_elems}) or (3,{n_elems + 1}))"
+            )
 
 
 # -----------------------------
@@ -164,7 +176,7 @@ class RodCallBack(CallBackBaseClass):
 def simulate(
     final_time: float = 3.0,
     dt: float = 1e-4,
-    n_elems: int =  12,
+    n_elems: int = 12,
     length: float = 0.6,
     radius: float = 0.03,
     density: float = 1000.0,
@@ -172,7 +184,7 @@ def simulate(
     poisson_ratio: float = 0.5,
     damping_nu: float = 0.048,
     add_gravity: bool = True,
-    gravity: np.ndarray = np.array([-9.81*1, -9.81*0, -9.81*0]),
+    gravity: np.ndarray = np.array([-9.81 * 1, -9.81 * 0, -9.81 * 0]),
     add_self_contact: bool = False,
     step_skip: int = 20,
 ):
@@ -216,7 +228,9 @@ def simulate(
 
     # Gravity (optional)
     if add_gravity:
-        sim.add_forcing_to(rod).using(GravityForces, acc_gravity=np.asarray(gravity, dtype=float))
+        sim.add_forcing_to(rod).using(
+            GravityForces, acc_gravity=np.asarray(gravity, dtype=float)
+        )
 
     # Self-contact (optional)
     if add_self_contact:
@@ -229,7 +243,7 @@ def simulate(
     # Tendon-like actuation params (4-channel)
     act_params = TendonActuationParams(
         activation=np.array([0.0, 0.0, 0.0, 0.0]),
-        torque_gain=0.08*0,
+        torque_gain=0.08 * 0,
         s_profile="tip",
     )
 
@@ -238,7 +252,9 @@ def simulate(
 
     # Diagnostics
     log = defaultdict(list)
-    sim.collect_diagnostics(rod).using(RodCallBack, step_skip=step_skip, callback_params=log)
+    sim.collect_diagnostics(rod).using(
+        RodCallBack, step_skip=step_skip, callback_params=log
+    )
 
     # Finalize
     sim.finalize()
@@ -259,12 +275,11 @@ def simulate(
 
     return log
 
+
 start = time.perf_counter()
 
 if __name__ == "__main__":
-    data = simulate(
-
-    )
+    data = simulate()
     elapsed = time.perf_counter() - start
     print(f"Elapsed time: {elapsed:.6f} seconds")
 
@@ -274,7 +289,7 @@ if __name__ == "__main__":
     print("Final tip position [m]:", tip)
 
     time = np.array(data["time"])  # (N,)
-    positions = data["position"]   # list of (3, n_nodes)
+    positions = data["position"]  # list of (3, n_nodes)
     tip_pos = np.array([p[:, -1] for p in positions])  # (N, 3)
     x = tip_pos[:, 0]
     y = tip_pos[:, 1]
@@ -300,14 +315,10 @@ if __name__ == "__main__":
     plt.tight_layout()
     plt.show()
 
-    df = pd.DataFrame({
-    'time': time,
-    'x': x,
-    'y': y,
-    'z': z
-    })
+    df = pd.DataFrame({"time": time, "x": x, "y": y, "z": z})
 
     # Save to Excel
-    file_path = r"Results\end_effector_position_Planar_PyElastica.xlsx"
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    file_path = DATA_DIR / "end_effector_position_planar_pyelastica.xlsx"
 
     df.to_excel(file_path, index=False)
