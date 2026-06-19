@@ -220,25 +220,6 @@ def compute_marker_errors(robot, u_batch, q0, measured_markers_batch, E, nu, rho
 
 ### SOFT ROBOT UTILITIES FUNCTIONS ###
 
-def draw_robot_curve(
-    robot: TendonActuatedGVS,
-    q: jnp.ndarray,
-    num_points: int = 50,
-):
-    batched_forward_kinematics = jax.vmap(robot.forward_kinematics, in_axes=(None, 0))
-    L_max = robot.length
-
-    s_ps = jnp.linspace(0, L_max, num_points)
-    g_ps = batched_forward_kinematics(q, s_ps)[:, :3, 3]
-
-    # q_gathered = robot._min_size_gathered(q)
-    # V_g = robot._forward_kinematics_gauss(q_gathered)
-
-    # g_ps = jnp.concatenate(V_g[:, :, :-1, -1:], axis=0)
-
-    curve = onp.array(g_ps, dtype=onp.float64)
-    return curve  # (N, 3)
-
 
 def draw_robot_curve(
     robot: TendonActuatedGVS,
@@ -294,6 +275,7 @@ def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray)
     solver = optx.Newton(rtol=1e-6, atol=1e-6)
     statics_eq_jit = jax.jit(statics_eq)
     return optx.root_find(statics_eq_jit, solver, q0, (u), max_steps=200)
+
 
 # STATIC EQUILIBRIUM EQUATION SOLVER with UPDATED E,rho AND NU
 def solve_equilibrium_Enurho(
