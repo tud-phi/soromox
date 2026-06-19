@@ -115,21 +115,41 @@ uv pip install -e .
 
 ### Optional Dependencies (extras)
 
-The extras in `pyproject.toml` bundle optional tooling:
+The default install keeps the runtime dependency set small. Install one or more
+extras when you need development tools, examples, rendering backends, RL
+workflows, or the dependencies used to reproduce the paper results.
 
-- `dev`: linting/formatting/testing utilities (ruff, pytest, coverage, tox, pre-commit, seaborn).
-- `docs`: Zensical stack for building the documentation site.
-- `examples`: dependencies for the example scripts (jaxopt, matplotlib, open3d, seaborn, ffmpeg-python, ipython).
-- `rendering`: rendering-focused deps (matplotlib, open3d, ffmpeg-python).
-- `test`: minimal test stack (pytest, coverage, tox, html report).
-- `all`: installs everything above.
+| Extra | Use this for | Main packages included |
+|-------|--------------|------------------------|
+| `dev` | Local development, linting, formatting, tests, coverage, release checks, and pre-commit hooks. | `ruff`, `pytest`, `coverage`, `tox`, `pre-commit`, `bump2version`, `check-manifest`, `seaborn` |
+| `docs` | Building and serving the documentation site locally. | `zensical`, `mkdocstrings`, `mkdocstrings-python` |
+| `examples` | Running the example scripts under `examples/`. | `matplotlib`, `seaborn`, `ipython`, `optax`, `optimistix`, `open3d`, `opencv-python`, `plotly`, `trimesh`, `viser`, `ffmpeg-python` |
+| `rendering` | Using optional rendering backends and exporting plots, videos, or interactive visualizations. | `matplotlib`, `open3d`, `opencv-python`, `plotly`, `trimesh`, `viser`, `ffmpeg-python` |
+| `rl` | Training and evaluating reinforcement-learning controllers with SoRoMoX, including parallel RL workflows. | `gymnasium`, `stable-baselines3`, `matplotlib` |
+| `paper_results` | Reproducing the paper results, including benchmarking scripts, RL experiments, visualization, and comparison baselines. | `cbfpy`, `elastica`, `gymnasium`, `stable-baselines3`, plus the example and rendering stack |
+| `test` | Running the test suite without the full development stack. | `pytest`, `pytest-cov`, `pytest-html`, `coverage`, `tox`, `codecov` |
+| `all` | Broad convenience install for users who want one environment with most optional tooling. For reproducible workflows, prefer the task-specific extras above. | See the `all` extra in `pyproject.toml` |
 
-Install with pip or uv, e.g.:
+Quote extras in shell commands so shells such as zsh do not interpret the square
+brackets as glob patterns. Install from PyPI with:
+
+```bash
+pip install "soromox[rendering]"
+pip install "soromox[rl]"
+```
+
+For a local editable source install, use pip or uv:
 
 ```bash
 pip install -e ".[dev,docs,examples]"
-# or
 uv pip install -e ".[rendering]"
+```
+
+To reproduce the paper results or run RL experiments from the source checkout:
+
+```bash
+uv pip install -e ".[paper_results]"
+uv pip install -e ".[rl]"
 ```
 
 ### Using uv for Project Management
@@ -143,6 +163,8 @@ uv pip install -e ".[dev,examples]"
 
 # Or use uv sync for reproducible installs (creates uv.lock)
 uv sync --extra dev --extra examples
+uv sync --extra paper_results
+uv sync --extra rl
 ```
 
 ### Running Tests with Coverage
