@@ -1,13 +1,15 @@
 """Train PPO on the released parallel SoRoMoX environment.
 
-The training entry point intentionally saves only the final PPO model and the
-final SB3 VecNormalize state. It does not create intermediate checkpoints or
-episode logs.
+The training entry point saves the final PPO model and SB3 VecNormalize state.
+It can also periodically save checkpoints and reward CSV records under this
+example directory.
 """
 
 import argparse
+import csv
 import importlib.util
 import os
+import time
 from pathlib import Path
 
 RL_DIR = Path(__file__).resolve().parent
@@ -23,6 +25,7 @@ else:
     spec.loader.exec_module(env_module)
     ParallelSoromoxEnv = env_module.ParallelSoromoxEnv
 from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.vec_env import VecNormalize
 
 
@@ -94,6 +97,100 @@ def build_model(env: VecNormalize, args: argparse.Namespace) -> PPO:
     )
 
 
+class RewardCheckpointCallback(BaseCallback):
+    """Save periodic PPO checkpoints, VecNormalize states, and reward records."""
+
+    def __init__(
+        self,
+        *,
+        env: VecNormalize,
+        checkpoint_dir: Path,
+        checkpoint_freq: int,
+        reward_csv_path: Path,
+        reward_log_freq: int,
+        reward_window: int,
+    ) -> None:
+        super().__init__()
+        self.env = env
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_freq = checkpoint_freq
+        self.reward_csv_path = reward_csv_path
+        self.reward_log_freq = reward_log_freq
+        self.reward_window = reward_window
+        self.episode_returns: list[float] = []
+        self.completed_returns: list[float] = []
+        self.start_time = time.perf_counter()
+        self.last_checkpoint_step = 0
+        self.last_reward_step = 0
+
+    def _init_callback(self) -> None:
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        self.reward_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        self.episode_returns = [0.0 for _ in range(self.training_env.num_envs)]
+        with self.reward_csv_path.open("w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["wall_time", "episode_reward_mean"])
+            writer.writeheader()
+
+    def _on_step(self) -> bool:
+        rewards = self._last_original_rewards()
+        dones = self.locals.get("dones")
+        if rewards is not None and dones is not None:
+            for idx, (reward, done) in enumerate(zip(rewards, dones)):
+                self.episode_returns[idx] += float(reward)
+                if bool(done):
+                    self.completed_returns.append(self.episode_returns[idx])
+                    self.episode_returns[idx] = 0.0
+
+        if (
+            self.checkpoint_freq > 0
+            and self.num_timesteps - self.last_checkpoint_step >= self.checkpoint_freq
+        ):
+            self._save_checkpoint(self.num_timesteps)
+            self.last_checkpoint_step = self.num_timesteps
+
+        if (
+            self.reward_log_freq > 0
+            and self.num_timesteps - self.last_reward_step >= self.reward_log_freq
+        ):
+            self._write_reward_record()
+            self.last_reward_step = self.num_timesteps
+
+        return True
+
+    def _last_original_rewards(self) -> list[float] | None:
+        getter = getattr(self.env, "get_original_reward", None)
+        rewards = getter() if getter is not None else self.locals.get("rewards")
+        if rewards is None:
+            return None
+        return [float(value) for value in rewards]
+
+    def _save_checkpoint(self, step: int) -> None:
+        model_path = self.checkpoint_dir / f"ppo_model_step_{step}"
+        vecnormalize_path = self.checkpoint_dir / f"env_vecnormalize_step_{step}.pkl"
+        self.model.save(str(model_path))
+        self.env.save(str(vecnormalize_path))
+        print(f"Saved checkpoint at {step} timesteps: {model_path}.zip")
+
+    def _write_reward_record(self) -> None:
+        if not self.completed_returns:
+            return
+        window = self.completed_returns[-self.reward_window :]
+        reward_mean = sum(window) / len(window)
+        wall_time = time.perf_counter() - self.start_time
+        with self.reward_csv_path.open("a", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=["wall_time", "episode_reward_mean"])
+            writer.writerow(
+                {
+                    "wall_time": f"{wall_time:.12g}",
+                    "episode_reward_mean": f"{reward_mean:.12g}",
+                }
+            )
+        print(
+            f"Reward record at {self.num_timesteps} timesteps: "
+            f"wall_time={wall_time:.3f}s, episode_reward_mean={reward_mean:.6g}"
+        )
+
+
 def save_final_artifacts(model: PPO, env: VecNormalize, args: argparse.Namespace) -> None:
     """Save the final PPO model and VecNormalize state.
 
@@ -117,8 +214,16 @@ def train(args: argparse.Namespace) -> None:
 
     env = build_env(args)
     model = build_model(env, args)
+    callback = RewardCheckpointCallback(
+        env=env,
+        checkpoint_dir=Path(args.checkpoint_dir),
+        checkpoint_freq=args.checkpoint_freq,
+        reward_csv_path=Path(args.reward_csv),
+        reward_log_freq=args.reward_log_freq,
+        reward_window=args.reward_window,
+    )
     try:
-        model.learn(total_timesteps=args.total_timesteps)
+        model.learn(total_timesteps=args.total_timesteps, callback=callback)
         save_final_artifacts(model, env, args)
     finally:
         env.close()
@@ -157,11 +262,41 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=str(RL_DIR / "checkpoints"),
     )
+    parser.add_argument(
+        "--checkpoint-dir",
+        type=str,
+        default=str(RL_DIR / "checkpoints"),
+        help="Directory for periodic checkpoint files.",
+    )
+    parser.add_argument(
+        "--checkpoint-freq",
+        type=positive_int,
+        default=100_000,
+        help="Save a model and VecNormalize checkpoint every N timesteps.",
+    )
     parser.add_argument("--model-name", type=str, default="ppo_model")
     parser.add_argument(
         "--vecnormalize-name",
         type=str,
         default="env_vecnormalize.pkl",
+    )
+    parser.add_argument(
+        "--reward-csv",
+        type=str,
+        default=str(RL_DIR / "reward_csv_exports" / "training_reward.csv"),
+        help="CSV file created for wall_time and episode_reward_mean records.",
+    )
+    parser.add_argument(
+        "--reward-log-freq",
+        type=positive_int,
+        default=10_000,
+        help="Append one reward CSV record every N timesteps when episodes have completed.",
+    )
+    parser.add_argument(
+        "--reward-window",
+        type=positive_int,
+        default=100,
+        help="Number of completed episodes used for episode_reward_mean.",
     )
     return parser.parse_args()
 
