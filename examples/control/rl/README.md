@@ -138,7 +138,7 @@ examples/control/rl/checkpoints/ppo_model.zip
 examples/control/rl/checkpoints/env_vecnormalize.pkl
 ```
 
-Render a parallel rollout directly to MP4:
+Render a parallel rollout directly to MP4 and GIF:
 
 ```bash
 python examples/control/rl/visualize.py
@@ -149,10 +149,11 @@ Open3D grid scene, and saves only:
 
 ```text
 examples/control/rl/visualizations/parallel_track_video.mp4
+examples/control/rl/visualizations/parallel_track_video.gif
 ```
 
-No NPZ rollout files or PNG frame folders are kept. The script prints progress
-bars for the rollout stage and the render/encode stage.
+No NPZ rollout files, PNG frame folders, or palette files are kept. The script
+prints progress bars for the rollout stage and the render/encode stage.
 
 Optional smaller preview:
 
@@ -163,7 +164,8 @@ python examples/control/rl/visualize.py \
   --n-steps 45 \
   --width 960 \
   --height 960 \
-  --output examples/control/rl/visualizations/parallel_track_video.mp4
+  --output examples/control/rl/visualizations/parallel_track_video.mp4 \
+  --gif-width 480
 ```
 
-<video src="visualizations/parallel_track_video.mp4" controls width="720"></video>
+![Parallel tracking demo](visualizations/parallel_track_video.gif)

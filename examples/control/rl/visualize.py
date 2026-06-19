@@ -1,13 +1,14 @@
-"""Run a PPO rollout and render it directly to one MP4 video.
+"""Run a PPO rollout and render it directly to MP4 and GIF videos.
 
 This script combines the older three-step visualization flow:
 
 1. run the parallel RL environment,
 2. render the batched rollout with Open3D,
-3. encode the rendered frames with ffmpeg.
+3. encode the rendered frames with ffmpeg,
+4. derive a README-friendly GIF from the MP4.
 
 No rollout NPZ files or PNG frame folders are kept. The only persistent output
-is the requested MP4 file.
+is the requested MP4 file and its GIF preview.
 """
 
 import argparse
@@ -15,6 +16,7 @@ import importlib.util
 import math
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Iterable
 
@@ -431,6 +433,38 @@ def render_rollout_to_mp4(
         progress.close()
 
 
+def encode_gif_from_mp4(
+    *,
+    mp4_path: Path,
+    gif_path: Path,
+    fps: int,
+    width: int,
+) -> None:
+    gif_path.parent.mkdir(parents=True, exist_ok=True)
+
+    filters = [f"fps={fps}"]
+    if width > 0:
+        filters.append(f"scale={width}:-1:flags=lanczos")
+    filters.append(
+        "split[s0][s1];[s0]palettegen=max_colors=128[p];"
+        "[s1][p]paletteuse=dither=bayer:bayer_scale=5"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(mp4_path),
+        "-vf",
+        ",".join(filters),
+        "-loop",
+        "0",
+        str(gif_path),
+    ]
+    print(f"Encoding GIF: {gif_path}")
+    subprocess.run(cmd, check=True)
+
+
 def existing_paths(paths: Iterable[Path]) -> None:
     missing = [str(path) for path in paths if not path.exists()]
     if missing:
@@ -442,6 +476,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument("--vecnormalize-path", type=Path, default=DEFAULT_VECNORMALIZE_PATH)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
+    parser.add_argument(
+        "--gif-output",
+        type=Path,
+        default=None,
+        help="GIF output path. Defaults to --output with a .gif suffix.",
+    )
 
     parser.add_argument("--num-envs", type=int, default=64)
     parser.add_argument("--max-envs", type=int, default=64)
@@ -474,6 +514,13 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--crf", type=int, default=18, help="Lower means higher quality.")
     parser.add_argument("--preset", type=str, default="medium")
+    parser.add_argument("--gif-fps", type=int, default=10)
+    parser.add_argument(
+        "--gif-width",
+        type=int,
+        default=720,
+        help="GIF width in pixels. Use 0 to keep the MP4 width.",
+    )
     return parser.parse_args()
 
 
@@ -482,9 +529,18 @@ def main() -> None:
     args.model_path = args.model_path.resolve()
     args.vecnormalize_path = args.vecnormalize_path.resolve()
     args.output = args.output.resolve()
+    args.gif_output = (
+        args.output.with_suffix(".gif")
+        if args.gif_output is None
+        else args.gif_output.resolve()
+    )
 
     if args.record_every_n <= 0:
         raise ValueError("--record-every-n must be positive.")
+    if args.gif_fps <= 0:
+        raise ValueError("--gif-fps must be positive.")
+    if args.gif_width < 0:
+        raise ValueError("--gif-width must be nonnegative.")
     if args.max_envs <= 0 or args.num_envs <= 0:
         raise ValueError("--num-envs and --max-envs must be positive.")
     if args.max_envs > args.num_envs:
@@ -502,13 +558,23 @@ def main() -> None:
     print(f"Model: {args.model_path}")
     print(f"VecNormalize: {args.vecnormalize_path}")
     print(f"Output MP4: {args.output}")
+    print(f"Output GIF: {args.gif_output}")
 
     raw_env, ts, q_ts, ball_ts = run_policy_and_collect(args)
     render_rollout_to_mp4(raw_env, ts, q_ts, ball_ts, args)
 
     if not args.output.exists() or args.output.stat().st_size == 0:
         raise RuntimeError(f"MP4 was not created correctly: {args.output}")
+    encode_gif_from_mp4(
+        mp4_path=args.output,
+        gif_path=args.gif_output,
+        fps=args.gif_fps,
+        width=args.gif_width,
+    )
+    if not args.gif_output.exists() or args.gif_output.stat().st_size == 0:
+        raise RuntimeError(f"GIF was not created correctly: {args.gif_output}")
     print(f"Saved MP4: {args.output}")
+    print(f"Saved GIF: {args.gif_output}")
 
 
 if __name__ == "__main__":

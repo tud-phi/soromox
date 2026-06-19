@@ -139,7 +139,6 @@ dmypy.json
 .DS_Store
 *.mp4
 *.gif
-!examples/control/rl/visualizations/parallel_track_video.mp4
 
 # Documentation build
 site/
