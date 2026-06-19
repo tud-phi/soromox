@@ -6,6 +6,7 @@ reinforcement-learning workflow:
 - `parallel_soromox_env.py`: JAX-vectorized Stable-Baselines3 `VecEnv`.
 - `train.py`: PPO training file.
 - `test.py`: model evaluation file.
+- `plot_reward.py`: create reward-curve PDFs from local CSV exports.
 - `visualize.py`: run the checkpointed PPO model, render the parallel rollout,
   and save one MP4 video.
 
@@ -26,6 +27,7 @@ The environment should provide:
 - `gymnasium`
 - `stable-baselines3`
 - `numpy`
+- `matplotlib`
 - `open3d`
 - `ffmpeg`
 
@@ -128,6 +130,57 @@ ee_pos - ball_pos
 ```python
 np.linalg.norm(ee_pos - ball_pos, axis=1).mean()
 ```
+
+## Reward Plotting
+
+`plot_reward.py` creates an averaged reward-curve PDF from local CSV exports.
+By default it reads all CSV files from:
+
+```text
+examples/control/rl/reward_logs
+```
+
+Each CSV file must contain these columns:
+
+```text
+wall_time
+episode_reward_mean
+```
+
+File names are used to group runs automatically. For example,
+`SoRoMoX_64_envs_1bqkkr1d.csv` is plotted as `SoRoMoX 64 envs`, while
+`PyElastica_*.csv` files are plotted as `PyElastica`.
+
+From the repository root:
+
+```bash
+python examples/control/rl/plot_reward.py
+```
+
+The default output is:
+
+```text
+examples/control/rl/visualizations/reward_curve.pdf
+```
+
+To use another CSV folder or output path:
+
+```bash
+python examples/control/rl/plot_reward.py \
+  --csv-dir path/to/reward_logs \
+  --output path/to/reward_curve.pdf
+```
+
+The script interpolates averaged curves to 500 points and applies light Gaussian
+smoothing by default. You can adjust those settings:
+
+```bash
+python examples/control/rl/plot_reward.py \
+  --points 800 \
+  --smooth-scale 0
+```
+
+Use `--smooth-scale 0` to disable smoothing.
 
 ## Visualization
 
