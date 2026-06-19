@@ -28,16 +28,16 @@ Case = 4;
 
 switch Case
    case 1
-      load 'System_Planar_PCS.mat';
+      load 'system_planar_pcs.mat';
       output_file = 'end_effector_position_planar_pcs_sorosim.mat';
    case 2
-      load 'System_Spatial_PCS.mat';
+      load 'system_spatial_pcs.mat';
       output_file = 'end_effector_position_spatial_pcs_sorosim.mat';
    case 3
-      load 'System_Complex_GVS.mat';
+      load 'system_complex_gvs.mat';
       output_file = 'end_effector_position_complex_gvs_sorosim.mat';
    otherwise
-      load 'System_Tendon_driven_GVS.mat';
+      load 'system_tendon_driven_gvs.mat';
       output_file = 'end_effector_position_tendon_driven_gvs_sorosim.mat';
 end
 
