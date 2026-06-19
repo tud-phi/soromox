@@ -191,7 +191,9 @@ class RewardCheckpointCallback(BaseCallback):
         )
 
 
-def save_final_artifacts(model: PPO, env: VecNormalize, args: argparse.Namespace) -> None:
+def save_final_artifacts(
+    model: PPO, env: VecNormalize, args: argparse.Namespace
+) -> None:
     """Save the final PPO model and VecNormalize state.
 
     Args:

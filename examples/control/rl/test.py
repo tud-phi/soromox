@@ -16,6 +16,7 @@ RL_DIR = Path(__file__).resolve().parent
 
 import jax
 import numpy as np
+
 if __package__:
     from .parallel_soromox_env import ParallelSoromoxEnv
 else:

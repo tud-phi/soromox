@@ -278,7 +278,9 @@ def build_jax_env_fns(
 
         return jnp.concatenate([ee_pos, ee_vel, current_force, ball_pos, ball_vel])
 
-    def make_ball_traj(key: jnp.ndarray) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    def make_ball_traj(
+        key: jnp.ndarray,
+    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Sample one random target-ball trajectory on a hemisphere.
 
         Args:
@@ -399,7 +401,15 @@ def build_jax_env_fns(
     def step_single(
         env_state: EnvState,
         action: jnp.ndarray,
-    ) -> Tuple[EnvState, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> Tuple[
+        EnvState,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+        jnp.ndarray,
+    ]:
         """Step one environment by one RL action.
 
         Args:
@@ -450,7 +460,9 @@ def build_jax_env_fns(
             new_env_state.ball_pos,
             new_env_state.ball_vel,
         )
-        reward, _ = reward_fn(ee_pos, new_env_state.ball_pos, ee_vel, new_env_state.ball_vel)
+        reward, _ = reward_fn(
+            ee_pos, new_env_state.ball_pos, ee_vel, new_env_state.ball_vel
+        )
         terminated, truncated = terminate_fn(new_env_state)
 
         invalid_obs = jnp.isnan(obs).any() | jnp.isinf(obs).any()
@@ -649,7 +661,9 @@ class ParallelSoromoxEnv(VecEnv):
         """
 
         indices = list(range(self.num_envs) if indices is None else indices)
-        values = values if isinstance(values, (list, tuple)) else [values] * len(indices)
+        values = (
+            values if isinstance(values, (list, tuple)) else [values] * len(indices)
+        )
         for value in values:
             setattr(self, name, value)
 

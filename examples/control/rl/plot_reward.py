@@ -11,9 +11,9 @@ import argparse
 import csv
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 os.environ.setdefault("MPLCONFIGDIR", str(SCRIPT_DIR / ".matplotlib_cache"))
@@ -21,7 +21,6 @@ os.environ.setdefault("MPLCONFIGDIR", str(SCRIPT_DIR / ".matplotlib_cache"))
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
-
 
 REWARD_KEY = "episode_reward_mean"
 TIME_KEY = "wall_time"
@@ -71,9 +70,7 @@ def parse_note(note_path: Path, csv_dir: Path) -> dict[str, list[Path]]:
         csv_match = csv_re.match(line)
         if csv_match and current_label:
             path = Path(csv_match.group(1))
-            groups[current_label].append(
-                path if path.is_absolute() else csv_dir / path
-            )
+            groups[current_label].append(path if path.is_absolute() else csv_dir / path)
             continue
 
         run_match = run_re.match(line)
@@ -136,7 +133,9 @@ def read_reward_csv(path: Path) -> Curve | None:
     return clean_curve(path, times, rewards) if times else None
 
 
-def clean_curve(source: Path, times: Iterable[float], rewards: Iterable[float]) -> Curve:
+def clean_curve(
+    source: Path, times: Iterable[float], rewards: Iterable[float]
+) -> Curve:
     data = sorted(
         (float(t), float(r))
         for t, r in zip(times, rewards)
@@ -202,11 +201,7 @@ def aggregate_curves(
         ]
     )
     mean = interpolated.mean(axis=0)
-    std = (
-        interpolated.std(axis=0, ddof=1)
-        if len(curves) > 1
-        else np.zeros_like(mean)
-    )
+    std = interpolated.std(axis=0, ddof=1) if len(curves) > 1 else np.zeros_like(mean)
     return grid / 60.0, mean, std
 
 

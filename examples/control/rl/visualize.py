@@ -130,7 +130,9 @@ def parse_vec3(value: str) -> tuple[float, float, float]:
         ) from exc
 
 
-def make_grid_offsets(num_envs: int, rows: int, cols: int, spacing: float) -> np.ndarray:
+def make_grid_offsets(
+    num_envs: int, rows: int, cols: int, spacing: float
+) -> np.ndarray:
     if rows * cols < num_envs:
         raise ValueError(f"rows * cols must cover num_envs; got {rows}x{cols}")
 
@@ -474,7 +476,9 @@ def existing_paths(paths: Iterable[Path]) -> None:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
-    parser.add_argument("--vecnormalize-path", type=Path, default=DEFAULT_VECNORMALIZE_PATH)
+    parser.add_argument(
+        "--vecnormalize-path", type=Path, default=DEFAULT_VECNORMALIZE_PATH
+    )
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_PATH)
     parser.add_argument(
         "--gif-output",
@@ -507,12 +511,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--record-every-n", type=int, default=1)
     parser.add_argument("--camera-fov", type=float, default=75.0)
     parser.add_argument("--camera-distance-factor", type=float, default=10.0)
-    parser.add_argument("--camera-position-offset", type=parse_vec3, default=(0.8, -0.8, 0.5))
+    parser.add_argument(
+        "--camera-position-offset", type=parse_vec3, default=(0.8, -0.8, 0.5)
+    )
     parser.add_argument("--camera-up", type=parse_vec3, default=(0.0, 0.0, 1.0))
     parser.add_argument("--no-trajectories", action="store_true")
     parser.add_argument("--visible", action="store_true")
 
-    parser.add_argument("--crf", type=int, default=18, help="Lower means higher quality.")
+    parser.add_argument(
+        "--crf", type=int, default=18, help="Lower means higher quality."
+    )
     parser.add_argument("--preset", type=str, default="medium")
     parser.add_argument("--gif-fps", type=int, default=10)
     parser.add_argument(
