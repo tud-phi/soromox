@@ -7,8 +7,6 @@ Files are grouped by their names, for example
 ``SoRoMoX_64_envs_1bqkkr1d.csv`` is grouped as ``SoRoMoX 64 envs``.
 """
 
-from __future__ import annotations
-
 import argparse
 import csv
 import os
@@ -265,7 +263,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=SCRIPT_DIR / "reward_curve.pdf",
+        default=SCRIPT_DIR / "visualizations" / "reward_curve.pdf",
         help="Output PDF path.",
     )
     parser.add_argument(
