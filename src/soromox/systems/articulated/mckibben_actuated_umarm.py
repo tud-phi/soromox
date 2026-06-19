@@ -262,6 +262,11 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
             ``(num_mckibben_groups, 4, 2, 3)``. Axis 2 stores
             ``[fixed_point, moving_point]``.
         """
+        if self.num_actuators == 0:
+            return jnp.zeros(
+                (self.num_mckibben_groups, self.mckibben_moving_points.shape[1], 2, 3),
+                dtype=q.dtype,
+            )
         group_indices = jnp.arange(self.num_mckibben_groups)
         moving, fixed = jax.vmap(lambda idx: self._actuator_points_local_group(q, idx))(
             group_indices
@@ -284,6 +289,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
         Returns:
             SE(3) transforms with shape ``(num_mckibben_groups, 4, 4)``.
         """
+        if self.num_mckibben_groups == 0:
+            return jnp.zeros((0, 4, 4), dtype=q.dtype)
         joint_frames, link_frames, _, _ = self._kinematic_frames(q)
         group_indices = jnp.arange(self.num_mckibben_groups)
         pair_starts = self.mckibben_joint_pair_indices[:, 0]
@@ -304,6 +311,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
             ``(num_actuators, 2, 3)``. Axis 1 stores
             ``[fixed_point, moving_point]`` for each actuator.
         """
+        if self.num_actuators == 0:
+            return jnp.zeros((0, 2, 3), dtype=q.dtype)
         local_segments = self._mckibben_actuator_segments_local(q)
         frames = self._mckibben_group_frames(q)
         rotations = frames[:, :3, :3]
@@ -323,6 +332,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
     ) -> tuple[ActuatorVisualLayer, ...]:
         """Return renderer-facing McKibben muscle segments."""
         del s_points
+        if self.num_actuators == 0:
+            return ()
         scalar_fields = {}
         if actuator_inputs is not None:
             pressures = jnp.asarray(actuator_inputs).reshape((self.num_actuators,))
@@ -352,6 +363,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
         Returns:
             Effective lengths with shape ``(num_actuators,)``.
         """
+        if self.num_actuators == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
         segments = self._mckibben_actuator_segments_local(q)
         current_length = jnp.linalg.norm(
             segments[:, :, 1, :] - segments[:, :, 0, :], axis=-1
@@ -373,6 +386,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
             Pressure-normalized actuator potential values with shape
             ``(num_actuators,)``.
         """
+        if self.num_actuators == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
         length = self.effective_lengths(q).reshape(self.mckibben_thread_length.shape)
         energy = (
             (self.mckibben_thread_length**2 - length**2)
@@ -474,6 +489,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
             Actuation matrix with shape ``(num_dofs, num_actuators)`` such that
             ``tau = A(q) @ pressures``.
         """
+        if self.num_actuators == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
         group_indices = jnp.arange(self.num_mckibben_groups)
         group_matrices = jax.vmap(lambda idx: self._actuation_matrix_group(q, idx))(
             group_indices
@@ -492,6 +509,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
             McKibben actuator forces with shape ``(num_actuators,)``. The sign
             convention matches the cached UMArm/MuJoCo force model.
         """
+        if self.num_actuators == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
         length = self.effective_lengths(q).reshape(self.mckibben_thread_length.shape)
         pressure = pressures.reshape(length.shape)
         force = (

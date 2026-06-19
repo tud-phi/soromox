@@ -43,7 +43,7 @@ SoRoMoX provides three core capabilities for soft robotics research and developm
     - **PCS (Piecewise Constant Strain)**: Continuum robots with constant strain segments
     - **GVS (Generalized Variable Strain)**: Flexible strain basis functions (Legendre, Chebyshev, Fourier)
     - **HSA (Handed Shearing Auxetics)**: Robots with auxetic material properties
-    - **Multiple Actuators**: Support for tendon and pneumatic actuation
+    - **Multiple Actuators**: Support for tendon and pressure actuation
 
 === "Model-Based Controllers"
 
@@ -70,7 +70,7 @@ SoRoMoX supports both planar (2D) and spatial (3D) soft robot architectures:
     Planar and spatial rigid-link chains. Includes `Pendulum` for planar benchmark dynamics, `TendonActuatedPendulum` for cable-driven articulated mechanisms, and `ArticulatedSoftRobot` for spatial screw-axis chains with optional joint stiffness and damping.
 
 !!! tip "PCS Systems (Piecewise Constant Strain)"
-    Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pneumatic actuation
+    Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pressure actuation
 
 !!! abstract "GVS Systems (Geometric Variable Strain)"
     Advanced continuum robots with flexible strain basis functions (Legendre, Chebyshev, Fourier, etc.) and optional tendon actuation

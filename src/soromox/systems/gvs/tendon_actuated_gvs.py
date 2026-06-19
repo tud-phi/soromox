@@ -461,6 +461,8 @@ class TendonActuatedGVS(GVS):
         """Compute the actuation/Jacobian matrix for a batched tendon family."""
         q_gathered = self._min_size_gathered(q)
         num_tendons = tendon_routing_params.num_tendons
+        if num_tendons == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
 
         def A_segment_i(i: Array):
             """
@@ -698,6 +700,8 @@ class TendonActuatedGVS(GVS):
         """Compute the length of all tendons in one batched tendon family."""
         q_gathered = self._min_size_gathered(q)
         num_tendons = tendon_routing_params.num_tendons
+        if num_tendons == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
 
         def tendon_length_density_segment_i(i: Array):
             """

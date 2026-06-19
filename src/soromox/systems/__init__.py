@@ -31,7 +31,7 @@ from soromox.systems.pcs.params import (
     ISupportParams,
     PCSParams,
     PlanarPCSParams,
-    PneumaticActuatedPlanarPCSParams,
+    PressureActuatedPlanarPCSParams,
     TendonActuatedPCSParams,
     TendonActuatedPlanarPCSParams,
 )
@@ -60,7 +60,7 @@ from .pcs import (
     PCS,
     ISupport,
     PlanarPCS,
-    PneumaticActuatedPlanarPCS,
+    PressureActuatedPlanarPCS,
     TendonActuatedPCS,
     TendonActuatedPlanarPCS,
 )
@@ -121,8 +121,8 @@ __all__ = [
     "PlanarPCS",
     "PlanarPCSParams",
     "PlanarPCSStructure",
-    "PneumaticActuatedPlanarPCS",
-    "PneumaticActuatedPlanarPCSParams",
+    "PressureActuatedPlanarPCS",
+    "PressureActuatedPlanarPCSParams",
     "TendonActuatedPCS",
     "TendonActuatedPCSParams",
     "TendonActuatedPlanarPCS",

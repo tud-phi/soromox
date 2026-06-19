@@ -87,6 +87,7 @@ SIZE_STYLES = {
 FALLBACK_LINESTYLES = ["-", "--", "-.", ":", (0, (5, 2)), (0, (1, 1))]
 FALLBACK_MARKERS = ["o", "s", "^", "D", "p", "x", "v", "*"]
 SEGMENT_SIZE_LABELS = {"num_segments", "num_links"}
+FIGURE_SIZE_SCALE = 0.65
 
 
 def _system_key(system: Any) -> str:
@@ -309,7 +310,7 @@ def _plot(
     fig, axes = plt.subplots(
         2,
         len(systems),
-        figsize=(6 * len(systems), 8),
+        figsize=(6 * FIGURE_SIZE_SCALE * len(systems), 8 * FIGURE_SIZE_SCALE),
         squeeze=False,
         sharex="col",
     )
@@ -386,7 +387,7 @@ def _plot_total_throughput(
     fig, axes = plt.subplots(
         1,
         len(systems),
-        figsize=(6 * len(systems), 4),
+        figsize=(6 * FIGURE_SIZE_SCALE * len(systems), 4 * FIGURE_SIZE_SCALE),
         squeeze=False,
         sharex="col",
     )
@@ -479,7 +480,10 @@ def _plot_combined_scaling(
     )
 
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
-    fig, ax = plt.subplots(figsize=(7.2, 4.8), constrained_layout=True)
+    fig, ax = plt.subplots(
+        figsize=(7.2 * FIGURE_SIZE_SCALE, 4.8 * FIGURE_SIZE_SCALE),
+        constrained_layout=True,
+    )
     all_x: list[float] = []
     all_y: list[float] = []
 

@@ -8,7 +8,7 @@ PCS systems model continuum soft robots by dividing them into segments, each wit
 
 - Accurate continuum modeling with manageable complexity
 - Support for both 2D (planar) and 3D (spatial) robots
-- Various actuation methods (tendons, pneumatics)
+- Various actuation methods (tendons, pressure chambers)
 - Efficient numerical implementation using Gauss-Legendre quadrature
 
 ## Available Systems
@@ -49,13 +49,13 @@ Core 3D PCS implementation for spatial continuum robots.
 - Configurable tendon distances from backbone
 - Segment-selective actuation
 
-### Pneumatic Actuated
+### Pressure Actuated
 
-#### [Pneumatic Actuated Planar PCS](pneumatic-actuated-planar-pcs.md)
+#### [Pressure Actuated Planar PCS](pressure-actuated-planar-pcs.md)
 
-2D PCS robots with pneumatic chamber actuation.
+2D PCS robots with prescribed chamber-pressure actuation.
 
-- Pneumatic chamber modeling
+- Pressure chamber modeling
 - Pressure-based control
 - Configurable chamber geometry
 
@@ -74,7 +74,7 @@ Core 3D PCS implementation for spatial continuum robots.
 | `PlanarPCS` | 2D | None (strain input) | General 2D continuum modeling |
 | `TendonActuatedPCS` | 3D | Tendons | 3D cable-driven robots |
 | `TendonActuatedPlanarPCS` | 2D | Tendons | 2D cable-driven robots |
-| `PneumaticActuatedPlanarPCS` | 2D | Pneumatic | Soft pneumatic actuators |
+| `PressureActuatedPlanarPCS` | 2D | Pressure | Pressure-driven soft actuators |
 | `ISupport` | 3D | Pneumatic | I-Support robot platform |
 
 ## References

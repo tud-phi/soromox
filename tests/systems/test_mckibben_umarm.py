@@ -38,6 +38,20 @@ def make_robot() -> McKibbenActuatedUMArm:
     )
 
 
+def make_zero_actuator_robot() -> McKibbenActuatedUMArm:
+    params = McKibbenActuatedUMArmParams.from_cached_npz(ASSET_PARAMS_PATH).replace(
+        mckibben_moving_base_transform=jnp.zeros((0, 4, 4), dtype=jnp.float64),
+        mckibben_moving_points=jnp.zeros((0, 4, 3), dtype=jnp.float64),
+        mckibben_fixed_points=jnp.zeros((0, 4, 3), dtype=jnp.float64),
+        mckibben_reference_length=jnp.zeros((0, 4), dtype=jnp.float64),
+        mckibben_length_offset=jnp.zeros((0, 4), dtype=jnp.float64),
+        mckibben_thread_length=jnp.zeros((0, 4), dtype=jnp.float64),
+        mckibben_num_turns=jnp.zeros((0, 4), dtype=jnp.float64),
+        mckibben_joint_pair_indices=jnp.zeros((0, 2), dtype=jnp.int32),
+    )
+    return McKibbenActuatedUMArm(params)
+
+
 def test_cached_params_shapes() -> None:
     params = McKibbenActuatedUMArmParams.from_cached_npz(ASSET_PARAMS_PATH)
     robot = McKibbenActuatedUMArm(params)
@@ -60,6 +74,25 @@ def test_cached_params_shapes() -> None:
     assert params.mckibben_thread_length.shape == (6, 4)
     assert params.mckibben_num_turns.shape == (6, 4)
     assert params.mckibben_joint_pair_indices.shape == (6, 2)
+
+
+def test_zero_actuator_umarm_exposes_empty_actuator_interface() -> None:
+    robot = make_zero_actuator_robot()
+    q = jnp.linspace(-0.2, 0.2, robot.num_dofs)
+    qd = jnp.linspace(0.1, -0.1, robot.num_dofs)
+    pressures = jnp.zeros((0,), dtype=q.dtype)
+    y = jnp.concatenate([q, qd])
+
+    assert robot.num_actuators == 0
+    assert robot.num_mckibben_groups == 0
+    assert robot.mckibben_actuator_segments(q).shape == (0, 2, 3)
+    assert robot.effective_lengths(q).shape == (0,)
+    assert robot._potential_per_pressure(q).shape == (0,)
+    assert robot.actuator_forces(q, pressures).shape == (0,)
+    assert robot.actuation_matrix(q).shape == (robot.num_dofs, 0)
+    assert_allclose(robot.actuation_force(q, pressures), jnp.zeros((robot.num_dofs,)))
+    assert robot.actuator_visual_layers(q, jnp.linspace(0.0, 1.0, 3)) == ()
+    assert robot.forward_dynamics(jnp.array(0.0), y, (pressures, None)).shape == y.shape
 
 
 def test_cached_params_use_soromox_base_axis() -> None:

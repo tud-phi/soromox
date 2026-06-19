@@ -121,17 +121,17 @@ python examples/simulation/pcs/simulate_batched_tendon_actuated_pcs.py
 
 **Key concepts:** Tendon kinematics, actuation space, batch simulation
 
-#### Pneumatic-Actuated Planar PCS
+#### Pressure-Actuated Planar PCS
 ```bash
-python examples/simulation/pcs/simulate_pneumatic_actuated_planar_pcs.py
+python examples/simulation/pcs/simulate_pressure_actuated_planar_pcs.py
 ```
 
 **What you'll learn:**
-- Pneumatic actuation modeling
+- Pressure actuation modeling
 - Pressure-to-strain mapping
-- Pneumatic soft robot dynamics
+- Pressure-driven soft robot dynamics
 
-**Key concepts:** Pneumatic actuation, pressure control
+**Key concepts:** Pressure actuation, pressure control
 
 #### I-SUPPORT Manipulator
 ```bash
@@ -242,7 +242,7 @@ python examples/control/operational_space/control_pcs_with_impedance.py
 
 ### Actuation-Space Controllers
 
-Actuation-space controllers operate directly on the actuator inputs (e.g., tendon tensions, pneumatic pressures).
+Actuation-space controllers operate directly on the actuator inputs (e.g., tendon tensions, chamber pressures).
 
 #### Setpoint Regulation
 ```bash

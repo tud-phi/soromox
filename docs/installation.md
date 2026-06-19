@@ -10,7 +10,7 @@
     - **Architecture**: Functional approach → Object-oriented Equinox dataclasses
     - **Performance**: Symbolic derivations → Numerical implementations
     - **New Soft Robot Models**: Support for Spatial PCS, GVS, and articulated soft robot systems
-    - **Actuation**: Popular soft robot actuation modalities such as tendon-actuation and pneumatic-actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
+    - **Actuation**: Popular soft robot actuation modalities such as tendon and pressure actuation are implemented into the models (instead of just direct-torque actuation like in JSRM)
     - **Renderers**: SoRoMoX includes built-in renderers for visualization
     - **Control**: Model-based control implementations are included
 
