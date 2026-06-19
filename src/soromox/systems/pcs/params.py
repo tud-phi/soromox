@@ -3,7 +3,7 @@ __all__ = [
     "PlanarPCSParams",
     "TendonActuatedPCSParams",
     "TendonActuatedPlanarPCSParams",
-    "PneumaticActuatedPlanarPCSParams",
+    "PressureActuatedPlanarPCSParams",
     "ISupportParams",
 ]
 
@@ -153,8 +153,8 @@ class TendonActuatedPlanarPCSParams(PlanarPCSParams):
             )
 
 
-class PneumaticActuatedPlanarPCSParams(PlanarPCSParams):
-    """Dynamic parameters for pneumatic planar PCS.
+class PressureActuatedPlanarPCSParams(PlanarPCSParams):
+    """Dynamic parameters for pressure-actuated planar PCS.
 
     Chamber geometry arrays describe the per-segment chamber layout and can be
     updated without changing the strain layout as long as their shapes are

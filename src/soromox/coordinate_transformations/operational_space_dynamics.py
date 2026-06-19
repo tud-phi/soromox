@@ -1093,6 +1093,26 @@ class OperationalSpaceDynamics(eqx.Module):
         return mu_xx
 
     @eqx.filter_jit
+    def coriolis_force(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the operational space Coriolis/centrifugal force.
+
+        The operational space Coriolis force is defined as:
+            f_c_x = mu_x @ qd
+
+        where mu_x is the operational space Coriolis matrix that maps
+        configuration-space velocity to operational-space force.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            qd: Generalized velocities of shape (num_dofs,).
+
+        Returns:
+            f_c_x: Operational space Coriolis force of shape (n_operational_space,).
+        """
+        return self.mu_x(q, qd) @ qd
+
+    @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:
         """
         Compute the operational space damping matrix.
@@ -1121,6 +1141,31 @@ class OperationalSpaceDynamics(eqx.Module):
     # =========================================================================
     # Forces
     # =========================================================================
+
+    @eqx.filter_jit
+    def damping_force(self, q: Array, qd: Array) -> Array:
+        """
+        Compute the operational space damping force.
+
+        The operational space damping force is defined as:
+            f_d_x = D_x @ xd = J_bar^T @ D @ qd
+
+        where D is the configuration space damping matrix.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            qd: Generalized velocities of shape (num_dofs,).
+
+        Returns:
+            f_d_x: Operational space damping force of shape (n_operational_space,).
+        """
+        J_bar = self.dynamically_consistent_pseudoinverse(q)
+        D = self.robot.damping_matrix(q)
+
+        # f_d_x = J_bar^T @ D @ qd
+        f_d_x = J_bar.T @ D @ qd
+
+        return f_d_x
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
@@ -1173,58 +1218,44 @@ class OperationalSpaceDynamics(eqx.Module):
         return G_x
 
     @eqx.filter_jit
-    def damping_force(self, q: Array, qd: Array) -> Array:
+    def potential_force(self, q: Array) -> Array:
         """
-        Compute the operational space damping force.
+        Compute the total conservative operational space force.
 
-        The operational space damping force is defined as:
-            f_d_x = D_x @ xd = J_bar^T @ D @ qd
-
-        where D is the configuration space damping matrix.
+        This is the sum of gravitational and elastic forces.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
 
         Returns:
-            f_d_x: Operational space damping force of shape (n_operational_space,).
+            f_pot_x: Conservative operational space force of shape
+                (n_operational_space,).
         """
-        J_bar = self.dynamically_consistent_pseudoinverse(q)
-        D = self.robot.damping_matrix(q)
-
-        # f_d_x = J_bar^T @ D @ qd
-        f_d_x = J_bar.T @ D @ qd
-
-        return f_d_x
+        return self.gravitational_force(q) + self.elastic_force(q)
 
     @eqx.filter_jit
-    def coriolis_force(self, q: Array, qd: Array) -> Array:
+    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Compute the operational space Coriolis/centrifugal force.
+        Return operational-space dynamics terms ``(Lambda, Cxd, G_x)``.
 
-        The operational space Coriolis force is defined as:
-            f_c_x = mu @ xd
-
-        where mu is the operational space Coriolis matrix and xd is the
-        operational space velocity.
+        ``Cxd`` is the operational-space Coriolis/centrifugal force vector.
+        ``G_x`` is the operational-space gravitational force, matching the
+        ``SoftRobot.dynamics_terms`` convention of returning gravity separately
+        from elastic forces.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
             qd: Generalized velocities of shape (num_dofs,).
 
         Returns:
-            f_c_x: Operational space Coriolis force of shape (n_operational_space,).
+            Lambda: Operational space inertia matrix of shape
+                (n_operational_space, n_operational_space).
+            Cxd: Operational space Coriolis/centrifugal force of shape
+                (n_operational_space,).
+            G_x: Operational space gravitational force of shape
+                (n_operational_space,).
         """
-        J, Jd = self.jacobian_and_time_derivative(q, qd)
-        M = self.robot.inertia_matrix(q)
-        C = self.robot.coriolis_matrix(q, qd)
-        M_inv = jnp.linalg.inv(M)
-
-        # Compute Lambda
-        Lambda_inv = J @ M_inv @ J.T
-        Lambda = jnp.linalg.inv(Lambda_inv)
-
-        # Compute the Coriolis force acting on the operational space
-        f_c_x = Lambda @ (J @ M_inv @ C - Jd) @ qd
-
-        return f_c_x
+        Lambda = self.inertia_matrix(q)
+        Cxd = self.coriolis_force(q, qd)
+        G_x = self.gravitational_force(q)
+        return Lambda, Cxd, G_x

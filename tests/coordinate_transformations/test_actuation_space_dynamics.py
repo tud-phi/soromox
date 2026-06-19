@@ -491,6 +491,18 @@ class TestForces:
         expected = J_inv.T @ D @ qd
         assert_allclose(tau_d_y, expected, rtol=1e-10)
 
+    def test_potential_force_sums_conservative_forces(self, underactuated_pendulum):
+        """Test that potential_force sums gravitational and elastic forces."""
+        robot = underactuated_pendulum
+        asd = ActuationSpaceDynamics(robot)
+
+        q = jnp.array([0.1, 0.2, 0.3])
+        tau_pot_y = asd.potential_force(q)
+        expected = asd.gravitational_force(q) + asd.elastic_force(q)
+
+        assert tau_pot_y.shape == (robot.num_dofs,)
+        assert_allclose(tau_pot_y, expected, rtol=1e-10)
+
 
 # -----------------------
 # Actuation matrix tests
@@ -580,6 +592,22 @@ class TestIntegration:
         assert G_y.shape == (3,)
         assert tau_el_y.shape == (3,)
 
+    def test_dynamics_terms_match_individual_methods(self, underactuated_pendulum):
+        """Test dynamics_terms returns the individual actuation-space terms."""
+        robot = underactuated_pendulum
+        asd = ActuationSpaceDynamics(robot)
+
+        q = jnp.array([0.1, 0.2, 0.3])
+        qd = jnp.array([0.01, 0.02, 0.03])
+        M_y, Cyd, G_y = asd.dynamics_terms(q, qd)
+
+        assert M_y.shape == (3, 3)
+        assert Cyd.shape == (3,)
+        assert G_y.shape == (3,)
+        assert_allclose(M_y, asd.inertia_matrix(q), rtol=1e-10)
+        assert_allclose(Cyd, asd.coriolis_force(q, qd), rtol=1e-10)
+        assert_allclose(G_y, asd.gravitational_force(q), rtol=1e-10)
+
     def test_jit_compilation(self, underactuated_pendulum):
         """Test that all methods work correctly (they are already JIT-compiled via @eqx.filter_jit)."""
         robot = underactuated_pendulum
@@ -599,8 +627,10 @@ class TestIntegration:
         _ = asd.damping_matrix(q)
         _ = asd.elastic_force(q)
         _ = asd.gravitational_force(q)
+        _ = asd.potential_force(q)
         _ = asd.damping_force(q, qd)
         _ = asd.coriolis_force(q, qd)
+        _ = asd.dynamics_terms(q, qd)
         _ = asd.actuation_matrix(q)
 
 
@@ -1221,8 +1251,10 @@ class TestActuationSpaceDynamicsSystemIndependent:
         _ = asd.damping_matrix(q)
         _ = asd.elastic_force(q)
         _ = asd.gravitational_force(q)
+        _ = asd.potential_force(q)
         _ = asd.damping_force(q, qd)
         _ = asd.coriolis_force(q, qd)
+        _ = asd.dynamics_terms(q, qd)
         _ = asd.actuation_matrix(q)
 
     def test_dynamics_shapes_consistent(self, robot):
@@ -1237,9 +1269,15 @@ class TestActuationSpaceDynamicsSystemIndependent:
         D_y = asd.damping_matrix(q)
         G_y = asd.gravitational_force(q)
         tau_el_y = asd.elastic_force(q)
+        tau_pot_y = asd.potential_force(q)
+        M_terms, Cyd, G_terms = asd.dynamics_terms(q, qd)
 
         assert M_y.shape == (n_dof, n_dof)
         assert eta_y.shape == (n_dof, n_dof)
         assert D_y.shape == (n_dof, n_dof)
         assert G_y.shape == (n_dof,)
         assert tau_el_y.shape == (n_dof,)
+        assert tau_pot_y.shape == (n_dof,)
+        assert M_terms.shape == (n_dof, n_dof)
+        assert Cyd.shape == (n_dof,)
+        assert G_terms.shape == (n_dof,)

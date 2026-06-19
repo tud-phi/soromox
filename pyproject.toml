@@ -146,6 +146,7 @@ docs = [
 examples = [
     "cbfpy",
     "ffmpeg-python",
+    "gymnasium",
     "ipython",
     "matplotlib",
     "open3d>=0.18",
@@ -154,6 +155,7 @@ examples = [
     "optimistix",
     "plotly",
     "seaborn",
+    "stable-baselines3",
     "trimesh",
     "viser",
 ]
@@ -181,6 +183,7 @@ all = [
     "codecov",
     "coverage[toml]",
     "ffmpeg-python",
+    "gymnasium",
     "ipython",
     "matplotlib",
     "zensical",
@@ -196,6 +199,7 @@ all = [
     "pytest-html",
     "ruff",
     "seaborn",
+    "stable-baselines3",
     "tox",
     "trimesh",
     "viser",

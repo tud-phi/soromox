@@ -208,7 +208,6 @@ def solve_tau_star_for_batch(
     dof = q0.shape[0]
     tau_stars = []
     tau0 = jnp.zeros((dof,), dtype=jnp.float64)  # cold-start
-
     for m in range(M):
         u_i = u_batch[:, m]
         p_meas_i = measured_markers_batch[:, m]
@@ -236,7 +235,6 @@ def solve_tau_star_for_batch(
 
             updates, opt_state = opt.update(g, opt_state, tau)
             tau = optax.apply_updates(tau, updates)
-
         tau_stars.append(best_tau)
 
         print(f"[Sample {m:02d}] Identified tau* with loss={float(best_val):.6e}")
@@ -1247,15 +1245,71 @@ if __name__ == "__main__":
     ax.fill(angles_markers, errnorm_pred_plot, alpha=0.25, color="skyblue")
 
     ax.set_xticks(angles_markers[:-1])
-    ax.set_xticklabels(marker_labels, fontsize=16)
-    ax.set_ylabel("Position RMSE [m]", labelpad=30, fontsize=16)
+    ax.set_xticklabels(marker_labels, fontsize=22)
+    # ax.set_ylabel("Position RMSE [m]", labelpad=30, fontsize=16)
+    ax.set_rlabel_position(45)
+    rmax = ax.get_rmax()
+    ax.text(
+        onp.pi / 7,
+        rmax * 0.6,
+        "Position RMSE [m]",
+        fontsize=20,
+        ha="center",
+        va="center",
+        rotation=45,
+        rotation_mode="anchor",
+        transform=ax.transData,
+        clip_on=False,
+    )
     ax.legend(loc="upper center", fontsize=18)
-    ax.tick_params(axis="both", labelsize=16)
+    ax.tick_params(axis="both", labelsize=20)
     ax.grid(True)
 
     plt.tight_layout()
     # plt.savefig("radar_error_per_marker_all_with_initial_center.pdf", format="pdf", bbox_inches="tight")
     # plt.savefig("radar_error_per_marker_all_with_initial_center.jpg", format="jpg", dpi=300, bbox_inches="tight")
+    plt.show()
+
+    # Bar plot: Aggregate RMSE across all markers for each case
+    # Compute overall RMSE for each case across all configurations and markers
+    rmse_initial = onp.sqrt(onp.mean(errnorms_before_id**2))
+    rmse_optimal = onp.sqrt(onp.mean(errnorms_zero**2))
+    rmse_residual = onp.sqrt(onp.mean(errnorms_star**2))
+    rmse_nn_pred = onp.sqrt(onp.mean(errnorms_pred**2))
+    # print("initial RMSE:", rmse_initial)
+    # print("optimal RMSE:", rmse_optimal)
+    # print("residual RMSE:", rmse_residual)
+    # print("NN-predicted RMSE:", rmse_nn_pred)
+
+    cases = [
+        "Initial\nparameters",
+        "Optimal\nparameters",
+        "Optimal\nresidual",
+        "NN-predicted\nresidual",
+    ]
+    rmse_values = [rmse_initial, rmse_optimal, rmse_residual, rmse_nn_pred]
+    colors = ["lightgray", "gray", "tab:blue", "skyblue"]
+
+    fig, ax = plt.subplots(figsize=(12, 9))
+    bars = ax.bar(
+        cases, rmse_values, color=colors, edgecolor="black", linewidth=1.5, alpha=0.8
+    )
+
+    # # Add value labels on top of each bar
+    # for bar, value in zip(bars, rmse_values):
+    #     height = bar.get_height()
+    #     ax.text(bar.get_x() + bar.get_width()/2., height,
+    #             f'{value:.4f}',
+    #             ha='center', va='bottom', fontsize=18, fontweight='bold')
+
+    ax.set_ylabel("Overall RMSE [m]", fontsize=24)
+    # ax.set_title('Aggregate Position RMSE Across All Markers and Configurations', fontsize=16)
+    ax.grid(True, linestyle="--", alpha=0.3, axis="y")
+    ax.tick_params(axis="both", labelsize=24)
+
+    plt.tight_layout()
+    # plt.savefig("bar_overall_rmse_comparison.pdf", format="pdf", bbox_inches="tight")
+    # plt.savefig("bar_overall_rmse_comparison.jpg", format="jpg", dpi=300, bbox_inches="tight")
     plt.show()
 
     # Violin plot: 12 violins (4 markers × 3 tau conditions)
@@ -1323,3 +1377,237 @@ if __name__ == "__main__":
     # plt.savefig("violin_error_distribution_12markers.pdf", format="pdf", bbox_inches="tight")
     # plt.savefig("violin_error_distribution_12markers.jpg", format="jpg", dpi=300, bbox_inches="tight")
     plt.show()
+
+
+link1_origin = LinkSpec(
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+    E=5.05e5,
+    nu=0.45,
+    rho=1500.0,
+    eta=1e4,
+    L=0.0250 + 0.2550 + 0.0250,
+    r_i=0.01541,
+    r_f=0.00642,
+)
+
+# Link 2
+link2_origin = LinkSpec(
+    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+    E=5.05e5,
+    nu=0.45,
+    rho=1500.0,
+    eta=1e4,
+    L=0.0550,
+    r_i=0.00642,
+    r_f=0.00480,
+)
+
+
+robot_origin = TendonActuatedGVS.from_segments(
+    [
+        GVSSegment(
+            link=link1_origin,
+            joint=joint1,
+            basis=basis1,
+            num_gauss_points=num_gauss_points[0],
+        ),
+        GVSSegment(
+            link=link2_origin,
+            joint=joint2,
+            basis=basis2,
+            num_gauss_points=num_gauss_points[1],
+        ),
+    ],
+    gravity=jnp.asarray(g),
+    base_pose=p0,
+    active_tendon_routing=active_tendon_routing,
+    scale_rotational_basis_by_length=True,
+)
+
+# Compare backbones between robot with tau* and robot_origin with null tau
+
+tau_zero = jnp.zeros((dof,), dtype=jnp.float64)
+
+curves_orig = []
+curves_tau_star = []
+markers_orig = []
+markers_tau_star = []
+measured_pts = []
+
+for m in range(M):
+    res_origin = solve_equilibrium_with_tau(robot_origin, u_batch[:, m], tau_zero, q0)
+    q_origin = res_origin.value
+
+    res_tau_star = solve_equilibrium_with_tau(
+        robot, u_batch[:, m], tau_star_batch[:, m], q0
+    )
+    q_tau_star = res_tau_star.value
+
+    curve_origin = draw_robot_curve(robot_origin, q_origin, num_points=200)
+    curve_tau_star = draw_robot_curve(robot, q_tau_star, num_points=200)
+
+    curves_orig.append(onp.asarray(curve_origin))
+    curves_tau_star.append(onp.asarray(curve_tau_star))
+
+    markers_orig.append(
+        onp.asarray(markers_from_q(robot_origin, q_origin).reshape(4, 3))
+    )
+    markers_tau_star.append(
+        onp.asarray(markers_from_q(robot, q_tau_star).reshape(4, 3))
+    )
+
+    meas = onp.asarray(measured_markers_batch[:, m].reshape(4, 3))
+    measured_pts.append(meas)
+
+# compute plot bounds from all points
+all_pts = []
+for c0, ct, m0, mt, mm in zip(
+    curves_orig, curves_tau_star, markers_orig, markers_tau_star, measured_pts
+):
+    all_pts.append(c0)
+    all_pts.append(ct)
+    all_pts.append(m0)
+    all_pts.append(mt)
+    all_pts.append(mm)
+all_pts = onp.vstack(all_pts)
+mins = all_pts.min(axis=0)
+maxs = all_pts.max(axis=0)
+ranges = maxs - mins
+max_range = ranges.max()
+center = 0.5 * (maxs + mins)
+
+fig, ax = plt.subplots(figsize=(12, 9), subplot_kw={"projection": "3d"})
+
+# use the default Matplotlib axes color cycle like the earlier backbone plot above
+default_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
+colors = [default_colors[i % len(default_colors)] for i in range(M)]
+
+alpha_orig = 0.25  # transparency for null-tau baseline
+alpha_tau_star = 1.0  # optimized more opaque
+
+for m in range(M):
+    curve_origin = curves_orig[m]
+    curve_tau_star = curves_tau_star[m]
+
+    ax.plot(
+        curve_origin[:, 0],
+        curve_origin[:, 1],
+        curve_origin[:, 2],
+        lw=3,
+        color=colors[m],
+        alpha=alpha_orig,
+    )
+    ax.plot(
+        curve_tau_star[:, 0],
+        curve_tau_star[:, 1],
+        curve_tau_star[:, 2],
+        lw=3,
+        color=colors[m],
+        alpha=alpha_tau_star,
+    )
+
+    m0 = markers_orig[m]
+    mt = markers_tau_star[m]
+    mm = measured_pts[m]
+
+    grad_alphas = onp.linspace(0.25, 1.0, 4)
+    red_col = (0.8, 0.1, 0.1)
+    orange_col = (1.0, 0.55, 0.0)
+    blue_col = (0.0, 0.2, 0.8)
+
+    for i in range(4):
+        a = float(grad_alphas[i])
+        ax.scatter(
+            m0[i, 0], m0[i, 1], m0[i, 2], marker="x", color=orange_col, s=50, alpha=a
+        )
+        ax.scatter(
+            mt[i, 0], mt[i, 1], mt[i, 2], marker="x", color=red_col, s=90, alpha=a
+        )
+        ax.scatter(
+            mm[i, 0],
+            mm[i, 1],
+            mm[i, 2],
+            marker="o",
+            facecolors="none",
+            edgecolors=blue_col,
+            s=90,
+            alpha=a,
+        )
+
+# Set axis labels and title (larger font)
+ax.set_xlabel("X [m]", fontsize=16, labelpad=20)
+ax.set_ylabel("Y [m]", fontsize=16)  # , labelpad=20
+ax.set_zlabel("Z [m]", fontsize=16, labelpad=20)
+ax.xaxis.set_tick_params(pad=8)
+# ax.yaxis.set_tick_params(pad=1)
+ax.zaxis.set_tick_params(pad=8)
+ax.view_init(elev=20, azim=15)
+# ax.set_title("Shape comparison across inputs", fontsize=16)
+
+# enforce equal aspect ratio for 3D plot
+ax.set_xlim(center[0] - max_range / 2, center[0] + max_range / 2)
+ax.set_ylim(center[1] - max_range / 2, center[1] + max_range / 2)
+ax.set_zlim(center[2] - max_range / 2, center[2] + max_range / 2)
+ax.set_box_aspect([1, 1, 1])
+
+# create a custom legend: show division null tau vs tau* plus markers
+from matplotlib.lines import Line2D
+
+legend_elems = [
+    Line2D(
+        [0],
+        [0],
+        color="k",
+        lw=2.5,
+        linestyle="-",
+        alpha=alpha_orig,
+        label="Backbone (Initial)",
+    ),
+    Line2D(
+        [0],
+        [0],
+        color="k",
+        lw=3.0,
+        linestyle="-",
+        alpha=alpha_tau_star,
+        label="Backbone (Optimized)",
+    ),
+    Line2D(
+        [0],
+        [0],
+        marker="x",
+        color="w",
+        markerfacecolor="orange",
+        markeredgecolor="orange",
+        markersize=8,
+        label="Predicted marker pos. (Initial)",
+    ),
+    Line2D(
+        [0],
+        [0],
+        marker="x",
+        color="w",
+        markerfacecolor="red",
+        markeredgecolor="red",
+        markersize=8,
+        label="Predicted marker pos. (Optimized)",
+    ),
+    Line2D(
+        [0],
+        [0],
+        marker="o",
+        color="w",
+        markeredgecolor="blue",
+        markerfacecolor="none",
+        markersize=8,
+        label="Measured marker pos.",
+    ),
+]
+ax.legend(handles=legend_elems, loc="upper left", fontsize=16)
+
+plt.tight_layout()
+plt.tick_params(axis="both", labelsize=16)
+
+# plt.savefig("MARKERS_CONFIG_comparison_ss.pdf", format="pdf", bbox_inches="tight")
+# plt.savefig("MARKERS_CONFIG_comparison_ss.jpg", format="jpg", dpi=300, bbox_inches="tight")
+plt.show()

@@ -1012,13 +1012,19 @@ def test_tendon_gvs_infers_max_dof_for_higher_order_example_basis():
             [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
         ),
         y_slope=jnp.array(
-            [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
+            [
+                -0.0295 * jnp.cos(jnp.pi / 180 * 30),
+                -0.0295 * jnp.cos(jnp.pi / 180 * 150),
+            ]
         ),
         z_intercept=jnp.array(
             [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
         ),
         z_slope=jnp.array(
-            [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
+            [
+                -0.0295 * jnp.sin(jnp.pi / 180 * 30),
+                -0.0295 * jnp.sin(jnp.pi / 180 * 150),
+            ]
         ),
         attachment_segment_index=jnp.array([0, 0]),
     )

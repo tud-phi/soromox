@@ -88,7 +88,7 @@ Selecting the appropriate control space is crucial for achieving good performanc
 **Example applications:**
 
 - Tendon-actuated soft robots with configuration-dependent routing
-- Pneumatically-actuated robots with fewer chambers than DOFs
+- Pressure-actuated robots with fewer chambers than DOFs
 - Any soft robot where underactuation or complex actuation coupling is intrinsic
 
 !!! info "Zero Dynamics: A Universal Consideration for Underactuation"
