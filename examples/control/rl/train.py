@@ -1,7 +1,8 @@
 """Train PPO on the released parallel SoRoMoX environment.
 
 The training entry point intentionally saves only the final PPO model and the
-final SB3 VecNormalize state. It does not create checkpoints or episode logs.
+final SB3 VecNormalize state. It does not create intermediate checkpoints or
+episode logs.
 """
 
 from __future__ import annotations
@@ -154,13 +155,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save-dir",
         type=str,
-        default=str(PARALLEL_RL_DIR / "soromox_models"),
+        default=str(PARALLEL_RL_DIR / "checkpoints"),
     )
-    parser.add_argument("--model-name", type=str, default="soromox_ppo_final")
+    parser.add_argument("--model-name", type=str, default="ppo_model")
     parser.add_argument(
         "--vecnormalize-name",
         type=str,
-        default="soromox_ppo_vecnormalize_final.pkl",
+        default="env_vecnormalize.pkl",
     )
     return parser.parse_args()
 

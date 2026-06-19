@@ -28,8 +28,8 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 
 
-DEFAULT_MODEL_PATH = str(PARALLEL_RL_DIR / "soromox_models" / "soromox_ppo_final.zip")
-DEFAULT_VECNORMALIZE_PATH = str(PARALLEL_RL_DIR / "soromox_models" / "soromox_ppo_vecnormalize_final.pkl")
+DEFAULT_MODEL_PATH = str(PARALLEL_RL_DIR / "checkpoints" / "ppo_model.zip")
+DEFAULT_VECNORMALIZE_PATH = str(PARALLEL_RL_DIR / "checkpoints" / "env_vecnormalize.pkl")
 
 
 def to_numpy(value, dtype=None) -> np.ndarray:

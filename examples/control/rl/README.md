@@ -71,14 +71,15 @@ python examples/control/rl/train.py \
 The training script saves:
 
 ```text
-examples/control/rl/soromox_models/soromox_ppo_final.zip
-examples/control/rl/soromox_models/soromox_ppo_vecnormalize_final.pkl
+examples/control/rl/checkpoints/ppo_model.zip
+examples/control/rl/checkpoints/env_vecnormalize.pkl
 ```
 
 You can change the artifact names:
 
 ```bash
 python examples/control/rl/train.py \
+  --save-dir examples/control/rl/checkpoints \
   --model-name my_model \
   --vecnormalize-name my_vecnormalize.pkl
 ```
@@ -92,8 +93,8 @@ python examples/control/rl/test.py
 By default, the test script loads the packaged release model:
 
 ```text
-examples/control/rl/soromox_models/soromox_ppo_final.zip
-examples/control/rl/soromox_models/soromox_ppo_vecnormalize_final.pkl
+examples/control/rl/checkpoints/ppo_model.zip
+examples/control/rl/checkpoints/env_vecnormalize.pkl
 ```
 
 To test a newly trained model, pass explicit paths:
@@ -143,7 +144,7 @@ By default this runs 64 environments for 105 control steps, renders them in one
 Open3D grid scene, and saves only:
 
 ```text
-examples/control/rl/visualizations/soromox_rollout.mp4
+examples/control/rl/visualizations/parallel_track_video.mp4
 ```
 
 No NPZ rollout files or PNG frame folders are kept. The script prints progress
@@ -158,7 +159,7 @@ python examples/control/rl/visualize.py \
   --n-steps 45 \
   --width 960 \
   --height 960 \
-  --output examples/control/rl/visualizations/soromox_preview.mp4
+  --output examples/control/rl/visualizations/parallel_track_video.mp4
 ```
 
-<video src="visualizations/soromox_rollout.mp4" controls width="720"></video>
+<video src="visualizations/parallel_track_video.mp4" controls width="720"></video>

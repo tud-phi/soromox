@@ -10,8 +10,6 @@ No rollout NPZ files or PNG frame folders are kept. The only persistent output
 is the requested MP4 file.
 """
 
-from __future__ import annotations
-
 import argparse
 import math
 import os
@@ -42,12 +40,17 @@ from examples.control.rl.parallel_soromox_env import ParallelSoromoxEnv
 try:
     import open3d as o3d
     from soromox.rendering.camera_config import CameraConfig
-    from soromox.rendering.color_config import BackboneColorConfig, RendererColorConfig
+    from soromox.rendering.color_config import (
+        ActuatorStyleConfig,
+        BackboneColorConfig,
+        RendererColorConfig,
+    )
     from soromox.rendering.open3d_renderer import Open3DRenderer
     from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 except ImportError as exc:
     o3d = None
     CameraConfig = None
+    ActuatorStyleConfig = None
     BackboneColorConfig = None
     RendererColorConfig = None
     FFmpegVideoWriter = None
@@ -60,7 +63,7 @@ else:
 
 DEFAULT_MODEL_PATH = RL_DIR / "checkpoints" / "ppo_model.zip"
 DEFAULT_VECNORMALIZE_PATH = RL_DIR / "checkpoints" / "env_vecnormalize.pkl"
-DEFAULT_OUTPUT_PATH = RL_DIR / "visualizations" / "soromox_rollout.mp4"
+DEFAULT_OUTPUT_PATH = RL_DIR / "visualizations" / "parallel_track_video.mp4"
 
 
 class Progress:
@@ -188,7 +191,7 @@ class HeadlessMultiArmVideoRenderer(Open3DRenderer):
         )
         opt = vis.get_render_option()
         opt.background_color = np.array(self.background_color, dtype=np.float64)
-        opt.line_width = self.tendon_line_width
+        opt.line_width = self.actuator_line_width
         return vis, vis.get_view_control()
 
     def _build_scene(self, vis, scene_data, frame_idx=0, *, color_config=None):
@@ -363,7 +366,7 @@ def render_rollout_to_mp4(
             segment_colors=np.array([[0.0039, 0.6510, 0.8392, 1.0]], dtype=np.float64)
         ),
         base_plate_color=(0.2, 0.2, 0.2),
-        tendon_color=(0.9, 0.15, 0.15),
+        actuators=ActuatorStyleConfig(default_color=(0.9, 0.15, 0.15)),
     )
     camera_config = CameraConfig(
         fov=args.camera_fov,
@@ -384,7 +387,7 @@ def render_rollout_to_mp4(
         backbone_style="discrete",
         background_color=(1.0, 1.0, 1.0),
         sphere_resolution=args.sphere_resolution,
-        tendon_line_width=args.tendon_line_width,
+        actuator_line_width=args.tendon_line_width,
         grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
         ball_trajectories=None if args.no_trajectories else ball_ts_batched,
