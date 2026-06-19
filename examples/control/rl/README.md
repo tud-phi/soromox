@@ -14,7 +14,10 @@ Testing will print the final-step end-effector tracking error and success rate.
 
 ## Dependencies
 
-The scripts assume the project environment already provides:
+The scripts assume `soromox` has already been installed in the active Python
+environment. They do not modify `sys.path` to import from a source checkout.
+
+The environment should provide:
 
 - `soromox`
 - `jax`
@@ -26,7 +29,8 @@ The scripts assume the project environment already provides:
 - `open3d`
 - `ffmpeg`
 
-Please use `pip install soromox[examples]` to get all dependencies.
+Please use `pip install soromox[examples]` to get all dependencies before
+running `train.py`, `test.py`, or `visualize.py`.
 
 ## Environment
 

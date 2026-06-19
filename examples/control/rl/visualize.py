@@ -11,20 +11,14 @@ is the requested MP4 file.
 """
 
 import argparse
+import importlib.util
 import math
 import os
 import shutil
-import sys
 from pathlib import Path
 from typing import Iterable
 
 RL_DIR = Path(__file__).resolve().parent
-REPO_ROOT = RL_DIR.parents[2]
-REPO_SRC = REPO_ROOT / "src"
-for path in (REPO_ROOT, REPO_SRC):
-    path_str = str(path)
-    if path_str not in sys.path:
-        sys.path.insert(0, path_str)
 
 os.environ.setdefault("XLA_PYTHON_CLIENT_PREALLOCATE", "false")
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/soromox_matplotlib")
@@ -35,7 +29,16 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 
-from examples.control.rl.parallel_soromox_env import ParallelSoromoxEnv
+if __package__:
+    from .parallel_soromox_env import ParallelSoromoxEnv
+else:
+    env_path = RL_DIR / "parallel_soromox_env.py"
+    spec = importlib.util.spec_from_file_location("parallel_soromox_env", env_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load ParallelSoromoxEnv from {env_path}")
+    env_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(env_module)
+    ParallelSoromoxEnv = env_module.ParallelSoromoxEnv
 
 try:
     import open3d as o3d

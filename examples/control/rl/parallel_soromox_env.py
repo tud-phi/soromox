@@ -9,14 +9,6 @@ call for efficient reinforcement-learning training and evaluation.
 from functools import partial
 from typing import Any, NamedTuple, Optional, Sequence, Tuple
 
-if __package__:
-    from ._repo_path import ensure_repo_src_on_path
-else:
-    from examples.control.rl._repo_path import ensure_repo_src_on_path
-
-
-ensure_repo_src_on_path()
-
 import equinox as eqx
 import jax
 import jax.numpy as jnp

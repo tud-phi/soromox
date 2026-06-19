@@ -5,23 +5,23 @@ final SB3 VecNormalize state. It does not create intermediate checkpoints or
 episode logs.
 """
 
-from __future__ import annotations
-
 import argparse
+import importlib.util
 import os
+from pathlib import Path
 
-if __package__:
-    from ._repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
-else:
-    from examples.control.rl._repo_path import PARALLEL_RL_DIR, ensure_repo_src_on_path
-
-
-ensure_repo_src_on_path()
+RL_DIR = Path(__file__).resolve().parent
 
 if __package__:
     from .parallel_soromox_env import ParallelSoromoxEnv
 else:
-    from examples.control.rl.parallel_soromox_env import ParallelSoromoxEnv
+    env_path = RL_DIR / "parallel_soromox_env.py"
+    spec = importlib.util.spec_from_file_location("parallel_soromox_env", env_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load ParallelSoromoxEnv from {env_path}")
+    env_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(env_module)
+    ParallelSoromoxEnv = env_module.ParallelSoromoxEnv
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -155,7 +155,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--save-dir",
         type=str,
-        default=str(PARALLEL_RL_DIR / "checkpoints"),
+        default=str(RL_DIR / "checkpoints"),
     )
     parser.add_argument("--model-name", type=str, default="ppo_model")
     parser.add_argument(
