@@ -17,8 +17,8 @@ import math
 import os
 import shutil
 import subprocess
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Iterable
 
 RL_DIR = Path(__file__).resolve().parent
 
@@ -44,6 +44,7 @@ else:
 
 try:
     import open3d as o3d
+
     from soromox.rendering.camera_config import CameraConfig
     from soromox.rendering.color_config import (
         ActuatorStyleConfig,

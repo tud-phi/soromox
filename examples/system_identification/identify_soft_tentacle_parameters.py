@@ -748,6 +748,12 @@ if __name__ == "__main__":
         meas = onp.asarray(measured_markers_batch[:, m].reshape(4, 3))
         measured_pts.append(meas)
 
+    onp.save("data/curves_orig.npy", onp.asarray(curves_orig))
+    onp.save("data/curves_hat.npy", onp.asarray(curves_hat))
+    onp.save("data/markers_orig.npy", onp.asarray(markers_orig))
+    onp.save("data/markers_hat.npy", onp.asarray(markers_hat))
+    onp.save("data/measured_pts.npy", onp.asarray(measured_pts))
+
     # compute plot bounds from all points
     all_pts = []
     for c0, ch, m0, mh, mm in zip(
