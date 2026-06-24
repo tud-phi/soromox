@@ -1100,7 +1100,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
                 for actuator_idx in range(robot_actuators.shape[0]):
                     color = tuple(colors[robot_idx, frame_idx, actuator_idx, :3])
-                    ls = _make_polyline_lineset(robot_actuators[actuator_idx], color=color)
+                    ls = _make_polyline_lineset(
+                        robot_actuators[actuator_idx], color=color
+                    )
                     mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = layer.line_width or self.actuator_line_width
@@ -1895,6 +1897,20 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 )
 
         def _save_frame(i: int, force: bool = False) -> None:
+            # --- DEBUG ADDITION START ---
+            import os
+
+            save_dir = os.path.abspath("snapshots")
+            os.makedirs(save_dir, exist_ok=True)
+            target_path = os.path.join(save_dir, f"snapshot_frame_{i:05d}.png")
+
+            if force:
+                # Force a dedicated physical PNG write even if video_writer is active
+                vis.capture_screen_image(target_path, do_render=True)
+                print(f"[Open3D Debug] Snapshot successfully saved to: {target_path}")
+                if video_writer is not None:
+                    return  # Still let the video writer continue its frame sequence
+            # --- DEBUG ADDITION END ---
             if video_writer is not None:
                 try:
                     img = np.asarray(

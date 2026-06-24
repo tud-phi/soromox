@@ -30,10 +30,6 @@ COLORS = {
     "post_opt_3": "#FFBC42",
     "backbone_opt": "#7B2CBF",
     "backbone_init": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#e76f51",
 }
 
 MODEL_ORDER = ["articulated_soft_robot", "planar_pcs", "pcs", "gvs"]
@@ -45,9 +41,9 @@ MODEL_LABELS = {
 }
 MODEL_COLORS = {
     "articulated_soft_robot": COLORS["pre_opt_1"],
-    "planar_pcs": COLORS["post_opt_3"],
+    "planar_pcs": COLORS["pre_opt_2"],
     "pcs": COLORS["post_opt_1"],
-    "gvs": COLORS["pre_opt_2"],
+    "gvs": COLORS["post_opt_3"],
 }
 
 SIZE_STYLES = {
@@ -147,7 +143,6 @@ def _model_color(system: Any, index: int) -> str:
     canonical = _canonical_system(system)
     if canonical in MODEL_COLORS:
         return MODEL_COLORS[canonical]
-    # Fallback hex palette if unknown
     palette = ["#0173B2", "#DE8F05", "#029E73", "#D55E00", "#CC78BC", "#CA9161"]
     return palette[index % len(palette)]
 
@@ -246,10 +241,6 @@ def _filter_rows(
 def _filter_to_shared_segment_range(
     rows: Sequence[Mapping[str, Any]],
 ) -> list[Mapping[str, Any]]:
-    size_labels = {row["size_label"] for row in rows}
-    if not size_labels <= SEGMENT_SIZE_LABELS:
-        return list(rows)
-
     sizes_by_system: dict[Any, list[int]] = {}
     for row in rows:
         sizes_by_system.setdefault(row["system"], []).append(_size_value(row))
@@ -260,6 +251,7 @@ def _filter_to_shared_segment_range(
     common_min = max(min(sizes) for sizes in sizes_by_system.values())
     common_max = min(max(sizes) for sizes in sizes_by_system.values())
     filtered = [row for row in rows if common_min <= _size_value(row) <= common_max]
+
     if not filtered:
         raise ValueError(
             "No rows remain after limiting to the shared segment-count range."
@@ -344,7 +336,6 @@ def _plot(
 ) -> None:
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
 
-    # 15cm width per system column, 20cm total height
     width_cm = 15.0 * len(systems)
     fig, axes = plt.subplots(
         2,
@@ -553,6 +544,7 @@ def _plot_combined_scaling(
         return
 
     x_min = min(all_x)
+    x_min = min(all_x)
     y_min, y_max = min(all_y), max(all_y)
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -561,18 +553,19 @@ def _plot_combined_scaling(
     ax.set_title("GPU Batch-Scaling Throughput")
 
     if y_min <= 1.0 <= y_max:
-        ax.axhline(1.0, color="0.45", linestyle=":", linewidth=0.8, alpha=0.75)
+        ax.axhline(1.0, color="#717674", linestyle=":", linewidth=1.8, alpha=0.9)
         ax.text(
             x_min,
             1.0,
-            "real time",
-            color="0.35",
+            "Real time",
+            fontsize=14,
+            color="#717674",
             ha="left",
-            va="bottom",  # fontsize=9,
+            va="bottom",
         )
 
     # ---------------------------------------------------------
-    # Override dynamic legend to keep it clean and readable
+    # DYNAMIC LEGEND: Built only from the filtered rows
     # ---------------------------------------------------------
     model_handles = [
         Line2D(
@@ -585,13 +578,11 @@ def _plot_combined_scaling(
         for idx, system in enumerate(systems)
     ]
 
-    # Hardcode the legend values and labels
-    legend_size_values = [1, 2, 4, 8, 16]
-    size_label = r"$N$"
-    size_legend_title = "Number of Segments"
+    # Read sizes directly from the user-filtered dataset
+    size_values = sorted({_size_value(row) for row in rows})
 
     size_handles = []
-    for size in legend_size_values:
+    for size in size_values:
         linestyle, marker = _style_for_size(size)
         size_handles.append(
             Line2D(
@@ -604,7 +595,7 @@ def _plot_combined_scaling(
                 markerfacecolor="white",
                 markeredgewidth=1.0,
                 linewidth=1.3,
-                label=rf"{size_label}={size}",
+                label=rf"$N$={size}",
             )
         )
 
@@ -616,7 +607,7 @@ def _plot_combined_scaling(
     ax.add_artist(first_legend)
     ax.legend(
         handles=size_handles,
-        title=size_legend_title,
+        title="Number of segments",
         loc="lower right",
         ncol=2 if len(size_handles) > 4 else 1,
         columnspacing=1.2,
@@ -630,6 +621,72 @@ def _plot_combined_scaling(
     if show:
         plt.show()
     plt.close(fig)
+
+
+# --- Interactive Menu ---
+
+
+def _interactive_selection(
+    args: argparse.Namespace, rows: list[Mapping[str, Any]]
+) -> argparse.Namespace:
+    """Prompt user for model and segment selections if not provided via CLI."""
+    print("\n" + "=" * 40)
+    print(" SoRoMoX Batch Scaling Plotter")
+    print("=" * 40)
+
+    # 1. Model Selection
+    if not args.systems:
+        available_systems = sorted(
+            {_canonical_system(r["system"]) for r in rows},
+            key=lambda s: MODEL_ORDER.index(s) if s in MODEL_ORDER else 99,
+        )
+        print("\nAvailable Robot Models:")
+        print("  0: All Models (Default)")
+        for i, sys_val in enumerate(available_systems, 1):
+            print(f"  {i}: {_model_label(sys_val)}")
+
+        sel = input(
+            "\nSelect models (comma-separated numbers, e.g., 1,3) [0]: "
+        ).strip()
+        if sel and sel != "0":
+            try:
+                indices = [int(x.strip()) - 1 for x in sel.split(",")]
+                args.systems = [
+                    available_systems[i]
+                    for i in indices
+                    if 0 <= i < len(available_systems)
+                ]
+            except ValueError:
+                print("[!] Invalid input, proceeding with all models.")
+
+    # 2. Segment Selection
+    if not args.segment_counts:
+        temp_systems = (
+            {_compact_system_key(s) for s in args.systems} if args.systems else None
+        )
+        # Assess available segment sizes for the chosen models
+        temp_rows = [
+            r
+            for r in rows
+            if r["size_label"] in SEGMENT_SIZE_LABELS
+            and (not temp_systems or _compact_system_key(r["system"]) in temp_systems)
+        ]
+        available_sizes = sorted({_size_value(r) for r in temp_rows})
+
+        if available_sizes:
+            print("\nAvailable Segment Counts:")
+            print(f"  0: All Available Segments {available_sizes} (Default)")
+            sel = input(
+                "\nSelect segment counts (comma-separated, e.g., 1,2,4) [0]: "
+            ).strip()
+            if sel and sel != "0":
+                try:
+                    args.segment_counts = [int(x.strip()) for x in sel.split(",")]
+                except ValueError:
+                    print("[!] Invalid input, proceeding with all available segments.")
+
+    print("\nGenerating plots...\n")
+    return args
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
@@ -664,13 +721,13 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--systems",
         nargs="*",
-        help="Optional subset of systems to plot",
+        help="Optional subset of systems to plot (skips interactive menu if provided)",
     )
     parser.add_argument(
         "--segment-counts",
         nargs="*",
         type=int,
-        help="Optional subset of segment counts to plot",
+        help="Optional subset of segment counts to plot (skips interactive menu if provided)",
     )
     parser.add_argument(
         "--gauss-points",
@@ -700,7 +757,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     )
     args = parser.parse_args(argv)
 
-    # Auto-discover CSVs if none provided
     if not args.csv:
         if args.data_dir.exists():
             args.csv = list(args.data_dir.glob("*.csv"))
@@ -711,7 +767,6 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         print(f"[!] No CSV files found in {args.data_dir}. Exiting.")
         sys.exit(1)
 
-    # Construct output paths
     args.output = args.output_dir / args.output_name
     args.combined_output = None
     if not args.no_combined_plot:
@@ -726,7 +781,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     configure_matplotlib()
     args = parse_args(sys.argv[1:] if argv is None else argv)
 
+    # Load all rows
     rows = _load_rows(args.csv)
+
+    # Isolate segment data strictly to prevent 'p' basis-order corruption in the prompt/legend
+    rows = [r for r in rows if r["size_label"] in SEGMENT_SIZE_LABELS]
+
+    # Launch interactive CLI
+    args = _interactive_selection(args, rows)
+
+    # Filter dataset based on CLI or interactive choices
     rows = _filter_rows(rows, args.systems, args.segment_counts, args.gauss_points)
     rows = _filter_to_shared_segment_range(rows)
 

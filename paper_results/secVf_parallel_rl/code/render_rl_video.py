@@ -8,6 +8,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
+from matplotlib import colors
 
 from soromox.rendering import Open3DRenderer, RendererColorConfig
 from soromox.rendering.camera_config import CameraConfig
@@ -22,6 +23,20 @@ from soromox.systems import (
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
+
+COLORS = {
+    "pre_opt_1": "#006BA6",
+    "pre_opt_2": "#0496FF",
+    "post_opt_1": "#D81159",
+    "post_opt_2": "#8F2D56",
+    "post_opt_3": "#FFBC42",
+    "backbone_opt": "#7B2CBF",
+    "backbone_init": "#0ead69",
+    "ground_truth": "#FFBC42",
+    "x_t": "#2a9d8f",
+    "y_t": "#e9c46a",
+    "z_t": "#e76f51",
+}
 
 jax.config.update("jax_enable_x64", True)
 
@@ -99,7 +114,13 @@ def main():
         help="Output MP4 path",
     )
     parser.add_argument(
-        "--ball-radius", type=float, default=0.015, help="Radius of the target ball"
+        "--ball-radius", type=float, default=0.025, help="Radius of the target ball"
+    )
+    parser.add_argument(
+        "--show-trajectory",
+        action="store_true",
+        default=False,
+        help="Plot the target ball's trajectory as a trail of small red spheres",
     )
     args = parser.parse_args()
 
@@ -119,7 +140,25 @@ def main():
     # Open3DRenderer expects dynamic sphere trajectories to be of shape (K_balls, T, 3)
     dynamic_spheres_positions = ball_ts.reshape(1, -1, 3)
     dynamic_spheres_radii = np.array([args.ball_radius], dtype=np.float64)
-    dynamics_spheres_colors = np.array([[1.0, 170 / 255, 0.0]], dtype=np.float64)
+    dynamics_spheres_colors = np.array(
+        [colors.to_rgb(COLORS["ground_truth"])], dtype=np.float64
+    )  # [1.0, 170 / 255, 0.0]
+
+    # --- ADD THIS NEW BLOCK: 2.5 Format the Trajectory Trail (Static Spheres) ---
+    static_spheres_positions = None
+    static_spheres_radii = None
+    static_spheres_colors = None
+
+    if args.show_trajectory:
+        trail_radius = 0.003
+        trail_pts = ball_ts[::2]
+        num_pts = trail_pts.shape[0]
+
+        static_spheres_positions = trail_pts
+        static_spheres_radii = np.full((num_pts,), trail_radius, dtype=np.float64)
+        static_spheres_colors = np.tile(
+            np.array([[0.8, 0.1, 0.1]], dtype=np.float64), (num_pts, 1)
+        )
 
     # 3. Build Robot Geometry
     print("Building robot geometry...")
@@ -128,7 +167,9 @@ def main():
     # 4. Configure Color Styling
     color_config = RendererColorConfig(
         backbone=BackboneColorConfig(
-            segment_colors=np.array([[0.0039, 0.6510, 0.8392, 1.0]], dtype=np.float64)
+            segment_colors=np.array(
+                [colors.to_rgb(COLORS["backbone_init"])], dtype=np.float64
+            )  # [0.0039, 0.6510, 0.8392, 1.0]
         ),
         base_plate_color=(0.2, 0.2, 0.2),
     )
@@ -169,6 +210,9 @@ def main():
         loop=False,
         record_path=args.output,
         render_actuators=True,
+        static_spheres_positions=static_spheres_positions,
+        static_spheres_radii=static_spheres_radii,
+        static_spheres_colors=static_spheres_colors,
         dynamic_spheres_positions=dynamic_spheres_positions,
         dynamic_spheres_radii=dynamic_spheres_radii,
         dynamics_spheres_colors=dynamics_spheres_colors,
