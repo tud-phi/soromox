@@ -15,12 +15,13 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-os.environ.setdefault("MPLCONFIGDIR", str(SCRIPT_DIR / ".matplotlib_cache"))
-
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+os.environ.setdefault("MPLCONFIGDIR", str(SCRIPT_DIR / ".matplotlib_cache"))
+
 
 REWARD_KEY = "episode_reward_mean"
 TIME_KEY = "wall_time"

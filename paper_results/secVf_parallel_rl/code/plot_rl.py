@@ -53,18 +53,17 @@ class Curve:
 
 
 def configure_matplotlib() -> None:
-    """Configure the standardized CMU Serif publication theme."""
+    """Configure a compact publication-style matplotlib theme."""
     plt.rcParams.update(
         {
             # Adjust white padding around image
-            # "savefig.pad_inches": 0.1,
             # --- Grid Configuration ---
             "axes.grid": True,
-            "grid.alpha": 0.5,  # Increased from 0.35
-            "grid.linestyle": "-",  # Changed from ":" for better visibility
-            "grid.linewidth": 0.8,  # Slightly thicker
-            "grid.color": "#B0B0B0",  # Explicit darker gray
-            # --- Font Configuration (Native LaTeX fallback) ---
+            "grid.alpha": 0.5,
+            "grid.linestyle": "-",
+            "grid.linewidth": 0.8,
+            "grid.color": "#B0B0B0",
+            # --- Font Configuration ---
             "font.family": "serif",
             "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
             "mathtext.fontset": "cm",
@@ -73,10 +72,10 @@ def configure_matplotlib() -> None:
             "axes.labelsize": 11,
             # --- Legend Configuration ---
             "legend.fontsize": 11,
-            "legend.frameon": True,  # Toggle the box on
-            "legend.facecolor": "white",  # Solid background to block grid/lines
-            "legend.framealpha": 0.8,  # High opacity overlay
-            "legend.edgecolor": "#A0A0A0",  # Distinct grey border
+            "legend.frameon": True,
+            "legend.facecolor": "white",
+            "legend.framealpha": 0.8,
+            "legend.edgecolor": "#A0A0A0",
             "legend.fancybox": False,
             "patch.linewidth": 0.7,
             # --- Axes and Spines ---

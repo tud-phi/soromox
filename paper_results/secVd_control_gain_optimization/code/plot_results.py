@@ -28,7 +28,7 @@ COLORS = {
     "post_opt_2": "#8F2D56",
     "post_opt_3": "#FFBC42",
     "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",  # 0ead69, #3bceac
+    "backbone_init": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
@@ -58,26 +58,25 @@ def configure_matplotlib() -> None:
     plt.rcParams.update(
         {
             # Adjust white padding around image
-            # "savefig.pad_inches": 0.1,
             # --- Grid Configuration ---
             "axes.grid": True,
-            "grid.alpha": 0.5,  # Increased from 0.35
-            "grid.linestyle": "-",  # Changed from ":" for better visibility
-            "grid.linewidth": 0.8,  # Slightly thicker
-            "grid.color": "#B0B0B0",  # Explicit darker gray
-            # --- Font Configuration (Native LaTeX fallback) ---
+            "grid.alpha": 0.5,
+            "grid.linestyle": "-",
+            "grid.linewidth": 0.8,
+            "grid.color": "#B0B0B0",
+            # --- Font Configuration ---
             "font.family": "serif",
-            "font.serif": ["Computer Modern Serif", "DejaVu Serif", "cmr10"],
+            "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
             "mathtext.fontset": "cm",
             "axes.formatter.use_mathtext": True,
-            # "font.size": 7,
-            # "axes.labelsize": 7,
+            "font.size": 11,
+            "axes.labelsize": 11,
             # --- Legend Configuration ---
-            # "legend.fontsize": 6,
-            "legend.frameon": True,  # Toggle the box on
-            "legend.facecolor": "white",  # Solid background to block grid/lines
-            "legend.framealpha": 0.8,  # High opacity overlay
-            "legend.edgecolor": "#A0A0A0",  # Distinct grey border
+            "legend.fontsize": 11,
+            "legend.frameon": True,
+            "legend.facecolor": "white",
+            "legend.framealpha": 0.8,
+            "legend.edgecolor": "#A0A0A0",
             "legend.fancybox": False,
             "patch.linewidth": 0.7,
             # --- Axes and Spines ---

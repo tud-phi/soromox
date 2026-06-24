@@ -9,8 +9,6 @@ import numpy as onp
 from cbfpy.cbfs.clf_cbf import CLFCBFConfig
 from jax import Array
 
-plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
-from soromox.rendering import Open3DRenderer, RendererColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
@@ -18,6 +16,8 @@ from soromox.systems import (
     TendonActuatedPCS,
     TendonActuatedPCSParams,
 )
+
+plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
 
 jax.config.update("jax_enable_x64", True)
 jnp.set_printoptions(
@@ -447,80 +447,36 @@ if __name__ == "__main__":
     results = [run_case(use_cbf, label) for label, use_cbf in selected_modes]
 
     # ======================================================
-    # Open3D render (Headless Bypass for Windows)
+    # Export Trajectory for Offline Rendering
     # ======================================================
-    if Open3DRenderer is None:
-        print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
-    else:
-        os.makedirs("videos", exist_ok=True)
-        from soromox.rendering.video_encoding import FFmpegVideoWriter
+    from pathlib import Path
 
-        render_result = next(
-            (result for result in results if result["label"] == "with CBF"),
-            results[0],
-        )
-        render_config = render_result["config"]
-        render_ts = render_result["ts"]
-        render_q_ts = render_result["q_ts"]
+    SCRIPT_DIR = Path(__file__).resolve().parent.parent / "data"
+    os.makedirs(SCRIPT_DIR, exist_ok=True)
 
-        obs_centers = onp.asarray(render_config.obs["centers"], dtype=onp.float64)
-        obs_radii = onp.asarray(render_config.obs["radii"], dtype=onp.float64)
-        obs_colors = onp.tile(
-            onp.array([[0.5, 0.5, 0.5]], dtype=onp.float64),
-            (obs_radii.shape[0], 1),
-        )
+    render_result = next(
+        (result for result in results if result["label"] == "with CBF"),
+        results[0],
+    )
+    render_config = render_result["config"]
+    render_ts = render_result["ts"]
+    render_q_ts = render_result["q_ts"]
 
-        target_center = onp.asarray(render_config.p_d_2, dtype=onp.float64).reshape(
-            1, 3
-        )
-        target_radius = onp.array([0.01], dtype=onp.float64)
-        target_color = onp.array([[1.0, 0.1, 0.1]], dtype=onp.float64)
+    export_path = (
+        SCRIPT_DIR
+        / f"clf_cbf_rollout_{render_result['label'].lower().replace(' ', '_')}.npz"
+    )
 
-        static_spheres_positions = onp.concatenate([obs_centers, target_center], axis=0)
-        static_spheres_radii = onp.concatenate([obs_radii, target_radius], axis=0)
-        static_spheres_colors = onp.concatenate([obs_colors, target_color], axis=0)
-
-        renderer = Open3DRenderer(
-            robot,
-            num_points=80,
-            color_config=RendererColorConfig(),
-            width=1280,
-            height=800,
-            backbone_style="discrete",
-            actuator_line_width=2.0,
-        )
-
-        # Calculate timing and framerate
-        render_stride = max(1, len(render_ts) // 300)
-        sliced_q_ts = render_q_ts[::render_stride]
-        dt = (
-            float(render_ts[render_stride] - render_ts[0])
-            if len(render_ts) > render_stride
-            else 0.033
-        )
-        fps = 1.0 / max(dt, 1e-6)
-
-        output_path = f"videos/clf_cbf_rollout_{render_result['label'].lower().replace(' ', '_')}.mp4"
-        print("\nGenerating video headlessly (Bypassing GLFW)...")
-        writer = FFmpegVideoWriter(output_path, renderer.width, renderer.height, fps)
-
-        # Loop through configurations and render headlessly
-        for i in range(len(sliced_q_ts)):
-            frame_img = renderer.render_frame(
-                sliced_q_ts[i],
-                static_spheres_positions=static_spheres_positions,
-                static_spheres_radii=static_spheres_radii,
-                static_spheres_colors=static_spheres_colors,
-                render_actuators=True,
-            )
-            writer.write(frame_img)
-
-            # Print progress every 10 frames
-            if i % 10 == 0 or i == len(sliced_q_ts) - 1:
-                print(f"Rendered frame {i + 1}/{len(sliced_q_ts)}")
-
-        writer.close()
-        print(f"Successfully saved MP4 to {output_path}")
+    print(f"\nExporting rollout data to {export_path}...")
+    onp.savez_compressed(
+        export_path,
+        ts=onp.asarray(render_ts),
+        q_ts=onp.asarray(render_q_ts),
+        obs_centers=onp.asarray(render_config.obs["centers"]),
+        obs_radii=onp.asarray(render_config.obs["radii"]),
+        target_center=onp.asarray(render_config.p_d_2),
+    )
+    print("Export complete. You can now render this on a local machine.")
 
     # ======================================================
     # Figure-style plot: max normal force boundary + goal distance
