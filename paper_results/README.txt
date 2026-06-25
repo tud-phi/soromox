@@ -12,5 +12,5 @@ This folder aims to be a self-contained storage for the data and plots shown in 
 
 - ...
 
-- final_figures/    -->  contains the final plots and videos used in the paper, manually copy-pasted here when satisfied
+- final_outputs/    -->  contains the final plots and videos used in the paper, manually copy-pasted here when satisfied
 		
