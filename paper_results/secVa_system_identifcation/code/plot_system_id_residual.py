@@ -161,7 +161,6 @@ def plot_radar_rmse(
     ax.plot(
         angles,
         d_resid,
-        # "s-",
         "o-",
         label="Optimal residual",
         linewidth=0.7,
@@ -250,12 +249,14 @@ def plot_bar_overall_rmse(
     return fig
 
 
-def plot_violin_error_distribution(df: pd.DataFrame) -> plt.Figure:
+def plot_violin_error_distribution(
+    df: pd.DataFrame, figsize_cm=(15.0, 10.0), legend_loc="upper right", box=True
+) -> plt.Figure:
     """Expects DataFrame with columns: ['Marker', 'Tau Condition', 'Error']"""
     fig, ax = plt.subplots(figsize=(5.8, 3.5), constrained_layout=True)
 
     # Ensure palette maps correctly to tau conditions in your dataframe
-    palette = [COLORS["optimal_param"], COLORS["optimal_resid"], COLORS["nn_pred"]]
+    palette = [COLORS["post_opt_1"], COLORS["post_opt_2"], COLORS["post_opt_3"]]
 
     sns.violinplot(
         data=df,
@@ -541,21 +542,21 @@ def main() -> int:
     # Generate and save all figures
     # Radar Plot
     fig_radar = plot_radar_rmse(rmse_data, (8, 8))
-    save_figure(fig_radar, DEFAULT_OUTPUT_DIR, "radar_rmse_per_marker", "svg")
+    save_figure(fig_radar, DEFAULT_OUTPUT_DIR, "radar_rmse_per_marker", "pdf")
 
     # Bar Plot
     fig_bar = plot_bar_overall_rmse(overall_rmse_dict, figsize_cm=(6.5, 5.0), box=True)
-    save_figure(fig_bar, DEFAULT_OUTPUT_DIR, "bar_overall_rmse", "svg")
+    save_figure(fig_bar, DEFAULT_OUTPUT_DIR, "bar_overall_rmse", "pdf")
 
     # Violin Plot
-    # fig_violin = plot_violin_error_distribution(
-    #     df_violin, figsize_cm=(15.0, 10.0), legend_loc="upper right", box=True
-    # )
-    # save_figure(fig_violin, DEFAULT_OUTPUT_DIR, "violin_error_distribution", "svg")
+    fig_violin = plot_violin_error_distribution(
+        df_violin, figsize_cm=(15.0, 10.0), legend_loc="upper right", box=True
+    )
+    save_figure(fig_violin, DEFAULT_OUTPUT_DIR, "violin_error_distribution", "pdf")
 
     # 3D Comparison
     fig_3d = plot_3d_comparison(shape_data, (8, 8), legend_loc="upper left")
-    save_figure(fig_3d, DEFAULT_OUTPUT_DIR, "3d_shape_comparison", "svg")
+    save_figure(fig_3d, DEFAULT_OUTPUT_DIR, "3d_shape_comparison", "pdf")
 
     return 0
 

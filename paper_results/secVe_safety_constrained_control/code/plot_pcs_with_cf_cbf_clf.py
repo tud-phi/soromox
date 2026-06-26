@@ -57,7 +57,7 @@ def configure_matplotlib() -> None:
             "xtick.direction": "out",
             "ytick.direction": "out",
             "savefig.bbox": "tight",
-            "figure.dpi": 150,
+            "figure.dpi": 300,
             "lines.linewidth": 1.8,
         }
     )
