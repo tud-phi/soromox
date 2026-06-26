@@ -1897,9 +1897,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 )
 
         def _save_frame(i: int, force: bool = False) -> None:
-            # --- DEBUG ADDITION START ---
-            import os
-
             save_dir = os.path.abspath("snapshots")
             os.makedirs(save_dir, exist_ok=True)
             target_path = os.path.join(save_dir, f"snapshot_frame_{i:05d}.png")
@@ -1909,8 +1906,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 vis.capture_screen_image(target_path, do_render=True)
                 print(f"[Open3D Debug] Snapshot successfully saved to: {target_path}")
                 if video_writer is not None:
-                    return  # Still let the video writer continue its frame sequence
-            # --- DEBUG ADDITION END ---
+                    return
+
             if video_writer is not None:
                 try:
                     img = np.asarray(

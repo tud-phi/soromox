@@ -11,7 +11,6 @@ import numpy as np
 from matplotlib import colors
 
 from soromox.rendering import Open3DRenderer, RendererColorConfig
-from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import BackboneColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
@@ -103,7 +102,6 @@ def main():
     parser.add_argument(
         "--data",
         type=str,
-        # required=True,
         default=DATA_DIR / "traj" / "open3d_rollout_data.npz",
         help="Path to the .npz file containing rollout arrays",
     )
@@ -112,9 +110,6 @@ def main():
         type=str,
         default=OUTPUT_DIR / "rl_rollout.mp4",
         help="Output MP4 path",
-    )
-    parser.add_argument(
-        "--ball-radius", type=float, default=0.025, help="Radius of the target ball"
     )
     parser.add_argument(
         "--show-trajectory",
@@ -139,10 +134,10 @@ def main():
     # 2. Format the Dynamic Sphere (Target Ball)
     # Open3DRenderer expects dynamic sphere trajectories to be of shape (K_balls, T, 3)
     dynamic_spheres_positions = ball_ts.reshape(1, -1, 3)
-    dynamic_spheres_radii = np.array([args.ball_radius], dtype=np.float64)
+    dynamic_spheres_radii = np.array([0.015], dtype=np.float64)
     dynamics_spheres_colors = np.array(
         [colors.to_rgb(COLORS["ground_truth"])], dtype=np.float64
-    )  # [1.0, 170 / 255, 0.0]
+    )
 
     # --- ADD THIS NEW BLOCK: 2.5 Format the Trajectory Trail (Static Spheres) ---
     static_spheres_positions = None
@@ -164,26 +159,30 @@ def main():
     print("Building robot geometry...")
     robot = build_rl_robot()
 
+    if "random" in str(args.data):
+        color_label = "backbone_init"
+    else:
+        color_label = "backbone_opt"
     # 4. Configure Color Styling
     color_config = RendererColorConfig(
         backbone=BackboneColorConfig(
             segment_colors=np.array(
-                [colors.to_rgb(COLORS["backbone_opt"])], dtype=np.float64
-            )  # [0.0039, 0.6510, 0.8392, 1.0]
+                [colors.to_rgb(COLORS[color_label])], dtype=np.float64
+            )
         ),
         base_plate_color=(0.2, 0.2, 0.2),
     )
 
     renderer = Open3DRenderer(
         robot,
-        num_points=40,
+        num_points=80,
         color_config=color_config,
         width=1920,
-        height=1920,
+        height=1080,
         backbone_style="discrete",
         background_color=(1.0, 1.0, 1.0),
-        base_plate_radius_scale=1.5,
-        base_plate_thickness=0.04,
+        # base_plate_radius_scale=1.5,
+        # base_plate_thickness=0.04,
     )
 
     # Calculate exact FPS based on timestamps
@@ -191,15 +190,6 @@ def main():
     fps = 1.0 / max(1e-6, float(np.median(dt_seq)))
 
     print(f"Rendering MP4 to {args.output} (Target FPS: {fps:.2f})...")
-
-    # Define a custom camera config to zoom in
-    # Lower distance_factor = closer camera (Default is usually around 10.0)
-    my_camera_config = CameraConfig(
-        distance_factor=6.0,
-        fov=60.0,  # Optional: Lower FOV also creates a zoom effect
-        position_offset=(0.0, -1.0, 0.3),
-        up=(0.0, 0.0, 1.0),
-    )
 
     # 5. Render to FFmpeg
     renderer.render_sequence(
@@ -216,7 +206,6 @@ def main():
         dynamic_spheres_positions=dynamic_spheres_positions,
         dynamic_spheres_radii=dynamic_spheres_radii,
         dynamics_spheres_colors=dynamics_spheres_colors,
-        camera_config=my_camera_config,
         window_name="SoRoMoX RL Rollout Offline",
     )
 
