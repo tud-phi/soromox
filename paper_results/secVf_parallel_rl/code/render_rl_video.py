@@ -104,7 +104,7 @@ def main():
         "--data",
         type=str,
         # required=True,
-        default=DATA_DIR / "traj" / "open3d_rollout_data_random.npz",
+        default=DATA_DIR / "traj" / "open3d_rollout_data.npz",
         help="Path to the .npz file containing rollout arrays",
     )
     parser.add_argument(
@@ -119,7 +119,7 @@ def main():
     parser.add_argument(
         "--show-trajectory",
         action="store_true",
-        default=False,
+        default=True,
         help="Plot the target ball's trajectory as a trail of small red spheres",
     )
     args = parser.parse_args()
@@ -168,7 +168,7 @@ def main():
     color_config = RendererColorConfig(
         backbone=BackboneColorConfig(
             segment_colors=np.array(
-                [colors.to_rgb(COLORS["backbone_init"])], dtype=np.float64
+                [colors.to_rgb(COLORS["backbone_opt"])], dtype=np.float64
             )  # [0.0039, 0.6510, 0.8392, 1.0]
         ),
         base_plate_color=(0.2, 0.2, 0.2),

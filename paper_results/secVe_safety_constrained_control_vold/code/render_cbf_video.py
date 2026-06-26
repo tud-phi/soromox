@@ -5,10 +5,12 @@ import argparse
 import os
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 import numpy as np
+from matplotlib import colors
 
-from soromox.rendering import Open3DRenderer, RendererColorConfig
+from soromox.rendering import BackboneColorConfig, Open3DRenderer, RendererColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
     PCSParams,
@@ -17,14 +19,31 @@ from soromox.systems import (
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = SCRIPT_DIR / "data"
+
+COLORS = {
+    "pre_opt_1": "#006BA6",
+    "pre_opt_2": "#0496FF",
+    "post_opt_1": "#D81159",
+    "post_opt_2": "#8F2D56",
+    "post_opt_3": "#FFBC42",
+    "backbone_opt": "#7B2CBF",
+    "backbone_init": "#0ead69",
+    "ground_truth": "#FFBC42",
+    "x_t": "#2a9d8f",
+    "y_t": "#e9c46a",
+    "z_t": "#e76f51",
+}
+
+jax.config.update("jax_enable_x64", True)
 
 
-def build_robot() -> TendonActuatedPCS:
+def build_robot(
+    segment_length, backbone_radius, tendon_routing_params
+) -> TendonActuatedPCS:
     """Reconstruct the static robot parameters for the visualizer."""
-    num_segments = 2
+    num_segments = len(segment_length)
     rho = 1070 * jnp.ones((num_segments,))
-    segment_length = 15e-2 * 2 / num_segments * jnp.ones((num_segments,))
-    backbone_radius = 3.6e-2 * jnp.ones((num_segments,))
 
     damping_matrix = 1e-3 * jnp.diag(
         (
@@ -34,20 +53,6 @@ def build_robot() -> TendonActuatedPCS:
             * segment_length[:, None]
         ).flatten()
     )
-
-    r0, r1 = float(backbone_radius[0]) - 0.005, float(backbone_radius[1]) - 0.005
-    theta0 = jnp.deg2rad(jnp.array([120, 240, 0]))
-    theta1 = jnp.deg2rad(jnp.array([180, 300, 60]))
-    ry0, rz0 = r0 * jnp.cos(theta0), r0 * jnp.sin(theta0)
-    ry1, rz1 = r1 * jnp.cos(theta1), r1 * jnp.sin(theta1)
-
-    tendon_routing_params = {
-        "ry": jnp.concatenate([ry0, ry1]),
-        "rz": jnp.concatenate([rz0, rz1]),
-        "my": jnp.zeros(6),
-        "mz": jnp.zeros(6),
-        "idx_seg_att": jnp.array([0, 0, 0, 1, 1, 1]),
-    }
 
     body_params = PCSParams(
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
@@ -64,11 +69,13 @@ def build_robot() -> TendonActuatedPCS:
     )
 
     active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=tendon_routing_params["ry"],
-        z_intercept=tendon_routing_params["rz"],
-        y_slope=tendon_routing_params["my"],
-        z_slope=tendon_routing_params["mz"],
-        attachment_segment_index=tendon_routing_params["idx_seg_att"],
+        y_intercept=tendon_routing_params["tendon_y_intercept"],
+        z_intercept=tendon_routing_params["tendon_z_intercept"],
+        y_slope=tendon_routing_params["tendon_y_slope"],
+        z_slope=tendon_routing_params["tendon_z_slope"],
+        attachment_segment_index=tendon_routing_params[
+            "tendon_attachment_segment_index"
+        ],
     )
 
     return TendonActuatedPCS(
@@ -82,7 +89,7 @@ def build_robot() -> TendonActuatedPCS:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--data", type=str, default=SCRIPT_DIR / "data" / "clf_cbf_rollout_with_cbf.npz"
+        "--data", type=str, default=DATA_DIR / "robot_trajectory_data_withCBF.npz"
     )
     parser.add_argument(
         "--output",
@@ -103,28 +110,55 @@ def main():
     data = np.load(args.data)
     ts = data["ts"]
     q_ts = data["q_ts"]
+    goal_position = data["goal_position"]
     obs_centers = data["obs_centers"]
     obs_radii = data["obs_radii"]
-    target_center = data["target_center"].reshape(1, 3)
+    backbone_radius = data["backbone_radius"]
+    # safety_margin = data["safety_margin"]
+    segment_length = data["segment_length"]
+    backbone_radius = data["backbone_radius"]
+    tendon_routing_params = {
+        k: data[k]
+        for k in (
+            "tendon_y_intercept",
+            "tendon_z_intercept",
+            "tendon_y_slope",
+            "tendon_z_slope",
+            "tendon_attachment_segment_index",
+        )
+    }
 
     # Format obstacle & target spheres
-    obs_colors = np.tile(np.array([[0.5, 0.5, 0.5]]), (obs_radii.shape[0], 1))
-    target_radius = np.array([0.01])
-    target_color = np.array([[1.0, 0.1, 0.1]])
+    obs_colors = np.tile(
+        np.array([colors.to_rgb(COLORS["post_opt_1"])], dtype=np.float64),
+        (obs_radii.shape[0], 1),
+    )
+    target_position = goal_position[np.newaxis, :]
+    target_radius = np.array([0.025])  # obs_radii[0, np.newaxis]
+    target_color = np.array([colors.to_rgb(COLORS["ground_truth"])], dtype=np.float64)
 
-    static_spheres_positions = np.concatenate([obs_centers, target_center], axis=0)
+    static_spheres_positions = np.concatenate([obs_centers, target_position], axis=0)
     static_spheres_radii = np.concatenate([obs_radii, target_radius], axis=0)
     static_spheres_colors = np.concatenate([obs_colors, target_color], axis=0)
 
+    color_config = RendererColorConfig(
+        backbone=BackboneColorConfig(
+            segment_colors=np.array(
+                [colors.to_rgb(COLORS["backbone_opt"])], dtype=np.float64
+            )
+        ),
+        base_plate_color=(0.2, 0.2, 0.2),
+    )
+
     print("Building robot geometry...")
-    robot = build_robot()
+    robot = build_robot(segment_length, backbone_radius, tendon_routing_params)
 
     renderer = Open3DRenderer(
         robot,
         num_points=80,
-        color_config=RendererColorConfig(),
-        width=1280,
-        height=800,
+        color_config=color_config,
+        width=1920,
+        height=1080,
         backbone_style="discrete",
         actuator_line_width=2.0,
     )
@@ -133,8 +167,6 @@ def main():
     render_stride = max(1, len(ts) // 300)
 
     print(f"Rendering MP4 to {args.output}...")
-    # Open3D's interactive backend will be used; if running on local windows,
-    # the window will momentarily pop up to capture frames if we use standard execution
     renderer.render_sequence(
         ts=ts[::render_stride],
         q_ts=q_ts[::render_stride],
@@ -146,7 +178,6 @@ def main():
         static_spheres_radii=static_spheres_radii,
         static_spheres_colors=static_spheres_colors,
     )
-    print("Done!")
 
 
 if __name__ == "__main__":
