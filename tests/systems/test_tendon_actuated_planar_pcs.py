@@ -76,7 +76,9 @@ def _body_params(num_segments: int):
     segment_lengths = 1e-1 * jnp.ones((num_segments,), dtype=jnp.float64)
     damping_matrix = 1e-3 * jnp.diag(
         (
-            jnp.repeat(jnp.array([[1e0, 1e3, 1e3]], dtype=jnp.float64), num_segments, axis=0)
+            jnp.repeat(
+                jnp.array([[1e0, 1e3, 1e3]], dtype=jnp.float64), num_segments, axis=0
+            )
             * segment_lengths[:, None]
         ).flatten()
     )
@@ -177,7 +179,7 @@ def _closed_form_constant_actuation_matrix(
     return robot.B_xi.T @ jnp.stack(columns, axis=1)
 
 
-def test_constant_distance_routing_matches_previous_closed_form():
+def test_constant_distance_routing_matches_closed_form():
     num_segments = 3
     distance_matrix = _constant_distance_matrix(num_segments)
     robot = _build_planar_robot(num_segments=num_segments)
