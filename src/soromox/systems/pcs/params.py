@@ -130,26 +130,34 @@ class TendonActuatedPCSParams(BaseSystemParams):
             )
 
 
-class TendonActuatedPlanarPCSParams(PlanarPCSParams):
-    """Dynamic parameters for parallel-routed planar tendon PCS.
+class TendonActuatedPlanarPCSParams(BaseSystemParams):
+    """Dynamic parameters for planar tendon-actuated PCS.
 
-    ``tendon_distance`` has shape ``(num_segments, num_tendons_per_segment)``.
-    Each row defines the offsets of the parallel tendons routed through that
-    segment.
+    ``body`` contains the underlying planar PCS dynamic parameters. Active and
+    passive tendon routing fields are batched by tendon; attachment segment
+    indices define which planar segment each tendon reaches. Passive tendon
+    impedance fields are batched by passive tendon and must have the same
+    leading length as ``passive_tendon_routing``.
     """
 
-    tendon_distance: Array
+    body: PlanarPCSParams
+    active_tendon_routing: BaseTendonRoutingParams
+    passive_tendon_routing: BaseTendonRoutingParams = eqx.field(
+        default_factory=LinearTendonRoutingParams.empty
+    )
+    passive_tendon: PassiveTendonParams = eqx.field(
+        default_factory=PassiveTendonParams.empty
+    )
 
     def validate(self) -> None:
-        super().validate()
-        n_segments = self.length.shape[0]
-        if (
-            self.tendon_distance.ndim != 2
-            or self.tendon_distance.shape[0] != n_segments
-        ):
+        self.body.validate()
+        self.active_tendon_routing.validate()
+        self.passive_tendon_routing.validate()
+        self.passive_tendon.validate()
+        if self.passive_tendon.num_tendons != self.passive_tendon_routing.num_tendons:
             raise ValueError(
-                "tendon_distance must have shape "
-                f"({n_segments}, num_tendons_per_segment), got {self.tendon_distance.shape}."
+                "passive_tendon must have one impedance entry per "
+                "passive_tendon_routing entry."
             )
 
 

@@ -142,6 +142,19 @@ def _tendon_routing(num_segments):
     )
 
 
+def _planar_tendon_routing(num_segments):
+    offsets = 0.02 * jnp.ones((num_segments, 2), dtype=jnp.float64).at[:, 1].set(-1.0)
+    return linear_tendon_routing(
+        y_intercept=offsets.reshape(-1),
+        z_intercept=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
+        y_slope=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
+        z_slope=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
+        attachment_segment_index=jnp.repeat(
+            jnp.arange(num_segments, dtype=jnp.int32), 2
+        ),
+    )
+
+
 def _pressure_planar_robot():
     body = _planar_pcs_params([0.08, 0.12])
     params = PressureActuatedPlanarPCSParams(
@@ -216,8 +229,7 @@ def _planar_hsa_robot():
         TendonActuatedPlanarPCS(
             params=tendon_actuated_planar_pcs_params(
                 body=_planar_pcs_params([0.08, 0.12, 0.2]),
-                tendon_distance=0.02
-                * jnp.ones((3, 2), dtype=jnp.float64).at[:, 1].set(-1.0),
+                active_tendon_routing=_planar_tendon_routing(3),
             )
         ),
         _pressure_planar_robot(),

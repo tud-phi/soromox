@@ -93,13 +93,13 @@ body_params = PCSParams(
 # Tendon routing: 3 tendons at 120 degrees apart, parallel to backbone
 # Tendon positions at angles: 0°, 120°, 240° from the +z axis
 # d_y = r * sin(theta), d_z = r * cos(theta)
-tendon_distance = 0.8 * radius  # Slightly inside the robot radius
+tendon_offset_radius = 0.8 * radius  # Slightly inside the robot radius
 angles_deg = jnp.array([0.0, 120.0, 240.0])
 angles_rad = jnp.deg2rad(angles_deg)
 
 active_tendon_routing = LinearTendonRoutingParams(
-    y_intercept=tendon_distance * jnp.sin(angles_rad),
-    z_intercept=tendon_distance * jnp.cos(angles_rad),
+    y_intercept=tendon_offset_radius * jnp.sin(angles_rad),
+    z_intercept=tendon_offset_radius * jnp.cos(angles_rad),
     y_slope=jnp.zeros(3),
     z_slope=jnp.zeros(3),
     attachment_segment_index=jnp.array([0, 0, 0]),

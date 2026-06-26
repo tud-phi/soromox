@@ -1,136 +1,272 @@
 __all__ = ["TendonActuatedPlanarPCS"]
 
+from collections.abc import Callable
 from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
+import soromox.actuation.tendon_actuation as act
 from soromox.rendering.actuators import ActuatorVisualLayer
+from soromox.systems.params import (
+    BaseTendonRoutingParams,
+    PassiveTendonParams,
+)
 from soromox.systems.pcs.params import TendonActuatedPlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
+from soromox.utils.integration import scale_gaussian_quadrature
 
 from .planar_pcs import PlanarPCS
 
 
 class TendonActuatedPlanarPCS(PlanarPCS):
     """
-    Tendon-driven Planar Piecewise Constant Strain (PCS) model for 2D soft continuum robots.
+    Tendon-driven planar Piecewise Constant Strain (PCS) model.
 
-    This class implements the geometric and dynamic modeling of a 2D soft robot
-    using the Cosserat rod theory and piecewise constant strain assumption.
-    It supports computation of forward kinematics, Jacobians, dynamical matrices.
+    This model uses the planar strain convention ``[kappa_z, sigma_x, sigma_y]``
+    per segment and supports active and passive tendons. Tendons are described by
+    the same batched routing parameter objects used by ``TendonActuatedPCS`` and
+    ``TendonActuatedGVS``. Each tendon has an ``attachment_segment_index`` that
+    determines which proximal segments it spans.
 
-    This class assumes parallel routing of the tendons to the backbone centerline.
-    For other kinds of tendon routings (e.g., out-of-plane, helicoidal, etc.),
-    the `TendonActuatedPCS` should be used.
+    Routing basis functions may be shared with spatial systems or written in a
+    compact planar form. For each tendon and arc-length position ``s``, ``d_s``
+    and ``dd_s_ds`` may return:
 
-    Attributes:
-        num_segments: Number of segments (constant strain sections) along the robot.
-        num_actuators: Number of actuators (control inputs) for the robot (2 per actuated segment in the case of planar tendon-driven robots).
-        th0: Initial orientation angle of the robot in radians.
-        g: Gravitational acceleration vector (embedded in a 3D vector).
-            [0, g_x, g_y]
-        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
-        num_active_strains: Number of active strain components (based on strain_selector).
-        num_strains: Total number of strain components (6 * num_segments).
-        B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
-        xi_ref: Reference strain (reference configuration) of the robot.
-        num_gauss_points: Requested nonzero Gauss-Legendre quadrature nodes.
-        num_integration_points: Stored integration nodes, including zero-weight endpoints.
-        integration_points, integration_weights: Quadrature nodes and weights.
-        d: Distances of the tendons from the segment's backbone.
-        segment_indices_to_actuate: Indices of the segments that are actuated.
+    - a scalar: interpreted as the planar offset ``d(s)`` or derivative
+      ``d'(s)``;
+    - shape ``(1,)``: first entry is interpreted as ``d(s)`` or ``d'(s)``;
+    - shape ``(3,)``: PCS/GVS-compatible ``[0, y, z]`` routing, where ``y`` is
+      the planar offset and ``z`` must be zero.
 
-    Notes:
-    -----
-    - The strain vector is composed of 3 components per segment:
-      [kappa_z, sigma_x, sigma_y].
-      By default, the rod is assumed to be straight and aligned with the x-axis,
-        so the reference strain is set to [0, 1, 0].
-        Thus:   - kappa_z corresponds to bending around the z-axis,
-                - sigma_x corresponds to axial strain along the x-axis,
-                - sigma_y corresponds to shear along the y-axis.
-    - This class assumes parallel routing of the tendons to the backbone centerline.
-      For other kinds of tendon routings (e.g., out-of-plane, helicoidal, etc.),
-      the `TendonActuatedPCS` should be used.
-
+    Shape ``(2,)`` is intentionally invalid because it is ambiguous whether it
+    means ``[x, y]`` or ``[y, z]``. The built-in ``LinearTendonRoutingParams``
+    uses the PCS/GVS-compatible ``[0, y, z]`` convention; planar callers should
+    set ``z_intercept = z_slope = 0``.
     """
 
+    n_p: int
     params: TendonActuatedPlanarPCSParams
-    d: Array  # distance of the tendons from the segment's backbone, shape (num_segments,)
-    segment_indices_to_actuate: Array  # indices of the segments that are actuated, shape (num_actuated_segments,)
+    active_tendon_routing: BaseTendonRoutingParams
+    passive_tendon_routing: BaseTendonRoutingParams
+    active_d_s: Callable = eqx.field(static=True)
+    active_dd_s_ds: Callable = eqx.field(static=True)
+    passive_d_s: Callable = eqx.field(static=True)
+    passive_dd_s_ds: Callable = eqx.field(static=True)
+    K_pt: Array
+    D_pt: Array
+    l_pt0: Array
 
     def __init__(
         self,
         params: TendonActuatedPlanarPCSParams,
         structure: PlanarPCSStructure | None = None,
-        segment_actuation_selector: Array | None = None,
+        active_tendon_routing_basis: dict[str, Callable] | None = None,
+        passive_tendon_routing_basis: dict[str, Callable] | None = None,
         **kwargs: Any,
     ):
         """
-        Initialize the TendonActuatedPlanarPCS class
+        Initialize a tendon-actuated planar PCS model.
 
         Args:
-            params: Dynamic tendon-actuated planar PCS parameters.
-            structure: Static planar PCS layout. If omitted, the default planar
-                PCS structure is used.
-            segment_actuation_selector: Boolean array selecting the actuated
-                segments. Defaults to all segments active.
-            **kwargs: Additional keyword arguments.
+            params: Typed dynamic parameters. ``params.body`` stores the planar
+                PCS body, and active/passive routing fields store one leading
+                entry per tendon.
+            structure: Static planar PCS layout. Changing the number of
+                segments, active strains, or quadrature layout requires
+                reconstruction.
+            active_tendon_routing_basis: Routing functions for active tendons.
+                Defaults to linear routing. Custom functions may return scalar,
+                ``(1,)``, or PCS/GVS-compatible ``(3,)`` values as documented in
+                the class docstring.
+            passive_tendon_routing_basis: Routing functions for passive tendons.
+                The same planar return-shape rules apply.
+            **kwargs: Additional keyword arguments for ``PlanarPCS``.
         """
         if not isinstance(params, TendonActuatedPlanarPCSParams):
             raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")
-        super().__init__(params, structure=structure, **kwargs)
+        params.validate()
+        super().__init__(params.body, structure=structure, **kwargs)
+        self.params = params
 
-        if segment_actuation_selector is None:
-            segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)
-
-        self.segment_indices_to_actuate = jnp.array(
-            [i for i, act in enumerate(segment_actuation_selector) if act]
+        if active_tendon_routing_basis is None:
+            active_tendon_routing_basis = {
+                "d_s": act.linear_routing,
+                "dd_s_ds": act.linear_routing_arc_length_derivative,
+            }
+        self.active_d_s, self.active_dd_s_ds = self._set_tendon_routing_basis(
+            active_tendon_routing_basis
+        )
+        self.active_tendon_routing = self._set_active_tendon_routing(
+            params.active_tendon_routing
         )
 
-        self.num_actuators = int(jnp.sum(segment_actuation_selector)) * self.d.shape[1]
+        if passive_tendon_routing_basis is None:
+            passive_tendon_routing_basis = {
+                "d_s": act.linear_routing,
+                "dd_s_ds": act.linear_routing_arc_length_derivative,
+            }
+        self.passive_d_s, self.passive_dd_s_ds = self._set_tendon_routing_basis(
+            passive_tendon_routing_basis
+        )
+        self.passive_tendon_routing = self._set_passive_tendon_routing(
+            params.passive_tendon_routing
+        )
+        self._set_passive_tendon(params.passive_tendon)
 
-        self._set_params(params)
+    def _set_tendon_routing_basis(
+        self, tendon_routing_basis: dict[str, Callable]
+    ) -> tuple[Callable, Callable]:
+        """Store tendon routing and arc-length derivative callables."""
+        return tendon_routing_basis["d_s"], tendon_routing_basis["dd_s_ds"]
 
-    def _set_params(self, params: TendonActuatedPlanarPCSParams):
+    @staticmethod
+    def _planar_component_from_routing_value(value: Array, name: str) -> Array:
         """
-        Set the parameters of the tendon-driven planar PCS.
+        Extract the scalar planar tendon offset from one routing-basis value.
 
-        Args:
-            params (Dict[str, Array]): Dictionary containing the parameters of the robot.
-                Dictionary containing the robot parameters:
-                - "th0": (optional) float
-                    Initial orientation angle [rad]
-                    Default is 90 degrees (1.57 radians).
-                - "L": List/Array of num_segments floats
-                    Length of each segment [m]
-                - "r": List/Array of num_segments floats
-                    Radius of each segment [m]
-                - "rho": List/Array of num_segments floats
-                    Density of each segment [kg/m^3]
-                - "g": List/Array of 2 floats [gx, gy]
-                    Gravitational acceleration vector [m/s^2]
-                - "E": List/Array of num_segments floats
-                    Elastic modulus of each segment [Pa]
-                - "G": List/Array of num_segments floats
-                    Shear modulus of each segment [Pa]
-                - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
-                - "d": List/Array of num_segments floats
-                    Distance of the tendons from the segment's backbone [m]
+        Accepted shapes are scalar, ``(1,)``, and PCS/GVS-compatible ``(3,)``.
+        Shape ``(2,)`` is rejected because its coordinate convention is
+        ambiguous.
         """
-        super()._set_params(params)
-
-        # Distance of the tendons from the segment's backbone
-        d = jnp.asarray(params.tendon_distance, dtype=jnp.float64)
-        if d.ndim != 2 or d.shape[0] != self.num_segments:
+        value = jnp.asarray(value)
+        if value.ndim == 0:
+            return value
+        if value.shape[-1] == 1:
+            return value[..., 0]
+        if value.shape[-1] == 3:
+            return value[..., 1]
+        if value.shape[-1] == 2:
             raise ValueError(
-                "tendon_distance must have shape "
-                f"({self.num_segments}, num_tendons_per_segment), got {d.shape}."
+                f"{name} returned shape (..., 2), which is ambiguous for planar "
+                "routing. Return a scalar, shape (1,), or PCS/GVS-compatible "
+                "shape (3,) with zero z."
             )
-        self.d = d
+        raise ValueError(
+            f"{name} must return a scalar, shape (1,), or shape (3,), got "
+            f"shape {value.shape}."
+        )
+
+    @staticmethod
+    def _planar_z_magnitude_from_routing_value(value: Array, name: str) -> Array:
+        """Return ``abs(z)`` for PCS/GVS-compatible planar routing samples."""
+        value = jnp.asarray(value)
+        if value.ndim == 0 or value.shape[-1] == 1:
+            return jnp.asarray(0.0, dtype=value.dtype)
+        if value.shape[-1] == 3:
+            return jnp.abs(value[..., 2])
+        if value.shape[-1] == 2:
+            raise ValueError(
+                f"{name} returned shape (..., 2), which is ambiguous for planar "
+                "routing. Return a scalar, shape (1,), or PCS/GVS-compatible "
+                "shape (3,) with zero z."
+            )
+        raise ValueError(
+            f"{name} must return a scalar, shape (1,), or shape (3,), got "
+            f"shape {value.shape}."
+        )
+
+    def _validate_planar_routing_basis(
+        self,
+        tendon_routing_params: BaseTendonRoutingParams,
+        d_s: Callable,
+        dd_s_ds: Callable,
+        name: str,
+    ) -> None:
+        """Validate planar routing shape, zero out-of-plane routing, and body fit."""
+        if tendon_routing_params.num_tendons == 0:
+            return
+
+        sample_s = jnp.linspace(0.0, self.L_cum[-1], 75)
+
+        def radius_at_s(s: Array) -> Array:
+            idx = jnp.sum(self.L_cum <= s) - 1
+            idx = jnp.clip(idx, 0, self.num_segments - 1)
+            return self.r[idx]
+
+        def sample_tendon(
+            tendon_routing_params_k: BaseTendonRoutingParams, s: Array
+        ) -> tuple[Array, Array, Array]:
+            d_value = d_s(tendon_routing_params_k, s)
+            dd_value = dd_s_ds(tendon_routing_params_k, s)
+            d = self._planar_component_from_routing_value(d_value, f"{name}.d_s")
+            z = self._planar_z_magnitude_from_routing_value(d_value, f"{name}.d_s")
+            dz = self._planar_z_magnitude_from_routing_value(
+                dd_value, f"{name}.dd_s_ds"
+            )
+            return jnp.abs(d), z, dz
+
+        d_abs, z_abs, dz_abs = vmap(
+            vmap(sample_tendon, in_axes=(None, 0), out_axes=0),
+            in_axes=(0, None),
+            out_axes=0,
+        )(tendon_routing_params, sample_s)
+        r_body = vmap(radius_at_s)(sample_s)
+
+        if bool(jnp.any(z_abs > 1e-12)) or bool(jnp.any(dz_abs > 1e-12)):
+            raise ValueError(
+                f"{name} returned nonzero z routing or z derivative, which is "
+                "invalid for TendonActuatedPlanarPCS."
+            )
+        if bool(jnp.any(d_abs > r_body[None, :])):
+            raise UserWarning(f"{name} tendon(s) exit the robot body.")
+
+    def _set_active_tendon_routing(
+        self, active_tendon_routing: BaseTendonRoutingParams
+    ) -> BaseTendonRoutingParams:
+        """Store and validate active tendon routing parameters."""
+        if not isinstance(active_tendon_routing, BaseTendonRoutingParams):
+            raise TypeError(
+                "active_tendon_routing must be a BaseTendonRoutingParams instance."
+            )
+        active_tendon_routing.validate()
+        self.num_actuators = active_tendon_routing.num_tendons
+        active_tendon_routing.validate_attachment_segments(
+            self.num_segments, "active_tendon_routing"
+        )
+        self._validate_planar_routing_basis(
+            active_tendon_routing,
+            self.active_d_s,
+            self.active_dd_s_ds,
+            "active_tendon_routing",
+        )
+        return active_tendon_routing
+
+    def _set_passive_tendon_routing(
+        self, passive_tendon_routing: BaseTendonRoutingParams
+    ) -> BaseTendonRoutingParams:
+        """Store and validate passive tendon routing parameters."""
+        if not isinstance(passive_tendon_routing, BaseTendonRoutingParams):
+            raise TypeError(
+                "passive_tendon_routing must be a BaseTendonRoutingParams instance."
+            )
+        passive_tendon_routing.validate()
+        self.n_p = passive_tendon_routing.num_tendons
+        passive_tendon_routing.validate_attachment_segments(
+            self.num_segments, "passive_tendon_routing"
+        )
+        self._validate_planar_routing_basis(
+            passive_tendon_routing,
+            self.passive_d_s,
+            self.passive_dd_s_ds,
+            "passive_tendon_routing",
+        )
+        return passive_tendon_routing
+
+    def _set_passive_tendon(self, passive_tendon: PassiveTendonParams) -> None:
+        """Store per-passive-tendon stiffness, damping, and rest-length offsets."""
+        if not isinstance(passive_tendon, PassiveTendonParams):
+            raise TypeError("passive_tendon must be a PassiveTendonParams instance.")
+        passive_tendon.validate()
+        if passive_tendon.num_tendons != self.n_p:
+            raise ValueError(
+                "passive_tendon length must match passive_tendon_routing length; "
+                f"got {passive_tendon.num_tendons} and {self.n_p}."
+            )
+        self.K_pt = jnp.diag(jnp.asarray(passive_tendon.stiffness))
+        self.D_pt = jnp.diag(jnp.asarray(passive_tendon.damping))
+        self.l_pt0 = jnp.asarray(passive_tendon.rest_length_offset)
 
     def with_params(
         self, params: TendonActuatedPlanarPCSParams
@@ -138,166 +274,302 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, TendonActuatedPlanarPCSParams):
             raise TypeError("params must be a TendonActuatedPlanarPCSParams instance.")
-        d = jnp.asarray(params.tendon_distance, dtype=jnp.float64)
-        if d.shape != self.d.shape:
+        params.validate()
+        if type(params.active_tendon_routing) is not type(
+            self.params.active_tendon_routing
+        ):
             raise ValueError(
-                "tendon_distance shape changes the actuation layout; construct a new TendonActuatedPlanarPCS."
+                "Changing active_tendon_routing type requires reconstruction."
             )
-        updated_self = self._with_planar_pcs_params(params)
-        return eqx.tree_at(lambda model: model.d, updated_self, d)
+        if type(params.passive_tendon_routing) is not type(
+            self.params.passive_tendon_routing
+        ):
+            raise ValueError(
+                "Changing passive_tendon_routing type requires reconstruction."
+            )
+        if (
+            params.active_tendon_routing.num_tendons
+            != self.params.active_tendon_routing.num_tendons
+        ):
+            raise ValueError(
+                "Changing the number of active tendons requires reconstruction."
+            )
+        if (
+            params.passive_tendon_routing.num_tendons
+            != self.params.passive_tendon_routing.num_tendons
+        ):
+            raise ValueError(
+                "Changing the number of passive tendons requires reconstruction."
+            )
+        self.params.active_tendon_routing.assert_same_attachment_segments(
+            params.active_tendon_routing, "active_tendon_routing"
+        )
+        self.params.passive_tendon_routing.assert_same_attachment_segments(
+            params.passive_tendon_routing, "passive_tendon_routing"
+        )
 
-    def update_params(self, **updates: Array) -> "TendonActuatedPlanarPCS":
+        updated_self = self._with_planar_pcs_params(params.body, stored_params=params)
+        updated_self._validate_planar_routing_basis(
+            params.active_tendon_routing,
+            self.active_d_s,
+            self.active_dd_s_ds,
+            "active_tendon_routing",
+        )
+        updated_self._validate_planar_routing_basis(
+            params.passive_tendon_routing,
+            self.passive_d_s,
+            self.passive_dd_s_ds,
+            "passive_tendon_routing",
+        )
+        return eqx.tree_at(
+            lambda model: (
+                model.params,
+                model.active_tendon_routing,
+                model.passive_tendon_routing,
+                model.K_pt,
+                model.D_pt,
+                model.l_pt0,
+            ),
+            updated_self,
+            (
+                params,
+                params.active_tendon_routing,
+                params.passive_tendon_routing,
+                jnp.diag(jnp.asarray(params.passive_tendon.stiffness)),
+                jnp.diag(jnp.asarray(params.passive_tendon.damping)),
+                jnp.asarray(params.passive_tendon.rest_length_offset),
+            ),
+        )
+
+    def update_params(self, **updates: Any) -> "TendonActuatedPlanarPCS":
         """Return an updated copy with selected typed parameter fields replaced."""
         return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Compute the actuation matrix of the robot.
-
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
-
-        Returns:
-            A (Array): Actuation matrix of shape (num_active_strains, num_actuators)
-        """
-        xi = self.strain(q)
-
-        segment_indices = jnp.arange(self.num_segments)
-
-        def compute_actuation_matrix_for_segment(
-            segment_idx: int,
-            d_sm: Array,
-        ) -> Array:
-            """
-            Compute the actuation matrix for a single segment.
-            We assume that each segment is actuated by num_segment_tendons that are routed at a distance of d from the segment's backbone,
-            respectively, and attached to the segment's distal end. We assume that the motor is located at the base of the robot and that the
-            tendons are routed through all proximal segments.
-            The positive control inputs u1 and u2 are the tensions (i.e., forces) applied by the two tendons.
-            At a straight configuration with a positive d1, a positive u1 and zero u2 should cause the bend negatively (to the right) and contract its length.
-
-            Args:
-                segment_idx: index of the segment
-                d_sm: distance of the tendons from the segment's backbone (shape: (num_segment_tendons,))
-
-            Returns:
-                A_sm: actuation matrix of shape (n_xi, num_segment_tendons)
-            """
-
-            def compute_A_d(d_k: Array) -> Array:
-                """
-                Compute the actuation matrix for a single actuator/tendon with respect to the soft robot's strains.
-                Args:
-                    d_k: distance of the k-th tendon from the centerline as array of shape ()
-                Returns:
-                    A_d: actuation matrix of shape (n_xi, ) where n_xi is the number of strains
-                """
-
-                def compute_A_d_wrt_xi_i(i: Array, L_i: Array, xi_i: Array) -> Array:
-                    """
-                    Compute the actuation matrix for a single actuator with respect to the strains of a single segment.
-                    Args:
-                        i: index of the segment
-                        L_i: length of the segment
-                        xi_i: strains for the segment
-
-                    Returns:
-                        A_d_segment: actuation matrix for the segment of shape (3, 3)
-                    """
-                    kappa_i = xi_i[0]  # bending strain
-                    axial_i = xi_i[1]  # axial strain
-                    shear_i = xi_i[2]  # shear strain
-
-                    square_root_term = jnp.sqrt(
-                        shear_i**2 + (axial_i + d_k * kappa_i) ** 2
-                    )
-
-                    A_d_wrt_xi_i = jnp.array(
-                        [
-                            L_i
-                            * d_k
-                            * (d_k * kappa_i + axial_i)
-                            / square_root_term,  # actuation on the bending
-                            L_i
-                            * (d_k * kappa_i + axial_i)
-                            / square_root_term,  # actuation on the axial strain
-                            L_i
-                            * shear_i
-                            / square_root_term,  # actuation on the shear strain
-                        ]
-                    )
-
-                    A_d_segment = jnp.where(
-                        i * jnp.ones((3,)) <= segment_idx * jnp.ones((3,)),
-                        A_d_wrt_xi_i,
-                        jnp.zeros_like(A_d_wrt_xi_i),
-                    )
-
-                    return A_d_segment
-
-                A_d = vmap(compute_A_d_wrt_xi_i)(
-                    segment_indices, self.L, xi.reshape(-1, 3)
-                ).reshape(-1)
-
-                return A_d
-
-            A_sm = vmap(compute_A_d, in_axes=0, out_axes=-1)(d_sm)
-
-            return A_sm
-
-        # compute the actuation matrix for all segments
-
-        # (num_segments, n_xi, num_segment_tendons)
-        A = vmap(compute_actuation_matrix_for_segment, in_axes=(0, 0), out_axes=0)(
-            segment_indices, self.d
+    def _local_tendon_basis_single(
+        self,
+        i: Array,
+        xi_i: Array,
+        s: Array,
+        tendon_routing_params_k: BaseTendonRoutingParams,
+        d_s_fn: Callable,
+        dd_s_ds_fn: Callable,
+        attachment_segment_idx: Array,
+    ) -> Array:
+        """Return the local planar actuation basis for one tendon at ``s``."""
+        is_tendon_active = attachment_segment_idx >= i
+        d = self._planar_component_from_routing_value(
+            d_s_fn(tendon_routing_params_k, s), "d_s"
+        )
+        dd_ds = self._planar_component_from_routing_value(
+            dd_s_ds_fn(tendon_routing_params_k, s), "dd_s_ds"
         )
 
-        # deactivate the actuation for some segments
-        # (num_actuated_segments, n_xi, num_segment_tendons)
-        A = A[self.segment_indices_to_actuate]
-
-        # reshape the actuation matrix to have shape (n_xi, n_act)
-        A = jnp.concatenate(A, axis=1)  # concatenate along the second axis
-
-        # project onto the active strain basis to match the generalized coordinates
-        A = self.B_xi.T @ A
-
-        return A
+        kappa = xi_i[0]
+        axial = xi_i[1] + d * kappa
+        shear = xi_i[2] + dd_ds
+        norm = jnp.sqrt(axial**2 + shear**2)
+        basis = jnp.array([d * axial / norm, axial / norm, shear / norm])
+        return is_tendon_active * basis
 
     @eqx.filter_jit
-    def tendon_length(self, q: Array) -> Array:
-        """
-        Compute the cumulative tendon length for each actuator.
+    def actuation_matrix(self, q: Array) -> Array:
+        """Return the active tendon actuation matrix."""
+        return self._actuation_matrix(
+            q, self.active_tendon_routing, self.active_d_s, self.active_dd_s_ds
+        )
 
-        Each tendon is assumed to be routed along the backbone and attached at the distal
-        end of the corresponding actuated segment. The tendon length is obtained by
-        integrating the local stretch along every traversed segment, which depends on
-        shear and axial strains and on the tendon offset d.
+    @eqx.filter_jit
+    def jacobian_passive_tendon(self, q: Array) -> Array:
+        """Return the passive tendon length Jacobian in active coordinates."""
+        return self._actuation_matrix(
+            q,
+            self.passive_tendon_routing,
+            self.passive_d_s,
+            self.passive_dd_s_ds,
+        ).T
 
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+    @eqx.filter_jit
+    def _actuation_matrix(
+        self,
+        q: Array,
+        tendon_routing_params: BaseTendonRoutingParams,
+        d_s: Callable,
+        dd_s_ds: Callable,
+    ) -> Array:
+        """Compute the generalized tendon actuation matrix by quadrature."""
+        xi = self.strain(q).reshape((self.num_segments, 3))
+        num_tendons = tendon_routing_params.num_tendons
+        if num_tendons == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
 
-        Returns:
-            l (Array): tendon lengths of shape (num_actuators,).
-        """
+        def A_segment_i(i: Array) -> Array:
+            xi_i = xi[i]
 
-        xi = self.strain(q).reshape(self.num_segments, 3)
-        kappa = xi[:, 0:1]
-        axial = xi[:, 1:2]
-        shear = xi[:, 2:3]  # ensure 2D for broadcasting
+            def A_point_j(j: Array) -> Array:
+                Xs_j = Xs_scaled[j]
+                Ws_j = Ws_scaled[j]
+                Phi_a_j = vmap(
+                    self._local_tendon_basis_single,
+                    in_axes=(None, None, None, 0, None, None, 0),
+                    out_axes=-1,
+                )(
+                    i,
+                    xi_i,
+                    Xs_j,
+                    tendon_routing_params,
+                    d_s,
+                    dd_s_ds,
+                    tendon_routing_params.attachment_segment_index_array,
+                )
+                return Ws_j * Phi_a_j
 
-        d = self.d
-        if d.ndim == 1:
-            d = d[:, None]
+            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[i],
+                self.L_cum[i + 1],
+            )
+            return vmap(A_point_j)(jnp.arange(self.num_integration_points))
 
-        local_extension = axial + d * kappa
-        segment_lengths = self.L[:, None] * jnp.sqrt(shear**2 + local_extension**2)
+        A_blocks = vmap(A_segment_i)(jnp.arange(self.num_segments))
+        A = jnp.sum(A_blocks, axis=1).reshape((3 * self.num_segments, num_tendons))
+        return self.B_xi.T @ A
 
-        cumulative_lengths = jnp.cumsum(segment_lengths, axis=0)
-        tendon_lengths = cumulative_lengths[self.segment_indices_to_actuate]
+    @eqx.filter_jit
+    def active_tendon_length(self, q: Array) -> Array:
+        """Return active tendon lengths."""
+        return self._tendon_length(
+            q, self.active_tendon_routing, self.active_d_s, self.active_dd_s_ds
+        )
 
-        return tendon_lengths.reshape(-1)
+    @eqx.filter_jit
+    def passive_tendon_length(self, q: Array) -> Array:
+        """Return passive tendon lengths."""
+        return self._tendon_length(
+            q,
+            self.passive_tendon_routing,
+            self.passive_d_s,
+            self.passive_dd_s_ds,
+        )
+
+    tendon_length = active_tendon_length
+    actuated_coordinates = active_tendon_length
+
+    @eqx.filter_jit
+    def _tendon_length(
+        self,
+        q: Array,
+        tendon_routing_params: BaseTendonRoutingParams,
+        d_s: Callable,
+        dd_s_ds: Callable,
+    ) -> Array:
+        """Compute tendon lengths by integrating local planar length density."""
+        xi = self.strain(q).reshape((self.num_segments, 3))
+        num_tendons = tendon_routing_params.num_tendons
+        if num_tendons == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
+
+        def length_density_segment_i(i: Array) -> Array:
+            xi_i = xi[i]
+
+            def length_density_point_j(j: Array) -> Array:
+                Xs_j = Xs_scaled[j]
+                Ws_j = Ws_scaled[j]
+
+                def length_density_tendon_k(
+                    tendon_routing_params_k: BaseTendonRoutingParams,
+                    attachment_segment_idx: Array,
+                ) -> Array:
+                    is_tendon_active = attachment_segment_idx >= i
+                    d = self._planar_component_from_routing_value(
+                        d_s(tendon_routing_params_k, Xs_j), "d_s"
+                    )
+                    dd_ds = self._planar_component_from_routing_value(
+                        dd_s_ds(tendon_routing_params_k, Xs_j), "dd_s_ds"
+                    )
+                    axial = xi_i[1] + d * xi_i[0]
+                    shear = xi_i[2] + dd_ds
+                    return is_tendon_active * jnp.sqrt(axial**2 + shear**2)
+
+                dl_ds_j = vmap(length_density_tendon_k)(
+                    tendon_routing_params,
+                    tendon_routing_params.attachment_segment_index_array,
+                )
+                return Ws_j * dl_ds_j
+
+            Xs_scaled, Ws_scaled = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[i],
+                self.L_cum[i + 1],
+            )
+            return vmap(length_density_point_j)(
+                jnp.arange(self.num_integration_points)
+            )
+
+        dl_ds_blocks = vmap(length_density_segment_i)(jnp.arange(self.num_segments))
+        return jnp.sum(dl_ds_blocks, axis=(0, 1))
+
+    @eqx.filter_jit
+    def forward_kinematics_active_tendons(self, q: Array, s: Array) -> Array:
+        """Return active tendon Cartesian points at arc length ``s``."""
+        return self._forward_kinematics_tendons(
+            q, s, self.active_tendon_routing, self.active_d_s
+        )
+
+    @eqx.filter_jit
+    def forward_kinematics_passive_tendons(self, q: Array, s: Array) -> Array:
+        """Return passive tendon Cartesian points at arc length ``s``."""
+        return self._forward_kinematics_tendons(
+            q, s, self.passive_tendon_routing, self.passive_d_s
+        )
+
+    @eqx.filter_jit
+    def forward_kinematics_tendons(self, q: Array, s: Array) -> Array:
+        """Return active and passive tendon Cartesian points at arc length ``s``."""
+        active_pos = self.forward_kinematics_active_tendons(q, s)
+        passive_pos = self.forward_kinematics_passive_tendons(q, s)
+        if active_pos.size == 0:
+            return passive_pos
+        if passive_pos.size == 0:
+            return active_pos
+        return jnp.concatenate([active_pos, passive_pos], axis=0)
+
+    @eqx.filter_jit
+    def _forward_kinematics_tendons(
+        self,
+        q: Array,
+        s: Array,
+        tendon_routing_params: BaseTendonRoutingParams,
+        d_s: Callable,
+    ) -> Array:
+        """Compute Cartesian tendon positions for one routing family."""
+        if tendon_routing_params.num_tendons == 0:
+            return jnp.zeros((0, 2), dtype=q.dtype)
+
+        def forward_kinematics_tendon_k(
+            tendon_routing_params_k: BaseTendonRoutingParams,
+            attachment_segment_idx: Array,
+            q: Array,
+            s: Array,
+        ) -> Array:
+            attachment_s = self.L_cum[attachment_segment_idx + 1]
+            s_val = jnp.clip(s, 0.0, attachment_s)
+            pose = self.forward_kinematics(q, s_val)
+            theta = pose[0]
+            normal = jnp.array([-jnp.sin(theta), jnp.cos(theta)])
+            d = self._planar_component_from_routing_value(
+                d_s(tendon_routing_params_k, s_val), "d_s"
+            )
+            return pose[1:3] + d * normal
+
+        return vmap(forward_kinematics_tendon_k, in_axes=(0, 0, None, None))(
+            tendon_routing_params,
+            tendon_routing_params.attachment_segment_index_array,
+            q,
+            s,
+        )
 
     def actuator_visual_layers(
         self,
@@ -306,30 +578,52 @@ class TendonActuatedPlanarPCS(PlanarPCS):
         *,
         actuator_inputs: Array | None = None,
     ) -> tuple[ActuatorVisualLayer, ...]:
-        """Return renderer-facing actuator geometry for planar routed tendons."""
+        """Return renderer-facing actuator geometry for active/passive tendons."""
         del actuator_inputs
-        num_tendons_per_segment = self.d.shape[1]
-        attachment_indices = jnp.repeat(
-            self.segment_indices_to_actuate, num_tendons_per_segment
-        )
-        distances = self.d[self.segment_indices_to_actuate].reshape(-1)
+        layers: list[ActuatorVisualLayer] = []
+        if self.active_tendon_routing.num_tendons > 0:
+            active_points = vmap(
+                lambda s: self.forward_kinematics_active_tendons(q, s)
+            )(s_points)
+            layers.append(
+                ActuatorVisualLayer(
+                    name="active_tendons",
+                    kind="tendon",
+                    points=active_points.transpose(1, 0, 2),
+                )
+            )
+        if self.passive_tendon_routing.num_tendons > 0:
+            passive_points = vmap(
+                lambda s: self.forward_kinematics_passive_tendons(q, s)
+            )(s_points)
+            layers.append(
+                ActuatorVisualLayer(
+                    name="passive_tendons",
+                    kind="tendon",
+                    points=passive_points.transpose(1, 0, 2),
+                )
+            )
+        return tuple(layers)
 
-        def tendon_path(segment_idx: Array, distance: Array) -> Array:
-            attachment_s = self.L_cum[segment_idx + 1]
+    @eqx.filter_jit
+    def elastic_force(self, q: Array) -> Array:
+        """Return body elastic force plus passive tendon spring force."""
+        tau_el = super().elastic_force(q)
+        J_pt = self.jacobian_passive_tendon(q)
+        l_pt = self.passive_tendon_length(q)
+        return tau_el + J_pt.T @ self.K_pt @ (l_pt - self.l_pt0)
 
-            def tendon_point(s: Array) -> Array:
-                pose = self.forward_kinematics(q, jnp.clip(s, 0.0, attachment_s))
-                theta = pose[0]
-                normal = jnp.array([-jnp.sin(theta), jnp.cos(theta)])
-                return pose[1:3] + distance * normal
+    @eqx.filter_jit
+    def damping_matrix(self, q: Array) -> Array:
+        """Return body damping plus passive tendon damping."""
+        D = super().damping_matrix(q)
+        J_pt = self.jacobian_passive_tendon(q)
+        return D + J_pt.T @ self.D_pt @ J_pt
 
-            return vmap(tendon_point)(s_points)
-
-        points = vmap(tendon_path)(attachment_indices, distances)
-        return (
-            ActuatorVisualLayer(
-                name="active_tendons",
-                kind="tendon",
-                points=points,
-            ),
-        )
+    @eqx.filter_jit
+    def _elastic_energy(self, q: Array) -> Array:
+        """Return body elastic energy plus passive tendon spring energy."""
+        U_K = super()._elastic_energy(q)
+        l_pt = self.passive_tendon_length(q)
+        delta_l = l_pt - self.l_pt0
+        return U_K + 0.5 * delta_l.T @ self.K_pt @ delta_l

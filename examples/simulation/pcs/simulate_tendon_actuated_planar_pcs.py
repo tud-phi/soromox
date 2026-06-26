@@ -9,6 +9,8 @@ from jax import numpy as jnp
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer
 from soromox.systems import (
+    LinearTendonRoutingParams,
+    PlanarPCSParams,
     PlanarPCSStructure,
     SystemState,
     TendonActuatedPlanarPCS,
@@ -31,7 +33,7 @@ if __name__ == "__main__":
             * segment_lengths[:, None]
         ).flatten()
     )
-    params = TendonActuatedPlanarPCSParams(
+    body = PlanarPCSParams(
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
@@ -41,13 +43,24 @@ if __name__ == "__main__":
         shear_modulus=1e3 * jnp.ones((num_segments,)),
         damping_matrix=damping_matrix,
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-        tendon_distance=2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0),
+    )
+    tendon_offsets = 2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0)
+    active_tendon_routing = LinearTendonRoutingParams(
+        y_intercept=tendon_offsets.reshape(-1),
+        y_slope=jnp.zeros((2 * num_segments,)),
+        z_intercept=jnp.zeros((2 * num_segments,)),
+        z_slope=jnp.zeros((2 * num_segments,)),
+        attachment_segment_index=jnp.repeat(
+            jnp.arange(num_segments, dtype=jnp.int32), 2
+        ),
+    )
+    params = TendonActuatedPlanarPCSParams(
+        body=body,
+        active_tendon_routing=active_tendon_routing,
     )
 
     # activate all strains (i.e. bending, shear, and axial)
     strain_selector = jnp.ones((3 * num_segments,), dtype=bool)
-    # actuation selector for the segments
-    segment_actuation_selector = jnp.ones((num_segments,), dtype=bool)
 
     # ======================================================
     # Robot initialization
@@ -55,7 +68,6 @@ if __name__ == "__main__":
     robot = TendonActuatedPlanarPCS(
         params=params,
         structure=PlanarPCSStructure(strain_selector=strain_selector),
-        segment_actuation_selector=segment_actuation_selector,
     )
 
     # =====================================================
@@ -111,11 +123,7 @@ if __name__ == "__main__":
     tendon_pattern = tendon_pattern.at[:, 1].set(
         jnp.where(~even_segments, segment_tensions, 0.0)
     )
-    u = jnp.take(
-        tendon_pattern,
-        robot.segment_indices_to_actuate,
-        axis=0,
-    ).reshape(-1)
+    u = tendon_pattern.reshape(-1)
     print("u =\n", u)
 
     # call the actuation mapping function
