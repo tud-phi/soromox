@@ -73,7 +73,7 @@ Core 3D PCS implementation for spatial continuum robots.
 | `PCS` | 3D | None (strain input) | General 3D continuum modeling |
 | `PlanarPCS` | 2D | None (strain input) | General 2D continuum modeling |
 | `TendonActuatedPCS` | 3D | Tendons | 3D cable-driven robots |
-| `TendonActuatedPlanarPCS` | 2D | Tendons | 2D cable-driven robots |
+| `TendonActuatedPlanarPCS` | 2D | Active/passive routed tendons | 2D cable-driven robots |
 | `PressureActuatedPlanarPCS` | 2D | Pressure | Pressure-driven soft actuators |
 | `ISupport` | 3D | Pneumatic | I-Support robot platform |
 

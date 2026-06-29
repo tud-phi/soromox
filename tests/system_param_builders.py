@@ -227,19 +227,21 @@ def tendon_actuated_pcs_params(
 
 
 def tendon_actuated_planar_pcs_params(
-    *, body: PlanarPCSParams, tendon_distance: Array
+    *,
+    body: PlanarPCSParams,
+    active_tendon_routing: BaseTendonRoutingParams,
+    passive_tendon_routing: BaseTendonRoutingParams | None = None,
+    passive_tendon: PassiveTendonParams | None = None,
 ) -> TendonActuatedPlanarPCSParams:
+    if passive_tendon_routing is None:
+        passive_tendon_routing = LinearTendonRoutingParams.empty()
+    if passive_tendon is None:
+        passive_tendon = PassiveTendonParams.empty()
     return TendonActuatedPlanarPCSParams(
-        length=body.length,
-        radius=body.radius,
-        density=body.density,
-        young_modulus=body.young_modulus,
-        shear_modulus=body.shear_modulus,
-        damping_matrix=body.damping_matrix,
-        gravity=body.gravity,
-        base_pose=body.base_pose,
-        reference_strain=body.reference_strain,
-        tendon_distance=jnp.asarray(tendon_distance),
+        body=body,
+        active_tendon_routing=active_tendon_routing,
+        passive_tendon_routing=passive_tendon_routing,
+        passive_tendon=passive_tendon,
     )
 
 

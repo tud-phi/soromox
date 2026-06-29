@@ -12,6 +12,7 @@ from system_param_builders import (
     planar_pcs_params,
     spatial_base_pose,
     tendon_actuated_pcs_params,
+    tendon_actuated_planar_pcs_params,
 )
 
 from soromox.actuation.tendon_actuation import (
@@ -26,6 +27,7 @@ from soromox.systems import (
     Pendulum,
     PendulumParams,
     TendonActuatedPCS,
+    TendonActuatedPlanarPCS,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -53,6 +55,20 @@ def _pcs_params(num_segments: int = 2):
         shear_modulus=1e5 * jnp.ones((num_segments,), dtype=jnp.float64),
         gravity=jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
         damping_matrix=jnp.eye(6 * num_segments, dtype=jnp.float64),
+    )
+
+
+def _planar_pcs_params(num_segments: int = 2):
+    segment_lengths = 0.1 * jnp.ones((num_segments,), dtype=jnp.float64)
+    return planar_pcs_params(
+        length=segment_lengths,
+        radius=0.02 * jnp.ones((num_segments,), dtype=jnp.float64),
+        density=1000.0 * jnp.ones((num_segments,), dtype=jnp.float64),
+        young_modulus=1e6 * jnp.ones((num_segments,), dtype=jnp.float64),
+        shear_modulus=1e5 * jnp.ones((num_segments,), dtype=jnp.float64),
+        gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
+        damping_matrix=jnp.eye(3 * num_segments, dtype=jnp.float64),
+        base_pose=planar_base_pose(),
     )
 
 
@@ -222,6 +238,40 @@ def test_tendon_system_accepts_base_routing_subclasses():
         robot.num_dofs,
         1,
     )
+
+
+def test_planar_tendon_params_use_body_wrapper_and_reject_topology_changes():
+    body = _planar_pcs_params(num_segments=2)
+    routing = linear_tendon_routing(
+        y_intercept=jnp.array([0.005], dtype=jnp.float64),
+        y_slope=jnp.array([0.0], dtype=jnp.float64),
+        z_intercept=jnp.array([0.0], dtype=jnp.float64),
+        z_slope=jnp.array([0.0], dtype=jnp.float64),
+        attachment_segment_index=jnp.array([1], dtype=jnp.int32),
+    )
+    robot = TendonActuatedPlanarPCS(
+        params=tendon_actuated_planar_pcs_params(
+            body=body,
+            active_tendon_routing=routing,
+        )
+    )
+
+    updated_body = body.replace(radius=0.9 * body.radius)
+    updated_robot = robot.with_params(robot.params.replace(body=updated_body))
+    assert_allclose(updated_robot.r, 0.9 * robot.r)
+    assert robot.params.body is body
+
+    changed_attachment = linear_tendon_routing(
+        y_intercept=routing.y_intercept,
+        y_slope=routing.y_slope,
+        z_intercept=routing.z_intercept,
+        z_slope=routing.z_slope,
+        attachment_segment_index=jnp.array([0], dtype=jnp.int32),
+    )
+    with pytest.raises(ValueError, match="topology"):
+        robot.with_params(
+            robot.params.replace(active_tendon_routing=changed_attachment)
+        )
 
 
 def test_same_shape_param_updates_do_not_retrace_under_filter_jit():
