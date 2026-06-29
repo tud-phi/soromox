@@ -17,7 +17,7 @@ from matplotlib.lines import Line2D
 
 Coordinate = Literal["x", "y", "z"]
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve()
 BENCHMARK_DIR = SCRIPT_DIR.parents[1]
 DEFAULT_DATA_DIR = BENCHMARK_DIR / "data"
 DEFAULT_OUTPUT_DIR = BENCHMARK_DIR / "outputs"

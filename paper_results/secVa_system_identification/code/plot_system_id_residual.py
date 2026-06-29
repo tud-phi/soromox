@@ -24,7 +24,7 @@ COLORS = {
     "post_opt_2": "#8F2D56",
     "post_opt_3": "#FFBC42",
     "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",  # 0ead69, #3bceac
+    "backbone_init": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
@@ -337,7 +337,7 @@ def plot_3d_comparison(
                 m0[i, 1],
                 m0[i, 2],
                 marker="*",
-                color=COLORS["pre_opt_1"],
+                color=COLORS["backbone_init"],
                 s=6,
                 alpha=a,
             )
@@ -346,7 +346,7 @@ def plot_3d_comparison(
                 mt[i, 1],
                 mt[i, 2],
                 marker="*",
-                color=COLORS["post_opt_1"],
+                color=COLORS["backbone_opt"],
                 s=6,
                 alpha=a,
             )
@@ -369,7 +369,7 @@ def plot_3d_comparison(
     ax.set_xlim(center[0] - max_range / 2, center[0] + max_range / 2)
     ax.set_ylim(center[1] - max_range / 2, center[1] + max_range / 2)
     ax.set_zlim(center[2] - max_range / 2, center[2] + max_range / 2)
-    ax.set_box_aspect([1, 1, 1])  # , zoom=1.2)
+    ax.set_box_aspect([1, 1, 1])
 
     legend_elems = [
         Line2D(
@@ -393,8 +393,8 @@ def plot_3d_comparison(
             [0],
             marker="*",
             color="w",
-            markerfacecolor=COLORS["pre_opt_1"],
-            markeredgecolor=COLORS["pre_opt_1"],
+            markerfacecolor=COLORS["backbone_init"],
+            markeredgecolor=COLORS["backbone_init"],
             markersize=5,
             label="Pred. marks (Init)",
         ),
@@ -403,8 +403,8 @@ def plot_3d_comparison(
             [0],
             marker="*",
             color="w",
-            markerfacecolor=COLORS["post_opt_1"],
-            markeredgecolor=COLORS["post_opt_1"],
+            markerfacecolor=COLORS["backbone_opt"],
+            markeredgecolor=COLORS["backbone_opt"],
             markersize=5,
             label="Pred. marks (Opt)",
         ),
@@ -440,20 +440,20 @@ def plot_3d_comparison(
         Line2D(
             [0],
             [0],
-            marker="x",
+            marker="*",
             color="w",
-            markerfacecolor=COLORS["pre_opt_1"],
-            markeredgecolor=COLORS["pre_opt_1"],
+            markerfacecolor=COLORS["backbone_init"],
+            markeredgecolor=COLORS["backbone_init"],
             markersize=7,
             label="Initial predicted markers",
         ),
         Line2D(
             [0],
             [0],
-            marker="x",
+            marker="*",
             color="w",
-            markerfacecolor=COLORS["post_opt_1"],
-            markeredgecolor=COLORS["post_opt_1"],
+            markerfacecolor=COLORS["backbone_opt"],
+            markeredgecolor=COLORS["backbone_opt"],
             markersize=7,
             label="Optimized predicted markers",
         ),

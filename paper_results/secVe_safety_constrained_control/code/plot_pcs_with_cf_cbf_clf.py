@@ -117,19 +117,19 @@ def main() -> None:
             ax1.plot(
                 result["ts"],
                 result["force"],
-                color=COLORS["post_opt_1"],
+                color=COLORS["backbone_opt"],
                 linewidth=2.5,
                 linestyle=linestyle,
             )[0]
         )
 
-    ax1.axhline(force_limit, color=COLORS["post_opt_1"], linestyle=":", linewidth=2.0)
+    ax1.axhline(force_limit, color=COLORS["backbone_opt"], linestyle=":", linewidth=2.0)
     ax1.set_xlabel("Time [s]")
-    ax1.set_ylabel("Max Pairwise Normal Force [N]", color=COLORS["post_opt_1"])
+    ax1.set_ylabel("Max Pairwise Normal Force [N]", color=COLORS["backbone_opt"])
     ax1.tick_params(axis="x")
-    ax1.tick_params(axis="y", labelcolor=COLORS["post_opt_1"])
+    ax1.tick_params(axis="y", labelcolor=COLORS["backbone_opt"])
     ax1.set_ylim(0.0, force_axis_max)
-    ax1.spines["left"].set_color(COLORS["post_opt_1"])
+    ax1.spines["left"].set_color(COLORS["backbone_opt"])
 
     ax2 = ax1.twinx()
     for result in results:
@@ -138,23 +138,41 @@ def main() -> None:
             ax2.plot(
                 result["ts"],
                 result["distance"],
-                color=COLORS["pre_opt_1"],
+                color=COLORS["backbone_init"],
                 linewidth=2.5,
                 linestyle=linestyle,
             )[0]
         )
 
-    ax2.set_ylabel("Goal Distance [m]", color=COLORS["pre_opt_1"])
-    ax2.tick_params(axis="y", labelcolor=COLORS["pre_opt_1"])
-    ax2.spines["right"].set_color(COLORS["pre_opt_1"])
+    ax2.set_ylabel("Goal Distance [m]", color=COLORS["backbone_init"])
+    ax2.tick_params(axis="y", labelcolor=COLORS["backbone_init"])
+    ax2.spines["right"].set_color(COLORS["backbone_init"])
 
     custom_handles = [
+        Line2D(
+            [0],
+            [0],
+            markeredgecolor=COLORS["backbone_init"],
+            markerfacecolor=COLORS["backbone_init"],
+            color="white",
+            marker="o",
+            markersize=8,
+        ),
+        Line2D(
+            [0],
+            [0],
+            markeredgecolor=COLORS["backbone_opt"],
+            markerfacecolor=COLORS["backbone_opt"],
+            color="white",
+            marker="o",
+            markersize=8,
+        ),
         Line2D([0], [0], color="black", linestyle="--"),
         Line2D([0], [0], color="black", linestyle="-"),
     ]
     ax1.legend(
         custom_handles,
-        ["HOCLF controller", "HOCLF+HOCBF controller"],
+        ["Goal distance", "Normal force", "HOCLF controller", "HOCLF+HOCBF controller"],
         loc="center right",
     )
     ax1.set_ylim(0.0, force_axis_max)
