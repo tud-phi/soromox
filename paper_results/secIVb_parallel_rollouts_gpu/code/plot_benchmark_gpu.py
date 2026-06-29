@@ -369,7 +369,7 @@ def _plot(
 
         ax_per_env.set_title(f"{_model_label(system)} - per-env speed")
         ax_total.set_title(f"{_model_label(system)} - total throughput")
-        ax_total.set_xlabel(r"Number of environments $n_\mathrm{envs}$")
+        ax_total.set_xlabel(r"Number of environments $n_\mathrm{b}$")
 
         for axis in (ax_per_env, ax_total):
             if log_x:
@@ -380,7 +380,7 @@ def _plot(
 
     axes[0, 0].set_ylabel(r"Simulated time / wall time (per env)")
     axes[1, 0].set_ylabel(
-        r"Total simulated time / wall time ($r_{\mathrm{s}/\mathrm{w}}$)"
+        r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)"
     )
 
     if output is not None:
@@ -433,7 +433,7 @@ def _plot_total_throughput(
                 ax.plot(x, y_total, marker="o", label=label)
 
         ax.set_title(_model_label(system))
-        ax.set_xlabel(r"Number of environments $n_\mathrm{envs}$")
+        ax.set_xlabel(r"Number of environments $n_\mathrm{b}$")
         if log_x:
             ax.set_xscale("log")
         if log_y:
@@ -441,7 +441,7 @@ def _plot_total_throughput(
         ax.legend()
 
     axes[0, 0].set_ylabel(
-        r"Total simulated time / wall time ($r_{\mathrm{s}/\mathrm{w}}$)"
+        r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)"
     )
 
     if output is not None:
@@ -542,8 +542,8 @@ def _plot_combined_scaling(
     y_min, y_max = min(all_y), max(all_y)
     ax.set_xscale("log")
     ax.set_yscale("log")
-    ax.set_xlabel(r"Number of parallel environments $n_\mathrm{envs}$")
-    ax.set_ylabel(r"Simulation throughput $r_{\mathrm{s}/\mathrm{w}}$")
+    ax.set_xlabel(r"Number of parallel environments $n_\mathrm{b}$")
+    ax.set_ylabel(r"Simulation throughput $\Gamma_\mathrm{sim}$")
     ax.set_title("GPU Batch-Scaling Throughput")
 
     if y_min <= 1.0 <= y_max:
