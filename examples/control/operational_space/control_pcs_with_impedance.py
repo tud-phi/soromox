@@ -384,7 +384,7 @@ def main() -> None:
         control_state=None,
     )
 
-    solver_dt = 1e-4
+    solver_dt = 2e-5
     save_dt = 0.01
 
     # =========================================================================
