@@ -1,9 +1,10 @@
 """
 Operational-Space Impedance Control Example for PCS (Piecewise Constant Strain) Soft Robot.
 
-This example demonstrates how to use the OperationalSpaceImpedanceControlTracker to control a
-two-segment PCS soft robot in operational space, where the task is defined as
-tracking the end-effector position.
+This example demonstrates how to use the OperationalSpaceImpedanceControlTracker
+to control a two-segment PCS soft robot in operational space. It supports both
+end-effector position tracking and full end-effector pose tracking, with
+trajectory primitives shared by the operational-space examples in this folder.
 
 The operational-space impedance controller uses partial feedback linearization
 to cancel the original task dynamics and replace them with a desired impedance
@@ -20,19 +21,253 @@ References:
     https://doi.org/10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da
 """
 
+import argparse
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
+from jax import Array
+from trajectory_primitives import (
+    ORIENTATION_PRIMITIVES,
+    POSITION_PRIMITIVES,
+    SURFACES,
+    TRACKING_MODES,
+    TaskSpaceTrajectoryConfig,
+    make_end_effector_task_selector,
+    make_operational_space_reference_trajectory,
+)
 
-jax.config.update("jax_enable_x64", True)  # Double precision
-
-from soromox.control import OperationalSpaceImpedanceControlTracker, ReferenceTrajectory
+from soromox.control import OperationalSpaceImpedanceControlTracker
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import Open3DRenderer
 from soromox.systems import PCS, PCSParams, SystemState
 
+jax.config.update("jax_enable_x64", True)  # Double precision
 
-def main():
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tracking", choices=TRACKING_MODES, default="position")
+    parser.add_argument(
+        "--position-primitive",
+        choices=POSITION_PRIMITIVES,
+        default="figure-eight",
+    )
+    parser.add_argument(
+        "--orientation-primitive",
+        choices=ORIENTATION_PRIMITIVES,
+        default="fixed",
+    )
+    parser.add_argument("--surface", choices=SURFACES, default="plane")
+    parser.add_argument("--t1", type=float, default=10.0, help="Final time [s].")
+    parser.add_argument(
+        "--period", type=float, default=4.0, help="Trajectory period [s]."
+    )
+    parser.add_argument(
+        "--output-prefix",
+        default="control_pcs_with_impedance",
+        help="Prefix for generated PDF plots.",
+    )
+    parser.add_argument("--no-show", action="store_true", help="Do not show plots.")
+    parser.add_argument(
+        "--no-render", action="store_true", help="Skip optional Open3D rendering."
+    )
+    return parser.parse_args()
+
+
+def _output_path(prefix: str, suffix: str) -> str:
+    path = Path(prefix)
+    suffix = suffix.replace("_", "-")
+    return str(path.with_name(f"{path.name}_{suffix}.pdf"))
+
+
+def _position_indices(osd: OperationalSpaceDynamics) -> Array:
+    pos_start = osd.n_orientation_dim
+    pos_dim = 2 if osd.is_planar else 3
+    return jnp.arange(pos_start, pos_start + pos_dim)
+
+
+def _plot_tracking_results(
+    args: argparse.Namespace,
+    osd: OperationalSpaceDynamics,
+    robot: PCS,
+    t_traj: Array,
+    x_traj_full: Array,
+    x_des_traj_full: Array,
+    u_traj: Array,
+) -> tuple[str, Array, Array | None]:
+    pos_indices = _position_indices(osd)
+    x_traj_pos = x_traj_full[:, pos_indices]
+    x_des_traj_pos = x_des_traj_full[:, pos_indices]
+    tracking_error_pos = x_des_traj_pos - x_traj_pos
+
+    pose_error = None
+    if args.tracking == "pose":
+        pose_error = jax.vmap(osd.compute_pose_error)(x_traj_full, x_des_traj_full)
+
+    n_rows = 5 if args.tracking == "pose" else 3
+    fig, axes = plt.subplots(n_rows, 1, figsize=(10, 3.2 * n_rows), sharex=True)
+    colors = plt.cm.tab10.colors
+
+    axis_labels = ["x", "y", "z"][: x_traj_pos.shape[1]]
+
+    ax = axes[0]
+    for i, label in enumerate(axis_labels):
+        color = colors[i % len(colors)]
+        ax.plot(
+            t_traj, x_traj_pos[:, i], color=color, linewidth=2, label=f"$p_{label}$"
+        )
+        ax.plot(
+            t_traj,
+            x_des_traj_pos[:, i],
+            "--",
+            color=color,
+            linewidth=1.5,
+            alpha=0.7,
+            label=f"$p_{{{label},des}}$",
+        )
+    ax.set_ylabel("Position [m]")
+    ax.set_title("End-Effector Position Tracking")
+    ax.legend(loc="upper right", ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    for i, label in enumerate(axis_labels):
+        color = colors[i % len(colors)]
+        ax.plot(
+            t_traj,
+            tracking_error_pos[:, i] * 1000.0,
+            color=color,
+            linewidth=2,
+            label=f"$e_{label}$",
+        )
+    ax.set_ylabel("Position Error [mm]")
+    ax.set_title("Position Tracking Error")
+    ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
+
+    control_axis_index = 2
+    if args.tracking == "pose":
+        assert pose_error is not None
+        orientation_dim = osd.n_orientation_dim
+        orientation_error = pose_error[:, : osd.n_angular_velocity_dim]
+        orientation_labels = ["x", "y", "z"][:orientation_dim]
+
+        ax = axes[2]
+        for i, label in enumerate(orientation_labels):
+            color = colors[i % len(colors)]
+            ax.plot(
+                t_traj,
+                x_traj_full[:, i],
+                color=color,
+                linewidth=2,
+                label=f"$r_{label}$",
+            )
+            ax.plot(
+                t_traj,
+                x_des_traj_full[:, i],
+                "--",
+                color=color,
+                linewidth=1.5,
+                alpha=0.7,
+                label=f"$r_{{{label},des}}$",
+            )
+        ax.set_ylabel("Orientation")
+        ax.set_title("End-Effector Orientation Tracking")
+        ax.legend(loc="upper right", ncol=2)
+        ax.grid(True, alpha=0.3)
+
+        ax = axes[3]
+        error_labels = ["x", "y", "z"][: orientation_error.shape[1]]
+        for i, label in enumerate(error_labels):
+            color = colors[i % len(colors)]
+            ax.plot(
+                t_traj,
+                jnp.rad2deg(orientation_error[:, i]),
+                color=color,
+                linewidth=2,
+                label=f"$e_{{r,{label}}}$",
+            )
+        ax.set_ylabel("Orientation Error [deg]")
+        ax.set_title("Geometric Orientation Error")
+        ax.legend(loc="upper right")
+        ax.grid(True, alpha=0.3)
+        control_axis_index = 4
+
+    ax = axes[control_axis_index]
+    num_actuators_to_plot = min(robot.num_actuators, 6)
+    for i in range(num_actuators_to_plot):
+        color = colors[i % len(colors)]
+        ax.plot(t_traj, u_traj[:, i], color=color, label=f"$u_{i}$", linewidth=1.5)
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Control Input")
+    ax.set_title("Actuator Inputs")
+    ax.legend(loc="upper right", ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    output = _output_path(
+        args.output_prefix,
+        f"{args.tracking}_{args.position_primitive}_{args.orientation_primitive}_results",
+    )
+    plt.savefig(output, dpi=200)
+    if args.no_show:
+        plt.close(fig)
+    else:
+        plt.show()
+
+    return output, tracking_error_pos, pose_error
+
+
+def _plot_configuration_results(
+    args: argparse.Namespace,
+    num_dofs: int,
+    t_traj: Array,
+    q_traj: Array,
+    qd_traj: Array,
+) -> str:
+    fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
+    colors = plt.cm.tab10.colors
+    num_dofs_to_plot = min(num_dofs, 6)
+
+    ax = axes[0]
+    for i in range(num_dofs_to_plot):
+        color = colors[i % len(colors)]
+        ax.plot(t_traj, q_traj[:, i], color=color, label=f"$q_{i}$", linewidth=2)
+    ax.set_ylabel("Configuration")
+    ax.set_title("Configuration Space Evolution")
+    ax.legend(loc="upper right", ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[1]
+    for i in range(num_dofs_to_plot):
+        color = colors[i % len(colors)]
+        ax.plot(
+            t_traj, qd_traj[:, i], color=color, label=f"$\\dot{{q}}_{i}$", linewidth=2
+        )
+    ax.set_xlabel("Time [s]")
+    ax.set_ylabel("Velocity")
+    ax.set_title("Configuration Space Velocities")
+    ax.legend(loc="upper right", ncol=2)
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    output = _output_path(
+        args.output_prefix,
+        f"{args.tracking}_{args.position_primitive}_{args.orientation_primitive}_config",
+    )
+    plt.savefig(output, dpi=200)
+    if args.no_show:
+        plt.close(fig)
+    else:
+        plt.show()
+    return output
+
+
+def main() -> None:
+    args = parse_args()
+
     # =========================================================================
     # Robot Configuration: Two-Segment PCS
     # =========================================================================
@@ -58,7 +293,7 @@ def main():
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,
-        gravity=jnp.array([0.0, 0.0, 9.81]),
+        gravity=jnp.array([0.0, 0.0, -9.81]),
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
         damping_matrix=damping_matrix,
@@ -67,7 +302,6 @@ def main():
         ),
     )
 
-    # Initialize robot
     robot = PCS(params=params)
     num_dofs = robot.num_active_strains
     total_length = float(jnp.sum(segment_lengths))
@@ -79,88 +313,54 @@ def main():
     # =========================================================================
     # Operational Space Definition
     # =========================================================================
-    # Define the operational space as the end-effector position (x, y, z)
-    # We place the task point at the tip of the robot (s = L_total)
     s_ps = jnp.array([total_length])
+    task_selector = make_end_effector_task_selector(args.tracking, n_velocity_dim=6)
 
-    # For PCS robots, the Jacobian has shape (6, num_dofs) for each point:
-    # [omega_x, omega_y, omega_z, v_x, v_y, v_z]
-    # We select only the linear velocity components (position tracking)
-    # task_selector selects [v_x, v_y, v_z] which are indices 3, 4, 5
-    task_selector = jnp.array([False, False, False, True, True, True])
-
-    # Create operational space dynamics
     osd = OperationalSpaceDynamics(
         robot=robot,
         s_ps=s_ps,
         task_selector=task_selector,
     )
 
+    print(f"Tracking mode: {args.tracking}")
+    print(f"Position primitive: {args.position_primitive}")
+    print(f"Orientation primitive: {args.orientation_primitive}")
+    print(f"Surface: {args.surface}")
     print(f"Operational space dimension (velocity): {osd.n_operational_space}")
     print(f"Operational space dimension (pose): {osd.n_pose_operational_space}")
     print(f"Full pose dimension: {osd.n_points * osd.n_pose_dim}")
 
     # =========================================================================
-    # Reference Trajectory Definition (End-Effector Position)
+    # Reference Trajectory Definition
     # =========================================================================
-    t0, t1 = 0.0, 10.0
+    t0, t1 = 0.0, args.t1
     ts = jnp.linspace(t0, t1, 1000)
 
-    # Get the initial FULL end-effector pose for reference
-    # IMPORTANT: The reference trajectory must provide FULL poses (all components),
-    # even though only some components (e.g., position) are part of the task.
-    # The controller will ignore components not in the task.
     q0 = jnp.zeros((num_dofs,))
-    x0_full = osd.operational_space_poses(q0)  # shape: (n_points * n_pose_dim,)
+    x0_full = osd.operational_space_poses(q0)
     print(f"Initial end-effector pose (full): {x0_full}")
 
-    # Define a trajectory that moves the end-effector in a simple pattern
-    # Starting from the initial position and making small oscillations
-    # For 3D PCS with ROTATION_VECTOR: x0_full = [rot_x, rot_y, rot_z, p_x, p_y, p_z]
-    # We modify position components (indices 3, 4, 5) while keeping rotation constant
-    def x_des_fn(t):
-        """Desired FULL end-effector pose as a function of time."""
-        # Start from rest position and move in y-z plane
-        # The robot initially points along the x-axis (after the base rotation)
-        period = 4.0
-        amplitude_y = 0.02  # 2 cm amplitude in y
-        amplitude_z = 0.01  # 1 cm amplitude in z
-
-        # Smooth trajectory with sinusoidal motion
-        # Ramp up the motion smoothly in the first second
-        ramp = jnp.minimum(t / 1.0, 1.0)
-
-        # x0_full is [rot_x, rot_y, rot_z, p_x, p_y, p_z] for 3D PCS
-        # Modify position components (indices 3, 4, 5)
-        x_des = x0_full.at[4].add(ramp * amplitude_y * jnp.sin(2 * jnp.pi * t / period))
-        x_des = x_des.at[5].add(ramp * amplitude_z * jnp.sin(4 * jnp.pi * t / period))
-
-        return x_des
-
-    # Create reference trajectory with rotation representation for proper velocity derivation
-    # When rotation_representation is provided, ReferenceTrajectory automatically derives
-    # velocities correctly (handling the geometric relationship between orientation and
-    # angular velocity)
-    reference_trajectory = ReferenceTrajectory(
-        ts=ts,
-        x_des_fn=x_des_fn,
-        rotation_representation=osd.rotation_representation,
-        n_points=osd.n_points,
-        is_planar=osd.is_planar,
+    trajectory_config = TaskSpaceTrajectoryConfig(
+        tracking=args.tracking,
+        position_primitive=args.position_primitive,
+        orientation_primitive=args.orientation_primitive,
+        surface=args.surface,
+        period=args.period,
     )
+    reference_trajectory = make_operational_space_reference_trajectory(
+        osd=osd,
+        q0=q0,
+        ts=ts,
+        config=trajectory_config,
+    )
+    assert reference_trajectory.x_des_fn is not None
 
     # =========================================================================
     # Impedance Controller Setup
     # =========================================================================
-    # Define operational space gains
-    # K_x: Stiffness gain (makes the closed-loop stiffer -> faster convergence)
-    # D_x: Damping gain (suppresses oscillations)
+    K_x = 5e0 * jnp.ones((osd.n_operational_space,))
+    D_x = 1e0 * jnp.ones((osd.n_operational_space,))
 
-    # For a second-order system with critical damping: D = 2 * sqrt(K)
-    K_x = 1.0 * jnp.ones((osd.n_operational_space,))  # Stiffness [N/m]
-    D_x = 0.2 * jnp.ones((osd.n_operational_space,))  # Damping [N·s/m]
-
-    # Create the impedance controller
     controller = OperationalSpaceImpedanceControlTracker(
         operational_space_dynamics=osd,
         reference_trajectory=reference_trajectory,
@@ -174,19 +374,16 @@ def main():
     # =========================================================================
     # Simulation Setup
     # =========================================================================
-    # Initial conditions
-    qd0 = jnp.zeros((num_dofs,))  # Zero initial velocity
+    qd0 = jnp.zeros((num_dofs,))
     y0 = jnp.concatenate([q0, qd0])
 
-    # Create initial system state
     initial_state = SystemState(
         t=jnp.array(t0),
         y=y0,
         u=jnp.zeros((robot.num_actuators,)),
-        control_state=None,  # Impedance controller is stateless
+        control_state=None,
     )
 
-    # Simulation parameters
     solver_dt = 1e-4
     save_dt = 0.01
 
@@ -203,138 +400,56 @@ def main():
         save_dt=save_dt,
     )
 
-    # Extract results
     t_traj = trajectory.t
     q_traj, qd_traj = jnp.split(trajectory.y, 2, axis=1)
     assert trajectory.u is not None
     u_traj = trajectory.u
 
-    # Compute FULL operational space coordinates along the trajectory (for visualization)
     x_traj_full = jax.vmap(osd.operational_space_poses)(q_traj)
-
-    # Compute desired FULL trajectory at saved times
-    x_des_traj_full = jax.vmap(x_des_fn)(t_traj)
-
-    # Extract position components for plotting (indices 3, 4, 5 for 3D PCS)
-    # For 3D robots with ROTATION_VECTOR: full pose = [rot_x, rot_y, rot_z, p_x, p_y, p_z]
-    pos_indices = jnp.array([3, 4, 5])  # Position components
-    x_traj_pos = x_traj_full[:, pos_indices]
-    x_des_traj_pos = x_des_traj_full[:, pos_indices]
+    x_des_traj_full = jax.vmap(reference_trajectory.x_des_fn)(t_traj)
 
     print(f"Simulation completed. {len(t_traj)} time steps saved.")
 
     # =========================================================================
     # Plotting Results
     # =========================================================================
-    fig, axes = plt.subplots(3, 1, figsize=(10, 10), sharex=True)
+    tracking_output, tracking_error_pos, pose_error = _plot_tracking_results(
+        args,
+        osd,
+        robot,
+        t_traj,
+        x_traj_full,
+        x_des_traj_full,
+        u_traj,
+    )
+    config_output = _plot_configuration_results(args, num_dofs, t_traj, q_traj, qd_traj)
 
-    # Define colors
-    colors = plt.cm.tab10.colors
+    # =========================================================================
+    # Summary Statistics
+    # =========================================================================
+    pos_rmse = jnp.sqrt(jnp.mean(tracking_error_pos**2, axis=0))
+    print(f"\nPosition RMSE tracking error: {pos_rmse * 1000} mm")
+    print(f"Mean position RMSE: {jnp.mean(pos_rmse) * 1000:.3f} mm")
 
-    # Plot 1: End-effector position tracking
-    ax1 = axes[0]
-    axis_labels = ["x", "y", "z"]
-    for i in range(3):
-        color = colors[i % len(colors)]
-        ax1.plot(
-            t_traj,
-            x_traj_pos[:, i],
-            color=color,
-            linewidth=2,
-            label=f"$p_{{{axis_labels[i]}}}$",
-        )
-        ax1.plot(
-            t_traj,
-            x_des_traj_pos[:, i],
-            "--",
-            color=color,
-            linewidth=1.5,
-            alpha=0.7,
-            label=f"$p_{{{axis_labels[i]},des}}$",
-        )
-    ax1.set_ylabel("Position [m]")
-    ax1.set_title("End-Effector Position Tracking (Operational Space)")
-    ax1.legend(loc="upper right", ncol=2)
-    ax1.grid(True, alpha=0.3)
-
-    # Plot 2: Tracking error in operational space
-    ax2 = axes[1]
-    tracking_error = x_des_traj_pos - x_traj_pos
-    for i in range(3):
-        color = colors[i % len(colors)]
-        ax2.plot(
-            t_traj,
-            tracking_error[:, i] * 1000,  # Convert to mm
-            color=color,
-            label=f"$e_{{{axis_labels[i]}}}$",
-            linewidth=2,
-        )
-    ax2.set_ylabel("Tracking Error [mm]")
-    ax2.set_title("Operational Space Tracking Error")
-    ax2.legend(loc="upper right")
-    ax2.grid(True, alpha=0.3)
-
-    # Plot 3: Control input
-    ax3 = axes[2]
-    num_actuators_to_plot = min(robot.num_actuators, 6)
-    for i in range(num_actuators_to_plot):
-        color = colors[i % len(colors)]
-        ax3.plot(t_traj, u_traj[:, i], color=color, label=f"$u_{i}$", linewidth=1.5)
-    ax3.set_xlabel("Time [s]")
-    ax3.set_ylabel("Control Input")
-    ax3.set_title("Actuator Inputs")
-    ax3.legend(loc="upper right", ncol=2)
-    ax3.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig("control_pcs_with_impedance_results.pdf", dpi=200)
-    plt.show()
-
-    # Plot configuration space evolution
-    fig2, axes2 = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-
-    # Plot configuration
-    ax1 = axes2[0]
-    num_dofs_to_plot = min(num_dofs, 6)
-    for i in range(num_dofs_to_plot):
-        color = colors[i % len(colors)]
-        ax1.plot(t_traj, q_traj[:, i], color=color, label=f"$q_{i}$", linewidth=2)
-    ax1.set_ylabel("Configuration")
-    ax1.set_title("Configuration Space Evolution")
-    ax1.legend(loc="upper right", ncol=2)
-    ax1.grid(True, alpha=0.3)
-
-    # Plot configuration velocities
-    ax2 = axes2[1]
-    for i in range(num_dofs_to_plot):
-        color = colors[i % len(colors)]
-        ax2.plot(
-            t_traj, qd_traj[:, i], color=color, label=f"$\\dot{{q}}_{i}$", linewidth=2
-        )
-    ax2.set_xlabel("Time [s]")
-    ax2.set_ylabel("Velocity")
-    ax2.set_title("Configuration Space Velocities")
-    ax2.legend(loc="upper right", ncol=2)
-    ax2.grid(True, alpha=0.3)
-
-    plt.tight_layout()
-    plt.savefig("control_pcs_with_impedance_config.pdf", dpi=200)
-    plt.show()
-
-    # Compute and print summary statistics
-    rmse = jnp.sqrt(jnp.mean(tracking_error**2, axis=0))
-    print(f"\nRMSE tracking error: {rmse * 1000} mm")
-    print(f"Mean RMSE: {jnp.mean(rmse) * 1000:.3f} mm")
+    if pose_error is not None:
+        orientation_error = pose_error[:, : osd.n_angular_velocity_dim]
+        orient_rmse = jnp.sqrt(jnp.mean(orientation_error**2, axis=0))
+        print(f"Orientation RMSE tracking error: {jnp.rad2deg(orient_rmse)} deg")
+        print(f"Mean orientation RMSE: {jnp.rad2deg(jnp.mean(orient_rmse)):.3f} deg")
 
     print("\nPlots saved to:")
-    print("  - control_pcs_with_impedance_results.pdf")
-    print("  - control_pcs_with_impedance_config.pdf")
+    print(f"  - {tracking_output}")
+    print(f"  - {config_output}")
+
+    if args.no_render:
+        return
 
     if Open3DRenderer is None:
         print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
     else:
-        target_radius = float(jnp.mean(params["r"])) * 0.5
-        target_positions = jnp.asarray(x_des_traj_pos)[None, :, :]
+        pos_indices = _position_indices(osd)
+        target_radius = float(jnp.mean(params.radius)) * 0.5
+        target_positions = jnp.asarray(x_des_traj_full[:, pos_indices])[None, :, :]
         renderer = Open3DRenderer(robot, num_points=50)
         renderer.render_sequence(
             ts=t_traj,
