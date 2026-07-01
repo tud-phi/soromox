@@ -17,21 +17,33 @@ from pcs_cf_cbf_clf_common import (
     trajectory_path,
 )
 
-from soromox.rendering import BackboneColorConfig, Open3DRenderer, RendererColorConfig
+from soromox.rendering import (
+    BackboneColorConfig,
+    CameraConfig,
+    Open3DRenderer,
+    RendererColorConfig,
+)
 
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
-    "z_t": "#e76f51",
+    "z_t": "#D81159",
 }
+
+cmap_pre_opt_1 = colors.LinearSegmentedColormap.from_list(
+    "grad_pre_opt_1", ["#FFFFFF", COLORS["pre_opt_1"]]
+)
+cmap_post_opt_1 = colors.LinearSegmentedColormap.from_list(
+    "grad_post_opt_1", ["#FFFFFF", COLORS["post_opt_1"]]
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -97,30 +109,39 @@ def main() -> None:
     target_center = result["target_center"].reshape(1, 3)
 
     obs_colors = np.tile(
-        np.array([colors.to_rgb(COLORS["post_opt_1"])], dtype=np.float64),
+        np.array([colors.to_rgb(COLORS["obstacle"])], dtype=np.float64),
         (obs_radii.shape[0], 1),
     )
     target_radius = np.array([0.015], dtype=np.float64)
     if args.controller == "with-cbf":
-        color_label = "backbone_opt"
+        gradient = cmap_post_opt_1(np.array([0.75, 1.0]))[:, :3]
     else:
-        color_label = "backbone_init"
-    target_color = np.array([colors.to_rgb(COLORS["ground_truth"])], dtype=np.float64)
+        gradient = cmap_pre_opt_1(np.array([0.75, 1.0]))[:, :3]
+    target_color = np.array([colors.to_rgb(COLORS["target"])], dtype=np.float64)
     static_spheres_positions = np.concatenate([obs_centers, target_center], axis=0)
     static_spheres_radii = np.concatenate([obs_radii, target_radius], axis=0)
     static_spheres_colors = np.concatenate([obs_colors, target_color], axis=0)
 
+    # Manual camera settings
+    radius = 2.4
+    angle = -np.pi / 4
+    x, y = float(radius * np.cos(angle)), float(radius * np.sin(angle))
+    camera_config = CameraConfig(
+        position=(x, y, 0.325),
+        look_at=(0.0, 0.0, 0.125),
+        fov=60.0,
+    )
+
     color_config = RendererColorConfig(
         backbone=BackboneColorConfig(
-            segment_colors=np.array(
-                [colors.to_rgb(COLORS[color_label])], dtype=np.float64
-            )
+            segment_colors=np.asarray(gradient, dtype=np.float64)
         ),
         base_plate_color=(0.2, 0.2, 0.2),
     )
 
     print("Building robot geometry...")
     robot = build_simulation_setup().robot
+    print("L_cum =", robot.L_cum)
     renderer = Open3DRenderer(
         robot,
         num_points=80,
@@ -142,6 +163,7 @@ def main() -> None:
         loop=args.loop,
         record_path=str(output_path),
         render_actuators=True,
+        camera_config=camera_config,
         static_spheres_positions=static_spheres_positions,
         static_spheres_radii=static_spheres_radii,
         static_spheres_colors=static_spheres_colors,

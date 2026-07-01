@@ -23,11 +23,15 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
+    "ground_truth": "#FFBC42",
+    "x_t": "#2a9d8f",
+    "y_t": "#e9c46a",
+    "z_t": "#D81159",
 }
 
 MODEL_ORDER = ["articulated_soft_robot", "planar_pcs", "pcs", "gvs"]
@@ -41,7 +45,7 @@ MODEL_COLORS = {
     "articulated_soft_robot": COLORS["pre_opt_1"],
     "planar_pcs": COLORS["pre_opt_2"],
     "pcs": COLORS["post_opt_1"],
-    "gvs": COLORS["post_opt_3"],
+    "gvs": COLORS["post_opt_2"],
 }
 
 SIZE_STYLES = {
@@ -88,7 +92,7 @@ def configure_matplotlib() -> None:
             "xtick.direction": "out",
             "ytick.direction": "out",
             "savefig.bbox": "tight",
-            "figure.dpi": 150,
+            "figure.dpi": 300,
             "lines.linewidth": 1.8,
         }
     )
@@ -379,9 +383,7 @@ def _plot(
         ax_per_env.legend()
 
     axes[0, 0].set_ylabel(r"Simulated time / wall time (per env)")
-    axes[1, 0].set_ylabel(
-        r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)"
-    )
+    axes[1, 0].set_ylabel(r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)")
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -440,9 +442,7 @@ def _plot_total_throughput(
             ax.set_yscale("log")
         ax.legend()
 
-    axes[0, 0].set_ylabel(
-        r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)"
-    )
+    axes[0, 0].set_ylabel(r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)")
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)

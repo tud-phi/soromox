@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import scipy.io as sio
+from matplotlib import colors
 from matplotlib.lines import Line2D
 
 Coordinate = Literal["x", "y", "z"]
@@ -22,35 +23,41 @@ BENCHMARK_DIR = SCRIPT_DIR.parents[1]
 DEFAULT_DATA_DIR = BENCHMARK_DIR / "data"
 DEFAULT_OUTPUT_DIR = BENCHMARK_DIR / "outputs"
 
-COORDINATES: tuple[Coordinate, ...] = ("x", "y", "z")
-COORDINATE_COLORS: dict[Coordinate, str] = {
-    "x": "#0072B2",
-    "y": "#D55E00",
-    "z": "#009E73",
-}
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",  # 0ead69, #3bceac
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
     "ground_truth": "#FFBC42",
-    "x": "#2a9d8f",
-    "y": "#e9c46a",
-    "z": "#e76f51",
+    "x_t": "#2a9d8f",
+    "y_t": "#e9c46a",
+    "z_t": "#D81159",
 }
+COORDINATES: tuple[Coordinate, ...] = ("x", "y", "z")
+COORDINATE_COLORS: dict[Coordinate, str] = {
+    "x": COLORS["x_t"],
+    "y": COLORS["y_t"],
+    "z": COLORS["z_t"],
+}
+cmap_x = colors.LinearSegmentedColormap.from_list("grad_x", ["#000000", COLORS["x_t"]])
+cmap_y = colors.LinearSegmentedColormap.from_list("grad_y", ["#000000", COLORS["y_t"]])
+cmap_z = colors.LinearSegmentedColormap.from_list("grad_z", ["#000000", COLORS["z_t"]])
+grad_x = cmap_x(np.array([0.4, 0.7, 1.0]))[:, :3]
+grad_y = cmap_y(np.array([0.4, 0.7, 1.0]))[:, :3]
+grad_z = cmap_z(np.array([0.4, 0.7, 1.0]))[:, :3]
 COLORS_CASES = {
-    "SoRoSim_x": COLORS["x"],
-    "SoRoSim_y": COLORS["y"],
-    "SoRoSim_z": COLORS["z"],
-    "SoRoMoX_x": "#037A6C",
-    "SoRoMoX_y": "#c1921a",
-    "SoRoMoX_z": "#ad2c0c",
-    "PyElastica_x": "#025544",
-    "PyElastica_y": "#7d5c07",
-    "PyElastica_z": "#6c1a05",
+    "SoRoSim_x": grad_x[2],
+    "SoRoSim_y": grad_y[2],
+    "SoRoSim_z": grad_z[2],
+    "SoRoMoX_x": grad_x[1],
+    "SoRoMoX_y": grad_y[1],
+    "SoRoMoX_z": grad_z[1],
+    "PyElastica_x": grad_x[0],
+    "PyElastica_y": grad_y[0],
+    "PyElastica_z": grad_z[0],
 }
 WIDTHS = {
     "SoRoSim": 2.5,
@@ -304,8 +311,8 @@ def plot_case(
             color="none",
             marker="o",
             markersize=legend_markersize,
-            markerfacecolor=COLORS["x"],
-            markeredgecolor=COLORS["x"],
+            markerfacecolor=COLORS["x_t"],
+            markeredgecolor=COLORS["x_t"],
             label=r"$x$",
         ),
         Line2D(
@@ -314,8 +321,8 @@ def plot_case(
             color="none",
             marker="o",
             markersize=legend_markersize,
-            markerfacecolor=COLORS["y"],
-            markeredgecolor=COLORS["y"],
+            markerfacecolor=COLORS["y_t"],
+            markeredgecolor=COLORS["y_t"],
             label=r"$y$",
         ),
         Line2D(
@@ -324,8 +331,8 @@ def plot_case(
             color="none",
             marker="o",
             markersize=legend_markersize,
-            markerfacecolor=COLORS["z"],
-            markeredgecolor=COLORS["z"],
+            markerfacecolor=COLORS["z_t"],
+            markeredgecolor=COLORS["z_t"],
             label=r"$z$",
         ),
     ]

@@ -15,15 +15,15 @@ from pcs_cf_cbf_clf_common import DATA_DIR, OUTPUTS_DIR, load_results
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
-    "z_t": "#e76f51",
+    "z_t": "#D81159",
 }
 
 
@@ -112,48 +112,56 @@ def main() -> None:
     force_lines = []
     goal_distance_lines = []
     for result in results:
-        linestyle = "-" if result["label"] == "with CBF" else "--"
+        if result["label"] == "with CBF":
+            linestyle = "-"
+            color = COLORS["post_opt_1"]
+        else:
+            linestyle = "-"
+            color = COLORS["pre_opt_1"]
         force_lines.append(
             ax1.plot(
                 result["ts"],
                 result["force"],
-                color=COLORS["backbone_opt"],
+                color=color,
                 linewidth=2.5,
                 linestyle=linestyle,
             )[0]
         )
 
-    ax1.axhline(force_limit, color=COLORS["backbone_opt"], linestyle=":", linewidth=2.0)
+    ax1.axhline(force_limit, color=COLORS["post_opt_1"], linestyle=":", linewidth=2.0)
     ax1.set_xlabel("Time [s]")
-    ax1.set_ylabel("Max Pairwise Normal Force [N]", color=COLORS["backbone_opt"])
+    ax1.set_ylabel("Max Pairwise Normal Force [N]")
     ax1.tick_params(axis="x")
-    ax1.tick_params(axis="y", labelcolor=COLORS["backbone_opt"])
+    ax1.tick_params(axis="y")
     ax1.set_ylim(0.0, force_axis_max)
-    ax1.spines["left"].set_color(COLORS["backbone_opt"])
 
     ax2 = ax1.twinx()
     for result in results:
-        linestyle = "-" if result["label"] == "with CBF" else "--"
+        if result["label"] == "with CBF":
+            linestyle = "--"
+            color = COLORS["post_opt_1"]
+        else:
+            linestyle = "--"
+            color = COLORS["pre_opt_1"]
         goal_distance_lines.append(
             ax2.plot(
                 result["ts"],
                 result["distance"],
-                color=COLORS["backbone_init"],
+                color=color,
                 linewidth=2.5,
                 linestyle=linestyle,
             )[0]
         )
 
-    ax2.set_ylabel("Goal Distance [m]", color=COLORS["backbone_init"])
-    ax2.tick_params(axis="y", labelcolor=COLORS["backbone_init"])
-    ax2.spines["right"].set_color(COLORS["backbone_init"])
+    ax2.set_ylabel("Goal Distance [m]")
+    ax2.tick_params(axis="y")
 
     custom_handles = [
         Line2D(
             [0],
             [0],
-            markeredgecolor=COLORS["backbone_init"],
-            markerfacecolor=COLORS["backbone_init"],
+            markeredgecolor=COLORS["pre_opt_1"],
+            markerfacecolor=COLORS["pre_opt_1"],
             color="white",
             marker="o",
             markersize=8,
@@ -161,8 +169,8 @@ def main() -> None:
         Line2D(
             [0],
             [0],
-            markeredgecolor=COLORS["backbone_opt"],
-            markerfacecolor=COLORS["backbone_opt"],
+            markeredgecolor=COLORS["post_opt_1"],
+            markerfacecolor=COLORS["post_opt_1"],
             color="white",
             marker="o",
             markersize=8,
@@ -172,7 +180,7 @@ def main() -> None:
     ]
     ax1.legend(
         custom_handles,
-        ["Goal distance", "Normal force", "HOCLF controller", "HOCLF+HOCBF controller"],
+        ["HOCLF controller", "HOCLF+HOCBF controller", "Goal distance", "Normal force"],
         loc="center right",
     )
     ax1.set_ylim(0.0, force_axis_max)
@@ -188,7 +196,7 @@ def main() -> None:
     ax1.grid(True)
     ax2.grid(False)
 
-    ax1.set_xlim(min(result["ts"]), max(result["ts"]))
+    ax1.set_xlim(min(result["ts"]), round(max(result["ts"])))
     fig.tight_layout()
     png_path = args.output_dir / "force_goal_distance_plot.png"
     pdf_path = args.output_dir / "force_goal_distance_plot.pdf"

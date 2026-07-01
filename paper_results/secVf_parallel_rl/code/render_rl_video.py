@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 from matplotlib import colors
 
-from soromox.rendering import Open3DRenderer, RendererColorConfig
+from soromox.rendering import CameraConfig, Open3DRenderer, RendererColorConfig
 from soromox.rendering.color_config import BackboneColorConfig
 from soromox.systems import (
     LinearTendonRoutingParams,
@@ -26,16 +26,20 @@ OUTPUT_DIR = SCRIPT_DIR / "outputs"
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
-    "z_t": "#e76f51",
+    "z_t": "#D81159",
 }
+cmap_target = colors.LinearSegmentedColormap.from_list(
+    "grad_target", ["#FFFFFF", COLORS["target"]]
+)
+gradient = cmap_target(np.array([0.65, 1.0]))[:, :3]
 
 jax.config.update("jax_enable_x64", True)
 
@@ -136,7 +140,7 @@ def main():
     dynamic_spheres_positions = ball_ts.reshape(1, -1, 3)
     dynamic_spheres_radii = np.array([0.015], dtype=np.float64)
     dynamics_spheres_colors = np.array(
-        [colors.to_rgb(COLORS["ground_truth"])], dtype=np.float64
+        [colors.to_rgb(COLORS["target"])], dtype=np.float64
     )
 
     # --- ADD THIS NEW BLOCK: 2.5 Format the Trajectory Trail (Static Spheres) ---
@@ -152,17 +156,27 @@ def main():
         static_spheres_positions = trail_pts
         static_spheres_radii = np.full((num_pts,), trail_radius, dtype=np.float64)
         static_spheres_colors = np.tile(
-            np.array([[0.8, 0.1, 0.1]], dtype=np.float64), (num_pts, 1)
+            np.array([gradient[0]], dtype=np.float64), (num_pts, 1)
         )
 
     # 3. Build Robot Geometry
     print("Building robot geometry...")
     robot = build_rl_robot()
 
+    # Manual camera settings
+    radius = 1.7
+    angle = np.pi * 1.15
+    x, y = float(radius * np.cos(angle)), float(radius * np.sin(angle))
+    camera_config = CameraConfig(
+        position=(x, y, float(2 * np.sum(robot.L))),
+        look_at=(0.0, 0.0, float(0.7 * np.sum(robot.L) / 2)),
+        fov=60.0,
+    )
+
     if "random" in str(args.data):
-        color_label = "backbone_init"
+        color_label = "pre_opt_1"
     else:
-        color_label = "backbone_opt"
+        color_label = "post_opt_1"
     # 4. Configure Color Styling
     color_config = RendererColorConfig(
         backbone=BackboneColorConfig(
@@ -200,6 +214,7 @@ def main():
         loop=False,
         record_path=args.output,
         render_actuators=True,
+        camera_config=camera_config,
         static_spheres_positions=static_spheres_positions,
         static_spheres_radii=static_spheres_radii,
         static_spheres_colors=static_spheres_colors,

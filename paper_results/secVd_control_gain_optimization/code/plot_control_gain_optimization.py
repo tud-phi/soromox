@@ -24,15 +24,15 @@ FONT_SIZE_PT = FONT_SIZE_CM * CM_TO_POINT
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
-    "z_t": "#e76f51",
+    "z_t": "#D81159",
 }
 AXIS = {
     "x_axis_label": r"$x$ $\mathrm{[m]}$",

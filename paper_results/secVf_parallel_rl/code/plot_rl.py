@@ -26,22 +26,22 @@ FIGURE_SIZE_CM = (12.0, 12.0)  # Matches original 3.8 x 3.8 inches
 COLORS = {
     "pre_opt_1": "#006BA6",
     "pre_opt_2": "#0496FF",
-    "post_opt_1": "#D81159",
-    "post_opt_2": "#8F2D56",
-    "post_opt_3": "#FFBC42",
-    "backbone_opt": "#7B2CBF",
-    "backbone_init": "#0ead69",  # 0ead69, #3bceac
+    "post_opt_1": "#f1552e",
+    "post_opt_2": "#D81159",
+    "post_opt_3": "#8F2D56",
+    "obstacle": "#7B2CBF",
+    "target": "#0ead69",
     "ground_truth": "#FFBC42",
     "x_t": "#2a9d8f",
     "y_t": "#e9c46a",
-    "z_t": "#e76f51",
+    "z_t": "#D81159",
 }
 COLORS_RL = {
-    "PyElastica": COLORS["pre_opt_1"],  # "#0072B2",
-    "SoRoMoX 64 envs": COLORS["pre_opt_2"],  # "#D55E00",
-    "SoRoMoX 128 envs": COLORS["post_opt_1"],  # "#009E73",
-    "SoRoMoX 256 envs": COLORS["post_opt_2"],  # "#E69F00",
-    "SoRoMoX 512 envs": COLORS["post_opt_3"],  # "#CC79A7",
+    "PyElastica": COLORS["pre_opt_1"],
+    "SoRoMoX 64 envs": COLORS["pre_opt_2"],
+    "SoRoMoX 128 envs": COLORS["post_opt_1"],
+    "SoRoMoX 256 envs": COLORS["post_opt_2"],
+    "SoRoMoX 512 envs": COLORS["post_opt_3"],
 }
 
 
@@ -83,7 +83,7 @@ def configure_matplotlib() -> None:
             "xtick.direction": "out",
             "ytick.direction": "out",
             "savefig.bbox": "tight",
-            "figure.dpi": 150,
+            "figure.dpi": 300,
             "lines.linewidth": 1.8,
         }
     )
@@ -313,7 +313,7 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output",
         type=Path,
-        default=SCRIPT_DIR / "outputs" / "reward_curve.svg",
+        default=SCRIPT_DIR / "outputs" / "reward_curve.pdf",
         help="Output PDF path.",
     )
     parser.add_argument(
