@@ -44,7 +44,7 @@ class TaskSpaceTrajectoryConfig:
     orientation_primitive: str = "fixed"
     surface: str = "plane"
     period: float = 4.0
-    ramp_time: float = 1.0
+    ramp_time: float = 0.0
     position_amplitude_x: float = 0.08
     position_amplitude_y: float = 0.04
     position_amplitude_z: float = 0.0
@@ -82,6 +82,20 @@ class TaskSpaceTrajectoryConfig:
             raise ValueError("ramp_time must be nonnegative.")
         if self.surface_radius <= 0.0:
             raise ValueError("surface_radius must be positive.")
+
+
+@dataclass(frozen=True)
+class SurfaceGeometry:
+    """Surface geometry used by surface-following pose references."""
+
+    surface: str
+    radius: float
+    plane_point: Array
+    plane_normal: Array
+    preferred_y: Array
+    cylinder_origin: Array
+    cylinder_axis: Array
+    sphere_center: Array
 
 
 def make_end_effector_task_selector(tracking: str, n_velocity_dim: int) -> Array:
@@ -150,6 +164,40 @@ def make_operational_space_reference_trajectory(
     )
 
 
+def make_surface_geometry_metadata(
+    osd,
+    q0: Array,
+    config: TaskSpaceTrajectoryConfig,
+) -> SurfaceGeometry:
+    """Return surface metadata matching the surface-following reference path."""
+    if osd.n_points != 1:
+        raise ValueError(
+            "This example helper currently supports a single operational-space "
+            f"point, got {osd.n_points}."
+        )
+    if osd.is_planar:
+        raise ValueError("Surface geometry is only defined for 3D poses.")
+
+    x0_full = osd.operational_space_poses(q0)
+    x0_pose = x0_full.reshape(osd.n_points, osd.n_pose_dim)[0]
+    orientation0 = x0_pose[: osd.n_orientation_dim]
+    position0 = x0_pose[osd.n_orientation_dim :]
+    R0 = _orientation_to_rotation_matrix(orientation0, osd.rotation_representation)
+    return _make_surface_geometry_metadata(position0, R0, config)
+
+
+def surface_normal_at(position: Array, surface_geometry: SurfaceGeometry) -> Array:
+    """Return the outward normal of an example surface at ``position``."""
+    return _surface_normal(
+        position,
+        surface_geometry.surface,
+        surface_geometry.plane_normal,
+        surface_geometry.cylinder_origin,
+        surface_geometry.cylinder_axis,
+        surface_geometry.sphere_center,
+    )
+
+
 def _make_planar_pose_fn(
     position0: Array, theta0: Array, config: TaskSpaceTrajectoryConfig
 ) -> Callable[[Array], Array]:
@@ -171,14 +219,16 @@ def _make_spatial_pose_fn(
     rotation_representation: RotationRepresentation,
     config: TaskSpaceTrajectoryConfig,
 ) -> Callable[[Array], Array]:
-    normal0 = R0[:, 0]
-    preferred_y = R0[:, 1]
-    cylinder_axis = _cylinder_axis_from_normal(normal0)
-    cylinder_origin = position0 - config.surface_radius * normal0
-    sphere_center = position0 - config.surface_radius * normal0
+    surface_geometry = _make_surface_geometry_metadata(position0, R0, config)
 
     def x_des_fn(t: Array) -> Array:
-        position = position0 + _position_offset(t, 3, config)
+        if (
+            config.tracking == "pose"
+            and config.orientation_primitive == "surface-following"
+        ):
+            position = _surface_position(t, surface_geometry, config)
+        else:
+            position = position0 + _position_offset(t, 3, config)
 
         if config.tracking == "position" or config.orientation_primitive == "fixed":
             R_des = R0
@@ -193,13 +243,13 @@ def _make_spatial_pose_fn(
         elif config.orientation_primitive == "surface-following":
             normal = _surface_normal(
                 position,
-                config.surface,
-                normal0,
-                cylinder_origin,
-                cylinder_axis,
-                sphere_center,
+                surface_geometry.surface,
+                surface_geometry.plane_normal,
+                surface_geometry.cylinder_origin,
+                surface_geometry.cylinder_axis,
+                surface_geometry.sphere_center,
             )
-            R_des = _frame_from_x_axis(normal, preferred_y)
+            R_des = _frame_from_x_axis(normal, surface_geometry.preferred_y)
         else:
             raise ValueError(
                 f"Unsupported orientation primitive: {config.orientation_primitive}"
@@ -209,6 +259,93 @@ def _make_spatial_pose_fn(
         return jnp.concatenate([orientation, position])
 
     return x_des_fn
+
+
+def _surface_position(
+    t: Array,
+    surface_geometry: SurfaceGeometry,
+    config: TaskSpaceTrajectoryConfig,
+) -> Array:
+    chart_offset = _surface_chart_offset(t, config)
+    u, v = chart_offset[0], chart_offset[1]
+    normal = _normalize(surface_geometry.plane_normal)
+    tangent_y, tangent_z = _surface_tangent_axes(
+        normal,
+        surface_geometry.preferred_y,
+    )
+
+    if surface_geometry.surface == "plane":
+        return surface_geometry.plane_point + u * tangent_y + v * tangent_z
+
+    if surface_geometry.surface == "cylinder":
+        axis = _normalize(surface_geometry.cylinder_axis)
+        radial0 = normal - jnp.dot(normal, axis) * axis
+        radial0 = _normalize(radial0)
+        circumferential = _normalize(jnp.cross(axis, radial0))
+        theta = v / surface_geometry.radius
+        radial = jnp.cos(theta) * radial0 + jnp.sin(theta) * circumferential
+        return (
+            surface_geometry.cylinder_origin
+            + u * axis
+            + surface_geometry.radius * radial
+        )
+
+    if surface_geometry.surface == "sphere":
+        tangent = u * tangent_y + v * tangent_z
+        angle_sq = jnp.dot(tangent, tangent) / surface_geometry.radius**2
+        angle = jnp.sqrt(jnp.maximum(angle_sq, 1e-24))
+        sinc = jnp.sin(angle) / angle
+        radial = jnp.cos(angle) * normal + sinc * tangent / surface_geometry.radius
+        return surface_geometry.sphere_center + surface_geometry.radius * radial
+
+    raise ValueError(f"Unsupported surface: {surface_geometry.surface}")
+
+
+def _surface_chart_offset(t: Array, config: TaskSpaceTrajectoryConfig) -> Array:
+    if config.position_primitive == "helix":
+        phase = _phase(t, config.period)
+        turns = t / config.period
+        ramp = _ramp(t, config.ramp_time)
+        return ramp * jnp.array(
+            [
+                config.helix_pitch * turns,
+                config.helix_radius * phase,
+            ]
+        )
+    return _position_offset(t, 2, config)
+
+
+def _surface_tangent_axes(normal: Array, preferred_y: Array) -> tuple[Array, Array]:
+    tangent_y = preferred_y - jnp.dot(preferred_y, normal) * normal
+    tangent_y = jnp.where(
+        jnp.linalg.norm(tangent_y) > 1e-8,
+        tangent_y,
+        _fallback_axis(normal),
+    )
+    tangent_y = _normalize(tangent_y)
+    tangent_z = _normalize(jnp.cross(normal, tangent_y))
+    return tangent_y, tangent_z
+
+
+def _make_surface_geometry_metadata(
+    position0: Array,
+    R0: Array,
+    config: TaskSpaceTrajectoryConfig,
+) -> SurfaceGeometry:
+    normal0 = _normalize(R0[:, 0])
+    preferred_y = _normalize(R0[:, 1])
+    cylinder_axis = _cylinder_axis_from_normal(normal0)
+    center = position0 - config.surface_radius * normal0
+    return SurfaceGeometry(
+        surface=config.surface,
+        radius=config.surface_radius,
+        plane_point=position0,
+        plane_normal=normal0,
+        preferred_y=preferred_y,
+        cylinder_origin=center,
+        cylinder_axis=cylinder_axis,
+        sphere_center=center,
+    )
 
 
 def _position_offset(
@@ -396,7 +533,10 @@ __all__ = [
     "POSITION_PRIMITIVES",
     "SURFACES",
     "TRACKING_MODES",
+    "SurfaceGeometry",
     "TaskSpaceTrajectoryConfig",
     "make_end_effector_task_selector",
     "make_operational_space_reference_trajectory",
+    "make_surface_geometry_metadata",
+    "surface_normal_at",
 ]

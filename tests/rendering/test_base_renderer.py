@@ -117,7 +117,9 @@ class DummyBatchedActuatedSpatialRobot(DummySpatialRobot):
         self.single_calls += 1
         raise AssertionError("single actuator hook should not be used")
 
-    def actuator_visual_layers_batched(self, q_batch, s_points, *, actuator_inputs=None):
+    def actuator_visual_layers_batched(
+        self, q_batch, s_points, *, actuator_inputs=None
+    ):
         self.batched_calls += 1
         num_robots = int(q_batch.shape[0])
         base_paths = jnp.stack(
@@ -322,6 +324,64 @@ class FakeViserActuatorServer:
         self.scene = FakeViserScene()
 
 
+class FakeViserGuiFolder:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+
+class FakeViserGuiHandle:
+    def __init__(self, value=None):
+        self.value = value
+        self.icon = None
+        self.on_click_callback = None
+        self.on_update_callback = None
+
+    def on_click(self, callback):
+        self.on_click_callback = callback
+        return callback
+
+    def on_update(self, callback):
+        self.on_update_callback = callback
+        return callback
+
+
+class FakeViserGui:
+    def add_folder(self, name):
+        del name
+        return FakeViserGuiFolder()
+
+    def add_button(self, name, icon=None):
+        del name
+        handle = FakeViserGuiHandle()
+        handle.icon = icon
+        return handle
+
+    def add_slider(self, name, min, max, step, initial_value):
+        del name, min, max, step
+        return FakeViserGuiHandle(value=initial_value)
+
+    def add_checkbox(self, name, initial_value):
+        del name
+        return FakeViserGuiHandle(value=initial_value)
+
+    def add_text(self, name, initial_value, disabled=False):
+        del name, disabled
+        return FakeViserGuiHandle(value=initial_value)
+
+
+class FakeViserPlaybackServer:
+    def __init__(self):
+        self.gui = FakeViserGui()
+
+
+class FakeGuiEvent:
+    def __init__(self, value):
+        self.target = FakeViserGuiHandle(value=value)
+
+
 def test_renderer_exposes_base_pose_transform_and_axis():
     robot = DummyPlanarRobot(jnp.array([jnp.pi / 2, 1.0, 2.0]))
     renderer = DummyRenderer(robot)
@@ -337,9 +397,7 @@ def test_renderer_exposes_base_pose_transform_and_axis():
 def test_camera_auto_position_rotates_default_offset_by_base_pose():
     config = CameraConfig(distance_factor=2.0, position_offset=(1.0, 0.0, 0.0))
     center = np.array([10.0, 20.0, 30.0])
-    base_transform = poses.planar_pose_to_transform(
-        jnp.array([jnp.pi / 2, 1.0, 2.0])
-    )
+    base_transform = poses.planar_pose_to_transform(jnp.array([jnp.pi / 2, 1.0, 2.0]))
 
     camera_pos, look_at = config.compute_auto_position(
         center,
@@ -358,9 +416,7 @@ def test_camera_explicit_position_remains_world_space_with_base_pose():
         position_offset=(1.0, 0.0, 0.0),
     )
     center = np.array([10.0, 20.0, 30.0])
-    base_transform = poses.planar_pose_to_transform(
-        jnp.array([jnp.pi / 2, 1.0, 2.0])
-    )
+    base_transform = poses.planar_pose_to_transform(jnp.array([jnp.pi / 2, 1.0, 2.0]))
 
     camera_pos, look_at = config.compute_auto_position(
         center,
@@ -421,7 +477,9 @@ def test_open3d_interactive_camera_front_points_from_eye_to_target():
         vis,
         ctrl,
         scene_data,
-        camera_config=CameraConfig(distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)),
+        camera_config=CameraConfig(
+            distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)
+        ),
     )
 
     assert_allclose(ctrl.front, np.array([1.0, 0.0, 0.0]), atol=1e-12)
@@ -479,7 +537,9 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
 
     renderer._setup_camera(
         curves,
-        camera_config=CameraConfig(distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)),
+        camera_config=CameraConfig(
+            distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)
+        ),
     )
 
     assert_allclose(client.camera.look_at, np.array([1.0, 0.5, 0.0]), atol=1e-12)
@@ -510,9 +570,7 @@ def test_viser_actuator_geometry_updates_existing_line_handles():
     pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     renderer._server = FakeViserActuatorServer()
     renderer._scene_handles = SceneHandles()
@@ -538,6 +596,37 @@ def test_viser_actuator_geometry_updates_existing_line_handles():
     assert len(renderer._server.scene.line_segments) == 3
     assert all(handle.remove_count == 0 for handle in first_handles)
     assert_allclose(first_handles[0].points[0, 0], np.array([1.0, 0.1, 0.0]))
+
+
+def test_viser_frame_slider_updates_paused_sequence_frame():
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import AnimationState, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+    renderer._server = FakeViserPlaybackServer()
+    renderer._animation_state = AnimationState(
+        frame_idx=0,
+        playing=False,
+        loop=False,
+        playback_speed=1.0,
+        num_frames=10,
+        ts=np.linspace(0.0, 0.9, 10),
+    )
+    updated_frames = []
+
+    renderer._setup_playback_gui(on_frame_changed=updated_frames.append)
+    slider = renderer._gui_handles["frame_slider"]
+
+    slider.on_update_callback(FakeGuiEvent(7))
+
+    assert renderer._animation_state.frame_idx == 7
+    assert updated_frames == [7]
+
+    slider.on_update_callback(FakeGuiEvent(99))
+
+    assert renderer._animation_state.frame_idx == 9
+    assert updated_frames == [7, 9]
 
 
 def test_renderer_normalizes_base_offsets_to_curve_dimension():
@@ -582,9 +671,7 @@ def test_renderer_rejects_extra_explicit_base_offsets_by_default():
 
 
 def test_renderer_computes_actuator_visual_layers_single_and_batched():
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot, num_points=5)
 
     single = renderer.compute_actuator_visual_layers(jnp.array([]))
@@ -636,9 +723,7 @@ def test_renderer_uses_batched_actuator_visual_fast_path():
 
 
 def test_renderer_computes_trajectory_actuator_visual_layers():
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot, num_points=4)
 
     layers = renderer.compute_actuator_visual_layers_trajectory(
@@ -677,9 +762,7 @@ def test_renderer_uses_trajectory_actuator_visual_fast_path():
 
 
 def test_matplotlib_actuator_overlay_changes_rendered_frame():
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = MatplotlibRenderer(robot, width=240, height=180, num_points=8)
 
     without_actuators = renderer.render_frame(jnp.array([]), render_actuators=False)

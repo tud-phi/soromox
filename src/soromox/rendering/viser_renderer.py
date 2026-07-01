@@ -635,9 +635,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     num_segments = len(curve) - 1
                     if num_segments <= 0:
                         continue
-                    points = np.stack(
-                        [curve[:-1], curve[1:]], axis=1
-                    )
+                    points = np.stack([curve[:-1], curve[1:]], axis=1)
                     color = _rgb_to_viser_color(
                         layer_colors[robot_idx, actuator_idx, :3]
                     )
@@ -918,7 +916,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Use a Viser-specific auto-distance. CameraConfig's default distance
         # factor is tuned for backends with an additional zoom control, while
         # Viser uses the camera position as a true perspective eye point.
-        config = camera_config or CameraConfig(fov=self._camera_fov, distance_factor=1.0)
+        config = camera_config or CameraConfig(
+            fov=self._camera_fov, distance_factor=1.0
+        )
 
         # Compute bounding box of all curves
         all_points = curves.reshape(-1, 3)
@@ -1231,6 +1231,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         loop: bool = False,
         record_path: str | None = None,
         record_every_n: int = 1,
+        stop_when_recording_done: bool = False,
+        record_client_timeout: float = 10.0,
+        record_frame_timeout: float = 10.0,
         video_config: VideoEncodingConfig | None = None,
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
@@ -1260,6 +1263,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
             loop: Loop animation
             record_path: Path to save video (mp4, mov)
             record_every_n: Record every N frames
+            stop_when_recording_done: If True, return after recording one non-looping
+                pass through the sequence.
+            record_client_timeout: Seconds to wait for a browser client before video
+                recording fails.
+            record_frame_timeout: Seconds to wait for each browser render before video
+                recording fails.
             video_config: FFmpeg encoding settings
             camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
@@ -1285,6 +1294,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
+        record_every_n = max(1, int(record_every_n))
 
         if q_ts.ndim == 3 and (plot_configurations or plot_actuator_positions):
             raise ValueError(
@@ -1405,8 +1415,25 @@ class ViserRenderer(BaseSoftRobotRenderer):
             ts=ts,
         )
 
+        def update_sequence_frame(frame_idx: int) -> None:
+            self._update_frame(
+                frame_idx,
+                q_ts,
+                base_offsets,
+                resolved_colors.per_robot_point_rgba,
+                base_plate_color=cfg.base_plate_color,
+                render_actuators=render_actuators,
+                actuator_inputs=self._actuator_inputs_for_timestep(
+                    actuator_inputs,
+                    num_robots=int(num_robots),
+                    num_steps=int(num_frames),
+                    frame_idx=frame_idx,
+                ),
+                color_config=cfg,
+            )
+
         # Setup GUI controls
-        self._setup_playback_gui()
+        self._setup_playback_gui(on_frame_changed=update_sequence_frame)
 
         # Add plots after playback controls (so they appear at the end)
         if plot_configurations or plot_actuator_positions or custom_plots:
@@ -1421,7 +1448,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     actuator_fig = self.create_actuator_position_plot(
                         ts, q_ts_for_plots, self.robot, robot_name=robot_name
                     )
-                    self.add_gui_plotly("Actuator Coordinates", actuator_fig, aspect=2.0)
+                    self.add_gui_plotly(
+                        "Actuator Coordinates", actuator_fig, aspect=2.0
+                    )
 
                 # Add custom plots
                 if custom_plots:
@@ -1437,7 +1466,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Video recording setup
         video_writer = None
+        record_client = None
         if record_path is not None:
+            record_client = self._wait_for_recording_client(record_client_timeout)
+            if record_client is None:
+                raise RuntimeError(
+                    "Viser video recording requires a connected browser client. "
+                    "Open the Viser URL or enable browser auto-open."
+                )
             fps = 1.0 / np.mean(np.diff(ts)) if len(ts) > 1 else 30.0
             video_writer = FFmpegVideoWriter(
                 record_path,
@@ -1448,6 +1484,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 video_config=video_config,
             )
             print(f"[ViserRenderer] Recording to {record_path}")
+            self._record_viser_frame(
+                video_writer,
+                record_client,
+                timeout=record_frame_timeout,
+            )
 
         # Animation loop
         try:
@@ -1477,36 +1518,27 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
                             if next_idx != state.frame_idx:
                                 state.frame_idx = next_idx
-                                self._update_frame(
-                                    next_idx,
-                                    q_ts,
-                                    base_offsets,
-                                    resolved_colors.per_robot_point_rgba,
-                                    base_plate_color=cfg.base_plate_color,
-                                    render_actuators=render_actuators,
-                                    actuator_inputs=self._actuator_inputs_for_timestep(
-                                        actuator_inputs,
-                                        num_robots=int(num_robots),
-                                        num_steps=int(num_frames),
-                                        frame_idx=next_idx,
-                                    ),
-                                    color_config=cfg,
+                                update_sequence_frame(next_idx)
+                                recording_final_frame = (
+                                    stop_when_recording_done
+                                    and video_writer is not None
+                                    and not state.loop
+                                    and next_idx >= state.num_frames - 1
                                 )
 
                                 # Record frame
-                                if (
-                                    video_writer is not None
-                                    and next_idx % record_every_n == 0
+                                if video_writer is not None and (
+                                    next_idx % record_every_n == 0
+                                    or recording_final_frame
                                 ):
-                                    clients = list(self._server.get_clients().values())
-                                    if clients:
-                                        try:
-                                            frame = clients[0].camera.get_render(
-                                                height=self.height, width=self.width
-                                            )
-                                            video_writer.write(np.array(frame))
-                                        except Exception:
-                                            pass
+                                    record_client = self._record_viser_frame(
+                                        video_writer,
+                                        record_client,
+                                        timeout=record_frame_timeout,
+                                    )
+
+                                if video_writer is not None and recording_final_frame:
+                                    break
 
                     # Update GUI
                     self._update_playback_gui(state)
@@ -1576,7 +1608,68 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Update dynamic spheres
         self._update_dynamic_spheres(frame_idx)
 
-    def _setup_playback_gui(self) -> None:
+    def _wait_for_recording_client(self, timeout: float) -> Any | None:
+        """Wait briefly for a Viser browser client used for video capture."""
+        if self._server is None:
+            return None
+
+        deadline = time.time() + max(0.0, float(timeout))
+        while time.time() <= deadline:
+            clients = list(self._server.get_clients().values())
+            if clients:
+                return clients[0]
+            time.sleep(0.05)
+        return None
+
+    def _record_viser_frame(
+        self,
+        video_writer: FFmpegVideoWriter,
+        client: Any | None,
+        *,
+        timeout: float,
+    ) -> Any | None:
+        """Capture one Viser frame and return the client used."""
+        if self._server is None:
+            return client
+
+        clients = list(self._server.get_clients().values())
+        if clients and client not in clients:
+            client = clients[0]
+        if client is None:
+            return client
+
+        result: dict[str, Any] = {}
+        error: dict[str, BaseException] = {}
+
+        def capture() -> None:
+            try:
+                result["frame"] = client.camera.get_render(
+                    height=self.height,
+                    width=self.width,
+                )
+            except BaseException as exc:
+                error["exception"] = exc
+
+        thread = threading.Thread(target=capture, daemon=True)
+        thread.start()
+        thread.join(timeout=max(0.0, float(timeout)))
+        if thread.is_alive():
+            raise RuntimeError(
+                "Timed out while capturing a Viser video frame. Make sure the "
+                "Viser browser tab is open, foregrounded, and connected."
+            )
+        if "exception" in error:
+            raise RuntimeError("Failed to capture a Viser video frame.") from error[
+                "exception"
+            ]
+
+        video_writer.write(np.asarray(result["frame"], dtype=np.uint8))
+        return client
+
+    def _setup_playback_gui(
+        self,
+        on_frame_changed: Callable[[int], None] | None = None,
+    ) -> None:
         """Setup playback control GUI elements."""
         if self._server is None:
             return
@@ -1620,7 +1713,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
         @self._gui_handles["frame_slider"].on_update
         def _(event):
             if self._animation_state is not None and not self._animation_state.playing:
-                self._animation_state.frame_idx = int(event.target.value)
+                frame_idx = int(event.target.value)
+                frame_idx = max(
+                    0,
+                    min(frame_idx, self._animation_state.num_frames - 1),
+                )
+                self._animation_state.frame_idx = frame_idx
+                self._animation_state.last_tick = time.time()
+                if on_frame_changed is not None:
+                    on_frame_changed(frame_idx)
 
         @self._gui_handles["speed_slider"].on_update
         def _(event):

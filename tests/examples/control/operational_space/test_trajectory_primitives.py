@@ -12,7 +12,7 @@ from soromox.utils.geometry.rotations import (
 )
 
 MODULE_PATH = (
-    Path(__file__).resolve().parents[2]
+    Path(__file__).resolve().parents[4]
     / "examples"
     / "control"
     / "operational_space"
@@ -66,6 +66,7 @@ def test_default_config_uses_larger_ranges_and_four_second_period():
     config = trajectory_primitives.TaskSpaceTrajectoryConfig()
 
     assert config.period == 4.0
+    assert config.ramp_time == 0.0
     assert config.position_amplitude_x == 0.08
     assert config.position_amplitude_y == 0.04
     assert config.position_amplitude_z == 0.0
@@ -122,6 +123,21 @@ def test_spatial_helix_advances_along_world_z_axis():
     assert jnp.allclose(pose[3], -config.helix_radius)
     assert jnp.allclose(pose[4], config.helix_radius)
     assert jnp.allclose(pose[5], config.helix_pitch / 4.0)
+
+
+@pytest.mark.parametrize("primitive", ["line", "planar-circle", "figure-eight"])
+def test_periodic_spatial_primitives_repeat_by_default(primitive):
+    config = trajectory_primitives.TaskSpaceTrajectoryConfig(
+        tracking="position",
+        position_primitive=primitive,
+        period=4.0,
+    )
+    reference = _make_reference(config)
+
+    for t in (0.25, 1.0, 2.75):
+        pose = reference.x_des_fn(jnp.array(t))
+        next_period_pose = reference.x_des_fn(jnp.array(t + config.period))
+        assert jnp.allclose(next_period_pose[3:], pose[3:], atol=1e-12)
 
 
 @pytest.mark.parametrize("primitive", trajectory_primitives.POSITION_PRIMITIVES)
@@ -197,6 +213,56 @@ def test_surface_following_aligns_local_x_with_surface_normal(surface):
         expected_normal = expected_normal / jnp.linalg.norm(expected_normal)
 
     assert jnp.allclose(R[:, 0], expected_normal, atol=1e-6)
+
+
+@pytest.mark.parametrize("surface", trajectory_primitives.SURFACES)
+def test_surface_following_positions_remain_on_selected_surface(surface):
+    osd = FakeOperationalSpaceDynamics()
+    config = trajectory_primitives.TaskSpaceTrajectoryConfig(
+        tracking="pose",
+        position_primitive="figure-eight",
+        orientation_primitive="surface-following",
+        surface=surface,
+        period=4.0,
+    )
+    reference = trajectory_primitives.make_operational_space_reference_trajectory(
+        osd=osd,
+        q0=jnp.zeros((1,)),
+        ts=jnp.linspace(0.0, 4.0, 9),
+        config=config,
+    )
+    surface_geometry = trajectory_primitives.make_surface_geometry_metadata(
+        osd=osd,
+        q0=jnp.zeros((1,)),
+        config=config,
+    )
+
+    for t in (0.0, 0.75, 1.5, 2.25, 3.0):
+        position = reference.x_des_fn(jnp.array(t))[3:]
+        if surface == "plane":
+            signed_distance = jnp.dot(
+                position - surface_geometry.plane_point,
+                surface_geometry.plane_normal,
+            )
+            assert jnp.allclose(signed_distance, 0.0, atol=1e-12)
+        elif surface == "cylinder":
+            center_to_point = position - surface_geometry.cylinder_origin
+            radial = (
+                center_to_point
+                - jnp.dot(center_to_point, surface_geometry.cylinder_axis)
+                * surface_geometry.cylinder_axis
+            )
+            assert jnp.allclose(
+                jnp.linalg.norm(radial),
+                config.surface_radius,
+                atol=1e-12,
+            )
+        else:
+            assert jnp.allclose(
+                jnp.linalg.norm(position - surface_geometry.sphere_center),
+                config.surface_radius,
+                atol=1e-12,
+            )
 
 
 def test_surface_following_rejects_planar_pose_tracking():
