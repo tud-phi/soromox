@@ -1,0 +1,786 @@
+"""Simulation and saved-data helpers for configuration-space control examples."""
+
+from __future__ import annotations
+
+import json
+import warnings
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+
+jax.config.update("jax_enable_x64", True)
+
+from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
+from soromox.control.configuration_space import (
+    ComputedTorqueTracker,
+    FeedforwardCompensationTracker,
+    GravityCancellationRegulator,
+    MixedStateFeedbackTracker,
+    PIDController,
+    PotentialCancellationRegulator,
+    PotentialCompensationRegulator,
+)
+from soromox.systems import PCS, PCSParams, SystemState
+
+DEFAULT_SOLVER_DT = 5e-5
+DEFAULT_SAVE_DT = 0.01
+DEFAULT_SETPOINT_OUTPUT = "setpoint_regulation_comparison.npz"
+DEFAULT_TRAJECTORY_OUTPUT = "trajectory_tracking_comparison.npz"
+
+STRAIN_INDICES = (1, 2, 3)
+STRAIN_NAMES = (r"$\kappa_y$", r"$\kappa_z$", r"$\sigma_x$")
+
+SETPOINT_COLORS = {
+    "PID (model-free)": "#E24A33",
+    "Potential Compensation": "#348ABD",
+    "Potential Cancellation": "#988ED5",
+    "Gravity Cancellation": "#8EBA42",
+}
+
+TRACKER_COLORS = {
+    "Computed Torque": "#E24A33",
+    "Feedforward Compensation": "#348ABD",
+    "Mixed State Feedback": "#988ED5",
+}
+
+REGULATOR_COLORS = SETPOINT_COLORS
+
+
+@dataclass(frozen=True)
+class ScenarioInfo:
+    """Metadata for one simulated scenario."""
+
+    key: str
+    title: str
+
+
+@dataclass(frozen=True)
+class PlotGroup:
+    """A controller group to plot from one scenario."""
+
+    key: str
+    scenario_key: str
+    title: str
+    filename_prefix: str
+    controller_names: tuple[str, ...]
+    colors: dict[str, str]
+    event_times: tuple[float, ...] = ()
+
+
+@dataclass(frozen=True)
+class RmsePanel:
+    """One panel in an RMSE bar-chart summary."""
+
+    title: str
+    scenario_key: str
+    controller_names: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RmseSummary:
+    """A saved RMSE summary figure specification."""
+
+    key: str
+    filename: str
+    panels: tuple[RmsePanel, ...]
+
+
+@dataclass(frozen=True)
+class RenderTarget:
+    """Default Viser render target for a saved comparison."""
+
+    key: str
+    scenario_key: str
+    title: str
+    default_controller: str
+
+
+@dataclass
+class ComparisonRun:
+    """Saved rollout data for plotting and rendering."""
+
+    example_key: str
+    title: str
+    strain_indices: tuple[int, ...]
+    strain_names: tuple[str, ...]
+    scenarios: tuple[ScenarioInfo, ...]
+    results: dict[str, dict[str, dict[str, Any]]]
+    plot_groups: tuple[PlotGroup, ...]
+    rmse_summaries: tuple[RmseSummary, ...]
+    render_targets: tuple[RenderTarget, ...]
+
+    def scenario_title(self, scenario_key: str) -> str:
+        for scenario in self.scenarios:
+            if scenario.key == scenario_key:
+                return scenario.title
+        return scenario_key
+
+
+def create_robot() -> tuple[PCS, int, int]:
+    """Create the PCS robot used by the configuration-space examples."""
+    num_segments = 1
+    rho = 1070 * jnp.ones((num_segments,))
+
+    segment_lengths = 1e-1 * jnp.ones((num_segments,))
+    damping_matrix = 1e-3 * jnp.diag(
+        (
+            jnp.repeat(
+                jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
+                num_segments,
+                axis=0,
+            )
+            * segment_lengths[:, None]
+        ).flatten()
+    )
+    params = PCSParams(
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        length=segment_lengths,
+        radius=2e-2 * jnp.ones((num_segments,)),
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        young_modulus=2e3 * jnp.ones((num_segments,)),
+        shear_modulus=1e3 * jnp.ones((num_segments,)),
+        damping_matrix=damping_matrix,
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            num_segments,
+        ),
+    )
+
+    robot = PCS(params=params)
+    return robot, int(robot.num_active_strains), num_segments
+
+
+def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
+    """Create the PID gains shared by all compared controllers."""
+    del num_dofs
+
+    kp_rot = 1e-2
+    ki_rot = 1e-3
+    kd_rot = 1e-4
+
+    kp_lin = 1e-1
+    ki_lin = 1e-3
+    kd_lin = 1e-2
+
+    kp_segment = jnp.array([kp_rot, kp_rot, kp_rot, kp_lin, kp_lin, kp_lin])
+    ki_segment = jnp.array([ki_rot, ki_rot, ki_rot, ki_lin, ki_lin, ki_lin])
+    kd_segment = jnp.array([kd_rot, kd_rot, kd_rot, kd_lin, kd_lin, kd_lin])
+
+    return PIDControl(
+        Kp=jnp.tile(kp_segment, num_segments),
+        Ki=jnp.tile(ki_segment, num_segments),
+        Kd=jnp.tile(kd_segment, num_segments),
+        saturation_fn="tanh",
+        gamma=1.0,
+    )
+
+
+def create_setpoint_trajectory(
+    num_dofs: int,
+    t0: float,
+    t1: float,
+) -> tuple[ReferenceTrajectory, jnp.ndarray]:
+    """Create step setpoints in kappa_y, kappa_z, and sigma_x."""
+    ts = jnp.linspace(t0, t1, 1000)
+    step_times = jnp.array([0.0, 3.0, 6.0, 9.0, 12.0])
+
+    kappa_y_values = jnp.array([0.0, 2.0, -1.0, 1.5, 0.0])
+    kappa_z_values = jnp.array([0.0, 0.5, -0.8, 0.3, 0.0])
+    sigma_x_values = jnp.array([0.0, 0.02, -0.01, 0.01, 0.0])
+
+    def x_des_fn(t):
+        q_des = jnp.zeros((num_dofs,))
+        step_idx = jnp.searchsorted(step_times, t, side="right") - 1
+        step_idx = jnp.clip(step_idx, 0, len(kappa_y_values) - 1)
+
+        q_des = q_des.at[1].set(kappa_y_values[step_idx])
+        q_des = q_des.at[2].set(kappa_z_values[step_idx])
+        q_des = q_des.at[3].set(sigma_x_values[step_idx])
+        return q_des
+
+    return ReferenceTrajectory(ts=ts, x_des_fn=x_des_fn), step_times
+
+
+def create_smooth_trajectory(
+    num_dofs: int,
+    t0: float,
+    t1: float,
+    frequency_scale: float = 1.0,
+) -> ReferenceTrajectory:
+    """Create a smooth sinusoidal trajectory in kappa_y, kappa_z, and sigma_x."""
+    ts = jnp.linspace(t0, t1, 1000)
+
+    omega_y = 0.3 * frequency_scale
+    omega_z = 0.2 * frequency_scale
+    omega_x = 0.25 * frequency_scale
+
+    amp_kappa_y = 2.0
+    amp_kappa_z = 1.0
+    amp_sigma_x = 0.02
+
+    def x_des_fn(t):
+        q_des = jnp.zeros((num_dofs,))
+        duration = t1 - t0
+        ramp_duration = 0.1 * duration
+
+        ramp_up = 0.5 * (1 - jnp.cos(jnp.pi * jnp.clip((t - t0) / ramp_duration, 0, 1)))
+        ramp_down = 0.5 * (
+            1
+            + jnp.cos(
+                jnp.pi * jnp.clip((t - (t1 - ramp_duration)) / ramp_duration, 0, 1)
+            )
+        )
+        ramp = ramp_up * ramp_down
+
+        q_des = q_des.at[1].set(ramp * amp_kappa_y * jnp.sin(omega_y * t))
+        q_des = q_des.at[2].set(ramp * amp_kappa_z * jnp.sin(omega_z * t + jnp.pi / 4))
+        q_des = q_des.at[3].set(ramp * amp_sigma_x * jnp.sin(omega_x * t + jnp.pi / 2))
+        return q_des
+
+    return ReferenceTrajectory(ts=ts, x_des_fn=x_des_fn)
+
+
+def run_simulation(
+    robot: PCS,
+    controller: Any,
+    num_dofs: int,
+    t0: float,
+    t1: float,
+    *,
+    solver_dt: float = DEFAULT_SOLVER_DT,
+    save_dt: float = DEFAULT_SAVE_DT,
+) -> dict[str, Any]:
+    """Run one closed-loop simulation."""
+    q0 = jnp.zeros((num_dofs,))
+    qd0 = jnp.zeros((num_dofs,))
+    y0 = jnp.concatenate([q0, qd0])
+    control_state_0 = PIDControllerState.zero(num_dofs)
+
+    initial_state = SystemState(
+        t=jnp.array(t0),
+        y=y0,
+        u=jnp.zeros((robot.num_actuators,)),
+        control_state=control_state_0,
+    )
+
+    trajectory = robot.rollout_closed_loop_to(
+        initial_state=initial_state,
+        controller=controller,
+        t1=t1,
+        solver_dt=solver_dt,
+        save_dt=save_dt,
+    )
+    q_traj, qd_traj = jnp.split(trajectory.y, 2, axis=1)
+
+    return {
+        "t": trajectory.t,
+        "q": q_traj,
+        "qd": qd_traj,
+        "u": trajectory.u,
+    }
+
+
+def compute_metrics(
+    results: dict[str, Any],
+    q_des_fn: Any,
+    strain_indices: tuple[int, ...],
+) -> dict[str, Any]:
+    """Compute tracking metrics for one simulation result."""
+    t = results["t"]
+    q = results["q"]
+    q_des = jax.vmap(q_des_fn)(t)
+    tracking_error = q_des - q
+    tracked_error = tracking_error[:, list(strain_indices)]
+    dt = t[1] - t[0]
+
+    return {
+        "rmse": jnp.sqrt(jnp.mean(tracked_error**2, axis=0)),
+        "max_error": jnp.max(jnp.abs(tracked_error), axis=0),
+        "ise": jnp.sum(tracked_error**2, axis=0) * dt,
+        "tracking_error": tracking_error,
+        "q_des": q_des,
+    }
+
+
+def run_controller_set(
+    robot: PCS,
+    controller_classes: dict[str, type],
+    reference_trajectory: ReferenceTrajectory,
+    pid_control: PIDControl,
+    num_dofs: int,
+    t0: float,
+    t1: float,
+    *,
+    solver_dt: float,
+    save_dt: float,
+    verbose: bool = True,
+) -> dict[str, dict[str, Any]]:
+    """Run a group of controllers against one reference trajectory."""
+    all_results: dict[str, dict[str, Any]] = {}
+    for name, controller_class in controller_classes.items():
+        if verbose:
+            print(f"\nRunning simulation with {name}...")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            controller = controller_class(
+                robot=robot,
+                reference_trajectory=reference_trajectory,
+                pid_control=pid_control,
+            )
+
+        results = run_simulation(
+            robot,
+            controller,
+            num_dofs,
+            t0,
+            t1,
+            solver_dt=solver_dt,
+            save_dt=save_dt,
+        )
+        results["metrics"] = compute_metrics(
+            results,
+            reference_trajectory.x_des_fn,
+            STRAIN_INDICES,
+        )
+        all_results[name] = results
+
+        if verbose:
+            print(f"  Completed {len(results['t'])} time steps.")
+
+    return all_results
+
+
+def run_setpoint_comparison(
+    *,
+    t0: float = 0.0,
+    t1: float = 15.0,
+    solver_dt: float = DEFAULT_SOLVER_DT,
+    save_dt: float = DEFAULT_SAVE_DT,
+    verbose: bool = True,
+) -> ComparisonRun:
+    """Run the setpoint regulation comparison."""
+    robot, num_dofs, num_segments = create_robot()
+    if verbose:
+        print(f"Number of DOFs: {num_dofs}")
+        print(f"Number of actuators: {robot.num_actuators}")
+
+    pid_control = create_pid_control(num_dofs, num_segments)
+    reference_trajectory, step_times = create_setpoint_trajectory(num_dofs, t0, t1)
+    controllers = {
+        "PID (model-free)": PIDController,
+        "Potential Compensation": PotentialCompensationRegulator,
+        "Potential Cancellation": PotentialCancellationRegulator,
+        "Gravity Cancellation": GravityCancellationRegulator,
+    }
+
+    results = run_controller_set(
+        robot,
+        controllers,
+        reference_trajectory,
+        pid_control,
+        num_dofs,
+        t0,
+        t1,
+        solver_dt=solver_dt,
+        save_dt=save_dt,
+        verbose=verbose,
+    )
+
+    run = ComparisonRun(
+        example_key="setpoint_regulation",
+        title="Setpoint Regulation",
+        strain_indices=STRAIN_INDICES,
+        strain_names=STRAIN_NAMES,
+        scenarios=(ScenarioInfo("setpoint", "Setpoint Regulation"),),
+        results={"setpoint": results},
+        plot_groups=(
+            PlotGroup(
+                key="controllers",
+                scenario_key="setpoint",
+                title="Setpoint Regulation: Strain Tracking Comparison",
+                filename_prefix="setpoint_regulation",
+                controller_names=tuple(controllers.keys()),
+                colors=SETPOINT_COLORS,
+                event_times=tuple(float(t) for t in step_times),
+            ),
+        ),
+        rmse_summaries=(
+            RmseSummary(
+                key="rmse",
+                filename="setpoint_regulation_rmse.pdf",
+                panels=(
+                    RmsePanel(
+                        title="Setpoint Regulation: RMSE Comparison",
+                        scenario_key="setpoint",
+                        controller_names=tuple(controllers.keys()),
+                    ),
+                ),
+            ),
+        ),
+        render_targets=(
+            RenderTarget(
+                key="setpoint",
+                scenario_key="setpoint",
+                title="Setpoint Regulation",
+                default_controller="PID (model-free)",
+            ),
+        ),
+    )
+    if verbose:
+        print_metrics_table(results, STRAIN_NAMES, "Setpoint Regulation: RMSE")
+    return run
+
+
+def run_trajectory_tracking_comparison(
+    *,
+    t0: float = 0.0,
+    t1_slow: float = 30.0,
+    t1_fast: float = 15.0,
+    slow_frequency_scale: float = 1.0,
+    fast_frequency_scale: float = 3.0,
+    solver_dt: float = DEFAULT_SOLVER_DT,
+    save_dt: float = DEFAULT_SAVE_DT,
+    verbose: bool = True,
+) -> ComparisonRun:
+    """Run the trajectory tracking comparison."""
+    robot, num_dofs, num_segments = create_robot()
+    if verbose:
+        print(f"Number of DOFs: {num_dofs}")
+        print(f"Number of actuators: {robot.num_actuators}")
+
+    pid_control = create_pid_control(num_dofs, num_segments)
+
+    trackers = {
+        "Computed Torque": ComputedTorqueTracker,
+        "Feedforward Compensation": FeedforwardCompensationTracker,
+        "Mixed State Feedback": MixedStateFeedbackTracker,
+    }
+    regulators = {
+        "PID (model-free)": PIDController,
+        "Potential Compensation": PotentialCompensationRegulator,
+        "Potential Cancellation": PotentialCancellationRegulator,
+        "Gravity Cancellation": GravityCancellationRegulator,
+    }
+
+    if verbose:
+        print("\n" + "=" * 80)
+        print("PART 1: SLOW TRAJECTORY (Quasi-static)")
+        print("=" * 80)
+    reference_slow = create_smooth_trajectory(
+        num_dofs,
+        t0,
+        t1_slow,
+        frequency_scale=slow_frequency_scale,
+    )
+    slow_results = run_controller_set(
+        robot,
+        {**trackers, **regulators},
+        reference_slow,
+        pid_control,
+        num_dofs,
+        t0,
+        t1_slow,
+        solver_dt=solver_dt,
+        save_dt=save_dt,
+        verbose=verbose,
+    )
+    if verbose:
+        print_metrics_table(slow_results, STRAIN_NAMES, "Slow Trajectory: RMSE")
+
+    if verbose:
+        print("\n" + "=" * 80)
+        print("PART 2: FAST TRAJECTORY (Dynamic)")
+        print("=" * 80)
+    reference_fast = create_smooth_trajectory(
+        num_dofs,
+        t0,
+        t1_fast,
+        frequency_scale=fast_frequency_scale,
+    )
+    fast_results = run_controller_set(
+        robot,
+        trackers,
+        reference_fast,
+        pid_control,
+        num_dofs,
+        t0,
+        t1_fast,
+        solver_dt=solver_dt,
+        save_dt=save_dt,
+        verbose=verbose,
+    )
+    if verbose:
+        print_metrics_table(
+            fast_results,
+            STRAIN_NAMES,
+            "Fast Trajectory: RMSE Comparison (Trackers)",
+        )
+
+    return ComparisonRun(
+        example_key="trajectory_tracking",
+        title="Trajectory Tracking",
+        strain_indices=STRAIN_INDICES,
+        strain_names=STRAIN_NAMES,
+        scenarios=(
+            ScenarioInfo("slow", "Slow Trajectory"),
+            ScenarioInfo("fast", "Fast Trajectory"),
+        ),
+        results={"slow": slow_results, "fast": fast_results},
+        plot_groups=(
+            PlotGroup(
+                key="slow-trackers",
+                scenario_key="slow",
+                title="Slow Trajectory: Tracking Controllers",
+                filename_prefix="trajectory_slow_trackers",
+                controller_names=tuple(trackers.keys()),
+                colors=TRACKER_COLORS,
+            ),
+            PlotGroup(
+                key="slow-regulators",
+                scenario_key="slow",
+                title="Slow Trajectory: Regulators (quasi-static)",
+                filename_prefix="trajectory_slow_regulators",
+                controller_names=tuple(regulators.keys()),
+                colors=REGULATOR_COLORS,
+            ),
+            PlotGroup(
+                key="fast-trackers",
+                scenario_key="fast",
+                title="Fast Trajectory: Tracking Controllers",
+                filename_prefix="trajectory_fast_trackers",
+                controller_names=tuple(trackers.keys()),
+                colors=TRACKER_COLORS,
+            ),
+        ),
+        rmse_summaries=(
+            RmseSummary(
+                key="rmse-summary",
+                filename="trajectory_tracking_rmse_summary.pdf",
+                panels=(
+                    RmsePanel(
+                        title="Slow Trajectory: All Controllers",
+                        scenario_key="slow",
+                        controller_names=(*trackers.keys(), *regulators.keys()),
+                    ),
+                    RmsePanel(
+                        title="Fast Trajectory: Tracking Controllers",
+                        scenario_key="fast",
+                        controller_names=tuple(trackers.keys()),
+                    ),
+                ),
+            ),
+        ),
+        render_targets=(
+            RenderTarget(
+                key="slow",
+                scenario_key="slow",
+                title="Slow Trajectory",
+                default_controller="Computed Torque",
+            ),
+            RenderTarget(
+                key="fast",
+                scenario_key="fast",
+                title="Fast Trajectory",
+                default_controller="Computed Torque",
+            ),
+        ),
+    )
+
+
+def print_metrics_table(
+    all_results: dict[str, dict[str, Any]],
+    strain_names: tuple[str, ...],
+    title: str,
+) -> None:
+    """Print a formatted RMSE table."""
+    print(f"\n{'=' * 80}")
+    print(title)
+    print("=" * 80)
+    print(
+        f"{'Controller':<30} "
+        f"{strain_names[0]:>15} {strain_names[1]:>15} {strain_names[2]:>15}"
+    )
+    print("-" * 80)
+
+    for name, results in all_results.items():
+        rmse = results["metrics"]["rmse"]
+        print(f"{name:<30} {rmse[0]:>15.4f} {rmse[1]:>15.4f} {rmse[2]:>15.4f}")
+
+
+def save_comparison_npz(path: str | Path, run: ComparisonRun) -> Path:
+    """Save a comparison run as compressed NPZ plus JSON metadata."""
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata = {
+        "format_version": 1,
+        "example_key": run.example_key,
+        "title": run.title,
+        "strain_indices": list(run.strain_indices),
+        "strain_names": list(run.strain_names),
+        "scenarios": [
+            {
+                "key": scenario.key,
+                "title": scenario.title,
+                "controller_names": list(run.results[scenario.key].keys()),
+            }
+            for scenario in run.scenarios
+        ],
+        "plot_groups": [_plot_group_to_dict(group) for group in run.plot_groups],
+        "rmse_summaries": [
+            _rmse_summary_to_dict(summary) for summary in run.rmse_summaries
+        ],
+        "render_targets": [
+            _render_target_to_dict(target) for target in run.render_targets
+        ],
+    }
+
+    arrays: dict[str, np.ndarray] = {"metadata": np.array(json.dumps(metadata))}
+    for scenario_idx, scenario in enumerate(run.scenarios):
+        scenario_results = run.results[scenario.key]
+        for controller_idx, controller_name in enumerate(scenario_results):
+            result = scenario_results[controller_name]
+            prefix = f"s{scenario_idx}_c{controller_idx}"
+            arrays[f"{prefix}_t"] = np.asarray(result["t"])
+            arrays[f"{prefix}_q"] = np.asarray(result["q"])
+            arrays[f"{prefix}_qd"] = np.asarray(result["qd"])
+            arrays[f"{prefix}_u"] = np.asarray(result["u"])
+
+            metrics = result["metrics"]
+            for metric_name in ("rmse", "max_error", "ise", "tracking_error", "q_des"):
+                arrays[f"{prefix}_metrics_{metric_name}"] = np.asarray(
+                    metrics[metric_name]
+                )
+
+    np.savez_compressed(output, **arrays)
+    return output
+
+
+def load_comparison_npz(path: str | Path) -> ComparisonRun:
+    """Load a comparison run saved by :func:`save_comparison_npz`."""
+    input_path = Path(path)
+    with np.load(input_path, allow_pickle=False) as data:
+        metadata = json.loads(str(data["metadata"].item()))
+        scenarios = tuple(
+            ScenarioInfo(scenario["key"], scenario["title"])
+            for scenario in metadata["scenarios"]
+        )
+
+        results: dict[str, dict[str, dict[str, Any]]] = {}
+        for scenario_idx, scenario in enumerate(metadata["scenarios"]):
+            scenario_key = scenario["key"]
+            scenario_results: dict[str, dict[str, Any]] = {}
+            for controller_idx, controller_name in enumerate(
+                scenario["controller_names"]
+            ):
+                prefix = f"s{scenario_idx}_c{controller_idx}"
+                scenario_results[controller_name] = {
+                    "t": data[f"{prefix}_t"],
+                    "q": data[f"{prefix}_q"],
+                    "qd": data[f"{prefix}_qd"],
+                    "u": data[f"{prefix}_u"],
+                    "metrics": {
+                        "rmse": data[f"{prefix}_metrics_rmse"],
+                        "max_error": data[f"{prefix}_metrics_max_error"],
+                        "ise": data[f"{prefix}_metrics_ise"],
+                        "tracking_error": data[f"{prefix}_metrics_tracking_error"],
+                        "q_des": data[f"{prefix}_metrics_q_des"],
+                    },
+                }
+            results[scenario_key] = scenario_results
+
+    return ComparisonRun(
+        example_key=metadata["example_key"],
+        title=metadata["title"],
+        strain_indices=tuple(int(i) for i in metadata["strain_indices"]),
+        strain_names=tuple(metadata["strain_names"]),
+        scenarios=scenarios,
+        results=results,
+        plot_groups=tuple(
+            _plot_group_from_dict(group) for group in metadata["plot_groups"]
+        ),
+        rmse_summaries=tuple(
+            _rmse_summary_from_dict(summary) for summary in metadata["rmse_summaries"]
+        ),
+        render_targets=tuple(
+            _render_target_from_dict(target) for target in metadata["render_targets"]
+        ),
+    )
+
+
+def _plot_group_to_dict(group: PlotGroup) -> dict[str, Any]:
+    return {
+        "key": group.key,
+        "scenario_key": group.scenario_key,
+        "title": group.title,
+        "filename_prefix": group.filename_prefix,
+        "controller_names": list(group.controller_names),
+        "colors": group.colors,
+        "event_times": list(group.event_times),
+    }
+
+
+def _plot_group_from_dict(data: dict[str, Any]) -> PlotGroup:
+    return PlotGroup(
+        key=data["key"],
+        scenario_key=data["scenario_key"],
+        title=data["title"],
+        filename_prefix=data["filename_prefix"],
+        controller_names=tuple(data["controller_names"]),
+        colors=dict(data["colors"]),
+        event_times=tuple(float(t) for t in data.get("event_times", ())),
+    )
+
+
+def _rmse_summary_to_dict(summary: RmseSummary) -> dict[str, Any]:
+    return {
+        "key": summary.key,
+        "filename": summary.filename,
+        "panels": [
+            {
+                "title": panel.title,
+                "scenario_key": panel.scenario_key,
+                "controller_names": list(panel.controller_names),
+            }
+            for panel in summary.panels
+        ],
+    }
+
+
+def _rmse_summary_from_dict(data: dict[str, Any]) -> RmseSummary:
+    return RmseSummary(
+        key=data["key"],
+        filename=data["filename"],
+        panels=tuple(
+            RmsePanel(
+                title=panel["title"],
+                scenario_key=panel["scenario_key"],
+                controller_names=tuple(panel["controller_names"]),
+            )
+            for panel in data["panels"]
+        ),
+    )
+
+
+def _render_target_to_dict(target: RenderTarget) -> dict[str, str]:
+    return {
+        "key": target.key,
+        "scenario_key": target.scenario_key,
+        "title": target.title,
+        "default_controller": target.default_controller,
+    }
+
+
+def _render_target_from_dict(data: dict[str, str]) -> RenderTarget:
+    return RenderTarget(
+        key=data["key"],
+        scenario_key=data["scenario_key"],
+        title=data["title"],
+        default_controller=data["default_controller"],
+    )
