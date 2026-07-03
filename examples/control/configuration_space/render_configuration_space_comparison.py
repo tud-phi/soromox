@@ -31,6 +31,7 @@ ACTUAL_RENDER_COLORS = np.array(
     dtype=np.float64,
 )
 DESIRED_RENDER_COLOR = np.array([150.0, 165.0, 181.0], dtype=np.float64) / 255.0
+TARGET_WIREFRAME_RADIUS_SCALE = 1.03
 
 
 def _normalized(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -80,13 +81,9 @@ def make_tube_ring_vertices(
             normal = _normalized(projected_normal, normal)
         binormal = _normalized(np.cross(tangent, normal), reference)
 
-        ring = (
-            point[None, :]
-            + radius
-            * (
-                np.cos(angles)[:, None] * normal[None, :]
-                + np.sin(angles)[:, None] * binormal[None, :]
-            )
+        ring = point[None, :] + radius * (
+            np.cos(angles)[:, None] * normal[None, :]
+            + np.sin(angles)[:, None] * binormal[None, :]
         )
         vertices[point_idx] = ring.astype(np.float32)
 
@@ -180,7 +177,12 @@ def make_tube_wire_segments(
 
     for segment_idx in axial_indices:
         segments.extend(
-            np.stack([ring_vertices[point_idx, segment_idx], ring_vertices[point_idx + 1, segment_idx]])
+            np.stack(
+                [
+                    ring_vertices[point_idx, segment_idx],
+                    ring_vertices[point_idx + 1, segment_idx],
+                ]
+            )
             for point_idx in range(num_points - 1)
         )
 
@@ -261,7 +263,7 @@ def add_controller_visibility_selector(
             return
         points = make_tube_wire_segments(
             target_curves[frame_idx],
-            radius=renderer._robot_radius * 1.03,
+            radius=renderer._robot_radius * TARGET_WIREFRAME_RADIUS_SCALE,
             radial_segments=target_radial_segments,
         )
         color = target_wire_color(target_opacity)
@@ -368,7 +370,7 @@ def render_run(
         robot,
         num_points=num_points,
         port=viser_port,
-        backbone_style="swept",
+        backbone_style="discrete",
         open_browser=open_browser,
         color_config=color_config,
     )
