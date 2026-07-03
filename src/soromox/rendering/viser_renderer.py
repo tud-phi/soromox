@@ -469,7 +469,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
                     handle = self._server.scene.add_icosphere(
                         name=f"/robots/robot_{robot_idx}/backbone/pt_{pt_idx}",
-                        radius=self._robot_radius * 0.8,
+                        radius=self._robot_radius,
                         color=color,
                         opacity=opacity,
                         subdivisions=self._sphere_resolution,
