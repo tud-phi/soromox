@@ -302,9 +302,20 @@ class FakeViserLineHandle:
         self.remove_count += 1
 
 
+class FakeViserGeometryHandle:
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+        self.remove_count = 0
+
+    def remove(self):
+        self.remove_count += 1
+
+
 class FakeViserScene:
     def __init__(self):
         self.line_segments = []
+        self.icospheres = []
+        self.trimeshes = []
 
     def add_line_segments(self, *, name, points, colors, line_width):
         handle = FakeViserLineHandle(
@@ -314,6 +325,16 @@ class FakeViserScene:
             line_width=line_width,
         )
         self.line_segments.append(handle)
+        return handle
+
+    def add_icosphere(self, **kwargs):
+        handle = FakeViserGeometryHandle(**kwargs)
+        self.icospheres.append(handle)
+        return handle
+
+    def add_mesh_trimesh(self, **kwargs):
+        handle = FakeViserGeometryHandle(**kwargs)
+        self.trimeshes.append(handle)
         return handle
 
 
@@ -484,6 +505,31 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
 
     assert_allclose(client.camera.look_at, np.array([1.0, 0.5, 0.0]), atol=1e-12)
     assert_allclose(client.camera.position, np.array([3.0, 0.5, 0.0]), atol=1e-12)
+
+
+def test_viser_discrete_backbone_spheres_use_robot_radius():
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False, backbone_style="discrete")
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    curves = np.array([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    point_colors = np.ones((1, 2, 4), dtype=np.float64)
+
+    renderer._build_robot_geometry(
+        curves,
+        point_colors,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    assert_allclose(
+        np.array([handle.radius for handle in server.scene.icospheres]),
+        np.full(2, renderer._robot_radius),
+        atol=1e-12,
+    )
 
 
 def test_viser_default_camera_uses_backend_specific_distance():
