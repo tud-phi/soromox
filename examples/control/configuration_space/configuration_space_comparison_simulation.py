@@ -126,7 +126,7 @@ def create_robot() -> tuple[PCS, int, int]:
     rho = 1070 * jnp.ones((num_segments,))
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
-    damping_matrix = 1e-3 * jnp.diag(
+    damping_matrix = 3e-4 * jnp.diag(
         (
             jnp.repeat(
                 jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]),
@@ -171,6 +171,11 @@ def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
     ki_segment = jnp.array([ki_rot, ki_rot, ki_rot, ki_lin, ki_lin, ki_lin])
     kd_segment = jnp.array([kd_rot, kd_rot, kd_rot, kd_lin, kd_lin, kd_lin])
 
+    print("PID gains:")
+    print(f"  Kp: {kp_segment}")
+    print(f"  Ki: {ki_segment}")
+    print(f"  Kd: {kd_segment}")
+
     return PIDControl(
         Kp=jnp.tile(kp_segment, num_segments),
         Ki=jnp.tile(ki_segment, num_segments),
@@ -189,9 +194,9 @@ def create_setpoint_trajectory(
     ts = jnp.linspace(t0, t1, 1000)
     step_times = jnp.array([0.0, 3.0, 6.0, 9.0, 12.0])
 
-    kappa_y_values = jnp.array([0.0, 2.0, -1.0, 1.5, 0.0])
-    kappa_z_values = jnp.array([0.0, 0.5, -0.8, 0.3, 0.0])
-    sigma_x_values = jnp.array([0.0, 0.02, -0.01, 0.01, 0.0])
+    kappa_y_values = jnp.array([0.0, 20.0, -10.0, 15.0, 0.0])
+    kappa_z_values = jnp.array([0.0, 5.0, -8.0, 3.0, 0.0])
+    sigma_x_values = jnp.array([0.0, 0.06, -0.03, 0.03, 0.0])
 
     def x_des_fn(t):
         q_des = jnp.zeros((num_dofs,))
