@@ -285,24 +285,28 @@ def test_isupport_actuation_matrix_projects_to_active_strains():
 
 
 @pytest.mark.parametrize(
-    "pcs_segment_lengths",
+    ("pcs_segment_counts", "rigid_connector_selector"),
     [
-        [[0.04, 0.06], [0.025, 0.075]],
-        ((0.04, 0.06), (0.025, 0.075)),
-        jnp.array([[0.04, 0.06], [0.025, 0.075]]),
+        ([2, 2], [False, False, False]),
+        ((2, 2), (False, False, False)),
+        (jnp.array([2, 2]), jnp.array([False, False, False])),
     ],
 )
-def test_isupport_structure_accepts_sequence_inputs(pcs_segment_lengths):
-    params = make_isupport_params(num_segments=2)
+def test_isupport_structure_accepts_sequence_inputs(
+    pcs_segment_counts, rigid_connector_selector
+):
+    params = make_isupport_params(num_segments=2).replace(
+        pcs_segment_lengths=jnp.array([0.04, 0.06, 0.025, 0.075])
+    )
     structure = ISupportStructure(
         num_gauss_points=1,
-        pcs_segment_lengths=pcs_segment_lengths,
-        rigid_connector_lengths=[0.0, 0.0, 0.0],
+        pcs_segment_counts=pcs_segment_counts,
+        rigid_connector_selector=rigid_connector_selector,
     )
     robot = ISupport(params=params, structure=structure)
 
-    assert robot.structure.pcs_segment_lengths == ((0.04, 0.06), (0.025, 0.075))
-    assert robot.structure.rigid_connector_lengths == (0.0, 0.0, 0.0)
+    assert robot.structure.pcs_segment_counts == (2, 2)
+    assert robot.structure.rigid_connector_selector == (False, False, False)
     assert robot.num_pneumatic_segments == 2
     assert robot.num_pcs_segments == 4
     assert jnp.allclose(robot.L, jnp.array([0.04, 0.06, 0.025, 0.075]))
@@ -312,36 +316,82 @@ def test_isupport_structure_accepts_sequence_inputs(pcs_segment_lengths):
     )
 
 
+def test_isupport_structure_accepts_scalar_topology_inputs():
+    params = make_isupport_params(num_segments=2).replace(
+        pcs_segment_lengths=jnp.array([0.05, 0.05, 0.05, 0.05])
+    )
+    robot = ISupport(
+        params=params,
+        structure=ISupportStructure(
+            num_gauss_points=1,
+            pcs_segment_counts=2,
+            rigid_connector_selector=False,
+        ),
+    )
+
+    assert robot.structure.pcs_segment_counts == (2, 2)
+    assert robot.structure.rigid_connector_selector == (False, False, False)
+    assert jnp.allclose(robot.L, jnp.array([0.05, 0.05, 0.05, 0.05]))
+
+
 def test_isupport_structure_validates_split_sums_and_connector_count():
     params = make_isupport_params(num_segments=2)
 
     with pytest.raises(ValueError, match="sum"):
         ISupport(
-            params=params,
+            params=params.replace(pcs_segment_lengths=jnp.array([0.04, 0.05, 0.1])),
             structure=ISupportStructure(
                 num_gauss_points=1,
-                pcs_segment_lengths=[[0.04, 0.05], [0.1]],
+                pcs_segment_counts=(2, 1),
             ),
         )
 
-    with pytest.raises(ValueError, match="one more entry"):
+    with pytest.raises(ValueError, match="pcs_segment_counts"):
         ISupport(
             params=params,
             structure=ISupportStructure(
                 num_gauss_points=1,
-                rigid_connector_lengths=[0.0, 0.0],
+                pcs_segment_counts=(2, 2, 1),
+            ),
+        )
+
+    with pytest.raises(ValueError, match="rigid_connector_selector"):
+        ISupport(
+            params=params,
+            structure=ISupportStructure(
+                num_gauss_points=1,
+                rigid_connector_selector=[False, False],
+            ),
+        )
+
+    with pytest.raises(ValueError, match="unselected connector"):
+        ISupport(
+            params=params.replace(rigid_connector_lengths=jnp.array([0.01, 0.0, 0.0])),
+            structure=ISupportStructure(num_gauss_points=1),
+        )
+
+    with pytest.raises(ValueError, match="Selected rigid connectors"):
+        ISupport(
+            params=params,
+            structure=ISupportStructure(
+                num_gauss_points=1,
+                rigid_connector_selector=[True, False, False],
             ),
         )
 
 
 def test_isupport_rigid_connectors_expand_in_documented_sequence():
-    params = make_isupport_params(num_segments=2).replace(length=jnp.array([0.1, 0.2]))
+    params = make_isupport_params(num_segments=2).replace(
+        length=jnp.array([0.1, 0.2]),
+        pcs_segment_lengths=jnp.array([0.04, 0.06, 0.2]),
+        rigid_connector_lengths=jnp.array([0.01, 0.02, 0.03]),
+    )
     robot = ISupport(
         params=params,
         structure=ISupportStructure(
             num_gauss_points=1,
-            pcs_segment_lengths=[[0.04, 0.06], [0.2]],
-            rigid_connector_lengths=[0.01, 0.02, 0.03],
+            pcs_segment_counts=(2, 1),
+            rigid_connector_selector=(True, True, True),
         ),
     )
 
@@ -369,13 +419,15 @@ def test_isupport_actuation_groups_pressures_by_pneumatic_segment_after_split():
         chamber_inner_radius=jnp.array([0.002, 0.003]),
         chamber_distance=jnp.array([0.01, 0.015]),
         chamber_angle_offset=jnp.array([0.0, 0.2]),
+        pcs_segment_lengths=jnp.array([0.04, 0.06, 0.2]),
+        rigid_connector_lengths=jnp.array([0.01, 0.02, 0.03]),
     )
     robot = ISupport(
         params=params,
         structure=ISupportStructure(
             num_gauss_points=1,
-            pcs_segment_lengths=[[0.04, 0.06], [0.2]],
-            rigid_connector_lengths=[0.01, 0.02, 0.03],
+            pcs_segment_counts=(2, 1),
+            rigid_connector_selector=(True, True, True),
         ),
     )
 
@@ -403,3 +455,30 @@ def test_isupport_update_params_and_validation():
 
     with pytest.raises(ValueError, match="chamber_inner_radius"):
         robot.update_params(chamber_inner_radius=jnp.array([0.001, 0.002]))
+
+    split_params = make_isupport_params(num_segments=2).replace(
+        length=jnp.array([0.1, 0.2]),
+        pcs_segment_lengths=jnp.array([0.04, 0.06, 0.2]),
+        rigid_connector_lengths=jnp.array([0.01, 0.02, 0.03]),
+    )
+    split_robot = ISupport(
+        params=split_params,
+        structure=ISupportStructure(
+            num_gauss_points=1,
+            pcs_segment_counts=(2, 1),
+            rigid_connector_selector=(True, True, True),
+        ),
+    )
+
+    updated_split = split_robot.update_params(
+        length=jnp.array([0.12, 0.2]),
+        pcs_segment_lengths=jnp.array([0.05, 0.07, 0.2]),
+        rigid_connector_lengths=jnp.array([0.015, 0.025, 0.035]),
+    )
+
+    assert updated_split.structure.pcs_segment_counts == (2, 1)
+    assert updated_split.structure.rigid_connector_selector == (True, True, True)
+    assert jnp.allclose(
+        updated_split.L,
+        jnp.array([0.015, 0.05, 0.07, 0.025, 0.2, 0.035]),
+    )

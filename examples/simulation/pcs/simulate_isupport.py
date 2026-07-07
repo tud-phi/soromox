@@ -27,13 +27,17 @@ if __name__ == "__main__":
     )  # Shear modulus from elastic modulus and poisson ratio
 
     pneumatic_segment_lengths = jnp.array([190e-3, 180e-3])
-    rigid_connector_lengths = (41e-3, 27e-3, 6e-3)
-    # Each inner tuple partitions one pneumatic segment into PCS segments.
-    # The entries must sum to the matching pneumatic segment length above.
-    pcs_segment_lengths = (
-        (95e-3, 95e-3),
-        (60e-3, 60e-3, 60e-3),
-    )
+    # Topology: how many PCS segments approximate each pneumatic segment.
+    pcs_segment_counts = (2, 3)
+    # Parameters: metric PCS segment lengths, flattened by pneumatic segment.
+    # The first two entries sum to 190 mm; the last three sum to 180 mm.
+    # Set this to None to divide each pneumatic segment equally according to
+    # pcs_segment_counts.
+    pcs_segment_lengths = jnp.array([95e-3, 95e-3, 60e-3, 60e-3, 60e-3])
+    # Topology: base, interface, and tip connector slots are present.
+    rigid_connector_selector = (True, True, True)
+    # Parameters: base connector, interface connector, and tip connector lengths.
+    rigid_connector_lengths = jnp.array([41e-3, 27e-3, 6e-3])
 
     # damping coefficient
     # these values are from the paper but they seem way too large
@@ -72,6 +76,8 @@ if __name__ == "__main__":
         chamber_outer_radius=7.79 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_distance=20 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_angle_offset=jnp.zeros((num_pneumatic_segments,)),
+        pcs_segment_lengths=pcs_segment_lengths,
+        rigid_connector_lengths=rigid_connector_lengths,
     )
 
     # ======================================================
@@ -80,8 +86,8 @@ if __name__ == "__main__":
     robot = ISupport(
         params=params,
         structure=ISupportStructure(
-            pcs_segment_lengths=pcs_segment_lengths,
-            rigid_connector_lengths=rigid_connector_lengths,
+            pcs_segment_counts=pcs_segment_counts,
+            rigid_connector_selector=rigid_connector_selector,
         ),
     )
 
@@ -96,7 +102,7 @@ if __name__ == "__main__":
     )
     q0 = jnp.concatenate(
         [
-            jnp.tile(q0_pneumatic[i], len(pcs_segment_lengths[i]))
+            jnp.tile(q0_pneumatic[i], pcs_segment_counts[i])
             for i in range(num_pneumatic_segments)
         ]
     )

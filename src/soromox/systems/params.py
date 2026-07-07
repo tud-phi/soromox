@@ -131,6 +131,7 @@ class BaseSystemParams(eqx.Module):
                 lambda params, field_name=name: getattr(params, field_name),
                 updated,
                 value,
+                is_leaf=lambda leaf: leaf is None,
             )
         updated.validate()
         return updated
