@@ -189,8 +189,12 @@ class PressureActuatedPlanarPCSParams(PlanarPCSParams):
 class ISupportParams(PCSParams):
     """Dynamic parameters for the I-SUPPORT spatial pneumatic PCS model.
 
-    The PCS body parameters are inherited. Chamber fields describe per-segment
-    pneumatic chamber geometry and angular offsets.
+    The leading axis indexes physical pneumatic segments. ``ISupport`` expands
+    these fields into the internal PCS segment layout using ``ISupportStructure``.
+    Chamber fields describe per-pneumatic-segment chamber geometry and angular
+    offsets. ``damping_matrix`` is expressed in flattened pneumatic-segment
+    strain coordinates and must be block diagonal by pneumatic segment when the
+    model is constructed.
     """
 
     chamber_inner_radius: Array

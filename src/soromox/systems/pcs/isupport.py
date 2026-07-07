@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 import equinox as eqx
@@ -5,10 +6,232 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from soromox.systems.pcs.params import ISupportParams
-from soromox.systems.pcs.structures import PCSStructure
+from soromox.systems.pcs.structures import ISupportStructure, PCSStructure
 from soromox.utils.array_math import blk_diag
 
 from .pcs import PCS
+
+_RIGID_CONNECTOR_PARENT = -1
+
+
+def _straight_reference_strain(dtype: jnp.dtype) -> Array:
+    return jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=dtype)
+
+
+def _connector_source_index(connector_index: int, num_pneumatic_segments: int) -> int:
+    if connector_index <= 0:
+        return 0
+    if connector_index >= num_pneumatic_segments:
+        return num_pneumatic_segments - 1
+    return connector_index - 1
+
+
+def _normalize_structure_for_params(
+    params: ISupportParams,
+    structure: ISupportStructure,
+) -> ISupportStructure:
+    num_pneumatic_segments = int(params.length.shape[0])
+    pneumatic_lengths = tuple(float(length) for length in jnp.asarray(params.length))
+
+    pcs_segment_lengths = structure.pcs_segment_lengths
+    if pcs_segment_lengths is None:
+        pcs_segment_lengths = tuple((length,) for length in pneumatic_lengths)
+    if len(pcs_segment_lengths) != num_pneumatic_segments:
+        raise ValueError(
+            "pcs_segment_lengths must contain one entry per pneumatic segment; "
+            f"expected {num_pneumatic_segments}, got {len(pcs_segment_lengths)}."
+        )
+    for i, segment_lengths in enumerate(pcs_segment_lengths):
+        if len(segment_lengths) == 0:
+            raise ValueError(
+                f"pcs_segment_lengths[{i}] must contain at least one PCS segment."
+            )
+        if any(length <= 0.0 for length in segment_lengths):
+            raise ValueError("pcs_segment_lengths entries must be positive.")
+        if not math.isclose(
+            sum(segment_lengths),
+            pneumatic_lengths[i],
+            rel_tol=1e-9,
+            abs_tol=1e-12,
+        ):
+            raise ValueError(
+                "Each pcs_segment_lengths entry must sum to the matching "
+                "pneumatic segment length; "
+                f"entry {i} sums to {sum(segment_lengths)}, "
+                f"expected {pneumatic_lengths[i]}."
+            )
+
+    rigid_connector_lengths = structure.rigid_connector_lengths
+    if rigid_connector_lengths is None:
+        rigid_connector_lengths = tuple(0.0 for _ in range(num_pneumatic_segments + 1))
+    if len(rigid_connector_lengths) != num_pneumatic_segments + 1:
+        raise ValueError(
+            "rigid_connector_lengths must contain one more entry than there are "
+            "pneumatic segments; "
+            f"expected {num_pneumatic_segments + 1}, "
+            f"got {len(rigid_connector_lengths)}."
+        )
+    if any(length < 0.0 for length in rigid_connector_lengths):
+        raise ValueError("rigid_connector_lengths entries must be nonnegative.")
+
+    return ISupportStructure(
+        num_gauss_points=structure.num_gauss_points,
+        pcs_segment_lengths=pcs_segment_lengths,
+        rigid_connector_lengths=rigid_connector_lengths,
+        strain_selector=structure.strain_selector,
+        scale_rotational_basis_by_length=structure.scale_rotational_basis_by_length,
+    )
+
+
+def _expand_isupport_layout(
+    params: ISupportParams,
+    structure: ISupportStructure,
+) -> tuple[ISupportParams, PCSStructure, ISupportStructure, Array, Array]:
+    params.validate()
+    structure = _normalize_structure_for_params(params, structure)
+
+    num_pneumatic_segments = int(params.length.shape[0])
+    pneumatic_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+    radius = jnp.asarray(params.radius, dtype=jnp.float64)
+    density = jnp.asarray(params.density, dtype=jnp.float64)
+    young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
+    shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
+    reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64).reshape(
+        num_pneumatic_segments, 6
+    )
+    damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
+    damping_blocks = jnp.stack(
+        [
+            damping_matrix[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)]
+            for i in range(num_pneumatic_segments)
+        ]
+    )
+    if not bool(jnp.allclose(damping_matrix, blk_diag(damping_blocks))):
+        raise ValueError(
+            "ISupport damping_matrix must be block diagonal by pneumatic segment "
+            "before expansion into PCS segments."
+        )
+
+    r_chamber_in = jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64)
+    r_chamber_out = jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64)
+    d_chamber = jnp.asarray(params.chamber_distance, dtype=jnp.float64)
+    varphi_chamber_off = jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64)
+
+    expanded_lengths: list[float] = []
+    expanded_radius: list[Array] = []
+    expanded_density: list[Array] = []
+    expanded_young_modulus: list[Array] = []
+    expanded_shear_modulus: list[Array] = []
+    expanded_reference_strain: list[Array] = []
+    expanded_damping_blocks: list[Array] = []
+    expanded_chamber_inner_radius: list[Array] = []
+    expanded_chamber_outer_radius: list[Array] = []
+    expanded_chamber_distance: list[Array] = []
+    expanded_chamber_angle_offset: list[Array] = []
+    default_strain_selector: list[Array] = []
+    pcs_segment_to_pneumatic_segment: list[int] = []
+    pcs_segment_is_rigid: list[bool] = []
+
+    def append_segment(
+        *,
+        length: float,
+        source_index: int,
+        pneumatic_index: int,
+        is_rigid: bool,
+    ) -> None:
+        expanded_lengths.append(float(length))
+        expanded_radius.append(radius[source_index])
+        expanded_density.append(density[source_index])
+        expanded_young_modulus.append(young_modulus[source_index])
+        expanded_shear_modulus.append(shear_modulus[source_index])
+        expanded_chamber_inner_radius.append(r_chamber_in[source_index])
+        expanded_chamber_outer_radius.append(r_chamber_out[source_index])
+        expanded_chamber_distance.append(d_chamber[source_index])
+        expanded_chamber_angle_offset.append(varphi_chamber_off[source_index])
+
+        if is_rigid:
+            expanded_reference_strain.append(
+                _straight_reference_strain(reference_strain.dtype)
+            )
+            expanded_damping_blocks.append(
+                jnp.zeros((6, 6), dtype=damping_matrix.dtype)
+            )
+            default_strain_selector.append(jnp.zeros((6,), dtype=bool))
+            pcs_segment_to_pneumatic_segment.append(_RIGID_CONNECTOR_PARENT)
+        else:
+            length_scale = length / float(pneumatic_lengths[pneumatic_index])
+            expanded_reference_strain.append(reference_strain[pneumatic_index])
+            expanded_damping_blocks.append(
+                damping_blocks[pneumatic_index] * length_scale
+            )
+            default_strain_selector.append(jnp.ones((6,), dtype=bool))
+            pcs_segment_to_pneumatic_segment.append(pneumatic_index)
+        pcs_segment_is_rigid.append(is_rigid)
+
+    for connector_index in range(num_pneumatic_segments + 1):
+        connector_length = structure.rigid_connector_lengths[connector_index]
+        if connector_length > 0.0:
+            append_segment(
+                length=connector_length,
+                source_index=_connector_source_index(
+                    connector_index, num_pneumatic_segments
+                ),
+                pneumatic_index=_RIGID_CONNECTOR_PARENT,
+                is_rigid=True,
+            )
+
+        if connector_index < num_pneumatic_segments:
+            for segment_length in structure.pcs_segment_lengths[connector_index]:
+                append_segment(
+                    length=segment_length,
+                    source_index=connector_index,
+                    pneumatic_index=connector_index,
+                    is_rigid=False,
+                )
+
+    strain_selector = jnp.concatenate(default_strain_selector)
+    if structure.strain_selector is not None:
+        user_strain_selector = jnp.asarray(structure.strain_selector)
+        if not jnp.issubdtype(user_strain_selector.dtype, jnp.bool_):
+            raise TypeError(
+                f"strain_selector must be a boolean array, got {user_strain_selector.dtype}"
+            )
+        if user_strain_selector.size != strain_selector.size:
+            raise ValueError(
+                "strain_selector must have one boolean per expanded PCS strain; "
+                f"expected {strain_selector.size}, got {user_strain_selector.size}."
+            )
+        strain_selector = user_strain_selector.reshape(strain_selector.shape) & (
+            strain_selector
+        )
+
+    expanded_params = ISupportParams(
+        base_pose=params.base_pose,
+        length=jnp.asarray(expanded_lengths, dtype=jnp.float64),
+        radius=jnp.stack(expanded_radius),
+        density=jnp.stack(expanded_density),
+        gravity=params.gravity,
+        young_modulus=jnp.stack(expanded_young_modulus),
+        shear_modulus=jnp.stack(expanded_shear_modulus),
+        damping_matrix=blk_diag(jnp.stack(expanded_damping_blocks)),
+        reference_strain=jnp.concatenate(expanded_reference_strain),
+        chamber_inner_radius=jnp.stack(expanded_chamber_inner_radius),
+        chamber_outer_radius=jnp.stack(expanded_chamber_outer_radius),
+        chamber_distance=jnp.stack(expanded_chamber_distance),
+        chamber_angle_offset=jnp.stack(expanded_chamber_angle_offset),
+    )
+    pcs_structure = PCSStructure(
+        num_gauss_points=structure.num_gauss_points,
+        strain_selector=strain_selector,
+        scale_rotational_basis_by_length=structure.scale_rotational_basis_by_length,
+    )
+    return (
+        expanded_params,
+        pcs_structure,
+        structure,
+        jnp.asarray(pcs_segment_to_pneumatic_segment, dtype=jnp.int32),
+        jnp.asarray(pcs_segment_is_rigid, dtype=bool),
+    )
 
 
 class ISupport(PCS):
@@ -61,6 +284,8 @@ class ISupport(PCS):
     """
 
     params: ISupportParams
+    pcs_params: ISupportParams
+    structure: ISupportStructure
 
     r_chamber_in: Array  # inner radius of each segment's chamber, shape (num_segments,)
     r_chamber_out: (
@@ -72,11 +297,15 @@ class ISupport(PCS):
     num_chambers_per_segment: int = eqx.field(
         static=True, default=3
     )  # number of pneumatic chambers per segment
+    num_pneumatic_segments: int = eqx.field(static=True)
+    num_pcs_segments: int = eqx.field(static=True)
+    pcs_segment_to_pneumatic_segment: Array
+    pcs_segment_is_rigid: Array
 
     def __init__(
         self,
         params: ISupportParams,
-        structure: PCSStructure | None = None,
+        structure: ISupportStructure | None = None,
         num_chambers_per_segment: int = 3,
         **kwargs: Any,
     ):
@@ -85,22 +314,40 @@ class ISupport(PCS):
 
         Args:
             params: Dynamic I-SUPPORT parameters.
-            structure: Static PCS layout. If omitted, the default PCS structure
-                is used.
+            structure: Static I-SUPPORT layout. If omitted, each pneumatic
+                segment is represented by one PCS segment and no rigid
+                connectors are inserted.
             num_chambers_per_segment:
                 Number of pneumatic chambers per segment. Defaults to 3.
             **kwargs: Additional keyword arguments.
         """
         if not isinstance(params, ISupportParams):
             raise TypeError("params must be an ISupportParams instance.")
-        super().__init__(params, structure=structure, **kwargs)
+        if structure is None:
+            structure = ISupportStructure()
+        if not isinstance(structure, ISupportStructure):
+            raise TypeError("structure must be an ISupportStructure instance.")
 
         self.num_chambers_per_segment = num_chambers_per_segment
-        self.num_actuators = (
-            self.num_segments * self.num_chambers_per_segment
-        )  # each segment has one pressure input per chamber
+        (
+            pcs_params,
+            pcs_structure,
+            normalized_structure,
+            pcs_segment_to_pneumatic_segment,
+            pcs_segment_is_rigid,
+        ) = _expand_isupport_layout(params, structure)
+        super().__init__(pcs_params, structure=pcs_structure, **kwargs)
 
-        self._set_params(params)
+        self.params = params
+        self.pcs_params = pcs_params
+        self.structure = normalized_structure
+        self.num_pneumatic_segments = int(params.length.shape[0])
+        self.num_pcs_segments = self.num_segments
+        self.pcs_segment_to_pneumatic_segment = pcs_segment_to_pneumatic_segment
+        self.pcs_segment_is_rigid = pcs_segment_is_rigid
+        self.num_actuators = (
+            self.num_pneumatic_segments * self.num_chambers_per_segment
+        )  # each pneumatic segment has one pressure input per chamber
 
     def _set_params(self, params: ISupportParams):
         """
@@ -182,43 +429,43 @@ class ISupport(PCS):
             )
         self.varphi_chamber_off = varphi_chamber_off
 
+    def _current_body_params(self) -> ISupportParams:
+        """Return the expanded PCS params used by inherited PCS update helpers."""
+        return self.pcs_params
+
     def with_params(self, params: ISupportParams) -> "ISupport":
-        """Return an updated copy with a full typed parameter object."""
+        """Return an updated copy with a full pneumatic-segment parameter object."""
         if not isinstance(params, ISupportParams):
             raise TypeError("params must be an ISupportParams instance.")
+        (
+            pcs_params,
+            _,
+            _,
+            _,
+            _,
+        ) = _expand_isupport_layout(params, self.structure)
         chamber_arrays = (
-            jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64),
-            jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64),
-            jnp.asarray(params.chamber_distance, dtype=jnp.float64),
-            jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64),
+            jnp.asarray(pcs_params.chamber_inner_radius, dtype=jnp.float64),
+            jnp.asarray(pcs_params.chamber_outer_radius, dtype=jnp.float64),
+            jnp.asarray(pcs_params.chamber_distance, dtype=jnp.float64),
+            jnp.asarray(pcs_params.chamber_angle_offset, dtype=jnp.float64),
         )
-        for name, value in zip(
-            (
-                "chamber_inner_radius",
-                "chamber_outer_radius",
-                "chamber_distance",
-                "chamber_angle_offset",
-            ),
-            chamber_arrays,
-        ):
-            if value.shape != (self.num_segments,):
-                raise ValueError(
-                    f"{name} must have shape ({self.num_segments},), got {value.shape}."
-                )
-        updated_self = self._with_pcs_params(params)
-        return eqx.tree_at(
+        updated_self = self._with_pcs_params(pcs_params, stored_params=params)
+        updated_self = eqx.tree_at(
             lambda model: (
+                model.pcs_params,
                 model.r_chamber_in,
                 model.r_chamber_out,
                 model.d_chamber,
                 model.varphi_chamber_off,
             ),
             updated_self,
-            chamber_arrays,
+            (pcs_params, *chamber_arrays),
         )
+        return updated_self._with_refreshed_precomputed_matrices()
 
     def update_params(self, **updates: Array) -> "ISupport":
-        """Return an updated copy with selected typed parameter fields replaced."""
+        """Return an updated copy with selected pneumatic parameter fields replaced."""
         return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
@@ -365,7 +612,12 @@ class ISupport(PCS):
     def actuation_matrix(self, q: Array) -> Array:
         """
         Compute the actuation matrix of the robot.
-        We assume that each segment contains self.num_chambers_per_segment identical and symmetric pneumatic chambers that are pressurized to p1=u1, p2=u2, p3=u3, etc.
+        We assume that each pneumatic segment contains
+        self.num_chambers_per_segment identical and symmetric pneumatic chambers
+        that are pressurized to p1=u1, p2=u2, p3=u3, etc. If a pneumatic
+        segment is split into multiple PCS segments, the same pressure columns
+        are applied to each child PCS segment. Rigid connector PCS segments do
+        not contribute to the actuation matrix.
         Furthermore, we consider the following geometrical arrangement:
             - The 1st chamber with pressure p1 is located at the
               chamber_angle_offset value for its segment.
@@ -412,7 +664,7 @@ class ISupport(PCS):
 
             return A_single_chamber
 
-        def _actuation_matrix_segment_i(i: Array) -> Array:
+        def _actuation_matrix_pcs_segment_i(i: Array) -> Array:
             # compute the local polar chamber angles
             varphi_chambers = self._local_actuator_polar_angles(i)
 
@@ -426,14 +678,33 @@ class ISupport(PCS):
 
             return A_segment_i
 
-        A_blocks_tot = vmap(_actuation_matrix_segment_i)(
+        def _actuation_matrix_pcs_segment_full(i: Array) -> Array:
+            A_segment_i = _actuation_matrix_pcs_segment_i(i)
+            pneumatic_segment_i = self.pcs_segment_to_pneumatic_segment[i]
+            local_column_indices = (
+                jnp.arange(self.num_actuators)
+                - pneumatic_segment_i * self.num_chambers_per_segment
+            )
+            valid_columns = (
+                (pneumatic_segment_i >= 0)
+                & (local_column_indices >= 0)
+                & (local_column_indices < self.num_chambers_per_segment)
+            )
+            local_column_indices = jnp.clip(
+                local_column_indices, 0, self.num_chambers_per_segment - 1
+            )
+            return jnp.where(
+                valid_columns[None, :],
+                A_segment_i[:, local_column_indices],
+                0.0,
+            )
+
+        A_blocks_tot = vmap(_actuation_matrix_pcs_segment_full)(
             jnp.arange(self.num_segments),
         )
 
-        # assemble the contributions of the actuation of each segment
-        A_full = blk_diag(
-            A_blocks_tot
-        )  # shape (6 * num_segments, num_segments * num_chambers_per_segment)
+        # assemble the contributions of the actuation of each PCS segment
+        A_full = A_blocks_tot.reshape(self.num_strains, self.num_actuators)
         A = self.B_xi.T @ A_full  # shape (num_active_strains, num_actuators)
 
         return A

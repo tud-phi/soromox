@@ -10,7 +10,11 @@ from soromox.systems.pcs.params import (
     TendonActuatedPCSParams,
     TendonActuatedPlanarPCSParams,
 )
-from soromox.systems.pcs.structures import PCSStructure, PlanarPCSStructure
+from soromox.systems.pcs.structures import (
+    ISupportStructure,
+    PCSStructure,
+    PlanarPCSStructure,
+)
 
 from .isupport import ISupport
 from .pcs import PCS
@@ -29,6 +33,7 @@ __all__ = [
     "PressureActuatedPlanarPCS",
     "PCSParams",
     "PCSStructure",
+    "ISupportStructure",
     "PlanarPCSParams",
     "PlanarPCSStructure",
     "TendonActuatedPCSParams",

@@ -35,7 +35,11 @@ from soromox.systems.pcs.params import (
     TendonActuatedPCSParams,
     TendonActuatedPlanarPCSParams,
 )
-from soromox.systems.pcs.structures import PCSStructure, PlanarPCSStructure
+from soromox.systems.pcs.structures import (
+    ISupportStructure,
+    PCSStructure,
+    PlanarPCSStructure,
+)
 from soromox.systems.pendulum.params import (
     PendulumParams,
     TendonActuatedPendulumParams,
@@ -116,6 +120,7 @@ __all__ = [
     "PCS",
     "PCSParams",
     "PCSStructure",
+    "ISupportStructure",
     "ISupport",
     "ISupportParams",
     "PlanarPCS",

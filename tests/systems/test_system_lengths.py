@@ -25,6 +25,7 @@ from soromox.systems import (
     CrossSectionGeometry,
     ISupport,
     ISupportParams,
+    ISupportStructure,
     PCSStructure,
     Pendulum,
     PlanarHSA,
@@ -178,7 +179,7 @@ def _isupport_robot():
         chamber_distance=jnp.array([0.01, 0.01], dtype=jnp.float64),
         chamber_angle_offset=jnp.array([0.0, 0.0], dtype=jnp.float64),
     )
-    return ISupport(params=params, structure=PCSStructure(num_gauss_points=1))
+    return ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
 
 
 def _planar_hsa_robot():
