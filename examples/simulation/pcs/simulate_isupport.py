@@ -28,6 +28,12 @@ if __name__ == "__main__":
 
     pneumatic_segment_lengths = jnp.array([190e-3, 180e-3])
     rigid_connector_lengths = (41e-3, 27e-3, 6e-3)
+    # Each inner tuple partitions one pneumatic segment into PCS segments.
+    # The entries must sum to the matching pneumatic segment length above.
+    pcs_segment_lengths = (
+        (95e-3, 95e-3),
+        (60e-3, 60e-3, 60e-3),
+    )
 
     # damping coefficient
     # these values are from the paper but they seem way too large
@@ -73,18 +79,27 @@ if __name__ == "__main__":
     # ======================================================
     robot = ISupport(
         params=params,
-        structure=ISupportStructure(rigid_connector_lengths=rigid_connector_lengths),
+        structure=ISupportStructure(
+            pcs_segment_lengths=pcs_segment_lengths,
+            rigid_connector_lengths=rigid_connector_lengths,
+        ),
     )
 
     # =====================================================
     # Simulation upon time
     # =====================================================
     # Initial configuration
-    q0 = jnp.repeat(
+    q0_pneumatic = jnp.repeat(
         jnp.array([0.0, 0.0, -1.0 * jnp.pi, 0.1, 0.2, 0.0])[None, :],
         num_pneumatic_segments,
         axis=0,
-    ).flatten()
+    )
+    q0 = jnp.concatenate(
+        [
+            jnp.tile(q0_pneumatic[i], len(pcs_segment_lengths[i]))
+            for i in range(num_pneumatic_segments)
+        ]
+    )
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 
