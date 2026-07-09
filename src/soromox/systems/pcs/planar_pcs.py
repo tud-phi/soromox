@@ -93,7 +93,7 @@ class PlanarPCS(SoftRobot):
     integration_weights: Array
     M_segments: Array  # Cached per-segment mass matrices
     K_full: Array  # Cached full stiffness matrix
-    K: Array  # Cached active-coordinate stiffness matrix
+    K_active: Array  # Cached active-coordinate stiffness matrix
     D_full: Array  # Cached full damping matrix
     D_active: Array  # Cached active-coordinate damping matrix
 
@@ -439,7 +439,7 @@ class PlanarPCS(SoftRobot):
         ) = self._precomputed_matrices()
         object.__setattr__(self, "M_segments", M_segments)
         object.__setattr__(self, "K_full", K_full)
-        object.__setattr__(self, "K", K_active)
+        object.__setattr__(self, "K_active", K_active)
         object.__setattr__(self, "D_full", D_full)
         object.__setattr__(self, "D_active", D_active)
 
@@ -455,7 +455,7 @@ class PlanarPCS(SoftRobot):
             D_active,
         ) = updated_self._precomputed_matrices()
         return eqx.tree_at(
-            lambda m: (m.M_segments, m.K_full, m.K, m.D_full, m.D_active),
+            lambda m: (m.M_segments, m.K_full, m.K_active, m.D_full, m.D_active),
             updated_self,
             (M_segments, K_full, K_active, D_full, D_active),
         )
@@ -2357,7 +2357,7 @@ class PlanarPCS(SoftRobot):
         if formulate_in_strain_space:
             return self.K_full
 
-        return self.K
+        return self.K_active
 
     @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
@@ -2377,7 +2377,7 @@ class PlanarPCS(SoftRobot):
         Returns:
             K (Array): Stiffness matrix of shape (num_active_strains, num_active_strains).
         """
-        return self.K
+        return self.K_active
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
@@ -2390,7 +2390,7 @@ class PlanarPCS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (num_active_strains,).
         """
-        return self.K @ q
+        return self.K_active @ q
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:

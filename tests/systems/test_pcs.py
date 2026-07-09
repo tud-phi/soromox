@@ -1381,7 +1381,7 @@ def test_cached_constant_matrices_refresh_after_update_params():
 
     assert_allclose(updated.M_segments, expected_M, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.K_full, expected_K_full, rtol=RTOL, atol=ATOL)
-    assert_allclose(updated.K, expected_K, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.K_active, expected_K, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.D_full, expected_D_full, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.D_active, expected_D, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.stiffness_matrix(), expected_K, rtol=RTOL, atol=ATOL)
