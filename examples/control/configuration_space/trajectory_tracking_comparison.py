@@ -54,15 +54,7 @@ def create_robot() -> tuple[PCS, int]:
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
-    # Damping matrix
-    damping_matrix = 1e-3 * jnp.diag(
-        (
-            jnp.repeat(
-                jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
-            )
-            * segment_lengths[:, None]
-        ).flatten()
-    )
+    material_damping_coefficient = 362.0
     params = PCSParams(
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         length=segment_lengths,
@@ -71,7 +63,7 @@ def create_robot() -> tuple[PCS, int]:
         gravity=jnp.array([0.0, 0.0, 9.81]),
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
+        material_damping_coefficient=material_damping_coefficient,
         reference_strain=jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),

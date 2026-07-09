@@ -180,18 +180,32 @@ def _expand_isupport_layout(
     reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64).reshape(
         num_pneumatic_segments, 6
     )
-    damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
-    damping_blocks = jnp.stack(
-        [
-            damping_matrix[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)]
-            for i in range(num_pneumatic_segments)
-        ]
-    )
-    if not bool(jnp.allclose(damping_matrix, blk_diag(damping_blocks))):
-        raise ValueError(
-            "ISupport damping_matrix must be block diagonal by pneumatic segment "
-            "before expansion into PCS segments."
+    has_damping_matrix = params.damping_matrix is not None
+    if has_damping_matrix:
+        damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
+        damping_blocks = jnp.stack(
+            [
+                damping_matrix[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)]
+                for i in range(num_pneumatic_segments)
+            ]
         )
+        if not bool(jnp.allclose(damping_matrix, blk_diag(damping_blocks))):
+            raise ValueError(
+                "ISupport damping_matrix must be block diagonal by pneumatic segment "
+                "before expansion into PCS segments."
+            )
+    else:
+        damping_matrix = None
+        damping_blocks = None
+        material_damping_coefficient = jnp.asarray(
+            params.material_damping_coefficient, dtype=jnp.float64
+        )
+        if material_damping_coefficient.ndim == 0:
+            material_damping_coefficient = jnp.full(
+                (num_pneumatic_segments,),
+                material_damping_coefficient,
+                dtype=jnp.float64,
+            )
 
     r_chamber_in = jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64)
     r_chamber_out = jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64)
@@ -205,6 +219,7 @@ def _expand_isupport_layout(
     expanded_shear_modulus: list[Array] = []
     expanded_reference_strain: list[Array] = []
     expanded_damping_blocks: list[Array] = []
+    expanded_material_damping_coefficient: list[Array] = []
     expanded_chamber_inner_radius: list[Array] = []
     expanded_chamber_outer_radius: list[Array] = []
     expanded_chamber_distance: list[Array] = []
@@ -234,17 +249,27 @@ def _expand_isupport_layout(
             expanded_reference_strain.append(
                 _straight_reference_strain(reference_strain.dtype)
             )
-            expanded_damping_blocks.append(
-                jnp.zeros((6, 6), dtype=damping_matrix.dtype)
-            )
+            if has_damping_matrix:
+                expanded_damping_blocks.append(
+                    jnp.zeros((6, 6), dtype=damping_matrix.dtype)
+                )
+            else:
+                expanded_material_damping_coefficient.append(
+                    jnp.asarray(0.0, dtype=material_damping_coefficient.dtype)
+                )
             default_strain_selector.append(jnp.zeros((6,), dtype=bool))
             pcs_segment_to_pneumatic_segment.append(_RIGID_CONNECTOR_PARENT)
         else:
             length_scale = length / pneumatic_lengths[pneumatic_index]
             expanded_reference_strain.append(reference_strain[pneumatic_index])
-            expanded_damping_blocks.append(
-                damping_blocks[pneumatic_index] * length_scale
-            )
+            if has_damping_matrix:
+                expanded_damping_blocks.append(
+                    damping_blocks[pneumatic_index] * length_scale
+                )
+            else:
+                expanded_material_damping_coefficient.append(
+                    material_damping_coefficient[pneumatic_index]
+                )
             default_strain_selector.append(jnp.ones((6,), dtype=bool))
             pcs_segment_to_pneumatic_segment.append(pneumatic_index)
         pcs_segment_is_rigid.append(is_rigid)
@@ -285,6 +310,14 @@ def _expand_isupport_layout(
             strain_selector
         )
 
+    expanded_kwargs: dict[str, Array] = {}
+    if has_damping_matrix:
+        expanded_kwargs["damping_matrix"] = blk_diag(jnp.stack(expanded_damping_blocks))
+    else:
+        expanded_kwargs["material_damping_coefficient"] = jnp.stack(
+            expanded_material_damping_coefficient
+        )
+
     expanded_params = ISupportParams(
         base_pose=params.base_pose,
         length=jnp.stack(expanded_lengths),
@@ -293,12 +326,12 @@ def _expand_isupport_layout(
         gravity=params.gravity,
         young_modulus=jnp.stack(expanded_young_modulus),
         shear_modulus=jnp.stack(expanded_shear_modulus),
-        damping_matrix=blk_diag(jnp.stack(expanded_damping_blocks)),
         reference_strain=jnp.concatenate(expanded_reference_strain),
         chamber_inner_radius=jnp.stack(expanded_chamber_inner_radius),
         chamber_outer_radius=jnp.stack(expanded_chamber_outer_radius),
         chamber_distance=jnp.stack(expanded_chamber_distance),
         chamber_angle_offset=jnp.stack(expanded_chamber_angle_offset),
+        **expanded_kwargs,
     )
     pcs_structure = PCSStructure(
         num_gauss_points=structure.num_gauss_points,
@@ -329,8 +362,9 @@ class ISupport(PCS):
         young_modulus: Elastic modulus of each segment [Pa], cached as ``E``.
         shear_modulus: Shear modulus of each segment [Pa], cached as ``G``.
         density: Density of each segment [kg/m^3], cached as ``rho``.
-        damping_matrix: Damping matrix of the flattened strain coordinates
-            [Pa*s], cached as ``D``.
+        damping_matrix: Resolved damping matrix of the flattened strain
+            coordinates [Pa*s], cached as ``D_full``. It can be supplied
+            directly or derived from ``material_damping_coefficient``.
         num_active_strains: Number of active strain components (based on strain_selector).
         num_strains: Total number of strain components (6 * num_segments).
         B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
@@ -456,9 +490,13 @@ class ISupport(PCS):
                     Elastic modulus of each segment [Pa].
                 - ``shear_modulus``: Array of shape ``(num_segments,)``.
                     Shear modulus of each segment [Pa].
-                - ``damping_matrix``: Array of shape
+                - ``material_damping_coefficient``: Scalar or array of shape
+                    ``(num_segments,)``. Material damping coefficient used to
+                    derive segment damping from geometry.
+                - ``damping_matrix``: Optional custom array of shape
                     ``(6 * num_segments, 6 * num_segments)``.
                     Damping matrix of the flattened strain coordinates [Pa*s].
+                    Exactly one damping input must be provided.
                 - ``reference_strain``: Array with ``6 * num_segments``
                     entries. Reference strain of the robot.
                 - ``chamber_inner_radius``: Array of shape
@@ -511,7 +549,7 @@ class ISupport(PCS):
 
     def _current_body_params(self) -> ISupportParams:
         """Return the expanded PCS params used by inherited PCS update helpers."""
-        return self.pcs_params
+        return getattr(self, "pcs_params", self.params)
 
     def with_params(self, params: ISupportParams) -> "ISupport":
         """Return an updated copy with a full pneumatic-segment parameter object."""

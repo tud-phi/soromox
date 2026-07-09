@@ -63,7 +63,8 @@ or `(num_links,)`.
 | `density` | Per-segment material density |
 | `young_modulus` | Per-segment Young's modulus |
 | `shear_modulus` | Per-segment shear modulus |
-| `damping_matrix` | Generalized damping matrix |
+| `material_damping_coefficient` | PCS material damping coefficient |
+| `damping_matrix` | Custom generalized damping matrix |
 | `gravity` | Gravity vector |
 | `base_pose` | Base configuration as scalar-first quaternion pose |
 | `reference_strain` | Reference strain vector |

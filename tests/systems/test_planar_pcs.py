@@ -1457,13 +1457,13 @@ def test_cached_constant_matrices_refresh_after_update_params_planar():
         density=0.9 * model.rho,
         young_modulus=1.25 * model.E,
         shear_modulus=0.75 * model.G,
-        damping_matrix=2.0 * model.D,
+        damping_matrix=2.0 * model.D_full,
     )
     segment_ids = jnp.arange(updated.num_segments)
     expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
     expected_K_full = updated._compute_stiffness_full_matrix()
     expected_K = updated.B_xi.T @ expected_K_full @ updated.B_xi
-    expected_D_full = updated.D
+    expected_D_full = updated.D_full
     expected_D = updated.B_xi.T @ expected_D_full @ updated.B_xi
 
     assert_allclose(updated.M_segments, expected_M, rtol=RTOL, atol=ATOL)

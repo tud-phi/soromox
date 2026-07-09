@@ -37,7 +37,8 @@ class PCS(SoftRobot):
         g0: Initial pose of the robot base as an SE(3) transformation matrix.
         g: Gravitational acceleration vector (embedded in a 6D vector).
             [0, 0, 0, g_x, g_y, g_z]
-        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        L, r, E, G, rho: Physical properties of each segment
+            (length, radius, elastic/shear modulus, etc.).
         num_active_strains: Number of active strain components (based on strain_selector).
         num_strains: Total number of strain components (6 * num_segments).
         B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
@@ -80,7 +81,6 @@ class PCS(SoftRobot):
     rho: Array
     E: Array  # Young's modulus of the segments
     G: Array  # Shear modulus of the segments
-    D: Array  # Damping coefficient of the segments
 
     num_segments: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True)
@@ -294,15 +294,64 @@ class PCS(SoftRobot):
             )
         self.G = G
 
-        # Damping matrix of the robot
-        D = params.damping_matrix
-        D = jnp.asarray(D, dtype=jnp.float64)
+    def _explicit_damping_full_matrix(self, params: PCSParams) -> Array:
+        """Return the custom full damping matrix supplied in params."""
+        if params.damping_matrix is None:
+            raise ValueError("damping_matrix is not set.")
         expected_D_shape = (self.num_strains, self.num_strains)
+        D = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
         if D.shape != expected_D_shape:
             raise ValueError(
                 f"damping_matrix must have shape {expected_D_shape}, got {D.shape}"
             )
-        self.D = D
+        return D
+
+    def _material_damping_coefficients(self) -> Array:
+        """Return one material damping coefficient per segment."""
+        params = self._current_body_params()
+        if params.material_damping_coefficient is None:
+            raise ValueError("material_damping_coefficient is not set.")
+        coefficient = jnp.asarray(
+            params.material_damping_coefficient, dtype=jnp.float64
+        )
+        if coefficient.ndim == 0:
+            return jnp.full((self.num_segments,), coefficient, dtype=jnp.float64)
+        if coefficient.shape != (self.num_segments,):
+            raise ValueError(
+                "material_damping_coefficient must be a scalar or have shape "
+                f"({self.num_segments},), got {coefficient.shape}."
+            )
+        return coefficient
+
+    def _compute_material_damping_full_matrix(self) -> Array:
+        """Compute full damping from material damping coefficients."""
+        coefficients = self._material_damping_coefficients()
+
+        def damping_block(i: Array) -> Array:
+            I_i = self._local_second_moment_of_area(i)
+            A_i = self._local_cross_sectional_area(i)
+            damping_diag = jnp.stack(
+                [
+                    I_i[0],
+                    3.0 * I_i[1],
+                    3.0 * I_i[2],
+                    3.0 * A_i,
+                    A_i,
+                    A_i,
+                ],
+                axis=0,
+            )
+            return self.L[i] * coefficients[i] * jnp.diag(damping_diag)
+
+        damping_blocks = vmap(damping_block)(jnp.arange(self.num_segments))
+        return blk_diag(damping_blocks)
+
+    def _compute_damping_full_matrix(self) -> Array:
+        """Compute the current full damping matrix."""
+        params = self._current_body_params()
+        if params.material_damping_coefficient is not None:
+            return self._compute_material_damping_full_matrix()
+        return self._explicit_damping_full_matrix(params)
 
     def _current_body_params(self) -> PCSParams:
         """Return the PCS body params, including for typed actuated wrappers."""
@@ -337,14 +386,7 @@ class PCS(SoftRobot):
         density = jnp.asarray(params.density, dtype=jnp.float64)
         young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
         shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
-        damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
         reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
-
-        expected_D_shape = (self.num_strains, self.num_strains)
-        if damping_matrix.shape != expected_D_shape:
-            raise ValueError(
-                f"damping_matrix must have shape {expected_D_shape}, got {damping_matrix.shape}"
-            )
 
         updated_self = eqx.tree_at(
             lambda m: (
@@ -358,7 +400,6 @@ class PCS(SoftRobot):
                 m.rho,
                 m.E,
                 m.G,
-                m.D,
                 m.xi_ref,
             ),
             self,
@@ -377,7 +418,6 @@ class PCS(SoftRobot):
                 density,
                 young_modulus,
                 shear_modulus,
-                damping_matrix,
                 reference_strain.reshape(self.num_strains),
             ),
         )
@@ -412,10 +452,10 @@ class PCS(SoftRobot):
             jnp.arange(self.num_segments)
         )
         K_full = self._compute_stiffness_full_matrix()
-        K = self.B_xi.T @ K_full @ self.B_xi
-        D_full = self.D
+        K_active = self.B_xi.T @ K_full @ self.B_xi
+        D_full = self._compute_damping_full_matrix()
         D_active = self.B_xi.T @ D_full @ self.B_xi
-        return M_segments, K_full, K, D_full, D_active
+        return M_segments, K_full, K_active, D_full, D_active
 
     def precompute(self) -> None:
         """Refresh state-independent matrices cached by the model."""
@@ -423,13 +463,13 @@ class PCS(SoftRobot):
         (
             M_segments,
             K_full,
-            K,
+            K_active,
             D_full,
             D_active,
         ) = self._precomputed_matrices()
         object.__setattr__(self, "M_segments", M_segments)
         object.__setattr__(self, "K_full", K_full)
-        object.__setattr__(self, "K", K)
+        object.__setattr__(self, "K", K_active)
         object.__setattr__(self, "D_full", D_full)
         object.__setattr__(self, "D_active", D_active)
 
@@ -437,10 +477,17 @@ class PCS(SoftRobot):
         """Return a copy with cached state-independent matrices refreshed."""
         B_xi = self._scaled_strain_basis(self.B_xi_unscaled)
         updated_self = eqx.tree_at(lambda m: m.B_xi, self, B_xi)
+        (
+            M_segments,
+            K_full,
+            K_active,
+            D_full,
+            D_active,
+        ) = updated_self._precomputed_matrices()
         return eqx.tree_at(
             lambda m: (m.M_segments, m.K_full, m.K, m.D_full, m.D_active),
             updated_self,
-            updated_self._precomputed_matrices(),
+            (M_segments, K_full, K_active, D_full, D_active),
         )
 
     @eqx.filter_jit

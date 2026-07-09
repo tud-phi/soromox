@@ -39,27 +39,13 @@ if __name__ == "__main__":
     # Parameters: base connector, interface connector, and tip connector lengths.
     rigid_connector_lengths = jnp.array([41e-3, 27e-3, 6e-3])
 
-    # damping coefficient
-    # these values are from the paper but they seem way too large
-    # gamma_t = 806  # translational damping constant [1/s]
-    # gamma_r = 1.9416 * 10**(-4)  # rotational damping constant [m^2/s]
-    gamma_t = 806 * 1e-3  # translational damping constant [1/s]
-    gamma_r = 1.0 * 1e-3  # rotational damping constant [m^2/s]
-    # Damping is specified per unit backbone length and must be integrated over
-    # each segment, matching the strain-space stiffness assembly. Without this
-    # length scaling the velocity term makes the two-pneumatic-segment
-    # fixed-step rollout unnecessarily stiff and can drive the explicit solver
-    # to NaNs.
-    damping_matrix = jnp.diag(
-        (
-            jnp.repeat(
-                jnp.array([[gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]]),
-                num_pneumatic_segments,
-                axis=0,
-            )
-            * pneumatic_segment_lengths[:, None]
-        ).flatten()
-    )
+    # Previous explicit damping used gamma_t = 806e-3 and gamma_r = 1.0e-3:
+    # D_i = L_i * diag([gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]).
+    # The material damping coefficient below is the least-squares scalar c for
+    # D_i(c) = L_i * c * diag([Ix, 3Iy, 3Iz, 3A, A, A]), evaluated with
+    # I-SUPPORT's actuator cross-section geometry. Equivalently,
+    # c = <D_old, D_material(1)>_F / <D_material(1), D_material(1)>_F.
+    material_damping_coefficient = 1.96e3
     params = ISupportParams(
         base_pose=jnp.array([0.5, 0.5, 0.5, -0.5, 0.0, 0.0, 0.0]),
         length=pneumatic_segment_lengths,
@@ -68,7 +54,7 @@ if __name__ == "__main__":
         gravity=jnp.array([0.0, 0.0, -9.81]),
         young_modulus=E * jnp.ones((num_pneumatic_segments,)),
         shear_modulus=G * jnp.ones((num_pneumatic_segments,)),
-        damping_matrix=damping_matrix,
+        material_damping_coefficient=material_damping_coefficient,
         reference_strain=jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_pneumatic_segments
         ),
