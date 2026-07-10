@@ -178,7 +178,7 @@ if __name__ == "__main__":
     # ViserRenderer provides interactive 3D visualization in the browser
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
-    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer = ViserRenderer(robot, num_points=50)
 
     # Create custom strain plots for PCS
     # Reshape to (T, num_segments, 6)

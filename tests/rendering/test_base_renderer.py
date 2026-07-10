@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -117,7 +119,9 @@ class DummyBatchedActuatedSpatialRobot(DummySpatialRobot):
         self.single_calls += 1
         raise AssertionError("single actuator hook should not be used")
 
-    def actuator_visual_layers_batched(self, q_batch, s_points, *, actuator_inputs=None):
+    def actuator_visual_layers_batched(
+        self, q_batch, s_points, *, actuator_inputs=None
+    ):
         self.batched_calls += 1
         num_robots = int(q_batch.shape[0])
         base_paths = jnp.stack(
@@ -316,6 +320,7 @@ class FakeViserScene:
         self.line_segments = []
         self.icospheres = []
         self.trimeshes = []
+        self.simple_meshes = []
 
     def add_line_segments(self, *, name, points, colors, line_width):
         handle = FakeViserLineHandle(
@@ -337,10 +342,21 @@ class FakeViserScene:
         self.trimeshes.append(handle)
         return handle
 
+    def add_mesh_simple(self, **kwargs):
+        handle = FakeViserGeometryHandle(**kwargs)
+        self.simple_meshes.append(handle)
+        return handle
+
 
 class FakeViserActuatorServer:
     def __init__(self):
         self.scene = FakeViserScene()
+        self.atomic_calls = 0
+
+    @contextmanager
+    def atomic(self):
+        self.atomic_calls += 1
+        yield
 
 
 class FakeViserGuiHandle:
@@ -420,12 +436,22 @@ def test_renderer_exposes_base_pose_transform_and_axis():
     )
 
 
+def test_backbone_geometry_sampling_preserves_fk_material_frames():
+    robot = DummySpatialRobot(jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]))
+    renderer = DummyRenderer(robot)
+
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 0)), jnp.array([[1.0, 2.0, 3.0]])
+    )
+
+    assert_allclose(curves[0, 0], jnp.array([1.0, 2.0, 3.0]), atol=1e-7)
+    assert_allclose(frames[0, 0], robot.base_transform[:3, :3], atol=1e-7)
+
+
 def test_camera_auto_position_rotates_default_offset_by_base_pose():
     config = CameraConfig(distance_factor=2.0, position_offset=(1.0, 0.0, 0.0))
     center = np.array([10.0, 20.0, 30.0])
-    base_transform = poses.planar_pose_to_transform(
-        jnp.array([jnp.pi / 2, 1.0, 2.0])
-    )
+    base_transform = poses.planar_pose_to_transform(jnp.array([jnp.pi / 2, 1.0, 2.0]))
 
     camera_pos, look_at = config.compute_auto_position(
         center,
@@ -444,9 +470,7 @@ def test_camera_explicit_position_remains_world_space_with_base_pose():
         position_offset=(1.0, 0.0, 0.0),
     )
     center = np.array([10.0, 20.0, 30.0])
-    base_transform = poses.planar_pose_to_transform(
-        jnp.array([jnp.pi / 2, 1.0, 2.0])
-    )
+    base_transform = poses.planar_pose_to_transform(jnp.array([jnp.pi / 2, 1.0, 2.0]))
 
     camera_pos, look_at = config.compute_auto_position(
         center,
@@ -507,7 +531,9 @@ def test_open3d_interactive_camera_front_points_from_eye_to_target():
         vis,
         ctrl,
         scene_data,
-        camera_config=CameraConfig(distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)),
+        camera_config=CameraConfig(
+            distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)
+        ),
     )
 
     assert_allclose(ctrl.front, np.array([1.0, 0.0, 0.0]), atol=1e-12)
@@ -565,7 +591,9 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
 
     renderer._setup_camera(
         curves,
-        camera_config=CameraConfig(distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)),
+        camera_config=CameraConfig(
+            distance_factor=1.0, position_offset=(1.0, 0.0, 0.0)
+        ),
     )
 
     assert_allclose(client.camera.look_at, np.array([1.0, 0.5, 0.0]), atol=1e-12)
@@ -582,11 +610,13 @@ def test_viser_discrete_backbone_spheres_use_robot_radius():
     renderer._server = server
     renderer._scene_handles = SceneHandles()
     curves = np.array([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    material_frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
     point_colors = np.ones((1, 2, 4), dtype=np.float64)
 
     renderer._build_robot_geometry(
         curves,
         point_colors,
+        material_frames=material_frames,
         base_plate_color=(0.15, 0.15, 0.15),
     )
 
@@ -595,6 +625,86 @@ def test_viser_discrete_backbone_spheres_use_robot_radius():
         np.full(2, renderer._robot_radius),
         atol=1e-12,
     )
+
+
+def test_viser_defaults_to_swept_backbone():
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+
+    assert renderer._backbone_style == "swept"
+
+
+def test_open3d_defaults_to_swept_backbone():
+    pytest.importorskip("open3d")
+    from soromox.rendering.open3d_renderer import Open3DRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = Open3DRenderer(robot)
+
+    assert renderer._backbone_mode == "swept"
+
+
+def test_viser_swept_backbone_uses_material_frame_rings():
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot, auto_start=False, backbone_style="swept", cylinder_sections=8
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    curves = np.array([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    material_frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
+
+    renderer._build_robot_geometry(
+        curves,
+        np.ones((1, 2, 4), dtype=np.float64),
+        material_frames=material_frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    first_ring = server.scene.simple_meshes[0].vertices[:8]
+    assert_allclose(first_ring[:, 0], 0.0, atol=1e-7)
+    assert np.ptp(first_ring[:, 1]) > renderer._robot_radius
+
+
+def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
+    pytest.importorskip("viser")
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot, auto_start=False, backbone_style="swept", cylinder_sections=8
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
+    colors = np.ones((1, 2, 4), dtype=np.float64)
+    initial_curve = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+    updated_curve = np.array([[[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]])
+
+    renderer._build_robot_geometry(
+        initial_curve,
+        colors,
+        material_frames=frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+    renderer._update_robot_geometry(updated_curve, frames)
+
+    tip_mesh = server.scene.simple_meshes[0]
+    body_tip_ring = tip_mesh.vertices[8:16]
+    cap_triangles = tip_mesh.faces[-8:]
+    assert server.atomic_calls == 1
+    assert_allclose(body_tip_ring.mean(axis=0), updated_curve[0, -1], atol=1e-7)
+    assert_allclose(tip_mesh.vertices[-1], updated_curve[0, -1], atol=1e-7)
+    assert np.all(cap_triangles[:, 0] == 16)
+    assert server.scene.icospheres == []
 
 
 def test_viser_default_camera_uses_backend_specific_distance():
@@ -621,9 +731,7 @@ def test_viser_actuator_geometry_updates_existing_line_handles():
     pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     renderer._server = FakeViserActuatorServer()
     renderer._scene_handles = SceneHandles()
@@ -716,9 +824,7 @@ def test_renderer_rejects_extra_explicit_base_offsets_by_default():
 
 
 def test_renderer_computes_actuator_visual_layers_single_and_batched():
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot, num_points=5)
 
     single = renderer.compute_actuator_visual_layers(jnp.array([]))
@@ -770,9 +876,7 @@ def test_renderer_uses_batched_actuator_visual_fast_path():
 
 
 def test_renderer_computes_trajectory_actuator_visual_layers():
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot, num_points=4)
 
     layers = renderer.compute_actuator_visual_layers_trajectory(
@@ -811,9 +915,7 @@ def test_renderer_uses_trajectory_actuator_visual_fast_path():
 
 
 def test_matplotlib_actuator_overlay_changes_rendered_frame():
-    robot = DummyActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-    )
+    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = MatplotlibRenderer(robot, width=240, height=180, num_points=8)
 
     without_actuators = renderer.render_frame(jnp.array([]), render_actuators=False)

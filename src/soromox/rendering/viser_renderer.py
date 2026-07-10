@@ -163,6 +163,46 @@ def _direction_to_quaternion(
     return (float(w), float(xyz[0]), float(xyz[1]), float(xyz[2]))
 
 
+def _oriented_tube_segment_mesh(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    frame0: np.ndarray,
+    frame1: np.ndarray,
+    radius: float,
+    sections: int,
+    *,
+    cap_end: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a tube segment whose endpoint rings use the FK material frames."""
+    angles = np.linspace(0.0, 2.0 * np.pi, int(sections), endpoint=False)
+    local_offsets = np.stack(
+        [
+            np.zeros_like(angles),
+            float(radius) * np.cos(angles),
+            float(radius) * np.sin(angles),
+        ],
+        axis=1,
+    )
+    ring0 = np.asarray(p0) + local_offsets @ np.asarray(frame0).T
+    ring1 = np.asarray(p1) + local_offsets @ np.asarray(frame1).T
+    vertex_groups = [ring0, ring1]
+    if cap_end:
+        vertex_groups.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
+    vertices = np.concatenate(vertex_groups, axis=0).astype(np.float32)
+
+    faces: list[tuple[int, int, int]] = []
+    for idx in range(int(sections)):
+        nxt = (idx + 1) % int(sections)
+        faces.append((idx, nxt, int(sections) + idx))
+        faces.append((nxt, int(sections) + nxt, int(sections) + idx))
+    if cap_end:
+        center_idx = 2 * int(sections)
+        for idx in range(int(sections)):
+            nxt = (idx + 1) % int(sections)
+            faces.append((center_idx, int(sections) + idx, int(sections) + nxt))
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
 # =============================================================================
 # ViserRenderer
 # =============================================================================
@@ -200,7 +240,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         host: str = "0.0.0.0",
         port: int = 8080,
-        backbone_style: Literal["discrete", "swept"] = "discrete",
+        backbone_style: Literal["discrete", "swept"] = "swept",
         sphere_resolution: int = 3,
         cylinder_sections: int = 48,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
@@ -240,7 +280,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration
             host: Server bind address (0.0.0.0 for all interfaces)
             port: Server port number
-            backbone_style: "discrete" (spheres) or "swept" (cylinders)
+            backbone_style: "swept" (material-frame surface) or "discrete" (spheres)
             sphere_resolution: Icosphere subdivision level (1=low, 2=medium, 3=good, 4=high)
             cylinder_sections: Number of cylinder cross-section segments (higher=smoother)
             grid_spacing: (x, y) spacing for multi-robot grid layout
@@ -436,6 +476,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves: np.ndarray,
         point_colors: np.ndarray,
         *,
+        material_frames: np.ndarray,
         base_plate_color: tuple[float, float, float],
     ) -> None:
         """Build robot backbone geometry in the scene.
@@ -456,6 +497,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
+            robot_frames = material_frames[robot_idx]
 
             # Create backbone geometry
             robot_points = []
@@ -488,55 +530,27 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     color_rgba = point_colors[robot_idx, pt_idx]
                     color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
 
-                    # Compute cylinder parameters
-                    direction = p1 - p0
-                    length = float(np.linalg.norm(direction))
-                    if length < 1e-9:
-                        continue
-
-                    center = (p0 + p1) / 2.0
-                    # Compute quaternion for orientation (Z-aligned cylinder rotated to direction)
-                    wxyz = _direction_to_quaternion(direction)
-
-                    # Create Z-aligned cylinder mesh, apply rotation via handle
-                    cylinder_mesh = self._make_cylinder_trimesh(
-                        length=length,
-                        radius=self._robot_radius,
-                        color=color_rgba[:3],
-                        direction=None,  # Keep Z-aligned for efficient updates
+                    vertices, faces = _oriented_tube_segment_mesh(
+                        p0,
+                        p1,
+                        robot_frames[pt_idx],
+                        robot_frames[pt_idx + 1],
+                        self._robot_radius,
+                        self._cylinder_sections,
+                        cap_end=pt_idx == num_points - 2,
                     )
                     handle = self._server.scene.add_mesh_simple(
                         name=f"/robots/robot_{robot_idx}/backbone/seg_{pt_idx}",
-                        vertices=cylinder_mesh.vertices,
-                        faces=cylinder_mesh.faces,
+                        vertices=vertices,
+                        faces=faces,
                         color=color,
                         opacity=opacity,
                         wireframe=self._wireframe,
                         material=self._material,
                         flat_shading=self._flat_shading,
                         cast_shadow=self._backbone_cast_shadow,
-                        position=tuple(center),
-                        wxyz=wxyz,
                     )
                     robot_points.append(handle)
-
-                # Add sphere at tip
-                tip_pos = curve[-1]
-                color_rgba = point_colors[robot_idx, -1]
-                color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
-                handle = self._server.scene.add_icosphere(
-                    name=f"/robots/robot_{robot_idx}/backbone/tip",
-                    radius=self._robot_radius,
-                    color=color,
-                    opacity=opacity,
-                    subdivisions=self._sphere_resolution,
-                    position=tuple(tip_pos),
-                    material=self._material,
-                    flat_shading=self._flat_shading,
-                    wireframe=self._wireframe,
-                    cast_shadow=self._backbone_cast_shadow,
-                )
-                robot_points.append(handle)
 
             self._scene_handles.backbone_points.append(robot_points)
 
@@ -635,9 +649,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     num_segments = len(curve) - 1
                     if num_segments <= 0:
                         continue
-                    points = np.stack(
-                        [curve[:-1], curve[1:]], axis=1
-                    )
+                    points = np.stack([curve[:-1], curve[1:]], axis=1)
                     color = _rgb_to_viser_color(
                         layer_colors[robot_idx, actuator_idx, :3]
                     )
@@ -757,63 +769,48 @@ class ViserRenderer(BaseSoftRobotRenderer):
     def _update_robot_geometry(
         self,
         curves: np.ndarray,
+        material_frames: np.ndarray,
     ) -> None:
-        """Update existing robot geometry positions (and orientations for swept mode).
-
-        This is more efficient than rebuilding geometry each frame:
-        - Discrete mode: Only updates sphere positions
-        - Swept mode: Updates cylinder positions and orientations via handle properties
-
-        Args:
-            curves: Backbone curves of shape (num_robots, num_points, 3)
-        """
-        if self._scene_handles is None:
+        """Atomically update all robot geometry for one animation frame."""
+        if self._scene_handles is None or self._server is None:
             return
 
-        num_robots = min(len(curves), len(self._scene_handles.backbone_points))
-        num_points = curves.shape[1]
+        with self._server.atomic():
+            num_robots = min(len(curves), len(self._scene_handles.backbone_points))
+            num_points = curves.shape[1]
 
-        for robot_idx in range(num_robots):
-            curve = curves[robot_idx]  # (num_points, 3)
-            if robot_idx < len(self._scene_handles.base_plates):
-                base_handle = self._scene_handles.base_plates[robot_idx]
-                base_pos, base_wxyz = self._base_plate_pose(curve[0])
-                base_handle.position = tuple(base_pos)
-                base_handle.wxyz = base_wxyz
+            for robot_idx in range(num_robots):
+                curve = curves[robot_idx]  # (num_points, 3)
+                robot_frames = material_frames[robot_idx]
+                if robot_idx < len(self._scene_handles.base_plates):
+                    base_handle = self._scene_handles.base_plates[robot_idx]
+                    base_pos, base_wxyz = self._base_plate_pose(curve[0])
+                    base_handle.position = tuple(base_pos)
+                    base_handle.wxyz = base_wxyz
 
-            robot_points = self._scene_handles.backbone_points[robot_idx]
+                robot_points = self._scene_handles.backbone_points[robot_idx]
 
-            if self._backbone_style == "discrete":
-                # Update sphere positions only
-                for pt_idx, handle in enumerate(robot_points):
-                    if pt_idx < len(curve):
-                        handle.position = tuple(curve[pt_idx])
-            else:
-                # Swept style: update cylinder positions and orientations
-                # robot_points contains (num_points - 1) cylinders + 1 tip sphere
-                num_segments = num_points - 1
-                for seg_idx in range(min(len(robot_points) - 1, num_segments)):
-                    handle = robot_points[seg_idx]
-                    p0 = curve[seg_idx]
-                    p1 = curve[seg_idx + 1]
+                if self._backbone_style == "discrete":
+                    for pt_idx, handle in enumerate(robot_points):
+                        if pt_idx < len(curve):
+                            handle.position = tuple(curve[pt_idx])
+                else:
+                    num_segments = num_points - 1
+                    for seg_idx in range(min(len(robot_points), num_segments)):
+                        handle = robot_points[seg_idx]
+                        p0 = curve[seg_idx]
+                        p1 = curve[seg_idx + 1]
 
-                    # Compute new center and orientation
-                    direction = p1 - p0
-                    length = float(np.linalg.norm(direction))
-                    if length < 1e-9:
-                        continue
-
-                    center = (p0 + p1) / 2.0
-                    wxyz = _direction_to_quaternion(direction)
-
-                    # Update handle properties (no mesh recreation!)
-                    handle.position = tuple(center)
-                    handle.wxyz = wxyz
-
-                # Update tip sphere position (last element in robot_points)
-                if len(robot_points) > 0:
-                    tip_handle = robot_points[-1]
-                    tip_handle.position = tuple(curve[-1])
+                        vertices, _ = _oriented_tube_segment_mesh(
+                            p0,
+                            p1,
+                            robot_frames[seg_idx],
+                            robot_frames[seg_idx + 1],
+                            self._robot_radius,
+                            self._cylinder_sections,
+                            cap_end=seg_idx == num_segments - 1,
+                        )
+                        handle.vertices = vertices
 
     def _build_static_spheres(
         self,
@@ -918,7 +915,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Use a Viser-specific auto-distance. CameraConfig's default distance
         # factor is tuned for backends with an additional zoom control, while
         # Viser uses the camera position as a true perspective eye point.
-        config = camera_config or CameraConfig(fov=self._camera_fov, distance_factor=1.0)
+        config = camera_config or CameraConfig(
+            fov=self._camera_fov, distance_factor=1.0
+        )
 
         # Compute bounding box of all curves
         all_points = curves.reshape(-1, 3)
@@ -1056,8 +1055,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
             allow_extra_rows=uses_configured_offsets,
         )
 
-        # Compute backbone curves
-        curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
+        curves, material_frames = self.compute_backbone_curves_and_frames_batched(
+            q, base_offsets
+        )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
@@ -1067,6 +1069,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._build_robot_geometry(
             curves,
             resolved_colors.per_robot_point_rgba,
+            material_frames=material_frames,
             base_plate_color=cfg.base_plate_color,
         )
 
@@ -1167,8 +1170,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
             allow_extra_rows=uses_configured_offsets,
         )
 
-        # Compute backbone curves
-        curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
+        curves, material_frames = self.compute_backbone_curves_and_frames_batched(
+            q, base_offsets
+        )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
@@ -1178,6 +1184,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._build_robot_geometry(
             curves,
             resolved_colors.per_robot_point_rgba,
+            material_frames=material_frames,
             base_plate_color=cfg.base_plate_color,
         )
 
@@ -1326,9 +1333,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Precompute backbone curves for the first frame used to build geometry.
-        curves_0 = np.asarray(
-            self.compute_backbone_curves_batched(q_ts[:, 0, :], base_offsets)
+        curves_0, material_frames_0 = self.compute_backbone_curves_and_frames_batched(
+            q_ts[:, 0, :], base_offsets
         )
+        curves_0 = np.asarray(curves_0)
+        material_frames_0 = np.asarray(material_frames_0)
 
         # Fit the initial camera to the full animated trajectory, matching
         # Open3DRenderer.render_sequence and avoiding under-framing on motion.
@@ -1347,6 +1356,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._build_robot_geometry(
             curves_0,
             resolved_colors.per_robot_point_rgba,
+            material_frames=material_frames_0,
             base_plate_color=cfg.base_plate_color,
         )
 
@@ -1438,7 +1448,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     actuator_fig = self.create_actuator_position_plot(
                         ts, q_ts_for_plots, self.robot, robot_name=robot_name
                     )
-                    self.add_gui_plotly("Actuator Coordinates", actuator_fig, aspect=2.0)
+                    self.add_gui_plotly(
+                        "Actuator Coordinates", actuator_fig, aspect=2.0
+                    )
 
                 # Add custom plots
                 if custom_plots:
@@ -1547,8 +1559,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         q_frame = q_ts[:, frame_idx, :]  # (num_robots, DOF)
         num_robots = q_frame.shape[0]
 
-        # Compute new curves
-        curves = np.asarray(self.compute_backbone_curves_batched(q_frame, base_offsets))
+        curves, material_frames = self.compute_backbone_curves_and_frames_batched(
+            q_frame, base_offsets
+        )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         # Check if we can use efficient updates (geometry already built with same config)
         can_update = (
@@ -1560,11 +1575,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         if can_update:
             # Efficient update: only modify position/orientation properties
-            self._update_robot_geometry(curves)
+            self._update_robot_geometry(curves, material_frames)
         else:
             # Full rebuild needed (first frame or configuration changed)
             self._build_robot_geometry(
-                curves, point_colors, base_plate_color=base_plate_color
+                curves,
+                point_colors,
+                material_frames=material_frames,
+                base_plate_color=base_plate_color,
             )
 
         if render_actuators and self._has_actuator_visuals:
@@ -2135,10 +2153,11 @@ class LiveModeController:
             target_dim=3,
         )
 
-        # Compute curves
-        curves = np.asarray(
-            self._renderer.compute_backbone_curves_batched(q, base_offsets)
+        curves, material_frames = (
+            self._renderer.compute_backbone_curves_and_frames_batched(q, base_offsets)
         )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         if (
             self._resolved_colors is None
@@ -2158,11 +2177,12 @@ class LiveModeController:
 
         if can_update:
             # Efficient update: only modify position/orientation properties
-            self._renderer._update_robot_geometry(curves)
+            self._renderer._update_robot_geometry(curves, material_frames)
         else:
             # Full rebuild needed (first frame or configuration changed)
             self._renderer._build_robot_geometry(
                 curves,
                 self._resolved_colors.per_robot_point_rgba,
+                material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )

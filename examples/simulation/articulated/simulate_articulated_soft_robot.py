@@ -233,7 +233,6 @@ def render_robot(
             renderer = ViserRenderer(
                 robot,
                 num_points=80,
-                backbone_style="discrete",
             )
             renderer.render_sequence(
                 ts,

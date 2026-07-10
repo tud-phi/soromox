@@ -136,6 +136,8 @@ class CachedMesh:
     scale_base: np.ndarray
     dynamic_length: bool
     rotate_to_axis: bool
+    swept_ring_offsets: np.ndarray | None = None
+    cap_end: bool = False
 
 
 def _unit_mesh_from_o3d(mesh: o3d.geometry.TriangleMesh) -> UnitMesh:
@@ -351,6 +353,106 @@ def _make_elliptical_cylinder_between(
     return mesh
 
 
+def _primitive_rotation_from_material_frame(frame: np.ndarray) -> np.ndarray:
+    """Map a +Z-axis primitive into the robot's +X backbone convention."""
+    frame = np.asarray(frame, dtype=np.float64)
+    return frame[:, [1, 2, 0]]
+
+
+def _cross_section_ring_offsets(
+    geom_tag: int, params: np.ndarray, resolution: int
+) -> np.ndarray:
+    """Return cross-section offsets in material-frame coordinates."""
+    params = np.asarray(params, dtype=np.float64).reshape(-1)
+    eps = 1e-6
+    if geom_tag == CrossSectionGeometry.RECTANGULAR:
+        width = max(float(params[0]) if params.size else 0.0, eps)
+        height = max(float(params[1]) if params.size > 1 else 0.0, eps)
+        return np.array(
+            [
+                [0.0, -0.5 * width, -0.5 * height],
+                [0.0, 0.5 * width, -0.5 * height],
+                [0.0, 0.5 * width, 0.5 * height],
+                [0.0, -0.5 * width, 0.5 * height],
+            ],
+            dtype=np.float64,
+        )
+
+    angles = np.linspace(0.0, 2.0 * np.pi, int(resolution), endpoint=False)
+    if geom_tag == CrossSectionGeometry.CIRCULAR:
+        a_val = b_val = max(float(params[0]) if params.size else 0.0, eps)
+    else:
+        a_val = max(float(params[0]) if params.size else 0.0, eps)
+        b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
+    return np.stack(
+        [
+            np.zeros_like(angles),
+            a_val * np.cos(angles),
+            b_val * np.sin(angles),
+        ],
+        axis=1,
+    )
+
+
+def _swept_segment_vertices(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    frame0: np.ndarray,
+    frame1: np.ndarray,
+    ring_offsets: np.ndarray,
+    *,
+    cap_end: bool = False,
+) -> np.ndarray:
+    """Place both cross-section rings using their sampled material frames."""
+    ring0 = np.asarray(p0) + ring_offsets @ np.asarray(frame0).T
+    ring1 = np.asarray(p1) + ring_offsets @ np.asarray(frame1).T
+    vertices = [ring0, ring1]
+    if cap_end:
+        vertices.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
+    return np.concatenate(vertices, axis=0)
+
+
+def _swept_segment_faces(ring_size: int, *, cap_end: bool = False) -> np.ndarray:
+    faces: list[tuple[int, int, int]] = []
+    for idx in range(int(ring_size)):
+        nxt = (idx + 1) % int(ring_size)
+        faces.append((idx, nxt, int(ring_size) + idx))
+        faces.append((nxt, int(ring_size) + nxt, int(ring_size) + idx))
+    if cap_end:
+        center_idx = 2 * int(ring_size)
+        for idx in range(int(ring_size)):
+            nxt = (idx + 1) % int(ring_size)
+            faces.append((center_idx, int(ring_size) + idx, int(ring_size) + nxt))
+    return np.asarray(faces, dtype=np.int32)
+
+
+def _make_swept_cross_section_segment(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    frame0: np.ndarray,
+    frame1: np.ndarray,
+    geom_tag: int,
+    params: np.ndarray,
+    color: tuple[float, float, float],
+    resolution: int,
+    apply_color: bool = True,
+    cap_end: bool = False,
+) -> o3d.geometry.TriangleMesh:
+    """Create a body segment by connecting FK-oriented cross-section rings."""
+    offsets = _cross_section_ring_offsets(geom_tag, params, resolution)
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(
+        _swept_segment_vertices(p0, p1, frame0, frame1, offsets, cap_end=cap_end)
+    )
+    mesh.triangles = o3d.utility.Vector3iVector(
+        _swept_segment_faces(offsets.shape[0], cap_end=cap_end)
+    )
+    mesh.compute_vertex_normals()
+    if apply_color:
+        mesh.paint_uniform_color(np.asarray(color, dtype=np.float64))
+    return mesh
+
+
 def _make_target_sphere(
     center_xyz: np.ndarray,
     radius: float = 0.01,
@@ -406,6 +508,7 @@ class DynamicSpheres:
 @dataclass
 class SceneData:
     curves: np.ndarray  # (N, T, P, 3)
+    material_frames: np.ndarray  # (N, T, P, 3, 3)
     q_ts: np.ndarray  # (N, T, DOF)
     ts: np.ndarray  # (T,)
     layout: SegmentLayout
@@ -467,7 +570,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         num_points: int = 80,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         color_config: RendererColorConfig | None = None,
-        backbone_style: str = "discrete",
+        backbone_style: str = "swept",
         recompute_normals: bool = True,
         tube_resolution: int = 20,
         sphere_resolution: int = 32,
@@ -487,7 +590,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             num_points: Number of points for backbone discretization
             background_color: RGB background color (0-1 range)
             color_config: Shared renderer color configuration
-            backbone_style: "discrete" or "swept"
+            backbone_style: "swept" (material-frame surface) or "discrete" (markers)
             recompute_normals: Whether to recompute vertex normals per segment update
             tube_resolution: Radial resolution for tube segments
             sphere_resolution: Resolution for backbone spheres
@@ -650,6 +753,27 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             norms = np.linalg.norm(normals, axis=1, keepdims=True)
             normals = np.where(norms > 1e-9, normals / norms, normals)
             cached.mesh.vertex_normals = o3d.utility.Vector3dVector(normals)
+
+    @staticmethod
+    def _apply_swept_cached_mesh(
+        cached: CachedMesh,
+        p0: np.ndarray,
+        p1: np.ndarray,
+        frame0: np.ndarray,
+        frame1: np.ndarray,
+    ) -> None:
+        if cached.swept_ring_offsets is None:
+            raise ValueError("Swept mesh is missing cross-section ring offsets.")
+        vertices = _swept_segment_vertices(
+            p0,
+            p1,
+            frame0,
+            frame1,
+            cached.swept_ring_offsets,
+            cap_end=cached.cap_end,
+        )
+        cached.mesh.vertices = o3d.utility.Vector3dVector(vertices)
+        cached.mesh.compute_vertex_normals()
 
     def _frame_intervals_from_ts(self, ts: Array, playback_speed: float) -> np.ndarray:
         """Compute per-frame wall-clock intervals from timestamps, scaled by playback speed."""
@@ -816,20 +940,20 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             if mode == "swept":
                 return "box", np.array([width, height, 1.0]), True, True
             depth = max(width, height)
-            return "box", np.array([width, height, depth]), False, False
+            return "box", np.array([width, height, depth]), False, True
         if geom_tag == CrossSectionGeometry.ELLIPTICAL:
             a_val = max(float(params[0]) if params.size else 0.0, eps)
             b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
             if mode == "swept":
                 return "elliptical_cylinder", np.array([a_val, b_val, 1.0]), True, True
             rz = max(a_val, b_val)
-            return "ellipsoid", np.array([a_val, b_val, rz]), False, False
+            return "ellipsoid", np.array([a_val, b_val, rz]), False, True
         a_val = max(float(params[0]) if params.size else 0.0, eps)
         b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
         if mode == "swept":
             return "elliptical_cylinder", np.array([a_val, b_val, 1.0]), True, True
         rz = max(a_val, b_val)
-        return "ellipsoid", np.array([a_val, b_val, rz]), False, False
+        return "ellipsoid", np.array([a_val, b_val, rz]), False, True
 
     def _prepare_scene_data(
         self,
@@ -884,14 +1008,21 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             allow_extra_rows=uses_configured_offsets,
         )
 
-        # Backbone curves (T, N, P, 3) -> (N, T, P, 3)
+        # Backbone curves and material frames, time-first then robot-first.
         q_ts_time_first = q_ts_arr.transpose(1, 0, 2)
 
-        def _compute_curves_for_timestep(q_batch: jax.Array) -> jax.Array:
-            return self.compute_backbone_curves_batched(q_batch, offsets)
+        def _compute_geometry_for_timestep(
+            q_batch: jax.Array,
+        ) -> tuple[jax.Array, jax.Array]:
+            return self.compute_backbone_curves_and_frames_batched(q_batch, offsets)
 
-        all_curves_time_first = jax.vmap(_compute_curves_for_timestep)(q_ts_time_first)
+        all_curves_time_first, all_frames_time_first = jax.vmap(
+            _compute_geometry_for_timestep
+        )(q_ts_time_first)
         curves = np.array(all_curves_time_first.transpose(1, 0, 2, 3), dtype=np.float64)
+        material_frames = np.array(
+            all_frames_time_first.transpose(1, 0, 2, 3, 4), dtype=np.float64
+        )
 
         layout = self._compute_segment_layout(curves.shape[2])
         resolved_colors = self.resolve_backbone_colors(
@@ -918,6 +1049,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         return SceneData(
             curves=curves,
+            material_frames=material_frames,
             q_ts=q_ts_np,
             ts=ts_np,
             layout=layout,
@@ -956,10 +1088,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
+            material_frames = scene_data.material_frames[robot_idx, frame_idx]
             q_frame = scene_data.q_ts[robot_idx, frame_idx]
             sections, max_radius = self._cross_sections_for_points(q_frame, s_ps)
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
-            base_axis = self._base_tangent_axis(dim=3)
+            base_axis = material_frames[0, :, 0]
             base_mesh = _make_base_plate(
                 curve[0] - 0.5 * self.base_plate_thickness * base_axis,
                 radius=float(self.base_plate_radius_scale * max_radius),
@@ -979,59 +1112,23 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     edge_end = min(c1, curve.shape[0] - 1)
                     for p in range(c0, edge_end):
                         geom_type, params = sections[p]
-                        if geom_type == CrossSectionGeometry.CIRCULAR:
-                            radius = float(params[0]) if params.size else 0.0
-                            radius = max(radius, 1e-6)
-                            cyl = _make_cylinder_between(
-                                curve[p],
-                                curve[p + 1],
-                                radius=radius,
-                                color=raw_color_rgb,
-                                resolution=self.tube_resolution,
-                                apply_color=False,
-                            )
-                            scene.add_geometry(
-                                f"tube_{robot_idx}_{s}_{p}",
-                                cyl,
-                                mat_for(raw_color_rgba),
-                            )
-                        elif geom_type == CrossSectionGeometry.RECTANGULAR:
-                            if params.size < 2:
-                                continue
-                            width = max(float(params[0]), 1e-6)
-                            height = max(float(params[1]), 1e-6)
-                            box = _make_box_between(
-                                curve[p],
-                                curve[p + 1],
-                                width=width,
-                                height=height,
-                                color=raw_color_rgb,
-                                apply_color=False,
-                            )
-                            scene.add_geometry(
-                                f"box_{robot_idx}_{s}_{p}",
-                                box,
-                                mat_for(raw_color_rgba),
-                            )
-                        else:
-                            if params.size < 2:
-                                continue
-                            a_val = max(float(params[0]), 1e-6)
-                            b_val = max(float(params[1]), 1e-6)
-                            cyl = _make_elliptical_cylinder_between(
-                                curve[p],
-                                curve[p + 1],
-                                a=a_val,
-                                b=b_val,
-                                color=raw_color_rgb,
-                                resolution=self.tube_resolution,
-                                apply_color=False,
-                            )
-                            scene.add_geometry(
-                                f"ell_{robot_idx}_{s}_{p}",
-                                cyl,
-                                mat_for(raw_color_rgba),
-                            )
+                        body = _make_swept_cross_section_segment(
+                            curve[p],
+                            curve[p + 1],
+                            material_frames[p],
+                            material_frames[p + 1],
+                            geom_type,
+                            params,
+                            raw_color_rgb,
+                            self.tube_resolution,
+                            apply_color=False,
+                            cap_end=p == curve.shape[0] - 2,
+                        )
+                        scene.add_geometry(
+                            f"body_{robot_idx}_{s}_{p}",
+                            body,
+                            mat_for(raw_color_rgba),
+                        )
                 else:
                     for p in range(c0, c1):
                         geom_type, params = sections[p]
@@ -1066,6 +1163,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 apply_color=False,
                                 apply_translation=True,
                             )
+                            box.rotate(
+                                _primitive_rotation_from_material_frame(
+                                    material_frames[p]
+                                ),
+                                center=curve[p],
+                            )
                             scene.add_geometry(
                                 f"box_{robot_idx}_{s}_{p}",
                                 box,
@@ -1085,6 +1188,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 apply_color=False,
                                 apply_translation=True,
                             )
+                            ell.rotate(
+                                _primitive_rotation_from_material_frame(
+                                    material_frames[p]
+                                ),
+                                center=curve[p],
+                            )
                             scene.add_geometry(
                                 f"ell_{robot_idx}_{s}_{p}",
                                 ell,
@@ -1100,7 +1209,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
                 for actuator_idx in range(robot_actuators.shape[0]):
                     color = tuple(colors[robot_idx, frame_idx, actuator_idx, :3])
-                    ls = _make_polyline_lineset(robot_actuators[actuator_idx], color=color)
+                    ls = _make_polyline_lineset(
+                        robot_actuators[actuator_idx], color=color
+                    )
                     mat_line = o3d.visualization.MaterialRecord()
                     mat_line.shader = "unlitLine"
                     mat_line.line_width = layer.line_width or self.actuator_line_width
@@ -1526,6 +1637,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         vis,
         curve0: np.ndarray,
+        material_frames0: np.ndarray,
         sections: list[tuple[int, np.ndarray]],
         max_radius: float,
         layout: SegmentLayout,
@@ -1534,7 +1646,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     ) -> tuple[object, list[list[CachedMesh]]]:
         """Add base and backbone meshes for one robot; return handles."""
         base_color = self._blend_with_background(base_plate_color)
-        base_axis = self._base_tangent_axis(dim=3)
+        base_axis = material_frames0[0, :, 0]
         base_mesh = _make_base_plate(
             curve0[0] - 0.5 * self.base_plate_thickness * base_axis,
             radius=float(self.base_plate_radius_scale * max_radius),
@@ -1554,26 +1666,34 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 edge_end = min(c1, curve0.shape[0] - 1)
                 for p in range(c0, edge_end):
                     geom_tag, params = sections[p]
-                    unit_key, scale_base, dynamic_length, rotate_to_axis = (
-                        self._primitive_from_section(geom_tag, params)
+                    ring_offsets = _cross_section_ring_offsets(
+                        geom_tag, params, self.tube_resolution
                     )
-                    unit = self._unit_meshes[unit_key]
-                    mesh = self._instantiate_mesh(unit, seg_color)
+                    cap_end = p == curve0.shape[0] - 2
+                    vertices = _swept_segment_vertices(
+                        curve0[p],
+                        curve0[p + 1],
+                        material_frames0[p],
+                        material_frames0[p + 1],
+                        ring_offsets,
+                        cap_end=cap_end,
+                    )
+                    faces = _swept_segment_faces(ring_offsets.shape[0], cap_end=cap_end)
+                    mesh = o3d.geometry.TriangleMesh()
+                    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+                    mesh.triangles = o3d.utility.Vector3iVector(faces)
+                    mesh.compute_vertex_normals()
+                    mesh.paint_uniform_color(np.asarray(seg_color, dtype=np.float64))
                     cached = CachedMesh(
                         mesh=mesh,
-                        base_vertices=unit.vertices,
-                        base_normals=unit.normals,
-                        scale_base=scale_base,
-                        dynamic_length=dynamic_length,
-                        rotate_to_axis=rotate_to_axis,
+                        base_vertices=vertices,
+                        base_normals=None,
+                        scale_base=np.ones(3),
+                        dynamic_length=False,
+                        rotate_to_axis=False,
+                        swept_ring_offsets=ring_offsets,
+                        cap_end=cap_end,
                     )
-                    p0 = curve0[p]
-                    p1 = curve0[p + 1]
-                    axis = p1 - p0
-                    length = float(np.linalg.norm(axis))
-                    R = _axis_alignment_rotation(axis)
-                    mid = (p0 + p1) / 2.0
-                    self._apply_cached_mesh(cached, mid, R, length)
                     seg_meshes.append(cached)
                     vis.add_geometry(mesh)
             else:
@@ -1592,7 +1712,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         dynamic_length=dynamic_length,
                         rotate_to_axis=rotate_to_axis,
                     )
-                    self._apply_cached_mesh(cached, curve0[p], None, None)
+                    rotation = _primitive_rotation_from_material_frame(
+                        material_frames0[p]
+                    )
+                    self._apply_cached_mesh(cached, curve0[p], rotation, None)
                     seg_meshes.append(cached)
                     vis.add_geometry(mesh)
             meshes_groups.append(seg_meshes)
@@ -1602,12 +1725,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self,
         vis,
         curve: np.ndarray,
+        material_frames: np.ndarray,
         base_mesh,
         meshes_groups: list[list[CachedMesh]],
         layout: SegmentLayout,
     ) -> None:
         """Translate base and backbone geometry to a new curve position."""
-        base_axis = self._base_tangent_axis(dim=3)
+        base_axis = material_frames[0, :, 0]
         base_center = curve[0] - 0.5 * self.base_plate_thickness * base_axis
         delta = base_center - _mesh_center(base_mesh)
         base_mesh.translate(delta, relative=True)
@@ -1618,23 +1742,25 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             seg_meshes = meshes_groups[s]
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
                 edge_end = min(c1, curve.shape[0] - 1)
-                # Cylinders need full re-orientation + centering, not just translation
                 for i_local, p in enumerate(range(c0, edge_end)):
                     if i_local >= len(seg_meshes):
                         break
                     cached = seg_meshes[i_local]
-                    p0 = curve[p]
-                    p1 = curve[p + 1]
-                    axis = p1 - p0
-                    length = float(np.linalg.norm(axis))
-                    R = _axis_alignment_rotation(axis)
-                    mid = (p0 + p1) / 2.0
-                    self._apply_cached_mesh(cached, mid, R, length)
+                    self._apply_swept_cached_mesh(
+                        cached,
+                        curve[p],
+                        curve[p + 1],
+                        material_frames[p],
+                        material_frames[p + 1],
+                    )
                     vis.update_geometry(cached.mesh)
             else:
                 for i_local, p in enumerate(range(c0, min(c1, c0 + len(seg_meshes)))):
                     cached = seg_meshes[i_local]
-                    self._apply_cached_mesh(cached, curve[p], None, None)
+                    rotation = _primitive_rotation_from_material_frame(
+                        material_frames[p]
+                    )
+                    self._apply_cached_mesh(cached, curve[p], rotation, None)
                     vis.update_geometry(cached.mesh)
 
     def _build_scene(
@@ -1663,11 +1789,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         for robot_idx in range(scene_data.num_robots):
             curve0 = scene_data.curves[robot_idx, frame_idx]
+            material_frames0 = scene_data.material_frames[robot_idx, frame_idx]
             q0 = scene_data.q_ts[robot_idx, frame_idx]
             sections, max_radius = self._cross_sections_for_points(q0, s_ps)
             base_mesh, groups = self._build_robot_geometry(
                 vis,
                 curve0,
+                material_frames0,
                 sections,
                 max_radius,
                 layout,
@@ -1755,9 +1883,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
+            material_frames = scene_data.material_frames[robot_idx, frame_idx]
             self._update_robot_geometry(
                 vis,
                 curve,
+                material_frames,
                 handles.base_meshes[robot_idx],
                 handles.backbone_meshes[robot_idx],
                 layout,

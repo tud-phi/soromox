@@ -13,7 +13,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import MatplotlibRenderer, ViserRenderer
+from soromox.rendering import ISupportViserRenderer, MatplotlibRenderer
 from soromox.systems import ISupport, ISupportParams, ISupportStructure, SystemState
 
 if __name__ == "__main__":
@@ -193,13 +193,12 @@ if __name__ == "__main__":
     # =====================================================
     # Viser web-based visualization
     # =====================================================
-    if ViserRenderer is None:
-        print("ViserRenderer is unavailable. Install with `pip install viser`.")
+    if ISupportViserRenderer is None:
+        print("ISupportViserRenderer is unavailable. Install with `pip install viser`.")
     else:
-        viser_renderer = ViserRenderer(
+        viser_renderer = ISupportViserRenderer(
             robot,
             num_points=50,
-            backbone_style="discrete",
         )
         viser_renderer.render_sequence(
             ts=ts,

@@ -209,6 +209,21 @@ def get_color_theme(name: str) -> RendererColorConfig:
     return BUILTIN_THEMES[name]
 
 
+def validate_rgb(color: tuple[float, float, float], *, name: str = "color") -> None:
+    """Validate a normalized RGB tuple used by renderer configuration objects."""
+    try:
+        color_array = np.asarray(color, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an RGB tuple with values in [0, 1].") from exc
+    if (
+        color_array.shape != (3,)
+        or not np.all(np.isfinite(color_array))
+        or np.any(color_array < 0.0)
+        or np.any(color_array > 1.0)
+    ):
+        raise ValueError(f"{name} must be an RGB tuple with values in [0, 1].")
+
+
 def ensure_rgba(colors: np.ndarray) -> np.ndarray:
     """Ensure array has an RGBA channel."""
     arr = np.asarray(colors, dtype=np.float64)

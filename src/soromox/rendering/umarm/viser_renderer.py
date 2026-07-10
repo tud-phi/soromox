@@ -222,6 +222,7 @@ class UMArmViserRenderer(ViserRenderer):
         curves: np.ndarray,
         point_colors: np.ndarray,
         *,
+        material_frames: np.ndarray,
         base_plate_color: tuple[float, float, float],
     ) -> None:
         """Build a UMArm-specific rigid visual model instead of a soft tube."""
@@ -231,7 +232,10 @@ class UMArmViserRenderer(ViserRenderer):
             or self._current_geometry_q is None
         ):
             super()._build_robot_geometry(
-                curves, point_colors, base_plate_color=base_plate_color
+                curves,
+                point_colors,
+                material_frames=material_frames,
+                base_plate_color=base_plate_color,
             )
             return
 
@@ -436,8 +440,11 @@ class UMArmViserRenderer(ViserRenderer):
         self._scene_handles.num_robots = num_robots
         self._scene_handles.num_backbone_points = curves.shape[1]
 
-    def _update_robot_geometry(self, curves: np.ndarray) -> None:
+    def _update_robot_geometry(
+        self, curves: np.ndarray, material_frames: np.ndarray
+    ) -> None:
         """Update the UMArm rigid visual model without rebuilding scene objects."""
+        del material_frames
         if (
             self._scene_handles is None
             or self._current_geometry_q is None
@@ -702,9 +709,11 @@ class UMArmLiveModeController(LiveModeController):
             target_dim=3,
         )
 
-        curves = np.asarray(
-            self._renderer.compute_backbone_curves_batched(q, base_offsets)
+        curves, material_frames = (
+            self._renderer.compute_backbone_curves_and_frames_batched(q, base_offsets)
         )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         if (
             self._resolved_colors is None
@@ -721,11 +730,12 @@ class UMArmLiveModeController(LiveModeController):
             and scene_handles.num_backbone_points == curves.shape[1]
         )
         if can_update:
-            self._renderer._update_robot_geometry(curves)
+            self._renderer._update_robot_geometry(curves, material_frames)
         else:
             self._renderer._build_robot_geometry(
                 curves,
                 self._resolved_colors.per_robot_point_rgba,
+                material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )
         if self._renderer._has_actuator_visuals:

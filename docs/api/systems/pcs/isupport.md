@@ -10,7 +10,31 @@
 - **Pressure-based control**: Direct pressure input for actuation
 - **I-Support platform**: Specific configuration for the I-Support robot
 
-## Quick Start
+## Specialized Viser Rendering
+
+Use `ISupportViserRenderer` to display the physical chamber layout instead of
+the generic swept backbone. The renderer follows the model's chamber radii,
+radial distances, angle offsets, pneumatic-segment grouping, and rigid connector
+topology. It adds corrugated chamber surfaces, six translucent spacers per
+pneumatic segment, and the base, intermediate, and tip interfaces.
+
+```python
+from soromox.rendering import ISupportViserRenderer, ISupportVisualConfig
+
+renderer = ISupportViserRenderer(
+    robot,
+    visual_config=ISupportVisualConfig(),
+    num_points=50,
+)
+renderer.show(q)
+```
+
+`ISupportVisualConfig` exposes the interface and spacer dimensions, chamber
+ellipticity, bellows pitch and amplitude, mesh resolution, colors, and spacer
+opacity. When an `ISupport` topology omits a rigid connector, the renderer adds
+a thin visual-only interface plate without changing the robot kinematics.
+
+## Model Quick Start
 
 ```python
 import jax.numpy as jnp
@@ -33,7 +57,6 @@ params = ISupportParams(
 )
 robot = ISupport(params, structure=ISupportStructure(num_gauss_points=3))
 
-# Configuration
 q = jnp.zeros(robot.num_dofs)
 
 # Pressure actuation (3 chambers per pneumatic segment)
