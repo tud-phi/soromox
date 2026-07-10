@@ -42,7 +42,8 @@ class TendonActuatedPCS(PCS):
         g0: Initial pose of the robot base as an SE(3) transformation matrix.
         g: Gravitational acceleration vector (embedded in a 6D vector).
             [0, 0, 0, g_x, g_y, g_z]
-        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        L, r, E, G, rho: Physical properties of each segment. ``r`` is the
+            radius of the assumed solid circular cross-section.
         num_active_strains: Number of active strain components (based on strain_selector).
         num_strains: Total number of strain components (6 * num_segments).
         B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
@@ -54,8 +55,9 @@ class TendonActuatedPCS(PCS):
         active_d_s: Function that returns the vector [d_x, d_y, d_z] of the active tendon
             position w.r.t. the central backbone within the cross-sectional plane at a given
             abscissa point s. The three entries represent the coordinate of the tendon
-            position with respect to the local cross-sectional frame at s. For this reason,
-            d_x is always equal to 0 (as the backbone is pointing in the local x-direction)
+            position with respect to the local material frame at s. Because the
+            cross-sectional plane is normal to the longitudinal local x-axis,
+            d_x is zero.
         active_dd_s_ds: Function that returns the vector of the derivative over s of active_d_s.
         passive_tendon_routing: Batched routing params with one leading entry per passive tendon.
         passive_d_s: As active_d_s for the passive tendons.
@@ -66,16 +68,15 @@ class TendonActuatedPCS(PCS):
 
     Notes:
     -----
+    - The material-frame local x-axis is the rod's longitudinal axis (the
+      undeformed backbone tangent), independent of its orientation in the
+      inertial frame. Tendon offsets ``[0, d_y, d_z]`` therefore lie in the
+      local yz cross-sectional plane.
     - The strain vector is composed of 6 components per segment:
-      [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z].
-      By default, the rod is assumed to be straight and aligned with the x-axis,
-        so the reference strain is set to [0, 0, 0, 1, 0, 0].
-        Thus:   - kappa_x corresponds to torsion around the x-axis,
-                - kappa_y corresponds to bending around the y-axis,
-                - kappa_z corresponds to bending around the z-axis,
-                - sigma_x corresponds to axial strain along the x-axis,
-                - sigma_y corresponds to shear along the y-axis,
-                - sigma_z corresponds to shear along the z-axis.
+      [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]. The default
+      straight, unstretched reference strain is [0, 0, 0, 1, 0, 0].
+    - As in ``PCS``, every body segment has a solid circular cross-section whose
+      radius supplies the area and second moments used in the dynamics.
 
     References:
         Renda, F., Boyer, F., Dias, J., & Seneviratne, L. (2018). Discrete Cosserat
@@ -371,6 +372,9 @@ class TendonActuatedPCS(PCS):
     ) -> Array:
         """
         Compute the actuation matrix contribution of one tendon k at s contained in segment i.
+
+        The routing value is a local-frame offset in the yz cross-sectional
+        plane; its local x component is zero because x is longitudinal.
 
         Args:
             i (Array): index of the segment ()

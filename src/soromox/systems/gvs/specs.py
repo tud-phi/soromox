@@ -88,7 +88,7 @@ class LinkSpec:
         rho: Mass density of the link material. Unit: ``kg/m^3``. Shape:
             scalar ``()``.
         eta: Material damping coefficient used to form the local damping
-            matrix. Unit: ``N*s/m``. Shape: scalar ``()``.
+            matrix. Unit: ``Pa*s`` (``N*s/m^2``). Shape: scalar ``()``.
         L: Link arclength. Unit: meter ``m``. Shape: scalar ``()``.
         r_i: Initial radius for circular cross-sections at ``x = 0``. Unit:
             meter ``m``. Shape: scalar ``()``. Ignored for non-circular links.
@@ -163,7 +163,7 @@ class LinkSpec:
             rho: Mass density of the link material. Unit: ``kg/m^3``. Shape:
                 scalar ``()``.
             eta: Material damping coefficient used to form the local damping
-                matrix. Unit: ``N*s/m``. Shape: scalar ``()``.
+                matrix. Unit: ``Pa*s`` (``N*s/m^2``). Shape: scalar ``()``.
             L: Link arclength. Unit: meter ``m``. Shape: scalar ``()``.
             r: Constant circular radius applied at both link ends. Unit: meter
                 ``m``. Shape: scalar ``()``. Optional if both ``r_i`` and
@@ -227,7 +227,7 @@ class LinkSpec:
             rho: Mass density of the link material. Unit: ``kg/m^3``. Shape:
                 scalar ``()``.
             eta: Material damping coefficient used to form the local damping
-                matrix. Unit: ``N*s/m``. Shape: scalar ``()``.
+                matrix. Unit: ``Pa*s`` (``N*s/m^2``). Shape: scalar ``()``.
             L: Link arclength. Unit: meter ``m``. Shape: scalar ``()``.
             h: Constant rectangular height applied at both link ends. Unit:
                 meter ``m``. Shape: scalar ``()``. Optional if ``h_i`` and
@@ -308,7 +308,7 @@ class LinkSpec:
             rho: Mass density of the link material. Unit: ``kg/m^3``. Shape:
                 scalar ``()``.
             eta: Material damping coefficient used to form the local damping
-                matrix. Unit: ``N*s/m``. Shape: scalar ``()``.
+                matrix. Unit: ``Pa*s`` (``N*s/m^2``). Shape: scalar ``()``.
             L: Link arclength. Unit: meter ``m``. Shape: scalar ``()``.
             a: Constant semi-major axis applied at both link ends. Unit: meter
                 ``m``. Shape: scalar ``()``. Optional if ``a_i`` and ``a_f``

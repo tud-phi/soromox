@@ -24,13 +24,13 @@ __all__ = ["TendonActuatedGVS"]
 
 class TendonActuatedGVS(GVS):
     """
-      Geometric Variable Strain (GVS) model for 3D soft continuum robots with tendon actuation.
+    Geometric Variable Strain (GVS) model for 3D soft continuum robots with tendon actuation.
 
-      This class implements the geometric and dynamic modeling of a 3D soft robot
-      using the Cosserat rod theory with geometric variable strain parametrizations.
-      It supports computation of forward kinematics, Jacobians, and dynamic matrices
-      for robots with arbitrary combinations of link cross-sections, joint types, and
-      strain basis functions. Additionally, it includes tendon actuation capabilities.
+    This class implements the geometric and dynamic modeling of a 3D soft robot
+    using the Cosserat rod theory with geometric variable strain parametrizations.
+    It supports computation of forward kinematics, Jacobians, and dynamic matrices
+    for robots with arbitrary combinations of link cross-sections, joint types, and
+    strain basis functions. Additionally, it includes tendon actuation capabilities.
 
     Attributes:
         num_segments: Number of segments (links) in the robot.
@@ -52,17 +52,22 @@ class TendonActuatedGVS(GVS):
         basis_type_index: Index of the strain basis type used for each segment.
         basis_active_params, basis_order_params: Parameters controlling the strain basis DOFs and orders.
 
-      Notes
-      -----
-      - The GVS model generalizes PCS by allowing the strain distribution in each segment
-        to be expressed in arbitrary basis functions (monomials, Fourier, Gaussian, etc.),
-        rather than assuming it to be constant.
-      - The strain vector per segment is composed of 6 components:
-        [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z].
-      - The joint and link strain contributions are treated separately, with their DOFs
-        padded or truncated to `max_dof` for consistent computation.
-      - Link cross-section geometry can vary along the length and supports circular,
-        rectangular, and elliptical shapes.
+    Notes
+    -----
+    - The GVS model generalizes PCS by allowing the strain distribution in each segment
+      to be expressed in arbitrary basis functions (monomials, Fourier, Gaussian, etc.),
+      rather than assuming it to be constant.
+    - The strain vector per segment is composed of 6 components:
+      [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]. The material-frame
+      local x-axis is the longitudinal backbone direction, independent of the
+      base pose's orientation in the inertial frame.
+    - Tendon routing values ``[0, d_y, d_z]`` are local-frame offsets in the yz
+      cross-sectional plane normal to the longitudinal local x-axis.
+    - The joint and link strain contributions are treated separately, with their DOFs
+      padded or truncated to `max_dof` for consistent computation.
+    - Link cross-section geometry can vary along the length and supports circular,
+      rectangular, and elliptical shapes; tendon actuation does not impose a
+      circular-section assumption.
 
     """
 

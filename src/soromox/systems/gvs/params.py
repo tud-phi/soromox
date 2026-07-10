@@ -23,6 +23,7 @@ class GVSLinkParams(BaseSystemParams):
     the singular per-link naming convention used by the other fields. Reference
     strain is intentionally stored on ``GVSParams`` because it belongs to the
     strain basis state, not the link cross-section/material data.
+    ``damping_coefficient`` is a viscosity-like modulus in Pa*s (N*s/m^2).
     """
 
     length: Array

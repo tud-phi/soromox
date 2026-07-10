@@ -363,8 +363,9 @@ class ISupport(PCS):
         shear_modulus: Shear modulus of each segment [Pa], cached as ``G``.
         density: Density of each segment [kg/m^3], cached as ``rho``.
         damping_matrix: Resolved damping matrix of the flattened strain
-            coordinates [Pa*s], cached as ``D_full``. It can be supplied
-            directly or derived from ``material_damping_coefficient``.
+            coordinates, cached as ``D_full``. It can be supplied directly or
+            derived from a material damping coefficient in Pa*s. Matrix-entry
+            units depend on the associated generalized strain coordinates.
         num_active_strains: Number of active strain components (based on strain_selector).
         num_strains: Total number of strain components (6 * num_segments).
         B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
@@ -492,11 +493,12 @@ class ISupport(PCS):
                     Shear modulus of each segment [Pa].
                 - ``material_damping_coefficient``: Scalar or array of shape
                     ``(num_segments,)``. Material damping coefficient used to
-                    derive segment damping from geometry.
+                    derive segment damping from geometry [Pa*s] ([N*s/m^2]).
                 - ``damping_matrix``: Optional custom array of shape
                     ``(6 * num_segments, 6 * num_segments)``.
-                    Damping matrix of the flattened strain coordinates [Pa*s].
-                    Exactly one damping input must be provided.
+                    Damping matrix of the flattened strain coordinates; its
+                    entry units depend on the paired generalized strain
+                    coordinates. Exactly one damping input must be provided.
                 - ``reference_strain``: Array with ``6 * num_segments``
                     entries. Reference strain of the robot.
                 - ``chamber_inner_radius``: Array of shape

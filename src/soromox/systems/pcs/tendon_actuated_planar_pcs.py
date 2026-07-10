@@ -30,6 +30,11 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     ``TendonActuatedGVS``. Each tendon has an ``attachment_segment_index`` that
     determines which proximal segments it spans.
 
+    As in ``PlanarPCS``, the material-frame local x-axis is the longitudinal
+    backbone direction and every body segment has a solid circular
+    cross-section. Planar tendon offsets lie along local y, in the
+    cross-sectional plane normal to local x.
+
     Routing basis functions may be shared with spatial systems or written in a
     compact planar form. For each tendon and arc-length position ``s``, ``d_s``
     and ``dd_s_ds`` may return:
@@ -37,8 +42,9 @@ class TendonActuatedPlanarPCS(PlanarPCS):
     - a scalar: interpreted as the planar offset ``d(s)`` or derivative
       ``d'(s)``;
     - shape ``(1,)``: first entry is interpreted as ``d(s)`` or ``d'(s)``;
-    - shape ``(3,)``: PCS/GVS-compatible ``[0, y, z]`` routing, where ``y`` is
-      the planar offset and ``z`` must be zero.
+    - shape ``(3,)``: PCS/GVS-compatible local-frame ``[0, y, z]`` routing,
+      where the longitudinal x-offset is zero, ``y`` is the planar offset, and
+      the out-of-plane ``z`` value must be zero.
 
     Shape ``(2,)`` is intentionally invalid because it is ambiguous whether it
     means ``[x, y]`` or ``[y, z]``. The built-in ``LinearTendonRoutingParams``

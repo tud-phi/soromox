@@ -38,6 +38,10 @@ class Pendulum(SoftRobot):
         - mass m[i]
         - planar moment of inertia about its COM I[i]
 
+    At zero joint angle, each link points along the local positive x-axis of its
+    proximal frame. ``Lc[i]`` is measured from the proximal joint along this link
+    axis. The base pose may rotate that local convention in the inertial frame.
+
     Gravity is applied as a planar acceleration vector g = [g_x, g_y]. Optional linear
     joint stiffness K and viscous damping D can be supplied to model elastic and damping
     torques (τ_el = K q, τ_d = D qd).
@@ -62,7 +66,8 @@ class Pendulum(SoftRobot):
     Attributes:
         num_links: Number of links / DoFs.
         num_actuators: Number of joint actuators. Equal to num_links.
-        m, I, L, Lc, r: Physical link properties (radius used for visualization).
+        m, I, L, Lc, r: Physical link properties. Radius is used only for
+            circular visualization geometry; mass and inertia are supplied independently.
         g: Planar gravity vector [g_x, g_y].
         K, D: Optional joint stiffness and damping matrices (zeros if omitted).
         q_ref_k: Optional rest configuration of the torsional springs (default is the zero configuration).
@@ -138,7 +143,10 @@ class Pendulum(SoftRobot):
         return jnp.asarray(self.L)
 
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Circular cross-section using per-link radius."""
+        """Return circular visualization geometry using the per-link radius.
+
+        The radius does not determine the link's mass or planar moment of inertia.
+        """
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
         segment_idx = jnp.clip(jnp.sum(s > L_cum) - 1, 0, self.num_links - 1)
         radius = self.r[segment_idx]
@@ -584,7 +592,8 @@ class Pendulum(SoftRobot):
         Compute the forward kinematics at arc-length position s along the pendulum.
 
         The pose is computed as [theta, x, y] where theta is the orientation angle
-        and (x, y) is the Cartesian position.
+        and (x, y) is the Cartesian position. A zero link angle points along the
+        local positive x-axis; cumulative joint angles rotate that direction.
 
         Args:
             q: Joint angles, shape (N,) [rad].

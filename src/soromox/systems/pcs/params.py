@@ -90,7 +90,10 @@ class PCSParams(BaseContinuumSoftRobotParams):
     ``length``, ``radius``, material parameters, and density use a leading
     segment axis. Damping can be supplied either as the preferred
     ``material_damping_coefficient`` or as a full flattened strain
-    ``damping_matrix``.
+    ``damping_matrix``. ``material_damping_coefficient`` is a viscosity-like
+    modulus in Pa*s (N*s/m^2); it may be scalar or have one value per segment.
+    The assembled matrix includes geometry and length factors, so its entries
+    have generalized-coordinate-dependent units rather than a single Pa*s unit.
     ``base_pose`` is the scalar-first quaternion SE(3) base pose vector
     ``[qw, qx, qy, qz, x, y, z]`` used to initialize the base transform. The
     quaternion is normalized before use and must have nonzero finite norm.
@@ -120,7 +123,10 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
     segments. ``base_pose`` stores the planar pose ``[theta, x, y]`` with shape
     ``(3,)``. ``theta`` is a right-handed angle in radians about the
     out-of-plane z-axis, and ``x``/``y`` are direct translations in the parent
-    frame.
+    frame. ``material_damping_coefficient`` is a viscosity-like modulus in Pa*s
+    (N*s/m^2); it may be scalar or have one value per segment. The assembled
+    matrix includes geometry and length factors and therefore has
+    generalized-coordinate-dependent entry units.
     """
 
     radius: Array

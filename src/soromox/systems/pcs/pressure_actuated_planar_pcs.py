@@ -158,7 +158,8 @@ class PressureActuatedPlanarPCS(PlanarPCS):
                 - "G": List/Array of num_segments floats
                     Shear modulus of each segment [Pa]
                 - "D": List/Array of (num_segments x num_segments) floats
-                    Damping matrix of each segment [Pa*s]
+                    Generalized strain-coordinate damping matrix; entry units
+                    depend on the paired strain coordinates.
                 - "r_chamber_in" : Array of num_segments floats
                     Inner radius of each segment's pressure chamber [m]
                 - "r_chamber_out" : Array of num_segments floats

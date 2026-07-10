@@ -37,8 +37,8 @@ class PlanarPCS(SoftRobot):
         base_pose: Initial planar pose ``[theta, x, y]`` with ``theta`` in radians.
         g: Gravitational acceleration vector (embedded in a 3D vector).
             [0, g_x, g_y]
-        L, r, E, G, rho: Physical properties of each segment
-            (length, radius, elastic/shear modulus, etc.).
+        L, r, E, G, rho: Physical properties of each segment. ``r`` is the
+            radius of the assumed solid circular cross-section.
         num_active_strains: Number of active strain components (based on strain_selector).
         num_strains: Total number of strain components (6 * num_segments).
         B_xi: Basis matrix for projecting active strains (3 * num_segments, num_active_strains).
@@ -51,13 +51,19 @@ class PlanarPCS(SoftRobot):
 
     Notes:
     -----
+    - The material-frame local x-axis is the rod's longitudinal axis (the
+      undeformed backbone tangent). This convention is independent of the base
+      pose, which may orient the local x-axis arbitrarily in the inertial frame.
     - The strain vector is composed of 3 components per segment:
-      [kappa_z, sigma_x, sigma_y].
-      By default, the rod is assumed to be straight and aligned with the x-axis,
-        so the reference strain is set to [0, 1, 0].
-        Thus:   - kappa_z corresponds to bending around the z-axis,
-                - sigma_x corresponds to axial strain along the x-axis,
-                - sigma_y corresponds to shear along the y-axis.
+      [kappa_z, sigma_x, sigma_y]. The default straight, unstretched reference
+      strain is [0, 1, 0]. Thus, kappa_z is the out-of-plane bending strain,
+      sigma_x is axial stretch along local x, and sigma_y is transverse shear.
+    - Every segment is assumed to have a solid circular cross-section. Its
+      radius determines the area and second moment used by the mass, material
+      damping, and stiffness matrices.
+    - ``material_damping_coefficient`` is a viscosity-like modulus in Pa*s
+      (N*s/m^2). The assembled damping matrix also contains section geometry
+      and segment-length factors, so its entries do not share one blanket unit.
 
     References:
         Renda, F., Boyer, F., Dias, J., & Seneviratne, L. (2018). Discrete Cosserat
@@ -209,7 +215,7 @@ class PlanarPCS(SoftRobot):
         return B_xi
 
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Circular cross-section with segment radius."""
+        """Return the assumed solid circular cross-section and segment radius."""
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
@@ -289,7 +295,7 @@ class PlanarPCS(SoftRobot):
         return D
 
     def _material_damping_coefficients(self) -> Array:
-        """Return one material damping coefficient per segment."""
+        """Return per-segment material damping coefficients in Pa*s (N*s/m^2)."""
         params = self._current_body_params()
         if params.material_damping_coefficient is None:
             raise ValueError("material_damping_coefficient is not set.")
@@ -306,7 +312,7 @@ class PlanarPCS(SoftRobot):
         return coefficient
 
     def _compute_material_damping_full_matrix(self) -> Array:
-        """Compute full damping from material damping coefficients."""
+        """Compute damping using the solid-circle area and second moment."""
         coefficients = self._material_damping_coefficients()
 
         def damping_block(i: Array) -> Array:
@@ -488,6 +494,9 @@ class PlanarPCS(SoftRobot):
         """
         Compute the strain vector from the generalized coordinates.
 
+        Components use the rod material frame, whose local x-axis is the
+        longitudinal backbone direction.
+
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
 
@@ -502,6 +511,9 @@ class PlanarPCS(SoftRobot):
     def chi(self, xi: Array, s: Array) -> Array:
         """
         Compute the forward kinematics of the robot.
+
+        Linear strains are expressed in the material frame: axial stretch is
+        along local x and transverse shear is along local y.
 
         Args:
             xi (Array): strain vector of shape (3*num_segments,) where each row corresponds to a segment
@@ -2052,7 +2064,7 @@ class PlanarPCS(SoftRobot):
     @eqx.filter_jit
     def _local_cross_sectional_area(self, i: Array) -> Array:
         """
-        Compute the local cross-sectional area for the i-th segment.
+        Compute the area of the i-th segment's solid circular cross-section.
 
         Args:
             i (Array): index of the segment
@@ -2060,14 +2072,16 @@ class PlanarPCS(SoftRobot):
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment
         """
-        # Cross-sectional area
+        # Area of the assumed solid circular cross-section
         A_i = jnp.pi * self.r[i] ** 2
         return A_i
 
     @eqx.filter_jit
     def _local_second_moment_of_area(self, i: Array) -> Array:
         """
-        Compute the local second moment of area for the i-th segment.
+        Compute the transverse second moment of the solid circular section.
+
+        The rod is longitudinally aligned with local x and bends about local z.
 
         Args:
             i (Array): index of the segment
@@ -2075,13 +2089,16 @@ class PlanarPCS(SoftRobot):
         Returns:
             I_i (Array): local second moment of area of the i-th segment
         """
-        # Second moment of area
+        # Transverse second moment of the assumed solid circular cross-section
         I_i = jnp.pi * self.r[i] ** 4 / 4
         return I_i
 
     def _compute_local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
+
+        The rotational entry uses the solid circular cross-section's transverse
+        second moment about local z; local x is the longitudinal direction.
 
         Args:
             i (Array): index of the segment
@@ -2320,7 +2337,10 @@ class PlanarPCS(SoftRobot):
     @eqx.filter_jit
     def _local_stiffness_matrix(self, i: Array) -> Array:
         """
-        Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
+        Compute local stiffness for a planar rod longitudinally aligned with local x.
+
+        The diagonal constitutive terms use the solid circular cross-section's
+        area and transverse second moment.
 
         Args:
             i (Array): index of the segment
