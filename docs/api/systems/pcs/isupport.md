@@ -14,26 +14,33 @@
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import ISupport
+from soromox.systems import ISupport, ISupportParams, ISupportStructure
 
-# Create an I-Support robot
-robot = ISupport(
-    num_segments=2,
-    L=jnp.array([0.1, 0.1]),           # Segment lengths
-    r=jnp.array([0.02, 0.02]),         # Cross-section radii
-    rho=jnp.array([1000.0, 1000.0]),   # Density
-    E=jnp.array([1e5, 1e5]),           # Young's modulus
-    G=jnp.array([1e4, 1e4]),           # Shear modulus
+params = ISupportParams(
+    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    length=jnp.array([0.18]),
+    radius=jnp.array([35.6e-3]),
+    density=jnp.array([1104.0]),
+    gravity=jnp.array([0.0, 0.0, -9.81]),
+    young_modulus=jnp.array([1.6464e6]),
+    shear_modulus=jnp.array([0.5488e6]),
+    material_damping_coefficient=1.96e3,
+    reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+    chamber_inner_radius=jnp.array([6.39e-3]),
+    chamber_outer_radius=jnp.array([7.79e-3]),
+    chamber_distance=jnp.array([20e-3]),
+    chamber_angle_offset=jnp.array([0.0]),
 )
+robot = ISupport(params, structure=ISupportStructure(num_gauss_points=3))
 
 # Configuration
 q = jnp.zeros(robot.num_dofs)
 
-# Pressure actuation (3 chambers per segment)
-u = jnp.array([0.1, 0.0, -0.1, 0.1, 0.0, -0.1])
+# Pressure actuation (3 chambers per pneumatic segment)
+u = jnp.array([2.0e4, 0.0, 0.0])
 
 # Forward kinematics
-chi = robot.forward_kinematics(q, s=robot.length)
+g_tip = robot.forward_kinematics(q, s=jnp.sum(robot.L))
 ```
 
 ## Key Features
