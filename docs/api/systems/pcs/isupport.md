@@ -36,7 +36,8 @@ a thin visual-only interface plate without changing the robot kinematics.
 
 Pass chamber pressures in pascals to color each chamber with the sequential
 Matplotlib `Blues` colormap. The default scale spans 0–300 kPa and omits the
-palest 15% of the colormap so unpressurized chambers remain visible. Values
+palest 50% of the colormap so unpressurized chambers remain visibly distinct
+from the white scene background. Values
 outside the configured scale are clamped. Pressure channels use segment-major
 order: all chamber azimuth indices of the first pneumatic segment, followed by
 those of the second segment, and so on.

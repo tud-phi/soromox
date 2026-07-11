@@ -264,10 +264,15 @@ def test_pressure_colormap_clamps_and_handles_missing_values():
     )
     expected_mid = tuple(
         int(round(255.0 * component))
-        for component in cmap(config.pressure_colormap_start + 0.85 * 0.5)[:3]
+        for component in cmap(
+            config.pressure_colormap_start
+            + (1.0 - config.pressure_colormap_start) * 0.5
+        )[:3]
     )
     expected_high = tuple(int(round(255.0 * component)) for component in cmap(1.0)[:3])
 
+    assert config.pressure_colormap_start == pytest.approx(0.50)
+    assert max(expected_low) < 220
     assert renderer._pressure_color(-1.0e5) == expected_low
     assert renderer._pressure_color(0.0) == expected_low
     assert renderer._pressure_color(1.5e5) == expected_mid

@@ -44,7 +44,7 @@ class ISupportVisualConfig:
     spacer_opacity: float = 0.35
     pressure_colormap: str = "Blues"
     pressure_range: tuple[float, float] = (0.0, 3.0e5)
-    pressure_colormap_start: float = 0.15
+    pressure_colormap_start: float = 0.50
     pressure_label_offset: float = 0.012
 
     def __post_init__(self) -> None:
