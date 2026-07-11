@@ -49,7 +49,7 @@ class ISupportVisualConfig:
     spacer_opacity: float = 0.35
     pressure_colormap: str = "Blues"
     pressure_range: tuple[float, float] = (0.0, 3.0e5)
-    pressure_colormap_start: float = 0.50
+    pressure_colormap_start: float = 0.15
     pressure_label_offset: float = 0.012
 
     def __post_init__(self) -> None:
@@ -176,6 +176,7 @@ class ISupportViserRenderer(ViserRenderer):
         self._pressure_frame_idx = 0
         self._show_pressure_labels = False
         self._force_pressure_labels = False
+        self._current_world_poses: np.ndarray | None = None
         self._robot_visual_handles: list[_ISupportRobotHandles] = []
         (
             self._pneumatic_specs,
@@ -514,7 +515,11 @@ class ISupportViserRenderer(ViserRenderer):
         robot_idx: int,
         poses: np.ndarray,
     ) -> list[Any]:
-        if self._server is None or self._current_pressures is None:
+        if (
+            self._server is None
+            or self._current_pressures is None
+            or not (self._force_pressure_labels or self._show_pressure_labels)
+        ):
             return []
         labels: list[Any] = []
         for spec in self._pneumatic_specs:
@@ -551,7 +556,8 @@ class ISupportViserRenderer(ViserRenderer):
                     handle.visible = False
                 continue
 
-            if not robot_handles.pressure_label_handles:
+            labels_enabled = self._force_pressure_labels or self._show_pressure_labels
+            if labels_enabled and not robot_handles.pressure_label_handles:
                 robot_handles.pressure_label_handles = self._add_pressure_labels(
                     robot_idx, poses
                 )
@@ -563,29 +569,43 @@ class ISupportViserRenderer(ViserRenderer):
                     pressure = float(pressures[flat_chamber_idx])
                     chamber_handle = robot_handles.chamber_handles[flat_chamber_idx]
                     chamber_handle.color = self._pressure_color(pressure)
-                    label_handle = robot_handles.pressure_label_handles[
-                        flat_chamber_idx
-                    ]
-                    value_text = (
-                        f"{pressure / 1.0e3:.1f} kPa" if np.isfinite(pressure) else "--"
-                    )
-                    label_handle.text = (
-                        f"Segment {spec.pneumatic_idx + 1} · "
-                        f"Chamber {chamber_idx + 1}\n{value_text}"
-                    )
-                    label_handle.position = self._pressure_label_position(
-                        poses, spec, chamber_idx
-                    )
-                    label_handle.visible = (
-                        self._force_pressure_labels or self._show_pressure_labels
-                    )
+                    if labels_enabled:
+                        label_handle = robot_handles.pressure_label_handles[
+                            flat_chamber_idx
+                        ]
+                        value_text = (
+                            f"{pressure / 1.0e3:.1f} kPa"
+                            if np.isfinite(pressure)
+                            else "--"
+                        )
+                        label_handle.text = (
+                            f"Segment {spec.pneumatic_idx + 1} · "
+                            f"Chamber {chamber_idx + 1}\n{value_text}"
+                        )
+                        label_handle.position = self._pressure_label_position(
+                            poses, spec, chamber_idx
+                        )
+                        label_handle.visible = True
                     flat_chamber_idx += 1
+
+    def _remove_pressure_labels(self) -> None:
+        for robot_handles in self._robot_visual_handles:
+            for handle in robot_handles.pressure_label_handles:
+                if hasattr(handle, "remove"):
+                    handle.remove()
+            robot_handles.pressure_label_handles = []
 
     def _set_pressure_labels_visible(self, visible: bool) -> None:
         self._show_pressure_labels = bool(visible)
-        for robot_handles in self._robot_visual_handles:
-            for handle in robot_handles.pressure_label_handles:
-                handle.visible = self._show_pressure_labels
+        if not self._show_pressure_labels:
+            self._remove_pressure_labels()
+            return
+        if self._current_pressures is None or self._current_world_poses is None:
+            return
+        if self._server is None:
+            return
+        with self._server.atomic():
+            self._apply_pressure_visuals(self._current_world_poses)
 
     def _pressure_colorbar_image(self) -> np.ndarray:
         cfg = self.visual_config
@@ -726,10 +746,7 @@ class ISupportViserRenderer(ViserRenderer):
     def _remove_robot_geometry(self) -> None:
         if self._scene_handles is None:
             return
-        for robot_handles in self._robot_visual_handles:
-            for handle in robot_handles.pressure_label_handles:
-                if hasattr(handle, "remove"):
-                    handle.remove()
+        self._remove_pressure_labels()
         for robot_handles in self._scene_handles.backbone_points:
             for handle in robot_handles:
                 if hasattr(handle, "remove"):
@@ -766,6 +783,7 @@ class ISupportViserRenderer(ViserRenderer):
         self._remove_robot_geometry()
         q = self._as_batch(self._current_geometry_q)
         world_poses = self._sample_world_poses(q, curves)
+        self._current_world_poses = world_poses
         cfg = self.visual_config
 
         for robot_idx in range(q.shape[0]):
@@ -858,6 +876,7 @@ class ISupportViserRenderer(ViserRenderer):
 
         q = self._as_batch(self._current_geometry_q)
         world_poses = self._sample_world_poses(q, curves)
+        self._current_world_poses = world_poses
         with self._server.atomic():
             for robot_idx, robot_handles in enumerate(self._robot_visual_handles):
                 poses = world_poses[robot_idx]
