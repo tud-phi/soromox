@@ -392,7 +392,6 @@ params = params.replace(
     center_of_mass_position=center_of_mass_positions,
     mass=masses,
     center_of_mass_inertia=center_of_mass_inertia,
-    gravity=jnp.array([0.0, 0.0, -9.81]),
     joint_stiffness=jnp.diag(joint_stiffness),
     joint_damping=jnp.diag(joint_damping),
 )

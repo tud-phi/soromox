@@ -69,6 +69,71 @@ or `(num_links,)`.
 | `reference_strain` | Reference strain vector |
 | `joint_rest_configuration` | Joint coordinates where elastic joint force is zero |
 
+## World Frame, Mounting, and Gravity Defaults
+
+Soft-robot parameter objects use an upright mounting and Earth gravity when
+`base_pose` or `gravity` is omitted. Vertical is world y for planar systems and
+world z for spatial systems. Gravity is always expressed in the inertial/world
+frame; changing the base mounting does not rotate the gravity vector.
+
+| Mounting constructor | Planar backbone | Spatial backbone | Default gravity |
+|----------------------|-----------------|------------------|-----------------|
+| `horizontal` | +x | +x | negative vertical |
+| `upright` | +y | +z | negative vertical |
+| `hanging` | -y | -z | negative vertical |
+
+The exact default values are:
+
+- Planar upright pose: `[pi / 2, 0, 0]`; gravity: `[0, -9.81]` m/s².
+- Spatial upright pose: `[sqrt(0.5), 0, -sqrt(0.5), 0, 0, 0, 0]`;
+  gravity: `[0, 0, -9.81]` m/s².
+- Planar poses use `[theta, x, y]`. Spatial poses use scalar-first Hamilton
+  quaternions in `[qw, qx, qy, qz, x, y, z]` order.
+
+Omitting both fields selects the defaults:
+
+```python
+params = PlanarPCSParams(
+    length=length,
+    radius=radius,
+    density=density,
+    young_modulus=young_modulus,
+    shear_modulus=shear_modulus,
+    damping_matrix=damping_matrix,
+    reference_strain=reference_strain,
+)
+```
+
+Use the inherited mounting constructors to make another common mounting
+explicit. `base_position` translates the mounting without changing its
+orientation:
+
+```python
+horizontal = PlanarPCSParams.horizontal(**planar_params)
+upright = PlanarPCSParams.upright(
+    **planar_params, base_position=jnp.array([0.2, 0.1])
+)
+hanging = PCSParams.hanging(
+    **spatial_params, base_position=jnp.array([0.0, 0.0, 0.5])
+)
+```
+
+Pass an explicit vector for custom or zero gravity. Pass an explicit
+`base_pose` through the ordinary constructor for arbitrary orientations:
+
+```python
+zero_gravity = PCSParams(..., gravity=jnp.zeros(3))
+custom = PlanarPCSParams(
+    ...,
+    gravity=jnp.array([1.0, -9.7]),
+    base_pose=jnp.array([0.3, 0.2, 0.1]),
+)
+```
+
+Calling `replace(base_pose=None)` or `replace(gravity=None)` restores the
+dimension-appropriate default. The former identity fallback is available as
+`.horizontal(...)` or by passing an explicit identity pose.
+
 ## Tendon Parameters
 
 Continuum tendon routing uses `LinearTendonRoutingParams`. It is a batched
@@ -120,31 +185,19 @@ choices that affect compilation.
 import jax.numpy as jnp
 from soromox.systems import PCS, PCSParams, PCSStructure
 
-params = PCSParams(
+params = PCSParams.upright(
     length=jnp.array([0.1, 0.1]),
     radius=jnp.array([0.01, 0.01]),
     density=jnp.array([1000.0, 1000.0]),
     young_modulus=jnp.array([1e6, 1e6]),
     shear_modulus=jnp.array([1e5, 1e5]),
     damping_matrix=jnp.eye(12),
-    gravity=jnp.array([0.0, 0.0, -9.81]),
-    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
     reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 2),
 )
 
 robot = PCS(params=params, structure=PCSStructure(num_gauss_points=5))
 updated_robot = robot.update_params(length=jnp.array([0.12, 0.1]))
 ```
-
-`base_pose` convention:
-
-- Planar systems use shape `(3,)`: `[theta, x, y]`, where `theta` is a
-  right-handed angle in radians about the out-of-plane z-axis.
-- Spatial systems use shape `(7,)`: `[qw, qx, qy, qz, x, y, z]`.
-- Spatial quaternions are scalar-first Hamilton quaternions, normalized before
-  use, and must have nonzero finite norm.
-- Zero base rotation means the undeformed soft-robot backbone is aligned with
-  the positive base-frame x-axis.
 
 ## API Reference
 

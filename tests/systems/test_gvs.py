@@ -138,6 +138,37 @@ def test_params_from_segments_stores_resolved_max_dof():
         GVS(params=oversized, structure=structure)
 
 
+def test_params_from_segments_uses_spatial_environment_defaults():
+    segment = GVSSegment(
+        link=LinkSpec(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=1e6,
+            nu=0.45,
+            rho=1000.0,
+            eta=0.0,
+            L=0.2,
+            r_i=0.02,
+            r_f=0.02,
+        ),
+        joint=JointSpec(type="fixed"),
+        basis=StrainBasisSpec(
+            type="monomial",
+            active=[1, 1, 1, 1, 1, 1],
+            orders=[0, 0, 0, 0, 0, 0],
+            xi_ref=[0, 0, 0, 1, 0, 0],
+        ),
+        num_gauss_points=5,
+    )
+
+    params, _ = GVS.params_from_segments([segment])
+
+    assert_allclose(
+        params.base_pose,
+        jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+    )
+    assert_allclose(params.gravity, jnp.array([0.0, 0.0, -9.81]))
+
+
 def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
     """
     Initialize a GVS robot with a configurable number of segments, mixing joint families and

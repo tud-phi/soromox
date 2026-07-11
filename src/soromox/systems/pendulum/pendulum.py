@@ -217,6 +217,7 @@ class Pendulum(SoftRobot):
         for name in shape_locked_fields:
             if (
                 name in updates
+                and updates[name] is not None
                 and jnp.asarray(updates[name]).shape != getattr(self.params, name).shape
             ):
                 raise ValueError(

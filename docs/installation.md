@@ -179,9 +179,7 @@ Test your installation with this quick verification script:
         young_modulus=jnp.array([1e6]),
         shear_modulus=jnp.array([1e5]),
         damping_matrix=jnp.eye(3),
-        gravity=jnp.array([0.0, -9.81]),
         reference_strain=jnp.array([0.0, 1.0, 0.0]),
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     robot = PlanarPCS(params=params)
     robot.forward_kinematics(jnp.zeros(robot.num_dofs), s=0.1)
@@ -203,9 +201,7 @@ Test your installation with this quick verification script:
         young_modulus=jnp.array([1e6, 1e6]),
         shear_modulus=jnp.array([1e5, 1e5]),
         damping_matrix=jnp.eye(6),
-        gravity=jnp.array([0.0, -9.81]),
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 2),
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     robot = PlanarPCS(params=params)
 

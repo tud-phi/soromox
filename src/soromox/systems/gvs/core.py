@@ -229,7 +229,7 @@ class GVS(SoftRobot):
     def params_from_segments(
         segments: list[GVSSegment] | tuple[GVSSegment, ...],
         *,
-        gravity: Array,
+        gravity: Array | None = None,
         base_pose: Array | None = None,
         max_dof: int | None = None,
         max_num_gauss_points: int | None = None,
@@ -243,6 +243,8 @@ class GVS(SoftRobot):
         family, basis family, quadrature count, and cross-section family remain
         static in ``GVSStructure``. Numeric link, joint, and reference-strain
         values are copied into ``GVSParams``.
+        Omitted ``base_pose`` and ``gravity`` use the standard upright spatial
+        mounting and negative-z Earth gravity.
         """
         return params_and_structure_from_segments(
             segments,
@@ -258,14 +260,18 @@ class GVS(SoftRobot):
         cls,
         segments: list[GVSSegment] | tuple[GVSSegment, ...],
         *,
-        gravity: Array,
+        gravity: Array | None = None,
         base_pose: Array | None = None,
         max_dof: int | None = None,
         max_num_gauss_points: int | None = None,
         scale_rotational_basis_by_length: bool = False,
         **kwargs: Any,
     ) -> "GVS":
-        """Construct a GVS model directly from user-facing segment specs."""
+        """Construct a GVS model directly from user-facing segment specs.
+
+        Omitted ``base_pose`` and ``gravity`` use the standard upright spatial
+        mounting and negative-z Earth gravity.
+        """
         params, structure = cls.params_from_segments(
             segments,
             gravity=gravity,

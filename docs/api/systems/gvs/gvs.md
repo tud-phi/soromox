@@ -38,8 +38,6 @@ segment = GVSSegment(
 
 robot = GVS.from_segments(
     [segment],
-    gravity=jnp.array([0.0, 0.0, -9.81]),
-    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
     max_dof=4,
 )
 q = jnp.zeros(robot.num_dofs)

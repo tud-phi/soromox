@@ -7,6 +7,8 @@ __all__ = [
     "ISupportParams",
 ]
 
+from typing import ClassVar
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
@@ -57,7 +59,11 @@ class PCSParams(BaseContinuumSoftRobotParams):
     ``base_pose`` is the scalar-first quaternion SE(3) base pose vector
     ``[qw, qx, qy, qz, x, y, z]`` used to initialize the base transform. The
     quaternion is normalized before use and must have nonzero finite norm.
+    Omitting ``base_pose`` and ``gravity`` selects upright spatial mounting and
+    negative-z Earth gravity.
     """
+
+    is_planar: ClassVar[bool] = False
 
     radius: Array
     young_modulus: Array
@@ -82,8 +88,11 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
     segments. ``base_pose`` stores the planar pose ``[theta, x, y]`` with shape
     ``(3,)``. ``theta`` is a right-handed angle in radians about the
     out-of-plane z-axis, and ``x``/``y`` are direct translations in the parent
-    frame.
+    frame. Omitting ``base_pose`` and ``gravity`` selects upright planar
+    mounting and negative-y Earth gravity.
     """
+
+    is_planar: ClassVar[bool] = True
 
     radius: Array
     young_modulus: Array

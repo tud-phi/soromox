@@ -197,7 +197,7 @@ class TendonActuatedGVS(GVS):
         cls,
         segments: list[GVSSegment] | tuple[GVSSegment, ...],
         *,
-        gravity: Array,
+        gravity: Array | None = None,
         active_tendon_routing: BaseTendonRoutingParams,
         passive_tendon_routing: BaseTendonRoutingParams | None = None,
         passive_tendon: PassiveTendonParams | None = None,
@@ -209,7 +209,11 @@ class TendonActuatedGVS(GVS):
         passive_tendon_routing_basis: dict[str, Callable] | None = None,
         **kwargs: Any,
     ) -> "TendonActuatedGVS":
-        """Construct a tendon-actuated GVS model from segment and tendon specs."""
+        """Construct a tendon-actuated GVS model from segment and tendon specs.
+
+        Omitted ``base_pose`` and ``gravity`` use the standard upright spatial
+        mounting and negative-z Earth gravity.
+        """
         body, structure = GVS.params_from_segments(
             segments,
             gravity=gravity,

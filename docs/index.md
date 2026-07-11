@@ -118,11 +118,9 @@ Get up and running in minutes:
         radius=0.02 * jnp.ones((num_segments,)),
         density=1070.0 * jnp.ones((num_segments,)),
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-        gravity=jnp.array([0.0, 9.81]),
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
         damping_matrix=1e-3 * jnp.eye(3 * num_segments),
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     robot = PlanarPCS(params=params)
 

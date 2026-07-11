@@ -41,11 +41,9 @@ import jax.numpy as jnp
 from soromox.systems import ISupport, ISupportParams, ISupportStructure
 
 params = ISupportParams(
-    base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
     length=jnp.array([0.18]),
     radius=jnp.array([0.03]),
     density=jnp.array([1104.0]),
-    gravity=jnp.array([0.0, 0.0, -9.81]),
     young_modulus=jnp.array([1.6464e6]),
     shear_modulus=jnp.array([0.5488e6]),
     damping_matrix=1e-3 * jnp.eye(6),

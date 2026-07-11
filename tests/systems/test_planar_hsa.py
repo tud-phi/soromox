@@ -85,6 +85,22 @@ def test_planar_hsa_exposes_phi_max():
     assert jnp.allclose(robot.phi_max, typed_params.phi_max)
 
 
+def test_planar_hsa_npz_uses_environment_defaults_when_fields_are_absent(tmp_path):
+    with np.load(HSA_PARAMS_PATH) as data:
+        values = {
+            name: data[name]
+            for name in data.files
+            if name not in {"base_pose", "gravity"}
+        }
+    path = tmp_path / "hsa_without_environment.npz"
+    np.savez(path, **values)
+
+    params = PlanarHSAParams.from_npz(path)
+
+    assert jnp.allclose(params.base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
+    assert jnp.allclose(params.gravity, jnp.array([0.0, -9.81]))
+
+
 def test_jacobian_virtual_backbone(seed: int = 0):
     """
     Test that the symbolic Jacobian matches the autograd Jacobian of forward kinematics.

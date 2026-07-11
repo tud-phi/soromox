@@ -36,7 +36,6 @@ params = ArticulatedSoftRobotParams(
         jnp.diag(jnp.array([0.02, 0.03, 0.04])),
         jnp.diag(jnp.array([0.01, 0.02, 0.03])),
     ]),
-    gravity=jnp.array([0.0, 0.0, -9.81]),
     joint_stiffness=jnp.diag(jnp.array([0.5, 0.3])),
     joint_damping=jnp.diag(jnp.array([0.02, 0.01])),
     joint_rest_configuration=jnp.zeros(2),

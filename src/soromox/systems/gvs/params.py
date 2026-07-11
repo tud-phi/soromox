@@ -1,5 +1,7 @@
 __all__ = ["GVSLinkParams", "GVSParams", "TendonActuatedGVSParams"]
 
+from typing import ClassVar
+
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
@@ -81,8 +83,12 @@ class GVSParams(BaseSoftRobotParams):
     than link geometry or material properties. ``joint_stiffness`` has shape
     ``(num_segments, max_dof, max_dof)`` and is padded to the static GVS layout.
     ``base_pose`` uses scalar-first quaternion SE(3) coordinates
-    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm.
+    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm. Omitting
+    ``base_pose`` and ``gravity`` selects upright spatial mounting and
+    negative-z Earth gravity.
     """
+
+    is_planar: ClassVar[bool] = False
 
     link: GVSLinkParams
     reference_strain: Array

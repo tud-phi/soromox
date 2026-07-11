@@ -1,9 +1,12 @@
+from dataclasses import fields
+
 import equinox as eqx
 import jax
 import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from system_param_builders import (
+    articulated_params,
     linear_tendon_routing,
     passive_tendon_params,
     pcs_params,
@@ -26,9 +29,11 @@ from soromox.systems import (
     PCSParams,
     Pendulum,
     PendulumParams,
+    PlanarPCSParams,
     TendonActuatedPCS,
     TendonActuatedPlanarPCS,
 )
+from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)
 
@@ -70,6 +75,144 @@ def _planar_pcs_params(num_segments: int = 2):
         damping_matrix=jnp.eye(3 * num_segments, dtype=jnp.float64),
         base_pose=planar_base_pose(),
     )
+
+
+def _constructor_kwargs_without_environment(params):
+    return {
+        field.name: getattr(params, field.name)
+        for field in fields(params)
+        if field.name not in {"base_pose", "gravity"}
+    }
+
+
+def _articulated_params():
+    return articulated_params(
+        joint_screw=jnp.array([[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
+        tip_position=jnp.array([[0.5, 0.0, 0.0]]),
+        center_of_mass_position=jnp.array([[0.25, 0.0, 0.0]]),
+        mass=jnp.array([1.0]),
+        center_of_mass_inertia=jnp.eye(3)[None, :, :],
+        gravity=jnp.zeros(3),
+    )
+
+
+@pytest.mark.parametrize(
+    ("params_type", "source", "expected_pose", "expected_gravity"),
+    [
+        (
+            PlanarPCSParams,
+            _planar_pcs_params,
+            jnp.array([jnp.pi / 2, 0.0, 0.0]),
+            jnp.array([0.0, -9.81]),
+        ),
+        (
+            PendulumParams,
+            _pendulum_params,
+            jnp.array([jnp.pi / 2, 0.0, 0.0]),
+            jnp.array([0.0, -9.81]),
+        ),
+        (
+            PCSParams,
+            _pcs_params,
+            jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+            jnp.array([0.0, 0.0, -9.81]),
+        ),
+        (
+            ArticulatedSoftRobotParams,
+            _articulated_params,
+            jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+            jnp.array([0.0, 0.0, -9.81]),
+        ),
+    ],
+)
+def test_soft_robot_params_materialize_upright_environment_defaults(
+    params_type, source, expected_pose, expected_gravity
+):
+    params = params_type(**_constructor_kwargs_without_environment(source()))
+
+    assert_allclose(params.base_pose, expected_pose)
+    assert_allclose(params.gravity, expected_gravity)
+
+
+@pytest.mark.parametrize(
+    ("mounting", "expected_direction"),
+    [
+        ("horizontal", jnp.array([1.0, 0.0])),
+        ("upright", jnp.array([0.0, 1.0])),
+        ("hanging", jnp.array([0.0, -1.0])),
+    ],
+)
+def test_planar_mounting_constructors_map_local_x_to_world_direction(
+    mounting, expected_direction
+):
+    params = getattr(PlanarPCSParams, mounting)(
+        **_constructor_kwargs_without_environment(_planar_pcs_params()),
+        base_position=jnp.array([1.0, 2.0]),
+    )
+    transform = poses.planar_pose_to_transform(params.base_pose)
+
+    assert_allclose(
+        transform[:2, :2] @ jnp.array([1.0, 0.0]),
+        expected_direction,
+        atol=1e-12,
+    )
+    assert_allclose(params.base_pose[1:], jnp.array([1.0, 2.0]))
+    assert_allclose(params.gravity, jnp.array([0.0, -9.81]))
+
+
+@pytest.mark.parametrize(
+    ("mounting", "expected_direction"),
+    [
+        ("horizontal", jnp.array([1.0, 0.0, 0.0])),
+        ("upright", jnp.array([0.0, 0.0, 1.0])),
+        ("hanging", jnp.array([0.0, 0.0, -1.0])),
+    ],
+)
+def test_spatial_mounting_constructors_map_local_x_to_world_direction(
+    mounting, expected_direction
+):
+    params = getattr(PCSParams, mounting)(
+        **_constructor_kwargs_without_environment(_pcs_params()),
+        base_position=jnp.array([1.0, 2.0, 3.0]),
+    )
+    transform = poses.quaternion_pose_to_transform(params.base_pose)
+
+    assert_allclose(
+        transform[:3, :3] @ jnp.array([1.0, 0.0, 0.0]),
+        expected_direction,
+        atol=1e-12,
+    )
+    assert_allclose(params.base_pose[4:], jnp.array([1.0, 2.0, 3.0]))
+    assert_allclose(params.gravity, jnp.array([0.0, 0.0, -9.81]))
+
+
+def test_environment_defaults_can_be_overridden_and_restored():
+    custom_pose = jnp.array([0.25, 1.0, 2.0])
+    custom_gravity = jnp.array([1.0, -2.0])
+    params = PlanarPCSParams(
+        **_constructor_kwargs_without_environment(_planar_pcs_params()),
+        base_pose=custom_pose,
+        gravity=custom_gravity,
+    )
+    assert_allclose(params.base_pose, custom_pose)
+    assert_allclose(params.gravity, custom_gravity)
+
+    restored = params.replace(base_pose=None, gravity=None)
+    assert_allclose(restored.base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
+    assert_allclose(restored.gravity, jnp.array([0.0, -9.81]))
+
+    robot = Pendulum(params=_pendulum_params())
+    updated_robot = robot.update_params(base_pose=None, gravity=None)
+    assert_allclose(updated_robot.params.base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
+    assert_allclose(updated_robot.params.gravity, jnp.array([0.0, -9.81]))
+
+
+def test_named_mounting_rejects_competing_base_pose():
+    with pytest.raises(TypeError, match="does not accept base_pose"):
+        PlanarPCSParams.upright(
+            **_constructor_kwargs_without_environment(_planar_pcs_params()),
+            base_pose=jnp.zeros(3),
+        )
 
 
 class QuadraticTendonRoutingParams(BaseTendonRoutingParams):

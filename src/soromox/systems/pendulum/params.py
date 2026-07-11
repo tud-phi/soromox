@@ -1,5 +1,7 @@
 __all__ = ["PendulumParams", "TendonActuatedPendulumParams"]
 
+from typing import ClassVar
+
 import jax.numpy as jnp
 from jax import Array
 
@@ -19,8 +21,12 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
     generalized-coordinate matrices inherited from the articulated base class.
     ``base_pose`` stores the planar pose ``[theta, x, y]`` with shape ``(3,)``.
     ``theta`` is a right-handed angle in radians about the out-of-plane z-axis,
-    and ``x``/``y`` are direct translations in the parent frame.
+    and ``x``/``y`` are direct translations in the parent frame. Omitting
+    ``base_pose`` and ``gravity`` selects upright mounting and negative-y Earth
+    gravity.
     """
+
+    is_planar: ClassVar[bool] = True
 
     moment_inertia: Array
     length: Array

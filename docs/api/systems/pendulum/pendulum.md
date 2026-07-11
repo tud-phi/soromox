@@ -20,7 +20,6 @@ params = PendulumParams(
     moment_inertia=jnp.array([0.1, 0.05]),
     length=jnp.array([0.5, 0.3]),
     center_of_mass_length=jnp.array([0.25, 0.15]),
-    gravity=jnp.array([0.0, -9.81]),
     joint_stiffness=jnp.zeros((2, 2)),
     joint_damping=jnp.zeros((2, 2)),
     joint_rest_configuration=jnp.zeros(2),

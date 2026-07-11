@@ -184,12 +184,14 @@ Each robot system expects a typed Equinox PyTree params object. Numeric fields a
 JAX arrays, so same-shape updates can flow through `jit`, `grad`, and `vmap`
 without changing the compiled structure.
 
-`base_pose` follows the dimensionality of the robot. Planar robots expect
-`[theta, x, y]`, where `theta` is a right-handed angle in radians about the
-out-of-plane z-axis. Spatial robots expect `[qw, qx, qy, qz, x, y, z]`, using
-scalar-first Hamilton quaternions. Zero base rotation means the undeformed
-backbone is aligned with the positive base-frame x-axis. Spatial quaternions
-must have nonzero finite norm and are normalized before transform construction.
+When omitted, `base_pose` mounts the robot upright (+y planar, +z spatial) and
+`gravity` uses Earth gravity in the negative vertical world direction. Gravity
+is an inertial-frame vector and is not rotated with the base. Use the inherited
+`.horizontal(...)`, `.upright(...)`, and `.hanging(...)` parameter constructors
+for the three standard mountings. Explicit arrays remain available for custom
+poses, gravity directions, and zero-gravity models. See
+[Parameters](../api/utilities/parameters.md#world-frame-mounting-and-gravity-defaults)
+for exact vectors and quaternions.
 
 ```python title="Parameter Structure"
 params = PCSParams(
@@ -197,11 +199,9 @@ params = PCSParams(
     radius=radii,
     density=densities,
     reference_strain=reference_strain,
-    gravity=gravity,
     young_modulus=young_modulus,
     shear_modulus=shear_modulus,
     damping_matrix=damping_matrix,
-    base_pose=base_pose,
 )
 robot = PCS(params=params)
 robot = robot.update_params(length=new_lengths)
@@ -262,11 +262,9 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
         radius=0.02 * jnp.ones((num_segments,)),
         density=1070.0 * jnp.ones((num_segments,)),
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-        gravity=jnp.array([0.0, 9.81]),
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
         damping_matrix=damping_matrix,
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     # Note: Damping helps stabilize simulations and represents material dissipation.
     # For static analysis, you can omit this or set to zero.

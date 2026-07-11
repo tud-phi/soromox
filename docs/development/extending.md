@@ -89,6 +89,27 @@ class SoftRobot(DynamicalSystem):
         ...
 ```
 
+#### Soft-Robot Parameter Classes
+
+Parameter classes derived from `BaseSoftRobotParams` declare their world-frame
+dimensionality explicitly:
+
+```python
+from typing import ClassVar
+from soromox.systems import BaseSoftRobotParams
+
+class MyPlanarParams(BaseSoftRobotParams):
+    is_planar: ClassVar[bool] = True
+    # Additional numeric fields...
+```
+
+Use `False` for SE(3) systems. This mirrors the `SoftRobot.is_planar` property
+and lets the base class materialize
+the upright pose and negative-vertical Earth gravity when those keyword inputs
+are omitted, and provides inherited `.horizontal(...)`, `.upright(...)`, and
+`.hanging(...)` constructors. Do not infer the convention from an input array
+shape. Explicit `base_pose` and `gravity` values continue to override defaults.
+
 ### Step-by-Step: Implementing a New System
 
 #### 1. Choose Your Base Class
@@ -1053,9 +1074,7 @@ params = PlanarPCSParams(
     young_modulus=jnp.array([1e6, 1e6, 1e6]),
     shear_modulus=jnp.array([1e5, 1e5, 1e5]),
     damping_matrix=jnp.eye(9),
-    gravity=jnp.array([0.0, -9.81]),
     reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 3),
-    base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
 )
 robot = PlanarPCS(params=params)
 
