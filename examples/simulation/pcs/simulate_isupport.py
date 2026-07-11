@@ -13,7 +13,11 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from soromox.rendering import ISupportViserRenderer, MatplotlibRenderer
+from soromox.rendering import (
+    ISupportViserRenderer,
+    ISupportVisualConfig,
+    MatplotlibRenderer,
+)
 from soromox.systems import ISupport, ISupportParams, ISupportStructure, SystemState
 
 if __name__ == "__main__":
@@ -204,10 +208,12 @@ if __name__ == "__main__":
         viser_renderer = ISupportViserRenderer(
             robot,
             num_points=50,
+            visual_config=ISupportVisualConfig(pressure_range=(0.0, float(jnp.max(u)))),
         )
         viser_renderer.render_sequence(
             ts=ts,
             q_ts=q_ts,
+            pressures=u,
             playback_speed=1.0,
             autoplay=True,
             loop=True,

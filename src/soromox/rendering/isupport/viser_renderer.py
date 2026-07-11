@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -10,6 +11,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
+from matplotlib import colormaps
 
 from soromox.rendering.color_config import validate_rgb
 from soromox.rendering.viser_renderer import (
@@ -40,6 +42,10 @@ class ISupportVisualConfig:
     spacer_thickness: float = 0.0015
     spacer_color: tuple[float, float, float] = (0.72, 0.82, 0.88)
     spacer_opacity: float = 0.35
+    pressure_colormap: str = "Blues"
+    pressure_range: tuple[float, float] = (0.0, 3.0e5)
+    pressure_colormap_start: float = 0.15
+    pressure_label_offset: float = 0.012
 
     def __post_init__(self) -> None:
         positive_fields = (
@@ -68,6 +74,26 @@ class ISupportVisualConfig:
             0.0 <= self.spacer_opacity <= 1.0
         ):
             raise ValueError("spacer_opacity must be finite and in [0, 1].")
+        pressure_range = np.asarray(self.pressure_range, dtype=np.float64)
+        if pressure_range.shape != (2,) or not np.all(np.isfinite(pressure_range)):
+            raise ValueError("pressure_range must contain two finite values.")
+        if pressure_range[1] <= pressure_range[0]:
+            raise ValueError("pressure_range maximum must exceed its minimum.")
+        if not np.isfinite(self.pressure_colormap_start) or not (
+            0.0 <= self.pressure_colormap_start < 1.0
+        ):
+            raise ValueError("pressure_colormap_start must be finite and in [0, 1).")
+        if (
+            not np.isfinite(self.pressure_label_offset)
+            or self.pressure_label_offset < 0
+        ):
+            raise ValueError("pressure_label_offset must be finite and nonnegative.")
+        try:
+            colormaps.get_cmap(self.pressure_colormap)
+        except ValueError as exc:
+            raise ValueError(
+                f"Unknown Matplotlib colormap {self.pressure_colormap!r}."
+            ) from exc
         validate_rgb(self.interface_color, name="interface_color")
         validate_rgb(self.chamber_color, name="chamber_color")
         validate_rgb(self.spacer_color, name="spacer_color")
@@ -97,6 +123,7 @@ class _ISupportRobotHandles:
     chamber_handles: list[Any]
     interface_handles: list[Any]
     spacer_handles: list[Any]
+    pressure_label_handles: list[Any]
 
 
 def _tube_faces(num_rings: int, sections: int) -> np.ndarray:
@@ -139,6 +166,11 @@ class ISupportViserRenderer(ViserRenderer):
         super().__init__(robot, *args, **kwargs)
         self.visual_config = resolved_visual_config
         self._current_geometry_q: Array | None = None
+        self._current_pressures: np.ndarray | None = None
+        self._pressure_ts: np.ndarray | None = None
+        self._pressure_frame_idx = 0
+        self._show_pressure_labels = False
+        self._force_pressure_labels = False
         self._robot_visual_handles: list[_ISupportRobotHandles] = []
         (
             self._pneumatic_specs,
@@ -152,8 +184,69 @@ class ISupportViserRenderer(ViserRenderer):
         return q_array[None, :] if q_array.ndim == 1 else q_array
 
     @staticmethod
-    def _color_tuple(color: tuple[float, float, float]) -> tuple[int, int, int]:
+    def _color_tuple(
+        color: tuple[float, float, float] | np.ndarray,
+    ) -> tuple[int, int, int]:
         return tuple(np.asarray(np.clip(color, 0.0, 1.0) * 255.0, dtype=np.uint8))
+
+    def _pressure_color(self, pressure_pa: float) -> tuple[int, int, int]:
+        if not np.isfinite(pressure_pa):
+            return (145, 145, 145)
+        pressure_min, pressure_max = self.visual_config.pressure_range
+        normalized = np.clip(
+            (pressure_pa - pressure_min) / (pressure_max - pressure_min),
+            0.0,
+            1.0,
+        )
+        sample = (
+            self.visual_config.pressure_colormap_start
+            + (1.0 - self.visual_config.pressure_colormap_start) * normalized
+        )
+        rgb = np.asarray(
+            colormaps.get_cmap(self.visual_config.pressure_colormap)(float(sample))[:3]
+        )
+        return tuple(int(round(255.0 * component)) for component in rgb)
+
+    def _static_pressures(
+        self, pressures: Array | np.ndarray | None, *, num_robots: int
+    ) -> np.ndarray | None:
+        if pressures is None:
+            return None
+        values = np.asarray(pressures, dtype=np.float64)
+        expected = self.robot.num_actuators
+        if values.shape == (expected,):
+            return np.broadcast_to(values, (num_robots, expected)).copy()
+        if values.shape == (num_robots, expected):
+            return values.copy()
+        raise ValueError(
+            "pressures must have shape (num_actuators,) or "
+            f"(num_robots, num_actuators); got {values.shape}."
+        )
+
+    def _sequence_pressures(
+        self,
+        pressures: Array | np.ndarray | None,
+        *,
+        num_robots: int,
+        num_frames: int,
+    ) -> np.ndarray | None:
+        if pressures is None:
+            return None
+        values = np.asarray(pressures, dtype=np.float64)
+        expected = self.robot.num_actuators
+        if values.shape == (expected,):
+            return np.broadcast_to(values, (num_robots, num_frames, expected)).copy()
+        if values.shape == (num_frames, expected):
+            return np.broadcast_to(
+                values[None, ...], (num_robots, num_frames, expected)
+            ).copy()
+        if values.shape == (num_robots, num_frames, expected):
+            return values.copy()
+        raise ValueError(
+            "sequence pressures must have shape (num_actuators,), "
+            "(T, num_actuators), or (N, T, num_actuators); "
+            f"got {values.shape}."
+        )
 
     def _build_visual_layout(
         self,
@@ -391,38 +484,224 @@ class ISupportViserRenderer(ViserRenderer):
             cast_shadow=self._backbone_cast_shadow,
         )
 
-    def render_frame(self, q: Array, **kwargs) -> np.ndarray:
-        """Render and capture one I-SUPPORT configuration."""
+    def _pressure_label_position(
+        self,
+        poses: np.ndarray,
+        spec: _PneumaticVisualSpec,
+        chamber_idx: int,
+    ) -> np.ndarray:
+        ring_poses = poses[spec.ring_slice]
+        pose = ring_poses[len(ring_poses) // 2]
+        local_offset = np.asarray(
+            self.robot.local_chamber_offsets(spec.pneumatic_idx)[chamber_idx],
+            dtype=np.float64,
+        )
+        offset_norm = float(np.linalg.norm(local_offset))
+        radial_world = pose[:3, :3] @ (local_offset / offset_norm)
+        outer_radius = float(self.robot.params.chamber_outer_radius[spec.pneumatic_idx])
+        label_radius = (
+            offset_norm + outer_radius + self.visual_config.pressure_label_offset
+        )
+        return pose[:3, 3] + label_radius * radial_world
+
+    def _add_pressure_labels(
+        self,
+        robot_idx: int,
+        poses: np.ndarray,
+    ) -> list[Any]:
+        if self._server is None or self._current_pressures is None:
+            return []
+        labels: list[Any] = []
+        for spec in self._pneumatic_specs:
+            for chamber_idx in range(self.robot.num_chambers_per_segment):
+                labels.append(
+                    self._server.scene.add_label(
+                        name=(
+                            f"/robots/robot_{robot_idx}/isupport/pressure_labels/"
+                            f"segment_{spec.pneumatic_idx}/chamber_{chamber_idx}"
+                        ),
+                        text="",
+                        position=self._pressure_label_position(
+                            poses, spec, chamber_idx
+                        ),
+                        anchor="center-center",
+                        depth_test=False,
+                        font_screen_scale=0.8,
+                        visible=(
+                            self._force_pressure_labels or self._show_pressure_labels
+                        ),
+                    )
+                )
+        return labels
+
+    def _apply_pressure_visuals(self, world_poses: np.ndarray) -> None:
+        cfg = self.visual_config
+        for robot_idx, (robot_handles, poses) in enumerate(
+            zip(self._robot_visual_handles, world_poses, strict=True)
+        ):
+            if self._current_pressures is None:
+                for handle in robot_handles.chamber_handles:
+                    handle.color = self._color_tuple(cfg.chamber_color)
+                for handle in robot_handles.pressure_label_handles:
+                    handle.visible = False
+                continue
+
+            if not robot_handles.pressure_label_handles:
+                robot_handles.pressure_label_handles = self._add_pressure_labels(
+                    robot_idx, poses
+                )
+
+            pressures = self._current_pressures[robot_idx]
+            flat_chamber_idx = 0
+            for spec in self._pneumatic_specs:
+                for chamber_idx in range(self.robot.num_chambers_per_segment):
+                    pressure = float(pressures[flat_chamber_idx])
+                    chamber_handle = robot_handles.chamber_handles[flat_chamber_idx]
+                    chamber_handle.color = self._pressure_color(pressure)
+                    label_handle = robot_handles.pressure_label_handles[
+                        flat_chamber_idx
+                    ]
+                    value_text = (
+                        f"{pressure / 1.0e3:.1f} kPa" if np.isfinite(pressure) else "--"
+                    )
+                    label_handle.text = (
+                        f"Segment {spec.pneumatic_idx + 1} · "
+                        f"Chamber {chamber_idx + 1}\n{value_text}"
+                    )
+                    label_handle.position = self._pressure_label_position(
+                        poses, spec, chamber_idx
+                    )
+                    label_handle.visible = (
+                        self._force_pressure_labels or self._show_pressure_labels
+                    )
+                    flat_chamber_idx += 1
+
+    def _set_pressure_labels_visible(self, visible: bool) -> None:
+        self._show_pressure_labels = bool(visible)
+        for robot_handles in self._robot_visual_handles:
+            for handle in robot_handles.pressure_label_handles:
+                handle.visible = self._show_pressure_labels
+
+    def _setup_pressure_gui(self) -> None:
+        if self._server is None:
+            return
+        cfg = self.visual_config
+        existing = self._gui_handles.get("show_pressure_labels")
+        if existing is not None:
+            existing.value = self._show_pressure_labels
+            return
+        with self._server.gui.add_folder("I-SUPPORT"):
+            checkbox = self._server.gui.add_checkbox(
+                "Show pressure labels",
+                initial_value=self._show_pressure_labels,
+            )
+            self._gui_handles["show_pressure_labels"] = checkbox
+            self._server.gui.add_text(
+                "Pressure scale",
+                initial_value=(
+                    f"{cfg.pressure_range[0] / 1.0e3:g}–"
+                    f"{cfg.pressure_range[1] / 1.0e3:g} kPa · "
+                    f"{cfg.pressure_colormap}"
+                ),
+                disabled=True,
+            )
+
+        @checkbox.on_update
+        def _(event):
+            self._set_pressure_labels_visible(event.target.value)
+
+    def render_frame(
+        self,
+        q: Array,
+        *,
+        pressures: Array | np.ndarray | None = None,
+        **kwargs,
+    ) -> np.ndarray:
+        """Render one I-SUPPORT configuration, optionally with pressure labels."""
         self._current_geometry_q = self._as_batch(q)
+        self._current_pressures = self._static_pressures(
+            pressures, num_robots=int(self._current_geometry_q.shape[0])
+        )
+        self._pressure_ts = None
+        self._force_pressure_labels = pressures is not None
         return super().render_frame(q, **kwargs)
 
-    def show(self, q: Array, **kwargs) -> None:
-        """Display one I-SUPPORT configuration interactively."""
+    def show(
+        self,
+        q: Array,
+        *,
+        pressures: Array | np.ndarray | None = None,
+        **kwargs,
+    ) -> None:
+        """Display one I-SUPPORT configuration with optional chamber pressures."""
         self._current_geometry_q = self._as_batch(q)
+        self._current_pressures = self._static_pressures(
+            pressures, num_robots=int(self._current_geometry_q.shape[0])
+        )
+        self._pressure_ts = None
+        self._force_pressure_labels = False
+        self._set_pressure_labels_visible(False)
+        if self._server is None:
+            self.start()
+        self._setup_pressure_gui()
         super().show(q, **kwargs)
 
-    def render_sequence(self, ts: Array, q_ts: Array, **kwargs) -> None:
-        """Render an I-SUPPORT trajectory."""
+    def render_sequence(
+        self,
+        ts: Array,
+        q_ts: Array,
+        *,
+        pressures: Array | np.ndarray | None = None,
+        **kwargs,
+    ) -> None:
+        """Render an I-SUPPORT trajectory with optional chamber pressures."""
         q_array = jnp.asarray(q_ts)
         if q_array.ndim == 2:
             self._current_geometry_q = q_array[0][None, :]
+            num_robots, num_frames = 1, int(q_array.shape[0])
         elif q_array.ndim == 3:
             self._current_geometry_q = q_array[:, 0, :]
+            num_robots, num_frames = int(q_array.shape[0]), int(q_array.shape[1])
         else:
             raise ValueError(
                 f"q_ts must have shape (T, DOF) or (N, T, DOF), got {q_array.shape}."
             )
+        self._pressure_ts = self._sequence_pressures(
+            pressures,
+            num_robots=num_robots,
+            num_frames=num_frames,
+        )
+        self._pressure_frame_idx = 0
+        self._current_pressures = (
+            None if self._pressure_ts is None else self._pressure_ts[:, 0, :]
+        )
+        self._force_pressure_labels = False
+        self._set_pressure_labels_visible(False)
         super().render_sequence(ts, q_ts, **kwargs)
 
     def _update_frame(self, frame_idx: int, *args, **kwargs) -> None:
+        self._pressure_frame_idx = int(frame_idx)
+        self._current_pressures = (
+            None
+            if self._pressure_ts is None
+            else self._pressure_ts[:, self._pressure_frame_idx, :]
+        )
         if args:
             q_ts = jnp.asarray(args[0])
             self._current_geometry_q = q_ts[:, frame_idx, :]
         super()._update_frame(frame_idx, *args, **kwargs)
 
+    def _setup_playback_gui(self, on_frame_seek=None) -> None:
+        super()._setup_playback_gui(on_frame_seek=on_frame_seek)
+        self._setup_pressure_gui()
+
     def _remove_robot_geometry(self) -> None:
         if self._scene_handles is None:
             return
+        for robot_handles in self._robot_visual_handles:
+            for handle in robot_handles.pressure_label_handles:
+                if hasattr(handle, "remove"):
+                    handle.remove()
         for robot_handles in self._scene_handles.backbone_points:
             for handle in robot_handles:
                 if hasattr(handle, "remove"):
@@ -526,9 +805,11 @@ class ISupportViserRenderer(ViserRenderer):
                     chamber_handles=chamber_handles,
                     interface_handles=interface_handles,
                     spacer_handles=spacer_handles,
+                    pressure_label_handles=self._add_pressure_labels(robot_idx, poses),
                 )
             )
 
+        self._apply_pressure_visuals(world_poses)
         self._scene_handles.geometry_initialized = True
         self._scene_handles.num_robots = int(q.shape[0])
         self._scene_handles.num_backbone_points = curves.shape[1]
@@ -573,16 +854,24 @@ class ISupportViserRenderer(ViserRenderer):
                     position, wxyz = self._interface_pose(poses, spec)
                     handle.position = tuple(position)
                     handle.wxyz = wxyz
+            self._apply_pressure_visuals(world_poses)
 
     def start_live_mode(
         self,
-        callback: Callable[[float], np.ndarray] | None = None,
+        callback: Callable[[float], np.ndarray | tuple[np.ndarray, np.ndarray]]
+        | None = None,
         dt: float = 0.033,
+        pressure_callback: Callable[[float], np.ndarray] | None = None,
     ) -> ISupportLiveModeController:
-        """Start live mode while retaining the active I-SUPPORT configuration."""
+        """Start live mode with optional synchronized chamber pressures."""
         if self._server is None:
             self.start()
-        controller = ISupportLiveModeController(self, callback, dt)
+        self._pressure_ts = None
+        self._current_pressures = None
+        self._force_pressure_labels = False
+        self._set_pressure_labels_visible(False)
+        self._setup_pressure_gui()
+        controller = ISupportLiveModeController(self, callback, dt, pressure_callback)
         controller.start()
         return controller
 
@@ -593,11 +882,49 @@ class ISupportLiveModeController(LiveModeController):
     def __init__(
         self,
         renderer: ISupportViserRenderer,
-        callback: Callable[[float], np.ndarray] | None = None,
+        callback: Callable[[float], np.ndarray | tuple[np.ndarray, np.ndarray]]
+        | None = None,
         dt: float = 0.033,
+        pressure_callback: Callable[[float], np.ndarray] | None = None,
     ) -> None:
         super().__init__(renderer, callback, dt)
         self._renderer: ISupportViserRenderer = renderer
+        self._pressure_callback = pressure_callback
+
+    def push_state_with_pressures(self, q: np.ndarray, pressures: np.ndarray) -> None:
+        """Push a configuration and matching chamber pressures."""
+        q_batch = self._renderer._as_batch(q)
+        self._renderer._current_pressures = self._renderer._static_pressures(
+            pressures, num_robots=int(q_batch.shape[0])
+        )
+        self.push_state(q)
+
+    def _callback_loop(self) -> None:
+        while self._running:
+            t = time.time() - self._start_time
+            if self._callback is not None:
+                try:
+                    callback_result = self._callback(t)
+                    if isinstance(callback_result, tuple):
+                        q, pressures = callback_result
+                    else:
+                        q = callback_result
+                        pressures = (
+                            None
+                            if self._pressure_callback is None
+                            else self._pressure_callback(t)
+                        )
+                    if pressures is not None:
+                        q_batch = self._renderer._as_batch(q)
+                        self._renderer._current_pressures = (
+                            self._renderer._static_pressures(
+                                pressures, num_robots=int(q_batch.shape[0])
+                            )
+                        )
+                    self._process_state(q)
+                except Exception as exc:
+                    print(f"[ISupportViserRenderer] Callback error: {exc}")
+            time.sleep(self._dt)
 
     def _process_state(self, q: np.ndarray) -> None:
         self._renderer._current_geometry_q = self._renderer._as_batch(q)

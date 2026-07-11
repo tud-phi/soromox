@@ -34,6 +34,42 @@ ellipticity, bellows pitch and amplitude, mesh resolution, colors, and spacer
 opacity. When an `ISupport` topology omits a rigid connector, the renderer adds
 a thin visual-only interface plate without changing the robot kinematics.
 
+Pass chamber pressures in pascals to color each chamber with the sequential
+Matplotlib `Blues` colormap. The default scale spans 0–300 kPa and omits the
+palest 15% of the colormap so unpressurized chambers remain visible. Values
+outside the configured scale are clamped. Pressure channels use segment-major
+order: all chamber azimuth indices of the first pneumatic segment, followed by
+those of the second segment, and so on.
+
+The `pressure_range` configuration is expressed in pascals, matching the
+model and pressure input API. Conversion to kPa happens only for sidebar and
+label presentation.
+
+```python
+pressures = jnp.array([2.0e4, 0.0, 0.0])
+renderer.show(q, pressures=pressures)
+```
+
+Interactive views color the chambers whenever pressures are supplied. Pressure
+text starts hidden and can be enabled with the **Show pressure labels** sidebar
+checkbox. Labels use one-based model terminology and display values in kPa, for
+example `Segment 1 · Chamber 1` and `20.0 kPa`. A captured frame has no
+interactive sidebar, so `render_frame(q, pressures=pressures)` includes both
+the colors and labels automatically. Omitting `pressures` retains the original
+uniform chamber appearance and renders no pressure text.
+
+For trajectories, `pressures` may be a constant `(num_actuators,)` vector, a
+`(T, num_actuators)` time series, or a batched
+`(N, T, num_actuators)` time series:
+
+```python
+renderer.render_sequence(ts, q_ts, pressures=pressure_ts)
+```
+
+The live controller accepts synchronized updates through
+`push_state_with_pressures(q, pressures)`, a separate `pressure_callback`, or a
+state callback that returns `(q, pressures)`.
+
 ## Model Quick Start
 
 ```python
