@@ -66,7 +66,9 @@ def _make_robot(*, connectors: bool = True) -> ISupport:
         chamber_inner_radius=jnp.array([0.005, 0.005]),
         chamber_outer_radius=jnp.array([0.00779, 0.00779]),
         chamber_distance=jnp.array([0.020, 0.020]),
-        chamber_angle_offset=jnp.array([0.0, 0.15]),
+        chamber_azimuth_angles=jnp.stack(
+            [2 * jnp.pi * jnp.arange(3) / 3, 0.15 + 2 * jnp.pi * jnp.arange(3) / 3]
+        ),
         pcs_segment_lengths=jnp.array([0.04, 0.06, 0.12]),
         rigid_connector_lengths=(
             jnp.array([0.01, 0.02, 0.03]) if connectors else jnp.zeros((3,))
@@ -198,8 +200,11 @@ def test_chambers_follow_model_angles_ellipse_and_bellows():
     vertices = renderer._chamber_vertices(poses, spec, 0)
     first_ring = vertices[:sections]
     center = first_ring.mean(axis=0)
-    radial = poses[spec.ring_slice.start, :3, 2]
-    tangential = poses[spec.ring_slice.start, :3, 1]
+    rotation = poses[spec.ring_slice.start, :3, :3]
+    local_offset = np.asarray(renderer.robot.local_chamber_offsets(0)[0])
+    radial_local = local_offset / np.linalg.norm(local_offset)
+    radial = rotation @ radial_local
+    tangential = rotation @ np.cross(np.array([1.0, 0.0, 0.0]), radial_local)
     radial_extent = np.max(np.abs((first_ring - center) @ radial))
     tangential_extent = np.max(np.abs((first_ring - center) @ tangential))
     assert radial_extent / tangential_extent == pytest.approx(

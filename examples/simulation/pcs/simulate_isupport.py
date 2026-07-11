@@ -75,7 +75,12 @@ if __name__ == "__main__":
         chamber_inner_radius=6.39 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_outer_radius=7.79 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_distance=20 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
-        chamber_angle_offset=jnp.zeros((num_pneumatic_segments,)),
+        # Explicit [0, 2*pi/3, 4*pi/3] = [0, 120, 240] degrees for each
+        # pneumatic segment. Array index is the corresponding pressure channel.
+        chamber_azimuth_angles=jnp.tile(
+            2.0 * jnp.pi * jnp.arange(3) / 3,
+            (num_pneumatic_segments, 1),
+        ),
         pcs_segment_lengths=pcs_segment_lengths,
         rigid_connector_lengths=rigid_connector_lengths,
     )

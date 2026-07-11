@@ -201,8 +201,11 @@ class ISupportParams(PCSParams):
 
     The leading axis indexes physical pneumatic segments. ``ISupport`` expands
     these fields into the internal PCS segment layout using ``ISupportStructure``.
-    Chamber fields describe per-pneumatic-segment chamber geometry and angular
-    offsets. ``damping_matrix`` is expressed in flattened pneumatic-segment
+    Chamber fields describe per-pneumatic-segment chamber geometry. Chamber
+    azimuth is right-handed about local +X, measured from +Y toward +Z; array
+    index ``j`` is pressure channel ``j``. If ``chamber_azimuth_angles`` is
+    omitted, ``ISupport`` uses 0, 120, and 240 degrees for every pneumatic
+    segment. ``damping_matrix`` is expressed in flattened pneumatic-segment
     strain coordinates and must be block diagonal by pneumatic segment when the
     model is constructed.
 
@@ -221,7 +224,7 @@ class ISupportParams(PCSParams):
     chamber_inner_radius: Array
     chamber_outer_radius: Array
     chamber_distance: Array
-    chamber_angle_offset: Array
+    chamber_azimuth_angles: Array | None = None
     pcs_segment_lengths: Array | None = None
     rigid_connector_lengths: Array | None = None
 
@@ -232,9 +235,31 @@ class ISupportParams(PCSParams):
             "chamber_inner_radius",
             "chamber_outer_radius",
             "chamber_distance",
-            "chamber_angle_offset",
         ):
             _require_shape(name, getattr(self, name), (n_segments,))
+
+        if self.chamber_azimuth_angles is not None:
+            angles = jnp.asarray(self.chamber_azimuth_angles)
+            if angles.ndim != 2 or angles.shape[0] != n_segments or angles.shape[1] < 1:
+                raise ValueError(
+                    "chamber_azimuth_angles must have shape "
+                    "(num_pneumatic_segments, num_chambers_per_segment) with at "
+                    "least one chamber per segment"
+                )
+            if not bool(jnp.all(jnp.isfinite(angles))):
+                raise ValueError("chamber_azimuth_angles entries must be finite")
+            wrapped = jnp.mod(angles, 2.0 * jnp.pi)
+            ordered = jnp.sort(wrapped, axis=-1)
+            closed = jnp.concatenate(
+                [ordered, ordered[..., :1] + 2.0 * jnp.pi], axis=-1
+            )
+            gaps = jnp.diff(closed, axis=-1)
+            expected_gap = 2.0 * jnp.pi / angles.shape[-1]
+            if not bool(jnp.allclose(gaps, expected_gap, rtol=1e-6, atol=1e-8)):
+                raise ValueError(
+                    "chamber_azimuth_angles must be uniformly distributed around "
+                    "the full circle for every pneumatic segment"
+                )
 
         if self.pcs_segment_lengths is not None:
             pcs_segment_lengths = jnp.asarray(self.pcs_segment_lengths)

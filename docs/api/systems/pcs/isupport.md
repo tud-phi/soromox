@@ -51,7 +51,7 @@ params = ISupportParams(
     chamber_inner_radius=jnp.array([0.00639]),
     chamber_outer_radius=jnp.array([0.00779]),
     chamber_distance=jnp.array([0.020]),
-    chamber_angle_offset=jnp.array([0.0]),
+    chamber_azimuth_angles=(2.0 * jnp.pi * jnp.arange(3) / 3)[None, :],
 )
 robot = ISupport(params, structure=ISupportStructure(num_gauss_points=3))
 
@@ -65,6 +65,22 @@ g_tip = robot.forward_kinematics(q, s=jnp.sum(robot.L))
 ### Chamber Configuration
 
 The I-Support robot uses 3 pneumatic chambers per segment, arranged radially at 120-degree intervals. This configuration enables:
+
+`chamber_azimuth_angles` has shape
+`(num_pneumatic_segments, num_chambers_per_segment)`. Azimuth is a
+right-handed rotation about local `+X`, measured in radians from local `+Y`
+toward local `+Z`, so a chamber center is
+`[0, d*cos(phi), d*sin(phi)]`. Entry `j` is pressure channel `j`; the model
+does not sort or generate angles. Each row may be rotated, wrapped, and listed
+in any channel order, but its wrapped circular gaps must be uniformly
+`2*pi/num_chambers_per_segment` (within `rtol=1e-6`, `atol=1e-8`). Asymmetric
+layouts are currently rejected because the passive cross-section model assumes
+rotational symmetry.
+
+If `chamber_azimuth_angles` is omitted, `ISupport` supplies the canonical
+three-chamber layout `[0, 2*pi/3, 4*pi/3]`, or `[0°, 120°, 240°]`, for every
+pneumatic segment. Pass an explicit array whenever physical pressure-channel
+order differs from that default.
 
 - Bending in any direction
 - Extension/compression along the backbone

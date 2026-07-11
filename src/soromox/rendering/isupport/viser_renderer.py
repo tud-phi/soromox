@@ -307,19 +307,15 @@ class ISupportViserRenderer(ViserRenderer):
         segment_poses = poses[spec.ring_slice]
         rotations = segment_poses[:, :3, :3]
         centerline = segment_poses[:, :3, 3]
-        material_y = rotations[:, :, 1]
-        material_z = rotations[:, :, 2]
-
         pneumatic_idx = spec.pneumatic_idx
-        angle = float(self.robot.params.chamber_angle_offset[pneumatic_idx]) + (
-            2.0 * np.pi * chamber_idx / self.robot.num_chambers_per_segment
+        local_offset = np.asarray(
+            self.robot.local_chamber_offsets(pneumatic_idx)[chamber_idx]
         )
-        radial = np.sin(angle) * material_y + np.cos(angle) * material_z
-        tangential = np.cos(angle) * material_y - np.sin(angle) * material_z
-        chamber_centers = (
-            centerline
-            + float(self.robot.params.chamber_distance[pneumatic_idx]) * radial
-        )
+        radial_local = local_offset / np.linalg.norm(local_offset)
+        tangential_local = np.cross(np.array([1.0, 0.0, 0.0]), radial_local)
+        radial = rotations @ radial_local
+        tangential = rotations @ tangential_local
+        chamber_centers = centerline + rotations @ local_offset
 
         equivalent_radius = float(self.robot.params.chamber_outer_radius[pneumatic_idx])
         aspect_scale = np.sqrt(self.visual_config.chamber_aspect_ratio)

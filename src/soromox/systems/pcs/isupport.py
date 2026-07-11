@@ -14,6 +14,19 @@ from .pcs import PCS
 _RIGID_CONNECTOR_PARENT = -1
 
 
+def _with_default_chamber_azimuth_angles(params: ISupportParams) -> ISupportParams:
+    """Resolve the canonical three-chamber layout when no angles are supplied."""
+    if params.chamber_azimuth_angles is not None:
+        return params
+    num_pneumatic_segments = int(params.length.shape[0])
+    canonical_angles = 2.0 * jnp.pi * jnp.arange(3, dtype=jnp.float64) / 3.0
+    return params.replace(
+        chamber_azimuth_angles=jnp.tile(
+            canonical_angles[None, :], (num_pneumatic_segments, 1)
+        )
+    )
+
+
 def _straight_reference_strain(dtype: jnp.dtype) -> Array:
     return jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=dtype)
 
@@ -162,6 +175,7 @@ def _expand_isupport_layout(
     params: ISupportParams,
     structure: ISupportStructure,
 ) -> tuple[ISupportParams, PCSStructure, ISupportStructure, Array, Array]:
+    params = _with_default_chamber_azimuth_angles(params)
     params.validate()
     structure = _normalize_structure_for_params(params, structure)
 
@@ -196,7 +210,9 @@ def _expand_isupport_layout(
     r_chamber_in = jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64)
     r_chamber_out = jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64)
     d_chamber = jnp.asarray(params.chamber_distance, dtype=jnp.float64)
-    varphi_chamber_off = jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64)
+    chamber_azimuth_angles = jnp.asarray(
+        params.chamber_azimuth_angles, dtype=jnp.float64
+    )
 
     expanded_lengths: list[float] = []
     expanded_radius: list[Array] = []
@@ -208,7 +224,7 @@ def _expand_isupport_layout(
     expanded_chamber_inner_radius: list[Array] = []
     expanded_chamber_outer_radius: list[Array] = []
     expanded_chamber_distance: list[Array] = []
-    expanded_chamber_angle_offset: list[Array] = []
+    expanded_chamber_azimuth_angles: list[Array] = []
     default_strain_selector: list[Array] = []
     pcs_segment_to_pneumatic_segment: list[int] = []
     pcs_segment_is_rigid: list[bool] = []
@@ -228,7 +244,7 @@ def _expand_isupport_layout(
         expanded_chamber_inner_radius.append(r_chamber_in[source_index])
         expanded_chamber_outer_radius.append(r_chamber_out[source_index])
         expanded_chamber_distance.append(d_chamber[source_index])
-        expanded_chamber_angle_offset.append(varphi_chamber_off[source_index])
+        expanded_chamber_azimuth_angles.append(chamber_azimuth_angles[source_index])
 
         if is_rigid:
             expanded_reference_strain.append(
@@ -298,7 +314,7 @@ def _expand_isupport_layout(
         chamber_inner_radius=jnp.stack(expanded_chamber_inner_radius),
         chamber_outer_radius=jnp.stack(expanded_chamber_outer_radius),
         chamber_distance=jnp.stack(expanded_chamber_distance),
-        chamber_angle_offset=jnp.stack(expanded_chamber_angle_offset),
+        chamber_azimuth_angles=jnp.stack(expanded_chamber_azimuth_angles),
     )
     pcs_structure = PCSStructure(
         num_gauss_points=structure.num_gauss_points,
@@ -344,8 +360,8 @@ class ISupport(PCS):
             cached as ``r_chamber_out``.
         chamber_distance: Radial distance of the center of the actuators from
             the centerline of the backbone [m], cached as ``d_chamber``.
-        chamber_angle_offset: Angular offset of the first actuator from the
-            local segment frame [rad], cached as ``varphi_chamber_off``.
+        chamber_azimuth_angles: Explicit chamber azimuths [rad], right-handed
+            about local +X from +Y toward +Z. The second axis is pressure-channel order.
 
     References:
         Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021). I-support soft
@@ -372,7 +388,8 @@ class ISupport(PCS):
         Array  # outer radius of each segment's chamber, shape (num_segments,)
     )
     d_chamber: Array  # radial distance of the center of the chambers from the centerline of the backbone, shape (num_segments,)
-    varphi_chamber_off: Array  # angular offset of the first actuator from the local
+    # Expanded per-PCS-segment copy of the resolved channel layout.
+    chamber_azimuth_angles: Array
 
     num_chambers_per_segment: int = eqx.field(
         static=True, default=3
@@ -386,7 +403,6 @@ class ISupport(PCS):
         self,
         params: ISupportParams,
         structure: ISupportStructure | None = None,
-        num_chambers_per_segment: int = 3,
         **kwargs: Any,
     ):
         """
@@ -397,18 +413,17 @@ class ISupport(PCS):
             structure: Static I-SUPPORT layout. If omitted, each pneumatic
                 segment is represented by one PCS segment and no rigid
                 connectors are inserted.
-            num_chambers_per_segment:
-                Number of pneumatic chambers per segment. Defaults to 3.
             **kwargs: Additional keyword arguments.
         """
         if not isinstance(params, ISupportParams):
             raise TypeError("params must be an ISupportParams instance.")
+        params = _with_default_chamber_azimuth_angles(params)
         if structure is None:
             structure = ISupportStructure()
         if not isinstance(structure, ISupportStructure):
             raise TypeError("structure must be an ISupportStructure instance.")
 
-        self.num_chambers_per_segment = num_chambers_per_segment
+        self.num_chambers_per_segment = int(params.chamber_azimuth_angles.shape[1])
         (
             pcs_params,
             pcs_structure,
@@ -470,9 +485,9 @@ class ISupport(PCS):
                 - ``chamber_distance``: Array of shape ``(num_segments,)``.
                     Radial distance of the center of the chambers from the
                     centerline of the backbone [m].
-                - ``chamber_angle_offset``: Array of shape
-                    ``(num_segments,)``. Angular offset of the first actuator
-                    from the local z-axis [rad].
+                - ``chamber_azimuth_angles``: Array of shape
+                    ``(num_segments, num_chambers_per_segment)``. Right-handed
+                    azimuth about local +X, from local +Y toward local +Z [rad].
         """
         super()._set_params(params)
 
@@ -501,13 +516,18 @@ class ISupport(PCS):
             )
         self.d_chamber = d_chamber
 
-        varphi_chamber_off = jnp.asarray(params.chamber_angle_offset, dtype=jnp.float64)
-        if varphi_chamber_off.shape != (self.num_segments,):
+        chamber_azimuth_angles = jnp.asarray(
+            params.chamber_azimuth_angles, dtype=jnp.float64
+        )
+        if chamber_azimuth_angles.shape != (
+            self.num_segments,
+            self.num_chambers_per_segment,
+        ):
             raise ValueError(
-                "chamber_angle_offset must have shape "
-                f"({self.num_segments},), got {varphi_chamber_off.shape}."
+                "chamber_azimuth_angles must have shape "
+                f"({self.num_segments}, {self.num_chambers_per_segment}), got {chamber_azimuth_angles.shape}."
             )
-        self.varphi_chamber_off = varphi_chamber_off
+        self.chamber_azimuth_angles = chamber_azimuth_angles
 
     def _current_body_params(self) -> ISupportParams:
         """Return the expanded PCS params used by inherited PCS update helpers."""
@@ -517,6 +537,7 @@ class ISupport(PCS):
         """Return an updated copy with a full pneumatic-segment parameter object."""
         if not isinstance(params, ISupportParams):
             raise TypeError("params must be an ISupportParams instance.")
+        params = _with_default_chamber_azimuth_angles(params)
         (
             pcs_params,
             _,
@@ -528,7 +549,7 @@ class ISupport(PCS):
             jnp.asarray(pcs_params.chamber_inner_radius, dtype=jnp.float64),
             jnp.asarray(pcs_params.chamber_outer_radius, dtype=jnp.float64),
             jnp.asarray(pcs_params.chamber_distance, dtype=jnp.float64),
-            jnp.asarray(pcs_params.chamber_angle_offset, dtype=jnp.float64),
+            jnp.asarray(pcs_params.chamber_azimuth_angles, dtype=jnp.float64),
         )
         updated_self = self._with_pcs_params(pcs_params, stored_params=params)
         updated_self = eqx.tree_at(
@@ -537,7 +558,7 @@ class ISupport(PCS):
                 model.r_chamber_in,
                 model.r_chamber_out,
                 model.d_chamber,
-                model.varphi_chamber_off,
+                model.chamber_azimuth_angles,
             ),
             updated_self,
             (pcs_params, *chamber_arrays),
@@ -549,20 +570,42 @@ class ISupport(PCS):
         return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
-    def _local_actuator_polar_angles(self, i: Array) -> Array:
-        """
-        Compute the polar angles of the chambers in the i-th segment.
+    def chamber_azimuths(self, pneumatic_segment_idx: Array) -> Array:
+        """Return one azimuth per chamber in pressure-channel order.
+
+        This concise accessor name is distinct from the parameter field
+        ``chamber_azimuth_angles``. The returned array has shape
+        ``(num_chambers_per_segment,)`` and is not sorted or normalized.
 
         Args:
-            i (Array): index of the segment as array of shape ()
+            pneumatic_segment_idx: Index of the physical pneumatic segment.
 
         Returns:
-            varphi_chambers_i (Array): polar angles of the i-th pneumatic chamber as Array of shape (num_chambers_per_segment, )
+            Chamber azimuth angles in radians, indexed exactly like the
+            segment's pressure inputs.
         """
-        varphi_chambers_i = self.varphi_chamber_off[i] + jnp.linspace(
-            0, 2 * jnp.pi, self.num_chambers_per_segment, endpoint=False
+        return self.params.chamber_azimuth_angles[pneumatic_segment_idx]
+
+    @eqx.filter_jit
+    def local_chamber_offsets(self, pneumatic_segment_idx: Array) -> Array:
+        """Return vectors from the local backbone centerline to chamber centers.
+
+        The result has shape ``(num_chambers_per_segment, 3)`` and follows
+        pressure-channel order. Each row is expressed in the pneumatic
+        segment's local frame as ``[0, d*cos(phi), d*sin(phi)]``; it is an
+        offset vector, not an absolute chamber-center position.
+
+        Args:
+            pneumatic_segment_idx: Index of the physical pneumatic segment.
+
+        Returns:
+            Local chamber-center offset vectors in meters.
+        """
+        phi = self.chamber_azimuths(pneumatic_segment_idx)
+        distance = self.params.chamber_distance[pneumatic_segment_idx]
+        return distance * jnp.stack(
+            [jnp.zeros_like(phi), jnp.cos(phi), jnp.sin(phi)], axis=-1
         )
-        return varphi_chambers_i
 
     @eqx.filter_jit
     def _local_actuator_centroid(self, i: Array, varphi_angle: Array) -> Array:
@@ -579,8 +622,8 @@ class ISupport(PCS):
         centroid_actuator = jnp.array(
             [
                 0.0,  # the actuator centroid is on the cross-section
-                self.d_chamber[i] * jnp.sin(varphi_angle),  # up along local y-axis
-                self.d_chamber[i] * jnp.cos(varphi_angle),  # right along local z-axis
+                self.d_chamber[i] * jnp.cos(varphi_angle),
+                self.d_chamber[i] * jnp.sin(varphi_angle),
             ]
         )
         return centroid_actuator
@@ -677,7 +720,7 @@ class ISupport(PCS):
         """
 
         # compute the polar angles of the actuators
-        varphi_actuators_i = self._local_actuator_polar_angles(i)
+        varphi_actuators_i = self.chamber_azimuth_angles[i]
         # compute the second moment of area of each actuator
         I_actuators_i = vmap(
             lambda varphi: self._local_actuator_second_moment_of_area(i, varphi)
@@ -698,14 +741,7 @@ class ISupport(PCS):
         segment is split into multiple PCS segments, the same pressure columns
         are applied to each child PCS segment. Rigid connector PCS segments do
         not contribute to the actuation matrix.
-        Furthermore, we consider the following geometrical arrangement:
-            - The 1st chamber with pressure p1 is located at the
-              chamber_angle_offset value for its segment.
-            - The 2nd chamber with pressure p2 is located at
-              chamber_angle_offset + 1 * 2 * jnp.pi / self.num_chambers_per_segment.
-            - The 3rd chamber with pressure p3 is located at
-              chamber_angle_offset + 2 * 2 * jnp.pi / self.num_chambers_per_segment.
-            - etc.
+        Chamber columns follow ``chamber_azimuth_angles`` without reordering.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -727,7 +763,7 @@ class ISupport(PCS):
             centroid_chamber = self._local_actuator_centroid(i, varphi)
 
             # compute the contribution of the chamber on the (rotational) backbone torque
-            torque_contrib = -jnp.cross(centroid_chamber, force_contrib)
+            torque_contrib = jnp.cross(centroid_chamber, force_contrib)
 
             A_single_chamber = jnp.concatenate(
                 [
@@ -746,7 +782,7 @@ class ISupport(PCS):
 
         def _actuation_matrix_pcs_segment_i(i: Array) -> Array:
             # compute the local polar chamber angles
-            varphi_chambers = self._local_actuator_polar_angles(i)
+            varphi_chambers = self.chamber_azimuth_angles[i]
 
             # build the actuation matrix
             A_columns_i = vmap(lambda varphi: _actuation_matrix_one_chamber(i, varphi))(
