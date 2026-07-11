@@ -19,6 +19,7 @@ from soromox.systems.gvs.structures import (
 from soromox.systems.hsa.params import PlanarHSAParams
 from soromox.systems.hsa.structures import PlanarHSAStructure
 from soromox.systems.params import (
+    DEFAULT_GRAVITY_MAGNITUDE,
     BaseArticulatedSoftRobotParams,
     BaseContinuumSoftRobotParams,
     BaseSoftRobotParams,
@@ -72,6 +73,7 @@ from .pendulum import Pendulum, TendonActuatedPendulum
 
 __all__ = [
     # base classes
+    "DEFAULT_GRAVITY_MAGNITUDE",
     "DynamicalSystem",
     "EnvironmentState",
     "SoftRobot",

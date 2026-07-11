@@ -7,6 +7,8 @@ __all__ = [
     "ISupportParams",
 ]
 
+from typing import ClassVar
+
 import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
@@ -50,9 +52,7 @@ def _validate_damping_input(
         )
         return
 
-    material_damping_coefficient = jnp.asarray(
-        params.material_damping_coefficient
-    )
+    material_damping_coefficient = jnp.asarray(params.material_damping_coefficient)
     if material_damping_coefficient.ndim == 0:
         return
     _require_shape(
@@ -97,14 +97,16 @@ class PCSParams(BaseContinuumSoftRobotParams):
     ``base_pose`` is the scalar-first quaternion SE(3) base pose vector
     ``[qw, qx, qy, qz, x, y, z]`` used to initialize the base transform. The
     quaternion is normalized before use and must have nonzero finite norm.
+    Omitting ``base_pose`` and ``gravity`` selects upright spatial mounting and
+    negative-z Earth gravity.
     """
+
+    is_planar: ClassVar[bool] = False
 
     radius: Array
     young_modulus: Array
     shear_modulus: Array
-    material_damping_coefficient: Array | None = eqx.field(
-        default=None, kw_only=True
-    )
+    material_damping_coefficient: Array | None = eqx.field(default=None, kw_only=True)
     damping_matrix: Array | None = eqx.field(default=None, kw_only=True)
 
     def validate(self) -> None:
@@ -127,14 +129,16 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
     (N*s/m^2); it may be scalar or have one value per segment. The assembled
     matrix includes geometry and length factors and therefore has
     generalized-coordinate-dependent entry units.
+    Omitting ``base_pose`` and ``gravity`` selects upright planar
+    mounting and negative-y Earth gravity.
     """
+
+    is_planar: ClassVar[bool] = True
 
     radius: Array
     young_modulus: Array
     shear_modulus: Array
-    material_damping_coefficient: Array | None = eqx.field(
-        default=None, kw_only=True
-    )
+    material_damping_coefficient: Array | None = eqx.field(default=None, kw_only=True)
     damping_matrix: Array | None = eqx.field(default=None, kw_only=True)
 
     def validate(self) -> None:
@@ -237,8 +241,11 @@ class ISupportParams(PCSParams):
 
     The leading axis indexes physical pneumatic segments. ``ISupport`` expands
     these fields into the internal PCS segment layout using ``ISupportStructure``.
-    Chamber fields describe per-pneumatic-segment chamber geometry and angular
-    offsets. Damping can be supplied as ``material_damping_coefficient`` or as a
+    Chamber fields describe per-pneumatic-segment chamber geometry. Chamber
+    azimuth is right-handed about local +X, measured from +Y toward +Z; array
+    index ``j`` is pressure channel ``j``. If ``chamber_azimuth_angles`` is
+    omitted, ``ISupport`` uses 0, 120, and 240 degrees for every pneumatic
+    segment. Damping can be supplied as ``material_damping_coefficient`` or as a
     full ``damping_matrix``. A custom ``damping_matrix`` is expressed in flattened
     pneumatic-segment strain coordinates and must be block diagonal by pneumatic
     segment when the model is constructed.
@@ -258,7 +265,7 @@ class ISupportParams(PCSParams):
     chamber_inner_radius: Array
     chamber_outer_radius: Array
     chamber_distance: Array
-    chamber_angle_offset: Array
+    chamber_azimuth_angles: Array | None = None
     pcs_segment_lengths: Array | None = None
     rigid_connector_lengths: Array | None = None
 
@@ -269,9 +276,31 @@ class ISupportParams(PCSParams):
             "chamber_inner_radius",
             "chamber_outer_radius",
             "chamber_distance",
-            "chamber_angle_offset",
         ):
             _require_shape(name, getattr(self, name), (n_segments,))
+
+        if self.chamber_azimuth_angles is not None:
+            angles = jnp.asarray(self.chamber_azimuth_angles)
+            if angles.ndim != 2 or angles.shape[0] != n_segments or angles.shape[1] < 1:
+                raise ValueError(
+                    "chamber_azimuth_angles must have shape "
+                    "(num_pneumatic_segments, num_chambers_per_segment) with at "
+                    "least one chamber per segment"
+                )
+            if not bool(jnp.all(jnp.isfinite(angles))):
+                raise ValueError("chamber_azimuth_angles entries must be finite")
+            wrapped = jnp.mod(angles, 2.0 * jnp.pi)
+            ordered = jnp.sort(wrapped, axis=-1)
+            closed = jnp.concatenate(
+                [ordered, ordered[..., :1] + 2.0 * jnp.pi], axis=-1
+            )
+            gaps = jnp.diff(closed, axis=-1)
+            expected_gap = 2.0 * jnp.pi / angles.shape[-1]
+            if not bool(jnp.allclose(gaps, expected_gap, rtol=1e-6, atol=1e-8)):
+                raise ValueError(
+                    "chamber_azimuth_angles must be uniformly distributed around "
+                    "the full circle for every pneumatic segment"
+                )
 
         if self.pcs_segment_lengths is not None:
             pcs_segment_lengths = jnp.asarray(self.pcs_segment_lengths)

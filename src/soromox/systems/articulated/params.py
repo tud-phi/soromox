@@ -1,6 +1,7 @@
 __all__ = ["ArticulatedSoftRobotParams", "McKibbenActuatedUMArmParams"]
 
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 from jax import Array
@@ -18,8 +19,12 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
     Per-joint screw axes and transforms define the dynamic link geometry used by
     the articulated model. The number of joints is fixed by array shapes.
     ``base_pose`` uses scalar-first quaternion SE(3) coordinates
-    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm.
+    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm. Omitting
+    ``base_pose`` and ``gravity`` selects upright mounting and negative-z Earth
+    gravity.
     """
+
+    is_planar: ClassVar[bool] = False
 
     joint_screw: Array
     parent_to_joint_transform: Array
@@ -37,18 +42,16 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
         center_of_mass_position: Array,
         mass: Array,
         center_of_mass_inertia: Array,
-        gravity: Array,
+        gravity: Array | None = None,
         joint_stiffness: Array,
         joint_damping: Array,
         joint_rest_configuration: Array,
         radius: Array,
         base_pose: Array | None = None,
     ) -> None:
-        """Create articulated parameters with a default spatial identity base."""
-        if base_pose is None:
-            base_pose = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-        self.base_pose = jnp.asarray(base_pose)
-        self.gravity = jnp.asarray(gravity)
+        """Create articulated parameters with default upright mounting and gravity."""
+        self.base_pose = self._resolve_base_pose(base_pose)
+        self.gravity = self._resolve_gravity(gravity)
         self.mass = jnp.asarray(mass)
         self.joint_stiffness = jnp.asarray(joint_stiffness)
         self.joint_damping = jnp.asarray(joint_damping)
@@ -112,7 +115,7 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
         center_of_mass_position: Array,
         mass: Array,
         center_of_mass_inertia: Array,
-        gravity: Array,
+        gravity: Array | None = None,
         joint_stiffness: Array,
         joint_damping: Array,
         joint_rest_configuration: Array,

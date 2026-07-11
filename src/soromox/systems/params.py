@@ -1,4 +1,5 @@
 __all__ = [
+    "DEFAULT_GRAVITY_MAGNITUDE",
     "BaseSystemParams",
     "BaseSoftRobotParams",
     "BaseContinuumSoftRobotParams",
@@ -11,12 +12,14 @@ __all__ = [
 ]
 
 from dataclasses import fields
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 from jax.errors import ConcretizationTypeError, TracerBoolConversionError
+
+DEFAULT_GRAVITY_MAGNITUDE = 9.81
 
 
 def _validate_finite_array(
@@ -127,6 +130,7 @@ class BaseSystemParams(eqx.Module):
 
         updated = self
         for name, value in updates.items():
+            value = self._normalize_replacement(name, value)
             updated = eqx.tree_at(
                 lambda params, field_name=name: getattr(params, field_name),
                 updated,
@@ -135,6 +139,10 @@ class BaseSystemParams(eqx.Module):
             )
         updated.validate()
         return updated
+
+    def _normalize_replacement(self, name: str, value: Any) -> Any:
+        """Normalize a field replacement before rebuilding the PyTree."""
+        return value
 
     def validate(self) -> None:
         """Validate parameter consistency."""
@@ -148,17 +156,127 @@ class BaseSystemParams(eqx.Module):
 class BaseSoftRobotParams(BaseSystemParams):
     """Common dynamic parameters for soft robot systems.
 
-    ``base_pose`` and ``gravity`` are JAX arrays in the dimensional convention
-    of the concrete model. Planar robots use ``base_pose = [theta, x, y]`` with
-    2D gravity, where ``theta`` is a right-handed angle in radians about the
-    out-of-plane z-axis. Spatial robots use
+    ``base_pose`` and ``gravity`` are optional keyword-only constructor inputs.
+    When omitted, the robot points upright and standard Earth gravity acts in
+    the negative vertical world direction. Planar robots use
+    ``base_pose = [theta, x, y]`` with 2D gravity, where ``theta`` is a
+    right-handed angle in radians about the out-of-plane z-axis. Spatial robots use
     ``base_pose = [qw, qx, qy, qz, x, y, z]`` with 3D gravity. Spatial
     quaternions are scalar-first Hamilton quaternions, normalized before
-    transform construction, and must have nonzero finite norm.
+    transform construction, and must have nonzero finite norm. Use
+    :meth:`horizontal`, :meth:`upright`, or :meth:`hanging` for explicit common
+    mounting configurations.
     """
 
-    base_pose: Array
-    gravity: Array
+    is_planar: ClassVar[bool | None] = None
+
+    base_pose: Array | None = eqx.field(default=None, kw_only=True)
+    gravity: Array | None = eqx.field(default=None, kw_only=True)
+
+    def __check_init__(self) -> None:
+        object.__setattr__(self, "base_pose", self._resolve_base_pose(self.base_pose))
+        object.__setattr__(self, "gravity", self._resolve_gravity(self.gravity))
+
+    @classmethod
+    def _require_planarity(cls) -> bool:
+        if cls.is_planar is None:
+            raise TypeError(
+                f"{cls.__name__} must declare is_planar as True or False."
+            )
+        return cls.is_planar
+
+    @classmethod
+    def _mounting_base_pose(
+        cls,
+        mounting: Literal["horizontal", "upright", "hanging"],
+        base_position: Array | None = None,
+    ) -> Array:
+        is_planar = cls._require_planarity()
+        position_dimension = 2 if is_planar else 3
+        if base_position is None:
+            position = jnp.zeros(position_dimension)
+        else:
+            position = _validate_finite_array(
+                "base_position", base_position, (position_dimension,)
+            )
+            position = jnp.asarray(position)
+
+        if is_planar:
+            angles = {
+                "horizontal": 0.0,
+                "upright": jnp.pi / 2,
+                "hanging": -jnp.pi / 2,
+            }
+            return jnp.concatenate([jnp.asarray([angles[mounting]]), position])
+
+        sqrt_half = jnp.sqrt(jnp.asarray(0.5))
+        quaternions = {
+            "horizontal": jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            "upright": jnp.asarray([sqrt_half, 0.0, -sqrt_half, 0.0]),
+            "hanging": jnp.asarray([sqrt_half, 0.0, sqrt_half, 0.0]),
+        }
+        return jnp.concatenate([quaternions[mounting], position])
+
+    @classmethod
+    def _default_gravity(cls) -> Array:
+        if cls._require_planarity():
+            return jnp.asarray([0.0, -DEFAULT_GRAVITY_MAGNITUDE])
+        return jnp.asarray([0.0, 0.0, -DEFAULT_GRAVITY_MAGNITUDE])
+
+    @classmethod
+    def _resolve_base_pose(cls, base_pose: Array | None) -> Array:
+        if base_pose is None:
+            return cls._mounting_base_pose("upright")
+        return jnp.asarray(base_pose)
+
+    @classmethod
+    def _resolve_gravity(cls, gravity: Array | None) -> Array:
+        if gravity is None:
+            return cls._default_gravity()
+        return jnp.asarray(gravity)
+
+    @classmethod
+    def _from_mounting(
+        cls,
+        mounting: Literal["horizontal", "upright", "hanging"],
+        *,
+        base_position: Array | None = None,
+        **kwargs: Any,
+    ) -> "BaseSoftRobotParams":
+        if "base_pose" in kwargs:
+            raise TypeError(
+                f"{cls.__name__}.{mounting}() does not accept base_pose; "
+                "use base_position or the ordinary constructor instead."
+            )
+        return cls(base_pose=cls._mounting_base_pose(mounting, base_position), **kwargs)
+
+    @classmethod
+    def horizontal(
+        cls, *, base_position: Array | None = None, **kwargs: Any
+    ) -> "BaseSoftRobotParams":
+        """Construct parameters with the backbone pointing along world +x."""
+        return cls._from_mounting("horizontal", base_position=base_position, **kwargs)
+
+    @classmethod
+    def upright(
+        cls, *, base_position: Array | None = None, **kwargs: Any
+    ) -> "BaseSoftRobotParams":
+        """Construct parameters pointing along world +y (planar) or +z (spatial)."""
+        return cls._from_mounting("upright", base_position=base_position, **kwargs)
+
+    @classmethod
+    def hanging(
+        cls, *, base_position: Array | None = None, **kwargs: Any
+    ) -> "BaseSoftRobotParams":
+        """Construct parameters pointing along world -y (planar) or -z (spatial)."""
+        return cls._from_mounting("hanging", base_position=base_position, **kwargs)
+
+    def _normalize_replacement(self, name: str, value: Any) -> Any:
+        if name == "base_pose":
+            return type(self)._resolve_base_pose(value)
+        if name == "gravity":
+            return type(self)._resolve_gravity(value)
+        return value
 
 
 class BaseContinuumSoftRobotParams(BaseSoftRobotParams):

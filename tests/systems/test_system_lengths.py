@@ -177,7 +177,9 @@ def _isupport_robot():
         chamber_inner_radius=jnp.array([0.002, 0.002], dtype=jnp.float64),
         chamber_outer_radius=jnp.array([0.004, 0.004], dtype=jnp.float64),
         chamber_distance=jnp.array([0.01, 0.01], dtype=jnp.float64),
-        chamber_angle_offset=jnp.array([0.0, 0.0], dtype=jnp.float64),
+        chamber_azimuth_angles=jnp.tile(
+            2 * jnp.pi * jnp.arange(3, dtype=jnp.float64) / 3, (2, 1)
+        ),
     )
     return ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
 

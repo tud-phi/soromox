@@ -38,6 +38,7 @@ def make_pressure_planar_params():
 
 
 def make_isupport_params(num_segments=1):
+    angles = 2.0 * jnp.pi * jnp.arange(3) / 3
     return ISupportParams(
         base_pose=spatial_base_pose(),
         length=jnp.full((num_segments,), 0.1),
@@ -53,24 +54,22 @@ def make_isupport_params(num_segments=1):
         chamber_inner_radius=jnp.full((num_segments,), 0.002),
         chamber_outer_radius=jnp.full((num_segments,), 0.004),
         chamber_distance=jnp.full((num_segments,), 0.01),
-        chamber_angle_offset=jnp.zeros((num_segments,)),
+        chamber_azimuth_angles=jnp.tile(angles, (num_segments, 1)),
     )
 
 
 def expected_isupport_segment_actuation(params, segment_idx, num_chambers=3):
     chamber_area = jnp.pi * params.chamber_inner_radius[segment_idx] ** 2
     chamber_distance = params.chamber_distance[segment_idx]
-    chamber_angles = params.chamber_angle_offset[segment_idx] + jnp.linspace(
-        0.0, 2.0 * jnp.pi, num_chambers, endpoint=False
-    )
+    chamber_angles = params.chamber_azimuth_angles[segment_idx]
     expected_columns = []
     for angle in chamber_angles:
         expected_columns.append(
             jnp.array(
                 [
                     0.0,
-                    -chamber_distance * jnp.cos(angle) * chamber_area,
                     chamber_distance * jnp.sin(angle) * chamber_area,
+                    -chamber_distance * jnp.cos(angle) * chamber_area,
                     chamber_area,
                     0.0,
                     0.0,
@@ -175,14 +174,12 @@ def test_isupport_geometry_helpers_and_actuation_matrix_shape():
     robot = ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
 
     expected_angles = jnp.array([0.0, 2.0 * jnp.pi / 3.0, 4.0 * jnp.pi / 3.0])
-    expected_centroid = jnp.array([0.0, 0.0, params.chamber_distance[0]])
+    expected_centroid = jnp.array([0.0, params.chamber_distance[0], 0.0])
     expected_area = jnp.pi * (
         params.chamber_outer_radius[0] ** 2 - params.chamber_inner_radius[0] ** 2
     )
 
-    assert jnp.allclose(
-        robot._local_actuator_polar_angles(jnp.array(0)), expected_angles
-    )
+    assert jnp.allclose(robot.chamber_azimuths(jnp.array(0)), expected_angles)
     assert jnp.allclose(
         robot._local_actuator_centroid(jnp.array(0), jnp.array(0.0)),
         expected_centroid,
@@ -198,6 +195,54 @@ def test_isupport_geometry_helpers_and_actuation_matrix_shape():
     actuation_matrix = robot.actuation_matrix(jnp.zeros((6,)))
     assert actuation_matrix.shape == (6, 3)
     assert not jnp.isnan(actuation_matrix).any()
+
+
+def test_isupport_chamber_azimuth_cardinals_and_symmetry_validation():
+    cardinal_angles = jnp.array([[0.0, jnp.pi / 2, jnp.pi, 3 * jnp.pi / 2]])
+    params = make_isupport_params().replace(
+        chamber_azimuth_angles=cardinal_angles,
+        chamber_distance=jnp.array([0.01]),
+    )
+    robot = ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
+    assert jnp.allclose(
+        robot.local_chamber_offsets(jnp.array(0)),
+        jnp.array(
+            [
+                [0.0, 0.01, 0.0],
+                [0.0, 0.0, 0.01],
+                [0.0, -0.01, 0.0],
+                [0.0, 0.0, -0.01],
+            ]
+        ),
+        atol=1e-12,
+    )
+
+    unsorted = params.replace(
+        chamber_azimuth_angles=cardinal_angles[:, jnp.array([2, 0, 3, 1])]
+    )
+    unsorted.validate()
+    assert jnp.allclose(
+        ISupport(unsorted).chamber_azimuths(0),
+        unsorted.chamber_azimuth_angles[0],
+    )
+
+    with pytest.raises(ValueError, match="uniformly distributed"):
+        params.replace(
+            chamber_azimuth_angles=jnp.array([[0.0, 0.5, jnp.pi, 3 * jnp.pi / 2]])
+        ).validate()
+
+
+def test_isupport_defaults_to_canonical_three_chamber_azimuths():
+    params = make_isupport_params(num_segments=2).replace(chamber_azimuth_angles=None)
+    robot = ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
+    expected = jnp.tile(
+        jnp.array([0.0, 2.0 * jnp.pi / 3.0, 4.0 * jnp.pi / 3.0]),
+        (2, 1),
+    )
+
+    assert robot.num_chambers_per_segment == 3
+    assert jnp.allclose(robot.params.chamber_azimuth_angles, expected)
+    assert jnp.allclose(robot.pcs_params.chamber_azimuth_angles, expected)
 
 
 def test_isupport_actuation_matrix_matches_per_segment_chamber_model():
@@ -218,7 +263,12 @@ def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
     params = make_isupport_params(num_segments=2).replace(
         chamber_inner_radius=jnp.array([0.002, 0.003]),
         chamber_distance=jnp.array([0.01, 0.015]),
-        chamber_angle_offset=jnp.array([0.0, 0.2]),
+        chamber_azimuth_angles=jnp.stack(
+            [
+                2 * jnp.pi * jnp.arange(3) / 3,
+                (0.2 + 2 * jnp.pi * jnp.arange(3) / 3)[jnp.array([2, 0, 1])],
+            ]
+        ),
     )
     robot = ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
 
@@ -418,7 +468,9 @@ def test_isupport_actuation_groups_pressures_by_pneumatic_segment_after_split():
         length=jnp.array([0.1, 0.2]),
         chamber_inner_radius=jnp.array([0.002, 0.003]),
         chamber_distance=jnp.array([0.01, 0.015]),
-        chamber_angle_offset=jnp.array([0.0, 0.2]),
+        chamber_azimuth_angles=jnp.stack(
+            [2 * jnp.pi * jnp.arange(3) / 3, 0.2 + 2 * jnp.pi * jnp.arange(3) / 3]
+        ),
         pcs_segment_lengths=jnp.array([0.04, 0.06, 0.2]),
         rigid_connector_lengths=jnp.array([0.01, 0.02, 0.03]),
     )
@@ -449,9 +501,10 @@ def test_isupport_update_params_and_validation():
     params = make_isupport_params()
     robot = ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
 
-    updated = robot.update_params(chamber_angle_offset=jnp.array([0.25]))
-    assert jnp.allclose(updated.varphi_chamber_off, jnp.array([0.25]))
-    assert jnp.allclose(robot.varphi_chamber_off, params.chamber_angle_offset)
+    updated_angles = 0.25 + 2 * jnp.pi * jnp.arange(3)[None, :] / 3
+    updated = robot.update_params(chamber_azimuth_angles=updated_angles)
+    assert jnp.allclose(updated.chamber_azimuth_angles, updated_angles)
+    assert jnp.allclose(robot.chamber_azimuth_angles, params.chamber_azimuth_angles)
 
     with pytest.raises(ValueError, match="chamber_inner_radius"):
         robot.update_params(chamber_inner_radius=jnp.array([0.001, 0.002]))

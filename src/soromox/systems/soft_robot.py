@@ -55,8 +55,9 @@ class SoftRobot(DynamicalSystem):
             scalar-first Hamilton quaternions, normalized before use, and
             represent the base-frame orientation; translations are inserted
             directly. Configured spatial quaternions must have nonzero finite
-            norm. In the standard zero-rotation base pose, the soft robot
-            backbone is aligned with the positive base-frame x-axis.
+            norm. When omitted, the base pose is upright: the backbone points
+            along world +y for planar robots and world +z for spatial robots.
+            In an explicit zero-rotation pose, the backbone is aligned with +x.
         num_gauss_points (int | Array | None): Requested nonzero
             Gauss-Legendre quadrature point count. May be scalar for systems
             with a uniform grid or an array for systems with per-segment grids.
@@ -102,9 +103,8 @@ class SoftRobot(DynamicalSystem):
                 expect shape ``(7,)`` with ``[qw, qx, qy, qz, x, y, z]``.
                 Spatial quaternions are scalar-first Hamilton quaternions,
                 normalized before use, and must have nonzero finite norm. If
-                omitted, the zero-rotation base pose is used in the appropriate
-                dimension. With zero base rotation, the soft robot backbone is
-                aligned with the positive base-frame x-axis.
+                omitted, the upright pose is used: the backbone points along
+                world +y for planar robots and world +z for spatial robots.
             **kwargs: Additional keyword arguments (unused, kept for API compatibility).
         """
         # Note: We don't call super().__init__() here because Equinox modules
@@ -112,10 +112,12 @@ class SoftRobot(DynamicalSystem):
         # parent __init__ calls. Child classes must set num_dofs and num_actuators.
         if base_pose is None:
             if self.is_planar:
-                base_pose = jnp.zeros(3, dtype=jnp.float64)
+                base_pose = jnp.array([jnp.pi / 2, 0.0, 0.0], dtype=jnp.float64)
             else:
+                sqrt_half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float64))
                 base_pose = jnp.array(
-                    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64
+                    [sqrt_half, 0.0, -sqrt_half, 0.0, 0.0, 0.0, 0.0],
+                    dtype=jnp.float64,
                 )
         if self.is_planar:
             validate_planar_base_pose("base_pose", base_pose)

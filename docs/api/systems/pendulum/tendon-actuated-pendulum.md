@@ -86,7 +86,6 @@ body_params = PendulumParams(
     moment_inertia=jnp.array([3.0, 2.0]),
     length=jnp.array([2.0, 1.0]),
     center_of_mass_length=jnp.array([1.0, 0.5]),
-    gravity=jnp.array([0.0, -9.81]),
     joint_stiffness=jnp.diag(jnp.array([1.5, 2.0])),
     joint_damping=jnp.zeros((2, 2)),
     joint_rest_configuration=jnp.zeros(2),
