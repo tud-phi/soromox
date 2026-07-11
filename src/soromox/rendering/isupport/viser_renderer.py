@@ -26,9 +26,7 @@ __all__ = ["ISupportVisualConfig", "ISupportViserRenderer"]
 class ISupportVisualConfig:
     """Physical and stylistic defaults for :class:`ISupportViserRenderer`."""
 
-    interface_radius: float = 0.030
     interface_color: tuple[float, float, float] = (0.08, 0.20, 0.72)
-    fallback_interface_thickness: float = 0.005
     chamber_color: tuple[float, float, float] = (0.94, 0.91, 0.72)
     chamber_aspect_ratio: float = 21.72 / 13.03
     bellows_pitch: float = 0.010
@@ -36,18 +34,14 @@ class ISupportVisualConfig:
     chamber_sections: int = 20
     samples_per_fold: int = 4
     spacers_per_segment: int = 6
-    spacer_radius: float = 0.030
     spacer_thickness: float = 0.0015
     spacer_color: tuple[float, float, float] = (0.72, 0.82, 0.88)
     spacer_opacity: float = 0.35
 
     def __post_init__(self) -> None:
         positive_fields = (
-            "interface_radius",
-            "fallback_interface_thickness",
             "chamber_aspect_ratio",
             "bellows_pitch",
-            "spacer_radius",
             "spacer_thickness",
         )
         for name in positive_fields:
@@ -76,6 +70,7 @@ class ISupportVisualConfig:
 @dataclass(frozen=True)
 class _PneumaticVisualSpec:
     pneumatic_idx: int
+    radius: float
     s_start: float
     s_end: float
     ring_slice: slice
@@ -90,6 +85,7 @@ class _InterfaceVisualSpec:
     modeled: bool
     sample_indices: tuple[int, ...]
     thickness: float
+    radius: float
 
 
 @dataclass
@@ -170,7 +166,6 @@ class ISupportViserRenderer(ViserRenderer):
         rigid_selector = np.asarray(self.robot.pcs_segment_is_rigid, dtype=bool)
         sample_s: list[float] = []
         pneumatic_specs: list[_PneumaticVisualSpec] = []
-        pneumatic_bounds: list[tuple[float, float]] = []
 
         for pneumatic_idx in range(self.robot.num_pneumatic_segments):
             pcs_indices = np.flatnonzero(
@@ -210,6 +205,7 @@ class ISupportViserRenderer(ViserRenderer):
             pneumatic_specs.append(
                 _PneumaticVisualSpec(
                     pneumatic_idx=pneumatic_idx,
+                    radius=float(self.robot.r[pcs_indices[0]]),
                     s_start=s_start,
                     s_end=s_end,
                     ring_slice=ring_slice,
@@ -218,66 +214,33 @@ class ISupportViserRenderer(ViserRenderer):
                     faces=_tube_faces(num_rings, self.visual_config.chamber_sections),
                 )
             )
-            pneumatic_bounds.append((s_start, s_end))
 
-        rigid_indices = iter(np.flatnonzero(rigid_selector).tolist())
+        rigid_indices = np.flatnonzero(rigid_selector).tolist()
+        rigid_physical_indices = [
+            i
+            for i, is_rigid in enumerate(self.robot.structure.rigid_segment_selector)
+            if is_rigid
+        ]
+        if len(rigid_indices) != len(rigid_physical_indices):
+            raise ValueError("Rigid segment topology does not match the PCS layout.")
         interface_specs: list[_InterfaceVisualSpec] = []
-        connector_selector = self.robot.structure.rigid_connector_selector
-        if connector_selector is None:
-            connector_selector = tuple(
-                False for _ in range(self.robot.num_pneumatic_segments + 1)
+        for physical_idx, pcs_idx in zip(rigid_physical_indices, rigid_indices):
+            start_idx = len(sample_s)
+            sample_s.extend(
+                [
+                    float(cumulative_lengths[pcs_idx]),
+                    float(cumulative_lengths[pcs_idx + 1]),
+                ]
             )
-
-        for slot_idx, modeled in enumerate(connector_selector):
-            if modeled:
-                try:
-                    pcs_idx = next(rigid_indices)
-                except StopIteration as exc:
-                    raise ValueError(
-                        "Rigid connector topology does not match the PCS layout."
-                    ) from exc
-                start_idx = len(sample_s)
-                sample_s.extend(
-                    [
-                        float(cumulative_lengths[pcs_idx]),
-                        float(cumulative_lengths[pcs_idx + 1]),
-                    ]
+            interface_specs.append(
+                _InterfaceVisualSpec(
+                    slot_idx=physical_idx,
+                    modeled=True,
+                    sample_indices=(start_idx, start_idx + 1),
+                    thickness=float(lengths[pcs_idx]),
+                    radius=float(self.robot.r[pcs_idx]),
                 )
-                interface_specs.append(
-                    _InterfaceVisualSpec(
-                        slot_idx=slot_idx,
-                        modeled=True,
-                        sample_indices=(start_idx, start_idx + 1),
-                        thickness=float(lengths[pcs_idx]),
-                    )
-                )
-            else:
-                if slot_idx == 0:
-                    boundary = pneumatic_bounds[0][0]
-                elif slot_idx == self.robot.num_pneumatic_segments:
-                    boundary = pneumatic_bounds[-1][1]
-                else:
-                    boundary = 0.5 * (
-                        pneumatic_bounds[slot_idx - 1][1]
-                        + pneumatic_bounds[slot_idx][0]
-                    )
-                sample_idx = len(sample_s)
-                sample_s.append(float(boundary))
-                interface_specs.append(
-                    _InterfaceVisualSpec(
-                        slot_idx=slot_idx,
-                        modeled=False,
-                        sample_indices=(sample_idx,),
-                        thickness=self.visual_config.fallback_interface_thickness,
-                    )
-                )
-
-        try:
-            next(rigid_indices)
-        except StopIteration:
-            pass
-        else:
-            raise ValueError("PCS layout contains an unmatched rigid connector.")
+            )
 
         return (
             tuple(pneumatic_specs),
@@ -493,7 +456,7 @@ class ISupportViserRenderer(ViserRenderer):
                             f"/robots/robot_{robot_idx}/isupport/spacers/"
                             f"segment_{spec.pneumatic_idx}/spacer_{spacer_idx}"
                         ),
-                        radius=cfg.spacer_radius,
+                        radius=spec.radius,
                         thickness=cfg.spacer_thickness,
                         color=cfg.spacer_color,
                         opacity=cfg.spacer_opacity,
@@ -510,7 +473,7 @@ class ISupportViserRenderer(ViserRenderer):
                         f"/robots/robot_{robot_idx}/isupport/interfaces/"
                         f"interface_{spec.slot_idx}"
                     ),
-                    radius=cfg.interface_radius,
+                    radius=spec.radius,
                     thickness=spec.thickness,
                     color=cfg.interface_color,
                     opacity=None,

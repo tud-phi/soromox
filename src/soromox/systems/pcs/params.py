@@ -239,9 +239,10 @@ class PressureActuatedPlanarPCSParams(PlanarPCSParams):
 class ISupportParams(PCSParams):
     """Dynamic parameters for the I-SUPPORT spatial pneumatic PCS model.
 
-    The leading axis indexes physical pneumatic segments. ``ISupport`` expands
-    these fields into the internal PCS segment layout using ``ISupportStructure``.
-    Chamber fields describe per-pneumatic-segment chamber geometry. Chamber
+    The leading axis of the standard PCS body fields indexes every physical
+    rigid or pneumatic segment in robot order. ``ISupport`` expands these fields
+    into the internal PCS layout using ``ISupportStructure``. Chamber fields
+    index only pneumatic segments, in their order of appearance. Chamber
     azimuth is right-handed about local +X, measured from +Y toward +Z; array
     index ``j`` is pressure channel ``j``. If ``chamber_azimuth_angles`` is
     omitted, ``ISupport`` uses 0, 120, and 240 degrees for every pneumatic
@@ -256,10 +257,7 @@ class ISupportParams(PCSParams):
     assigned to each pneumatic segment must sum to the corresponding
     ``length`` entry when the model is constructed.
 
-    ``rigid_connector_lengths`` optionally stores connector lengths in the
-    canonical I-SUPPORT order: base connector, interfaces between pneumatic
-    segments, and tip connector. ``ISupportStructure.rigid_connector_selector``
-    determines which connector slots are part of the fixed model topology.
+    Segment types are defined by ``ISupportStructure.rigid_segment_selector``.
     """
 
     chamber_inner_radius: Array
@@ -267,21 +265,34 @@ class ISupportParams(PCSParams):
     chamber_distance: Array
     chamber_azimuth_angles: Array | None = None
     pcs_segment_lengths: Array | None = None
-    rigid_connector_lengths: Array | None = None
 
     def validate(self) -> None:
         super().validate()
-        n_segments = self.length.shape[0]
+        chamber_inner_radius = jnp.asarray(self.chamber_inner_radius)
+        if chamber_inner_radius.ndim != 1:
+            raise ValueError(
+                "chamber_inner_radius must be one-dimensional with shape "
+                "(num_pneumatic_segments,)."
+            )
+        n_pneumatic_segments = chamber_inner_radius.shape[0]
+        if n_pneumatic_segments < 1:
+            raise ValueError(
+                "ISupportParams must describe at least one pneumatic segment"
+            )
         for name in (
             "chamber_inner_radius",
             "chamber_outer_radius",
             "chamber_distance",
         ):
-            _require_shape(name, getattr(self, name), (n_segments,))
+            _require_shape(name, getattr(self, name), (n_pneumatic_segments,))
 
         if self.chamber_azimuth_angles is not None:
             angles = jnp.asarray(self.chamber_azimuth_angles)
-            if angles.ndim != 2 or angles.shape[0] != n_segments or angles.shape[1] < 1:
+            if (
+                angles.ndim != 2
+                or angles.shape[0] != n_pneumatic_segments
+                or angles.shape[1] < 1
+            ):
                 raise ValueError(
                     "chamber_azimuth_angles must have shape "
                     "(num_pneumatic_segments, num_chambers_per_segment) with at "
@@ -309,11 +320,3 @@ class ISupportParams(PCSParams):
                     "pcs_segment_lengths must be one-dimensional with shape "
                     "(num_pcs_segments,)."
                 )
-
-        if self.rigid_connector_lengths is not None:
-            rigid_connector_lengths = jnp.asarray(self.rigid_connector_lengths)
-            _require_shape(
-                "rigid_connector_lengths",
-                rigid_connector_lengths,
-                (n_segments + 1,),
-            )

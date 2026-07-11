@@ -181,7 +181,12 @@ def _isupport_robot():
             2 * jnp.pi * jnp.arange(3, dtype=jnp.float64) / 3, (2, 1)
         ),
     )
-    return ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
+    return ISupport(
+        params=params,
+        structure=ISupportStructure(
+            num_gauss_points=1, rigid_segment_selector=(False, False)
+        ),
+    )
 
 
 def _planar_hsa_robot():

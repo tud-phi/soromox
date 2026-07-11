@@ -52,17 +52,30 @@ class _FakeServer:
 
 
 def _make_robot(*, connectors: bool = True) -> ISupport:
-    lengths = jnp.array([0.10, 0.12])
+    if connectors:
+        lengths = jnp.array([0.01, 0.10, 0.02, 0.12, 0.03])
+        rigid_segment_selector = (True, False, True, False, True)
+        radii = jnp.array([0.025, 0.03, 0.026, 0.035, 0.027])
+        densities = jnp.array([1200.0, 1000.0, 1250.0, 1000.0, 1300.0])
+    else:
+        lengths = jnp.array([0.10, 0.12])
+        rigid_segment_selector = (False, False)
+        radii = jnp.array([0.03, 0.03])
+        densities = jnp.array([1000.0, 1000.0])
+    num_physical_segments = len(rigid_segment_selector)
     params = ISupportParams(
         base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         length=lengths,
-        radius=jnp.array([0.03, 0.03]),
-        density=jnp.array([1000.0, 1000.0]),
+        radius=radii,
+        density=densities,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=jnp.array([2.0e3, 2.0e3]),
-        shear_modulus=jnp.array([1.0e3, 1.0e3]),
-        damping_matrix=1.0e-3 * jnp.eye(12),
-        reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 2),
+        young_modulus=2.0e3 * jnp.ones((num_physical_segments,)),
+        shear_modulus=1.0e3 * jnp.ones((num_physical_segments,)),
+        damping_matrix=1.0e-3 * jnp.eye(6 * num_physical_segments),
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            num_physical_segments,
+        ),
         chamber_inner_radius=jnp.array([0.005, 0.005]),
         chamber_outer_radius=jnp.array([0.00779, 0.00779]),
         chamber_distance=jnp.array([0.020, 0.020]),
@@ -70,16 +83,13 @@ def _make_robot(*, connectors: bool = True) -> ISupport:
             [2 * jnp.pi * jnp.arange(3) / 3, 0.15 + 2 * jnp.pi * jnp.arange(3) / 3]
         ),
         pcs_segment_lengths=jnp.array([0.04, 0.06, 0.12]),
-        rigid_connector_lengths=(
-            jnp.array([0.01, 0.02, 0.03]) if connectors else jnp.zeros((3,))
-        ),
     )
     return ISupport(
         params=params,
         structure=ISupportStructure(
             num_gauss_points=1,
             pcs_segment_counts=(2, 1),
-            rigid_connector_selector=(connectors, connectors, connectors),
+            rigid_segment_selector=rigid_segment_selector,
         ),
     )
 
@@ -111,7 +121,6 @@ def _curves_and_frames(renderer, q, offsets=None):
         ({"chamber_sections": 5}, "chamber_sections"),
         ({"samples_per_fold": 1}, "samples_per_fold"),
         ({"spacer_opacity": 1.1}, "spacer_opacity"),
-        ({"interface_radius": 0.0}, "interface_radius"),
     ],
 )
 def test_visual_config_validation(updates, message):
@@ -151,8 +160,14 @@ def test_layout_tracks_split_pneumatic_segments_and_connectors():
         [(0.01, 0.11), (0.13, 0.25)],
         atol=1e-12,
     )
+    assert [spec.radius for spec in renderer._pneumatic_specs] == pytest.approx(
+        [0.03, 0.035]
+    )
     assert [spec.thickness for spec in renderer._interface_specs] == pytest.approx(
         [0.01, 0.02, 0.03]
+    )
+    assert [spec.radius for spec in renderer._interface_specs] == pytest.approx(
+        [0.025, 0.026, 0.027]
     )
     assert all(spec.modeled for spec in renderer._interface_specs)
 
@@ -164,18 +179,9 @@ def test_layout_tracks_split_pneumatic_segments_and_connectors():
     )
 
 
-def test_layout_adds_visual_only_interfaces_without_connectors():
-    config = ISupportVisualConfig(fallback_interface_thickness=0.004)
-    renderer = _renderer(
-        _make_robot(connectors=False),
-        visual_config=config,
-    )
-
-    assert len(renderer._interface_specs) == 3
-    assert not any(spec.modeled for spec in renderer._interface_specs)
-    assert [spec.thickness for spec in renderer._interface_specs] == pytest.approx(
-        [0.004, 0.004, 0.004]
-    )
+def test_layout_has_no_visual_only_interfaces_without_rigid_segments():
+    renderer = _renderer(_make_robot(connectors=False))
+    assert renderer._interface_specs == ()
 
 
 def test_chambers_follow_model_angles_ellipse_and_bellows():

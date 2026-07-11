@@ -18,7 +18,7 @@ def _with_default_chamber_azimuth_angles(params: ISupportParams) -> ISupportPara
     """Resolve the canonical three-chamber layout when no angles are supplied."""
     if params.chamber_azimuth_angles is not None:
         return params
-    num_pneumatic_segments = int(params.length.shape[0])
+    num_pneumatic_segments = int(params.chamber_inner_radius.shape[0])
     canonical_angles = 2.0 * jnp.pi * jnp.arange(3, dtype=jnp.float64) / 3.0
     return params.replace(
         chamber_azimuth_angles=jnp.tile(
@@ -31,19 +31,31 @@ def _straight_reference_strain(dtype: jnp.dtype) -> Array:
     return jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=dtype)
 
 
-def _connector_source_index(connector_index: int, num_pneumatic_segments: int) -> int:
-    if connector_index <= 0:
-        return 0
-    if connector_index >= num_pneumatic_segments:
-        return num_pneumatic_segments - 1
-    return connector_index - 1
-
-
 def _normalize_structure_for_params(
     params: ISupportParams,
     structure: ISupportStructure,
 ) -> ISupportStructure:
-    num_pneumatic_segments = int(params.length.shape[0])
+    num_physical_segments = int(params.length.shape[0])
+
+    rigid_segment_selector = structure.rigid_segment_selector
+    if rigid_segment_selector is None:
+        rigid_segment_selector = tuple(i % 2 == 0 for i in range(num_physical_segments))
+    if len(rigid_segment_selector) != num_physical_segments:
+        raise ValueError(
+            "rigid_segment_selector must contain one entry per physical segment; "
+            f"expected {num_physical_segments}, got {len(rigid_segment_selector)}."
+        )
+    num_pneumatic_segments = sum(not is_rigid for is_rigid in rigid_segment_selector)
+    if num_pneumatic_segments < 1:
+        raise ValueError(
+            "rigid_segment_selector must contain at least one pneumatic segment."
+        )
+    num_chamber_segments = int(params.chamber_inner_radius.shape[0])
+    if num_chamber_segments != num_pneumatic_segments:
+        raise ValueError(
+            "Chamber parameter arrays must contain one entry per pneumatic segment; "
+            f"expected {num_pneumatic_segments}, got {num_chamber_segments}."
+        )
 
     pcs_segment_counts = structure.pcs_segment_counts
     if pcs_segment_counts is None:
@@ -58,24 +70,10 @@ def _normalize_structure_for_params(
     if any(count < 1 for count in pcs_segment_counts):
         raise ValueError("pcs_segment_counts entries must be positive integers.")
 
-    rigid_connector_selector = structure.rigid_connector_selector
-    num_rigid_connectors = num_pneumatic_segments + 1
-    if rigid_connector_selector is None:
-        rigid_connector_selector = tuple(False for _ in range(num_rigid_connectors))
-    elif len(rigid_connector_selector) == 1 and num_rigid_connectors > 1:
-        rigid_connector_selector = rigid_connector_selector * num_rigid_connectors
-    if len(rigid_connector_selector) != num_rigid_connectors:
-        raise ValueError(
-            "rigid_connector_selector must contain one more entry than there are "
-            "pneumatic segments; "
-            f"expected {num_rigid_connectors}, "
-            f"got {len(rigid_connector_selector)}."
-        )
-
     return ISupportStructure(
         num_gauss_points=structure.num_gauss_points,
         pcs_segment_counts=pcs_segment_counts,
-        rigid_connector_selector=rigid_connector_selector,
+        rigid_segment_selector=rigid_segment_selector,
         strain_selector=structure.strain_selector,
         scale_rotational_basis_by_length=structure.scale_rotational_basis_by_length,
     )
@@ -84,12 +82,20 @@ def _normalize_structure_for_params(
 def _resolve_pcs_segment_lengths(
     params: ISupportParams,
     pcs_segment_counts: tuple[int, ...],
+    rigid_segment_selector: tuple[bool, ...],
 ) -> tuple[Array, ...]:
-    pneumatic_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+    physical_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+    pneumatic_physical_indices = [
+        i for i, is_rigid in enumerate(rigid_segment_selector) if not is_rigid
+    ]
 
     if params.pcs_segment_lengths is None:
         return tuple(
-            jnp.full((count,), pneumatic_lengths[i] / count, dtype=jnp.float64)
+            jnp.full(
+                (count,),
+                physical_lengths[pneumatic_physical_indices[i]] / count,
+                dtype=jnp.float64,
+            )
             for i, count in enumerate(pcs_segment_counts)
         )
 
@@ -102,7 +108,7 @@ def _resolve_pcs_segment_lengths(
     expected_num_pcs_segments = sum(pcs_segment_counts)
     if pcs_segment_lengths.shape != (expected_num_pcs_segments,):
         raise ValueError(
-            "pcs_segment_lengths must contain one length per soft PCS segment; "
+            "pcs_segment_lengths must contain one length per pneumatic PCS segment; "
             f"expected {expected_num_pcs_segments}, got {pcs_segment_lengths.shape[0]}."
         )
     if not bool(jnp.all(pcs_segment_lengths > 0.0)):
@@ -114,7 +120,7 @@ def _resolve_pcs_segment_lengths(
         stop = start + count
         child_lengths = pcs_segment_lengths[start:stop]
         child_length_sum = float(jnp.sum(child_lengths))
-        pneumatic_length = float(pneumatic_lengths[i])
+        pneumatic_length = float(physical_lengths[pneumatic_physical_indices[i]])
         if not math.isclose(
             child_length_sum,
             pneumatic_length,
@@ -132,45 +138,6 @@ def _resolve_pcs_segment_lengths(
     return tuple(segment_lengths_by_pneumatic_segment)
 
 
-def _resolve_rigid_connector_lengths(
-    params: ISupportParams,
-    rigid_connector_selector: tuple[bool, ...],
-) -> Array:
-    num_rigid_connectors = len(rigid_connector_selector)
-    if params.rigid_connector_lengths is None:
-        rigid_connector_lengths = jnp.zeros((num_rigid_connectors,), dtype=jnp.float64)
-    else:
-        rigid_connector_lengths = jnp.asarray(
-            params.rigid_connector_lengths, dtype=jnp.float64
-        )
-    if rigid_connector_lengths.shape != (num_rigid_connectors,):
-        raise ValueError(
-            "rigid_connector_lengths must contain one entry per canonical "
-            "connector slot; "
-            f"expected {num_rigid_connectors}, got {rigid_connector_lengths.shape}."
-        )
-    if not bool(jnp.all(rigid_connector_lengths >= 0.0)):
-        raise ValueError("rigid_connector_lengths entries must be nonnegative.")
-
-    for connector_index, is_selected in enumerate(rigid_connector_selector):
-        connector_length = float(rigid_connector_lengths[connector_index])
-        if is_selected:
-            if connector_length <= 0.0:
-                raise ValueError(
-                    "Selected rigid connectors must have positive lengths; "
-                    f"rigid_connector_lengths[{connector_index}] is "
-                    f"{connector_length}."
-                )
-        elif not math.isclose(connector_length, 0.0, rel_tol=1e-9, abs_tol=1e-12):
-            raise ValueError(
-                "rigid_connector_lengths contains a nonzero length for an "
-                "unselected connector; set "
-                f"rigid_connector_selector[{connector_index}] to True or set "
-                f"rigid_connector_lengths[{connector_index}] to zero."
-            )
-    return rigid_connector_lengths
-
-
 def _expand_isupport_layout(
     params: ISupportParams,
     structure: ISupportStructure,
@@ -179,33 +146,40 @@ def _expand_isupport_layout(
     params.validate()
     structure = _normalize_structure_for_params(params, structure)
 
-    num_pneumatic_segments = int(params.length.shape[0])
-    pneumatic_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+    num_physical_segments = int(params.length.shape[0])
+    physical_lengths = jnp.asarray(params.length, dtype=jnp.float64)
     pcs_segment_lengths = _resolve_pcs_segment_lengths(
-        params, structure.pcs_segment_counts
-    )
-    rigid_connector_lengths = _resolve_rigid_connector_lengths(
-        params, structure.rigid_connector_selector
+        params, structure.pcs_segment_counts, structure.rigid_segment_selector
     )
     radius = jnp.asarray(params.radius, dtype=jnp.float64)
     density = jnp.asarray(params.density, dtype=jnp.float64)
     young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
     shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
     reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64).reshape(
-        num_pneumatic_segments, 6
+        num_physical_segments, 6
     )
+    straight_reference_strain = _straight_reference_strain(reference_strain.dtype)
+    for physical_index, is_rigid in enumerate(structure.rigid_segment_selector):
+        if is_rigid and not bool(
+            jnp.allclose(reference_strain[physical_index], straight_reference_strain)
+        ):
+            raise ValueError(
+                "Rigid segment reference_strain entries must equal "
+                "[0, 0, 0, 1, 0, 0]; "
+                f"physical segment {physical_index} does not."
+            )
     has_damping_matrix = params.damping_matrix is not None
     if has_damping_matrix:
         damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
         damping_blocks = jnp.stack(
             [
                 damping_matrix[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)]
-                for i in range(num_pneumatic_segments)
+                for i in range(num_physical_segments)
             ]
         )
         if not bool(jnp.allclose(damping_matrix, blk_diag(damping_blocks))):
             raise ValueError(
-                "ISupport damping_matrix must be block diagonal by pneumatic segment "
+                "ISupport damping_matrix must be block diagonal by physical segment "
                 "before expansion into PCS segments."
             )
     else:
@@ -216,7 +190,7 @@ def _expand_isupport_layout(
         )
         if material_damping_coefficient.ndim == 0:
             material_damping_coefficient = jnp.full(
-                (num_pneumatic_segments,),
+                (num_physical_segments,),
                 material_damping_coefficient,
                 dtype=jnp.float64,
             )
@@ -248,7 +222,7 @@ def _expand_isupport_layout(
         *,
         length: Array,
         source_index: int,
-        pneumatic_index: int,
+        pneumatic_index: int | None,
         is_rigid: bool,
     ) -> None:
         expanded_lengths.append(jnp.asarray(length, dtype=jnp.float64))
@@ -256,59 +230,55 @@ def _expand_isupport_layout(
         expanded_density.append(density[source_index])
         expanded_young_modulus.append(young_modulus[source_index])
         expanded_shear_modulus.append(shear_modulus[source_index])
-        expanded_chamber_inner_radius.append(r_chamber_in[source_index])
-        expanded_chamber_outer_radius.append(r_chamber_out[source_index])
-        expanded_chamber_distance.append(d_chamber[source_index])
-        expanded_chamber_azimuth_angles.append(chamber_azimuth_angles[source_index])
+        chamber_index = 0 if pneumatic_index is None else pneumatic_index
+        expanded_chamber_inner_radius.append(r_chamber_in[chamber_index])
+        expanded_chamber_outer_radius.append(r_chamber_out[chamber_index])
+        expanded_chamber_distance.append(d_chamber[chamber_index])
+        expanded_chamber_azimuth_angles.append(chamber_azimuth_angles[chamber_index])
 
         if is_rigid:
-            expanded_reference_strain.append(
-                _straight_reference_strain(reference_strain.dtype)
-            )
+            expanded_reference_strain.append(reference_strain[source_index])
             if has_damping_matrix:
-                expanded_damping_blocks.append(
-                    jnp.zeros((6, 6), dtype=damping_matrix.dtype)
-                )
+                expanded_damping_blocks.append(damping_blocks[source_index])
             else:
                 expanded_material_damping_coefficient.append(
-                    jnp.asarray(0.0, dtype=material_damping_coefficient.dtype)
+                    material_damping_coefficient[source_index]
                 )
             default_strain_selector.append(jnp.zeros((6,), dtype=bool))
             pcs_segment_to_pneumatic_segment.append(_RIGID_CONNECTOR_PARENT)
         else:
-            length_scale = length / pneumatic_lengths[pneumatic_index]
-            expanded_reference_strain.append(reference_strain[pneumatic_index])
+            length_scale = length / physical_lengths[source_index]
+            expanded_reference_strain.append(reference_strain[source_index])
             if has_damping_matrix:
                 expanded_damping_blocks.append(
-                    damping_blocks[pneumatic_index] * length_scale
+                    damping_blocks[source_index] * length_scale
                 )
             else:
                 expanded_material_damping_coefficient.append(
-                    material_damping_coefficient[pneumatic_index]
+                    material_damping_coefficient[source_index]
                 )
             default_strain_selector.append(jnp.ones((6,), dtype=bool))
             pcs_segment_to_pneumatic_segment.append(pneumatic_index)
         pcs_segment_is_rigid.append(is_rigid)
 
-    for connector_index in range(num_pneumatic_segments + 1):
-        if structure.rigid_connector_selector[connector_index]:
+    pneumatic_index = 0
+    for physical_index, is_rigid in enumerate(structure.rigid_segment_selector):
+        if is_rigid:
             append_segment(
-                length=rigid_connector_lengths[connector_index],
-                source_index=_connector_source_index(
-                    connector_index, num_pneumatic_segments
-                ),
-                pneumatic_index=_RIGID_CONNECTOR_PARENT,
+                length=physical_lengths[physical_index],
+                source_index=physical_index,
+                pneumatic_index=None,
                 is_rigid=True,
             )
-
-        if connector_index < num_pneumatic_segments:
-            for segment_length in pcs_segment_lengths[connector_index]:
+        else:
+            for segment_length in pcs_segment_lengths[pneumatic_index]:
                 append_segment(
                     length=segment_length,
-                    source_index=connector_index,
-                    pneumatic_index=connector_index,
+                    source_index=physical_index,
+                    pneumatic_index=pneumatic_index,
                     is_rigid=False,
                 )
+            pneumatic_index += 1
 
     strain_selector = jnp.concatenate(default_strain_selector)
     if structure.strain_selector is not None:
@@ -445,9 +415,9 @@ class ISupport(PCS):
 
         Args:
             params: Dynamic I-SUPPORT parameters.
-            structure: Static I-SUPPORT layout. If omitted, each pneumatic
-                segment is represented by one PCS segment and no rigid
-                connectors are inserted.
+            structure: Static I-SUPPORT layout. If omitted, physical segments
+                alternate rigid and pneumatic from index zero, and each
+                pneumatic segment is represented by one PCS segment.
             **kwargs: Additional keyword arguments.
         """
         if not isinstance(params, ISupportParams):
@@ -466,12 +436,17 @@ class ISupport(PCS):
             pcs_segment_to_pneumatic_segment,
             pcs_segment_is_rigid,
         ) = _expand_isupport_layout(params, structure)
+        # Geometry-dependent caches are constructed by PCS.__init__, so expose
+        # the expanded type mask before delegating to it.
+        self.pcs_segment_is_rigid = pcs_segment_is_rigid
         super().__init__(pcs_params, structure=pcs_structure, **kwargs)
 
         self.params = params
         self.pcs_params = pcs_params
         self.structure = normalized_structure
-        self.num_pneumatic_segments = int(params.length.shape[0])
+        self.num_pneumatic_segments = sum(
+            not is_rigid for is_rigid in normalized_structure.rigid_segment_selector
+        )
         self.num_pcs_segments = self.num_segments
         self.pcs_segment_to_pneumatic_segment = pcs_segment_to_pneumatic_segment
         self.pcs_segment_is_rigid = pcs_segment_is_rigid
@@ -698,11 +673,11 @@ class ISupport(PCS):
         Returns:
             A_i (Array): local cross-sectional area of the i-th segment as array of shape ()
         """
-        A_one_actuator_i = self._local_actuator_cross_sectional_area(i)
-        # we assume that the cross-section only consists of the actuators
-        A_i = self.num_chambers_per_segment * A_one_actuator_i
-
-        return A_i
+        pneumatic_area = (
+            self.num_chambers_per_segment * self._local_actuator_cross_sectional_area(i)
+        )
+        rigid_area = super()._local_cross_sectional_area(i)
+        return jnp.where(self.pcs_segment_is_rigid[i], rigid_area, pneumatic_area)
 
     def _local_actuator_second_moment_of_area(
         self, i: Array, varphi_chamber: Array
@@ -759,17 +734,14 @@ class ISupport(PCS):
             I_i (Array): local second moment of area of the i-th segment as array of shape (3, )
         """
 
-        # compute the polar angles of the actuators
+        # Compute the pneumatic-section moments from its actuator annuli.
         varphi_actuators_i = self.chamber_azimuth_angles[i]
-        # compute the second moment of area of each actuator
         I_actuators_i = vmap(
             lambda varphi: self._local_actuator_second_moment_of_area(i, varphi)
         )(varphi_actuators_i)
-
-        # the second moment of area is assumed to be the sum across all actuators
-        I_i = jnp.sum(I_actuators_i, axis=0)
-
-        return I_i
+        pneumatic_moments = jnp.sum(I_actuators_i, axis=0)
+        rigid_moments = super()._local_second_moment_of_area(i)
+        return jnp.where(self.pcs_segment_is_rigid[i], rigid_moments, pneumatic_moments)
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:

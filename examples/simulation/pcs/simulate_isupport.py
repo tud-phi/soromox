@@ -26,7 +26,16 @@ if __name__ == "__main__":
         2 * (1 + poisson_ratio)
     )  # Shear modulus from elastic modulus and poisson ratio
 
-    pneumatic_segment_lengths = jnp.array([190e-3, 180e-3])
+    # Physical layout: base interface, pneumatic section, middle interface,
+    # pneumatic section, tip interface.
+    rigid_segment_selector = (True, False, True, False, True)
+    physical_segment_lengths = jnp.array([41e-3, 190e-3, 27e-3, 180e-3, 6e-3])
+    # Alessi et al. (2023) report a 30 mm circular cross-section radius for
+    # the complete arm, including its pneumatic sections and terminal plates.
+    physical_segment_radii = 30e-3 * jnp.ones((len(rigid_segment_selector),))
+    # The compiled reference model stores 1210 kg/m^3 for every rigid
+    # interface and 1104 kg/m^3 for each pneumatic section.
+    physical_segment_densities = jnp.array([1210.0, 1104.0, 1210.0, 1104.0, 1210.0])
     # Topology: how many PCS segments approximate each pneumatic segment.
     pcs_segment_counts = (2, 3)
     # Parameters: metric PCS segment lengths, flattened by pneumatic segment.
@@ -34,11 +43,6 @@ if __name__ == "__main__":
     # Set this to None to divide each pneumatic segment equally according to
     # pcs_segment_counts.
     pcs_segment_lengths = jnp.array([95e-3, 95e-3, 60e-3, 60e-3, 60e-3])
-    # Topology: base, interface, and tip connector slots are present.
-    rigid_connector_selector = (True, True, True)
-    # Parameters: base connector, interface connector, and tip connector lengths.
-    rigid_connector_lengths = jnp.array([41e-3, 27e-3, 6e-3])
-
     # Previous explicit damping used gamma_t = 806e-3 and gamma_r = 1.0e-3:
     # D_i = L_i * diag([gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]).
     # The material damping coefficient below is the least-squares scalar c for
@@ -48,15 +52,17 @@ if __name__ == "__main__":
     material_damping_coefficient = 1.96e3
     params = ISupportParams(
         base_pose=jnp.array([0.5, 0.5, 0.5, -0.5, 0.0, 0.0, 0.0]),
-        length=pneumatic_segment_lengths,
-        radius=35.6 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
-        density=1104 * jnp.ones((num_pneumatic_segments,)),
+        length=physical_segment_lengths,
+        radius=physical_segment_radii,
+        density=physical_segment_densities,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=E * jnp.ones((num_pneumatic_segments,)),
-        shear_modulus=G * jnp.ones((num_pneumatic_segments,)),
-        material_damping_coefficient=material_damping_coefficient,
+        young_modulus=E * jnp.ones((len(rigid_segment_selector),)),
+        shear_modulus=G * jnp.ones((len(rigid_segment_selector),)),
+        material_damping_coefficient=material_damping_coefficient
+        * jnp.ones((len(rigid_segment_selector),)),
         reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_pneumatic_segments
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+            len(rigid_segment_selector),
         ),
         chamber_inner_radius=6.39 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_outer_radius=7.79 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
@@ -68,7 +74,6 @@ if __name__ == "__main__":
             (num_pneumatic_segments, 1),
         ),
         pcs_segment_lengths=pcs_segment_lengths,
-        rigid_connector_lengths=rigid_connector_lengths,
     )
 
     # ======================================================
@@ -78,7 +83,7 @@ if __name__ == "__main__":
         params=params,
         structure=ISupportStructure(
             pcs_segment_counts=pcs_segment_counts,
-            rigid_connector_selector=rigid_connector_selector,
+            rigid_segment_selector=rigid_segment_selector,
         ),
     )
 

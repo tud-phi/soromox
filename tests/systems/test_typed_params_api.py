@@ -517,7 +517,12 @@ def test_isupport_inherits_material_damping_path():
             None, :
         ],
     )
-    robot = ISupport(params=params, structure=ISupportStructure(num_gauss_points=1))
+    robot = ISupport(
+        params=params,
+        structure=ISupportStructure(
+            num_gauss_points=1, rigid_segment_selector=(False,)
+        ),
+    )
 
     I_i = robot._local_second_moment_of_area(jnp.array(0))
     A_i = robot._local_cross_sectional_area(jnp.array(0))

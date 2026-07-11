@@ -29,10 +29,10 @@ renderer = ISupportViserRenderer(
 renderer.show(q)
 ```
 
-`ISupportVisualConfig` exposes the interface and spacer dimensions, chamber
-ellipticity, bellows pitch and amplitude, mesh resolution, colors, and spacer
-opacity. When an `ISupport` topology omits a rigid connector, the renderer adds
-a thin visual-only interface plate without changing the robot kinematics.
+`ISupportVisualConfig` exposes spacer thickness, chamber ellipticity, bellows
+pitch and amplitude, mesh resolution, colors, and spacer opacity. Rigid
+segments and pneumatic-section spacers use their modeled radii; no visual-only
+connector slots are added.
 
 ## Model Quick Start
 
@@ -41,19 +41,28 @@ import jax.numpy as jnp
 from soromox.systems import ISupport, ISupportParams, ISupportStructure
 
 params = ISupportParams(
-    length=jnp.array([0.18]),
-    radius=jnp.array([35.6e-3]),
-    density=jnp.array([1104.0]),
-    young_modulus=jnp.array([1.6464e6]),
-    shear_modulus=jnp.array([0.5488e6]),
+    # Physical order: rigid base, pneumatic section, rigid tip.
+    length=jnp.array([0.01, 0.18, 0.01]),
+    radius=jnp.array([0.03, 35.6e-3, 0.025]),
+    density=jnp.array([1210.0, 1104.0, 1210.0]),
+    young_modulus=jnp.array([2.0e9, 1.6464e6, 2.0e9]),
+    shear_modulus=jnp.array([0.8e9, 0.5488e6, 0.8e9]),
     material_damping_coefficient=1.96e3,
-    reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
+    reference_strain=jnp.tile(
+        jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 3
+    ),
     chamber_inner_radius=jnp.array([6.39e-3]),
     chamber_outer_radius=jnp.array([7.79e-3]),
     chamber_distance=jnp.array([20e-3]),
     chamber_azimuth_angles=(2.0 * jnp.pi * jnp.arange(3) / 3)[None, :],
 )
-robot = ISupport(params, structure=ISupportStructure(num_gauss_points=3))
+robot = ISupport(
+    params,
+    structure=ISupportStructure(
+        num_gauss_points=3,
+        rigid_segment_selector=(True, False, True),
+    ),
+)
 
 q = jnp.zeros(robot.num_dofs)
 
