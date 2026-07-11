@@ -12,6 +12,11 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 from matplotlib import colormaps
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.colorbar import ColorbarBase
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.figure import Figure
+from matplotlib.ticker import FixedLocator, FuncFormatter
 
 from soromox.rendering.color_config import validate_rgb
 from soromox.rendering.viser_renderer import (
@@ -582,10 +587,38 @@ class ISupportViserRenderer(ViserRenderer):
             for handle in robot_handles.pressure_label_handles:
                 handle.visible = self._show_pressure_labels
 
+    def _pressure_colorbar_image(self) -> np.ndarray:
+        cfg = self.visual_config
+        base_colormap = colormaps.get_cmap(cfg.pressure_colormap)
+        samples = np.linspace(cfg.pressure_colormap_start, 1.0, 256)
+        pressure_colormap = LinearSegmentedColormap.from_list(
+            "isupport_pressure", base_colormap(samples)
+        )
+
+        figure = Figure(figsize=(3.0, 0.65), dpi=120)
+        figure.patch.set_alpha(0.0)
+        canvas = FigureCanvasAgg(figure)
+        axes = figure.add_axes((0.08, 0.48, 0.84, 0.28))
+        colorbar = ColorbarBase(
+            axes,
+            cmap=pressure_colormap,
+            norm=Normalize(*cfg.pressure_range),
+            orientation="horizontal",
+        )
+        colorbar.ax.xaxis.set_major_formatter(
+            FuncFormatter(lambda value, _: f"{value / 1.0e3:g}")
+        )
+        colorbar.ax.xaxis.set_major_locator(
+            FixedLocator(np.linspace(*cfg.pressure_range, 5))
+        )
+        colorbar.ax.tick_params(labelsize=8, length=2, pad=1)
+        colorbar.set_label("Pressure [kPa]", fontsize=8, labelpad=2)
+        canvas.draw()
+        return np.asarray(canvas.buffer_rgba()).copy()
+
     def _setup_pressure_gui(self) -> None:
         if self._server is None:
             return
-        cfg = self.visual_config
         existing = self._gui_handles.get("show_pressure_labels")
         if existing is not None:
             existing.value = self._show_pressure_labels
@@ -596,14 +629,9 @@ class ISupportViserRenderer(ViserRenderer):
                 initial_value=self._show_pressure_labels,
             )
             self._gui_handles["show_pressure_labels"] = checkbox
-            self._server.gui.add_text(
-                "Pressure scale",
-                initial_value=(
-                    f"{cfg.pressure_range[0] / 1.0e3:g}–"
-                    f"{cfg.pressure_range[1] / 1.0e3:g} kPa · "
-                    f"{cfg.pressure_colormap}"
-                ),
-                disabled=True,
+            self._gui_handles["pressure_colorbar"] = self._server.gui.add_image(
+                self._pressure_colorbar_image(),
+                format="png",
             )
 
         @checkbox.on_update

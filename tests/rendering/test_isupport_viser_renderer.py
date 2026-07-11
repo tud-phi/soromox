@@ -57,6 +57,9 @@ class _FakeGuiHandle(_FakeHandle):
 
 
 class _FakeGui:
+    def __init__(self):
+        self.images = []
+
     @contextmanager
     def add_folder(self, _name):
         yield
@@ -66,6 +69,11 @@ class _FakeGui:
 
     def add_text(self, _name, *, initial_value, disabled):
         return _FakeGuiHandle(value=initial_value, disabled=disabled)
+
+    def add_image(self, image, *, format):
+        handle = _FakeGuiHandle(image=image, format=format)
+        self.images.append(handle)
+        return handle
 
 
 class _FakeServer:
@@ -360,7 +368,11 @@ def test_pressure_labels_and_colors_update_in_place():
 
     renderer._setup_pressure_gui()
     checkbox = renderer._gui_handles["show_pressure_labels"]
+    colorbar = renderer._gui_handles["pressure_colorbar"]
     assert checkbox.value is False
+    assert colorbar.format == "png"
+    assert colorbar.image.ndim == 3
+    assert colorbar.image.shape[-1] == 4
     checkbox.update(True)
     assert all(label.visible for label in labels)
     assert robot_handles.chamber_handles[0].color == pressure_color
