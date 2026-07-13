@@ -88,10 +88,7 @@ num_gauss_points = [5, 5]
 g = [0.0, 0.0, -9.81]
 
 active_tendon_routing = ThreadlikeRouting.linear(
-    y_intercept=jnp.array([0, 0.02 * 1]),
-    y_slope=jnp.array([0, 0]),
-    z_intercept=jnp.array([0.02 * 1, 0.0]),
-    z_slope=jnp.array([0, 0]),
+    intercept=jnp.array([[0.0, 0.0, 0.02], [0.0, 0.02, 0.0]]),
     start_segment_index=0,
     end_segment_index=(1, 1),
 )

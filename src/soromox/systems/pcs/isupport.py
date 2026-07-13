@@ -44,8 +44,9 @@ def _pneumatic_chamber_actuator(
     """Build straight, segment-local chamber paths in pressure-channel order."""
     angles = jnp.asarray(params.chamber_azimuth_angles, dtype=jnp.float64)
     distances = jnp.asarray(params.chamber_distance, dtype=jnp.float64)[:, None]
-    y_intercept = (distances * jnp.cos(angles)).reshape(-1)
-    z_intercept = (distances * jnp.sin(angles)).reshape(-1)
+    y_offsets = (distances * jnp.cos(angles)).reshape(-1)
+    z_offsets = (distances * jnp.sin(angles)).reshape(-1)
+    intercept = jnp.stack((jnp.zeros_like(y_offsets), y_offsets, z_offsets), axis=-1)
 
     parents = tuple(
         int(parent) for parent in jnp.asarray(pcs_segment_to_pneumatic_segment).tolist()
@@ -69,8 +70,7 @@ def _pneumatic_chamber_actuator(
         for _ in range(num_chambers)
     )
     routing = ThreadlikeRouting.linear(
-        y_intercept=y_intercept,
-        z_intercept=z_intercept,
+        intercept=intercept,
         start_segment_index=starts,
         end_segment_index=ends,
     )

@@ -63,13 +63,17 @@ def main():
     # Tendons
     theta = jnp.pi / 32
     dtheta = jnp.pi / 3
+    tendon_angles = jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=1.8e-2
-        * jnp.cos(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
-        z_intercept=1.8e-2
-        * jnp.sin(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
-        y_slope=jnp.zeros(3),
-        z_slope=jnp.zeros(3),
+        intercept=1.8e-2
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
+        ),
         start_segment_index=0,
         end_segment_index=(1, 1, 1),
     )

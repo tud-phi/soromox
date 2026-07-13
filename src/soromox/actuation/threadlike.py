@@ -46,6 +46,23 @@ def _channel_array(value: Any, count: int, name: str) -> Array:
     return array
 
 
+def _path_vector_array(value: Any, name: str, *, count: int | None = None) -> Array:
+    """Normalize material-frame vectors to shape ``(num_paths, 3)``."""
+    array = jnp.asarray(value)
+    if array.shape == (3,):
+        array = array[None, :]
+    if array.ndim != 2 or array.shape[1] != 3:
+        raise ValueError(
+            f"{name} must have shape (3,) or (num_paths, 3), got {array.shape}."
+        )
+    if count is not None:
+        if array.shape == (1, 3) and count != 1:
+            array = jnp.broadcast_to(array, (count, 3))
+        if array.shape != (count, 3):
+            raise ValueError(f"{name} must have shape ({count}, 3), got {array.shape}.")
+    return array
+
+
 class BaseThreadlikeRoutingParams(BaseSystemParams):
     """Base PyTree contract for vectorized threadlike routing parameters."""
 
@@ -95,12 +112,18 @@ class BaseThreadlikeRoutingParams(BaseSystemParams):
 
 
 class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
-    """Batched linear material-frame routing and contiguous segment spans."""
+    """Batched linear material-frame routing and contiguous segment spans.
 
-    y_intercept: Array
-    y_slope: Array
-    z_intercept: Array
-    z_slope: Array
+    ``intercept`` and ``slope`` have shape ``(num_paths, 3)`` in the local
+    material frame. Because SoRoMoX aligns the backbone with the local x-axis,
+    their x-components must be zero; the remaining components describe the
+    path within each material-frame cross-section.
+    """
+
+    intercept: Array = eqx.field(
+        converter=lambda value: _path_vector_array(value, "intercept")
+    )
+    slope: Array = eqx.field(converter=lambda value: _path_vector_array(value, "slope"))
     start_segment_index: tuple[int, ...] = eqx.field(
         static=True, converter=_index_tuple
     )
@@ -111,7 +134,7 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
 
     @property
     def num_paths(self) -> int:
-        return int(jnp.asarray(self.y_intercept).shape[0])
+        return int(jnp.asarray(self.intercept).shape[0])
 
     @property
     def start_segment_index_array(self) -> Array:
@@ -123,27 +146,33 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
 
     @classmethod
     def empty(cls) -> LinearThreadlikeRoutingParams:
-        empty = jnp.zeros((0,), dtype=jnp.float64)
+        empty = jnp.zeros((0, 3), dtype=jnp.float64)
         return cls(
-            y_intercept=empty,
-            y_slope=empty,
-            z_intercept=empty,
-            z_slope=empty,
+            intercept=empty,
+            slope=empty,
             start_segment_index=(),
             end_segment_index=(),
         )
 
     def validate(self) -> None:
-        y_intercept = jnp.asarray(self.y_intercept)
-        if y_intercept.ndim != 1:
-            raise ValueError("routing fields must have shape (num_paths,).")
-        expected = y_intercept.shape
-        for name in ("y_slope", "z_intercept", "z_slope"):
-            value = jnp.asarray(getattr(self, name))
-            if value.shape != expected:
-                raise ValueError(
-                    f"{name} must have shape {expected}, got {value.shape}."
-                )
+        intercept = jnp.asarray(self.intercept)
+        slope = jnp.asarray(self.slope)
+        if intercept.ndim != 2 or intercept.shape[1:] != (3,):
+            raise ValueError("intercept must have shape (num_paths, 3).")
+        if slope.shape != intercept.shape:
+            raise ValueError(
+                f"slope must have shape {intercept.shape}, got {slope.shape}."
+            )
+        if bool(jnp.any(intercept[:, 0] != 0.0)):
+            raise ValueError(
+                "intercept local-x components must be zero because the backbone "
+                "is aligned with the local x-axis."
+            )
+        if bool(jnp.any(slope[:, 0] != 0.0)):
+            raise ValueError(
+                "slope local-x components must be zero because the backbone is "
+                "aligned with the local x-axis."
+            )
         if len(self.start_segment_index) != self.num_paths:
             raise ValueError("start_segment_index must contain one entry per path.")
         if len(self.end_segment_index) != self.num_paths:
@@ -159,26 +188,17 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
 
 
 def linear_threadlike_routing(params: LinearThreadlikeRoutingParams, s: Array) -> Array:
-    """Return material-frame offsets ``[0, y(s), z(s)]``."""
-    s = jnp.asarray(s)
-    y = jnp.asarray(params.y_intercept) + jnp.asarray(params.y_slope) * s
-    z = jnp.asarray(params.z_intercept) + jnp.asarray(params.z_slope) * s
-    return jnp.stack((jnp.zeros_like(y), y, z), axis=-1)
+    """Return material-frame offsets ``intercept + slope * s``."""
+    return jnp.asarray(params.intercept) + jnp.asarray(params.slope) * jnp.asarray(s)
 
 
 def linear_threadlike_routing_derivative(
     params: LinearThreadlikeRoutingParams, s: Array
 ) -> Array:
     """Return the arc-length derivative of a linear routing offset."""
-    zeros = jnp.zeros_like(jnp.asarray(params.y_slope) + 0.0 * jnp.asarray(s))
-    return jnp.stack(
-        (
-            zeros,
-            jnp.asarray(params.y_slope) + zeros,
-            jnp.asarray(params.z_slope) + zeros,
-        ),
-        axis=-1,
-    )
+    return jnp.asarray(params.slope) + jnp.zeros_like(
+        jnp.asarray(params.slope)
+    ) * jnp.asarray(s)
 
 
 class ThreadlikeRouting(eqx.Module):
@@ -194,15 +214,23 @@ class ThreadlikeRouting(eqx.Module):
     def linear(
         cls,
         *,
-        y_intercept: Array,
-        y_slope: Array | float = 0.0,
-        z_intercept: Array | float = 0.0,
-        z_slope: Array | float = 0.0,
+        intercept: Array,
+        slope: Array | float = 0.0,
         start_segment_index: int | tuple[int, ...] | Array = 0,
         end_segment_index: int | tuple[int, ...] | Array = 0,
     ) -> ThreadlikeRouting:
-        y_intercept = jnp.atleast_1d(jnp.asarray(y_intercept))
-        count = int(y_intercept.shape[0])
+        """Construct linear cross-section paths in the local material frame.
+
+        The final array axis is ``[x, y, z]``. Local x follows the backbone, so
+        the x-components of ``intercept`` and ``slope`` must both be zero.
+        """
+        intercept = _path_vector_array(intercept, "intercept")
+        count = int(intercept.shape[0])
+        slope_array = jnp.asarray(slope)
+        if slope_array.ndim == 0:
+            slope_array = jnp.full(intercept.shape, slope_array)
+        else:
+            slope_array = _path_vector_array(slope_array, "slope", count=count)
         starts = _index_tuple(start_segment_index)
         ends = _index_tuple(end_segment_index)
         if len(starts) == 1 and count != 1:
@@ -210,10 +238,8 @@ class ThreadlikeRouting(eqx.Module):
         if len(ends) == 1 and count != 1:
             ends = ends * count
         params = LinearThreadlikeRoutingParams(
-            y_intercept=y_intercept,
-            y_slope=_channel_array(y_slope, count, "y_slope"),
-            z_intercept=_channel_array(z_intercept, count, "z_intercept"),
-            z_slope=_channel_array(z_slope, count, "z_slope"),
+            intercept=intercept,
+            slope=slope_array,
             start_segment_index=starts,
             end_segment_index=ends,
         )

@@ -40,10 +40,14 @@ if __name__ == "__main__":
     )
     tendon_offsets = 2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0)
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=tendon_offsets.reshape(-1),
-        y_slope=jnp.zeros((2 * num_segments,)),
-        z_intercept=jnp.zeros((2 * num_segments,)),
-        z_slope=jnp.zeros((2 * num_segments,)),
+        intercept=jnp.stack(
+            (
+                jnp.zeros((2 * num_segments,)),
+                tendon_offsets.reshape(-1),
+                jnp.zeros((2 * num_segments,)),
+            ),
+            axis=-1,
+        ),
         start_segment_index=0,
         end_segment_index=tuple(
             int(index) for index in jnp.repeat(jnp.arange(num_segments), 2)

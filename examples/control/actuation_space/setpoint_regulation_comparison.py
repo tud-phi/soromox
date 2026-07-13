@@ -87,10 +87,11 @@ def create_robot() -> tuple[PCS, int]:
     angles_rad = jnp.deg2rad(angles_deg)
 
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=tendon_offset_radius * jnp.sin(angles_rad),
-        z_intercept=tendon_offset_radius * jnp.cos(angles_rad),
-        y_slope=jnp.zeros(3),
-        z_slope=jnp.zeros(3),
+        intercept=tendon_offset_radius
+        * jnp.stack(
+            (jnp.zeros_like(angles_rad), jnp.sin(angles_rad), jnp.cos(angles_rad)),
+            axis=-1,
+        ),
         start_segment_index=0,
         end_segment_index=(0, 0, 0),
     )

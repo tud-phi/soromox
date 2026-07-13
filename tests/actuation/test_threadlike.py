@@ -93,11 +93,15 @@ def _gvs(*, actuators=None, passive_elements=()):
 
 
 def _routing(*, count=2):
+    y_offsets = jnp.linspace(-0.01, 0.01, count)
+    y_gradients = jnp.linspace(0.0, 0.01, count)
     return ThreadlikeRouting.linear(
-        y_intercept=jnp.linspace(-0.01, 0.01, count),
-        y_slope=jnp.linspace(0.0, 0.01, count),
-        z_intercept=jnp.zeros((count,)),
-        z_slope=jnp.zeros((count,)),
+        intercept=jnp.stack(
+            (jnp.zeros((count,)), y_offsets, jnp.zeros((count,))), axis=-1
+        ),
+        slope=jnp.stack(
+            (jnp.zeros((count,)), y_gradients, jnp.zeros((count,))), axis=-1
+        ),
         start_segment_index=(0,) * count,
         end_segment_index=(0,) * count,
     )
@@ -126,6 +130,33 @@ def _sinusoidal_offset(params: SinusoidalRoutingParams, s):
 def _sinusoidal_derivative(params: SinusoidalRoutingParams, s):
     y_dot = params.amplitude * params.frequency * jnp.cos(params.frequency * s)
     return jnp.asarray([0.0, y_dot, 0.0])
+
+
+def test_linear_routing_uses_full_material_frame_vectors():
+    routing = ThreadlikeRouting.linear(
+        intercept=jnp.array([[0.0, 0.02, 0.03], [0.0, 0.05, 0.06]]),
+        slope=jnp.array([0.0, 0.2, 0.3]),
+        end_segment_index=(0, 0),
+    )
+
+    assert routing.params.intercept.shape == (2, 3)
+    assert routing.params.slope.shape == (2, 3)
+    assert_allclose(
+        routing.offset(routing.params, jnp.array(0.5)),
+        routing.params.intercept + 0.5 * routing.params.slope,
+    )
+
+
+@pytest.mark.parametrize(
+    ("intercept", "slope"),
+    [
+        (jnp.array([0.01, 0.02, 0.03]), jnp.zeros(3)),
+        (jnp.array([0.0, 0.02, 0.03]), jnp.array([0.01, 0.0, 0.0])),
+    ],
+)
+def test_linear_routing_rejects_longitudinal_components(intercept, slope):
+    with pytest.raises(ValueError, match="local-x components must be zero"):
+        ThreadlikeRouting.linear(intercept=intercept, slope=slope)
 
 
 def test_identity_unactuated_and_mixed_construction():
@@ -216,11 +247,10 @@ def test_modality_signs_pressure_work_pair_and_power():
     assert_allclose(generalized_power, actuator_power, rtol=1e-9, atol=1e-11)
 
 
-def test_removed_tendon_wrapper_migration_fixture_preserves_generalized_force():
-    """Lock the former wrapper result while adopting positive tendon tensions."""
+def test_tendon_reference_fixture_preserves_generalized_force():
+    """Lock the reference generalized force for positive tendon tensions."""
     routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.02, -0.01]),
-        z_intercept=jnp.array([0.0, 0.015]),
+        intercept=jnp.array([[0.0, 0.02, 0.0], [0.0, -0.01, 0.015]]),
         start_segment_index=(0, 0),
         end_segment_index=(1, 0),
     )
@@ -326,16 +356,18 @@ def test_actuator_nested_update_and_topology_rejection():
     actuator = ThreadlikeActuator.tendons(_routing(count=1))
     robot = _spatial_pcs(actuators=actuator)
     params = robot.actuators[0].params
-    routing = params.transmission.routing.replace(y_intercept=jnp.array([0.02]))
+    routing = params.transmission.routing.replace(
+        intercept=jnp.array([[0.0, 0.02, 0.0]])
+    )
     transmission = params.transmission.replace(routing=routing)
     updated = robot.update_actuator_params(0, transmission=transmission)
     assert_allclose(
-        updated.actuators[0].params.transmission.routing.y_intercept,
-        jnp.array([0.02]),
+        updated.actuators[0].params.transmission.routing.intercept,
+        jnp.array([[0.0, 0.02, 0.0]]),
     )
     assert_allclose(
-        robot.actuators[0].params.transmission.routing.y_intercept,
-        jnp.array([-0.01]),
+        robot.actuators[0].params.transmission.routing.intercept,
+        jnp.array([[0.0, -0.01, 0.0]]),
     )
 
     with pytest.raises(ValueError, match="topology"):
@@ -344,8 +376,8 @@ def test_actuator_nested_update_and_topology_rejection():
     body_updated = robot.update_params(young_modulus=jnp.array([2e3]))
     assert_allclose(body_updated.params.young_modulus, jnp.array([2e3]))
     assert_allclose(
-        body_updated.actuators[0].params.transmission.routing.y_intercept,
-        robot.actuators[0].params.transmission.routing.y_intercept,
+        body_updated.actuators[0].params.transmission.routing.intercept,
+        robot.actuators[0].params.transmission.routing.intercept,
     )
 
 
@@ -372,8 +404,7 @@ def test_visual_layers_are_semantic_unstyled_and_carry_inputs():
 
 def test_planar_host_rejects_out_of_plane_routing():
     routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.01]),
-        z_intercept=jnp.array([0.005]),
+        intercept=jnp.array([0.0, 0.01, 0.005]),
         end_segment_index=0,
     )
     with pytest.raises(ValueError, match="local-y"):
@@ -383,13 +414,13 @@ def test_planar_host_rejects_out_of_plane_routing():
 def test_routing_spans_are_contiguous_inclusive_and_validated_by_the_host():
     with pytest.raises(ValueError, match="start_segment_index"):
         ThreadlikeRouting.linear(
-            y_intercept=jnp.array([0.01]),
+            intercept=jnp.array([0.0, 0.01, 0.0]),
             start_segment_index=1,
             end_segment_index=0,
         )
 
     routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.01]),
+        intercept=jnp.array([0.0, 0.01, 0.0]),
         start_segment_index=0,
         end_segment_index=1,
     )

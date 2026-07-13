@@ -6,23 +6,24 @@ The same actuation objects can therefore be installed on `PCS`, `PlanarPCS`, or
 
 ## Work-conjugate formulation
 
-A `Transmission` defines actuator coordinates (z(q)). Their Jacobian is the
+A `Transmission` defines actuator coordinates \(y_\mathrm{a}(q)\). Their Jacobian is the
 transpose of the moment matrix:
 
 \[
-A(q) = \left(\frac{\partial z}{\partial q}\right)^T,
-\qquad \dot z = A(q)^T \dot q.
+A(q) = \left(\frac{\partial y_\mathrm{a}}{\partial q}\right)^T,
+\qquad \dot y_\mathrm{a} = A(q)^T \dot q.
 \]
 
-An `EffortModel` maps user controls (u) to efforts (e) conjugate to (z).
+An `EffortModel` maps user controls \(u\) to efforts \(e\) conjugate to
+\(y_\mathrm{a}\).
 The generalized force and power are
 
 \[
 \tau_u = A(q)e,
-\qquad \dot q^T\tau_u = \dot z^T e.
+\qquad \dot q^T\tau_u = \dot y_\mathrm{a}^T e.
 \]
 
-`DirectEffort`, the only effort law in the initial release, implements `e = u`.
+`DirectEffort`, the currently available effort law, implements `e = u`.
 The split leaves room for later activation, pressure-flow, force-length,
 saturation, and actuator-dynamics models without changing the transmission API.
 
@@ -50,8 +51,8 @@ metadata, and rendered layers.
 The common robot interface is:
 
 ```python
-z = robot.actuator_coordinates(q)
-z_dot = robot.actuator_velocities(q, q_dot)
+y_a = robot.actuator_coordinates(q)
+y_a_dot = robot.actuator_velocities(q, q_dot)
 A = robot.actuation_matrix(q)
 e = robot.actuator_efforts(q, q_dot, u)
 tau = robot.actuation_force(q, u, q_dot=q_dot)

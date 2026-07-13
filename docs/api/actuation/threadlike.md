@@ -11,25 +11,29 @@ equivalent axial volume coordinate.
 `ThreadlikeRouting` stores a vectorized family of paths. Linear paths use
 
 \[
-d(s) = [0,\; y_0 + y_1s,\; z_0 + z_1s]
+d(s) = d_0 + d_1s
 \]
 
-in the local material frame, where local (x) is the backbone direction.
+in the local material frame. The `intercept` and `slope` arrays have shape
+`(num_paths, 3)`, with the final axis ordered along the local material-frame
+axes. SoRoMoX aligns the backbone with the local `x` axis; the local-`x`
+component of both arrays must therefore be zero, while the `y` and `z`
+components locate the path in the cross-section. A `(3,)` vector defines a
+single path.
 
 ```python
 from soromox.actuation import ThreadlikeRouting
 
 routing = ThreadlikeRouting.linear(
-    y_intercept=jnp.array([0.01, -0.01]),
-    y_slope=jnp.zeros(2),
-    z_intercept=jnp.zeros(2),
-    z_slope=jnp.zeros(2),
+    intercept=jnp.array([[0.0, 0.01, 0.0], [0.0, -0.01, 0.0]]),
+    slope=jnp.zeros((2, 3)),
     start_segment_index=(0, 0),
     end_segment_index=(1, 1),
 )
 ```
 
-Planar PCS uses the local `y` offset and requires the `z` fields to be zero.
+Planar PCS uses the local `y` offset and requires the local `x` and `z`
+components to be zero.
 
 ### Custom routing laws
 
@@ -178,7 +182,7 @@ parameters:
 ```python
 params = robot.actuators[0].params
 routing_params = params.transmission.routing.replace(
-    y_intercept=new_intercepts,
+    intercept=new_intercepts,
 )
 transmission_params = params.transmission.replace(routing=routing_params)
 robot = robot.update_actuator_params(
@@ -216,24 +220,9 @@ I-SUPPORT retains its detailed bellows renderer. Its renderer accepts the same
 `actuator_inputs=` argument and also supports `pressures=` as a mutually
 exclusive convenience alias.
 
-## Migration from continuum tendon subclasses
-
-| Previous API | Composable API |
-| --- | --- |
-| `TendonActuatedPCS` | `PCS(..., actuators=ThreadlikeActuator.tendons(...))` |
-| `TendonActuatedPlanarPCS` | `PlanarPCS(..., actuators=...)` |
-| `TendonActuatedGVS` | `GVS(..., actuators=...)` |
-| `LinearTendonRoutingParams(..., attachment_segment_index=end)` | `ThreadlikeRouting.linear(..., start_segment_index=0, end_segment_index=end)` |
-| Passive tendon fields on the robot | `ThreadlikeImpedance` in `passive_elements=` |
-| `active_tendon_length(q)` | `actuator.path_lengths(robot, q)` |
-| Tendon-space coordinates | `robot.actuator_coordinates(q)`; these are `-length` for tendons |
-| Tendon-specific renderer methods | `robot.actuator_visual_layers(...)` |
-
-The removed continuum wrappers used a different input-sign convention in some
-examples. New tendon inputs are positive tensions; do not negate them manually.
-
 ## Current limits
 
 Threadlike paths are fixed in the material frame, use contiguous segment spans,
-and have one constant coordinate scale per path. V1 uses stateless
-`DirectEffort`; nonlinear and stateful effort laws are future extensions.
+and have one constant coordinate scale per path. The current implementation uses
+stateless `DirectEffort`; nonlinear and stateful effort laws are future
+extensions.

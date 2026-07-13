@@ -771,24 +771,25 @@ if __name__ == "__main__":
     num_gauss_points = [8, 8]
     g = [0.0, 0.0, -9.81]
 
+    tendon_angles = jnp.deg2rad(jnp.array([30.0, 150.0]))
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array(
-            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+        intercept=0.0114
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        y_slope=jnp.array(
-            [
-                -0.0295 * jnp.cos(jnp.pi / 180 * 30),
-                -0.0295 * jnp.cos(jnp.pi / 180 * 150),
-            ]
-        ),
-        z_intercept=jnp.array(
-            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
-        ),
-        z_slope=jnp.array(
-            [
-                -0.0295 * jnp.sin(jnp.pi / 180 * 30),
-                -0.0295 * jnp.sin(jnp.pi / 180 * 150),
-            ]
+        slope=-0.0295
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
         start_segment_index=0,
         end_segment_index=(0, 0),

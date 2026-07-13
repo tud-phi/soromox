@@ -15,7 +15,7 @@ PCS systems model continuum soft robots by dividing them into segments, each wit
 
 ### Base Implementations
 
-#### [PCS (Spatial)](pcs.md)
+#### [Spatial PCS](pcs.md)
 
 Core 3D PCS implementation for spatial continuum robots.
 
@@ -51,9 +51,9 @@ routed mechanics are installed separately with `ThreadlikeImpedance`.
 
 | System | Dimension | Actuation | Use Case |
 |--------|-----------|-----------|----------|
-| `PCS` | 3D | Identity or composable | General 3D continuum modeling |
-| `PlanarPCS` | 2D | Identity or composable | General 2D continuum modeling |
-| `ISupport` | 3D | Pneumatic | I-Support robot platform |
+| `PCS` | 3D | Identity or [composable](../../actuation/index.md) | General 3D continuum modeling |
+| `PlanarPCS` | 2D | Identity or [composable](../../actuation/index.md) | General 2D continuum modeling |
+| `ISupport` | 3D | [Threadlike pneumatic](../../actuation/threadlike.md#modality-presets) | I-Support robot platform |
 
 ## References
 

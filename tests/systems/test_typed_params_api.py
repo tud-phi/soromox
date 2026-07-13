@@ -412,10 +412,7 @@ def test_tendon_pcs_inherits_material_damping_path():
         material_damping_coefficient=jnp.array([2.0], dtype=jnp.float64),
     )
     routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.005], dtype=jnp.float64),
-        y_slope=jnp.array([0.0], dtype=jnp.float64),
-        z_intercept=jnp.array([0.0], dtype=jnp.float64),
-        z_slope=jnp.array([0.0], dtype=jnp.float64),
+        intercept=jnp.array([0.0, 0.005, 0.0], dtype=jnp.float64),
         end_segment_index=(0,),
     )
     robot = PCS(params=body, actuators=ThreadlikeActuator.tendons(routing))
@@ -432,10 +429,7 @@ def test_planar_tendon_pcs_inherits_material_damping_path():
         material_damping_coefficient=jnp.array([2.0], dtype=jnp.float64),
     )
     routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.005], dtype=jnp.float64),
-        y_slope=jnp.array([0.0], dtype=jnp.float64),
-        z_intercept=jnp.array([0.0], dtype=jnp.float64),
-        z_slope=jnp.array([0.0], dtype=jnp.float64),
+        intercept=jnp.array([0.0, 0.005, 0.0], dtype=jnp.float64),
         end_segment_index=(0,),
     )
     robot = PlanarPCS(params=body, actuators=ThreadlikeActuator.tendons(routing))

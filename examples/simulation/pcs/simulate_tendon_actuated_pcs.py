@@ -50,18 +50,12 @@ if __name__ == "__main__":
         ),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=2e-2 * jnp.array([1.0, -1.0]),
-        z_intercept=2e-2 * jnp.array([0.0, 0.0]),
-        y_slope=jnp.array([0.0, 0.0]),
-        z_slope=jnp.array([0.0, 0.0]),
+        intercept=2e-2 * jnp.array([[0.0, 1.0, 0.0], [0.0, -1.0, 0.0]]),
         start_segment_index=0,
         end_segment_index=(1, 0),
     )
     passive_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=2e-2 * jnp.array([0.0]),
-        z_intercept=2e-2 * jnp.array([1.0]),
-        y_slope=jnp.array([0.0]),
-        z_slope=jnp.array([0.0]),
+        intercept=2e-2 * jnp.array([0.0, 0.0, 1.0]),
         start_segment_index=0,
         end_segment_index=(1,),
     )

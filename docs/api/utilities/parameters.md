@@ -154,20 +154,16 @@ from soromox.actuation import (
 )
 
 active_routing = ThreadlikeRouting.linear(
-    y_intercept=jnp.array([0.01, -0.01]),
-    y_slope=jnp.array([0.0, 0.002]),
-    z_intercept=jnp.array([0.0, 0.0]),
-    z_slope=jnp.array([0.0, 0.0]),
+    intercept=jnp.array([[0.0, 0.01, 0.0], [0.0, -0.01, 0.0]]),
+    slope=jnp.array([[0.0, 0.0, 0.0], [0.0, 0.002, 0.0]]),
     start_segment_index=(0, 0),
     end_segment_index=(0, 1),
 )
 active_tendons = ThreadlikeActuator.tendons(active_routing)
 
 passive_routing = ThreadlikeRouting.linear(
-    y_intercept=jnp.array([0.005, -0.005]),
-    y_slope=jnp.array([0.0, 0.0]),
-    z_intercept=jnp.array([0.004, 0.004]),
-    z_slope=jnp.array([0.0, 0.0]),
+    intercept=jnp.array([[0.0, 0.005, 0.004], [0.0, -0.005, 0.004]]),
+    slope=jnp.zeros((2, 3)),
     start_segment_index=(0, 0),
     end_segment_index=(0, 1),
 )
@@ -182,9 +178,7 @@ passive_impedance = ThreadlikeImpedance(
 
 The number of paths and their segment-span topology are structural. Changing
 either requires reconstructing the component and robot; numeric coefficients
-and mechanical parameters use immutable component updates. The legacy
-`PassiveTendonParams` remains specific to the out-of-scope articulated
-`TendonActuatedPendulum` model.
+and mechanical parameters use immutable component updates.
 
 ## Structure Naming
 

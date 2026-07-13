@@ -127,10 +127,9 @@ def build_arm(
         ),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.0, 0.0, 0.02, -0.02]),
-        z_intercept=jnp.array([0.02, -0.02, 0.0, 0.0]),
-        y_slope=jnp.array([0.0, 0.0, 0.0, 0.0]),
-        z_slope=jnp.array([0.0, 0.0, 0.0, 0.0]),
+        intercept=jnp.array(
+            [[0.0, 0.0, 0.02], [0.0, 0.0, -0.02], [0.0, 0.02, 0.0], [0.0, -0.02, 0.0]]
+        ),
         start_segment_index=0,
         end_segment_index=(0, 0, 0, 0),
     )

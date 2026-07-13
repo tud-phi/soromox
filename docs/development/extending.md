@@ -1165,8 +1165,8 @@ class ActuationSpaceController(ClosedFormModelBasedController):
         # Coordinates follow the installed transmissions. For a tendon preset,
         # these are negative path lengths; raw lengths remain available from
         # the threadlike actuator when needed.
-        z = self.robot.actuator_coordinates(q)
-        u = ...  # Your actuation-space control law using z
+        y_a = self.robot.actuator_coordinates(q)
+        u = ...  # Your actuation-space control law using y_a
 
         return u, None
 ```

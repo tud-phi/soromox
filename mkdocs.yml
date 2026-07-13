@@ -73,7 +73,7 @@ nav:
             - Articulated Soft Robot: api/systems/articulated/articulated-soft-robot.md
           - PCS Systems:
             - Overview: api/systems/pcs/index.md
-            - PCS (Spatial): api/systems/pcs/pcs.md
+            - Spatial PCS: api/systems/pcs/pcs.md
             - Planar PCS: api/systems/pcs/planar-pcs.md
             - I-Support: api/systems/pcs/isupport.md
           - GVS Systems:

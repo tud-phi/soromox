@@ -127,10 +127,7 @@ def _segments():
 
 def _tendon_routing(num_segments):
     return ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.005], dtype=jnp.float64),
-        z_intercept=jnp.array([0.005], dtype=jnp.float64),
-        y_slope=jnp.array([0.0], dtype=jnp.float64),
-        z_slope=jnp.array([0.0], dtype=jnp.float64),
+        intercept=jnp.array([0.0, 0.005, 0.005], dtype=jnp.float64),
         end_segment_index=(num_segments - 1,),
     )
 
@@ -138,10 +135,14 @@ def _tendon_routing(num_segments):
 def _planar_tendon_routing(num_segments):
     offsets = 0.02 * jnp.ones((num_segments, 2), dtype=jnp.float64).at[:, 1].set(-1.0)
     return ThreadlikeRouting.linear(
-        y_intercept=offsets.reshape(-1),
-        z_intercept=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
-        y_slope=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
-        z_slope=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
+        intercept=jnp.stack(
+            (
+                jnp.zeros((2 * num_segments,), dtype=jnp.float64),
+                offsets.reshape(-1),
+                jnp.zeros((2 * num_segments,), dtype=jnp.float64),
+            ),
+            axis=-1,
+        ),
         end_segment_index=tuple(jnp.repeat(jnp.arange(num_segments), 2).tolist()),
     )
 

@@ -122,10 +122,9 @@ def fully_actuated_pcs():
     # Tendon at +y creates moment around z (affects kappa_z)
     # Tendon at +z creates moment around y (affects kappa_y)
     tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([0.005, 0.0]),  # first tendon at +y
-        y_slope=jnp.array([0.0, 0.0]),  # slope in y
-        z_intercept=jnp.array([0.0, 0.005]),  # second tendon at +z
-        z_slope=jnp.array([0.0, 0.0]),  # slope in z
+        intercept=jnp.array(
+            [[0.0, 0.005, 0.0], [0.0, 0.0, 0.005]]
+        ),  # first tendon at +y, second at +z
         end_segment_index=(0, 0),
     )
     return PCS(
@@ -169,14 +168,9 @@ def underactuated_pcs():
     # 2 tendons for 4 DOFs (underactuated)
     # Use tendons at different offsets to ensure non-singular actuation matrix
     tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array(
-            [0.005, 0.0]
-        ),  # first tendon at +y, second at origin in y
-        y_slope=jnp.array([0.0, 0.0]),  # slope in y
-        z_intercept=jnp.array(
-            [0.0, 0.005]
-        ),  # first tendon at origin in z, second at +z
-        z_slope=jnp.array([0.0, 0.0]),  # slope in z
+        intercept=jnp.array(
+            [[0.0, 0.005, 0.0], [0.0, 0.0, 0.005]]
+        ),  # first tendon at +y, second at +z
         end_segment_index=(1, 1),
     )
     return PCS(

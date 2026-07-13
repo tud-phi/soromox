@@ -278,7 +278,7 @@ def test_isupport_pressure_area_validation_and_update_semantics():
         ),
     )
     routing_params = updated_derived.actuators[0].transmission.routing.params
-    assert jnp.allclose(routing_params.y_intercept[0], 0.012)
+    assert jnp.allclose(routing_params.intercept[0, 1], 0.012)
 
     explicit_area = jnp.array([7.5e-5])
     explicit_robot = ISupport(

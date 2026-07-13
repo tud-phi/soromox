@@ -1,8 +1,8 @@
 """Composable actuation primitives.
 
 The actuation model follows a work-conjugate formulation. A transmission
-defines actuator coordinates ``z(q)`` and their moment matrix
-``A(q) = dz/dq.T``. An effort model maps user controls to efforts conjugate to
+defines actuator coordinates ``y_a(q)`` and their moment matrix
+``A(q) = dy_a/dq.T``. An effort model maps user controls to efforts conjugate to
 those coordinates, and generalized actuation forces are ``A(q) @ effort``.
 """
 
@@ -78,12 +78,12 @@ class Transmission(eqx.Module):
 
     @abstractmethod
     def coordinates(self, robot: SoftRobot, q: Array) -> Array:
-        """Return transmission coordinates ``z(q)``."""
+        """Return transmission coordinates ``y_a(q)``."""
         ...
 
     @abstractmethod
     def moment_matrix(self, robot: SoftRobot, q: Array) -> Array:
-        """Return ``dz/dq.T`` with shape ``(num_dofs, num_channels)``."""
+        """Return ``dy_a/dq.T`` with shape ``(num_dofs, num_channels)``."""
         ...
 
     def velocities(self, robot: SoftRobot, q: Array, q_dot: Array) -> Array:

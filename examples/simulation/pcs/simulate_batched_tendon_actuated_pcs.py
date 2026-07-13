@@ -47,10 +47,9 @@ def build_robot() -> PCS:
         ),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=jnp.array([2e-2, -2e-2, 1e-2, -1e-2]),
-        z_intercept=jnp.zeros((4,)),
-        y_slope=jnp.zeros((4,)),
-        z_slope=jnp.zeros((4,)),
+        intercept=jnp.array(
+            [[0.0, 2e-2, 0.0], [0.0, -2e-2, 0.0], [0.0, 1e-2, 0.0], [0.0, -1e-2, 0.0]]
+        ),
         start_segment_index=0,
         end_segment_index=(0, 0, 1, 1),
     )

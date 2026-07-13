@@ -264,10 +264,22 @@ if __name__ == "__main__":
     )
 
     active_tendon_routing = ThreadlikeRouting.linear(
-        y_intercept=tendon_routing_params["ry"],
-        z_intercept=tendon_routing_params["rz"],
-        y_slope=tendon_routing_params["my"],
-        z_slope=tendon_routing_params["mz"],
+        intercept=jnp.stack(
+            (
+                jnp.zeros_like(tendon_routing_params["ry"]),
+                tendon_routing_params["ry"],
+                tendon_routing_params["rz"],
+            ),
+            axis=-1,
+        ),
+        slope=jnp.stack(
+            (
+                jnp.zeros_like(tendon_routing_params["my"]),
+                tendon_routing_params["my"],
+                tendon_routing_params["mz"],
+            ),
+            axis=-1,
+        ),
         start_segment_index=0,
         end_segment_index=tuple(
             int(index) for index in tendon_routing_params["idx_seg_att"]
