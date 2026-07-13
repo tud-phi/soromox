@@ -204,9 +204,9 @@ def test_isupport_uses_threadlike_pressure_chambers_and_resolves_area():
         0,
         0,
     )
-    assert jnp.allclose(robot.chamber_effective_pressure_area, expected_area)
+    coordinate_scale = robot.actuators[0].params.transmission.coordinate_scale
     assert jnp.allclose(
-        robot.virtual_tendon_force(jnp.ones((robot.num_actuators,))),
+        coordinate_scale,
         jnp.repeat(expected_area, robot.num_chambers_per_segment),
     )
     assert (
@@ -217,7 +217,7 @@ def test_isupport_uses_threadlike_pressure_chambers_and_resolves_area():
     )
 
 
-def test_isupport_matches_pr116_virtual_tendon_pressure_mapping():
+def test_isupport_matches_pr116_threadlike_pressure_mapping():
     params = make_isupport_params().replace(
         chamber_effective_pressure_area=jnp.array([2.5e-5])
     )
@@ -235,18 +235,17 @@ def test_isupport_matches_pr116_virtual_tendon_pressure_mapping():
         robot.num_chambers_per_segment,
     )
     expected_pressure_matrix = raw_path_matrix * pressure_area[None, :]
-    expected_virtual_tendon_force = pressure * pressure_area
 
     assert jnp.allclose(robot.actuation_matrix(q), expected_pressure_matrix)
     assert jnp.allclose(
-        robot.virtual_tendon_force(pressure), expected_virtual_tendon_force
+        robot.actuator_efforts(q, jnp.zeros_like(q), pressure), pressure
     )
     assert jnp.allclose(
         robot.actuation_force(q, pressure),
-        raw_path_matrix @ expected_virtual_tendon_force,
+        expected_pressure_matrix @ pressure,
     )
     assert jnp.allclose(
-        jax.jacobian(robot.chamber_volumes)(q),
+        jax.jacobian(robot.actuator_coordinates)(q),
         robot.actuation_matrix(q).T,
         rtol=1e-7,
         atol=1e-10,
@@ -269,9 +268,14 @@ def test_isupport_pressure_area_validation_and_update_semantics():
         chamber_distance=jnp.array([0.012]),
     )
     assert updated_derived.params.chamber_effective_pressure_area is None
+    updated_actuator = updated_derived.actuators[0]
+    updated_coordinate_scale = updated_actuator.params.transmission.coordinate_scale
     assert jnp.allclose(
-        updated_derived.chamber_effective_pressure_area,
-        jnp.pi * (0.005**2 - params.chamber_inner_radius**2),
+        updated_coordinate_scale,
+        jnp.repeat(
+            jnp.pi * (0.005**2 - params.chamber_inner_radius**2),
+            updated_derived.num_chambers_per_segment,
+        ),
     )
     routing_params = updated_derived.actuators[0].transmission.routing.params
     assert jnp.allclose(routing_params.y_intercept[0], 0.012)
@@ -284,7 +288,10 @@ def test_isupport_pressure_area_validation_and_update_semantics():
     updated_explicit = explicit_robot.update_params(
         chamber_outer_radius=jnp.array([0.005])
     )
-    assert jnp.allclose(updated_explicit.chamber_effective_pressure_area, explicit_area)
+    assert jnp.allclose(
+        updated_explicit.actuators[0].params.transmission.coordinate_scale,
+        jnp.repeat(explicit_area, updated_explicit.num_chambers_per_segment),
+    )
 
     with pytest.raises(ValueError, match="chamber radii"):
         params.replace(chamber_outer_radius=params.chamber_inner_radius).validate()

@@ -153,10 +153,10 @@ class ISupportParams(PCSParams):
     azimuth is right-handed about local +X, measured from +Y toward +Z; array
     index ``j`` is pressure channel ``j``. If ``chamber_azimuth_angles`` is
     omitted, ``ISupport`` uses 0, 120, and 240 degrees for every pneumatic
-    segment. ``chamber_effective_pressure_area`` converts each chamber pressure
-    into the effort conjugate to the equivalent chamber-volume coordinate. It
-    contains one value per pneumatic segment and is shared by all chambers in
-    that segment. When omitted, it is derived as
+    segment. ``chamber_effective_pressure_area`` scales each routed chamber-path
+    length into its pressure-conjugate equivalent-volume coordinate. It contains
+    one value per pneumatic segment and is shared by all chambers in that
+    segment. When omitted, it is derived as
     ``pi * (chamber_outer_radius**2 - chamber_inner_radius**2)``. Damping can be
     supplied as ``material_damping_coefficient`` or as a full ``damping_matrix``.
     A custom ``damping_matrix`` is expressed in flattened pneumatic-segment

@@ -451,7 +451,6 @@ class ISupport(PCS):
     d_chamber: Array  # radial distance of the center of the chambers from the centerline of the backbone, shape (num_segments,)
     # Expanded per-PCS-segment copy of the resolved channel layout.
     chamber_azimuth_angles: Array
-    chamber_effective_pressure_area: Array
 
     num_chambers_per_segment: int = eqx.field(
         static=True, default=3
@@ -516,9 +515,6 @@ class ISupport(PCS):
         self.num_pcs_segments = self.num_segments
         self.pcs_segment_to_pneumatic_segment = pcs_segment_to_pneumatic_segment
         self.pcs_segment_is_rigid = pcs_segment_is_rigid
-        self.chamber_effective_pressure_area = _resolve_chamber_effective_pressure_area(
-            params
-        )
 
     def _set_params(self, params: ISupportParams):
         """
@@ -634,9 +630,6 @@ class ISupport(PCS):
         chamber_actuator = _pneumatic_chamber_actuator(
             params, pcs_segment_to_pneumatic_segment
         )
-        chamber_effective_pressure_area = _resolve_chamber_effective_pressure_area(
-            params
-        )
         chamber_arrays = (
             jnp.asarray(pcs_params.chamber_inner_radius, dtype=jnp.float64),
             jnp.asarray(pcs_params.chamber_outer_radius, dtype=jnp.float64),
@@ -652,14 +645,12 @@ class ISupport(PCS):
                 model.d_chamber,
                 model.chamber_azimuth_angles,
                 model.actuators,
-                model.chamber_effective_pressure_area,
             ),
             updated_self,
             (
                 pcs_params,
                 *chamber_arrays,
                 (chamber_actuator,),
-                chamber_effective_pressure_area,
             ),
         )
         return updated_self._with_refreshed_precomputed_matrices()
@@ -826,23 +817,6 @@ class ISupport(PCS):
         pneumatic_moments = jnp.sum(I_actuators_i, axis=0)
         rigid_moments = super()._local_second_moment_of_area(i)
         return jnp.where(self.pcs_segment_is_rigid[i], rigid_moments, pneumatic_moments)
-
-    def _effective_pressure_area_per_chamber(self) -> Array:
-        """Expand per-segment effective areas into pressure-channel order."""
-        return jnp.repeat(
-            self.chamber_effective_pressure_area,
-            self.num_chambers_per_segment,
-        )
-
-    @eqx.filter_jit
-    def virtual_tendon_force(self, pressure: Array) -> Array:
-        """Convert chamber pressures to equivalent routed axial forces."""
-        return pressure * self._effective_pressure_area_per_chamber()
-
-    @eqx.filter_jit
-    def chamber_volumes(self, q: Array) -> Array:
-        """Return the pressure-conjugate coordinates ``A_eff * path_length``."""
-        return self.actuator_coordinates(q)
 
     def actuator_visual_layers(
         self,

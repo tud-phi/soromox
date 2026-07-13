@@ -167,10 +167,20 @@ area
 A_eff = pi * (chamber_outer_radius**2 - chamber_inner_radius**2).
 ```
 
-The pressure-conjugate coordinates are available as
-`robot.chamber_volumes(q)` or `robot.actuator_coordinates(q)`. The helper
-`robot.virtual_tendon_force(pressure)` returns `pressure * A_eff` for comparison
-with the equivalent routed axial-force interpretation.
+The pressure-conjugate coordinates, velocities, efforts, moment matrix, and
+generalized force use the shared actuation interface:
+
+```python
+volumes = robot.actuator_coordinates(q)
+volume_rates = robot.actuator_velocities(q, q_dot)
+pressure_efforts = robot.actuator_efforts(q, q_dot, pressures)
+A = robot.actuation_matrix(q)
+tau = robot.actuation_force(q, pressures, q_dot=q_dot)
+```
+
+For the current `DirectEffort` model, `pressure_efforts == pressures`. The
+effective area is part of the transmission coordinate and moment matrix rather
+than a separate pressure-to-force conversion API.
 
 I-SUPPORT's specialized renderer continues to draw the detailed bellows and
 accepts `actuator_inputs=` (with `pressures=` as a mutually exclusive alias).
