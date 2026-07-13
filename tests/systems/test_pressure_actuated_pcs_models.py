@@ -504,6 +504,10 @@ def test_isupport_actuation_groups_pressures_after_generalized_expansion():
         ),
     )
     actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
+    metadata = robot.actuator_input_metadata[0]
+    assert metadata.kind == "pneumatic"
+    assert metadata.units == ("Pa",) * robot.num_actuators
+    assert len(metadata.labels) == robot.num_actuators
     num_chambers = robot.num_chambers_per_segment
     assert actuation_matrix.shape == (18, 2 * num_chambers)
     assert jnp.allclose(

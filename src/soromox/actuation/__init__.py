@@ -1,3 +1,52 @@
+from .core import (
+    Actuator,
+    ActuatorKind,
+    ActuatorMetadata,
+    DirectEffort,
+    EffortModel,
+    IdentityActuator,
+    IdentityActuatorParams,
+    IdentityTransmission,
+    PassiveElement,
+    Transmission,
+)
 from .tendon_actuation import linear_routing, linear_routing_arc_length_derivative
+from .threadlike import (
+    BaseThreadlikeRoutingParams,
+    LinearThreadlikeRoutingParams,
+    ThreadlikeActuator,
+    ThreadlikeActuatorParams,
+    ThreadlikeImpedance,
+    ThreadlikeImpedanceParams,
+    ThreadlikeRouting,
+    ThreadlikeTransmission,
+    ThreadlikeTransmissionParams,
+    linear_threadlike_routing,
+    linear_threadlike_routing_derivative,
+)
 
-__all__ = ["linear_routing", "linear_routing_arc_length_derivative"]
+__all__ = [
+    "Actuator",
+    "ActuatorKind",
+    "ActuatorMetadata",
+    "DirectEffort",
+    "EffortModel",
+    "IdentityActuator",
+    "IdentityActuatorParams",
+    "IdentityTransmission",
+    "BaseThreadlikeRoutingParams",
+    "LinearThreadlikeRoutingParams",
+    "PassiveElement",
+    "ThreadlikeActuator",
+    "ThreadlikeActuatorParams",
+    "ThreadlikeImpedance",
+    "ThreadlikeImpedanceParams",
+    "ThreadlikeRouting",
+    "ThreadlikeTransmission",
+    "ThreadlikeTransmissionParams",
+    "Transmission",
+    "linear_routing",
+    "linear_routing_arc_length_derivative",
+    "linear_threadlike_routing",
+    "linear_threadlike_routing_derivative",
+]

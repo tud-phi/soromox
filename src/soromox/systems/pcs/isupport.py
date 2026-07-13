@@ -5,6 +5,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array, vmap
 
+from soromox.actuation.core import ActuatorMetadata
 from soromox.systems.pcs.params import ISupportParams
 from soromox.systems.pcs.structures import ISupportStructure, PCSStructure
 from soromox.utils.array_math import blk_diag
@@ -439,7 +440,13 @@ class ISupport(PCS):
         # Geometry-dependent caches are constructed by PCS.__init__, so expose
         # the expanded type mask before delegating to it.
         self.pcs_segment_is_rigid = pcs_segment_is_rigid
-        super().__init__(pcs_params, structure=pcs_structure, **kwargs)
+        super().__init__(
+            pcs_params,
+            structure=pcs_structure,
+            actuators=(),
+            passive_elements=(),
+            **kwargs,
+        )
 
         self.params = params
         self.pcs_params = pcs_params
@@ -742,6 +749,21 @@ class ISupport(PCS):
         pneumatic_moments = jnp.sum(I_actuators_i, axis=0)
         rigid_moments = super()._local_second_moment_of_area(i)
         return jnp.where(self.pcs_segment_is_rigid[i], rigid_moments, pneumatic_moments)
+
+    @property
+    def actuator_input_metadata(self) -> tuple[ActuatorMetadata, ...]:
+        """Describe custom chamber-pressure inputs through the common contract."""
+        return (
+            ActuatorMetadata(
+                labels=tuple(
+                    f"chamber_pressure_{index}" for index in range(self.num_actuators)
+                ),
+                units="Pa",
+                kind="pneumatic",
+                lower_bounds=jnp.zeros((self.num_actuators,)),
+                upper_bounds=jnp.full((self.num_actuators,), jnp.inf),
+            ),
+        )
 
     @eqx.filter_jit
     def actuation_matrix(self, q: Array) -> Array:

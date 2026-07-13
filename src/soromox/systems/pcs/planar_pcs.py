@@ -7,6 +7,11 @@ import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
+from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.threadlike import (
+    BaseThreadlikeRoutingParams,
+    ThreadlikeRouting,
+)
 from soromox.systems.pcs.params import PlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
@@ -107,6 +112,8 @@ class PlanarPCS(SoftRobot):
         self,
         params: PlanarPCSParams,
         structure: PlanarPCSStructure | None = None,
+        actuators: Actuator | tuple[Actuator, ...] | None = None,
+        passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
         **kwargs: Any,
     ):
         """Initialize the PlanarPCS class from typed dynamic parameters."""
@@ -187,8 +194,7 @@ class PlanarPCS(SoftRobot):
             )
         self.xi_ref = reference_strain.reshape(self.num_strains)
 
-        # Number of actuators
-        self.num_actuators = int(self.num_active_strains.item())
+        self._configure_actuation(actuators, passive_elements)
 
         self.precompute()
 
@@ -196,6 +202,29 @@ class PlanarPCS(SoftRobot):
     def is_planar(self) -> bool:
         """Planar PCS is a 2D model."""
         return True
+
+    def _validate_actuation_component(self, component) -> None:
+        """Validate routing topology and require offsets in the planar local-y axis."""
+        super()._validate_actuation_component(component)
+        routing = getattr(component, "routing", None)
+        if routing is None and hasattr(component, "transmission"):
+            routing = getattr(component.transmission, "routing", None)
+        if routing is None:
+            return
+        samples = jnp.linspace(0.0, self.L_cum[-1], 17)
+        offsets = vmap(
+            lambda path_params: vmap(lambda s: routing.offset(path_params, s))(samples)
+        )(routing.params)
+        if offsets.shape != (routing.num_paths, samples.shape[0], 3):
+            raise ValueError(
+                "ThreadlikeRouting.offset_fn must return material-frame [x, y, z] "
+                "offsets with final shape (3,)."
+            )
+        if bool(jnp.any(offsets[..., 0] != 0.0) | jnp.any(offsets[..., 2] != 0.0)):
+            raise ValueError(
+                "PlanarPCS threadlike routing must remain in the local-y direction; "
+                "its sampled local x and z offsets must be zero."
+            )
 
     @property
     def segment_length(self) -> Array:
@@ -2410,7 +2439,7 @@ class PlanarPCS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (num_active_strains,).
         """
-        return self.K_active @ q
+        return self.K_active @ q + self.passive_elastic_force(q)
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:
@@ -2436,21 +2465,146 @@ class PlanarPCS(SoftRobot):
         Returns:
             D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
         """
-        return self.D_active
+        return self.D_active + self.passive_damping_matrix(q)
 
-    @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Compute the actuation matrix of the robot.
+    def _elastic_energy(self, q: Array) -> Array:
+        """Return body strain energy plus installed passive-element energy."""
+        return 0.5 * q @ self.K_active @ q + self.passive_elastic_energy(q)
 
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+    def _threadlike_local_basis(
+        self,
+        segment_index: Array,
+        strain: Array,
+        s: Array,
+        routing: ThreadlikeRouting,
+        path_params: BaseThreadlikeRoutingParams,
+        start_segment_index: Array,
+        end_segment_index: Array,
+    ) -> Array:
+        active = (start_segment_index <= segment_index) & (
+            segment_index <= end_segment_index
+        )
+        offset = routing.offset(path_params, s)[1]
+        offset_derivative = routing.derivative(path_params, s)[1]
+        axial = strain[1] + offset * strain[0]
+        shear = strain[2] + offset_derivative
+        norm = jnp.sqrt(axial**2 + shear**2)
+        return active * jnp.asarray([offset * axial / norm, axial / norm, shear / norm])
 
-        Returns:
-            A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
-        """
-        A = jnp.identity(self.num_actuators)
-        return A
+    def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
+        """Integrate raw routed-length moment arms in the planar PCS basis."""
+        params = routing.params
+        count = params.num_paths
+        if count == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        strains = self.strain(q).reshape((self.num_segments, 3))
+
+        def segment_matrix(segment_index: Array) -> Array:
+            points, weights = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[segment_index],
+                self.L_cum[segment_index + 1],
+            )
+
+            def point_matrix(point_index: Array) -> Array:
+                basis = vmap(
+                    self._threadlike_local_basis,
+                    in_axes=(None, None, None, None, 0, 0, 0),
+                    out_axes=1,
+                )(
+                    segment_index,
+                    strains[segment_index],
+                    points[point_index],
+                    routing,
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return weights[point_index] * basis
+
+            return jnp.sum(
+                vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0
+            )
+
+        full_matrix = vmap(segment_matrix)(jnp.arange(self.num_segments)).reshape(
+            self.num_strains, count
+        )
+        return self.B_xi.T @ full_matrix
+
+    def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
+        """Integrate raw planar threadlike path lengths."""
+        params = routing.params
+        if params.num_paths == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
+        strains = self.strain(q).reshape((self.num_segments, 3))
+
+        def segment_density(segment_index: Array) -> Array:
+            points, weights = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[segment_index],
+                self.L_cum[segment_index + 1],
+            )
+
+            def point_density(point_index: Array) -> Array:
+                s = points[point_index]
+
+                def path_density(
+                    path_params: BaseThreadlikeRoutingParams,
+                    start_segment_index: Array,
+                    end_segment_index: Array,
+                ) -> Array:
+                    active = (start_segment_index <= segment_index) & (
+                        segment_index <= end_segment_index
+                    )
+                    offset = routing.offset(path_params, s)[1]
+                    derivative = routing.derivative(path_params, s)[1]
+                    axial = (
+                        strains[segment_index, 1] + offset * strains[segment_index, 0]
+                    )
+                    shear = strains[segment_index, 2] + derivative
+                    return active * jnp.sqrt(axial**2 + shear**2)
+
+                density = vmap(path_density)(
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return weights[point_index] * density
+
+            return jnp.sum(
+                vmap(point_density)(jnp.arange(self.num_integration_points)), axis=0
+            )
+
+        return jnp.sum(vmap(segment_density)(jnp.arange(self.num_segments)), axis=0)
+
+    def _threadlike_path_positions(
+        self, q: Array, s: Array, routing: ThreadlikeRouting
+    ) -> Array:
+        """Return planar positions of all routed paths at backbone coordinate ``s``."""
+        params = routing.params
+        if params.num_paths == 0:
+            return jnp.zeros((0, 2), dtype=q.dtype)
+
+        def path_position(
+            path_params: BaseThreadlikeRoutingParams,
+            start_segment_index: Array,
+            end_segment_index: Array,
+        ) -> Array:
+            start = self.L_cum[start_segment_index]
+            end = self.L_cum[end_segment_index + 1]
+            s_clamped = jnp.clip(s, start, end)
+            pose = self.forward_kinematics(q, s_clamped)
+            normal = jnp.asarray([-jnp.sin(pose[0]), jnp.cos(pose[0])])
+            offset = routing.offset(path_params, s_clamped)[1]
+            return pose[1:] + offset * normal
+
+        return vmap(path_position)(
+            params,
+            params.start_segment_index_array,
+            params.end_segment_index_array,
+        )
 
     @eqx.filter_jit
     def _gravitational_energy(self, q: Array) -> Array:
@@ -2775,7 +2929,7 @@ class PlanarPCS(SoftRobot):
 
         B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
-        tau_u = self.actuation_force(q, u)
+        tau_u = self.actuation_force(q, u, q_dot=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         qdd = jnp.linalg.solve(B, rhs)

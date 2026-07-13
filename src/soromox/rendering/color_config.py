@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -44,7 +45,18 @@ class ActuatorStyleConfig:
     """Default style configuration for rendered actuator visual layers."""
 
     default_color: tuple[float, float, float] = (0.9, 0.15, 0.15)
+    default_radius: float | None = None
     scalar_colormap: str = "viridis"
+    kind_colors: Mapping[str, tuple[float, float, float]] = field(default_factory=dict)
+    kind_radii: Mapping[str, float] = field(default_factory=dict)
+
+    def color_for_kind(self, kind: str) -> tuple[float, float, float]:
+        """Return the configured color for an actuator semantic kind."""
+        return self.kind_colors.get(kind, self.default_color)
+
+    def radius_for_kind(self, kind: str) -> float | None:
+        """Return the configured tube radius for an actuator semantic kind."""
+        return self.kind_radii.get(kind, self.default_radius)
 
 
 @dataclass(frozen=True)

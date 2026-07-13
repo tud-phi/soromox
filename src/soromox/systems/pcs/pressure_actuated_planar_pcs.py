@@ -110,7 +110,9 @@ class PressureActuatedPlanarPCS(PlanarPCS):
             raise TypeError(
                 "params must be a PressureActuatedPlanarPCSParams instance."
             )
-        super().__init__(params, structure=structure, **kwargs)
+        super().__init__(
+            params, structure=structure, actuators=(), passive_elements=(), **kwargs
+        )
 
         if segment_actuation_selector is None:
             segment_actuation_selector = jnp.ones(self.num_segments, dtype=bool)

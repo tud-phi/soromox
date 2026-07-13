@@ -70,7 +70,11 @@ color_config = RendererColorConfig(
         segment_palette="soromox:ember",
     ),
     base_plate_color=(0.5, 0.5, 0.5),
-    actuators=ActuatorStyleConfig(default_color=(0.8, 0.2, 0.2)),
+    actuators=ActuatorStyleConfig(
+        default_color=(0.8, 0.2, 0.2),
+        kind_colors={"tendon": (0.85, 0.2, 0.15)},
+        kind_radii={"tendon": 5e-4},
+    ),
 )
 
 renderer.show(q, color_config=color_config)

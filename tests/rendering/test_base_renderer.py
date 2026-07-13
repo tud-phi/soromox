@@ -12,10 +12,25 @@ from soromox.rendering.actuators import (
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.color_config import ActuatorStyleConfig
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.systems.soft_robot import CrossSectionGeometry
 from soromox.utils.geometry import poses
+
+
+def test_actuator_styles_can_be_selected_by_semantic_kind():
+    style = ActuatorStyleConfig(
+        default_color=(0.1, 0.2, 0.3),
+        default_radius=1e-4,
+        kind_colors={"tendon": (0.8, 0.1, 0.1)},
+        kind_radii={"tendon": 5e-4},
+    )
+
+    assert style.color_for_kind("tendon") == (0.8, 0.1, 0.1)
+    assert style.color_for_kind("muscle") == (0.1, 0.2, 0.3)
+    assert style.radius_for_kind("tendon") == 5e-4
+    assert style.radius_for_kind("muscle") == 1e-4
 
 
 class DummyPlanarRobot:

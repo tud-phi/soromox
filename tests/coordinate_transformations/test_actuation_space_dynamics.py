@@ -20,18 +20,17 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 from system_param_builders import (
-    linear_tendon_routing,
     pcs_params,
     pendulum_params,
-    tendon_actuated_pcs_params,
     tendon_actuated_pendulum_params,
 )
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 from soromox.systems import (
+    PCS,
     PCSStructure,
-    TendonActuatedPCS,
     TendonActuatedPendulum,
 )
 
@@ -91,7 +90,7 @@ def underactuated_pendulum():
 
 @pytest.fixture
 def fully_actuated_pcs():
-    """Create a 1-segment fully actuated TendonActuatedPCS (2 tendons on 1 segment with bending-only).
+    """Create a 1-segment fully actuated threadlike PCS.
 
     For a truly fully-actuated system, we use a single segment with 2 bending DOFs
     (kappa_y, kappa_z) and 2 tendons placed at different offsets.
@@ -122,26 +121,23 @@ def fully_actuated_pcs():
     # 2 tendons for 2 DOFs (fully actuated bending)
     # Tendon at +y creates moment around z (affects kappa_z)
     # Tendon at +z creates moment around y (affects kappa_y)
-    tendon_routing_params = linear_tendon_routing(
+    tendon_routing = ThreadlikeRouting.linear(
         y_intercept=jnp.array([0.005, 0.0]),  # first tendon at +y
         y_slope=jnp.array([0.0, 0.0]),  # slope in y
         z_intercept=jnp.array([0.0, 0.005]),  # second tendon at +z
         z_slope=jnp.array([0.0, 0.0]),  # slope in z
-        attachment_segment_index=jnp.array([0, 0]),  # both attach at segment 0
+        end_segment_index=(0, 0),
     )
-    params = tendon_actuated_pcs_params(
-        body=body,
-        active_tendon_routing=tendon_routing_params,
-    )
-    return TendonActuatedPCS(
-        params,
+    return PCS(
+        body,
         structure=PCSStructure(strain_selector=strain_selector),
+        actuators=ThreadlikeActuator.tendons(tendon_routing),
     )
 
 
 @pytest.fixture
 def underactuated_pcs():
-    """Create a 2-segment underactuated TendonActuatedPCS (2 tendons on 4 DOFs)."""
+    """Create a 2-segment underactuated threadlike PCS."""
     # Note: D must be provided in full strain space (num_strains x num_strains = 12x12)
     # The PCS.damping_matrix() method projects it to active strain space using B_xi
     body = pcs_params(
@@ -172,7 +168,7 @@ def underactuated_pcs():
     )
     # 2 tendons for 4 DOFs (underactuated)
     # Use tendons at different offsets to ensure non-singular actuation matrix
-    tendon_routing_params = linear_tendon_routing(
+    tendon_routing = ThreadlikeRouting.linear(
         y_intercept=jnp.array(
             [0.005, 0.0]
         ),  # first tendon at +y, second at origin in y
@@ -181,15 +177,12 @@ def underactuated_pcs():
             [0.0, 0.005]
         ),  # first tendon at origin in z, second at +z
         z_slope=jnp.array([0.0, 0.0]),  # slope in z
-        attachment_segment_index=jnp.array([1, 1]),  # both tendons attach at distal end
+        end_segment_index=(1, 1),
     )
-    params = tendon_actuated_pcs_params(
-        body=body,
-        active_tendon_routing=tendon_routing_params,
-    )
-    return TendonActuatedPCS(
-        params,
+    return PCS(
+        body,
         structure=PCSStructure(strain_selector=strain_selector),
+        actuators=ThreadlikeActuator.tendons(tendon_routing),
     )
 
 
@@ -1159,7 +1152,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         where Jd is the time derivative of the Jacobian. This is particularly
         important for systems with configuration-dependent actuation matrices
-        (like TendonActuatedPCS) where Jd ≠ 0.
+        (like PCS with threadlike actuation) where Jd ≠ 0.
         """
         asd = ActuationSpaceDynamics(robot)
         n_dof = robot.num_dofs

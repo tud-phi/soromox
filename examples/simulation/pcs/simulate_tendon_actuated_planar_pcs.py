@@ -7,14 +7,13 @@ from diffrax import Tsit5
 from jax import numpy as jnp
 
 jax.config.update("jax_enable_x64", True)  # double precision
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import MatplotlibRenderer
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PlanarPCS,
     PlanarPCSParams,
     PlanarPCSStructure,
     SystemState,
-    TendonActuatedPlanarPCS,
-    TendonActuatedPlanarPCSParams,
 )
 
 videos_dir = Path("videos")
@@ -40,18 +39,15 @@ if __name__ == "__main__":
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
     )
     tendon_offsets = 2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0)
-    active_tendon_routing = LinearTendonRoutingParams(
+    active_tendon_routing = ThreadlikeRouting.linear(
         y_intercept=tendon_offsets.reshape(-1),
         y_slope=jnp.zeros((2 * num_segments,)),
         z_intercept=jnp.zeros((2 * num_segments,)),
         z_slope=jnp.zeros((2 * num_segments,)),
-        attachment_segment_index=jnp.repeat(
-            jnp.arange(num_segments, dtype=jnp.int32), 2
+        start_segment_index=0,
+        end_segment_index=tuple(
+            int(index) for index in jnp.repeat(jnp.arange(num_segments), 2)
         ),
-    )
-    params = TendonActuatedPlanarPCSParams(
-        body=body,
-        active_tendon_routing=active_tendon_routing,
     )
 
     # activate all strains (i.e. bending, shear, and axial)
@@ -60,9 +56,10 @@ if __name__ == "__main__":
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = TendonActuatedPlanarPCS(
-        params=params,
+    robot = PlanarPCS(
+        params=body,
         structure=PlanarPCSStructure(strain_selector=strain_selector),
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
     # =====================================================
@@ -107,7 +104,7 @@ if __name__ == "__main__":
     #     maxval=0.0,
     # )
     # alternating tendon tensions
-    base_tension = jnp.array(-0.3, dtype=q0.dtype)
+    base_tension = jnp.array(0.3, dtype=q0.dtype)
     segment_ids = jnp.arange(num_segments)
     segment_tensions = base_tension / (segment_ids.astype(q0.dtype) + 1.0)
     even_segments = (segment_ids % 2) == 0

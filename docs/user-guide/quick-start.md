@@ -207,6 +207,9 @@ robot = PCS(params=params)
 robot = robot.update_params(length=new_lengths)
 ```
 
+For routed tendons, pushing rods, muscles, and equivalent pressure chambers,
+continue with the dedicated [Threadlike actuation guide](../api/actuation/threadlike.md).
+
 !!! note "Units Matter"
     Always use consistent SI units (meters, kilograms, seconds) for reliable results.
 

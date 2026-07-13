@@ -621,33 +621,49 @@ class ISupportViserRenderer(ViserRenderer):
         def _(event):
             self._set_pressure_labels_visible(event.target.value)
 
+    @staticmethod
+    def _resolve_actuator_inputs(
+        actuator_inputs: Array | np.ndarray | None,
+        pressures: Array | np.ndarray | None,
+    ) -> Array | np.ndarray | None:
+        """Resolve the generic input name and pressure-specific convenience alias."""
+        if actuator_inputs is not None and pressures is not None:
+            raise ValueError(
+                "actuator_inputs and pressures are aliases; provide only one."
+            )
+        return actuator_inputs if actuator_inputs is not None else pressures
+
     def render_frame(
         self,
         q: Array,
         *,
+        actuator_inputs: Array | np.ndarray | None = None,
         pressures: Array | np.ndarray | None = None,
         **kwargs,
     ) -> np.ndarray:
         """Render one I-SUPPORT configuration, optionally with pressure labels."""
+        inputs = self._resolve_actuator_inputs(actuator_inputs, pressures)
         self._current_geometry_q = self._as_batch(q)
         self._current_pressures = self._static_pressures(
-            pressures, num_robots=int(self._current_geometry_q.shape[0])
+            inputs, num_robots=int(self._current_geometry_q.shape[0])
         )
         self._pressure_ts = None
-        self._force_pressure_labels = pressures is not None
-        return super().render_frame(q, **kwargs)
+        self._force_pressure_labels = inputs is not None
+        return super().render_frame(q, actuator_inputs=inputs, **kwargs)
 
     def show(
         self,
         q: Array,
         *,
+        actuator_inputs: Array | np.ndarray | None = None,
         pressures: Array | np.ndarray | None = None,
         **kwargs,
     ) -> None:
         """Display one I-SUPPORT configuration with optional chamber pressures."""
+        inputs = self._resolve_actuator_inputs(actuator_inputs, pressures)
         self._current_geometry_q = self._as_batch(q)
         self._current_pressures = self._static_pressures(
-            pressures, num_robots=int(self._current_geometry_q.shape[0])
+            inputs, num_robots=int(self._current_geometry_q.shape[0])
         )
         self._pressure_ts = None
         self._force_pressure_labels = False
@@ -655,17 +671,19 @@ class ISupportViserRenderer(ViserRenderer):
         if self._server is None:
             self.start()
         self._setup_pressure_gui()
-        super().show(q, **kwargs)
+        super().show(q, actuator_inputs=inputs, **kwargs)
 
     def render_sequence(
         self,
         ts: Array,
         q_ts: Array,
         *,
+        actuator_inputs: Array | np.ndarray | None = None,
         pressures: Array | np.ndarray | None = None,
         **kwargs,
     ) -> None:
         """Render an I-SUPPORT trajectory with optional chamber pressures."""
+        inputs = self._resolve_actuator_inputs(actuator_inputs, pressures)
         q_array = jnp.asarray(q_ts)
         if q_array.ndim == 2:
             self._current_geometry_q = q_array[0][None, :]
@@ -678,7 +696,7 @@ class ISupportViserRenderer(ViserRenderer):
                 f"q_ts must have shape (T, DOF) or (N, T, DOF), got {q_array.shape}."
             )
         self._pressure_ts = self._sequence_pressures(
-            pressures,
+            inputs,
             num_robots=num_robots,
             num_frames=num_frames,
         )
@@ -688,7 +706,7 @@ class ISupportViserRenderer(ViserRenderer):
         )
         self._force_pressure_labels = False
         self._set_pressure_labels_visible(False)
-        super().render_sequence(ts, q_ts, **kwargs)
+        super().render_sequence(ts, q_ts, actuator_inputs=inputs, **kwargs)
 
     def _update_frame(self, frame_idx: int, *args, **kwargs) -> None:
         self._pressure_frame_idx = int(frame_idx)

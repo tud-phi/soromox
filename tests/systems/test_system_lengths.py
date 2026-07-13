@@ -6,18 +6,16 @@ import pytest
 from numpy.testing import assert_allclose
 from system_param_builders import (
     articulated_params,
-    linear_tendon_routing,
     pcs_params,
     pendulum_params,
     planar_base_pose,
     planar_pcs_params,
     spatial_base_pose,
-    tendon_actuated_pcs_params,
     tendon_actuated_pendulum_params,
-    tendon_actuated_planar_pcs_params,
 )
 
 import soromox
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     GVS,
     PCS,
@@ -35,10 +33,7 @@ from soromox.systems import (
     PlanarPCSStructure,
     PressureActuatedPlanarPCS,
     PressureActuatedPlanarPCSParams,
-    TendonActuatedGVS,
-    TendonActuatedPCS,
     TendonActuatedPendulum,
-    TendonActuatedPlanarPCS,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
@@ -134,25 +129,23 @@ def _segments():
 
 
 def _tendon_routing(num_segments):
-    return linear_tendon_routing(
+    return ThreadlikeRouting.linear(
         y_intercept=jnp.array([0.005], dtype=jnp.float64),
         z_intercept=jnp.array([0.005], dtype=jnp.float64),
         y_slope=jnp.array([0.0], dtype=jnp.float64),
         z_slope=jnp.array([0.0], dtype=jnp.float64),
-        attachment_segment_index=jnp.array([num_segments - 1], dtype=jnp.int32),
+        end_segment_index=(num_segments - 1,),
     )
 
 
 def _planar_tendon_routing(num_segments):
     offsets = 0.02 * jnp.ones((num_segments, 2), dtype=jnp.float64).at[:, 1].set(-1.0)
-    return linear_tendon_routing(
+    return ThreadlikeRouting.linear(
         y_intercept=offsets.reshape(-1),
         z_intercept=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
         y_slope=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
         z_slope=jnp.zeros((2 * num_segments,), dtype=jnp.float64),
-        attachment_segment_index=jnp.repeat(
-            jnp.arange(num_segments, dtype=jnp.int32), 2
-        ),
+        end_segment_index=tuple(jnp.repeat(jnp.arange(num_segments), 2).tolist()),
     )
 
 
@@ -222,23 +215,19 @@ def _planar_hsa_robot():
         ),
         _articulated_robot(),
         GVS.from_segments(_segments(), gravity=jnp.array([0.0, 0.0, -9.81])),
-        TendonActuatedGVS.from_segments(
+        GVS.from_segments(
             _segments(),
             gravity=jnp.array([0.0, 0.0, -9.81]),
-            active_tendon_routing=_tendon_routing(3),
+            actuators=ThreadlikeActuator.tendons(_tendon_routing(3)),
         ),
-        TendonActuatedPCS(
-            params=tendon_actuated_pcs_params(
-                body=_pcs_params([0.08, 0.12, 0.2]),
-                active_tendon_routing=_tendon_routing(3),
-            ),
+        PCS(
+            params=_pcs_params([0.08, 0.12, 0.2]),
             structure=PCSStructure(num_gauss_points=3),
+            actuators=ThreadlikeActuator.tendons(_tendon_routing(3)),
         ),
-        TendonActuatedPlanarPCS(
-            params=tendon_actuated_planar_pcs_params(
-                body=_planar_pcs_params([0.08, 0.12, 0.2]),
-                active_tendon_routing=_planar_tendon_routing(3),
-            )
+        PlanarPCS(
+            params=_planar_pcs_params([0.08, 0.12, 0.2]),
+            actuators=ThreadlikeActuator.tendons(_planar_tendon_routing(3)),
         ),
         _pressure_planar_robot(),
         _isupport_robot(),

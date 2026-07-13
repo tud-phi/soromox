@@ -8,7 +8,7 @@ from soromox.systems.articulated.params import (
     McKibbenActuatedUMArmParams,
 )
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.gvs.params import GVSLinkParams, GVSParams, TendonActuatedGVSParams
+from soromox.systems.gvs.params import GVSLinkParams, GVSParams
 from soromox.systems.gvs.structures import (
     GVSJointStructure,
     GVSLinkStructure,
@@ -33,8 +33,6 @@ from soromox.systems.pcs.params import (
     PCSParams,
     PlanarPCSParams,
     PressureActuatedPlanarPCSParams,
-    TendonActuatedPCSParams,
-    TendonActuatedPlanarPCSParams,
 )
 from soromox.systems.pcs.structures import (
     ISupportStructure,
@@ -58,7 +56,6 @@ from .gvs import (
     JointSpec,
     LinkSpec,
     StrainBasisSpec,
-    TendonActuatedGVS,
 )
 from .hsa import PlanarHSA
 from .pcs import (
@@ -66,8 +63,6 @@ from .pcs import (
     ISupport,
     PlanarPCS,
     PressureActuatedPlanarPCS,
-    TendonActuatedPCS,
-    TendonActuatedPlanarPCS,
 )
 from .pendulum import Pendulum, TendonActuatedPendulum
 
@@ -107,8 +102,6 @@ __all__ = [
     "LinkSpec",
     "JointSpec",
     "StrainBasisSpec",
-    "TendonActuatedGVS",
-    "TendonActuatedGVSParams",
     # hsa systems
     "PlanarHSA",
     "PlanarHSAParams",
@@ -130,8 +123,4 @@ __all__ = [
     "PlanarPCSStructure",
     "PressureActuatedPlanarPCS",
     "PressureActuatedPlanarPCSParams",
-    "TendonActuatedPCS",
-    "TendonActuatedPCSParams",
-    "TendonActuatedPlanarPCS",
-    "TendonActuatedPlanarPCSParams",
 ]

@@ -10,6 +10,7 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import (
     ActuatorStyleConfig,
     BackboneColorConfig,
@@ -19,16 +20,14 @@ from soromox.rendering import (
     ViserRenderer,
 )
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PCS,
     PCSParams,
     PCSStructure,
     SystemState,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 
-def build_robot() -> TendonActuatedPCS:
+def build_robot() -> PCS:
     """Construct a simple tendon-actuated PCS robot."""
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))
@@ -47,24 +46,23 @@ def build_robot() -> TendonActuatedPCS:
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),
     )
-    active_tendon_routing = LinearTendonRoutingParams(
+    active_tendon_routing = ThreadlikeRouting.linear(
         y_intercept=jnp.array([2e-2, -2e-2, 1e-2, -1e-2]),
         z_intercept=jnp.zeros((4,)),
         y_slope=jnp.zeros((4,)),
         z_slope=jnp.zeros((4,)),
-        attachment_segment_index=jnp.array([0, 0, 1, 1]),
+        start_segment_index=0,
+        end_segment_index=(0, 0, 1, 1),
     )
 
-    return TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
-        ),
+    return PCS(
+        params=body_params,
         structure=PCSStructure(),
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
 
-def simulate_batched(robot: TendonActuatedPCS, num_robots: int, rng_key: jax.Array):
+def simulate_batched(robot: PCS, num_robots: int, rng_key: jax.Array):
     """Roll out multiple trajectories with vmap and random constant tendon tensions."""
     q0 = jnp.zeros((num_robots, robot.num_dofs))
     # # sample different configurations per robot in the batch
@@ -78,12 +76,12 @@ def simulate_batched(robot: TendonActuatedPCS, num_robots: int, rng_key: jax.Arr
         t=jnp.zeros((num_robots,)), y=jnp.concatenate([q0, qd0], axis=1)
     )
 
-    # Sample constant tendon tensions per robot in [-1, 0]
+    # Sample positive tendon tensions per robot.
     u_batch = jax.random.uniform(
         rng_key,
         (num_robots, robot.num_actuators),
-        minval=-1.0,
-        maxval=0.0,
+        minval=0.0,
+        maxval=1.0,
     )
     print("u_batch:\n", u_batch)
 

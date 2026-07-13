@@ -4,7 +4,6 @@ from jax import Array
 from soromox.systems import (
     GVS,
     ArticulatedSoftRobotParams,
-    BaseTendonRoutingParams,
     GVSParams,
     GVSStructure,
     LinearTendonRoutingParams,
@@ -13,10 +12,7 @@ from soromox.systems import (
     PendulumParams,
     PlanarHSAParams,
     PlanarPCSParams,
-    TendonActuatedGVSParams,
-    TendonActuatedPCSParams,
     TendonActuatedPendulumParams,
-    TendonActuatedPlanarPCSParams,
 )
 
 
@@ -207,44 +203,6 @@ def passive_tendon_params(
     )
 
 
-def tendon_actuated_pcs_params(
-    *,
-    body: PCSParams,
-    active_tendon_routing: BaseTendonRoutingParams,
-    passive_tendon_routing: BaseTendonRoutingParams | None = None,
-    passive_tendon: PassiveTendonParams | None = None,
-) -> TendonActuatedPCSParams:
-    if passive_tendon_routing is None:
-        passive_tendon_routing = LinearTendonRoutingParams.empty()
-    if passive_tendon is None:
-        passive_tendon = PassiveTendonParams.empty()
-    return TendonActuatedPCSParams(
-        body=body,
-        active_tendon_routing=active_tendon_routing,
-        passive_tendon_routing=passive_tendon_routing,
-        passive_tendon=passive_tendon,
-    )
-
-
-def tendon_actuated_planar_pcs_params(
-    *,
-    body: PlanarPCSParams,
-    active_tendon_routing: BaseTendonRoutingParams,
-    passive_tendon_routing: BaseTendonRoutingParams | None = None,
-    passive_tendon: PassiveTendonParams | None = None,
-) -> TendonActuatedPlanarPCSParams:
-    if passive_tendon_routing is None:
-        passive_tendon_routing = LinearTendonRoutingParams.empty()
-    if passive_tendon is None:
-        passive_tendon = PassiveTendonParams.empty()
-    return TendonActuatedPlanarPCSParams(
-        body=body,
-        active_tendon_routing=active_tendon_routing,
-        passive_tendon_routing=passive_tendon_routing,
-        passive_tendon=passive_tendon,
-    )
-
-
 def tendon_actuated_pendulum_params(
     *,
     body: PendulumParams,
@@ -293,25 +251,6 @@ def gvs_params_from_segments(
         max_dof=max_dof,
         max_num_gauss_points=max_num_gauss_points,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
-    )
-
-
-def tendon_actuated_gvs_params(
-    *,
-    body: GVSParams,
-    active_tendon_routing: BaseTendonRoutingParams,
-    passive_tendon_routing: BaseTendonRoutingParams | None = None,
-    passive_tendon: PassiveTendonParams | None = None,
-) -> TendonActuatedGVSParams:
-    if passive_tendon_routing is None:
-        passive_tendon_routing = LinearTendonRoutingParams.empty()
-    if passive_tendon is None:
-        passive_tendon = PassiveTendonParams.empty()
-    return TendonActuatedGVSParams(
-        body=body,
-        active_tendon_routing=active_tendon_routing,
-        passive_tendon_routing=passive_tendon_routing,
-        passive_tendon=passive_tendon,
     )
 
 

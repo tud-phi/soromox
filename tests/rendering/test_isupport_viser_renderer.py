@@ -433,11 +433,23 @@ def test_render_frame_forces_labels_only_when_pressures_are_supplied(monkeypatch
     )
     renderer.render_frame(q)
     renderer.render_frame(q, pressures=np.full(renderer.robot.num_actuators, 2.0e4))
+    renderer.render_frame(
+        q, actuator_inputs=np.full(renderer.robot.num_actuators, 3.0e4)
+    )
+
+    with pytest.raises(ValueError, match="provide only one"):
+        renderer.render_frame(
+            q,
+            actuator_inputs=np.zeros(renderer.robot.num_actuators),
+            pressures=np.zeros(renderer.robot.num_actuators),
+        )
 
     assert captured[0][0] is None
     assert captured[0][1] is False
     assert captured[1][0].shape == (1, renderer.robot.num_actuators)
     assert captured[1][1] is True
+    assert_allclose(captured[2][0][0], 3.0e4)
+    assert captured[2][1] is True
 
 
 def test_batched_geometry_applies_base_offsets():

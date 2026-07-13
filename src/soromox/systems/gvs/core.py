@@ -6,6 +6,11 @@ import jax
 import jax.numpy as jnp
 from jax import Array, lax, vmap
 
+from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.threadlike import (
+    BaseThreadlikeRoutingParams,
+    ThreadlikeRouting,
+)
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData
 from soromox.systems.gvs.construction import params_and_structure_from_segments
@@ -46,7 +51,7 @@ from soromox.systems.gvs.structures import (
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
-from soromox.utils.lie_algebra import constant_strain, se3
+from soromox.utils.lie_algebra import constant_strain, se3, so3
 
 __all__ = ["GVS"]
 
@@ -204,6 +209,8 @@ class GVS(SoftRobot):
         self,
         params: GVSParams,
         structure: GVSStructure,
+        actuators: Actuator | tuple[Actuator, ...] | None = None,
+        passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
         **kwargs: Any,
     ) -> None:
         """Initialize a GVS robot from typed params and static segment structure."""
@@ -227,6 +234,7 @@ class GVS(SoftRobot):
             g=params.gravity,
             p0=params.base_pose,
         )
+        self._configure_actuation(actuators, passive_elements)
         self.precompute()
 
     @staticmethod
@@ -4502,7 +4510,7 @@ class GVS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (num_dofs,).
         """
-        return self.K @ q
+        return self.K @ q + self.passive_elastic_force(q)
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:
@@ -4592,7 +4600,11 @@ class GVS(SoftRobot):
         Returns:
             D (Array): Damping matrix, shape (num_dofs, num_dofs)
         """
-        return self.D_active
+        return self.D_active + self.passive_damping_matrix(q)
+
+    def _elastic_energy(self, q: Array) -> Array:
+        """Return body strain energy plus installed passive-element energy."""
+        return 0.5 * q @ self.K @ q + self.passive_elastic_energy(q)
 
     @eqx.filter_jit
     def _gravitational_energy(self, q: Array) -> Array:
@@ -4639,19 +4651,156 @@ class GVS(SoftRobot):
 
         return jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
 
-    @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Compute the actuation matrix of the robot.
+    def _threadlike_local_basis(
+        self,
+        routing: ThreadlikeRouting,
+        path_params: BaseThreadlikeRoutingParams,
+        start_segment_index: Array,
+        end_segment_index: Array,
+        q_link: Array,
+        s: Array,
+        segment_index: Array,
+        point_index: Array,
+    ) -> Array:
+        """Return one spatial routed-path length gradient density."""
+        active = (start_segment_index <= segment_index) & (
+            segment_index <= end_segment_index
+        )
+        basis = self.B_Xs[segment_index, point_index]
+        length = self.segment_lengths[segment_index]
+        if self.scale_rotational_basis_by_length:
+            basis = basis.at[:3, :].divide(length)
+        strain = basis @ q_link + self.xi_ref_Xs[segment_index, point_index]
+        offset = jnp.append(routing.offset(path_params, s), 1.0)
+        derivative = jnp.append(routing.derivative(path_params, s), 1.0)
+        tangent_unnormalized = (derivative + se3.hat(strain) @ offset)[:-1]
+        tangent = tangent_unnormalized / jnp.linalg.norm(tangent_unnormalized)
+        local = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
+        return active * local
 
-        Args:
-            q (Array): generalized coordinates of shape (num_dofs,).
+    def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
+        """Integrate raw routed-length moment arms in the native GVS basis."""
+        params = routing.params
+        count = params.num_paths
+        if count == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        q_gathered = self._min_size_gathered(q)
 
-        Returns:
-            A (Array): Actuation matrix of shape (num_dofs, num_dofs)
-        """
-        A = jnp.identity(self.num_dofs)
-        return A
+        def segment_matrix(segment_index: Array) -> Array:
+            length = self.segment_lengths[segment_index]
+            q_link = q_gathered[segment_index, 1]
+            joint = jnp.zeros((self.max_dof, count), dtype=q.dtype)
+
+            def point_matrix(point_index: Array) -> Array:
+                s = (
+                    self.segment_end_positions[segment_index]
+                    + self.integration_points[segment_index, point_index] * length
+                )
+                local = vmap(
+                    self._threadlike_local_basis,
+                    in_axes=(None, 0, 0, 0, None, None, None, None),
+                    out_axes=1,
+                )(
+                    routing,
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                    q_link,
+                    s,
+                    segment_index,
+                    point_index,
+                )
+                basis = self.B_Xs[segment_index, point_index]
+                if self.scale_rotational_basis_by_length:
+                    basis = basis.at[:3, :].divide(length)
+                return self.integration_weights[segment_index, point_index] * (
+                    basis.T @ local
+                )
+
+            link = length * jnp.sum(
+                vmap(point_matrix)(jnp.arange(1, self.max_num_integration_points - 1)),
+                axis=0,
+            )
+            return jnp.stack((joint, link), axis=0)
+
+        full = vmap(segment_matrix)(jnp.arange(self.num_segments)).reshape(
+            self.num_padded_dofs, count
+        )
+        return self.active_dof_map.T @ full
+
+    def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
+        """Integrate raw threadlike path lengths over the GVS quadrature."""
+        params = routing.params
+        if params.num_paths == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
+        q_gathered = self._min_size_gathered(q)
+
+        def segment_lengths(segment_index: Array) -> Array:
+            length = self.segment_lengths[segment_index]
+            q_link = q_gathered[segment_index, 1]
+
+            def point_density(point_index: Array) -> Array:
+                s = (
+                    self.segment_end_positions[segment_index]
+                    + self.integration_points[segment_index, point_index] * length
+                )
+                basis = self.B_Xs[segment_index, point_index]
+                if self.scale_rotational_basis_by_length:
+                    basis = basis.at[:3, :].divide(length)
+                strain = basis @ q_link + self.xi_ref_Xs[segment_index, point_index]
+
+                def path_density(
+                    path_params: BaseThreadlikeRoutingParams,
+                    start_segment_index: Array,
+                    end_segment_index: Array,
+                ) -> Array:
+                    active = (start_segment_index <= segment_index) & (
+                        segment_index <= end_segment_index
+                    )
+                    offset = jnp.append(routing.offset(path_params, s), 1.0)
+                    derivative = jnp.append(routing.derivative(path_params, s), 1.0)
+                    tangent = (derivative + se3.hat(strain) @ offset)[:-1]
+                    return active * jnp.linalg.norm(tangent)
+
+                density = vmap(path_density)(
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return self.integration_weights[segment_index, point_index] * density
+
+            return length * jnp.sum(
+                vmap(point_density)(jnp.arange(1, self.max_num_integration_points - 1)),
+                axis=0,
+            )
+
+        return jnp.sum(vmap(segment_lengths)(jnp.arange(self.num_segments)), axis=0)
+
+    def _threadlike_path_positions(
+        self, q: Array, s: Array, routing: ThreadlikeRouting
+    ) -> Array:
+        """Return spatial positions of all routed paths at backbone coordinate ``s``."""
+        params = routing.params
+        if params.num_paths == 0:
+            return jnp.zeros((0, 3), dtype=q.dtype)
+
+        def path_position(
+            path_params: BaseThreadlikeRoutingParams,
+            start_segment_index: Array,
+            end_segment_index: Array,
+        ) -> Array:
+            start = self.segment_end_positions[start_segment_index]
+            end = self.segment_end_positions[end_segment_index + 1]
+            s_clamped = jnp.clip(s, start, end)
+            pose = self.forward_kinematics(q, s_clamped)
+            point = pose @ jnp.append(routing.offset(path_params, s_clamped), 1.0)
+            return point[:-1]
+
+        return vmap(path_position)(
+            params,
+            params.start_segment_index_array,
+            params.end_segment_index_array,
+        )
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -4691,7 +4840,7 @@ class GVS(SoftRobot):
 
         B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
-        tau_u = self.actuation_force(q, u)
+        tau_u = self.actuation_force(q, u, q_dot=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - tau_el - self.D_active @ qd
         qdd = jnp.linalg.solve(B, rhs)

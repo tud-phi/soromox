@@ -1148,6 +1148,11 @@ class OperationalSpaceController(ClosedFormModelBasedController):
 
 #### Actuation-Space Controllers
 
+New actuator modalities should implement the composable `Transmission` and
+`EffortModel` contracts described in the
+[actuation model](../api/actuation/index.md), rather than introducing a new
+continuum host subclass.
+
 Operate directly in actuation coordinates (tendon lengths, pressures):
 
 ```python

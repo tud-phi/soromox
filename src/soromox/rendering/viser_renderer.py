@@ -83,6 +83,7 @@ class SceneHandles:
     backbone_points: list[list] = field(default_factory=list)
     actuator_lines: list = field(default_factory=list)
     actuator_line_keys: list[str] = field(default_factory=list)
+    actuator_meshes: list = field(default_factory=list)
 
     # Track if geometry has been initially built (for efficient updates)
     geometry_initialized: bool = False
@@ -602,7 +603,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         actuator_inputs: Array | None = None,
     ) -> None:
-        """Build actuator line geometry in the scene.
+        """Build semantic actuator geometry in the scene.
 
         Args:
             q: Robot configurations (num_robots, DOF)
@@ -625,6 +626,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
         cfg = color_config or self.color_config
         line_specs = []
+        mesh_specs = []
 
         if len(self._scene_handles.actuator_line_keys) > len(
             self._scene_handles.actuator_lines
@@ -639,15 +641,56 @@ class ViserRenderer(BaseSoftRobotRenderer):
             layer_points = np.asarray(layer.points)
             layer_colors = resolve_actuator_rgba(
                 layer,
-                default_color=cfg.actuators.default_color,
+                default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
             line_width = layer.line_width or self._actuator_line_width
+            configured_radius = cfg.actuators.radius_for_kind(layer.kind)
+            if layer.radius is None:
+                layer_radii = (
+                    None if configured_radius is None else np.asarray(configured_radius)
+                )
+            else:
+                layer_radii = np.asarray(layer.radius)
             for robot_idx in range(num_robots):
                 for actuator_idx in range(layer_points.shape[1]):
                     curve = layer_points[robot_idx, actuator_idx]
+                    if curve.shape[-1] == 2:
+                        curve = np.pad(curve, ((0, 0), (0, 1)))
                     num_segments = len(curve) - 1
                     if num_segments <= 0:
+                        continue
+                    radius = None
+                    if layer_radii is not None:
+                        if layer_radii.ndim == 0:
+                            radius = float(layer_radii)
+                        elif layer_radii.ndim == 1:
+                            radius = float(layer_radii[actuator_idx])
+                        else:
+                            radius = float(layer_radii[robot_idx, actuator_idx])
+                    name = (
+                        f"/robots/robot_{robot_idx}/actuators/"
+                        f"{layer_idx}_{layer.name}_{actuator_idx}"
+                    )
+                    if radius is not None and radius > 0.0:
+                        segment_meshes = []
+                        for p0, p1 in zip(curve[:-1], curve[1:]):
+                            direction = p1 - p0
+                            length = float(np.linalg.norm(direction))
+                            if length <= 1e-12:
+                                continue
+                            mesh = self._make_cylinder_trimesh(
+                                length=length,
+                                radius=radius,
+                                color=layer_colors[robot_idx, actuator_idx],
+                                direction=direction,
+                            )
+                            mesh.apply_translation(0.5 * (p0 + p1))
+                            segment_meshes.append(mesh)
+                        if segment_meshes:
+                            mesh_specs.append(
+                                (name, trimesh.util.concatenate(segment_meshes))
+                            )
                         continue
                     points = np.stack([curve[:-1], curve[1:]], axis=1)
                     color = _rgb_to_viser_color(
@@ -655,15 +698,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     )
                     line_specs.append(
                         (
-                            (
-                                f"/robots/robot_{robot_idx}/actuators/"
-                                f"{layer_idx}_{layer.name}_{actuator_idx}"
-                            ),
+                            name,
                             points.astype(np.float32),
                             np.tile(color, (num_segments, 2, 1)).astype(np.uint8),
                             line_width,
                         )
                     )
+
+        for handle in self._scene_handles.actuator_meshes:
+            if hasattr(handle, "remove"):
+                handle.remove()
+        self._scene_handles.actuator_meshes = [
+            self._server.scene.add_mesh_trimesh(name=name, mesh=mesh)
+            for name, mesh in mesh_specs
+        ]
 
         if len(self._scene_handles.actuator_lines) > len(line_specs):
             for handle in self._scene_handles.actuator_lines[len(line_specs) :]:

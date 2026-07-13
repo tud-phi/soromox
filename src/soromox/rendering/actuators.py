@@ -16,7 +16,9 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
-ActuatorVisualKind = Literal["tendon", "muscle", "pneumatic", "cable", "generic"]
+ActuatorVisualKind = Literal[
+    "tendon", "push_rod", "muscle", "pneumatic", "cable", "generic"
+]
 
 
 @dataclass(frozen=True)
@@ -40,7 +42,22 @@ class ActuatorVisualLayer:
     colors: Array | np.ndarray | list | tuple | None = None
     scalar_fields: Mapping[str, Array] = field(default_factory=dict)
 
-    def with_points(self, points: Array) -> "ActuatorVisualLayer":
+    @property
+    def paths(self) -> Array:
+        """Semantic alias for the stored actuator polyline points."""
+        return self.points
+
+    @property
+    def radii(self) -> float | Array | None:
+        """Semantic alias for per-path physical radii."""
+        return self.radius
+
+    @property
+    def scalar_values(self) -> Mapping[str, Array]:
+        """Semantic alias for renderer scalar fields."""
+        return self.scalar_fields
+
+    def with_points(self, points: Array) -> ActuatorVisualLayer:
         """Return a copy with replaced geometry points."""
         return replace(self, points=points)
 
@@ -60,7 +77,7 @@ class BatchedActuatorVisualLayer:
     colors: Array | np.ndarray | list | tuple | None = None
     scalar_fields: Mapping[str, Array] = field(default_factory=dict)
 
-    def with_points(self, points: Array) -> "BatchedActuatorVisualLayer":
+    def with_points(self, points: Array) -> BatchedActuatorVisualLayer:
         """Return a copy with replaced geometry points."""
         return replace(self, points=points)
 
@@ -80,7 +97,7 @@ class TrajectoryActuatorVisualLayer:
     colors: Array | np.ndarray | list | tuple | None = None
     scalar_fields: Mapping[str, Array] = field(default_factory=dict)
 
-    def with_points(self, points: Array) -> "TrajectoryActuatorVisualLayer":
+    def with_points(self, points: Array) -> TrajectoryActuatorVisualLayer:
         """Return a copy with replaced geometry points."""
         return replace(self, points=points)
 
@@ -248,7 +265,9 @@ def _colormap_values(values: np.ndarray, colormap: str) -> np.ndarray:
 
 
 def resolve_actuator_rgba(
-    layer: ActuatorVisualLayer | BatchedActuatorVisualLayer | TrajectoryActuatorVisualLayer,
+    layer: ActuatorVisualLayer
+    | BatchedActuatorVisualLayer
+    | TrajectoryActuatorVisualLayer,
     *,
     default_color: tuple[float, float, float],
     scalar_field: str | None = None,

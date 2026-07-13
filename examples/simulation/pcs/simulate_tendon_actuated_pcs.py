@@ -7,6 +7,11 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from diffrax import Tsit5
 
+from soromox.actuation import (
+    ThreadlikeActuator,
+    ThreadlikeImpedance,
+    ThreadlikeRouting,
+)
 from soromox.rendering import (
     ActuatorStyleConfig,
     MatplotlibRenderer,
@@ -15,12 +20,9 @@ from soromox.rendering import (
     ViserRenderer,
 )
 from soromox.systems import (
-    LinearTendonRoutingParams,
-    PassiveTendonParams,
+    PCS,
     PCSParams,
     SystemState,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -47,36 +49,36 @@ if __name__ == "__main__":
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),
     )
-    active_tendon_routing = LinearTendonRoutingParams(
+    active_tendon_routing = ThreadlikeRouting.linear(
         y_intercept=2e-2 * jnp.array([1.0, -1.0]),
         z_intercept=2e-2 * jnp.array([0.0, 0.0]),
         y_slope=jnp.array([0.0, 0.0]),
         z_slope=jnp.array([0.0, 0.0]),
-        attachment_segment_index=jnp.array([1, 0]),
+        start_segment_index=0,
+        end_segment_index=(1, 0),
     )
-    passive_tendon_routing = LinearTendonRoutingParams(
+    passive_tendon_routing = ThreadlikeRouting.linear(
         y_intercept=2e-2 * jnp.array([0.0]),
         z_intercept=2e-2 * jnp.array([1.0]),
         y_slope=jnp.array([0.0]),
         z_slope=jnp.array([0.0]),
-        attachment_segment_index=jnp.array([1]),
+        start_segment_index=0,
+        end_segment_index=(1,),
     )
-    passive_tendon = PassiveTendonParams(
+    passive_tendon = ThreadlikeImpedance(
+        routing=passive_tendon_routing,
         stiffness=jnp.array([0.6]),
         damping=jnp.array([0.1]),
-        rest_length_offset=jnp.array([-0.3]),
+        rest_length=jnp.array([jnp.sum(segment_lengths) - 0.3]),
     )
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
-            passive_tendon_routing=passive_tendon_routing,
-            passive_tendon=passive_tendon,
-        ),
+    robot = PCS(
+        params=body_params,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
+        passive_elements=(passive_tendon,),
     )
 
     # =====================================================
@@ -94,7 +96,7 @@ if __name__ == "__main__":
     qd0 = jnp.zeros_like(q0)
 
     # Actuation parameters
-    u = jnp.array([-0.5, -1.0])
+    u = jnp.array([0.5, 1.0])
     print("u =\n", u)
 
     # Actuation matrix
@@ -103,27 +105,27 @@ if __name__ == "__main__":
     print(A)
 
     # Coupling matrix of the passive tendons
-    P = robot.jacobian_passive_tendon(q0).T
+    P = robot._threadlike_moment_matrix(q0, passive_tendon_routing).T
     print("P =\n", P.shape)
     print(P)
 
     # Active tendon lengths
-    la = robot.active_tendon_length(q0)
+    la = robot.actuators[0].path_lengths(robot, q0)
     print("la =\n", la.shape)
     print(la)
 
     # Passive tendon lengths
-    lp = robot.passive_tendon_length(q0)
+    lp = robot._threadlike_path_lengths(q0, passive_tendon_routing)
     print("lp =\n", lp.shape)
     print(lp)
 
     # Active tendons' position
-    ta_s = robot.forward_kinematics_active_tendons(q0, robot.L_cum[-1])
+    ta_s = robot.actuators[0].path_poses(robot, q0, robot.L_cum[-1])
     print("ta_s =\n", ta_s.shape)
     print(ta_s)
 
     # Passive tendons' position
-    tp_s = robot.forward_kinematics_passive_tendons(q0, robot.L_cum[-1])
+    tp_s = robot._threadlike_path_positions(q0, robot.L_cum[-1], passive_tendon_routing)
     print("tp_s =\n", tp_s.shape)
     print(tp_s)
 

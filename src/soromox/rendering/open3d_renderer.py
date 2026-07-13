@@ -1203,7 +1203,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             for layer_idx, layer in enumerate(scene_data.actuator_layers):
                 colors = resolve_actuator_rgba(
                     layer,
-                    default_color=cfg.actuators.default_color,
+                    default_color=cfg.actuators.color_for_kind(layer.kind),
                     scalar_colormap=cfg.actuators.scalar_colormap,
                 )
                 robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
@@ -1810,7 +1810,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             layer_lines: list[list] = []
             colors = resolve_actuator_rgba(
                 layer,
-                default_color=cfg.actuators.default_color,
+                default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
             for robot_idx in range(scene_data.num_robots):
@@ -1896,7 +1896,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         for layer_idx, layer in enumerate(scene_data.actuator_layers):
             colors = resolve_actuator_rgba(
                 layer,
-                default_color=cfg.actuators.default_color,
+                default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
             for robot_idx, robot_lines in enumerate(handles.actuator_lines[layer_idx]):

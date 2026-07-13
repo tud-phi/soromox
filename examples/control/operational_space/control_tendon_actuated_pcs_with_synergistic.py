@@ -18,6 +18,7 @@ import matplotlib.pyplot as plt
 
 jax.config.update("jax_enable_x64", True)  # Double precision
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.control import (
     OperationalSpaceSynergisticController,
     PIDControl,
@@ -27,11 +28,9 @@ from soromox.control import (
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PCS,
     PCSParams,
     SystemState,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 
@@ -64,22 +63,21 @@ def main():
     # Tendons
     theta = jnp.pi / 32
     dtheta = jnp.pi / 3
-    active_tendon_routing = LinearTendonRoutingParams(
+    active_tendon_routing = ThreadlikeRouting.linear(
         y_intercept=1.8e-2
         * jnp.cos(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
         z_intercept=1.8e-2
         * jnp.sin(jnp.array([theta, theta + 2 * dtheta, theta + 4 * dtheta])),
         y_slope=jnp.zeros(3),
         z_slope=jnp.zeros(3),
-        attachment_segment_index=jnp.array([1, 1, 1]),
+        start_segment_index=0,
+        end_segment_index=(1, 1, 1),
     )
 
     # Initialize robot
-    robot = TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
-        ),
+    robot = PCS(
+        params=body_params,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
     num_dofs = robot.num_active_strains
     total_length = float(jnp.sum(segment_lengths))

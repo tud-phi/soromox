@@ -1,5 +1,9 @@
 # Parameters
 
+Actuator and passive-element parameters follow the same immutable replacement
+style through indexed robot delegates. See
+[Actuation parameter updates](../actuation/index.md#parameter-updates).
+
 System parameters are represented as typed Equinox PyTrees. Shared base classes
 and cross-system tendon params live in `soromox.systems.params`; concrete params
 and structures live next to their system family, for example

@@ -95,7 +95,12 @@ class BaseSoftRobotRenderer(ABC):
         # Total robot length
         self.L_max = float(jnp.asarray(robot.length))
 
-        self._has_actuator_visual_layers = hasattr(robot, "actuator_visual_layers")
+        # SoftRobot defines the formal single-configuration actuator visual
+        # contract. The callable check keeps lightweight renderer test doubles
+        # and third-party robot adapters usable without class-name checks.
+        self._has_actuator_visual_layers = callable(
+            getattr(robot, "actuator_visual_layers", None)
+        )
         self._has_batched_actuator_visual_layers = hasattr(
             robot, "actuator_visual_layers_batched"
         )

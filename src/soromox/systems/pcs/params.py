@@ -1,8 +1,6 @@
 __all__ = [
     "PCSParams",
     "PlanarPCSParams",
-    "TendonActuatedPCSParams",
-    "TendonActuatedPlanarPCSParams",
     "PressureActuatedPlanarPCSParams",
     "ISupportParams",
 ]
@@ -15,10 +13,6 @@ from jax import Array
 
 from soromox.systems.params import (
     BaseContinuumSoftRobotParams,
-    BaseSystemParams,
-    BaseTendonRoutingParams,
-    LinearTendonRoutingParams,
-    PassiveTendonParams,
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
@@ -148,67 +142,6 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
         _require_shape("shear_modulus", self.shear_modulus, (n_segments,))
         _validate_damping_input(self, strain_dim=3, n_segments=n_segments)
         validate_planar_base_pose("base_pose", self.base_pose)
-
-
-class TendonActuatedPCSParams(BaseSystemParams):
-    """Dynamic parameters for spatial tendon-actuated PCS.
-
-    ``body`` contains the underlying PCS dynamic parameters. Active and passive
-    tendon routing fields are batched by tendon; passive impedance fields are
-    batched by passive tendon and must have the same leading length as
-    ``passive_tendon_routing``.
-    """
-
-    body: PCSParams
-    active_tendon_routing: BaseTendonRoutingParams
-    passive_tendon_routing: BaseTendonRoutingParams = eqx.field(
-        default_factory=LinearTendonRoutingParams.empty
-    )
-    passive_tendon: PassiveTendonParams = eqx.field(
-        default_factory=PassiveTendonParams.empty
-    )
-
-    def validate(self) -> None:
-        self.body.validate()
-        self.active_tendon_routing.validate()
-        self.passive_tendon_routing.validate()
-        self.passive_tendon.validate()
-        if self.passive_tendon.num_tendons != self.passive_tendon_routing.num_tendons:
-            raise ValueError(
-                "passive_tendon must have one impedance entry per "
-                "passive_tendon_routing entry."
-            )
-
-
-class TendonActuatedPlanarPCSParams(BaseSystemParams):
-    """Dynamic parameters for planar tendon-actuated PCS.
-
-    ``body`` contains the underlying planar PCS dynamic parameters. Active and
-    passive tendon routing fields are batched by tendon; attachment segment
-    indices define which planar segment each tendon reaches. Passive tendon
-    impedance fields are batched by passive tendon and must have the same
-    leading length as ``passive_tendon_routing``.
-    """
-
-    body: PlanarPCSParams
-    active_tendon_routing: BaseTendonRoutingParams
-    passive_tendon_routing: BaseTendonRoutingParams = eqx.field(
-        default_factory=LinearTendonRoutingParams.empty
-    )
-    passive_tendon: PassiveTendonParams = eqx.field(
-        default_factory=PassiveTendonParams.empty
-    )
-
-    def validate(self) -> None:
-        self.body.validate()
-        self.active_tendon_routing.validate()
-        self.passive_tendon_routing.validate()
-        self.passive_tendon.validate()
-        if self.passive_tendon.num_tendons != self.passive_tendon_routing.num_tendons:
-            raise ValueError(
-                "passive_tendon must have one impedance entry per "
-                "passive_tendon_routing entry."
-            )
 
 
 class PressureActuatedPlanarPCSParams(PlanarPCSParams):
