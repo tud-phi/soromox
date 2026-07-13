@@ -4,7 +4,9 @@
 
 ## Overview
 
-`ISupport` is a specialized PCS implementation for 3D pneumatic soft robots with chamber-based actuation. It extends the base `PCS` class with:
+`ISupport` is a specialized tendon-actuated PCS implementation for 3D pneumatic
+soft robots. Each pressure chamber is represented internally by a straight,
+segment-local virtual tendon:
 
 - **3 chambers per segment**: Radially arranged pneumatic chambers
 - **Pressure-based control**: Direct pressure input for actuation
@@ -91,6 +93,8 @@ params = ISupportParams(
     chamber_outer_radius=jnp.array([7.79e-3]),
     chamber_distance=jnp.array([20e-3]),
     chamber_azimuth_angles=(2.0 * jnp.pi * jnp.arange(3) / 3)[None, :],
+    # Optional override. The default is pi * (r_outer**2 - r_inner**2).
+    chamber_effective_pressure_area=None,
 )
 robot = ISupport(
     params,
@@ -137,7 +141,28 @@ order differs from that default.
 
 ### Actuation Mapping
 
-Pressure inputs are mapped to strains via the actuation basis matrix, converting chamber pressures to the 6 strain components (curvatures and linear strains).
+The control input remains chamber pressure in pascals. For chamber `k`, the
+model converts pressure to a virtual tendon force using
+
+`f_k = p_k * A_k`.
+
+`chamber_effective_pressure_area` has shape `(num_pneumatic_segments,)`; one
+area is shared by all chambers in a pneumatic segment. If it is omitted, the
+model uses
+
+`A = pi * (chamber_outer_radius**2 - chamber_inner_radius**2)`.
+
+The pressure actuation matrix is the configuration-dependent, length-integrated
+`TendonActuatedPCS` matrix with each column scaled by its effective pressure
+area. Virtual tendons contribute only to the PCS children of their own
+pneumatic segment, so pressure sections remain independent. Consequently, this
+matrix intentionally differs from the former configuration-independent local
+wrench approximation.
+
+The pressure-conjugate actuation coordinates are available through
+`robot.chamber_volumes(q)` and `robot.actuated_coordinates(q)`. They are modeled
+as effective area times virtual tendon length, and their Jacobian is the
+transpose of the pressure actuation matrix.
 
 ## API Reference
 

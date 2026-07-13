@@ -246,10 +246,14 @@ class ISupportParams(PCSParams):
     azimuth is right-handed about local +X, measured from +Y toward +Z; array
     index ``j`` is pressure channel ``j``. If ``chamber_azimuth_angles`` is
     omitted, ``ISupport`` uses 0, 120, and 240 degrees for every pneumatic
-    segment. Damping can be supplied as ``material_damping_coefficient`` or as a
-    full ``damping_matrix``. A custom ``damping_matrix`` is expressed in flattened
-    pneumatic-segment strain coordinates and must be block diagonal by pneumatic
-    segment when the model is constructed.
+    segment. ``chamber_effective_pressure_area`` converts each chamber pressure
+    to its virtual tendon force. It contains one value per pneumatic segment and
+    is shared by all chambers in that segment. When omitted, it is derived as
+    ``pi * (chamber_outer_radius**2 - chamber_inner_radius**2)``. Damping can be
+    supplied as ``material_damping_coefficient`` or as a full ``damping_matrix``.
+    A custom ``damping_matrix`` is expressed in flattened pneumatic-segment
+    strain coordinates and must be block diagonal by pneumatic segment when the
+    model is constructed.
 
     ``pcs_segment_lengths`` optionally stores flattened PCS segment lengths in
     the order defined by ``ISupportStructure.pcs_segment_counts``. If omitted,
@@ -265,6 +269,7 @@ class ISupportParams(PCSParams):
     chamber_distance: Array
     chamber_azimuth_angles: Array | None = None
     pcs_segment_lengths: Array | None = None
+    chamber_effective_pressure_area: Array | None = None
 
     def validate(self) -> None:
         super().validate()
@@ -285,6 +290,36 @@ class ISupportParams(PCSParams):
             "chamber_distance",
         ):
             _require_shape(name, getattr(self, name), (n_pneumatic_segments,))
+
+        chamber_outer_radius = jnp.asarray(self.chamber_outer_radius)
+        if not bool(
+            jnp.all(
+                jnp.isfinite(chamber_inner_radius) & jnp.isfinite(chamber_outer_radius)
+            )
+        ):
+            raise ValueError("chamber radii entries must be finite")
+        if not bool(
+            jnp.all(
+                (chamber_inner_radius >= 0.0)
+                & (chamber_outer_radius > chamber_inner_radius)
+            )
+        ):
+            raise ValueError(
+                "chamber radii must satisfy 0 <= chamber_inner_radius < "
+                "chamber_outer_radius"
+            )
+
+        if self.chamber_effective_pressure_area is not None:
+            effective_area = jnp.asarray(self.chamber_effective_pressure_area)
+            _require_shape(
+                "chamber_effective_pressure_area",
+                effective_area,
+                (n_pneumatic_segments,),
+            )
+            if not bool(jnp.all(jnp.isfinite(effective_area) & (effective_area > 0.0))):
+                raise ValueError(
+                    "chamber_effective_pressure_area entries must be finite and positive"
+                )
 
         if self.chamber_azimuth_angles is not None:
             angles = jnp.asarray(self.chamber_azimuth_angles)

@@ -16,6 +16,7 @@ from soromox.systems import (
     PlanarPCSStructure,
     PressureActuatedPlanarPCS,
     PressureActuatedPlanarPCSParams,
+    TendonActuatedPCS,
 )
 
 
@@ -65,14 +66,25 @@ def make_pneumatic_isupport_structure(num_segments=1, **kwargs):
     )
 
 
-def expected_isupport_segment_actuation(params, segment_idx, num_chambers=3):
-    chamber_area = jnp.pi * params.chamber_inner_radius[segment_idx] ** 2
-    chamber_distance = params.chamber_distance[segment_idx]
-    chamber_angles = params.chamber_azimuth_angles[segment_idx]
+def expected_isupport_segment_actuation(
+    params, pneumatic_segment_idx, segment_length=None, num_chambers=3
+):
+    if params.chamber_effective_pressure_area is None:
+        chamber_area = jnp.pi * (
+            params.chamber_outer_radius[pneumatic_segment_idx] ** 2
+            - params.chamber_inner_radius[pneumatic_segment_idx] ** 2
+        )
+    else:
+        chamber_area = params.chamber_effective_pressure_area[pneumatic_segment_idx]
+    if segment_length is None:
+        segment_length = params.length[pneumatic_segment_idx]
+    chamber_distance = params.chamber_distance[pneumatic_segment_idx]
+    chamber_angles = params.chamber_azimuth_angles[pneumatic_segment_idx]
     expected_columns = []
     for angle in chamber_angles:
         expected_columns.append(
-            jnp.array(
+            segment_length
+            * jnp.array(
                 [
                     0.0,
                     chamber_distance * jnp.sin(angle) * chamber_area,
@@ -275,9 +287,108 @@ def test_isupport_actuation_matrix_matches_per_segment_chamber_model():
     assert actuation_matrix.shape == (6, robot.num_chambers_per_segment)
     assert jnp.allclose(
         actuation_matrix,
-        expected_isupport_segment_actuation(params, 0, robot.num_chambers_per_segment),
+        expected_isupport_segment_actuation(
+            params, 0, num_chambers=robot.num_chambers_per_segment
+        ),
     )
     assert jnp.all(jnp.linalg.norm(actuation_matrix, axis=0) > 0.0)
+
+
+def test_isupport_inherits_tendon_actuation_and_resolves_pressure_area():
+    params = make_isupport_params()
+    robot = ISupport(
+        params=params,
+        structure=make_pneumatic_isupport_structure(num_gauss_points=2),
+    )
+
+    expected_area = jnp.pi * (
+        params.chamber_outer_radius**2 - params.chamber_inner_radius**2
+    )
+    assert isinstance(robot, TendonActuatedPCS)
+    assert isinstance(robot.params, ISupportParams)
+    assert robot.n_p == 0
+    assert robot.active_tendon_routing.num_tendons == robot.num_actuators
+    assert jnp.allclose(robot.chamber_effective_pressure_area, expected_area)
+    assert jnp.allclose(
+        robot.virtual_tendon_force(jnp.ones((robot.num_actuators,))),
+        jnp.repeat(expected_area, robot.num_chambers_per_segment),
+    )
+    assert (
+        robot.actuator_visual_layers(
+            jnp.zeros((robot.num_dofs,)), jnp.linspace(0.0, robot.length, 5)
+        )
+        == ()
+    )
+
+
+def test_isupport_pressure_force_and_volume_coordinate_consistency():
+    params = make_isupport_params().replace(
+        chamber_effective_pressure_area=jnp.array([2.5e-5])
+    )
+    robot = ISupport(
+        params=params,
+        structure=make_pneumatic_isupport_structure(num_gauss_points=3),
+    )
+    q = jnp.array([0.2, -0.1, 0.15, 0.03, 0.04, -0.02])
+    pressure = jnp.array([1.0e4, 2.0e4, 3.0e4])
+
+    tendon_matrix = robot._actuation_matrix(
+        q,
+        robot.active_tendon_routing,
+        robot.active_d_s,
+        robot.active_dd_s_ds,
+    )
+    tendon_force = robot.virtual_tendon_force(pressure)
+    assert jnp.allclose(tendon_force, pressure * 2.5e-5)
+    assert jnp.allclose(
+        robot.actuation_force(q, pressure), tendon_matrix @ tendon_force
+    )
+    assert jnp.allclose(
+        jax.jacobian(robot.chamber_volumes)(q),
+        robot.actuation_matrix(q).T,
+        rtol=1e-7,
+        atol=1e-10,
+    )
+    assert not jnp.allclose(
+        robot.actuation_matrix(q),
+        robot.actuation_matrix(jnp.zeros_like(q)),
+        rtol=1e-7,
+        atol=1e-12,
+    )
+
+
+def test_isupport_pressure_area_validation_and_update_semantics():
+    params = make_isupport_params()
+    structure = make_pneumatic_isupport_structure(num_gauss_points=1)
+    robot = ISupport(params=params, structure=structure)
+
+    updated_derived = robot.update_params(
+        chamber_outer_radius=jnp.array([0.005]),
+        chamber_distance=jnp.array([0.012]),
+    )
+    assert updated_derived.params.chamber_effective_pressure_area is None
+    assert jnp.allclose(
+        updated_derived.chamber_effective_pressure_area,
+        jnp.pi * (0.005**2 - params.chamber_inner_radius**2),
+    )
+    assert jnp.allclose(updated_derived.active_tendon_routing.y_intercept[0], 0.012)
+
+    explicit_area = jnp.array([7.5e-5])
+    explicit_robot = ISupport(
+        params.replace(chamber_effective_pressure_area=explicit_area),
+        structure=structure,
+    )
+    updated_explicit = explicit_robot.update_params(
+        chamber_outer_radius=jnp.array([0.005])
+    )
+    assert jnp.allclose(updated_explicit.chamber_effective_pressure_area, explicit_area)
+
+    with pytest.raises(ValueError, match="chamber radii"):
+        params.replace(chamber_outer_radius=params.chamber_inner_radius).validate()
+    with pytest.raises(ValueError, match="chamber_effective_pressure_area"):
+        params.replace(chamber_effective_pressure_area=jnp.array([-1.0])).validate()
+    with pytest.raises(ValueError, match="shape"):
+        params.replace(chamber_effective_pressure_area=jnp.array([1.0, 2.0])).validate()
 
 
 def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
@@ -298,8 +409,12 @@ def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
 
     actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
     num_chambers = robot.num_chambers_per_segment
-    expected_segment_0 = expected_isupport_segment_actuation(params, 0, num_chambers)
-    expected_segment_1 = expected_isupport_segment_actuation(params, 1, num_chambers)
+    expected_segment_0 = expected_isupport_segment_actuation(
+        params, 0, num_chambers=num_chambers
+    )
+    expected_segment_1 = expected_isupport_segment_actuation(
+        params, 1, num_chambers=num_chambers
+    )
 
     assert robot.num_actuators == 2 * num_chambers
     assert actuation_matrix.shape == (12, robot.num_actuators)
@@ -508,14 +623,21 @@ def test_isupport_actuation_groups_pressures_after_generalized_expansion():
     assert actuation_matrix.shape == (18, 2 * num_chambers)
     assert jnp.allclose(
         actuation_matrix[:6, :num_chambers],
-        expected_isupport_segment_actuation(params, 0, num_chambers),
+        expected_isupport_segment_actuation(
+            params, 0, segment_length=0.04, num_chambers=num_chambers
+        ),
     )
     assert jnp.allclose(
-        actuation_matrix[6:12, :num_chambers], actuation_matrix[:6, :num_chambers]
+        actuation_matrix[6:12, :num_chambers],
+        expected_isupport_segment_actuation(
+            params, 0, segment_length=0.06, num_chambers=num_chambers
+        ),
     )
     assert jnp.allclose(
         actuation_matrix[12:, num_chambers:],
-        expected_isupport_segment_actuation(params, 1, num_chambers),
+        expected_isupport_segment_actuation(
+            params, 1, segment_length=0.20, num_chambers=num_chambers
+        ),
     )
 
 
