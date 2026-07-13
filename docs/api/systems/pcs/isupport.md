@@ -4,7 +4,10 @@
 
 ## Overview
 
-`ISupport` is a specialized PCS implementation for 3D pneumatic soft robots with chamber-based actuation. It extends the base `PCS` class with:
+`ISupport` is a specialized PCS implementation for 3D pneumatic soft robots.
+Its pressure chambers use the common threadlike-actuation model: each physical
+chamber is represented by a straight, segment-local equivalent path through the
+deformable pneumatic section.
 
 - **3 chambers per segment**: Radially arranged pneumatic chambers
 - **Pressure-based control**: Direct pressure input for actuation
@@ -137,7 +140,41 @@ order differs from that default.
 
 ### Actuation Mapping
 
-Pressure inputs are mapped to strains via the actuation basis matrix, converting chamber pressures to the 6 strain components (curvatures and linear strains).
+Pressure remains the user control and is measured in pascals. The work
+coordinate of chamber `k` is the equivalent chamber volume
+
+```text
+V_k(q) = A_eff,k * length_k(q),
+```
+
+so the pressure actuation matrix is
+
+```text
+A(q) = (dV/dq)^T = (d length/dq)^T diag(A_eff).
+```
+
+This is the same distributed virtual-path model introduced in PR #116, now
+expressed through `ThreadlikeActuator.pressure_chambers(...)`. It is
+configuration-dependent and integrates the path contribution along every PCS
+child belonging to the physical pneumatic section. A chamber never crosses a
+rigid connector or contributes to another pneumatic section.
+
+`chamber_effective_pressure_area` has one entry per physical pneumatic section
+and is shared by its pressure channels. If omitted, the model uses the annular
+area
+
+```text
+A_eff = pi * (chamber_outer_radius**2 - chamber_inner_radius**2).
+```
+
+The pressure-conjugate coordinates are available as
+`robot.chamber_volumes(q)` or `robot.actuator_coordinates(q)`. The helper
+`robot.virtual_tendon_force(pressure)` returns `pressure * A_eff` for comparison
+with the equivalent routed axial-force interpretation.
+
+I-SUPPORT's specialized renderer continues to draw the detailed bellows and
+accepts `actuator_inputs=` (with `pressures=` as a mutually exclusive alias).
+The internal equivalent paths are not drawn as generic pneumatic tubes.
 
 ## API Reference
 
