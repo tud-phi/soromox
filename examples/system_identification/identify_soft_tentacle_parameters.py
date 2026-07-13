@@ -522,7 +522,7 @@ if __name__ == "__main__":
     ]
     measured_markers_batch = jnp.stack(measured_list, axis=1)
     radius = 0.0325
-    # The tendon preset embeds z = -length, so positive controls are tensions.
+    # The tendon preset embeds y_a = -length, so positive controls are tensions.
     levels = jnp.array([0.1, 0.15, 0.2, 0.25], dtype=jnp.float64) / radius  # (4,)
 
     u_m1 = jnp.stack(

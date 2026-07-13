@@ -36,7 +36,7 @@ class ActuationSpaceDynamics(eqx.Module):
     configuration space. They are accessed through the robot's
     `actuator_coordinates` method. The Jacobian of this
     map is the transpose of the actuation matrix:
-        J_actuated = dz/dq = A_at^T
+        J_actuated = dy_a/dq = A_at^T
 
     The unactuated coordinates can be specified by the user or computed via basis
     expansion using QR decomposition to find a set of linearly independent coordinates.
