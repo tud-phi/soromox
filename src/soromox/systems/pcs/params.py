@@ -1,7 +1,6 @@
 __all__ = [
     "PCSParams",
     "PlanarPCSParams",
-    "PressureActuatedPlanarPCSParams",
     "ISupportParams",
 ]
 
@@ -142,31 +141,6 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
         _require_shape("shear_modulus", self.shear_modulus, (n_segments,))
         _validate_damping_input(self, strain_dim=3, n_segments=n_segments)
         validate_planar_base_pose("base_pose", self.base_pose)
-
-
-class PressureActuatedPlanarPCSParams(PlanarPCSParams):
-    """Dynamic parameters for pressure-actuated planar PCS.
-
-    Chamber geometry arrays describe the per-segment chamber layout and can be
-    updated without changing the strain layout as long as their shapes are
-    unchanged.
-    """
-
-    chamber_inner_radius: Array
-    chamber_outer_radius: Array
-    chamber_angle: Array
-    chamber_distance: Array
-
-    def validate(self) -> None:
-        super().validate()
-        n_segments = self.length.shape[0]
-        for name in (
-            "chamber_inner_radius",
-            "chamber_outer_radius",
-            "chamber_angle",
-            "chamber_distance",
-        ):
-            _require_shape(name, getattr(self, name), (n_segments,))
 
 
 class ISupportParams(PCSParams):

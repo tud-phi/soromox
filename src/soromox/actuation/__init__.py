@@ -10,7 +10,6 @@ from .core import (
     PassiveElement,
     Transmission,
 )
-from .tendon_actuation import linear_routing, linear_routing_arc_length_derivative
 from .threadlike import (
     BaseThreadlikeRoutingParams,
     LinearThreadlikeRoutingParams,
@@ -45,8 +44,6 @@ __all__ = [
     "ThreadlikeTransmission",
     "ThreadlikeTransmissionParams",
     "Transmission",
-    "linear_routing",
-    "linear_routing_arc_length_derivative",
     "linear_threadlike_routing",
     "linear_threadlike_routing_derivative",
 ]

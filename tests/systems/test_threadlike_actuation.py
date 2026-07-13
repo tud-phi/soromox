@@ -302,6 +302,11 @@ def test_passive_impedance_superposition_and_parameter_updates():
     )
     robot = _spatial_pcs(actuators=(), passive_elements=(impedance,))
     q = jnp.linspace(-0.01, 0.02, robot.num_dofs)
+    q_dot = jnp.linspace(0.02, -0.01, robot.num_dofs)
+
+    path_jacobian = jax.jacrev(lambda q_: impedance.path_lengths(robot, q_))(q)
+    assert_allclose(impedance.path_velocities(robot, q, q_dot), path_jacobian @ q_dot)
+    assert impedance.path_poses(robot, q, robot.length).shape == (1, 3)
 
     energy_gradient = jax.grad(robot.passive_elastic_energy)(q)
     assert_allclose(

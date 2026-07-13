@@ -30,9 +30,6 @@ from soromox.systems import (
     PlanarHSAParams,
     PlanarHSAStructure,
     PlanarPCS,
-    PlanarPCSStructure,
-    PressureActuatedPlanarPCS,
-    PressureActuatedPlanarPCSParams,
     TendonActuatedPendulum,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
@@ -149,20 +146,6 @@ def _planar_tendon_routing(num_segments):
     )
 
 
-def _pressure_planar_robot():
-    body = _planar_pcs_params([0.08, 0.12])
-    params = PressureActuatedPlanarPCSParams(
-        **body.__dict__,
-        chamber_inner_radius=jnp.array([0.002, 0.002], dtype=jnp.float64),
-        chamber_outer_radius=jnp.array([0.004, 0.004], dtype=jnp.float64),
-        chamber_angle=jnp.array([jnp.pi / 3.0, jnp.pi / 3.0], dtype=jnp.float64),
-        chamber_distance=jnp.array([0.01, 0.01], dtype=jnp.float64),
-    )
-    return PressureActuatedPlanarPCS(
-        params=params, structure=PlanarPCSStructure(num_gauss_points=1)
-    )
-
-
 def _isupport_robot():
     body = _pcs_params([0.08, 0.12])
     params = ISupportParams(
@@ -229,7 +212,6 @@ def _planar_hsa_robot():
             params=_planar_pcs_params([0.08, 0.12, 0.2]),
             actuators=ThreadlikeActuator.tendons(_planar_tendon_routing(3)),
         ),
-        _pressure_planar_robot(),
         _isupport_robot(),
         _planar_hsa_robot(),
     ],

@@ -75,7 +75,6 @@ nav:
             - Overview: api/systems/pcs/index.md
             - PCS (Spatial): api/systems/pcs/pcs.md
             - Planar PCS: api/systems/pcs/planar-pcs.md
-            - Pressure Actuated Planar PCS: api/systems/pcs/pressure-actuated-planar-pcs.md
             - I-Support: api/systems/pcs/isupport.md
           - GVS Systems:
             - Overview: api/systems/gvs/index.md

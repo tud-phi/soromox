@@ -1811,7 +1811,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Args:
             ts: Time array (T,)
             q_ts: Configuration array (T, DOF)
-            robot: Robot instance with actuated_coordinates or tendon_length method
+            robot: Robot instance with an ``actuated_coordinates`` method
             robot_name: Name for the plot title
 
         Returns:
@@ -1820,16 +1820,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if go is None:
             raise ImportError("plotly is required. Install with: pip install plotly")
 
-        if hasattr(robot, "actuated_coordinates"):
-            coordinate_fn = robot.actuated_coordinates
-            yaxis_title = "Actuated coordinate"
-        elif hasattr(robot, "tendon_length"):
-            coordinate_fn = robot.tendon_length
-            yaxis_title = "Actuator length [m]"
-        else:
-            raise AttributeError(
-                "Robot does not have actuated_coordinates or tendon_length method"
-            )
+        if not hasattr(robot, "actuated_coordinates"):
+            raise AttributeError("Robot does not have an actuated_coordinates method")
+        coordinate_fn = robot.actuated_coordinates
+        yaxis_title = "Actuated coordinate"
 
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)

@@ -4,8 +4,6 @@ __all__ = [
     "BaseSoftRobotParams",
     "BaseContinuumSoftRobotParams",
     "BaseArticulatedSoftRobotParams",
-    "BaseTendonRoutingParams",
-    "LinearTendonRoutingParams",
     "PassiveTendonParams",
     "validate_planar_base_pose",
     "validate_quaternion_base_pose",
@@ -98,25 +96,6 @@ def validate_quaternion_base_pose(
         )
 
 
-def _attachment_segment_index(value: Any) -> int | tuple[int, ...]:
-    """Convert concrete tendon attachment indices to static Python metadata."""
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, tuple):
-        return tuple(int(idx) for idx in value)
-    if isinstance(value, list):
-        return tuple(int(idx) for idx in value)
-
-    array = jnp.asarray(value)
-    if array.ndim == 0:
-        return int(array.item())
-    if array.ndim != 1:
-        raise ValueError(
-            "attachment_segment_index must be a scalar or one-dimensional sequence."
-        )
-    return tuple(int(idx) for idx in array.tolist())
-
-
 class BaseSystemParams(eqx.Module):
     """Base class for dynamic system parameters stored as JAX PyTrees."""
 
@@ -180,9 +159,7 @@ class BaseSoftRobotParams(BaseSystemParams):
     @classmethod
     def _require_planarity(cls) -> bool:
         if cls.is_planar is None:
-            raise TypeError(
-                f"{cls.__name__} must declare is_planar as True or False."
-            )
+            raise TypeError(f"{cls.__name__} must declare is_planar as True or False.")
         return cls.is_planar
 
     @classmethod
@@ -305,143 +282,6 @@ class BaseArticulatedSoftRobotParams(BaseSoftRobotParams):
     joint_stiffness: Array
     joint_damping: Array
     joint_rest_configuration: Array
-
-
-class BaseTendonRoutingParams(BaseSystemParams):
-    """Base class for batched tendon routing parameter sets.
-
-    A tendon routing params object represents all tendons of one routing family.
-    The leading axis of every array indexes tendon number; changing this axis
-    changes the actuator layout and requires model reconstruction.
-    """
-
-    @property
-    def num_tendons(self) -> int:
-        raise NotImplementedError
-
-    @property
-    def attachment_segment_indices(self) -> tuple[int, ...]:
-        """Attachment segment indices as concrete topology metadata."""
-        raise NotImplementedError
-
-    @property
-    def attachment_segment_index_array(self) -> Array:
-        """Attachment segment indices as a JAX array for vectorized computations."""
-        return jnp.asarray(self.attachment_segment_indices, dtype=jnp.int32)
-
-    def validate_attachment_segments(self, num_segments: int, name: str) -> None:
-        """Validate static attachment indices against a concrete robot layout."""
-        for idx in self.attachment_segment_indices:
-            if idx >= num_segments:
-                raise ValueError(
-                    f"{name}.attachment_segment_index values must be strictly lower "
-                    f"than the number of segments of the robot. Got {idx}; "
-                    f"num_segments = {num_segments}."
-                )
-
-    def assert_same_attachment_segments(
-        self, other: "BaseTendonRoutingParams", name: str
-    ) -> None:
-        """Reject runtime topology changes hidden inside same-shape params."""
-        if self.attachment_segment_indices != other.attachment_segment_indices:
-            raise ValueError(
-                f"Changing {name}.attachment_segment_index changes tendon topology; "
-                "construct a new system."
-            )
-
-
-class LinearTendonRoutingParams(BaseTendonRoutingParams):
-    """Batched linear routing parameters for active or passive tendons.
-
-    The continuous routing fields have shape ``(num_tendons,)``. Tendon ``k``
-    has cross-section offsets ``y_intercept[k] + y_slope[k] * s`` and
-    ``z_intercept[k] + z_slope[k] * s``. ``attachment_segment_index`` is static
-    topology metadata: changing it changes which body segments the tendon spans
-    and requires model reconstruction.
-    """
-
-    y_intercept: Array
-    y_slope: Array
-    z_intercept: Array
-    z_slope: Array
-    attachment_segment_index: int | tuple[int, ...] = eqx.field(
-        static=True, converter=_attachment_segment_index
-    )
-
-    @classmethod
-    def empty(cls) -> "LinearTendonRoutingParams":
-        return cls(
-            y_intercept=jnp.array([], dtype=jnp.float64),
-            y_slope=jnp.array([], dtype=jnp.float64),
-            z_intercept=jnp.array([], dtype=jnp.float64),
-            z_slope=jnp.array([], dtype=jnp.float64),
-            attachment_segment_index=jnp.array([], dtype=jnp.int32),
-        )
-
-    @property
-    def num_tendons(self) -> int:
-        return int(self.y_intercept.shape[0])
-
-    @property
-    def attachment_segment_indices(self) -> tuple[int, ...]:
-        """Attachment segment indices as a tuple, including single-tendon params."""
-        if isinstance(self.attachment_segment_index, tuple):
-            return self.attachment_segment_index
-        return (int(self.attachment_segment_index),)
-
-    def validate(self) -> None:
-        if len(self.y_intercept.shape) != 1:
-            raise ValueError(
-                "LinearTendonRoutingParams fields must be one-dimensional with "
-                "shape (num_tendons,)."
-            )
-        n_tendons = self.y_intercept.shape[0]
-        expected_shape = (n_tendons,)
-        for name in (
-            "y_slope",
-            "z_intercept",
-            "z_slope",
-        ):
-            value = getattr(self, name)
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"{name} must have shape {expected_shape}, got {value.shape}."
-                )
-        indices = self.attachment_segment_indices
-        if len(indices) != n_tendons:
-            raise ValueError(
-                "attachment_segment_index must contain one entry per tendon; "
-                f"expected {n_tendons}, got {len(indices)}."
-            )
-        for idx in indices:
-            if idx < 0:
-                raise ValueError(
-                    f"attachment_segment_index values must be non-negative; got {idx}."
-                )
-
-    def replace(self, **updates: Any) -> "LinearTendonRoutingParams":
-        """Return a copy with selected dynamic routing fields replaced."""
-        if "attachment_segment_index" in updates:
-            new_indices = _attachment_segment_index(
-                updates.pop("attachment_segment_index")
-            )
-            if new_indices != self.attachment_segment_index:
-                raise ValueError(
-                    "Changing attachment_segment_index changes tendon topology; "
-                    "construct a new system."
-                )
-        return super().replace(**updates)
-
-    def routing_for_tendon(self, index: Array) -> "LinearTendonRoutingParams":
-        """Return the scalar-field PyTree for one tendon index."""
-        index = int(index)
-        return LinearTendonRoutingParams(
-            y_intercept=self.y_intercept[index],
-            y_slope=self.y_slope[index],
-            z_intercept=self.z_intercept[index],
-            z_slope=self.z_slope[index],
-            attachment_segment_index=self.attachment_segment_indices[index],
-        )
 
 
 class PassiveTendonParams(BaseSystemParams):

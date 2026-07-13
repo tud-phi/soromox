@@ -38,15 +38,7 @@ pushing rods, simplified muscles, and equivalent pressure chambers use the
 shared [threadlike actuation model](../../actuation/threadlike.md). Passive
 routed mechanics are installed separately with `ThreadlikeImpedance`.
 
-### Pressure Actuated
-
-#### [Pressure Actuated Planar PCS](pressure-actuated-planar-pcs.md)
-
-2D PCS robots with prescribed chamber-pressure actuation.
-
-- Pressure chamber modeling
-- Pressure-based control
-- Configurable chamber geometry
+### Pneumatic actuation
 
 #### [I-Support](isupport.md)
 
@@ -61,7 +53,6 @@ routed mechanics are installed separately with `ThreadlikeImpedance`.
 |--------|-----------|-----------|----------|
 | `PCS` | 3D | Identity or composable | General 3D continuum modeling |
 | `PlanarPCS` | 2D | Identity or composable | General 2D continuum modeling |
-| `PressureActuatedPlanarPCS` | 2D | Pressure | Pressure-driven soft actuators |
 | `ISupport` | 3D | Pneumatic | I-Support robot platform |
 
 ## References

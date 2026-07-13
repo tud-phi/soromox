@@ -8,7 +8,6 @@ from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from system_param_builders import (
     articulated_params,
-    linear_tendon_routing,
     passive_tendon_params,
     pcs_params,
     pendulum_params,
@@ -18,10 +17,6 @@ from system_param_builders import (
 )
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.actuation.tendon_actuation import (
-    linear_routing,
-    linear_routing_arc_length_derivative,
-)
 from soromox.systems import (
     PCS,
     ArticulatedSoftRobotParams,
@@ -556,31 +551,6 @@ def test_grad_differentiates_through_typed_params():
 
     grad_value = jax.grad(energy_for_first_mass)(params.mass[0])
     assert jnp.isfinite(grad_value)
-
-
-def test_linear_tendon_routing_supports_distinct_batched_tendons():
-    routing = linear_tendon_routing(
-        y_intercept=jnp.array([0.01, -0.02], dtype=jnp.float64),
-        y_slope=jnp.array([0.1, 0.0], dtype=jnp.float64),
-        z_intercept=jnp.array([0.0, 0.03], dtype=jnp.float64),
-        z_slope=jnp.array([0.0, -0.2], dtype=jnp.float64),
-        attachment_segment_index=jnp.array([0, 1], dtype=jnp.int32),
-    )
-
-    assert routing.num_tendons == 2
-    positions = linear_routing(routing, jnp.array(0.5, dtype=jnp.float64))
-    derivatives = linear_routing_arc_length_derivative(
-        routing, jnp.array(0.5, dtype=jnp.float64)
-    )
-
-    assert positions.shape == (2, 3)
-    assert derivatives.shape == (2, 3)
-    assert_allclose(positions[0], jnp.array([0.0, 0.06, 0.0]))
-    assert_allclose(positions[1], jnp.array([0.0, -0.02, -0.07]))
-
-    single = routing.routing_for_tendon(1)
-    assert single.y_intercept.shape == ()
-    assert_allclose(linear_routing(single, 0.5), positions[1])
 
 
 def test_passive_tendon_params_store_per_tendon_impedance():

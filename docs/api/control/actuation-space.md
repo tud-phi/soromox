@@ -279,7 +279,8 @@ from soromox.control.actuation_space import (
 from soromox.control import PIDControl
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 
-# Assume `robot` is a soft robot system (e.g., TendonActuatedPlanarPcs)
+# Assume `robot` is a soft robot system with independent actuator coordinates,
+# for example `PlanarPCS(..., actuators=ThreadlikeActuator.tendons(routing))`.
 
 # Create actuation-space dynamics
 asd = ActuationSpaceDynamics(robot=robot)

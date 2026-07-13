@@ -121,18 +121,6 @@ python examples/simulation/pcs/simulate_batched_tendon_actuated_pcs.py
 
 **Key concepts:** Tendon kinematics, actuation space, batch simulation
 
-#### Pressure-Actuated Planar PCS
-```bash
-python examples/simulation/pcs/simulate_pressure_actuated_planar_pcs.py
-```
-
-**What you'll learn:**
-- Pressure actuation modeling
-- Pressure-to-strain mapping
-- Pressure-driven soft robot dynamics
-
-**Key concepts:** Pressure actuation, pressure control
-
 #### I-SUPPORT Manipulator
 ```bash
 python examples/simulation/pcs/simulate_isupport.py

@@ -6,7 +6,6 @@ from soromox.systems import (
     ArticulatedSoftRobotParams,
     GVSParams,
     GVSStructure,
-    LinearTendonRoutingParams,
     PassiveTendonParams,
     PCSParams,
     PendulumParams,
@@ -173,23 +172,6 @@ def articulated_params(
         joint_damping=jnp.asarray(joint_damping),
         joint_rest_configuration=jnp.asarray(joint_rest_configuration),
         radius=jnp.asarray(radius),
-    )
-
-
-def linear_tendon_routing(
-    *,
-    y_intercept: Array,
-    z_intercept: Array,
-    y_slope: Array,
-    z_slope: Array,
-    attachment_segment_index: Array,
-) -> LinearTendonRoutingParams:
-    return LinearTendonRoutingParams(
-        y_intercept=jnp.asarray(y_intercept),
-        z_intercept=jnp.asarray(z_intercept),
-        y_slope=jnp.asarray(y_slope),
-        z_slope=jnp.asarray(z_slope),
-        attachment_segment_index=jnp.asarray(attachment_segment_index, dtype=jnp.int32),
     )
 
 

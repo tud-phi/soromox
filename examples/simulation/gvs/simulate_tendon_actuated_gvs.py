@@ -197,7 +197,7 @@ print("g(s_end) SE(3):\n", g_end)
 # y = jnp.concatenate([q0, q0dot])
 tau_ext = 0 * jnp.ones((dof,))
 
-l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
+l_tendons = robot.actuators[0].path_lengths(robot, q0)
 print("tendon lengths (m):", jax.device_get(l_tendons))
 
 

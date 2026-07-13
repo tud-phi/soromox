@@ -24,15 +24,12 @@ from soromox.systems.params import (
     BaseContinuumSoftRobotParams,
     BaseSoftRobotParams,
     BaseSystemParams,
-    BaseTendonRoutingParams,
-    LinearTendonRoutingParams,
     PassiveTendonParams,
 )
 from soromox.systems.pcs.params import (
     ISupportParams,
     PCSParams,
     PlanarPCSParams,
-    PressureActuatedPlanarPCSParams,
 )
 from soromox.systems.pcs.structures import (
     ISupportStructure,
@@ -62,7 +59,6 @@ from .pcs import (
     PCS,
     ISupport,
     PlanarPCS,
-    PressureActuatedPlanarPCS,
 )
 from .pendulum import Pendulum, TendonActuatedPendulum
 
@@ -81,8 +77,6 @@ __all__ = [
     "BaseSoftRobotParams",
     "BaseContinuumSoftRobotParams",
     "BaseArticulatedSoftRobotParams",
-    "BaseTendonRoutingParams",
-    "LinearTendonRoutingParams",
     "PassiveTendonParams",
     # articulated systems
     "ArticulatedSoftRobot",
@@ -121,6 +115,4 @@ __all__ = [
     "PlanarPCS",
     "PlanarPCSParams",
     "PlanarPCSStructure",
-    "PressureActuatedPlanarPCS",
-    "PressureActuatedPlanarPCSParams",
 ]

@@ -634,11 +634,23 @@ class ThreadlikeImpedance(PassiveElement):
         params.validate()
         return self._from_params(params, name=self.name, routing=self.routing)
 
+    def path_lengths(self, robot, q: Array) -> Array:
+        """Return the raw lengths of the passive routed paths."""
+        return robot._threadlike_path_lengths(q, self.routing)
+
+    def path_velocities(self, robot, q: Array, q_dot: Array) -> Array:
+        """Return the raw length rates of the passive routed paths."""
+        return self._length_jacobian(robot, q) @ q_dot
+
+    def path_poses(self, robot, q: Array, s: Array) -> Array:
+        """Return passive routed-path positions at backbone coordinate ``s``."""
+        return robot._threadlike_path_positions(q, s, self.routing)
+
     def _length_jacobian(self, robot, q: Array) -> Array:
         return robot._threadlike_moment_matrix(q, self.routing).T
 
     def elastic_force(self, robot, q: Array) -> Array:
-        lengths = robot._threadlike_path_lengths(q, self.routing)
+        lengths = self.path_lengths(robot, q)
         jacobian = self._length_jacobian(robot, q)
         return jacobian.T @ (
             self.params.stiffness * (lengths - self.params.rest_length)
@@ -649,9 +661,7 @@ class ThreadlikeImpedance(PassiveElement):
         return jacobian.T @ (self.params.damping[:, None] * jacobian)
 
     def elastic_energy(self, robot, q: Array) -> Array:
-        delta = (
-            robot._threadlike_path_lengths(q, self.routing) - self.params.rest_length
-        )
+        delta = self.path_lengths(robot, q) - self.params.rest_length
         return 0.5 * jnp.sum(self.params.stiffness * delta**2)
 
 

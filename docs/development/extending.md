@@ -1153,7 +1153,7 @@ New actuator modalities should implement the composable `Transmission` and
 [actuation model](../api/actuation/index.md), rather than introducing a new
 continuum host subclass.
 
-Operate directly in actuation coordinates (tendon lengths, pressures):
+Operate directly in the transmission's work coordinates:
 
 ```python
 class ActuationSpaceController(ClosedFormModelBasedController):
@@ -1162,11 +1162,11 @@ class ActuationSpaceController(ClosedFormModelBasedController):
         num_dofs = self.robot.num_dofs
         q = system_state.y[:num_dofs]
 
-        # Get actuation coordinates (e.g., tendon lengths)
-        if hasattr(self.robot, 'tendon_length'):
-            l = self.robot.tendon_length(q)
-            # Compute directly in actuation space
-            u = ...  # Your actuation-space control law
+        # Coordinates follow the installed transmissions. For a tendon preset,
+        # these are negative path lengths; raw lengths remain available from
+        # the threadlike actuator when needed.
+        z = self.robot.actuator_coordinates(q)
+        u = ...  # Your actuation-space control law using z
 
         return u, None
 ```

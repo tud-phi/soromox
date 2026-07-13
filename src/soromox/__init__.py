@@ -1,3 +1,4 @@
+# ruff: noqa: I001
 import importlib.metadata
 
 from .autodiff import *  # noqa: F403

@@ -105,7 +105,7 @@ if __name__ == "__main__":
     print(A)
 
     # Coupling matrix of the passive tendons
-    P = robot._threadlike_moment_matrix(q0, passive_tendon_routing).T
+    P = jax.jacrev(lambda q: passive_tendon.path_lengths(robot, q))(q0)
     print("P =\n", P.shape)
     print(P)
 
@@ -115,7 +115,7 @@ if __name__ == "__main__":
     print(la)
 
     # Passive tendon lengths
-    lp = robot._threadlike_path_lengths(q0, passive_tendon_routing)
+    lp = passive_tendon.path_lengths(robot, q0)
     print("lp =\n", lp.shape)
     print(lp)
 
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     print(ta_s)
 
     # Passive tendons' position
-    tp_s = robot._threadlike_path_positions(q0, robot.L_cum[-1], passive_tendon_routing)
+    tp_s = passive_tendon.path_poses(robot, q0, robot.L_cum[-1])
     print("tp_s =\n", tp_s.shape)
     print(tp_s)
 
