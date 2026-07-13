@@ -58,10 +58,9 @@ tau = robot.actuation_force(q, u, q_dot=q_dot)
 metadata = robot.actuator_input_metadata
 ```
 
-`actuated_coordinates(q)` remains the spelling consumed by
-[actuation-space controllers](../control/actuation-space.md). The coordinate
-transformation requires the moment matrix to have full column rank at its
-reference configuration.
+[Actuation-space controllers](../control/actuation-space.md) consume the same
+`actuator_coordinates(q)` contract. The coordinate transformation requires the
+moment matrix to have full column rank at its reference configuration.
 
 ## Active and passive components
 

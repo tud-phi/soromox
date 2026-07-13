@@ -421,7 +421,11 @@ class TendonActuatedPendulum(Pendulum):
         return l_tot_p
 
     tendon_length = active_tendon_length  # Alias for compatibility
-    actuated_coordinates = active_tendon_length  # Alias for actuation space dynamics
+
+    @eqx.filter_jit
+    def actuator_coordinates(self, q: Array) -> Array:
+        """Return active tendon lengths as work-conjugate coordinates."""
+        return self.active_tendon_length(q)
 
     # -------------------------------
     # Standardized dynamics interface

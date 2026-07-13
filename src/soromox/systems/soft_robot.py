@@ -1019,10 +1019,6 @@ class SoftRobot(DynamicalSystem):
             tuple(actuator.coordinates(self, q) for actuator in self.actuators)
         )
 
-    def actuated_coordinates(self, q: Array) -> Array:
-        """Compatibility name used by actuation-space coordinate transforms."""
-        return self.actuator_coordinates(q)
-
     def actuator_velocities(self, q: Array, q_dot: Array) -> Array:
         """Return all actuator-coordinate velocities in control order."""
         if not self.actuators:

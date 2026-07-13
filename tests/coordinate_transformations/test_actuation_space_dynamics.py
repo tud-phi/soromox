@@ -262,7 +262,7 @@ class TestCoordinateTransformations:
         y_a = asd.actuated_coordinates(q)
 
         # For identity routing, actuated coords equal tendon lengths
-        expected = robot.actuated_coordinates(q)
+        expected = robot.actuator_coordinates(q)
         assert_allclose(y_a, expected, rtol=1e-10)
 
     def test_actuated_coordinates_underactuated(self, underactuated_pendulum):
@@ -274,7 +274,7 @@ class TestCoordinateTransformations:
         y_a = asd.actuated_coordinates(q)
 
         # Actuated coords should equal tendon lengths
-        expected = robot.actuated_coordinates(q)
+        expected = robot.actuator_coordinates(q)
         assert_allclose(y_a, expected, rtol=1e-10)
 
     def test_unactuated_coordinates(self, underactuated_pendulum):
@@ -553,13 +553,13 @@ class TestActuationMatrix:
 class TestIntegration:
     """Integration tests combining multiple components."""
 
-    def test_actuated_coordinates_alias(self, fully_actuated_pendulum):
-        """Test that actuated_coordinates is an alias of active_tendon_length for the TendonActuatedPendulum."""
+    def test_pendulum_actuator_coordinates(self, fully_actuated_pendulum):
+        """Test the pendulum's common actuator-coordinate contract."""
         robot = fully_actuated_pendulum
         q = jnp.array([0.1, 0.2, 0.3])
 
         tendon_lengths = robot.active_tendon_length(q)
-        actuation_coords = robot.actuated_coordinates(q)
+        actuation_coords = robot.actuator_coordinates(q)
 
         assert_allclose(tendon_lengths, actuation_coords, rtol=1e-10)
 
@@ -857,12 +857,12 @@ class TestActuationSpaceDynamicsSystemIndependent:
         assert y_a.shape == (asd.n_actuated,)
 
     def test_actuated_coordinates_matches_robot(self, robot):
-        """Test actuated_coordinates matches robot's actuated_coordinates."""
+        """Test actuated_coordinates matches the robot actuator coordinates."""
         asd = ActuationSpaceDynamics(robot)
         q = random_configuration(robot)
 
         y_a = asd.actuated_coordinates(q)
-        expected = robot.actuated_coordinates(q)
+        expected = robot.actuator_coordinates(q)
 
         assert_allclose(y_a, expected, rtol=1e-10)
 

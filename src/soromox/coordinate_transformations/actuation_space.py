@@ -202,12 +202,6 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             y_a: Actuated coordinates of shape (n_actuated,).
         """
-        # Continuum hosts use the composable actuator-coordinate contract.
-        # Specialized legacy systems that intentionally remain outside this
-        # refactor (currently the tendon-actuated pendulum) may still override
-        # ``actuated_coordinates`` directly.
-        if type(self.robot).actuated_coordinates is not SoftRobot.actuated_coordinates:
-            return self.robot.actuated_coordinates(q)
         return self.robot.actuator_coordinates(q)
 
     @eqx.filter_jit

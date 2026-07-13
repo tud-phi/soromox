@@ -1811,7 +1811,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Args:
             ts: Time array (T,)
             q_ts: Configuration array (T, DOF)
-            robot: Robot instance with an ``actuated_coordinates`` method
+            robot: Robot instance with an ``actuator_coordinates`` method
             robot_name: Name for the plot title
 
         Returns:
@@ -1820,9 +1820,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if go is None:
             raise ImportError("plotly is required. Install with: pip install plotly")
 
-        if not hasattr(robot, "actuated_coordinates"):
-            raise AttributeError("Robot does not have an actuated_coordinates method")
-        coordinate_fn = robot.actuated_coordinates
+        if not hasattr(robot, "actuator_coordinates"):
+            raise AttributeError("Robot does not have an actuator_coordinates method")
+        coordinate_fn = robot.actuator_coordinates
         yaxis_title = "Actuated coordinate"
 
         ts = np.asarray(ts)
