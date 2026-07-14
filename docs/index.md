@@ -67,7 +67,9 @@ SoRoMoX provides three core capabilities for soft robotics research and developm
 SoRoMoX supports both planar (2D) and spatial (3D) soft robot architectures:
 
 !!! success "Articulated Systems"
-    Planar and spatial rigid-link chains. Includes `Pendulum` for planar benchmark dynamics, `TendonActuatedPendulum` for cable-driven articulated mechanisms, and `ArticulatedSoftRobot` for spatial screw-axis chains with optional joint stiffness and damping.
+    Planar and spatial rigid-link chains. `Pendulum` and `ArticulatedSoftRobot`
+    accept composable identity, tendon, pneumatic-muscle, and custom actuation
+    models while retaining optional joint stiffness and damping.
 
 !!! tip "PCS Systems (Piecewise Constant Strain)"
     Continuum soft robots with constant strain segments, available in both planar and spatial variants with tendon or pressure actuation

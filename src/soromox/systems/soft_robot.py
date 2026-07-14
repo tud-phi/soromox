@@ -182,21 +182,11 @@ class SoftRobot(DynamicalSystem):
             )
 
         for component in (*normalized_actuators, *normalized_passive):
-            self._validate_actuation_component(component)
+            component.validate_for_robot(self)
 
         self.actuators = normalized_actuators
         self.passive_elements = normalized_passive
         self.num_actuators = sum(actuator.num_channels for actuator in self.actuators)
-
-    def _validate_actuation_component(
-        self, component: Actuator | PassiveElement
-    ) -> None:
-        """Validate component topology against this robot's static structure."""
-        routing = getattr(component, "routing", None)
-        if routing is None and hasattr(component, "transmission"):
-            routing = getattr(component.transmission, "routing", None)
-        if routing is not None and hasattr(routing.params, "validate_for_robot"):
-            routing.params.validate_for_robot(self.num_segments)
 
     @property
     def actuator_input_metadata(self) -> tuple[ActuatorMetadata, ...]:
@@ -209,7 +199,7 @@ class SoftRobot(DynamicalSystem):
             raise IndexError(f"actuator index {index} is out of range.")
         actuators = list(self.actuators)
         actuators[index] = actuators[index].with_params(params)
-        self._validate_actuation_component(actuators[index])
+        actuators[index].validate_for_robot(self)
         return eqx.tree_at(lambda robot: robot.actuators, self, tuple(actuators))
 
     def update_actuator_params(self, index: int, **updates) -> "SoftRobot":
@@ -226,7 +216,7 @@ class SoftRobot(DynamicalSystem):
             raise IndexError(f"passive element index {index} is out of range.")
         elements = list(self.passive_elements)
         elements[index] = elements[index].with_params(params)
-        self._validate_actuation_component(elements[index])
+        elements[index].validate_for_robot(self)
         return eqx.tree_at(lambda robot: robot.passive_elements, self, tuple(elements))
 
     def update_passive_element_params(self, index: int, **updates) -> "SoftRobot":
@@ -253,6 +243,11 @@ class SoftRobot(DynamicalSystem):
     def is_planar(self) -> bool:
         """Return True for planar (SE(2)) robots, False for spatial (SE(3))."""
         ...
+
+    @property
+    def supports_articulated_tendon_routing(self) -> bool:
+        """Whether joint indices describe a serial articulated routing topology."""
+        return False
 
     @property
     def base_transform(self) -> Array:
@@ -1019,12 +1014,12 @@ class SoftRobot(DynamicalSystem):
             tuple(actuator.coordinates(self, q) for actuator in self.actuators)
         )
 
-    def actuator_velocities(self, q: Array, q_dot: Array) -> Array:
+    def actuator_velocities(self, q: Array, qd: Array) -> Array:
         """Return all actuator-coordinate velocities in control order."""
         if not self.actuators:
             return jnp.zeros((0,), dtype=q.dtype)
         return jnp.concatenate(
-            tuple(actuator.velocities(self, q, q_dot) for actuator in self.actuators)
+            tuple(actuator.velocities(self, q, qd) for actuator in self.actuators)
         )
 
     def actuation_matrix(self, q: Array) -> Array:
@@ -1036,8 +1031,10 @@ class SoftRobot(DynamicalSystem):
             axis=1,
         )
 
-    def actuator_efforts(self, q: Array, q_dot: Array, u: Array) -> Array:
+    def actuator_efforts(self, q: Array, u: Array, qd: Array | None = None) -> Array:
         """Map ordered user controls to ordered work-conjugate efforts."""
+        if qd is None:
+            qd = jnp.zeros_like(q)
         u = jnp.asarray(u)
         if u.shape != (self.num_actuators,):
             raise ValueError(
@@ -1051,15 +1048,13 @@ class SoftRobot(DynamicalSystem):
         start = 0
         for actuator in self.actuators:
             stop = start + actuator.num_channels
-            efforts.append(actuator.efforts(self, q, q_dot, u[start:stop]))
+            efforts.append(actuator.efforts(self, q, u[start:stop], qd=qd))
             start = stop
         return jnp.concatenate(tuple(efforts))
 
-    def actuation_force(self, q: Array, u: Array, q_dot: Array | None = None) -> Array:
+    def actuation_force(self, q: Array, u: Array, qd: Array | None = None) -> Array:
         """Return generalized actuation force ``A(q) @ effort``."""
-        if q_dot is None:
-            q_dot = jnp.zeros_like(q)
-        return self.actuation_matrix(q) @ self.actuator_efforts(q, q_dot, u)
+        return self.actuation_matrix(q) @ self.actuator_efforts(q, u, qd=qd)
 
     def passive_elastic_force(self, q: Array) -> Array:
         """Return the sum of installed passive conservative forces."""
@@ -1467,7 +1462,7 @@ class SoftRobot(DynamicalSystem):
         M, Cqd, G = self.dynamics_terms(q, qd)
         K = self.elastic_force(q)
         D = self.damping_matrix(q)
-        tau_u = self.actuation_force(q, u, q_dot=qd)
+        tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
         qdd = jnp.linalg.solve(M, rhs)

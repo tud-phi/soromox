@@ -22,16 +22,19 @@ from numpy.testing import assert_allclose
 from system_param_builders import (
     pcs_params,
     pendulum_params,
-    tendon_actuated_pendulum_params,
 )
 
-from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.actuation import (
+    ArticulatedTendonActuator,
+    ThreadlikeActuator,
+    ThreadlikeRouting,
+)
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 from soromox.systems import (
     PCS,
     PCSStructure,
-    TendonActuatedPendulum,
+    Pendulum,
 )
 
 # -----------------------
@@ -51,11 +54,9 @@ def fully_actuated_pendulum():
         joint_stiffness=jnp.eye(3) * 10.0,
         joint_damping=jnp.eye(3) * 0.5,
     )
-    return TendonActuatedPendulum(
-        tendon_actuated_pendulum_params(
-            body=body,
-            active_routing_matrix=jnp.tril(jnp.ones((3, 3))),
-        )
+    return Pendulum(
+        body,
+        actuators=ArticulatedTendonActuator.from_routing(jnp.tril(jnp.ones((3, 3)))),
     )
 
 
@@ -80,11 +81,9 @@ def underactuated_pendulum():
             [1.0, 1.0, 1.0],  # Tendon 2: routes through all 3 joints
         ]
     )
-    return TendonActuatedPendulum(
-        tendon_actuated_pendulum_params(
-            body=body,
-            active_routing_matrix=active_routing_matrix,
-        )
+    return Pendulum(
+        body,
+        actuators=ArticulatedTendonActuator.from_routing(active_routing_matrix),
     )
 
 
@@ -552,7 +551,7 @@ class TestIntegration:
         robot = fully_actuated_pendulum
         q = jnp.array([0.1, 0.2, 0.3])
 
-        tendon_lengths = robot.active_tendon_length(q)
+        tendon_lengths = robot.actuators[0].coordinates(robot, q)
         actuation_coords = robot.actuator_coordinates(q)
 
         assert_allclose(tendon_lengths, actuation_coords, rtol=1e-10)

@@ -69,8 +69,8 @@ nav:
           - Articulated Systems:
             - Overview: api/systems/articulated/index.md
             - Pendulum: api/systems/pendulum/pendulum.md
-            - Tendon Actuated Pendulum: api/systems/pendulum/tendon-actuated-pendulum.md
             - Articulated Soft Robot: api/systems/articulated/articulated-soft-robot.md
+            - McKibben UMArm: api/systems/articulated/mckibben-umarm.md
           - PCS Systems:
             - Overview: api/systems/pcs/index.md
             - Spatial PCS: api/systems/pcs/pcs.md
@@ -94,6 +94,7 @@ nav:
           - Utilities: api/control/utilities.md
       - Actuation:
           - Actuation Model: api/actuation/index.md
+          - Joint-Space Actuation: api/actuation/joint-space.md
           - Threadlike Actuation: api/actuation/threadlike.md
           - API Reference: api/actuation/reference.md
       - Utilities:

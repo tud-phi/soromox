@@ -172,10 +172,10 @@ generalized force use the shared actuation interface:
 
 ```python
 volumes = robot.actuator_coordinates(q)
-volume_rates = robot.actuator_velocities(q, q_dot)
-pressure_efforts = robot.actuator_efforts(q, q_dot, pressures)
+volume_rates = robot.actuator_velocities(q, qd)
+pressure_efforts = robot.actuator_efforts(q, pressures, qd=qd)
 A = robot.actuation_matrix(q)
-tau = robot.actuation_force(q, pressures, q_dot=q_dot)
+tau = robot.actuation_force(q, pressures, qd=qd)
 ```
 
 For the current `DirectEffort` model, `pressure_efforts == pressures`. The

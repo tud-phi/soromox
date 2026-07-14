@@ -203,29 +203,6 @@ class PlanarPCS(SoftRobot):
         """Planar PCS is a 2D model."""
         return True
 
-    def _validate_actuation_component(self, component) -> None:
-        """Validate routing topology and require offsets in the planar local-y axis."""
-        super()._validate_actuation_component(component)
-        routing = getattr(component, "routing", None)
-        if routing is None and hasattr(component, "transmission"):
-            routing = getattr(component.transmission, "routing", None)
-        if routing is None:
-            return
-        samples = jnp.linspace(0.0, self.L_cum[-1], 17)
-        offsets = vmap(
-            lambda path_params: vmap(lambda s: routing.offset(path_params, s))(samples)
-        )(routing.params)
-        if offsets.shape != (routing.num_paths, samples.shape[0], 3):
-            raise ValueError(
-                "ThreadlikeRouting.offset_fn must return material-frame [x, y, z] "
-                "offsets with final shape (3,)."
-            )
-        if bool(jnp.any(offsets[..., 0] != 0.0) | jnp.any(offsets[..., 2] != 0.0)):
-            raise ValueError(
-                "PlanarPCS threadlike routing must remain in the local-y direction; "
-                "its sampled local x and z offsets must be zero."
-            )
-
     @property
     def segment_length(self) -> Array:
         """Per-segment backbone lengths."""
@@ -2929,7 +2906,7 @@ class PlanarPCS(SoftRobot):
 
         B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
-        tau_u = self.actuation_force(q, u, q_dot=qd)
+        tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         qdd = jnp.linalg.solve(B, rhs)

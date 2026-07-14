@@ -4,7 +4,6 @@ __all__ = [
     "BaseSoftRobotParams",
     "BaseContinuumSoftRobotParams",
     "BaseArticulatedSoftRobotParams",
-    "PassiveTendonParams",
     "validate_planar_base_pose",
     "validate_quaternion_base_pose",
 ]
@@ -282,43 +281,3 @@ class BaseArticulatedSoftRobotParams(BaseSoftRobotParams):
     joint_stiffness: Array
     joint_damping: Array
     joint_rest_configuration: Array
-
-
-class PassiveTendonParams(BaseSystemParams):
-    """Batched passive tendon impedance and rest-length parameters.
-
-    Each field has shape ``(num_passive_tendons,)``. Passive tendon ``k`` uses
-    ``stiffness[k]``, ``damping[k]``, and ``rest_length_offset[k]``. The length
-    must match the paired passive routing params.
-    """
-
-    stiffness: Array
-    damping: Array
-    rest_length_offset: Array
-
-    @classmethod
-    def empty(cls) -> "PassiveTendonParams":
-        return cls(
-            stiffness=jnp.array([], dtype=jnp.float64),
-            damping=jnp.array([], dtype=jnp.float64),
-            rest_length_offset=jnp.array([], dtype=jnp.float64),
-        )
-
-    @property
-    def num_tendons(self) -> int:
-        return int(self.stiffness.shape[0])
-
-    def validate(self) -> None:
-        if len(self.stiffness.shape) != 1:
-            raise ValueError(
-                "PassiveTendonParams fields must be one-dimensional with shape "
-                "(num_passive_tendons,)."
-            )
-        n_tendons = self.stiffness.shape[0]
-        expected_shape = (n_tendons,)
-        for name in ("damping", "rest_length_offset"):
-            value = getattr(self, name)
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"{name} must have shape {expected_shape}, got {value.shape}."
-                )

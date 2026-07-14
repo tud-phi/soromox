@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 __all__ = ["ArticulatedSoftRobotParams", "McKibbenActuatedUMArmParams"]
 
 from pathlib import Path
@@ -49,7 +51,6 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
         radius: Array,
         base_pose: Array | None = None,
     ) -> None:
-        """Create articulated parameters with default upright mounting and gravity."""
         self.base_pose = self._resolve_base_pose(base_pose)
         self.gravity = self._resolve_gravity(gravity)
         self.mass = jnp.asarray(mass)
@@ -94,17 +95,16 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
 
 
 class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
-    """Dynamic and actuator parameters for the McKibben-actuated UMArm."""
+    """Dynamic parameters for the articulated UMArm body.
+
+    These parameters contain the rigid-link dynamics, compliant-joint mechanics,
+    visualization radii, base pose, gravity, and per-joint rotor armature. The
+    McKibben attachment geometry and pneumatic constitutive parameters belong to
+    :class:`soromox.actuation.ArticulatedMcKibbenActuatorParams`, so body and
+    actuator parameters can be updated independently.
+    """
 
     joint_armature: Array
-    mckibben_moving_base_transform: Array
-    mckibben_moving_points: Array
-    mckibben_fixed_points: Array
-    mckibben_reference_length: Array
-    mckibben_length_offset: Array
-    mckibben_thread_length: Array
-    mckibben_num_turns: Array
-    mckibben_joint_pair_indices: Array
 
     def __init__(
         self,
@@ -121,17 +121,8 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
         joint_rest_configuration: Array,
         radius: Array,
         joint_armature: Array,
-        mckibben_moving_base_transform: Array,
-        mckibben_moving_points: Array,
-        mckibben_fixed_points: Array,
-        mckibben_reference_length: Array,
-        mckibben_length_offset: Array,
-        mckibben_thread_length: Array,
-        mckibben_num_turns: Array,
-        mckibben_joint_pair_indices: Array,
         base_pose: Array | None = None,
     ) -> None:
-        """Create UMArm parameters from articulated and McKibben arrays."""
         super().__init__(
             base_pose=base_pose,
             joint_screw=joint_screw,
@@ -147,36 +138,17 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
             radius=radius,
         )
         self.joint_armature = jnp.asarray(joint_armature)
-        self.mckibben_moving_base_transform = jnp.asarray(
-            mckibben_moving_base_transform
-        )
-        self.mckibben_moving_points = jnp.asarray(mckibben_moving_points)
-        self.mckibben_fixed_points = jnp.asarray(mckibben_fixed_points)
-        self.mckibben_reference_length = jnp.asarray(mckibben_reference_length)
-        self.mckibben_length_offset = jnp.asarray(mckibben_length_offset)
-        self.mckibben_thread_length = jnp.asarray(mckibben_thread_length)
-        self.mckibben_num_turns = jnp.asarray(mckibben_num_turns)
-        self.mckibben_joint_pair_indices = jnp.asarray(
-            mckibben_joint_pair_indices, dtype=jnp.int32
-        )
 
     @classmethod
-    def from_cached_npz(cls, path: str | Path) -> "McKibbenActuatedUMArmParams":
-        """Load UMArm parameters from an explicit cached ``.npz`` file path."""
+    def from_cached_npz(cls, path: str | Path) -> McKibbenActuatedUMArmParams:
+        """Load the articulated UMArm body from the existing cache format."""
         with np.load(path) as data:
-            def read(name: str, *legacy_names: str) -> np.ndarray:
-                for key in (name, *legacy_names):
-                    if key in data:
-                        return np.asarray(data[key])
-                candidates = ", ".join((name, *legacy_names))
-                raise KeyError(f"UMArm parameter file is missing one of: {candidates}.")
-
             parent_to_joint_transform = np.asarray(
                 data["parent_to_joint_transform"]
             ).copy()
             tip_position = np.asarray(data["tip_position"])
             cls._normalize_cached_base_frame(parent_to_joint_transform, tip_position)
-
+            armature_key = "joint_armature" if "joint_armature" in data else "armature"
             return cls(
                 base_pose=jnp.array(
                     [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64
@@ -184,49 +156,15 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
                 joint_screw=jnp.asarray(data["joint_screw"]),
                 parent_to_joint_transform=jnp.asarray(parent_to_joint_transform),
                 tip_position=jnp.asarray(tip_position),
-                center_of_mass_position=jnp.asarray(
-                    data["center_of_mass_position"]
-                ),
-                center_of_mass_inertia=jnp.asarray(
-                    data["center_of_mass_inertia"]
-                ),
+                center_of_mass_position=jnp.asarray(data["center_of_mass_position"]),
+                center_of_mass_inertia=jnp.asarray(data["center_of_mass_inertia"]),
                 radius=jnp.asarray(data["radius"]),
                 mass=jnp.asarray(data["mass"]),
                 gravity=jnp.asarray(data["gravity"]),
                 joint_stiffness=jnp.asarray(data["joint_stiffness"]),
                 joint_damping=jnp.asarray(data["joint_damping"]),
-                joint_rest_configuration=jnp.asarray(
-                    data["joint_rest_configuration"]
-                ),
-                joint_armature=jnp.asarray(read("joint_armature", "armature")),
-                mckibben_moving_base_transform=jnp.asarray(
-                    read(
-                        "mckibben_moving_base_transform",
-                        "mck_moving_base_transform",
-                    )
-                ),
-                mckibben_moving_points=jnp.asarray(
-                    read("mckibben_moving_points", "mck_moving_points")
-                ),
-                mckibben_fixed_points=jnp.asarray(
-                    read("mckibben_fixed_points", "mck_fixed_points")
-                ),
-                mckibben_reference_length=jnp.asarray(
-                    read("mckibben_reference_length", "mck_base_length")
-                ),
-                mckibben_length_offset=jnp.asarray(
-                    read("mckibben_length_offset", "mck_length_offset")
-                ),
-                mckibben_thread_length=jnp.asarray(
-                    read("mckibben_thread_length", "mck_b_thread")
-                ),
-                mckibben_num_turns=jnp.asarray(
-                    read("mckibben_num_turns", "mck_n_turns")
-                ),
-                mckibben_joint_pair_indices=jnp.asarray(
-                    read("mckibben_joint_pair_indices", "mck_q_pair_index"),
-                    dtype=jnp.int32,
-                ),
+                joint_rest_configuration=jnp.asarray(data["joint_rest_configuration"]),
+                joint_armature=jnp.asarray(data[armature_key]),
             )
 
     @classmethod
@@ -247,7 +185,6 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
             proximal_direction, np.array([1.0, 0.0, 0.0])
         ):
             return
-
         rotation = cls._rotation_to_soromox_base_axis(proximal_direction)
         parent_to_joint_transform[0, :3, :3] = (
             rotation @ parent_to_joint_transform[0, :3, :3]
@@ -256,7 +193,6 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
 
     @staticmethod
     def _rotation_to_soromox_base_axis(source_direction: np.ndarray) -> np.ndarray:
-        """Return a rotation that maps ``source_direction`` to the +x base axis."""
         source = np.asarray(source_direction, dtype=np.float64)
         source = source / np.linalg.norm(source)
         target = np.array([1.0, 0.0, 0.0], dtype=np.float64)
@@ -264,7 +200,6 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
             return np.eye(3, dtype=np.float64)
         if np.allclose(source, -target):
             return np.diag(np.array([-1.0, 1.0, -1.0], dtype=np.float64))
-
         cross = np.cross(source, target)
         sin_angle = np.linalg.norm(cross)
         cos_angle = float(np.dot(source, target))
@@ -276,36 +211,17 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
             ],
             dtype=np.float64,
         )
-        return np.eye(3, dtype=np.float64) + skew + (
-            skew @ skew
-        ) * ((1.0 - cos_angle) / (sin_angle**2))
+        return (
+            np.eye(3, dtype=np.float64)
+            + skew
+            + (skew @ skew) * ((1.0 - cos_angle) / (sin_angle**2))
+        )
 
     def validate(self) -> None:
         super().validate()
         num_links = int(jnp.asarray(self.joint_screw).shape[0])
-        group_shape = jnp.asarray(self.mckibben_thread_length).shape
-        if len(group_shape) != 2:
+        if jnp.asarray(self.joint_armature).shape != (num_links,):
             raise ValueError(
-                "mckibben_thread_length must have shape "
-                f"(num_groups, num_actuators_per_group), got {group_shape}."
+                f"joint_armature must have shape ({num_links},), got "
+                f"{jnp.asarray(self.joint_armature).shape}."
             )
-        expected_group_matrix = group_shape
-        expected_group_points = (*group_shape, 3)
-        expected_group_transforms = (group_shape[0], 4, 4)
-
-        expected_shapes = {
-            "joint_armature": (num_links,),
-            "mckibben_moving_base_transform": expected_group_transforms,
-            "mckibben_moving_points": expected_group_points,
-            "mckibben_fixed_points": expected_group_points,
-            "mckibben_reference_length": expected_group_matrix,
-            "mckibben_length_offset": expected_group_matrix,
-            "mckibben_num_turns": expected_group_matrix,
-            "mckibben_joint_pair_indices": (group_shape[0], 2),
-        }
-        for name, expected_shape in expected_shapes.items():
-            value = jnp.asarray(getattr(self, name))
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"{name} must have shape {expected_shape}, got {value.shape}."
-                )

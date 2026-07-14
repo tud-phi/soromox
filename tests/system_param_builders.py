@@ -6,12 +6,10 @@ from soromox.systems import (
     ArticulatedSoftRobotParams,
     GVSParams,
     GVSStructure,
-    PassiveTendonParams,
     PCSParams,
     PendulumParams,
     PlanarHSAParams,
     PlanarPCSParams,
-    TendonActuatedPendulumParams,
 )
 
 
@@ -172,48 +170,6 @@ def articulated_params(
         joint_damping=jnp.asarray(joint_damping),
         joint_rest_configuration=jnp.asarray(joint_rest_configuration),
         radius=jnp.asarray(radius),
-    )
-
-
-def passive_tendon_params(
-    stiffness: Array, damping: Array, rest_length_offset: Array
-) -> PassiveTendonParams:
-    return PassiveTendonParams(
-        stiffness=jnp.asarray(stiffness),
-        damping=jnp.asarray(damping),
-        rest_length_offset=jnp.asarray(rest_length_offset),
-    )
-
-
-def tendon_actuated_pendulum_params(
-    *,
-    body: PendulumParams,
-    active_routing_matrix: Array,
-    passive_routing_matrix: Array | None = None,
-    active_tendon_reference_configuration: Array | None = None,
-    passive_tendon_reference_configuration: Array | None = None,
-    passive_tendon: PassiveTendonParams | None = None,
-) -> TendonActuatedPendulumParams:
-    n = body.mass.shape[0]
-    if passive_routing_matrix is None:
-        passive_routing_matrix = jnp.zeros((0, n))
-    if active_tendon_reference_configuration is None:
-        active_tendon_reference_configuration = body.joint_rest_configuration
-    if passive_tendon_reference_configuration is None:
-        passive_tendon_reference_configuration = body.joint_rest_configuration
-    if passive_tendon is None:
-        passive_tendon = PassiveTendonParams.empty()
-    return TendonActuatedPendulumParams(
-        body=body,
-        active_routing_matrix=jnp.asarray(active_routing_matrix),
-        passive_routing_matrix=jnp.asarray(passive_routing_matrix),
-        active_tendon_reference_configuration=jnp.asarray(
-            active_tendon_reference_configuration
-        ),
-        passive_tendon_reference_configuration=jnp.asarray(
-            passive_tendon_reference_configuration
-        ),
-        passive_tendon=passive_tendon,
     )
 
 

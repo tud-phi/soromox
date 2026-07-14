@@ -238,7 +238,7 @@ def test_isupport_matches_pr116_threadlike_pressure_mapping():
 
     assert jnp.allclose(robot.actuation_matrix(q), expected_pressure_matrix)
     assert jnp.allclose(
-        robot.actuator_efforts(q, jnp.zeros_like(q), pressure), pressure
+        robot.actuator_efforts(q, pressure, qd=jnp.zeros_like(q)), pressure
     )
     assert jnp.allclose(
         robot.actuation_force(q, pressure),

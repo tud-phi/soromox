@@ -1,8 +1,8 @@
 # Actuation model
 
 SoRoMoX separates actuator geometry from the law that produces actuator effort.
-The same actuation objects can therefore be installed on `PCS`, `PlanarPCS`, or
-`GVS` without introducing an actuator-specific robot subclass.
+The same actuation objects can therefore be installed on compatible continuum
+or articulated hosts without introducing an actuator-specific robot subclass.
 
 ## Work-conjugate formulation
 
@@ -48,16 +48,41 @@ metadata, and rendered layers.
 - Mixed actuator families are supported when their channel counts and robot
   routing topology are valid.
 
+## Host compatibility
+
+Actuator installation validates the geometric host contract before dynamics or
+rendering is evaluated. Incompatible combinations raise a descriptive
+`TypeError` or `ValueError`; they are not deferred to a missing-method failure.
+
+| Component | Compatible hosts | Contract |
+| --- | --- | --- |
+| `IdentityActuator` | Every `SoftRobot` | One channel per generalized coordinate |
+| `AffineJointTransmission` | Any host with a matching generalized-coordinate dimension | Pure affine coordinate map; no articulated topology semantics |
+| `ArticulatedTendonActuator`, `ArticulatedTendonImpedance` | `Pendulum`, `ArticulatedSoftRobot`, and hosts explicitly exposing serial articulated routing | Joint-index routing with no skipped joints and full row rank |
+| Threadlike actuator and impedance presets | `PCS`, `PlanarPCS`, `GVS`, and continuum hosts implementing the threadlike integration hooks | Material-frame path geometry plus continuum segment topology |
+| `ArticulatedMcKibbenActuator` | Spatial articulated hosts implementing the kinematic-frame contract, including `McKibbenActuatedUMArm` | Grouped attachment geometry and valid joint-pair indices |
+
+An affine transmission can mathematically map PCS generalized coordinates if
+its matrix has the correct width. That is a generic coordinate transformation,
+not an articulated tendon routing. The articulated-tendon preset therefore
+rejects PCS/GVS hosts, while threadlike presets reject articulated hosts that do
+not implement continuum path integration.
+
 The common robot interface is:
 
 ```python
 y_a = robot.actuator_coordinates(q)
-y_a_dot = robot.actuator_velocities(q, q_dot)
+y_a_dot = robot.actuator_velocities(q, qd)
 A = robot.actuation_matrix(q)
-e = robot.actuator_efforts(q, q_dot, u)
-tau = robot.actuation_force(q, u, q_dot=q_dot)
+e = robot.actuator_efforts(q, u, qd=qd)
+tau = robot.actuation_force(q, u, qd=qd)
 metadata = robot.actuator_input_metadata
 ```
+
+`qd` is optional for effort and force evaluation. Omitting it evaluates the
+effort model at zero actuator velocity. This is exactly equivalent for
+`DirectEffort`; forward dynamics supplies the actual `qd` so future
+velocity-dependent effort laws receive the physical actuator velocity.
 
 [Actuation-space controllers](../control/actuation-space.md) consume the same
 `actuator_coordinates(q)` contract. The coordinate transformation requires the
@@ -95,6 +120,7 @@ updated, while changing component type, channel count, routing count, or segment
 span requires reconstructing the component and robot. Visual styling is configured
 on renderers rather than stored in actuator parameters.
 
-See [Threadlike actuation](threadlike.md) for routed continuum examples and the
+See [Joint-space actuation](joint-space.md) for affine articulated coordinates,
+[Threadlike actuation](threadlike.md) for routed continuum examples, and the
 [parameter guide](../utilities/parameters.md) for the general immutable update
 pattern.

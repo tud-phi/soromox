@@ -86,9 +86,9 @@ class Transmission(eqx.Module):
         """Return ``dy_a/dq.T`` with shape ``(num_dofs, num_channels)``."""
         ...
 
-    def velocities(self, robot: SoftRobot, q: Array, q_dot: Array) -> Array:
+    def velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
         """Return transmission-coordinate velocities."""
-        return self.moment_matrix(robot, q).T @ q_dot
+        return self.moment_matrix(robot, q).T @ qd
 
 
 class EffortModel(eqx.Module):
@@ -120,6 +120,10 @@ class PassiveElement(eqx.Module):
 
     def update_params(self, **updates) -> PassiveElement:
         return self.with_params(self.params.replace(**updates))
+
+    def validate_for_robot(self, robot: SoftRobot) -> None:
+        """Validate static component topology against ``robot``."""
+        del robot
 
     def elastic_force(self, robot: SoftRobot, q: Array) -> Array:
         return jnp.zeros((robot.num_dofs,), dtype=q.dtype)
@@ -158,8 +162,8 @@ class Actuator(eqx.Module):
     def coordinates(self, robot: SoftRobot, q: Array) -> Array:
         return self.transmission.coordinates(robot, q)
 
-    def velocities(self, robot: SoftRobot, q: Array, q_dot: Array) -> Array:
-        return self.transmission.velocities(robot, q, q_dot)
+    def velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
+        return self.transmission.velocities(robot, q, qd)
 
     def moment_matrix(self, robot: SoftRobot, q: Array) -> Array:
         return self.transmission.moment_matrix(robot, q)
@@ -168,12 +172,18 @@ class Actuator(eqx.Module):
         self,
         robot: SoftRobot,
         q: Array,
-        q_dot: Array,
         control: Array,
+        qd: Array | None = None,
     ) -> Array:
+        if qd is None:
+            qd = jnp.zeros_like(q)
         coordinate = self.coordinates(robot, q)
-        velocity = self.velocities(robot, q, q_dot)
+        velocity = self.velocities(robot, q, qd)
         return self.effort_model.effort(control, coordinate, velocity)
+
+    def validate_for_robot(self, robot: SoftRobot) -> None:
+        """Validate static component topology against ``robot``."""
+        del robot
 
     @abstractmethod
     def with_params(self, params: BaseSystemParams) -> Actuator: ...

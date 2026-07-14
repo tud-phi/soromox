@@ -74,15 +74,15 @@ SoRoMoX organizes systems into the following categories:
 ### Articulated Systems
 
 Planar and spatial articulated robot systems modeled as serial rigid-link
-chains. `Pendulum` provides the planar benchmark, `TendonActuatedPendulum`
-adds cable-driven actuation, and `ArticulatedSoftRobot` extends the interface
-to spatial screw-axis chains with optional joint stiffness and damping.
+chains. `Pendulum` provides the planar benchmark and `ArticulatedSoftRobot`
+extends the interface to spatial screw-axis chains. Both hosts accept composable
+actuators and passive elements.
 
 | System | Actuation | Use Case |
 |--------|-----------|----------|
-| [Pendulum](pendulum/pendulum.md) | Direct torque | Planar benchmark and special case |
-| [Tendon Actuated Pendulum](pendulum/tendon-actuated-pendulum.md) | Tendons | Cable-driven articulated robots |
-| [Articulated Soft Robot](articulated/articulated-soft-robot.md) | Direct torque | Spatial rigid-link chains with compliant joints |
+| [Pendulum](pendulum/pendulum.md) | Identity or composable | Planar benchmark and cable-driven mechanisms |
+| [Articulated Soft Robot](articulated/articulated-soft-robot.md) | Identity or composable | Spatial rigid-link chains with compliant joints |
+| [McKibben UMArm](articulated/mckibben-umarm.md) | McKibben pressure actuation | Pneumatic rigid-soft hybrid arm |
 
 ### PCS Systems
 

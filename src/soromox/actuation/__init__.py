@@ -10,6 +10,20 @@ from .core import (
     PassiveElement,
     Transmission,
 )
+from .joint import (
+    AffineJointTransmission,
+    AffineJointTransmissionParams,
+    ArticulatedTendonActuator,
+    ArticulatedTendonActuatorParams,
+    ArticulatedTendonImpedance,
+    ArticulatedTendonImpedanceParams,
+)
+from .mckibben import (
+    ArticulatedMcKibbenActuator,
+    ArticulatedMcKibbenActuatorParams,
+    ArticulatedMcKibbenTransmission,
+    ArticulatedMcKibbenTransmissionParams,
+)
 from .threadlike import (
     BaseThreadlikeRoutingParams,
     LinearThreadlikeRoutingParams,
@@ -28,11 +42,21 @@ __all__ = [
     "Actuator",
     "ActuatorKind",
     "ActuatorMetadata",
+    "AffineJointTransmission",
+    "AffineJointTransmissionParams",
+    "ArticulatedTendonActuator",
+    "ArticulatedTendonActuatorParams",
+    "ArticulatedTendonImpedance",
+    "ArticulatedTendonImpedanceParams",
     "DirectEffort",
     "EffortModel",
     "IdentityActuator",
     "IdentityActuatorParams",
     "IdentityTransmission",
+    "ArticulatedMcKibbenActuator",
+    "ArticulatedMcKibbenActuatorParams",
+    "ArticulatedMcKibbenTransmission",
+    "ArticulatedMcKibbenTransmissionParams",
     "BaseThreadlikeRoutingParams",
     "LinearThreadlikeRoutingParams",
     "PassiveElement",

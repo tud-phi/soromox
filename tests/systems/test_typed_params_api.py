@@ -8,7 +8,6 @@ from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from system_param_builders import (
     articulated_params,
-    passive_tendon_params,
     pcs_params,
     pendulum_params,
     planar_base_pose,
@@ -16,7 +15,11 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
-from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.actuation import (
+    ArticulatedTendonImpedance,
+    ThreadlikeActuator,
+    ThreadlikeRouting,
+)
 from soromox.systems import (
     PCS,
     ArticulatedSoftRobotParams,
@@ -547,20 +550,21 @@ def test_grad_differentiates_through_typed_params():
     assert jnp.isfinite(grad_value)
 
 
-def test_passive_tendon_params_store_per_tendon_impedance():
-    params = passive_tendon_params(
+def test_articulated_tendon_impedance_stores_per_tendon_mechanics():
+    impedance = ArticulatedTendonImpedance.from_routing(
+        jnp.array([[1.0, 0.0], [1.0, 1.0], [1.0, -1.0]]),
         stiffness=jnp.array([10.0, 20.0, 30.0], dtype=jnp.float64),
         damping=jnp.array([0.1, 0.2, 0.3], dtype=jnp.float64),
-        rest_length_offset=jnp.array([0.0, -0.01, 0.02], dtype=jnp.float64),
+        coordinate_offset=jnp.array([0.0, -0.01, 0.02], dtype=jnp.float64),
     )
+    params = impedance.params
 
-    assert params.num_tendons == 3
     updated = params.replace(damping=params.damping + 1.0)
     assert_allclose(params.damping, jnp.array([0.1, 0.2, 0.3]))
     assert_allclose(updated.damping, jnp.array([1.1, 1.2, 1.3]))
 
-    with pytest.raises(ValueError, match="rest_length_offset"):
-        params.replace(rest_length_offset=jnp.array([0.0, 0.0]))
+    with pytest.raises(ValueError, match="damping"):
+        params.replace(damping=jnp.array([0.0, 0.0]))
 
 
 def test_removed_plural_typed_param_names_fail():

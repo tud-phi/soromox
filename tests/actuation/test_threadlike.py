@@ -227,7 +227,7 @@ def test_modality_signs_pressure_work_pair_and_power():
         )
     )
     q = jnp.linspace(-0.01, 0.02, tendon_robot.num_dofs)
-    q_dot = jnp.linspace(0.03, -0.02, tendon_robot.num_dofs)
+    qd = jnp.linspace(0.03, -0.02, tendon_robot.num_dofs)
     length = tendon_robot.actuators[0].path_lengths(tendon_robot, q)
 
     assert_allclose(tendon_robot.actuator_coordinates(q), -length)
@@ -242,8 +242,8 @@ def test_modality_signs_pressure_work_pair_and_power():
     )
 
     effort = jnp.array([3.0])
-    generalized_power = q_dot @ tendon_robot.actuation_force(q, effort, q_dot=q_dot)
-    actuator_power = effort @ tendon_robot.actuator_velocities(q, q_dot)
+    generalized_power = qd @ tendon_robot.actuation_force(q, effort, qd=qd)
+    actuator_power = effort @ tendon_robot.actuator_velocities(q, qd)
     assert_allclose(generalized_power, actuator_power, rtol=1e-9, atol=1e-11)
 
 
@@ -332,10 +332,10 @@ def test_passive_impedance_superposition_and_parameter_updates():
     )
     robot = _spatial_pcs(actuators=(), passive_elements=(impedance,))
     q = jnp.linspace(-0.01, 0.02, robot.num_dofs)
-    q_dot = jnp.linspace(0.02, -0.01, robot.num_dofs)
+    qd = jnp.linspace(0.02, -0.01, robot.num_dofs)
 
     path_jacobian = jax.jacrev(lambda q_: impedance.path_lengths(robot, q_))(q)
-    assert_allclose(impedance.path_velocities(robot, q, q_dot), path_jacobian @ q_dot)
+    assert_allclose(impedance.path_velocities(robot, q, qd), path_jacobian @ qd)
     assert impedance.path_poses(robot, q, robot.length).shape == (1, 3)
 
     energy_gradient = jax.grad(robot.passive_elastic_energy)(q)

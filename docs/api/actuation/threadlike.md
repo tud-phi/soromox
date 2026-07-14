@@ -6,6 +6,11 @@ range of body segments. The same geometry supports pulling tendons, pushing
 rods, simplified contractile muscles, and pressure chambers represented by an
 equivalent axial volume coordinate.
 
+Threadlike components require continuum segment topology and the host's native
+path-integration hooks. `PCS`, `PlanarPCS`, and `GVS` provide this contract.
+Articulated hosts do not, so installing a threadlike component on them raises a
+descriptive `TypeError` during construction.
+
 ## Routing
 
 `ThreadlikeRouting` stores a vectorized family of paths. Linear paths use
@@ -135,7 +140,7 @@ coordinate:
 ```python
 actuator = robot.actuators[0]
 lengths = actuator.path_lengths(robot, q)
-length_rates = actuator.path_velocities(robot, q, q_dot)
+length_rates = actuator.path_velocities(robot, q, qd)
 points = actuator.path_poses(robot, q, s)
 coordinates = robot.actuator_coordinates(q)
 ```

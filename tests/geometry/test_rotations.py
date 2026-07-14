@@ -29,6 +29,8 @@ from soromox.utils.geometry.errors import (
 from soromox.utils.geometry.rotations import (
     RotationRepresentation,
     normalize_quaternion,
+    principal_axis_rotation_matrix,
+    principal_axis_rotation_matrix_derivative,
     quaternion_conjugate,
     quaternion_multiply,
     quaternion_to_rotation_matrix,
@@ -40,6 +42,21 @@ from soromox.utils.geometry.rotations import (
     rotation_vector_to_quaternion,
     rotation_vector_to_rotation_matrix,
 )
+
+
+@pytest.mark.parametrize("axis", ["x", "y", "z"])
+@pytest.mark.parametrize("angle", [-0.7, 0.0, 0.45])
+def test_principal_axis_rotation_derivative_matches_autodiff(axis, angle):
+    angle = jnp.asarray(angle)
+    expected = jax.jacrev(lambda value: principal_axis_rotation_matrix(value, axis))(
+        angle
+    )
+    assert_allclose(
+        principal_axis_rotation_matrix_derivative(angle, axis),
+        expected,
+        rtol=1e-12,
+        atol=1e-12,
+    )
 
 
 def rotation_matrix_from_axis_angle(axis, angle):

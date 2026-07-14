@@ -5,6 +5,7 @@ from __future__ import annotations
 from jax import Array
 from jax import numpy as jnp
 
+from soromox.actuation.mckibben import ArticulatedMcKibbenActuator
 from soromox.actuation.threadlike import ThreadlikeActuator, ThreadlikeImpedance
 
 from .actuators import ActuatorVisualLayer
@@ -45,6 +46,22 @@ def actuator_visual_layers(
                     name=actuator.name,
                     kind=actuator.kind,
                     points=points,
+                    scalar_fields=scalar_fields,
+                )
+            )
+        elif isinstance(actuator, ArticulatedMcKibbenActuator):
+            if actuator.num_channels == 0:
+                start = stop
+                continue
+            scalar_fields = {}
+            if inputs is not None:
+                scalar_fields["pressure"] = inputs
+                scalar_fields["force"] = actuator.axial_forces(q, inputs)
+            layers.append(
+                ActuatorVisualLayer(
+                    name=actuator.name,
+                    kind="muscle",
+                    points=actuator.segments(robot, q),
                     scalar_fields=scalar_fields,
                 )
             )

@@ -11,11 +11,14 @@ from system_param_builders import (
     planar_base_pose,
     planar_pcs_params,
     spatial_base_pose,
-    tendon_actuated_pendulum_params,
 )
 
 import soromox
-from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.actuation import (
+    ArticulatedTendonActuator,
+    ThreadlikeActuator,
+    ThreadlikeRouting,
+)
 from soromox.systems import (
     GVS,
     PCS,
@@ -30,7 +33,6 @@ from soromox.systems import (
     PlanarHSAParams,
     PlanarHSAStructure,
     PlanarPCS,
-    TendonActuatedPendulum,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
@@ -191,11 +193,11 @@ def _planar_hsa_robot():
         PCS(params=_pcs_params([0.08, 0.12, 0.2])),
         PlanarPCS(params=_planar_pcs_params([0.08, 0.12, 0.2])),
         Pendulum(_pendulum_params([0.7, 0.9, 1.1])),
-        TendonActuatedPendulum(
-            tendon_actuated_pendulum_params(
-                body=_pendulum_params([0.7, 0.9, 1.1]),
-                active_routing_matrix=jnp.tril(jnp.ones((3, 3), dtype=jnp.float64)),
-            )
+        Pendulum(
+            _pendulum_params([0.7, 0.9, 1.1]),
+            actuators=ArticulatedTendonActuator.from_routing(
+                jnp.tril(jnp.ones((3, 3), dtype=jnp.float64))
+            ),
         ),
         _articulated_robot(),
         GVS.from_segments(_segments(), gravity=jnp.array([0.0, 0.0, -9.81])),

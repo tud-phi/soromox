@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any, Literal
 
 import equinox as eqx
-from jax import Array
+from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.systems.params import BaseSystemParams
@@ -20,6 +20,47 @@ from .core import (
 )
 
 ThreadlikeKind = Literal["tendon", "push_rod", "muscle", "pneumatic", "generic"]
+
+
+def _validate_routing_for_robot(routing: ThreadlikeRouting, robot) -> None:
+    """Validate routing topology and host-specific geometric constraints."""
+    required_hooks = (
+        "_threadlike_path_lengths",
+        "_threadlike_moment_matrix",
+        "_threadlike_path_positions",
+    )
+    if not all(callable(getattr(robot, name, None)) for name in required_hooks):
+        raise TypeError(
+            "Threadlike components require a continuum host implementing the "
+            "threadlike routing hooks, such as PCS, PlanarPCS, or GVS."
+        )
+    if not hasattr(robot, "num_segments"):
+        raise TypeError(
+            "Threadlike components require continuum segment topology through "
+            "num_segments."
+        )
+    routing.params.validate_for_robot(robot.num_segments)
+    if not robot.is_planar:
+        return
+    if not hasattr(robot, "L_cum"):
+        raise TypeError(
+            "Planar threadlike routing validation requires cumulative segment "
+            "coordinates through L_cum."
+        )
+    samples = jnp.linspace(0.0, robot.L_cum[-1], 17)
+    offsets = vmap(
+        lambda path_params: vmap(lambda s: routing.offset(path_params, s))(samples)
+    )(routing.params)
+    if offsets.shape != (routing.num_paths, samples.shape[0], 3):
+        raise ValueError(
+            "ThreadlikeRouting.offset_fn must return material-frame [x, y, z] "
+            "offsets with final shape (3,)."
+        )
+    if bool(jnp.any(offsets[..., 0] != 0.0) | jnp.any(offsets[..., 2] != 0.0)):
+        raise ValueError(
+            "PlanarPCS threadlike routing must remain in the local-y direction; "
+            "its sampled local x and z offsets must be zero."
+        )
 
 
 def _index_tuple(value: int | tuple[int, ...] | list[int] | Array) -> tuple[int, ...]:
@@ -334,8 +375,8 @@ class ThreadlikeTransmission(Transmission):
     def path_lengths(self, robot, q: Array) -> Array:
         return robot._threadlike_path_lengths(q, self.routing)
 
-    def path_velocities(self, robot, q: Array, q_dot: Array) -> Array:
-        return robot._threadlike_moment_matrix(q, self.routing).T @ q_dot
+    def path_velocities(self, robot, q: Array, qd: Array) -> Array:
+        return robot._threadlike_moment_matrix(q, self.routing).T @ qd
 
     def path_poses(self, robot, q: Array, s: Array) -> Array:
         return robot._threadlike_path_positions(q, s, self.routing)
@@ -574,11 +615,14 @@ class ThreadlikeActuator(Actuator):
             kind=self.kind,
         )
 
+    def validate_for_robot(self, robot) -> None:
+        _validate_routing_for_robot(self.transmission.routing, robot)
+
     def path_lengths(self, robot, q: Array) -> Array:
         return self.transmission.path_lengths(robot, q)
 
-    def path_velocities(self, robot, q: Array, q_dot: Array) -> Array:
-        return self.transmission.path_velocities(robot, q, q_dot)
+    def path_velocities(self, robot, q: Array, qd: Array) -> Array:
+        return self.transmission.path_velocities(robot, q, qd)
 
     def path_poses(self, robot, q: Array, s: Array) -> Array:
         return self.transmission.path_poses(robot, q, s)
@@ -660,13 +704,16 @@ class ThreadlikeImpedance(PassiveElement):
         params.validate()
         return self._from_params(params, name=self.name, routing=self.routing)
 
+    def validate_for_robot(self, robot) -> None:
+        _validate_routing_for_robot(self.routing, robot)
+
     def path_lengths(self, robot, q: Array) -> Array:
         """Return the raw lengths of the passive routed paths."""
         return robot._threadlike_path_lengths(q, self.routing)
 
-    def path_velocities(self, robot, q: Array, q_dot: Array) -> Array:
+    def path_velocities(self, robot, q: Array, qd: Array) -> Array:
         """Return the raw length rates of the passive routed paths."""
-        return self._length_jacobian(robot, q) @ q_dot
+        return self._length_jacobian(robot, q) @ qd
 
     def path_poses(self, robot, q: Array, s: Array) -> Array:
         """Return passive routed-path positions at backbone coordinate ``s``."""
