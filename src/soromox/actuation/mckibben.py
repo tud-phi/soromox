@@ -77,6 +77,13 @@ class ArticulatedMcKibbenTransmissionParams(BaseSystemParams):
                 raise ValueError(
                     f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
+        joint_pair_indices = jnp.asarray(self.joint_pair_indices)
+        if shape[0] > 0 and bool(
+            jnp.any(joint_pair_indices[:, 0] == joint_pair_indices[:, 1])
+        ):
+            raise ValueError(
+                "joint_pair_indices must contain two distinct DOF indices per group."
+            )
 
     def assert_same_topology(
         self, other: ArticulatedMcKibbenTransmissionParams

@@ -16,6 +16,7 @@ from system_param_builders import (
 
 from soromox.actuation import (
     BaseThreadlikeRoutingParams,
+    IdentityActuator,
     IdentityTransmission,
     ThreadlikeActuator,
     ThreadlikeImpedance,
@@ -185,6 +186,11 @@ def test_identity_unactuated_and_mixed_construction():
     ]
 
 
+def test_identity_actuator_rejects_channel_count_mismatch_during_construction():
+    with pytest.raises(ValueError, match="one channel per robot degree of freedom"):
+        _spatial_pcs(actuators=IdentityActuator(3))
+
+
 @pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs, _gvs])
 def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
     actuator = ThreadlikeActuator.tendons(_routing())
@@ -350,6 +356,35 @@ def test_passive_impedance_superposition_and_parameter_updates():
     updated = robot.update_passive_element_params(0, stiffness=jnp.array([75.0]))
     assert_allclose(updated.passive_elements[0].params.stiffness, jnp.array([75.0]))
     assert_allclose(robot.passive_elements[0].params.stiffness, jnp.array([50.0]))
+
+
+def test_gvs_forward_dynamics_includes_passive_threadlike_damping():
+    routing = _routing(count=1)
+    base = _gvs(actuators=())
+    q = jnp.zeros((base.num_dofs,))
+    qd = jnp.array([0.4, -0.2, 0.3, -0.1])
+    rest_length = base._threadlike_path_lengths(q, routing)
+    impedance = ThreadlikeImpedance(
+        routing=routing,
+        stiffness=jnp.zeros((1,)),
+        damping=jnp.array([2.0]),
+        rest_length=rest_length,
+    )
+    robot = _gvs(actuators=(), passive_elements=(impedance,))
+    y = jnp.concatenate((q, qd))
+
+    actual_qdd = robot.forward_dynamics(jnp.array(0.0), y)[robot.num_dofs :]
+    inertia, coriolis_force, gravity_force = robot.dynamics_terms(q, qd)
+    expected_qdd = jnp.linalg.solve(
+        inertia,
+        -coriolis_force
+        - gravity_force
+        - robot.elastic_force(q)
+        - robot.damping_matrix(q) @ qd,
+    )
+
+    assert jnp.linalg.norm(robot.passive_damping_matrix(q)) > 0.0
+    assert_allclose(actual_qdd, expected_qdd, rtol=1e-9, atol=1e-9)
 
 
 def test_actuator_nested_update_and_topology_rejection():

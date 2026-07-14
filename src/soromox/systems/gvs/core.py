@@ -4842,7 +4842,7 @@ class GVS(SoftRobot):
         tau_el = self.elastic_force(q)
         tau_u = self.actuation_force(q, u, qd=qd)
 
-        rhs = tau_u + tau_ext - Cqd - G - tau_el - self.D_active @ qd
+        rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         qdd = jnp.linalg.solve(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])

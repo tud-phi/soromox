@@ -301,6 +301,27 @@ def test_isupport_pressure_area_validation_and_update_semantics():
         params.replace(chamber_effective_pressure_area=jnp.array([1.0, 2.0])).validate()
 
 
+def test_isupport_body_update_preserves_actuator_owned_bounds():
+    robot = ISupport(
+        params=make_isupport_params(),
+        structure=make_pneumatic_isupport_structure(num_gauss_points=1),
+    )
+    lower_bounds = jnp.array([1.0e3, 2.0e3, 3.0e3])
+    upper_bounds = jnp.array([1.0e5, 1.1e5, 1.2e5])
+    updated_actuator = robot.update_actuator_params(
+        0,
+        lower_bounds=lower_bounds,
+        upper_bounds=upper_bounds,
+    )
+
+    updated_body = updated_actuator.update_params(
+        density=updated_actuator.params.density * 1.01
+    )
+
+    assert jnp.allclose(updated_body.actuators[0].params.lower_bounds, lower_bounds)
+    assert jnp.allclose(updated_body.actuators[0].params.upper_bounds, upper_bounds)
+
+
 def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
     params = make_isupport_params(num_segments=2).replace(
         chamber_inner_radius=jnp.array([0.002, 0.003]),

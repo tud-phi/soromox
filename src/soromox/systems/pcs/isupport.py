@@ -630,6 +630,12 @@ class ISupport(PCS):
         chamber_actuator = _pneumatic_chamber_actuator(
             params, pcs_segment_to_pneumatic_segment
         )
+        current_actuator = self.actuators[0]
+        chamber_actuator_params = chamber_actuator.params.replace(
+            lower_bounds=current_actuator.params.lower_bounds,
+            upper_bounds=current_actuator.params.upper_bounds,
+        )
+        chamber_actuator = current_actuator.with_params(chamber_actuator_params)
         chamber_arrays = (
             jnp.asarray(pcs_params.chamber_inner_radius, dtype=jnp.float64),
             jnp.asarray(pcs_params.chamber_outer_radius, dtype=jnp.float64),

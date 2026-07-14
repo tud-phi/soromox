@@ -162,6 +162,17 @@ def test_articulated_mckibben_actuator_rejects_continuum_host() -> None:
         PCS(params, PCSStructure(num_gauss_points=3), actuators=actuator)
 
 
+def test_mckibben_transmission_rejects_duplicate_joint_pair_indices() -> None:
+    actuator = ArticulatedMcKibbenActuator.from_cached_npz(ASSET_PARAMS_PATH)
+    transmission = actuator.params.transmission
+    duplicate_pair_indices = transmission.joint_pair_indices.at[0, 1].set(
+        transmission.joint_pair_indices[0, 0]
+    )
+
+    with pytest.raises(ValueError, match="two distinct DOF indices"):
+        transmission.replace(joint_pair_indices=duplicate_pair_indices)
+
+
 def test_cached_params_use_soromox_base_axis() -> None:
     robot = make_robot()
     q = jnp.zeros((robot.num_dofs,))
