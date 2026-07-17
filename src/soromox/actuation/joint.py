@@ -75,10 +75,10 @@ class AffineJointTransmissionParams(BaseSystemParams):
         reference_configuration: Generalized configuration ``q_ref`` at which
             the affine displacement term is zero.
         coordinate_offset: Per-channel actuator coordinate ``y_a0`` at
-            ``q_ref``, in the same units as the actuator coordinate. This
-            shifts coordinate values without changing the moment matrix
-            ``R.T``. For passive tendon impedance it represents deformation
-            at ``q_ref`` and therefore determines preload.
+            ``q_ref``, in the same units as the actuator coordinate. Thus
+            ``y_a(q_ref) = y_a0`` and the differential map is ``dy_a/dq = R``.
+            For passive tendon impedance, ``y_a0`` specifies the deformation
+            and corresponding preload at ``q_ref``.
     """
 
     routing_matrix: Array
@@ -232,9 +232,8 @@ class ArticulatedTendonActuator(Actuator):
             reference_configuration: Configuration ``q_ref`` used as the
                 origin of the routing displacement. Defaults to zero.
             coordinate_offset: Actuator coordinate ``y_a0`` at ``q_ref``, as a
-                scalar shared by all tendons or one value per tendon. It shifts
-                reported tendon coordinates but does not change the moment
-                matrix or the generalized force produced by ``DirectEffort``.
+                scalar shared by all tendons or one value per tendon. Under
+                ``DirectEffort``, the generalized force is ``R.T @ control``.
             lower_bounds: Lower tension bounds, shared or per tendon.
             upper_bounds: Upper tension bounds, shared or per tendon.
             labels: Optional input label for each tendon.

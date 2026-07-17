@@ -1,8 +1,10 @@
 # Joint-space actuation
 
-Joint-space transmissions map articulated configurations to work-conjugate
-actuator coordinates. They can be installed on both `Pendulum` and
-`ArticulatedSoftRobot` without introducing an actuator-specific robot subclass.
+Joint-space transmissions map generalized configurations to work-conjugate
+actuator coordinates. The generic `AffineJointTransmission` supports any host
+with a matching generalized-coordinate dimension, including `GVS`. The
+articulated-tendon presets additionally require serial articulated routing, as
+provided by `Pendulum` and `ArticulatedSoftRobot`.
 
 ## Affine transmission coordinates
 
@@ -28,20 +30,26 @@ configuration. The corresponding velocity, generalized force, and power are
 \]
 
 The generic affine transmission places no tendon-specific constraints on
-(R), so it is also suitable for custom generalized-coordinate work
+\(R\), so it is also suitable for custom generalized-coordinate work
 coordinates. For example, the transmission itself can map PCS coordinates when
 its matrix width matches the PCS degrees of freedom. The articulated-tendon
 preset adds stronger serial-joint semantics and intentionally rejects continuum
 hosts.
 
-The `coordinate_offset` argument is \(y_{\mathrm{a},0}\): the per-channel
-actuator coordinate at `reference_configuration`. It is not an additional joint
-angle and does not change \(A=R^\mathsf{T}\). With the current `DirectEffort`
-model, changing it shifts the active coordinate reported to controllers without
-changing the generalized force. For `ArticulatedTendonImpedance`, the coordinate
-is the spring deformation; `coordinate_offset=0` makes the reference
-configuration unstrained, while a nonzero value produces the reference preload
-\(R^\mathsf{T}K y_{\mathrm{a},0}\).
+The `coordinate_offset` parameter specifies the actuator-space coordinate at
+the reference configuration:
+
+\[
+y_\mathrm{a}(q_\mathrm{ref}) = y_{\mathrm{a},0}.
+\]
+
+It defines the origin of the affine coordinate, while the differential
+kinematics remain \(A=R^\mathsf{T}\). For an
+`ArticulatedTendonActuator` with `DirectEffort`, the generalized actuation
+force is \(\tau=R^\mathsf{T}u\). For `ArticulatedTendonImpedance`,
+\(y_\mathrm{a}\) is the elastic deformation; consequently, the elastic force
+at the reference configuration is
+\(\tau_\mathrm{elastic}=R^\mathsf{T}K y_{\mathrm{a},0}\).
 
 ## Articulated tendons
 

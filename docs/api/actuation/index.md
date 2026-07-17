@@ -54,34 +54,19 @@ Actuator installation validates the geometric host contract before dynamics or
 rendering is evaluated. Incompatible combinations raise a descriptive
 `TypeError` or `ValueError`; they are not deferred to a missing-method failure.
 
-SoRoMoX uses two geometric host categories in this documentation:
-
-- **Continuum hosts:** `PCS`, `PlanarPCS`, `GVS`, and their subclasses such as
-  `ISupport`. Their generalized coordinates parameterize a continuous strain
-  field; in particular, GVS does not expose a serial chain of discrete joints.
-- **Serial articulated hosts:** `Pendulum`, `ArticulatedSoftRobot`, and
-  articulated subclasses such as `McKibbenActuatedUMArm`. Their generalized
-  coordinates are discrete joint coordinates, and they expose joint-routing or
-  kinematic-frame contracts where applicable.
-
-All hosts use the symbol \(q\) for generalized coordinates. That common notation
-does not make every coordinate a physical joint. The component names below refer
-to the geometric contract they require, not merely to the presence of a vector
-of generalized coordinates.
-
 | Component | Compatible hosts | Contract |
 | --- | --- | --- |
 | `IdentityActuator` | Every `SoftRobot` | One channel per generalized coordinate |
-| `AffineJointTransmission` | Any host with a matching generalized-coordinate dimension | Pure affine coordinate map; no articulated topology semantics |
+| `AffineJointTransmission` | `PCS`, `PlanarPCS`, `GVS`, `Pendulum`, `ArticulatedSoftRobot`, or any host with a matching generalized-coordinate dimension | One matrix column per generalized coordinate |
 | `ArticulatedTendonActuator`, `ArticulatedTendonImpedance` | `Pendulum`, `ArticulatedSoftRobot`, and hosts explicitly exposing serial articulated routing | Joint-index routing with no skipped joints and full row rank |
 | Threadlike actuator and impedance presets | `PCS`, `PlanarPCS`, `GVS`, and continuum hosts implementing the threadlike integration hooks | Material-frame path geometry plus continuum segment topology |
 | `ArticulatedMcKibbenActuator` | Spatial articulated hosts implementing the kinematic-frame contract, including `McKibbenActuatedUMArm` | Grouped attachment geometry and valid joint-pair indices |
 
-An affine transmission can mathematically map PCS generalized coordinates if
-its matrix has the correct width. That is a generic coordinate transformation,
-not an articulated tendon routing. The articulated-tendon preset therefore
-rejects PCS/GVS hosts, while threadlike presets reject articulated hosts that do
-not implement continuum path integration.
+Compatibility of an `AffineJointTransmission` depends only on the width of its
+routing matrix: `routing_matrix.shape[1] == robot.num_dofs`. It can therefore
+map GVS, PCS, or articulated generalized coordinates. The articulated-tendon
+preset adds serial-joint routing constraints and rejects PCS/GVS hosts, while
+threadlike presets require continuum path-integration support.
 
 The common robot interface is:
 

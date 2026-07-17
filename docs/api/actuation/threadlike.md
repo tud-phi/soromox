@@ -6,21 +6,12 @@ range of body segments. The same geometry supports pulling tendons, pushing
 rods, simplified contractile muscles, and pressure chambers represented by an
 equivalent axial volume coordinate.
 
-The name **threadlike** is deliberate and retains the established terminology
-for this material-frame path geometry. It also communicates a modeling
-assumption: the transmission resolves a one-dimensional path and does not model
-a finite actuator cross-section or its distributed surface coupling to the
-backbone. The pressure-chamber preset captures cross-section only through a
-scalar effective area. Actuators whose diameter or surface loading materially
-affects the mechanics require a richer transmission model.
-
-Threadlike describes the actuator routing, not a robot family or its
-dimensionality: the same component can be used with spatial continuum hosts
-(`PCS` and `GVS`) and the planar continuum host `PlanarPCS`. Likewise,
-`Pendulum` and `ArticulatedSoftRobot` are existing host class names rather than
-a symmetric planar/spatial naming pair. Compatibility is determined by the
-continuum or articulated geometric contracts listed in the
-[actuation overview](index.md#host-compatibility).
+Following the general threadlike-routing formulation of
+[Renda et al. (2022)](https://doi.org/10.1109/LRA.2022.3183248), each actuator
+is represented by a path embedded in the continuum body. SoRoMoX specifies the
+path by its material-frame offset \(d(s)\) from the backbone and its derivative
+with respect to arc length. The host combines these routing fields with its
+backbone kinematics when evaluating path length and the moment matrix.
 
 Threadlike components require continuum segment topology and the host's native
 path-integration hooks. `PCS`, `PlanarPCS`, and `GVS` provide this contract.
