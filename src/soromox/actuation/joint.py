@@ -20,6 +20,7 @@ from .core import (
 
 
 def _channel_array(value: Any, count: int, name: str) -> Array:
+    """Broadcast a scalar or validate one value per actuator channel."""
     array = jnp.asarray(value)
     if array.ndim == 0:
         array = jnp.full((count,), array)
@@ -65,7 +66,20 @@ def _validate_articulated_tendon_host(robot) -> None:
 
 
 class AffineJointTransmissionParams(BaseSystemParams):
-    """Parameters for an affine mapping from joints to actuator coordinates."""
+    """Parameters for an affine mapping to actuator coordinates.
+
+    Attributes:
+        routing_matrix: Matrix ``R`` with shape
+            ``(num_channels, num_dofs)``. Each row is the derivative of one
+            actuator coordinate with respect to the generalized coordinates.
+        reference_configuration: Generalized configuration ``q_ref`` at which
+            the affine displacement term is zero.
+        coordinate_offset: Per-channel actuator coordinate ``y_a0`` at
+            ``q_ref``, in the same units as the actuator coordinate. This
+            shifts coordinate values without changing the moment matrix
+            ``R.T``. For passive tendon impedance it represents deformation
+            at ``q_ref`` and therefore determines preload.
+    """
 
     routing_matrix: Array
     reference_configuration: Array
@@ -206,6 +220,29 @@ class ArticulatedTendonActuator(Actuator):
         labels: tuple[str, ...] | None = None,
         name: str = "articulated_tendons",
     ) -> ArticulatedTendonActuator:
+        """Construct direct-tension actuation from signed joint routing.
+
+        The resulting actuator coordinate is
+        ``routing_matrix @ (q - reference_configuration) + coordinate_offset``.
+        Each routing row is the signed contraction Jacobian of one tendon.
+
+        Args:
+            routing_matrix: Signed tendon routing with one row per tendon and
+                one column per generalized coordinate.
+            reference_configuration: Configuration ``q_ref`` used as the
+                origin of the routing displacement. Defaults to zero.
+            coordinate_offset: Actuator coordinate ``y_a0`` at ``q_ref``, as a
+                scalar shared by all tendons or one value per tendon. It shifts
+                reported tendon coordinates but does not change the moment
+                matrix or the generalized force produced by ``DirectEffort``.
+            lower_bounds: Lower tension bounds, shared or per tendon.
+            upper_bounds: Upper tension bounds, shared or per tendon.
+            labels: Optional input label for each tendon.
+            name: Component name used for identification and rendering.
+
+        Returns:
+            An articulated tendon actuator with direct tension effort.
+        """
         matrix = jnp.asarray(routing_matrix)
         if matrix.ndim != 2:
             raise ValueError("routing_matrix must be two-dimensional.")
@@ -314,6 +351,24 @@ class ArticulatedTendonImpedance(PassiveElement):
         coordinate_offset: Array | float = 0.0,
         name: str = "passive_articulated_tendons",
     ) -> ArticulatedTendonImpedance:
+        """Construct passive spring-damper mechanics in tendon coordinates.
+
+        Args:
+            routing_matrix: Signed tendon routing with one row per passive
+                tendon and one column per generalized coordinate.
+            stiffness: Actuator-space stiffness, one value per tendon.
+            damping: Actuator-space damping, one value per tendon.
+            reference_configuration: Configuration ``q_ref`` used as the
+                origin of the routing displacement. Defaults to zero.
+            coordinate_offset: Tendon deformation ``y_a0`` at ``q_ref``, as a
+                scalar shared by all tendons or one value per tendon. Zero
+                makes ``q_ref`` unstrained; a nonzero value creates elastic
+                preload ``R.T @ (stiffness * y_a0)``.
+            name: Component name used for identification and rendering.
+
+        Returns:
+            A passive articulated tendon impedance component.
+        """
         matrix = jnp.asarray(routing_matrix)
         if matrix.ndim != 2:
             raise ValueError("routing_matrix must be two-dimensional.")

@@ -54,6 +54,21 @@ Actuator installation validates the geometric host contract before dynamics or
 rendering is evaluated. Incompatible combinations raise a descriptive
 `TypeError` or `ValueError`; they are not deferred to a missing-method failure.
 
+SoRoMoX uses two geometric host categories in this documentation:
+
+- **Continuum hosts:** `PCS`, `PlanarPCS`, `GVS`, and their subclasses such as
+  `ISupport`. Their generalized coordinates parameterize a continuous strain
+  field; in particular, GVS does not expose a serial chain of discrete joints.
+- **Serial articulated hosts:** `Pendulum`, `ArticulatedSoftRobot`, and
+  articulated subclasses such as `McKibbenActuatedUMArm`. Their generalized
+  coordinates are discrete joint coordinates, and they expose joint-routing or
+  kinematic-frame contracts where applicable.
+
+All hosts use the symbol \(q\) for generalized coordinates. That common notation
+does not make every coordinate a physical joint. The component names below refer
+to the geometric contract they require, not merely to the presence of a vector
+of generalized coordinates.
+
 | Component | Compatible hosts | Contract |
 | --- | --- | --- |
 | `IdentityActuator` | Every `SoftRobot` | One channel per generalized coordinate |

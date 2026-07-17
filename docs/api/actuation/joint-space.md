@@ -15,8 +15,8 @@ y_\mathrm{a}(q)
 A = R^\mathsf{T}.
 \]
 
-Here, each row of (R) is a signed actuator routing across the joints. The
-offset (y_{\mathrm{a},0}) makes the coordinate value explicit at the reference
+Here, each row of \(R\) is a signed actuator routing across the joints. The
+offset \(y_{\mathrm{a},0}\) makes the coordinate value explicit at the reference
 configuration. The corresponding velocity, generalized force, and power are
 
 \[
@@ -34,9 +34,18 @@ its matrix width matches the PCS degrees of freedom. The articulated-tendon
 preset adds stronger serial-joint semantics and intentionally rejects continuum
 hosts.
 
+The `coordinate_offset` argument is \(y_{\mathrm{a},0}\): the per-channel
+actuator coordinate at `reference_configuration`. It is not an additional joint
+angle and does not change \(A=R^\mathsf{T}\). With the current `DirectEffort`
+model, changing it shifts the active coordinate reported to controllers without
+changing the generalized force. For `ArticulatedTendonImpedance`, the coordinate
+is the spring deformation; `coordinate_offset=0` makes the reference
+configuration unstrained, while a nonzero value produces the reference preload
+\(R^\mathsf{T}K y_{\mathrm{a},0}\).
+
 ## Articulated tendons
 
-`ArticulatedTendonActuator` interprets (R) as a signed tendon-contraction
+`ArticulatedTendonActuator` interprets \(R\) as a signed tendon-contraction
 Jacobian. Positive control input is positive tendon tension.
 
 ```python
