@@ -7,12 +7,19 @@ rods, simplified contractile muscles, and pressure chambers represented by an
 equivalent axial volume coordinate.
 
 The name **threadlike** is deliberate and retains the established terminology
-for this material-frame path geometry. It describes the actuator routing, not a
-robot family or its dimensionality: the same threadlike component can be used
-with spatial continuum hosts (`PCS` and `GVS`) and the planar continuum host
-`PlanarPCS`. Likewise, `Pendulum` and `ArticulatedSoftRobot` are existing host
-class names rather than a symmetric planar/spatial naming pair. Compatibility
-is determined by the continuum or articulated geometric contracts listed in the
+for this material-frame path geometry. It also communicates a modeling
+assumption: the transmission resolves a one-dimensional path and does not model
+a finite actuator cross-section or its distributed surface coupling to the
+backbone. The pressure-chamber preset captures cross-section only through a
+scalar effective area. Actuators whose diameter or surface loading materially
+affects the mechanics require a richer transmission model.
+
+Threadlike describes the actuator routing, not a robot family or its
+dimensionality: the same component can be used with spatial continuum hosts
+(`PCS` and `GVS`) and the planar continuum host `PlanarPCS`. Likewise,
+`Pendulum` and `ArticulatedSoftRobot` are existing host class names rather than
+a symmetric planar/spatial naming pair. Compatibility is determined by the
+continuum or articulated geometric contracts listed in the
 [actuation overview](index.md#host-compatibility).
 
 Threadlike components require continuum segment topology and the host's native
