@@ -13,6 +13,18 @@ path by its material-frame offset \(d(s)\) from the backbone and its derivative
 with respect to arc length. The host combines these routing fields with its
 backbone kinematics when evaluating path length and the moment matrix.
 
+The transmission model assumes that:
+
+- the routing is fixed in the material frame and depends only on arc length;
+- the actuator coordinate is determined by path length, scaled by a constant
+  effective area for the pressure-chamber preset; and
+- each path carries one scalar work-conjugate effort, uniform along its route.
+
+Consequently, configuration- or time-dependent rerouting, changes in chamber
+cross-section, along-path friction or slack, and internal actuator dynamics are
+outside the transmission model. Representing these effects requires an extended
+routing, transmission, or effort model.
+
 Threadlike components require continuum segment topology and the host's native
 path-integration hooks. `PCS`, `PlanarPCS`, and `GVS` provide this contract.
 Articulated hosts do not, so installing a threadlike component on them raises a

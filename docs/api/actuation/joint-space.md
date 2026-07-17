@@ -2,9 +2,9 @@
 
 Joint-space transmissions map generalized configurations to work-conjugate
 actuator coordinates. The generic `AffineJointTransmission` supports any host
-with a matching generalized-coordinate dimension, including `GVS`. The
-articulated-tendon presets additionally require serial articulated routing, as
-provided by `Pendulum` and `ArticulatedSoftRobot`.
+with a matching generalized-coordinate dimension. The articulated-tendon
+presets additionally require serial articulated routing, as provided by
+`Pendulum` and `ArticulatedSoftRobot`.
 
 ## Affine transmission coordinates
 
