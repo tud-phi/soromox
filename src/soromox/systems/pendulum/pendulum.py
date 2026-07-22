@@ -7,6 +7,7 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
+from soromox.actuation.core import Actuator, PassiveElement
 from soromox.systems.pendulum.params import PendulumParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 
@@ -38,6 +39,10 @@ class Pendulum(SoftRobot):
         - mass m[i]
         - planar moment of inertia about its COM I[i]
 
+    At zero joint angle, each link points along the local positive x-axis of its
+    proximal frame. ``Lc[i]`` is measured from the proximal joint along this link
+    axis. The base pose may rotate that local convention in the inertial frame.
+
     Gravity is applied as a planar acceleration vector g = [g_x, g_y]. Optional linear
     joint stiffness K and viscous damping D can be supplied to model elastic and damping
     torques (τ_el = K q, τ_d = D qd).
@@ -61,8 +66,10 @@ class Pendulum(SoftRobot):
 
     Attributes:
         num_links: Number of links / DoFs.
-        num_actuators: Number of joint actuators. Equal to num_links.
-        m, I, L, Lc, r: Physical link properties (radius used for visualization).
+        num_actuators: Number of installed actuator channels. This equals
+            ``num_links`` for the default identity transmission.
+        m, I, L, Lc, r: Physical link properties. Radius is used only for
+            circular visualization geometry; mass and inertia are supplied independently.
         g: Planar gravity vector [g_x, g_y].
         K, D: Optional joint stiffness and damping matrices (zeros if omitted).
         q_ref_k: Optional rest configuration of the torsional springs (default is the zero configuration).
@@ -88,6 +95,9 @@ class Pendulum(SoftRobot):
     def __init__(
         self,
         params: PendulumParams,
+        *,
+        actuators: Actuator | tuple[Actuator, ...] | None = None,
+        passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
         **kwargs: Any,
     ) -> None:
         """Initialize the pendulum system with typed parameters."""
@@ -113,7 +123,6 @@ class Pendulum(SoftRobot):
 
         self.num_links = int(n_q)
         self.num_dofs = self.num_links
-        self.num_actuators = self.num_links
 
         # set parameters
         self.m = m
@@ -126,10 +135,16 @@ class Pendulum(SoftRobot):
         self.K = jnp.asarray(params.joint_stiffness)
         self.D = jnp.asarray(params.joint_damping)
         self.q_ref_k = jnp.asarray(params.joint_rest_configuration)
+        self._configure_actuation(actuators, passive_elements)
 
     @property
     def is_planar(self) -> bool:
         """Pendulum is a planar (2D) model."""
+        return True
+
+    @property
+    def supports_articulated_tendon_routing(self) -> bool:
+        """Pendulum coordinates form a serial articulated joint chain."""
         return True
 
     @property
@@ -138,7 +153,10 @@ class Pendulum(SoftRobot):
         return jnp.asarray(self.L)
 
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Circular cross-section using per-link radius."""
+        """Return circular visualization geometry using the per-link radius.
+
+        The radius does not determine the link's mass or planar moment of inertia.
+        """
         L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros(1), self.L]))
         segment_idx = jnp.clip(jnp.sum(s > L_cum) - 1, 0, self.num_links - 1)
         radius = self.r[segment_idx]
@@ -146,17 +164,10 @@ class Pendulum(SoftRobot):
         return tag, jnp.array([radius])
 
     def _current_body_params(self) -> PendulumParams:
-        """Return pendulum body params, including typed actuated wrappers."""
-        if isinstance(self.params, PendulumParams):
-            return self.params
-        body = getattr(self.params, "body", None)
-        if isinstance(body, PendulumParams):
-            return body
-        raise TypeError("model params do not contain PendulumParams body fields.")
+        """Return the pendulum body parameters."""
+        return self.params
 
-    def _with_pendulum_params(
-        self, params: PendulumParams, stored_params: Any | None = None
-    ) -> "Pendulum":
+    def _with_pendulum_params(self, params: PendulumParams) -> "Pendulum":
         """Return a copy with pendulum body caches refreshed."""
         current_params = self._current_body_params()
         if not isinstance(params, PendulumParams):
@@ -182,7 +193,7 @@ class Pendulum(SoftRobot):
             ),
             self,
             (
-                params if stored_params is None else stored_params,
+                params,
                 jnp.asarray(params.base_pose),
                 jnp.asarray(params.mass),
                 jnp.asarray(params.moment_inertia),
@@ -217,6 +228,7 @@ class Pendulum(SoftRobot):
         for name in shape_locked_fields:
             if (
                 name in updates
+                and updates[name] is not None
                 and jnp.asarray(updates[name]).shape != getattr(self.params, name).shape
             ):
                 raise ValueError(
@@ -584,7 +596,8 @@ class Pendulum(SoftRobot):
         Compute the forward kinematics at arc-length position s along the pendulum.
 
         The pose is computed as [theta, x, y] where theta is the orientation angle
-        and (x, y) is the Cartesian position.
+        and (x, y) is the Cartesian position. A zero link angle points along the
+        local positive x-axis; cumulative joint angles rotate that direction.
 
         Args:
             q: Joint angles, shape (N,) [rad].
@@ -870,7 +883,7 @@ class Pendulum(SoftRobot):
         Returns:
             tau_el (Array): Elastic force vector τ_el = K @ q, shape (N,) [N⋅m]
         """
-        tau_el = self.K @ (q - self.q_ref_k)
+        tau_el = self.K @ (q - self.q_ref_k) + self.passive_elastic_force(q)
         return tau_el
 
     @eqx.filter_jit
@@ -884,21 +897,7 @@ class Pendulum(SoftRobot):
         Returns:
             Array: Damping matrix, shape (N, N) [N⋅m⋅s/rad]
         """
-        return self.D
-
-    @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Return the actuation matrix (identity for direct joint torques).
-
-        Args:
-            q (Array): Joint angles, shape (N,) [rad] (unused for pendulum)
-
-        Returns:
-            A (Array): Actuation matrix (identity), shape (N, N)
-        """
-        A = jnp.eye(self.num_links)
-        return A
+        return self.D + self.passive_damping_matrix(q)
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -939,7 +938,7 @@ class Pendulum(SoftRobot):
             raise ValueError("actuation_args must be None, (u,), or (u, tau_ext)")
 
         if u is None:
-            u = jnp.zeros((self.num_links,))
+            u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
         if tau_ext is None:
             tau_ext = jnp.zeros((self.num_links,))
 
@@ -948,7 +947,7 @@ class Pendulum(SoftRobot):
         G = self._gravitational_force(q)
         D = self.damping_matrix(q)
         tau_el = self.elastic_force(q)
-        tau_u = self.actuation_force(q, u)
+        tau_u = self.actuation_force(q, u, qd=qd)
         rhs = tau_u + tau_ext - C @ qd - G - tau_el - D @ qd
         qdd = jnp.linalg.solve(B, rhs)
         return jnp.concatenate([qd, qdd])
@@ -993,5 +992,7 @@ class Pendulum(SoftRobot):
         Returns:
             U_k (Array): Elastic potential energy [J] (scalar)
         """
-        U_k = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (q - self.q_ref_k)
+        U_k = 0.5 * (q - self.q_ref_k).T @ self.stiffness_matrix() @ (
+            q - self.q_ref_k
+        ) + self.passive_elastic_energy(q)
         return U_k

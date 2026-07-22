@@ -1,22 +1,22 @@
 __all__ = [
+    "DEFAULT_GRAVITY_MAGNITUDE",
     "BaseSystemParams",
     "BaseSoftRobotParams",
     "BaseContinuumSoftRobotParams",
     "BaseArticulatedSoftRobotParams",
-    "BaseTendonRoutingParams",
-    "LinearTendonRoutingParams",
-    "PassiveTendonParams",
     "validate_planar_base_pose",
     "validate_quaternion_base_pose",
 ]
 
 from dataclasses import fields
-from typing import Any
+from typing import Any, ClassVar, Literal
 
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 from jax.errors import ConcretizationTypeError, TracerBoolConversionError
+
+DEFAULT_GRAVITY_MAGNITUDE = 9.81
 
 
 def _validate_finite_array(
@@ -95,25 +95,6 @@ def validate_quaternion_base_pose(
         )
 
 
-def _attachment_segment_index(value: Any) -> int | tuple[int, ...]:
-    """Convert concrete tendon attachment indices to static Python metadata."""
-    if isinstance(value, int):
-        return int(value)
-    if isinstance(value, tuple):
-        return tuple(int(idx) for idx in value)
-    if isinstance(value, list):
-        return tuple(int(idx) for idx in value)
-
-    array = jnp.asarray(value)
-    if array.ndim == 0:
-        return int(array.item())
-    if array.ndim != 1:
-        raise ValueError(
-            "attachment_segment_index must be a scalar or one-dimensional sequence."
-        )
-    return tuple(int(idx) for idx in array.tolist())
-
-
 class BaseSystemParams(eqx.Module):
     """Base class for dynamic system parameters stored as JAX PyTrees."""
 
@@ -127,13 +108,19 @@ class BaseSystemParams(eqx.Module):
 
         updated = self
         for name, value in updates.items():
+            value = self._normalize_replacement(name, value)
             updated = eqx.tree_at(
                 lambda params, field_name=name: getattr(params, field_name),
                 updated,
                 value,
+                is_leaf=lambda leaf: leaf is None,
             )
         updated.validate()
         return updated
+
+    def _normalize_replacement(self, name: str, value: Any) -> Any:
+        """Normalize a field replacement before rebuilding the PyTree."""
+        return value
 
     def validate(self) -> None:
         """Validate parameter consistency."""
@@ -147,17 +134,125 @@ class BaseSystemParams(eqx.Module):
 class BaseSoftRobotParams(BaseSystemParams):
     """Common dynamic parameters for soft robot systems.
 
-    ``base_pose`` and ``gravity`` are JAX arrays in the dimensional convention
-    of the concrete model. Planar robots use ``base_pose = [theta, x, y]`` with
-    2D gravity, where ``theta`` is a right-handed angle in radians about the
-    out-of-plane z-axis. Spatial robots use
+    ``base_pose`` and ``gravity`` are optional keyword-only constructor inputs.
+    When omitted, the robot points upright and standard Earth gravity acts in
+    the negative vertical world direction. Planar robots use
+    ``base_pose = [theta, x, y]`` with 2D gravity, where ``theta`` is a
+    right-handed angle in radians about the out-of-plane z-axis. Spatial robots use
     ``base_pose = [qw, qx, qy, qz, x, y, z]`` with 3D gravity. Spatial
     quaternions are scalar-first Hamilton quaternions, normalized before
-    transform construction, and must have nonzero finite norm.
+    transform construction, and must have nonzero finite norm. Use
+    :meth:`horizontal`, :meth:`upright`, or :meth:`hanging` for explicit common
+    mounting configurations.
     """
 
-    base_pose: Array
-    gravity: Array
+    is_planar: ClassVar[bool | None] = None
+
+    base_pose: Array | None = eqx.field(default=None, kw_only=True)
+    gravity: Array | None = eqx.field(default=None, kw_only=True)
+
+    def __check_init__(self) -> None:
+        object.__setattr__(self, "base_pose", self._resolve_base_pose(self.base_pose))
+        object.__setattr__(self, "gravity", self._resolve_gravity(self.gravity))
+
+    @classmethod
+    def _require_planarity(cls) -> bool:
+        if cls.is_planar is None:
+            raise TypeError(f"{cls.__name__} must declare is_planar as True or False.")
+        return cls.is_planar
+
+    @classmethod
+    def _mounting_base_pose(
+        cls,
+        mounting: Literal["horizontal", "upright", "hanging"],
+        base_position: Array | None = None,
+    ) -> Array:
+        is_planar = cls._require_planarity()
+        position_dimension = 2 if is_planar else 3
+        if base_position is None:
+            position = jnp.zeros(position_dimension)
+        else:
+            position = _validate_finite_array(
+                "base_position", base_position, (position_dimension,)
+            )
+            position = jnp.asarray(position)
+
+        if is_planar:
+            angles = {
+                "horizontal": 0.0,
+                "upright": jnp.pi / 2,
+                "hanging": -jnp.pi / 2,
+            }
+            return jnp.concatenate([jnp.asarray([angles[mounting]]), position])
+
+        sqrt_half = jnp.sqrt(jnp.asarray(0.5))
+        quaternions = {
+            "horizontal": jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+            "upright": jnp.asarray([sqrt_half, 0.0, -sqrt_half, 0.0]),
+            "hanging": jnp.asarray([sqrt_half, 0.0, sqrt_half, 0.0]),
+        }
+        return jnp.concatenate([quaternions[mounting], position])
+
+    @classmethod
+    def _default_gravity(cls) -> Array:
+        if cls._require_planarity():
+            return jnp.asarray([0.0, -DEFAULT_GRAVITY_MAGNITUDE])
+        return jnp.asarray([0.0, 0.0, -DEFAULT_GRAVITY_MAGNITUDE])
+
+    @classmethod
+    def _resolve_base_pose(cls, base_pose: Array | None) -> Array:
+        if base_pose is None:
+            return cls._mounting_base_pose("upright")
+        return jnp.asarray(base_pose)
+
+    @classmethod
+    def _resolve_gravity(cls, gravity: Array | None) -> Array:
+        if gravity is None:
+            return cls._default_gravity()
+        return jnp.asarray(gravity)
+
+    @classmethod
+    def _from_mounting(
+        cls,
+        mounting: Literal["horizontal", "upright", "hanging"],
+        *,
+        base_position: Array | None = None,
+        **kwargs: Any,
+    ) -> "BaseSoftRobotParams":
+        if "base_pose" in kwargs:
+            raise TypeError(
+                f"{cls.__name__}.{mounting}() does not accept base_pose; "
+                "use base_position or the ordinary constructor instead."
+            )
+        return cls(base_pose=cls._mounting_base_pose(mounting, base_position), **kwargs)
+
+    @classmethod
+    def horizontal(
+        cls, *, base_position: Array | None = None, **kwargs: Any
+    ) -> "BaseSoftRobotParams":
+        """Construct parameters with the backbone pointing along world +x."""
+        return cls._from_mounting("horizontal", base_position=base_position, **kwargs)
+
+    @classmethod
+    def upright(
+        cls, *, base_position: Array | None = None, **kwargs: Any
+    ) -> "BaseSoftRobotParams":
+        """Construct parameters pointing along world +y (planar) or +z (spatial)."""
+        return cls._from_mounting("upright", base_position=base_position, **kwargs)
+
+    @classmethod
+    def hanging(
+        cls, *, base_position: Array | None = None, **kwargs: Any
+    ) -> "BaseSoftRobotParams":
+        """Construct parameters pointing along world -y (planar) or -z (spatial)."""
+        return cls._from_mounting("hanging", base_position=base_position, **kwargs)
+
+    def _normalize_replacement(self, name: str, value: Any) -> Any:
+        if name == "base_pose":
+            return type(self)._resolve_base_pose(value)
+        if name == "gravity":
+            return type(self)._resolve_gravity(value)
+        return value
 
 
 class BaseContinuumSoftRobotParams(BaseSoftRobotParams):
@@ -186,180 +281,3 @@ class BaseArticulatedSoftRobotParams(BaseSoftRobotParams):
     joint_stiffness: Array
     joint_damping: Array
     joint_rest_configuration: Array
-
-
-class BaseTendonRoutingParams(BaseSystemParams):
-    """Base class for batched tendon routing parameter sets.
-
-    A tendon routing params object represents all tendons of one routing family.
-    The leading axis of every array indexes tendon number; changing this axis
-    changes the actuator layout and requires model reconstruction.
-    """
-
-    @property
-    def num_tendons(self) -> int:
-        raise NotImplementedError
-
-    @property
-    def attachment_segment_indices(self) -> tuple[int, ...]:
-        """Attachment segment indices as concrete topology metadata."""
-        raise NotImplementedError
-
-    @property
-    def attachment_segment_index_array(self) -> Array:
-        """Attachment segment indices as a JAX array for vectorized computations."""
-        return jnp.asarray(self.attachment_segment_indices, dtype=jnp.int32)
-
-    def validate_attachment_segments(self, num_segments: int, name: str) -> None:
-        """Validate static attachment indices against a concrete robot layout."""
-        for idx in self.attachment_segment_indices:
-            if idx >= num_segments:
-                raise ValueError(
-                    f"{name}.attachment_segment_index values must be strictly lower "
-                    f"than the number of segments of the robot. Got {idx}; "
-                    f"num_segments = {num_segments}."
-                )
-
-    def assert_same_attachment_segments(
-        self, other: "BaseTendonRoutingParams", name: str
-    ) -> None:
-        """Reject runtime topology changes hidden inside same-shape params."""
-        if self.attachment_segment_indices != other.attachment_segment_indices:
-            raise ValueError(
-                f"Changing {name}.attachment_segment_index changes tendon topology; "
-                "construct a new system."
-            )
-
-
-class LinearTendonRoutingParams(BaseTendonRoutingParams):
-    """Batched linear routing parameters for active or passive tendons.
-
-    The continuous routing fields have shape ``(num_tendons,)``. Tendon ``k``
-    has cross-section offsets ``y_intercept[k] + y_slope[k] * s`` and
-    ``z_intercept[k] + z_slope[k] * s``. ``attachment_segment_index`` is static
-    topology metadata: changing it changes which body segments the tendon spans
-    and requires model reconstruction.
-    """
-
-    y_intercept: Array
-    y_slope: Array
-    z_intercept: Array
-    z_slope: Array
-    attachment_segment_index: int | tuple[int, ...] = eqx.field(
-        static=True, converter=_attachment_segment_index
-    )
-
-    @classmethod
-    def empty(cls) -> "LinearTendonRoutingParams":
-        return cls(
-            y_intercept=jnp.array([], dtype=jnp.float64),
-            y_slope=jnp.array([], dtype=jnp.float64),
-            z_intercept=jnp.array([], dtype=jnp.float64),
-            z_slope=jnp.array([], dtype=jnp.float64),
-            attachment_segment_index=jnp.array([], dtype=jnp.int32),
-        )
-
-    @property
-    def num_tendons(self) -> int:
-        return int(self.y_intercept.shape[0])
-
-    @property
-    def attachment_segment_indices(self) -> tuple[int, ...]:
-        """Attachment segment indices as a tuple, including single-tendon params."""
-        if isinstance(self.attachment_segment_index, tuple):
-            return self.attachment_segment_index
-        return (int(self.attachment_segment_index),)
-
-    def validate(self) -> None:
-        if len(self.y_intercept.shape) != 1:
-            raise ValueError(
-                "LinearTendonRoutingParams fields must be one-dimensional with "
-                "shape (num_tendons,)."
-            )
-        n_tendons = self.y_intercept.shape[0]
-        expected_shape = (n_tendons,)
-        for name in (
-            "y_slope",
-            "z_intercept",
-            "z_slope",
-        ):
-            value = getattr(self, name)
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"{name} must have shape {expected_shape}, got {value.shape}."
-                )
-        indices = self.attachment_segment_indices
-        if len(indices) != n_tendons:
-            raise ValueError(
-                "attachment_segment_index must contain one entry per tendon; "
-                f"expected {n_tendons}, got {len(indices)}."
-            )
-        for idx in indices:
-            if idx < 0:
-                raise ValueError(
-                    f"attachment_segment_index values must be non-negative; got {idx}."
-                )
-
-    def replace(self, **updates: Any) -> "LinearTendonRoutingParams":
-        """Return a copy with selected dynamic routing fields replaced."""
-        if "attachment_segment_index" in updates:
-            new_indices = _attachment_segment_index(
-                updates.pop("attachment_segment_index")
-            )
-            if new_indices != self.attachment_segment_index:
-                raise ValueError(
-                    "Changing attachment_segment_index changes tendon topology; "
-                    "construct a new system."
-                )
-        return super().replace(**updates)
-
-    def routing_for_tendon(self, index: Array) -> "LinearTendonRoutingParams":
-        """Return the scalar-field PyTree for one tendon index."""
-        index = int(index)
-        return LinearTendonRoutingParams(
-            y_intercept=self.y_intercept[index],
-            y_slope=self.y_slope[index],
-            z_intercept=self.z_intercept[index],
-            z_slope=self.z_slope[index],
-            attachment_segment_index=self.attachment_segment_indices[index],
-        )
-
-
-class PassiveTendonParams(BaseSystemParams):
-    """Batched passive tendon impedance and rest-length parameters.
-
-    Each field has shape ``(num_passive_tendons,)``. Passive tendon ``k`` uses
-    ``stiffness[k]``, ``damping[k]``, and ``rest_length_offset[k]``. The length
-    must match the paired passive routing params.
-    """
-
-    stiffness: Array
-    damping: Array
-    rest_length_offset: Array
-
-    @classmethod
-    def empty(cls) -> "PassiveTendonParams":
-        return cls(
-            stiffness=jnp.array([], dtype=jnp.float64),
-            damping=jnp.array([], dtype=jnp.float64),
-            rest_length_offset=jnp.array([], dtype=jnp.float64),
-        )
-
-    @property
-    def num_tendons(self) -> int:
-        return int(self.stiffness.shape[0])
-
-    def validate(self) -> None:
-        if len(self.stiffness.shape) != 1:
-            raise ValueError(
-                "PassiveTendonParams fields must be one-dimensional with shape "
-                "(num_passive_tendons,)."
-            )
-        n_tendons = self.stiffness.shape[0]
-        expected_shape = (n_tendons,)
-        for name in ("damping", "rest_length_offset"):
-            value = getattr(self, name)
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"{name} must have shape {expected_shape}, got {value.shape}."
-                )

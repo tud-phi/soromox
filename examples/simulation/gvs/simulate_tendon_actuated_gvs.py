@@ -5,12 +5,12 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import optimistix as optx
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
+    GVS,
     CrossSectionGeometry,
-    LinearTendonRoutingParams,
     SystemState,
-    TendonActuatedGVS,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
@@ -24,7 +24,7 @@ print("JAX devices:", jax.devices())
 
 
 # STATIC EQUILIBRIUM EQUATION SOLVER
-def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+def solve_equilibrium(robot: GVS, u: jnp.ndarray, q0: jnp.ndarray):
     def statics_eq(q, args):
         u = args
         K = robot.stiffness_matrix()
@@ -85,20 +85,16 @@ num_gauss_points = [8, 8]
 g = [0.0, 0.0, -9.81]
 
 
-active_tendon_routing = LinearTendonRoutingParams(
-    y_intercept=jnp.array(
-        [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
-    ),
-    y_slope=jnp.array(
-        [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
-    ),
-    z_intercept=jnp.array(
-        [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
-    ),
-    z_slope=jnp.array(
-        [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
-    ),
-    attachment_segment_index=jnp.array([0, 0]),
+tendon_angles = jnp.deg2rad(jnp.array([30.0, 150.0]))
+tendon_directions = jnp.stack(
+    (jnp.zeros_like(tendon_angles), jnp.cos(tendon_angles), jnp.sin(tendon_angles)),
+    axis=-1,
+)
+active_tendon_routing = ThreadlikeRouting.linear(
+    intercept=0.0114 * tendon_directions,
+    slope=-0.0295 * tendon_directions,
+    start_segment_index=0,
+    end_segment_index=(0, 0),
 )
 # attention: 0DEG -> Y+, 180DEG -> Y-, 90DEG -> Z+, 270DEG -> Z-
 
@@ -113,11 +109,11 @@ segments = [
         link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
     ),
 ]
-robot = TendonActuatedGVS.from_segments(
+robot = GVS.from_segments(
     segments,
     gravity=jnp.asarray(g),
     base_pose=p0,
-    active_tendon_routing=active_tendon_routing,
+    actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     scale_rotational_basis_by_length=True,
 )
 # debug: check g0
@@ -171,7 +167,7 @@ D = robot.damping_matrix(q0)
 B = robot.actuation_matrix(q0)
 C = robot.coriolis_matrix(q0, q0dot)
 
-u = jnp.asarray([-1, -0.00], dtype=q0.dtype)
+u = jnp.asarray([1, 0.00], dtype=q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 
@@ -196,7 +192,7 @@ print("g(s_end) SE(3):\n", g_end)
 # y = jnp.concatenate([q0, q0dot])
 tau_ext = 0 * jnp.ones((dof,))
 
-l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
+l_tendons = robot.actuators[0].path_lengths(robot, q0)
 print("tendon lengths (m):", jax.device_get(l_tendons))
 
 

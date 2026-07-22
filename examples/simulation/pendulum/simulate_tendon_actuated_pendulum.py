@@ -10,13 +10,11 @@ import numpy as onp
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems import (
-    PassiveTendonParams,
-    PendulumParams,
-    SystemState,
-    TendonActuatedPendulum,
-    TendonActuatedPendulumParams,
+from soromox.actuation import (
+    ArticulatedTendonActuator,
+    ArticulatedTendonImpedance,
 )
+from soromox.systems import Pendulum, PendulumParams, SystemState
 
 num_links = 2
 
@@ -31,17 +29,17 @@ body_params = PendulumParams(
     joint_rest_configuration=jnp.zeros((num_links,)),
     radius=jnp.array([0.05, 0.05]),
 )
-params = TendonActuatedPendulumParams(
-    body=body_params,
-    active_routing_matrix=jnp.array([[0.2, -0.25]]),
-    passive_routing_matrix=jnp.array([[-0.15, 0.3]]),
-    active_tendon_reference_configuration=jnp.zeros((num_links,)),
-    passive_tendon_reference_configuration=jnp.zeros((num_links,)),
-    passive_tendon=PassiveTendonParams(
-        stiffness=jnp.array([2.75]),
-        damping=jnp.array([0.0]),
-        rest_length_offset=jnp.array([0.5]),
-    ),
+active_tendons = ArticulatedTendonActuator.from_routing(
+    jnp.array([[0.2, -0.25]]),
+    reference_configuration=jnp.zeros((num_links,)),
+    coordinate_offset=jnp.array([jnp.sum(body_params.length)]),
+)
+passive_tendons = ArticulatedTendonImpedance.from_routing(
+    jnp.array([[-0.15, 0.3]]),
+    reference_configuration=jnp.zeros((num_links,)),
+    coordinate_offset=jnp.array([0.5]),
+    stiffness=jnp.array([2.75]),
+    damping=jnp.array([0.0]),
 )
 
 # define initial configuration
@@ -60,7 +58,7 @@ video_path = Path("videos") / f"tendon_actuated_pendulum_nl-{num_links}.mp4"
 
 
 def draw_robot(
-    robot: TendonActuatedPendulum,
+    robot: Pendulum,
     q: Array,
     width: int,
     height: int,
@@ -111,7 +109,9 @@ def draw_robot(
 
     # Passive tendons
     try:
-        A_pt = onp.asarray(robot.A_pt)
+        A_pt = onp.asarray(
+            robot.passive_elements[0].transmission.moment_matrix(robot, q)
+        )
         Np = A_pt.shape[1]
     except AttributeError:
         A_pt = onp.zeros((N, N))
@@ -197,7 +197,11 @@ def draw_robot(
 
 if __name__ == "__main__":
     # Instantiate the pendulum model directly
-    robot = TendonActuatedPendulum(params=params)
+    robot = Pendulum(
+        params=body_params,
+        actuators=active_tendons,
+        passive_elements=(passive_tendons,),
+    )
 
     # initialize velocities and actuation
     qd0 = jnp.zeros_like(q0)  # initial velocities for simulation
@@ -208,24 +212,14 @@ if __name__ == "__main__":
     print("yd0:\n", yd)
 
     # check tendons' contributions
-    print("R_at =", robot.R_at.shape)
-    print(robot.R_at)
-    print("A_at =", robot.A_at.shape)
-    print(robot.A_at)
-    print("R_pt =", robot.R_pt.shape)
-    print(robot.R_pt)
-    print("A_pt =", robot.A_pt.shape)
-    print(robot.A_pt)
-    print("K_pt =", robot.K_pt.shape)
-    print(robot.K_pt)
-    print("D_pt =", robot.D_pt.shape)
-    print(robot.D_pt)
-    print("l_pt0 =", robot.l_pt0.shape)
-    print(robot.l_pt0)
-    print("l_tot_a at q0 =", robot.active_tendon_length(q0).shape)
-    print(robot.active_tendon_length(q0))
-    print("l_tot_p at q0 =", robot.passive_tendon_length(q0).shape)
-    print(robot.passive_tendon_length(q0))
+    print("R_at =", active_tendons.params.transmission.routing_matrix)
+    print("A_at =", robot.actuation_matrix(q0))
+    print("R_pt =", passive_tendons.params.transmission.routing_matrix)
+    print("A_pt =", passive_tendons.transmission.moment_matrix(robot, q0))
+    print("k_pt =", passive_tendons.params.stiffness)
+    print("d_pt =", passive_tendons.params.damping)
+    print("active coordinates at q0 =", robot.actuator_coordinates(q0))
+    print("passive coordinates at q0 =", passive_tendons.coordinates(robot, q0))
 
     # Integrate using the model's built-in solver
     initial_state = SystemState(t=t0, y=jnp.concatenate([q0, qd0]))

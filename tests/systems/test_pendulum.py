@@ -6,9 +6,10 @@ import jax.numpy as jnp
 import numpy as onp
 import pytest
 from numpy.testing import assert_allclose
-from system_param_builders import pendulum_params, tendon_actuated_pendulum_params
+from system_param_builders import pendulum_params
 
-from soromox.systems import Pendulum, TendonActuatedPendulum
+from soromox.actuation import ArticulatedTendonActuator
+from soromox.systems import Pendulum
 from soromox.utils.tolerance import Tolerance
 
 
@@ -63,14 +64,11 @@ def test_tendon_pendulum_update_reapplies_routing_invariants():
         center_of_mass_length=0.5 * jnp.ones((3,)),
         gravity=jnp.array([0.0, -9.81]),
     )
-    params = tendon_actuated_pendulum_params(
-        body=body,
-        active_routing_matrix=jnp.tril(jnp.ones((3, 3))),
-    )
-    robot = TendonActuatedPendulum(params)
+    actuator = ArticulatedTendonActuator.from_routing(jnp.tril(jnp.ones((3, 3))))
+    robot = Pendulum(body, actuators=actuator)
 
-    rank_deficient = params.replace(
-        active_routing_matrix=jnp.array(
+    rank_deficient = actuator.params.transmission.replace(
+        routing_matrix=jnp.array(
             [
                 [1.0, 0.0, 0.0],
                 [1.0, 0.0, 0.0],
@@ -79,10 +77,10 @@ def test_tendon_pendulum_update_reapplies_routing_invariants():
         )
     )
     with pytest.raises(ValueError, match="full row rank"):
-        robot.with_params(rank_deficient)
+        robot.update_actuator_params(0, transmission=rank_deficient)
 
-    joint_skipping = params.replace(
-        active_routing_matrix=jnp.array(
+    joint_skipping = actuator.params.transmission.replace(
+        routing_matrix=jnp.array(
             [
                 [1.0, 0.0, 1.0],
                 [1.0, 1.0, 0.0],
@@ -91,7 +89,7 @@ def test_tendon_pendulum_update_reapplies_routing_invariants():
         )
     )
     with pytest.raises(ValueError, match="skip joints"):
-        robot.with_params(joint_skipping)
+        robot.update_actuator_params(0, transmission=joint_skipping)
 
 
 @pytest.mark.parametrize("N", [2, 3])

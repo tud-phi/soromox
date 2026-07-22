@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.actuation.mckibben import ArticulatedMcKibbenActuator
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.viser_renderer import (
     LiveModeController,
@@ -52,10 +53,13 @@ class UMArmViserRenderer(ViserRenderer):
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
-        if not hasattr(self.robot, "mckibben_actuator_segments"):
+        if len(self.robot.actuators) != 1 or not isinstance(
+            self.robot.actuators[0], ArticulatedMcKibbenActuator
+        ):
             raise TypeError(
-                "UMArmViserRenderer requires a robot with mckibben_actuator_segments(q)."
-        )
+                "UMArmViserRenderer requires one installed ArticulatedMcKibbenActuator."
+            )
+        self._mckibben_actuator = self.robot.actuators[0]
         self._actuator_color_mode = actuator_color_mode
         self._actuator_radius = actuator_radius
         self._rod_core_radius_scale = rod_core_radius_scale
@@ -97,7 +101,9 @@ class UMArmViserRenderer(ViserRenderer):
     ) -> None:
         """Render a UMArm trajectory, including McKibben actuator segments."""
         q_arr = jnp.asarray(q_ts)
-        self._current_geometry_q = q_arr[None, 0, :] if q_arr.ndim == 2 else q_arr[:, 0, :]
+        self._current_geometry_q = (
+            q_arr[None, 0, :] if q_arr.ndim == 2 else q_arr[:, 0, :]
+        )
         self._actuator_pressures = None if pressures is None else jnp.asarray(pressures)
         self._actuator_frame_idx = 0
         old_mode = self._actuator_color_mode
@@ -120,7 +126,9 @@ class UMArmViserRenderer(ViserRenderer):
         super()._update_frame(frame_idx, *args, **kwargs)
 
     @staticmethod
-    def _color_tuple(color: tuple[float, float, float] | np.ndarray) -> tuple[int, int, int]:
+    def _color_tuple(
+        color: tuple[float, float, float] | np.ndarray,
+    ) -> tuple[int, int, int]:
         color_array = np.asarray(color, dtype=np.float64)
         color_array = np.clip(color_array[:3], 0.0, 1.0)
         return tuple(np.asarray(255.0 * color_array, dtype=np.uint8).tolist())
@@ -133,11 +141,10 @@ class UMArmViserRenderer(ViserRenderer):
         )
 
     def _infer_umarm_radii(self) -> tuple[float, float]:
-        fixed_radii = np.linalg.norm(
-            np.asarray(self.robot.mckibben_fixed_points)[..., :2], axis=-1
-        )
+        params = self._mckibben_actuator.params.transmission
+        fixed_radii = np.linalg.norm(np.asarray(params.fixed_points)[..., :2], axis=-1)
         moving_radii = np.linalg.norm(
-            np.asarray(self.robot.mckibben_moving_points)[..., :2], axis=-1
+            np.asarray(params.moving_points)[..., :2], axis=-1
         )
         all_radii = np.concatenate([fixed_radii.ravel(), moving_radii.ravel()])
         ujoint_radius = float(np.max(all_radii))
@@ -169,7 +176,9 @@ class UMArmViserRenderer(ViserRenderer):
         length = float(np.linalg.norm(direction))
         if length < 1e-9:
             return None
-        center = 0.5 * (np.asarray(p0, dtype=np.float64) + np.asarray(p1, dtype=np.float64))
+        center = 0.5 * (
+            np.asarray(p0, dtype=np.float64) + np.asarray(p1, dtype=np.float64)
+        )
         mesh = self._make_cylinder_trimesh(length=length, radius=radius, color=color)
         handle = self._server.scene.add_mesh_simple(
             name=name,
@@ -207,7 +216,9 @@ class UMArmViserRenderer(ViserRenderer):
         color: tuple[float, float, float],
         handles: list,
     ):
-        endpoints = self._transform_points(frame, self._local_z_endpoints(z_center, length))
+        endpoints = self._transform_points(
+            frame, self._local_z_endpoints(z_center, length)
+        )
         return self._add_cylinder_between(
             name,
             endpoints[0],
@@ -222,6 +233,7 @@ class UMArmViserRenderer(ViserRenderer):
         curves: np.ndarray,
         point_colors: np.ndarray,
         *,
+        material_frames: np.ndarray,
         base_plate_color: tuple[float, float, float],
     ) -> None:
         """Build a UMArm-specific rigid visual model instead of a soft tube."""
@@ -231,7 +243,10 @@ class UMArmViserRenderer(ViserRenderer):
             or self._current_geometry_q is None
         ):
             super()._build_robot_geometry(
-                curves, point_colors, base_plate_color=base_plate_color
+                curves,
+                point_colors,
+                material_frames=material_frames,
+                base_plate_color=base_plate_color,
             )
             return
 
@@ -261,8 +276,9 @@ class UMArmViserRenderer(ViserRenderer):
         ujoint_radius, rod_radius = self._infer_umarm_radii()
         rod_core_radius = rod_radius * self._rod_core_radius_scale
 
-        pair_starts = np.asarray(self.robot.mckibben_joint_pair_indices[:, 0])
-        upper_group_indices = np.arange(0, self.robot.num_mckibben_groups, 2)
+        actuator_params = self._mckibben_actuator.params.transmission
+        pair_starts = np.asarray(actuator_params.joint_pair_indices[:, 0])
+        upper_group_indices = np.arange(0, actuator_params.num_groups, 2)
         rod_link_indices = pair_starts[upper_group_indices] + 1
         linkage_link_indices = pair_starts[1:-1:2] + 1
         ujoint_link_indices = pair_starts
@@ -331,10 +347,8 @@ class UMArmViserRenderer(ViserRenderer):
                         np.asarray([[0.0, 0.0, 0.0], p_tip], dtype=np.float64)
                     )
 
-                upper_disk_z = float(self.robot.mckibben_moving_points[group_idx, 0, 2])
-                lower_disk_z = float(
-                    self.robot.mckibben_fixed_points[group_idx + 1, 0, 2]
-                )
+                upper_disk_z = float(actuator_params.moving_points[group_idx, 0, 2])
+                lower_disk_z = float(actuator_params.fixed_points[group_idx + 1, 0, 2])
                 for label, z_center in (
                     ("upper_actuator_disk", upper_disk_z),
                     ("lower_actuator_disk", lower_disk_z),
@@ -412,7 +426,9 @@ class UMArmViserRenderer(ViserRenderer):
                 name=f"/robots/robot_{robot_idx}/umarm/end_effector_sphere",
                 radius=self._end_effector_sphere_radius,
                 color=self._color_tuple(ee_sphere_color),
-                position=tuple(tip_frames_np[robot_idx, end_effector_link_idx, :3, 3] + offset),
+                position=tuple(
+                    tip_frames_np[robot_idx, end_effector_link_idx, :3, 3] + offset
+                ),
                 subdivisions=self._sphere_resolution,
                 material=self._material,
                 flat_shading=self._flat_shading,
@@ -436,8 +452,11 @@ class UMArmViserRenderer(ViserRenderer):
         self._scene_handles.num_robots = num_robots
         self._scene_handles.num_backbone_points = curves.shape[1]
 
-    def _update_robot_geometry(self, curves: np.ndarray) -> None:
+    def _update_robot_geometry(
+        self, curves: np.ndarray, material_frames: np.ndarray
+    ) -> None:
         """Update the UMArm rigid visual model without rebuilding scene objects."""
+        del material_frames
         if (
             self._scene_handles is None
             or self._current_geometry_q is None
@@ -546,7 +565,9 @@ class UMArmViserRenderer(ViserRenderer):
             if pressures.shape[0] == q.shape[0]:
                 return pressures
             frame_idx = min(self._actuator_frame_idx, pressures.shape[0] - 1)
-            return jnp.broadcast_to(pressures[frame_idx], (q.shape[0], pressures.shape[1]))
+            return jnp.broadcast_to(
+                pressures[frame_idx], (q.shape[0], pressures.shape[1])
+            )
         if pressures.ndim == 3:
             frame_idx = min(self._actuator_frame_idx, pressures.shape[1] - 1)
             return pressures[:, frame_idx, :]
@@ -583,7 +604,7 @@ class UMArmViserRenderer(ViserRenderer):
         if self._actuator_color_mode == "pressure":
             return self._heat_colors(np.asarray(pressures))
         if self._actuator_color_mode == "force":
-            forces = jax.vmap(self.robot.actuator_forces)(q, pressures)
+            forces = jax.vmap(self._mckibben_actuator.axial_forces)(q, pressures)
             return self._heat_colors(np.asarray(forces))
         raise ValueError(
             "actuator_color_mode must be one of 'uniform', 'pressure', or 'force'."
@@ -702,9 +723,11 @@ class UMArmLiveModeController(LiveModeController):
             target_dim=3,
         )
 
-        curves = np.asarray(
-            self._renderer.compute_backbone_curves_batched(q, base_offsets)
+        curves, material_frames = (
+            self._renderer.compute_backbone_curves_and_frames_batched(q, base_offsets)
         )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         if (
             self._resolved_colors is None
@@ -721,11 +744,12 @@ class UMArmLiveModeController(LiveModeController):
             and scene_handles.num_backbone_points == curves.shape[1]
         )
         if can_update:
-            self._renderer._update_robot_geometry(curves)
+            self._renderer._update_robot_geometry(curves, material_frames)
         else:
             self._renderer._build_robot_geometry(
                 curves,
                 self._resolved_colors.per_robot_point_rgba,
+                material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )
         if self._renderer._has_actuator_visuals:

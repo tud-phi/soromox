@@ -386,6 +386,51 @@ def test_inverse_kinematics_with_deactivated_strains(num_segments: int):
         assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
 
 
+@pytest.mark.parametrize(
+    "strain_selector",
+    [
+        jnp.array(
+            [
+                False,
+                False,
+                True,
+                True,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                True,
+                False,
+                True,
+                False,
+                False,
+            ],
+            dtype=bool,
+        ),
+        jnp.zeros((12,), dtype=bool),
+    ],
+    ids=["segment-specific-inactive-strains", "all-strains-inactive"],
+)
+def test_inverse_kinematics_with_inactive_strain_segments(strain_selector: Array):
+    num_segments = int(strain_selector.size // 6)
+    model, _ = make_pcs(num_segments=num_segments, strain_selector=strain_selector)
+
+    q = random_q(model, jax.random.PRNGKey(789), scale=0.05)
+    g_tips = segment_tip_transforms(model, q)
+    q_recovered = model.inverse_kinematics(g_tips)
+
+    assert q_recovered.shape == q.shape
+    assert_allclose(q_recovered, q, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        segment_tip_transforms(model, q_recovered), g_tips, rtol=RTOL, atol=ATOL
+    )
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_J_local_tips_matches_pointwise_evaluation(num_segments: int):
     model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
@@ -1325,18 +1370,18 @@ def test_cached_constant_matrices_refresh_after_update_params():
         density=0.9 * model.rho,
         young_modulus=1.25 * model.E,
         shear_modulus=0.75 * model.G,
-        damping_matrix=2.0 * model.D,
+        damping_matrix=2.0 * model.D_full,
     )
     segment_ids = jnp.arange(updated.num_segments)
     expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
     expected_K_full = updated._compute_stiffness_full_matrix()
     expected_K = updated.B_xi.T @ expected_K_full @ updated.B_xi
-    expected_D_full = updated.D
+    expected_D_full = updated.D_full
     expected_D = updated.B_xi.T @ expected_D_full @ updated.B_xi
 
     assert_allclose(updated.M_segments, expected_M, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.K_full, expected_K_full, rtol=RTOL, atol=ATOL)
-    assert_allclose(updated.K, expected_K, rtol=RTOL, atol=ATOL)
+    assert_allclose(updated.K_active, expected_K, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.D_full, expected_D_full, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.D_active, expected_D, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.stiffness_matrix(), expected_K, rtol=RTOL, atol=ATOL)

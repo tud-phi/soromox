@@ -1,7 +1,8 @@
 __all__ = ["PlanarHSAParams"]
 
-from dataclasses import fields
+from dataclasses import MISSING, fields
 from pathlib import Path
+from typing import ClassVar
 
 import numpy as np
 from jax import Array
@@ -19,8 +20,12 @@ class PlanarHSAParams(BaseSoftRobotParams):
     hysteresis coefficients used by the symbolic HSA expressions. ``base_pose``
     stores the planar pose ``[theta, x, y]`` with shape ``(3,)``. ``theta`` is
     a right-handed angle in radians about the out-of-plane z-axis, and
-    ``x``/``y`` are direct translations in the parent frame.
+    ``x``/``y`` are direct translations in the parent frame. Omitting
+    ``base_pose`` and ``gravity`` selects upright mounting and negative-y Earth
+    gravity.
     """
+
+    is_planar: ClassVar[bool] = True
 
     length: Array
     proximal_cap_length: Array
@@ -37,7 +42,6 @@ class PlanarHSAParams(BaseSoftRobotParams):
     rod_density: Array
     platform_density: Array
     end_cap_density: Array
-    gravity: Array
     nominal_bending_stiffness: Array
     nominal_shear_stiffness: Array
     nominal_axial_stiffness: Array
@@ -64,7 +68,12 @@ class PlanarHSAParams(BaseSoftRobotParams):
         """Load planar HSA parameters from an explicit ``.npz`` file path."""
         with np.load(path) as data:
             field_names = [field.name for field in fields(cls)]
-            missing = sorted(name for name in field_names if name not in data)
+            required_names = {
+                field.name
+                for field in fields(cls)
+                if field.default is MISSING and field.default_factory is MISSING
+            }
+            missing = sorted(name for name in required_names if name not in data)
             if missing:
                 missing_names = ", ".join(missing)
                 raise KeyError(
@@ -75,6 +84,7 @@ class PlanarHSAParams(BaseSoftRobotParams):
                 **{
                     field_name: jnp.asarray(data[field_name])
                     for field_name in field_names
+                    if field_name in data
                 }
             )
 

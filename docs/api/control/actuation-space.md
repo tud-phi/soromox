@@ -1,5 +1,9 @@
 # Actuation-Space Controllers
 
+The coordinates used here are supplied by the common
+[actuation model](../actuation/index.md), including signed/scaled threadlike
+coordinates rather than raw tendon lengths.
+
 Actuation-space controllers operate in a transformed coordinate system where the actuation matrix becomes a simple identity structure. This formulation, developed by [Pustina et al. (2024)](#references) and further elaborated in [Pustina (2025)](#references), provides a clean separation between actuated and unactuated dynamics, making it particularly well-suited for underactuated soft robots.
 
 ## Overview
@@ -275,7 +279,8 @@ from soromox.control.actuation_space import (
 from soromox.control import PIDControl
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 
-# Assume `robot` is a soft robot system (e.g., TendonActuatedPlanarPcs)
+# Assume `robot` is a soft robot system with independent actuator coordinates,
+# for example `PlanarPCS(..., actuators=ThreadlikeActuator.tendons(routing))`.
 
 # Create actuation-space dynamics
 asd = ActuationSpaceDynamics(robot=robot)
@@ -340,4 +345,3 @@ For stability analysis of PD-type controllers:
 - Paden, B., & Panja, R. (1988). Globally asymptotically stable 'PD+' controller for robot manipulators. *International Journal of Control*, 47(6), 1697-1712.
 
 - Kelly, R., & Carelli, R. (1996). A class of nonlinear PD-type controllers for robot manipulators. *Journal of Robotic Systems*, 13(12), 793-802.
-

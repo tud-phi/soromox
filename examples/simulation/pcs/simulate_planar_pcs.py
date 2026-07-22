@@ -22,12 +22,7 @@ if __name__ == "__main__":
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
-    damping_matrix = 1e-3 * jnp.diag(
-        (
-            jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0)
-            * segment_lengths[:, None]
-        ).flatten()
-    )
+    material_damping_coefficient = 318.0
     params = PlanarPCSParams(
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         length=segment_lengths,
@@ -36,7 +31,7 @@ if __name__ == "__main__":
         gravity=jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
         young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        damping_matrix=damping_matrix,
+        material_damping_coefficient=material_damping_coefficient,
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
     )
 

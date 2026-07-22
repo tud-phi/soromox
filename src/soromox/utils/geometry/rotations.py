@@ -37,6 +37,8 @@ __all__ = [
     "rotation_vector_to_quaternion",
     "rotation_matrix_to_rotation_vector",
     "rotation_vector_to_rotation_matrix",
+    "principal_axis_rotation_matrix",
+    "principal_axis_rotation_matrix_derivative",
     # 6D continuous representation
     "rotation_matrix_to_6d",
     "rotation_6d_to_rotation_matrix",
@@ -46,6 +48,7 @@ __all__ = [
 ]
 
 from enum import Enum
+from typing import Literal
 
 import jax.numpy as jnp
 from jax import Array, lax
@@ -80,6 +83,54 @@ class RotationRepresentation(Enum):
 
 # Default epsilon for numerical stability in rotation conversions
 DEFAULT_ROTATION_EPS = 1e-10
+
+
+def principal_axis_rotation_matrix(angle: Array, axis: Literal["x", "y", "z"]) -> Array:
+    """Return the active rotation matrix about a Cartesian principal axis.
+
+    Args:
+        angle: Right-handed rotation angle in radians.
+        axis: Static Cartesian axis identifier.
+
+    Returns:
+        Active rotation matrix with shape ``(3, 3)``.
+    """
+    c, s = jnp.cos(angle), jnp.sin(angle)
+    z, o = jnp.zeros_like(angle), jnp.ones_like(angle)
+    if axis == "x":
+        return jnp.stack(
+            [jnp.stack([o, z, z]), jnp.stack([z, c, -s]), jnp.stack([z, s, c])]
+        )
+    if axis == "y":
+        return jnp.stack(
+            [jnp.stack([c, z, s]), jnp.stack([z, o, z]), jnp.stack([-s, z, c])]
+        )
+    if axis == "z":
+        return jnp.stack(
+            [jnp.stack([c, -s, z]), jnp.stack([s, c, z]), jnp.stack([z, z, o])]
+        )
+    raise ValueError("axis must be one of 'x', 'y', or 'z'.")
+
+
+def principal_axis_rotation_matrix_derivative(
+    angle: Array, axis: Literal["x", "y", "z"]
+) -> Array:
+    """Differentiate a principal-axis rotation matrix with respect to angle."""
+    c, s = jnp.cos(angle), jnp.sin(angle)
+    z = jnp.zeros_like(angle)
+    if axis == "x":
+        return jnp.stack(
+            [jnp.stack([z, z, z]), jnp.stack([z, -s, -c]), jnp.stack([z, c, -s])]
+        )
+    if axis == "y":
+        return jnp.stack(
+            [jnp.stack([-s, z, c]), jnp.stack([z, z, z]), jnp.stack([-c, z, -s])]
+        )
+    if axis == "z":
+        return jnp.stack(
+            [jnp.stack([-s, -c, z]), jnp.stack([c, -s, z]), jnp.stack([z, z, z])]
+        )
+    raise ValueError("axis must be one of 'x', 'y', or 'z'.")
 
 
 def normalize_quaternion(

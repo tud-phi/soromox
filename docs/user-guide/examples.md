@@ -121,18 +121,6 @@ python examples/simulation/pcs/simulate_batched_tendon_actuated_pcs.py
 
 **Key concepts:** Tendon kinematics, actuation space, batch simulation
 
-#### Pressure-Actuated Planar PCS
-```bash
-python examples/simulation/pcs/simulate_pressure_actuated_planar_pcs.py
-```
-
-**What you'll learn:**
-- Pressure actuation modeling
-- Pressure-to-strain mapping
-- Pressure-driven soft robot dynamics
-
-**Key concepts:** Pressure actuation, pressure control
-
 #### I-SUPPORT Manipulator
 ```bash
 python examples/simulation/pcs/simulate_isupport.py
@@ -392,7 +380,6 @@ params = params.replace(
     center_of_mass_position=center_of_mass_positions,
     mass=masses,
     center_of_mass_inertia=center_of_mass_inertia,
-    gravity=jnp.array([0.0, 0.0, -9.81]),
     joint_stiffness=jnp.diag(joint_stiffness),
     joint_damping=jnp.diag(joint_damping),
 )

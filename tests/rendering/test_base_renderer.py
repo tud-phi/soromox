@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -10,10 +12,25 @@ from soromox.rendering.actuators import (
 )
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
+from soromox.rendering.color_config import ActuatorStyleConfig
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
 from soromox.systems.soft_robot import CrossSectionGeometry
 from soromox.utils.geometry import poses
+
+
+def test_actuator_styles_can_be_selected_by_semantic_kind():
+    style = ActuatorStyleConfig(
+        default_color=(0.1, 0.2, 0.3),
+        default_radius=1e-4,
+        kind_colors={"tendon": (0.8, 0.1, 0.1)},
+        kind_radii={"tendon": 5e-4},
+    )
+
+    assert style.color_for_kind("tendon") == (0.8, 0.1, 0.1)
+    assert style.color_for_kind("muscle") == (0.1, 0.2, 0.3)
+    assert style.radius_for_kind("tendon") == 5e-4
+    assert style.radius_for_kind("muscle") == 1e-4
 
 
 class DummyPlanarRobot:
@@ -318,6 +335,7 @@ class FakeViserScene:
         self.line_segments = []
         self.icospheres = []
         self.trimeshes = []
+        self.simple_meshes = []
 
     def add_line_segments(self, *, name, points, colors, line_width):
         handle = FakeViserLineHandle(
@@ -339,10 +357,42 @@ class FakeViserScene:
         self.trimeshes.append(handle)
         return handle
 
+    def add_mesh_simple(self, **kwargs):
+        handle = FakeViserGeometryHandle(**kwargs)
+        self.simple_meshes.append(handle)
+        return handle
+
 
 class FakeViserActuatorServer:
     def __init__(self):
         self.scene = FakeViserScene()
+        self.atomic_calls = 0
+
+    @contextmanager
+    def atomic(self):
+        self.atomic_calls += 1
+        yield
+
+
+class FakeViserGuiHandle:
+    def __init__(self, *, value=None, icon=None):
+        self.value = value
+        self.icon = icon
+        self.update_callback = None
+        self.click_callback = None
+
+    def on_update(self, callback):
+        self.update_callback = callback
+        return callback
+
+    def on_click(self, callback):
+        self.click_callback = callback
+        return callback
+
+    def trigger_update(self, value):
+        self.value = value
+        event = type("FakeViserGuiEvent", (), {"target": self})()
+        self.update_callback(event)
 
 
 class FakeViserGuiFolder:
@@ -353,54 +403,40 @@ class FakeViserGuiFolder:
         return False
 
 
-class FakeViserGuiHandle:
-    def __init__(self, value=None):
-        self.value = value
-        self.icon = None
-        self.on_click_callback = None
-        self.on_update_callback = None
-
-    def on_click(self, callback):
-        self.on_click_callback = callback
-        return callback
-
-    def on_update(self, callback):
-        self.on_update_callback = callback
-        return callback
-
-
 class FakeViserGui:
+    def __init__(self):
+        self.handles = {}
+
     def add_folder(self, name):
         del name
         return FakeViserGuiFolder()
 
-    def add_button(self, name, icon=None):
-        del name
-        handle = FakeViserGuiHandle()
-        handle.icon = icon
+    def add_button(self, name, *, icon):
+        handle = FakeViserGuiHandle(icon=icon)
+        self.handles[name] = handle
         return handle
 
-    def add_slider(self, name, min, max, step, initial_value):
-        del name, min, max, step
-        return FakeViserGuiHandle(value=initial_value)
+    def add_slider(self, name, *, min, max, step, initial_value):
+        del min, max, step
+        handle = FakeViserGuiHandle(value=initial_value)
+        self.handles[name] = handle
+        return handle
 
-    def add_checkbox(self, name, initial_value):
-        del name
-        return FakeViserGuiHandle(value=initial_value)
+    def add_checkbox(self, name, *, initial_value):
+        handle = FakeViserGuiHandle(value=initial_value)
+        self.handles[name] = handle
+        return handle
 
-    def add_text(self, name, initial_value, disabled=False):
-        del name, disabled
-        return FakeViserGuiHandle(value=initial_value)
+    def add_text(self, name, *, initial_value, disabled):
+        del disabled
+        handle = FakeViserGuiHandle(value=initial_value)
+        self.handles[name] = handle
+        return handle
 
 
 class FakeViserPlaybackServer:
     def __init__(self):
         self.gui = FakeViserGui()
-
-
-class FakeGuiEvent:
-    def __init__(self, value):
-        self.target = FakeViserGuiHandle(value=value)
 
 
 def test_renderer_exposes_base_pose_transform_and_axis():
@@ -413,6 +449,18 @@ def test_renderer_exposes_base_pose_transform_and_axis():
     assert_allclose(
         renderer._base_tangent_axis(dim=3), np.array([0.0, 1.0, 0.0]), atol=1e-7
     )
+
+
+def test_backbone_geometry_sampling_preserves_fk_material_frames():
+    robot = DummySpatialRobot(jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]))
+    renderer = DummyRenderer(robot)
+
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 0)), jnp.array([[1.0, 2.0, 3.0]])
+    )
+
+    assert_allclose(curves[0, 0], jnp.array([1.0, 2.0, 3.0]), atol=1e-7)
+    assert_allclose(frames[0, 0], robot.base_transform[:3, :3], atol=1e-7)
 
 
 def test_camera_auto_position_rotates_default_offset_by_base_pose():
@@ -512,7 +560,6 @@ def test_open3d_interactive_camera_front_points_from_eye_to_target():
 
 
 def test_viser_camera_uses_shared_up_and_radian_fov():
-    pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -540,7 +587,6 @@ def test_viser_camera_uses_shared_up_and_radian_fov():
 
 
 def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
-    pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -568,7 +614,6 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
 
 
 def test_viser_discrete_backbone_spheres_use_robot_radius():
-    pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -577,11 +622,13 @@ def test_viser_discrete_backbone_spheres_use_robot_radius():
     renderer._server = server
     renderer._scene_handles = SceneHandles()
     curves = np.array([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    material_frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
     point_colors = np.ones((1, 2, 4), dtype=np.float64)
 
     renderer._build_robot_geometry(
         curves,
         point_colors,
+        material_frames=material_frames,
         base_plate_color=(0.15, 0.15, 0.15),
     )
 
@@ -592,8 +639,84 @@ def test_viser_discrete_backbone_spheres_use_robot_radius():
     )
 
 
+def test_viser_defaults_to_swept_backbone():
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+
+    assert renderer._backbone_style == "swept"
+
+
+def test_open3d_defaults_to_swept_backbone():
+    pytest.importorskip("open3d")
+    from soromox.rendering.open3d_renderer import Open3DRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = Open3DRenderer(robot)
+
+    assert renderer._backbone_mode == "swept"
+
+
+def test_viser_swept_backbone_uses_material_frame_rings():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot, auto_start=False, backbone_style="swept", cylinder_sections=8
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    curves = np.array([[[0.0, 0.0, 0.0], [0.0, 1.0, 0.0]]])
+    material_frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
+
+    renderer._build_robot_geometry(
+        curves,
+        np.ones((1, 2, 4), dtype=np.float64),
+        material_frames=material_frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    first_ring = server.scene.simple_meshes[0].vertices[:8]
+    assert_allclose(first_ring[:, 0], 0.0, atol=1e-7)
+    assert np.ptp(first_ring[:, 1]) > renderer._robot_radius
+
+
+def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot, auto_start=False, backbone_style="swept", cylinder_sections=8
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
+    colors = np.ones((1, 2, 4), dtype=np.float64)
+    initial_curve = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+    updated_curve = np.array([[[0.0, 0.0, 0.0], [1.0, 1.0, 0.0]]])
+
+    renderer._build_robot_geometry(
+        initial_curve,
+        colors,
+        material_frames=frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+    renderer._update_robot_geometry(updated_curve, frames)
+
+    tip_mesh = server.scene.simple_meshes[0]
+    body_tip_ring = tip_mesh.vertices[8:16]
+    cap_triangles = tip_mesh.faces[-8:]
+    assert server.atomic_calls == 1
+    assert_allclose(body_tip_ring.mean(axis=0), updated_curve[0, -1], atol=1e-7)
+    assert_allclose(tip_mesh.vertices[-1], updated_curve[0, -1], atol=1e-7)
+    assert np.all(cap_triangles[:, 0] == 16)
+    assert server.scene.icospheres == []
+
+
 def test_viser_default_camera_uses_backend_specific_distance():
-    pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -613,7 +736,6 @@ def test_viser_default_camera_uses_backend_specific_distance():
 
 
 def test_viser_actuator_geometry_updates_existing_line_handles():
-    pytest.importorskip("viser")
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
     robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -644,8 +766,7 @@ def test_viser_actuator_geometry_updates_existing_line_handles():
     assert_allclose(first_handles[0].points[0, 0], np.array([1.0, 0.1, 0.0]))
 
 
-def test_viser_frame_slider_updates_paused_sequence_frame():
-    pytest.importorskip("viser")
+def test_viser_paused_frame_slider_seeks_rendered_frame():
     from soromox.rendering.viser_renderer import AnimationState, ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
@@ -654,25 +775,24 @@ def test_viser_frame_slider_updates_paused_sequence_frame():
     renderer._animation_state = AnimationState(
         frame_idx=0,
         playing=False,
-        loop=False,
-        playback_speed=1.0,
-        num_frames=10,
-        ts=np.linspace(0.0, 0.9, 10),
+        num_frames=4,
+        ts=np.array([0.0, 0.1, 0.2, 0.3]),
     )
-    updated_frames = []
+    sought_frames = []
 
-    renderer._setup_playback_gui(on_frame_changed=updated_frames.append)
-    slider = renderer._gui_handles["frame_slider"]
+    renderer._setup_playback_gui(on_frame_seek=sought_frames.append)
+    renderer._gui_handles["frame_slider"].trigger_update(2)
 
-    slider.on_update_callback(FakeGuiEvent(7))
+    assert renderer._animation_state.frame_idx == 2
+    assert sought_frames == [2]
+    assert renderer._gui_handles["time_text"].value == "t = 0.20 s"
 
-    assert renderer._animation_state.frame_idx == 7
-    assert updated_frames == [7]
+    renderer._gui_handles["frame_slider"].trigger_update(99)
 
-    slider.on_update_callback(FakeGuiEvent(99))
-
-    assert renderer._animation_state.frame_idx == 9
-    assert updated_frames == [7, 9]
+    assert renderer._animation_state.frame_idx == 3
+    assert sought_frames == [2, 3]
+    assert renderer._gui_handles["frame_slider"].value == 3
+    assert renderer._gui_handles["time_text"].value == "t = 0.30 s"
 
 
 def test_renderer_normalizes_base_offsets_to_curve_dimension():

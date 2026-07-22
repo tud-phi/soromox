@@ -160,7 +160,7 @@ class Link:
     rho : Array
         Mass density [kg/m^3]. Scalar.
     eta : Array
-        Material damping coefficient [N·s/m]. Scalar.
+        Material damping coefficient [Pa·s] ([N·s/m²]). Scalar.
     l : Array
         Length of each division of the link (soft-link discretization) [m]. Scalar.
 
@@ -189,7 +189,7 @@ class Link:
     nu: Array  # Poisson Ratio [-1, 0.5]
     G: Array  # Shear modulus [N/m²]
     rho: Array  # Density [kg/m³]
-    eta: Array  # Material Damping [N·s/m]
+    eta: Array  # Material damping coefficient [Pa·s] ([N·s/m²])
     l: Array  # noqa: E741  # Length of each divisions of the link (soft link) [m]
 
     r: tuple[float, float]  # Initial and final value of the geometrical parameter

@@ -184,12 +184,14 @@ Each robot system expects a typed Equinox PyTree params object. Numeric fields a
 JAX arrays, so same-shape updates can flow through `jit`, `grad`, and `vmap`
 without changing the compiled structure.
 
-`base_pose` follows the dimensionality of the robot. Planar robots expect
-`[theta, x, y]`, where `theta` is a right-handed angle in radians about the
-out-of-plane z-axis. Spatial robots expect `[qw, qx, qy, qz, x, y, z]`, using
-scalar-first Hamilton quaternions. Zero base rotation means the undeformed
-backbone is aligned with the positive base-frame x-axis. Spatial quaternions
-must have nonzero finite norm and are normalized before transform construction.
+When omitted, `base_pose` mounts the robot upright (+y planar, +z spatial) and
+`gravity` uses Earth gravity in the negative vertical world direction. Gravity
+is an inertial-frame vector and is not rotated with the base. Use the inherited
+`.horizontal(...)`, `.upright(...)`, and `.hanging(...)` parameter constructors
+for the three standard mountings. Explicit arrays remain available for custom
+poses, gravity directions, and zero-gravity models. See
+[Parameters](../api/utilities/parameters.md#world-frame-mounting-and-gravity-defaults)
+for exact vectors and quaternions.
 
 ```python title="Parameter Structure"
 params = PCSParams(
@@ -197,15 +199,16 @@ params = PCSParams(
     radius=radii,
     density=densities,
     reference_strain=reference_strain,
-    gravity=gravity,
     young_modulus=young_modulus,
     shear_modulus=shear_modulus,
-    damping_matrix=damping_matrix,
-    base_pose=base_pose,
+    material_damping_coefficient=material_damping_coefficient,
 )
 robot = PCS(params=params)
 robot = robot.update_params(length=new_lengths)
 ```
+
+For routed tendons, pushing rods, muscles, and equivalent pressure chambers,
+continue with the dedicated [Threadlike actuation guide](../api/actuation/threadlike.md).
 
 !!! note "Units Matter"
     Always use consistent SI units (meters, kilograms, seconds) for reliable results.
@@ -250,26 +253,17 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
     # Create a 3-segment soft robot
     num_segments = 3
     segment_lengths = 0.1 * jnp.ones((num_segments,))
-    # Damping matrix (optional but recommended for stability)
-    # Structure: diagonal matrix with damping coefficients for each strain component
-    # [bending, shear_x, shear_y] per segment, scaled by segment length
-    damping_matrix = 1e-3 * jnp.diag(
-        jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0).flatten()
-        * segment_lengths[:, None].flatten()
-    )
+    material_damping_coefficient = 318.0
     params = PlanarPCSParams(
         length=segment_lengths,
         radius=0.02 * jnp.ones((num_segments,)),
         density=1070.0 * jnp.ones((num_segments,)),
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-        gravity=jnp.array([0.0, 9.81]),
         young_modulus=2e3 * jnp.ones((num_segments,)),
         shear_modulus=1e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        material_damping_coefficient=material_damping_coefficient,
     )
     # Note: Damping helps stabilize simulations and represents material dissipation.
-    # For static analysis, you can omit this or set to zero.
 
     # Initialize the PCS robot
     robot = PlanarPCS(params=params)

@@ -138,7 +138,7 @@ class OperationalSpaceDynamics(eqx.Module):
 
         Args:
             robot: A soft robot implementing the SoftRobot interface.
-                Examples include PCS, PlanarPCS, TendonActuatedPCS, Pendulum, etc.
+                Examples include PCS, PlanarPCS, GVS, and Pendulum.
             s_ps: Array of shape (N,) specifying the arc-length positions along the
                 backbone where the operational space is defined. Values should be
                 in the interval [0, L_total] where L_total is the total robot length.

@@ -69,20 +69,16 @@ nav:
           - Articulated Systems:
             - Overview: api/systems/articulated/index.md
             - Pendulum: api/systems/pendulum/pendulum.md
-            - Tendon Actuated Pendulum: api/systems/pendulum/tendon-actuated-pendulum.md
             - Articulated Soft Robot: api/systems/articulated/articulated-soft-robot.md
+            - McKibben UMArm: api/systems/articulated/mckibben-umarm.md
           - PCS Systems:
             - Overview: api/systems/pcs/index.md
-            - PCS (Spatial): api/systems/pcs/pcs.md
+            - Spatial PCS: api/systems/pcs/pcs.md
             - Planar PCS: api/systems/pcs/planar-pcs.md
-            - Tendon Actuated PCS: api/systems/pcs/tendon-actuated-pcs.md
-            - Tendon Actuated Planar PCS: api/systems/pcs/tendon-actuated-planar-pcs.md
-            - Pressure Actuated Planar PCS: api/systems/pcs/pressure-actuated-planar-pcs.md
             - I-Support: api/systems/pcs/isupport.md
           - GVS Systems:
             - Overview: api/systems/gvs/index.md
             - GVS: api/systems/gvs/gvs.md
-            - Tendon Actuated GVS: api/systems/gvs/tendon-actuated-gvs.md
           - HSA Systems:
             - Overview: api/systems/hsa/index.md
             - Planar HSA: api/systems/hsa/planar-hsa.md
@@ -96,7 +92,11 @@ nav:
           - Operational-Space Controllers: api/control/operational-space.md
           - Actuation-Space Controllers: api/control/actuation-space.md
           - Utilities: api/control/utilities.md
-      - Actuation: api/actuation.md
+      - Actuation:
+          - Actuation Model: api/actuation/index.md
+          - Joint-Space Actuation: api/actuation/joint-space.md
+          - Threadlike Actuation: api/actuation/threadlike.md
+          - API Reference: api/actuation/reference.md
       - Utilities:
           - Overview: api/utilities/index.md
           - Parameters: api/utilities/parameters.md

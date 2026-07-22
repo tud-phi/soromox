@@ -19,7 +19,7 @@ class ActuationSpaceDynamics(eqx.Module):
 
     This class transforms the configuration-space dynamics of a soft robot to actuation
     space using the Jacobian of the coordinate transformation. The actuation space is
-    defined by the actuated coordinates (e.g., tendon lengths) and unactuated coordinates
+    defined by work-conjugate actuator coordinates and unactuated coordinates
     that span the null space of the actuation matrix.
 
     The actuation space dynamics follow the formulation:
@@ -33,16 +33,16 @@ class ActuationSpaceDynamics(eqx.Module):
         - y: Actuation space coordinates = [actuated_coords, unactuated_coords]
 
     The actuated coordinates are obtained from a (generally nonlinear) map from
-    configuration space. For tendon-actuated robots, these are the tendon lengths,
-    accessed via the robot's `actuation_coordinates` method. The Jacobian of this
+    configuration space. They are accessed through the robot's
+    `actuator_coordinates` method. The Jacobian of this
     map is the transpose of the actuation matrix:
-        J_actuated = d(tendon_lengths)/dq = A_at^T
+        J_actuated = dy_a/dq = A_at^T
 
     The unactuated coordinates can be specified by the user or computed via basis
     expansion using QR decomposition to find a set of linearly independent coordinates.
 
     Attributes:
-        robot: The soft robot (e.g., TendonActuatedPCS, TendonActuatedPendulum) to transform.
+        robot: The soft robot and its installed actuator models.
         H_unactuated: Matrix of shape (num_dofs - num_actuators, num_dofs) that maps
             configurations to unactuated coordinates. If None, computed via basis expansion.
         n_actuated: Number of actuated coordinates (equals num_actuators).
@@ -53,10 +53,8 @@ class ActuationSpaceDynamics(eqx.Module):
             A_y = [[I_{num_actuators}], [0_{num_dofs - num_actuators, num_actuators}]]
         where only the first num_actuators coordinates are directly actuated.
 
-        The robot must implement an `actuation_coordinates(q)` method that returns
-        the actuated coordinates (e.g., tendon lengths) as a function of configuration q.
-        For tendon-actuated robots (TendonActuatedPendulum, TendonActuatedPCS,
-        TendonActuatedGVS), this is aliased to `active_tendon_length`.
+        The robot must implement `actuator_coordinates(q)` and return one
+        independent work coordinate per actuator channel.
 
     References:
         Pustina, P., Della Santina, C., Boyer, F., De Luca, A., & Renda, F. (2024).
@@ -93,9 +91,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Args:
             robot: A soft robot implementing the SoftRobot interface.
                 Must have `num_actuators`, `num_dofs`, `actuation_matrix`, and
-                `actuation_coordinates` attributes/methods.
-                Examples include TendonActuatedPCS, TendonActuatedPendulum,
-                TendonActuatedGVS, etc.
+                `actuator_coordinates` attributes/methods.
             H_unactuated: Optional matrix of shape (num_dofs - num_actuators, num_dofs) that
                 maps configurations to unactuated coordinates. If None, the unactuated
                 coordinate mapping is computed via basis expansion using QR decomposition.
@@ -123,6 +119,13 @@ class ActuationSpaceDynamics(eqx.Module):
         # A_at has shape (num_dofs, num_actuators)
         q_ref = jnp.zeros(num_dofs)
         A_at = robot.actuation_matrix(q_ref)
+        rank = int(jnp.linalg.matrix_rank(A_at))
+        if rank != num_actuators:
+            raise ValueError(
+                "ActuationSpaceDynamics requires independent actuator coordinates "
+                f"at the reference configuration; expected rank {num_actuators}, "
+                f"got {rank}."
+            )
 
         # Compute or validate unactuated coordinate mapping
         if H_unactuated is None:
@@ -148,7 +151,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the unactuated coordinate mapping via basis expansion using QR decomposition.
 
         This method finds a set of coordinates that are linearly independent from the
-        actuated coordinates (tendon lengths). The approach uses QR decomposition to
+        actuated coordinates. The approach uses QR decomposition to
         find the orthogonal complement of the column space of the actuation matrix.
 
         Args:
@@ -191,7 +194,7 @@ class ActuationSpaceDynamics(eqx.Module):
 
         For tendon-actuated robots, this returns the tendon lengths, which are a
         nonlinear function of the configuration q. The robot must implement
-        an `actuation_coordinates(q)` method.
+        an `actuator_coordinates(q)` method.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -199,7 +202,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             y_a: Actuated coordinates of shape (n_actuated,).
         """
-        return self.robot.actuated_coordinates(q)  # type: ignore[attr-defined]
+        return self.robot.actuator_coordinates(q)
 
     @eqx.filter_jit
     def unactuated_coordinates(self, q: Array) -> Array:

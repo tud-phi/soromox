@@ -10,6 +10,7 @@ import scipy.io as sio
 from jax import Array, jit, value_and_grad, vmap
 from jax import numpy as jnp
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.control import (
     OperationalSpaceSynergisticController,
     PIDControl,
@@ -19,11 +20,9 @@ from soromox.control import (
 from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PCS,
     PCSParams,
     SystemState,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -101,19 +100,19 @@ tendon_offset_radius = 0.8 * radius  # Slightly inside the robot radius
 angles_deg = jnp.array([0.0, 120.0, 240.0])
 angles_rad = jnp.deg2rad(angles_deg)
 
-active_tendon_routing = LinearTendonRoutingParams(
-    y_intercept=tendon_offset_radius * jnp.sin(angles_rad),
-    z_intercept=tendon_offset_radius * jnp.cos(angles_rad),
-    y_slope=jnp.zeros(3),
-    z_slope=jnp.zeros(3),
-    attachment_segment_index=jnp.array([0, 0, 0]),
+active_tendon_routing = ThreadlikeRouting.linear(
+    intercept=tendon_offset_radius
+    * jnp.stack(
+        (jnp.zeros_like(angles_rad), jnp.sin(angles_rad), jnp.cos(angles_rad)),
+        axis=-1,
+    ),
+    start_segment_index=0,
+    end_segment_index=(0, 0, 0),
 )
 
-robot = TendonActuatedPCS(
-    params=TendonActuatedPCSParams(
-        body=body_params,
-        active_tendon_routing=active_tendon_routing,
-    ),
+robot = PCS(
+    params=body_params,
+    actuators=ThreadlikeActuator.tendons(active_tendon_routing),
 )
 params = robot.params
 
@@ -153,9 +152,9 @@ print(f"Full pose dimension: {osd.n_points * osd.n_pose_dim}")
 # =========================================================================
 print("\nFinding steady-state configuration under constant actuation...")
 
-# Apply constant tendon tensions (negative = pulling)
+# Apply positive tendon tensions.
 # Use asymmetric tensions to create an interesting configuration
-u_constant = jnp.array([-0.5, -0.2, -0.1])
+u_constant = jnp.array([0.5, 0.2, 0.1])
 print(f"  Applied tendon tensions: {u_constant}")
 
 # Define simulation parameters
@@ -752,8 +751,7 @@ animation_dict = {
     # Robot parameters
     "params": params,
     "active_tendon_routing": active_tendon_routing,
-    "passive_tendon_routing": params.passive_tendon_routing,
-    "passive_tendon": params.passive_tendon,
+    "passive_elements": robot.passive_elements,
     "num_segments": num_segments,
     # Optimized Parameters
     "best_opt_vars": opt_vars_tot[best_idx_opt],

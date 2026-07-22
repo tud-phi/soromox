@@ -1,15 +1,13 @@
-__all__ = ["GVSLinkParams", "GVSParams", "TendonActuatedGVSParams"]
+__all__ = ["GVSLinkParams", "GVSParams"]
 
-import equinox as eqx
+from typing import ClassVar
+
 from jax import Array
 from jax import numpy as jnp
 
 from soromox.systems.params import (
     BaseSoftRobotParams,
     BaseSystemParams,
-    BaseTendonRoutingParams,
-    LinearTendonRoutingParams,
-    PassiveTendonParams,
     validate_quaternion_base_pose,
 )
 
@@ -23,6 +21,7 @@ class GVSLinkParams(BaseSystemParams):
     the singular per-link naming convention used by the other fields. Reference
     strain is intentionally stored on ``GVSParams`` because it belongs to the
     strain basis state, not the link cross-section/material data.
+    ``damping_coefficient`` is a viscosity-like modulus in Pa*s (N*s/m^2).
     """
 
     length: Array
@@ -81,8 +80,12 @@ class GVSParams(BaseSoftRobotParams):
     than link geometry or material properties. ``joint_stiffness`` has shape
     ``(num_segments, max_dof, max_dof)`` and is padded to the static GVS layout.
     ``base_pose`` uses scalar-first quaternion SE(3) coordinates
-    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm.
+    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm. Omitting
+    ``base_pose`` and ``gravity`` selects upright spatial mounting and
+    negative-z Earth gravity.
     """
+
+    is_planar: ClassVar[bool] = False
 
     link: GVSLinkParams
     reference_strain: Array
@@ -186,45 +189,3 @@ class GVSParams(BaseSoftRobotParams):
                     f"maximum segment num_gauss_points; segment {idx} has "
                     f"{segment.num_gauss_points}, got {max_num_gauss_points}."
                 )
-
-
-class TendonActuatedGVSParams(BaseSystemParams):
-    """Dynamic parameters for tendon-actuated GVS.
-
-    ``body`` stores the underlying GVS dynamic params. Active and passive routing
-    objects are batched by tendon, so each tendon can use distinct linear routing
-    parameters and attachment segment. ``passive_tendon`` stores per-passive-
-    tendon impedance and rest-length offsets.
-    """
-
-    body: GVSParams
-    active_tendon_routing: BaseTendonRoutingParams
-    passive_tendon_routing: BaseTendonRoutingParams = eqx.field(
-        default_factory=LinearTendonRoutingParams.empty
-    )
-    passive_tendon: PassiveTendonParams = eqx.field(
-        default_factory=PassiveTendonParams.empty
-    )
-
-    def validate(self) -> None:
-        self.body.validate()
-        self.active_tendon_routing.validate()
-        self.passive_tendon_routing.validate()
-        self.passive_tendon.validate()
-        if self.passive_tendon.num_tendons != self.passive_tendon_routing.num_tendons:
-            raise ValueError(
-                "passive_tendon must have one impedance entry per "
-                "passive_tendon_routing entry."
-            )
-
-    def validate_against_structure(self, structure) -> None:
-        """Validate tendon-actuated params against the GVS structure."""
-        self.validate()
-        self.body.validate_against_structure(structure)
-        num_segments = len(structure.segments)
-        self.active_tendon_routing.validate_attachment_segments(
-            num_segments, "active_tendon_routing"
-        )
-        self.passive_tendon_routing.validate_attachment_segments(
-            num_segments, "passive_tendon_routing"
-        )

@@ -9,14 +9,14 @@ import pandas as pd
 import seaborn as sns
 from jax import Array
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
+    GVS,
     CrossSectionGeometry,
     GVSSegment,
     JointSpec,
-    LinearTendonRoutingParams,
     LinkSpec,
     StrainBasisSpec,
-    TendonActuatedGVS,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -103,7 +103,7 @@ def compute_marker_errors(robot, u_batch, q0, measured_markers_batch, tau_batch)
 
 ###drawing plots
 def draw_robot_curve(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     q: Array,
     num_points: int = 50,
 ):
@@ -121,7 +121,7 @@ def draw_robot_curve(
 
 
 # ---- Marker prediction for a fixed q  ----
-def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
+def markers_from_q(robot: GVS, q: jnp.ndarray) -> jnp.ndarray:
     """
     Output [p1; p2; p3; p4] (12,), where:
       p1 @ s=0.1291 with offset [0,0, 0.025]
@@ -144,7 +144,7 @@ def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
 
 
 def solve_equilibrium_with_tau(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     u: jnp.ndarray,  # (na,)
     tau_ext: jnp.ndarray,  # (dof,)
     q0: jnp.ndarray,
@@ -168,7 +168,7 @@ def solve_equilibrium_with_tau(
 
 
 def make_tau_loss_for_sample(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     u_i: jnp.ndarray,  # (na,)
     p_meas_i: jnp.ndarray,  # (12,)
     q0: jnp.ndarray,
@@ -195,7 +195,7 @@ def make_tau_loss_for_sample(
 
 
 def solve_tau_star_for_batch(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     u_batch: jnp.ndarray,  # (na, M)
     measured_markers_batch: jnp.ndarray,  # (12, M)
     q0: jnp.ndarray,
@@ -771,30 +771,32 @@ if __name__ == "__main__":
     num_gauss_points = [8, 8]
     g = [0.0, 0.0, -9.81]
 
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=jnp.array(
-            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+    tendon_angles = jnp.deg2rad(jnp.array([30.0, 150.0]))
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=0.0114
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        y_slope=jnp.array(
-            [
-                -0.0295 * jnp.cos(jnp.pi / 180 * 30),
-                -0.0295 * jnp.cos(jnp.pi / 180 * 150),
-            ]
+        slope=-0.0295
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        z_intercept=jnp.array(
-            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
-        ),
-        z_slope=jnp.array(
-            [
-                -0.0295 * jnp.sin(jnp.pi / 180 * 30),
-                -0.0295 * jnp.sin(jnp.pi / 180 * 150),
-            ]
-        ),
-        attachment_segment_index=jnp.array([0, 0]),
+        start_segment_index=0,
+        end_segment_index=(0, 0),
     )
     p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
 
-    robot = TendonActuatedGVS.from_segments(
+    robot = GVS.from_segments(
         [
             GVSSegment(
                 link=link1,
@@ -811,7 +813,7 @@ if __name__ == "__main__":
         ],
         gravity=jnp.asarray(g),
         base_pose=p0,
-        active_tendon_routing=active_tendon_routing,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
         scale_rotational_basis_by_length=True,
     )
 
@@ -849,33 +851,34 @@ if __name__ == "__main__":
     measured_markers_batch = jnp.stack(measured_list, axis=1)
     radius = 0.0325
 
-    def _neg(val):
-        return -float(val) / float(radius)
+    def _tension(val):
+        """Convert the applied load to a positive tendon tension."""
+        return float(val) / float(radius)
 
     # Define mapping from sample name to u
     sample_to_u = {
-        "m1u01": jnp.array([_neg(0.1), 0.0]),
-        "m1u015": jnp.array([_neg(0.15), 0.0]),
-        "m1u02": jnp.array([_neg(0.2), 0.0]),
-        "m1u025": jnp.array([_neg(0.25), 0.0]),
-        "m2u01": jnp.array([0.0, _neg(0.1)]),
-        "m2u015": jnp.array([0.0, _neg(0.15)]),
-        "m2u02": jnp.array([0.0, _neg(0.2)]),
-        "m2u025": jnp.array([0.0, _neg(0.25)]),
-        "m1_005": jnp.array([_neg(0.05), 0.0]),
-        "m1_012": jnp.array([_neg(0.12), 0.0]),
-        "m1_018": jnp.array([_neg(0.18), 0.0]),
-        "m2_005": jnp.array([0.0, _neg(0.05)]),
-        "m2_012": jnp.array([0.0, _neg(0.12)]),
-        "m2_018": jnp.array([0.0, _neg(0.18)]),
-        "m12_001": jnp.array([_neg(0.1), _neg(0.1)]),
-        "m12_002": jnp.array([_neg(0.2), _neg(0.2)]),
-        "m12_001002": jnp.array([_neg(0.1), _neg(0.2)]),
-        "m12_0015002": jnp.array([_neg(0.15), _neg(0.2)]),
-        "m12_002001": jnp.array([_neg(0.2), _neg(0.1)]),
-        "m12_0020015": jnp.array([_neg(0.2), _neg(0.15)]),
-        "m12_00100005": jnp.array([_neg(0.1), _neg(0.05)]),
-        "m12_00050010": jnp.array([_neg(0.05), _neg(0.1)]),
+        "m1u01": jnp.array([_tension(0.1), 0.0]),
+        "m1u015": jnp.array([_tension(0.15), 0.0]),
+        "m1u02": jnp.array([_tension(0.2), 0.0]),
+        "m1u025": jnp.array([_tension(0.25), 0.0]),
+        "m2u01": jnp.array([0.0, _tension(0.1)]),
+        "m2u015": jnp.array([0.0, _tension(0.15)]),
+        "m2u02": jnp.array([0.0, _tension(0.2)]),
+        "m2u025": jnp.array([0.0, _tension(0.25)]),
+        "m1_005": jnp.array([_tension(0.05), 0.0]),
+        "m1_012": jnp.array([_tension(0.12), 0.0]),
+        "m1_018": jnp.array([_tension(0.18), 0.0]),
+        "m2_005": jnp.array([0.0, _tension(0.05)]),
+        "m2_012": jnp.array([0.0, _tension(0.12)]),
+        "m2_018": jnp.array([0.0, _tension(0.18)]),
+        "m12_001": jnp.array([_tension(0.1), _tension(0.1)]),
+        "m12_002": jnp.array([_tension(0.2), _tension(0.2)]),
+        "m12_001002": jnp.array([_tension(0.1), _tension(0.2)]),
+        "m12_0015002": jnp.array([_tension(0.15), _tension(0.2)]),
+        "m12_002001": jnp.array([_tension(0.2), _tension(0.1)]),
+        "m12_0020015": jnp.array([_tension(0.2), _tension(0.15)]),
+        "m12_00100005": jnp.array([_tension(0.1), _tension(0.05)]),
+        "m12_00050010": jnp.array([_tension(0.05), _tension(0.1)]),
     }
 
     u_list = [
@@ -1403,7 +1406,7 @@ link2_origin = LinkSpec(
 )
 
 
-robot_origin = TendonActuatedGVS.from_segments(
+robot_origin = GVS.from_segments(
     [
         GVSSegment(
             link=link1_origin,
@@ -1420,7 +1423,7 @@ robot_origin = TendonActuatedGVS.from_segments(
     ],
     gravity=jnp.asarray(g),
     base_pose=p0,
-    active_tendon_routing=active_tendon_routing,
+    actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     scale_rotational_basis_by_length=True,
 )
 
