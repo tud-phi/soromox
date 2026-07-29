@@ -6,7 +6,6 @@ abstract: "Kinematic and dynamic models of continuum and articulated soft robots
 authors:
   - family-names: "Stölzle"
     given-names: "Maximilian"
-    email: "maximilian@stoelzle.ch"
   - family-names: "Gribonval"
     given-names: "Solange"
   - family-names: "Feliu-Talegon"
