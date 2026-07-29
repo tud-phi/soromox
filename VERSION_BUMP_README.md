@@ -149,7 +149,7 @@ When you push a version tag (e.g., `v0.1.1`), the following happens automaticall
 
 ## 🛠️ Requirements
 
-- Python 3.10+
+- Python 3.11+
 - `jsrm` conda environment
 - Git repository with proper remotes configured
 - GitHub repository with Actions enabled

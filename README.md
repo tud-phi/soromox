@@ -9,7 +9,7 @@
 [![Test](https://github.com/tud-phi/soromox/actions/workflows/test.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/test.yml)
 [![Documentation](https://github.com/tud-phi/soromox/actions/workflows/docs.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/docs.yml)
 [![PyPI version](https://badge.fury.io/py/soromox.svg)](https://badge.fury.io/py/soromox)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
 [![Coverage](https://img.shields.io/badge/coverage-local%20report-blue.svg)](#running-tests-with-coverage)

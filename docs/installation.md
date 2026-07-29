@@ -19,9 +19,10 @@
 ## 🔧 Requirements
 
 !!! note "System Requirements"
-    - **Python** >= 3.10
-    - **JAX** >= 0.4.0
-    - **NumPy** >= 1.21.0
+    - **Python** >= 3.11
+    - **JAX** >= 0.10.0
+    - **Diffrax** >= 0.7.2
+    - **NumPy**
 
 !!! warning "Python Version Compatibility"
     - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
@@ -234,9 +235,9 @@ Test your installation with this quick verification script:
         
         **Problem:** `ImportError` or compatibility issues
         
-        **Solution:** Ensure you're using Python 3.10 or later:
+        **Solution:** Ensure you're using Python 3.11 or later:
         ```bash
-        python --version  # Should be >= 3.10
+        python --version  # Should be >= 3.11
         ```
 
     === "📦 JAX Installation"

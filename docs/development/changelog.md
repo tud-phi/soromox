@@ -32,7 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Generalized continuum actuation around composable threadlike actuation models.
 - Standardized system, geometry, Lie algebra, operational-space, actuation-space,
   parameter, and base-pose APIs.
-- Added support for Python 3.14 and migrated the documentation build to Zensical.
+- Declared support for Python 3.11 through 3.14 and migrated the documentation
+  build to Zensical.
+- Set JAX 0.10.0 and Diffrax 0.7.2 as the minimum numerical dependency
+  versions validated by CI.
 - Expanded the software authorship and citation metadata.
 
 ### Fixed
