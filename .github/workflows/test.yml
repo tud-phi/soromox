@@ -34,10 +34,7 @@ jobs:
       - name: Install project with test extras
         run: |
           python -m pip install --upgrade pip
-          # Plotly and Trimesh complete the Viser test dependencies. Open3D is
-          # intentionally omitted because it does not publish wheels for every
-          # advertised Python version; its tests use importorskip when absent.
-          python -m pip install -e ".[test]" plotly trimesh
+          python -m pip install -e ".[test]"
 
       - name: Run pytest
         run: python -m pytest
