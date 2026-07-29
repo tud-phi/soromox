@@ -156,15 +156,20 @@ def run_impedance_simulation(
     assert reference_trajectory.x_des_fn is not None
 
     K_x = 5e0 * jnp.ones((osd.n_operational_space,))
-    D_x = 1e0 * jnp.ones((osd.n_operational_space,))
+    damping_ratio = 1.0
+    Lambda_0 = osd.inertia_matrix(problem.q0)
+    D_x = 2.0 * damping_ratio * jnp.sqrt(K_x * jnp.diag(Lambda_0))
+    feedback_linearization = "partial"
     controller = OperationalSpaceImpedanceControlTracker(
         operational_space_dynamics=osd,
         reference_trajectory=reference_trajectory,
         K_x=K_x,
         D_x=D_x,
+        feedback_linearization=feedback_linearization,
     )
 
     if verbose:
+        print(f"Feedback linearization: {feedback_linearization}")
         print(f"Operational space stiffness K_x: {K_x}")
         print(f"Operational space damping D_x: {D_x}")
 

@@ -1,15 +1,61 @@
-# GitHub Actions workflow for automated releases
-# Triggers on version tags and creates GitHub releases with changelog content
+# Build a tagged release once, attach the validated artifacts to GitHub, and
+# publish the same files to PyPI through trusted publishing.
 
 name: Release
 
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags like v0.1.0, v1.2.3, etc.
+      - "v*"
 
 jobs:
+  build:
+    name: Build and validate distributions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify tag matches package version
+        id: version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PACKAGE_VERSION="$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          if [[ "$TAG_VERSION" != "$PACKAGE_VERSION" ]]; then
+            echo "Tag version $TAG_VERSION does not match package version $PACKAGE_VERSION" >&2
+            exit 1
+          fi
+          echo "version=$PACKAGE_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Build and check distributions
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade build twine
+          python -m build .
+          python -m twine check dist/*
+
+      - name: Upload distribution artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: soromox-${{ steps.version.outputs.version }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
   create-release:
+    name: Create GitHub release
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -17,99 +63,73 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Fetch full history for changelog
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
-          cache: pip
+          python-version: "3.12"
 
-      - name: Get version from tag
-        id: get-version
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
+      - name: Download validated distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: soromox-${{ needs.build.outputs.version }}
+          path: dist/
 
       - name: Extract changelog
-        id: get-changelog
+        id: changelog
+        shell: bash
         run: |
-          python extract_changelog.py ${{ steps.get-version.outputs.version }} --output /tmp/changelog.md || echo "No changelog found"
-          if [ -f /tmp/changelog.md ]; then
-            {
-              echo 'changelog<<EOF'
-              cat /tmp/changelog.md
-              echo EOF
-            } >> $GITHUB_OUTPUT
-          else
-            echo "changelog=No changelog found for this version." >> $GITHUB_OUTPUT
-          fi
+          python extract_changelog.py "${{ needs.build.outputs.version }}" --output /tmp/changelog.md
+          {
+            echo "content<<EOF"
+            cat /tmp/changelog.md
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Build distribution
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -U setuptools wheel build
-          python -m build .
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          name: SoRoMoX v${{ steps.get-version.outputs.version }}
+          name: SoRoMoX v${{ needs.build.outputs.version }}
           body: |
-            # SoRoMoX v${{ steps.get-version.outputs.version }}
-            
-            ${{ steps.get-changelog.outputs.changelog }}
-            
+            # SoRoMoX v${{ needs.build.outputs.version }}
+
+            ${{ steps.changelog.outputs.content }}
+
             ## Installation
-            
-            Install from PyPI:
+
             ```bash
-            pip install soromox==${{ steps.get-version.outputs.version }}
+            pip install soromox==${{ needs.build.outputs.version }}
             ```
-            
-            Or install from source:
-            ```bash
-            git clone https://github.com/tud-phi/soromox.git
-            cd soromox
-            git checkout v${{ steps.get-version.outputs.version }}
-            pip install -e .
-            ```
-            
-            ## What's Changed
-            
-            See the full changelog in [docs/development/changelog.md](https://github.com/tud-phi/soromox/blob/v${{ steps.get-version.outputs.version }}/docs/development/changelog.md).
+
+            See the full [changelog](https://github.com/tud-phi/soromox/blob/v${{ needs.build.outputs.version }}/docs/development/changelog.md).
           files: |
             dist/*.whl
             dist/*.tar.gz
           draft: false
           prerelease: false
-          generate_release_notes: true
 
   publish-to-pypi:
-    needs: create-release
+    name: Publish to PyPI
+    needs:
+      - build
+      - create-release
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/soromox
     permissions:
-      id-token: write  # For trusted publishing
+      contents: read
+      id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Download validated distributions
+        uses: actions/download-artifact@v4
         with:
-          python-version: '3.x'
-          cache: pip
-
-      - name: Install build dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -U setuptools wheel build
-
-      - name: Build distribution
-        run: python -m build .
+          name: soromox-${{ needs.build.outputs.version }}
+          path: dist/
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
+          packages-dir: dist/
           skip-existing: true

@@ -258,12 +258,12 @@ All renderers support:
     ### Software Citation
 
     ```bibtex
-    @software{soromox2025,
+    @software{soromox2026,
       title = {SoRoMoX: Soft Robot Models in JAX},
-      author = {Stölzle, Maximilian and Gribonval, Solange and {Feliu Talegón}, Daniel and {Della Santina}, Cosimo},
-      year = {2025},
+      author = {Stölzle, Maximilian and Gribonval, Solange and {Feliu-Talegon}, Daniel and Perfetta, Vito Daniele and Martini, Michele and Zhang, Chuhan and Wong, Kiwan and Rus, Daniela and {Della Santina}, Cosimo},
+      year = {2026},
       url = {https://github.com/tud-phi/soromox},
-      version = {0.1.0},
+      version = {0.2.0},
       abstract = {Kinematic and dynamic models of continuum and articulated soft robots implemented in JAX.}
     }
     ```

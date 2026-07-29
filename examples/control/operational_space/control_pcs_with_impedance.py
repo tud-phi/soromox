@@ -7,8 +7,8 @@ end-effector position tracking and full end-effector pose tracking, with
 trajectory primitives shared by the operational-space examples in this folder.
 
 The operational-space impedance controller uses partial feedback linearization
-to cancel the original task dynamics and replace them with a desired impedance
-behavior characterized by stiffness K_x and damping D_x gains.
+and moving-reference feedforward to shape the task dynamics with a desired
+impedance characterized by stiffness K_x and damping D_x gains.
 
 This script runs the simulation and saves the rollout as an ``.npz`` file. Use
 ``plot_control_pcs_with_impedance.py`` to generate plots and Viser rendering

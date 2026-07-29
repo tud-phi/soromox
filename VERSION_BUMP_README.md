@@ -14,15 +14,21 @@ This directory contains scripts for automated version bumping and GitHub release
 The version bump script updates version information in:
 
 - `pyproject.toml` - Main project version
-- `CITATION.cff` - GitHub citation file
-- `docs/development/changelog.md` - Changelog with new version entry
-- `src/soromox.egg-info/PKG-INFO` - Package info (if exists)
+- `CITATION.cff` - Citation version and release date
+- `README.md` and `docs/index.md` - BibTeX version, year, and citation key
+- `docs/development/changelog.md` - Dated release entry
+- `uv.lock` - Local package version
+
+Generated `*.egg-info` files are intentionally excluded because build tools
+regenerate them from `pyproject.toml`.
 
 ## Usage
 
-### 🚀 Full Release Process (Recommended)
+### 🚀 Direct Release Process
 
-These commands will bump the version, commit changes, create a git tag, and push to trigger the automated GitHub release:
+These commands bump the version, commit the managed metadata, create an
+annotated tag, and push it. Use them only when the release commit is already on
+the protected default branch:
 
 ```bash
 # Create a patch release (0.1.0 -> 0.1.1)
@@ -77,13 +83,17 @@ python bump_version.py --patch --yes --create-tag
 When you push a version tag (e.g., `v0.1.1`), the following happens automatically:
 
 1. **GitHub Actions triggers** on the new tag
-2. **Changelog extraction** - The release notes are automatically extracted from `docs/development/changelog.md`
-3. **GitHub Release created** with:
+2. **Version verification** - The tag must match the version in `pyproject.toml`
+3. **Build validation** - The wheel and source distribution are built once and
+   checked with Twine
+4. **Changelog extraction** - Release notes are extracted from `docs/development/changelog.md`
+5. **GitHub Release created** with:
    - Release title: "SoRoMoX v0.1.1"
    - Description from changelog
    - Installation instructions
    - Built distribution files (`.whl` and `.tar.gz`)
-4. **PyPI publication** - Package is automatically published to PyPI
+6. **PyPI publication** - The same validated files are published through the
+   protected `pypi` environment and PyPI trusted publishing
 
 ## 📋 What Each Script Does
 
@@ -92,7 +102,8 @@ When you push a version tag (e.g., `v0.1.1`), the following happens automaticall
 2. Calculates new version based on increment type or uses specified version
 3. Updates all version-related files
 4. Updates changelog with new entry and current date
-5. Optionally commits changes and creates git tags
+5. Optionally commits only the managed release files and creates an annotated
+   git tag
 6. Optionally pushes to origin to trigger release
 
 ### extract_changelog.py
@@ -103,19 +114,26 @@ When you push a version tag (e.g., `v0.1.1`), the following happens automaticall
 ### GitHub Actions Workflow
 1. Triggers on version tags (`v*`)
 2. Extracts version from tag
-3. Gets changelog content for the version
-4. Creates GitHub release with description and assets
-5. Publishes to PyPI
+3. Verifies the tag and builds the distributions once
+4. Checks the distributions and extracts the changelog
+5. Creates the GitHub release with the validated assets
+6. Publishes the same assets to PyPI
 
 ## 🎯 Recommended Workflow
 
-1. **Develop your features** and update the changelog in `docs/development/changelog.md`
-2. **Create a release** using one of the release commands:
-   - `make release-patch` for bug fixes
-   - `make release-minor` for new features
-   - `make release-major` for breaking changes
-3. **Monitor the release** - GitHub Actions will automatically create the release and publish to PyPI
-4. **Verify the release** - Check GitHub releases and PyPI to ensure everything worked
+1. **Develop your features** and add notes below `[Unreleased]` in
+   `docs/development/changelog.md`.
+2. **Create a release branch** from the current default branch.
+3. **Bump the metadata without tagging**, for example with
+   `make bump-version VERSION=0.2.0`.
+4. **Validate and merge a release PR** after the test and documentation
+   workflows pass.
+5. **Create an annotated version tag** on the verified default-branch commit
+   and push only that tag.
+6. **Monitor the release workflow** and approve the protected `pypi`
+   environment when prompted.
+7. **Verify the GitHub release, PyPI metadata and attestations, and a fresh
+   installation from PyPI.**
 
 ## ✅ Features
 
@@ -135,12 +153,21 @@ When you push a version tag (e.g., `v0.1.1`), the following happens automaticall
 - `jsrm` conda environment
 - Git repository with proper remotes configured
 - GitHub repository with Actions enabled
-- PyPI account with trusted publishing configured (optional)
+- PyPI account with a trusted publisher configured for:
+  - Project: `soromox`
+  - Owner: `tud-phi`
+  - Repository: `soromox`
+  - Workflow: `release.yml`
+  - Environment: `pypi`
 - Changelog following [Keep a Changelog](https://keepachangelog.com/) format
 
-## 🔒 GitHub Secrets
+## 🔒 Publishing Security
 
-For PyPI publication, you may need to set up:
-- `PYPI_API_TOKEN` - PyPI API token (if not using trusted publishing)
+The `publish-to-pypi` job uses a protected GitHub environment named `pypi`
+and requests an OpenID Connect token with `id-token: write`.
 
-The workflow is configured to use GitHub's trusted publishing feature, which is more secure than API tokens.
+No long-lived `PYPI_API_TOKEN` secret is required.
+
+The release helper stages an explicit allowlist of metadata files. It never
+runs `git add .`, so unrelated worktree files cannot enter a release commit
+silently.

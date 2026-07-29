@@ -9,7 +9,13 @@ jax.config.update("jax_enable_x64", True)  # double precision
 import jax.numpy as jnp
 import pytest
 
-from soromox.utils.geometry.rotations import RotationRepresentation
+from soromox.utils.geometry.rotations import (
+    RotationRepresentation,
+    rotation_matrix_to_6d,
+    rotation_matrix_to_quaternion,
+    rotation_matrix_to_rotation_vector,
+    rotation_vector_to_rotation_matrix,
+)
 from soromox.utils.twist import twist_callable_from_pose_callable_factory
 
 
@@ -143,6 +149,35 @@ class TestCreateTwistFromPoseFnRotationVector:
         assert twist.shape == (12,)
         assert jnp.allclose(twist, expected_twist, atol=1e-6)
 
+    def test_changing_axis_at_nonidentity_orientation_is_spatial_velocity(self):
+        """Rotation-vector derivatives must not be mistaken for angular velocity."""
+        R0 = rotation_vector_to_rotation_matrix(jnp.array([0.8, -0.4, 0.3]))
+        angular_rate = 0.7
+
+        def pose_fn(t):
+            R_delta = rotation_vector_to_rotation_matrix(
+                jnp.array([0.0, 0.0, angular_rate * t])
+            )
+            orientation = rotation_matrix_to_rotation_vector(R_delta @ R0)
+            return jnp.concatenate([orientation, jnp.zeros(3)])
+
+        twist_fn = twist_callable_from_pose_callable_factory(
+            pose_fn=pose_fn,
+            n_points=1,
+            n_pose_dim=6,
+            n_orientation_dim=3,
+            rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+            is_planar=False,
+        )
+
+        twist = twist_fn(jnp.array(0.4))
+
+        assert jnp.allclose(
+            twist,
+            jnp.array([0.0, 0.0, angular_rate, 0.0, 0.0, 0.0]),
+            atol=1e-8,
+        )
+
 
 class TestCreateTwistFromPoseFnPlanar:
     """Tests for twist derivation with planar poses."""
@@ -235,6 +270,66 @@ class TestCreateTwistFromPoseFnQuaternion:
         assert twist.shape == (6,)
         assert jnp.allclose(twist[:3], jnp.zeros(3), atol=1e-6)
         assert jnp.allclose(twist[3:], jnp.array([0.1, 0.0, 0.0]), atol=1e-6)
+
+    def test_nonidentity_orientation_returns_spatial_not_body_velocity(self):
+        R0 = rotation_vector_to_rotation_matrix(jnp.array([0.8, -0.4, 0.3]))
+        angular_rate = 0.7
+
+        def pose_fn(t):
+            R_delta = rotation_vector_to_rotation_matrix(
+                jnp.array([0.0, 0.0, angular_rate * t])
+            )
+            orientation = rotation_matrix_to_quaternion(R_delta @ R0)
+            return jnp.concatenate([orientation, jnp.zeros(3)])
+
+        twist_fn = twist_callable_from_pose_callable_factory(
+            pose_fn=pose_fn,
+            n_points=1,
+            n_pose_dim=7,
+            n_orientation_dim=4,
+            rotation_representation=RotationRepresentation.QUATERNION,
+            is_planar=False,
+        )
+
+        twist = twist_fn(jnp.array(0.4))
+
+        assert jnp.allclose(
+            twist,
+            jnp.array([0.0, 0.0, angular_rate, 0.0, 0.0, 0.0]),
+            atol=1e-8,
+        )
+
+
+class TestCreateTwistFromPoseFnRotation6D:
+    """Tests for spatial twist derivation from the continuous 6D representation."""
+
+    def test_nonidentity_changing_axis_rotation(self):
+        R0 = rotation_vector_to_rotation_matrix(jnp.array([0.8, -0.4, 0.3]))
+        angular_rate = 0.7
+
+        def pose_fn(t):
+            R_delta = rotation_vector_to_rotation_matrix(
+                jnp.array([0.0, 0.0, angular_rate * t])
+            )
+            orientation = rotation_matrix_to_6d(R_delta @ R0)
+            return jnp.concatenate([orientation, jnp.zeros(3)])
+
+        twist_fn = twist_callable_from_pose_callable_factory(
+            pose_fn=pose_fn,
+            n_points=1,
+            n_pose_dim=9,
+            n_orientation_dim=6,
+            rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
+            is_planar=False,
+        )
+
+        twist = twist_fn(jnp.array(0.4))
+
+        assert jnp.allclose(
+            twist,
+            jnp.array([0.0, 0.0, angular_rate, 0.0, 0.0, 0.0]),
+            atol=1e-8,
+        )
 
 
 class TestCreateTwistFromPoseFnJITCompatibility:
