@@ -4504,10 +4504,12 @@ test = [
     { name = "coverage", extra = ["toml"] },
     { name = "matplotlib" },
     { name = "opencv-python" },
+    { name = "plotly" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-html" },
     { name = "tox" },
+    { name = "trimesh" },
     { name = "viser" },
 ]
 
@@ -4575,6 +4577,7 @@ requires-dist = [
     { name = "plotly", marker = "extra == 'examples'" },
     { name = "plotly", marker = "extra == 'paper-results'" },
     { name = "plotly", marker = "extra == 'rendering'" },
+    { name = "plotly", marker = "extra == 'test'" },
     { name = "pre-commit", marker = "extra == 'all'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pyelastica", marker = "extra == 'all'" },
@@ -4607,6 +4610,7 @@ requires-dist = [
     { name = "trimesh", marker = "extra == 'examples'" },
     { name = "trimesh", marker = "extra == 'paper-results'" },
     { name = "trimesh", marker = "extra == 'rendering'" },
+    { name = "trimesh", marker = "extra == 'test'" },
     { name = "viser", marker = "extra == 'all'" },
     { name = "viser", marker = "extra == 'examples'" },
     { name = "viser", marker = "extra == 'paper-results'" },

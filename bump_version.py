@@ -88,7 +88,7 @@ def update_pyproject_toml(file_path: Path, new_version: str) -> None:
 
 
 def update_citation_cff(file_path: Path, new_version: str, release_date: date) -> None:
-    """Update CFF version, release date, and year-bearing citation key."""
+    """Update the CFF version and release date."""
     content = file_path.read_text()
     content = replace_required(
         content,
@@ -101,12 +101,6 @@ def update_citation_cff(file_path: Path, new_version: str, release_date: date) -
         r'^date-released: "[^"]+"',
         f'date-released: "{release_date.isoformat()}"',
         description=f"release date in {file_path}",
-    )
-    content = replace_required(
-        content,
-        r'^(    value: ")soromox\d{4}(")$',
-        rf"\g<1>soromox{release_date.year}\g<2>",
-        description=f"citation key in {file_path}",
     )
     file_path.write_text(content)
 

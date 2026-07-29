@@ -64,9 +64,6 @@ def test_update_uv_lock_changes_only_local_package(tmp_path):
 def test_update_citations_synchronizes_version_date_and_year(tmp_path):
     cff = tmp_path / "CITATION.cff"
     cff.write_text(
-        "identifiers:\n"
-        "  - type: other\n"
-        '    value: "soromox2025"\n'
         'version: "0.1.0"\n'
         'date-released: "2025-09-01"\n'
     )
@@ -84,7 +81,6 @@ def test_update_citations_synchronizes_version_date_and_year(tmp_path):
     bump_version.update_citation_cff(cff, "0.2.0", release_date)
     bump_version.update_bibtex_citation(markdown, "0.2.0", release_date)
 
-    assert 'value: "soromox2026"' in cff.read_text()
     assert 'version: "0.2.0"' in cff.read_text()
     assert 'date-released: "2026-07-29"' in cff.read_text()
     assert "@software{soromox2026," in markdown.read_text()

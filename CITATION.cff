@@ -3,13 +3,10 @@ message: "If you use this software, please cite it as below."
 type: software
 title: "SoRoMoX: Soft Robot Models in JAX"
 abstract: "Kinematic and dynamic models of continuum and articulated soft robots implemented in JAX."
-identifiers:
-  - type: other
-    value: "soromox2026"
-    description: "The preferred citation key for this software"
 authors:
   - family-names: "Stölzle"
     given-names: "Maximilian"
+    email: "maximilian@stoelzle.ch"
   - family-names: "Gribonval"
     given-names: "Solange"
   - family-names: "Feliu-Talegon"
@@ -33,8 +30,8 @@ version: "0.2.0"
 date-released: "2026-07-29"
 keywords:
   - "JAX"
-  - "Soft Robotics" 
+  - "Soft Robotics"
   - "Kinematics"
   - "Dynamics"
-  - "Continuum Robots"
-  - "Articulated Robots"
+  - "Continuum Soft Robots"
+  - "Articulated Soft Robots"

@@ -314,8 +314,8 @@ The dry run mode will show you:
 
 The version bump process automatically updates:
 - `pyproject.toml` - Main project version
-- `CITATION.cff` - Citation version, release date, and year-bearing key
-- `README.md` and `docs/index.md` - Embedded software citations
+- `CITATION.cff` - Citation version and release date
+- `README.md` and `docs/index.md` - BibTeX version, year, and citation key
 - `docs/development/changelog.md` - Moves unreleased notes into a dated release
 - `uv.lock` - Local package version
 

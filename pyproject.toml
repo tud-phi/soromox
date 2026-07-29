@@ -201,10 +201,12 @@ test = [
     "coverage[toml]",
     "matplotlib",
     "opencv-python",
+    "plotly",
     "pytest",
     "pytest-cov",
     "pytest-html",
     "tox",
+    "trimesh",
     "viser",
 ]
 all = [
