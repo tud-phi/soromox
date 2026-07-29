@@ -5,6 +5,17 @@ import pytest
 import bump_version
 
 
+def test_parser_requires_exactly_one_version_selection():
+    parser = bump_version.build_parser()
+
+    assert parser.parse_args(["0.3.0"]).version == "0.3.0"
+    assert parser.parse_args(["--patch"]).patch is True
+    with pytest.raises(SystemExit):
+        parser.parse_args([])
+    with pytest.raises(SystemExit):
+        parser.parse_args(["0.3.0", "--patch"])
+
+
 def test_update_changelog_preserves_history(tmp_path):
     changelog = tmp_path / "changelog.md"
     changelog.write_text(
