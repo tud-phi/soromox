@@ -30,6 +30,8 @@ DEFAULT_SOLVER_DT = 5e-5
 DEFAULT_SAVE_DT = 0.01
 DEFAULT_SETPOINT_OUTPUT = "setpoint_regulation_comparison.npz"
 DEFAULT_TRAJECTORY_OUTPUT = "trajectory_tracking_comparison.npz"
+DEFAULT_REGULATION_TRACKING_OUTPUT = "regulation_tracking_comparison.npz"
+DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE = 10.0
 
 STRAIN_INDICES = (1, 2, 3)
 STRAIN_NAMES = (r"$\kappa_y$", r"$\kappa_z$", r"$\sigma_x$")
@@ -48,6 +50,13 @@ TRACKER_COLORS = {
 }
 
 REGULATOR_COLORS = SETPOINT_COLORS
+
+REGULATION_TRACKING_COLORS = {
+    "PID (model-free)": "#7F7F7F",
+    "Potential Compensation": "#348ABD",
+    "Feedforward Compensation": "#988ED5",
+    "Computed Torque": "#E24A33",
+}
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,8 @@ class PlotGroup:
     controller_names: tuple[str, ...]
     colors: dict[str, str]
     event_times: tuple[float, ...] = ()
+    phase_boundary_time: float | None = None
+    phase_boundary_label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -156,7 +167,7 @@ def create_robot() -> tuple[PCS, int, int]:
 
 
 def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
-    """Create the PID gains shared by all compared controllers."""
+    """Create the generalized-force PID gains used as the comparison baseline."""
     del num_dofs
 
     kp_rot = 1e-2
@@ -171,7 +182,7 @@ def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
     ki_segment = jnp.array([ki_rot, ki_rot, ki_rot, ki_lin, ki_lin, ki_lin])
     kd_segment = jnp.array([kd_rot, kd_rot, kd_rot, kd_lin, kd_lin, kd_lin])
 
-    print("PID gains:")
+    print("Baseline generalized-force PID gains:")
     print(f"  Kp: {kp_segment}")
     print(f"  Ki: {ki_segment}")
     print(f"  Kd: {kd_segment}")
@@ -182,6 +193,54 @@ def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
         Kd=jnp.tile(kd_segment, num_segments),
         saturation_fn="tanh",
         gamma=1.0,
+    )
+
+
+def normalize_pid_control_for_computed_torque(
+    robot: PCS,
+    pid_control: PIDControl,
+    q_normalization: jnp.ndarray | None = None,
+) -> PIDControl:
+    """Convert generalized-force PID gains to computed-torque acceleration gains.
+
+    The normalized gains satisfy ``M(q_normalization) @ K_ct = K_tau``. Thus,
+    at the normalization configuration, the computed-torque feedback produces
+    the same generalized force as the PID feedback used by the other controllers.
+    """
+    if q_normalization is None:
+        q_normalization = jnp.zeros((robot.num_dofs,))
+    if q_normalization.shape != (robot.num_dofs,):
+        raise ValueError(
+            "q_normalization must have shape "
+            f"({robot.num_dofs},), got {q_normalization.shape}."
+        )
+
+    def gain_matrix(gain: jnp.ndarray) -> jnp.ndarray:
+        if gain.ndim == 1:
+            if gain.shape == (1,):
+                return gain[0] * jnp.eye(robot.num_dofs)
+            if gain.shape == (robot.num_dofs,):
+                return jnp.diag(gain)
+        elif gain.shape == (robot.num_dofs, robot.num_dofs):
+            return gain
+        raise ValueError(
+            "PID gains must be scalar, length-num_dofs vectors, or "
+            f"({robot.num_dofs}, {robot.num_dofs}) matrices."
+        )
+
+    inertia = robot.inertia_matrix(q_normalization)
+    saturation_fn: str | Any
+    if pid_control._saturation_fn_name == "custom":
+        saturation_fn = pid_control._custom_saturation_fn
+    else:
+        saturation_fn = pid_control._saturation_fn_name
+
+    return PIDControl(
+        Kp=jnp.linalg.solve(inertia, gain_matrix(pid_control.Kp)),
+        Ki=jnp.linalg.solve(inertia, gain_matrix(pid_control.Ki)),
+        Kd=jnp.linalg.solve(inertia, gain_matrix(pid_control.Kd)),
+        saturation_fn=saturation_fn,
+        gamma=pid_control.gamma,
     )
 
 
@@ -248,6 +307,70 @@ def create_smooth_trajectory(
         return q_des
 
     return ReferenceTrajectory(ts=ts, x_des_fn=x_des_fn)
+
+
+def create_regulation_tracking_trajectory(
+    num_dofs: int,
+    t0: float,
+    tracking_start: float,
+    t1: float,
+    frequency_scale: float = DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE,
+) -> tuple[ReferenceTrajectory, jnp.ndarray]:
+    """Create setpoint regulation followed by smooth trajectory tracking.
+
+    The setpoint phase uses the same targets as the standalone regulation example
+    and returns to the neutral configuration before tracking begins. The tracking
+    phase is multiplied by a quintic ramp, making desired position, velocity, and
+    acceleration continuous at the phase boundary.
+    """
+    if not t0 < tracking_start < t1:
+        raise ValueError("Expected t0 < tracking_start < t1.")
+    if num_dofs < 4:
+        raise ValueError("The combined task requires at least four DOFs.")
+    if frequency_scale <= 0:
+        raise ValueError("frequency_scale must be positive.")
+
+    ts = jnp.linspace(t0, t1, 1000)
+    setpoint_times = jnp.linspace(t0, tracking_start, 6)[:-1]
+    kappa_y_values = jnp.array([0.0, 20.0, -10.0, 15.0, 0.0])
+    kappa_z_values = jnp.array([0.0, 5.0, -8.0, 3.0, 0.0])
+    sigma_x_values = jnp.array([0.0, 0.06, -0.03, 0.03, 0.0])
+
+    tracking_duration = t1 - tracking_start
+    ramp_duration = 0.1 * tracking_duration
+    omega_y = 0.3 * frequency_scale
+    omega_z = 0.2 * frequency_scale
+    omega_x = 0.25 * frequency_scale
+
+    amp_kappa_y = 10.0
+    amp_kappa_z = 5.0
+    amp_sigma_x = 0.05
+
+    def x_des_fn(t):
+        setpoint_idx = jnp.searchsorted(setpoint_times, t, side="right") - 1
+        setpoint_idx = jnp.clip(setpoint_idx, 0, len(kappa_y_values) - 1)
+        q_setpoint = jnp.zeros((num_dofs,))
+        q_setpoint = q_setpoint.at[1].set(kappa_y_values[setpoint_idx])
+        q_setpoint = q_setpoint.at[2].set(kappa_z_values[setpoint_idx])
+        q_setpoint = q_setpoint.at[3].set(sigma_x_values[setpoint_idx])
+
+        tracking_time = t - tracking_start
+        ramp_phase = jnp.clip(tracking_time / ramp_duration, 0.0, 1.0)
+        ramp = ramp_phase**3 * (10.0 - 15.0 * ramp_phase + 6.0 * ramp_phase**2)
+        q_tracking = jnp.zeros((num_dofs,))
+        q_tracking = q_tracking.at[1].set(
+            ramp * amp_kappa_y * jnp.sin(omega_y * tracking_time)
+        )
+        q_tracking = q_tracking.at[2].set(
+            ramp * amp_kappa_z * jnp.sin(omega_z * tracking_time + jnp.pi / 4)
+        )
+        q_tracking = q_tracking.at[3].set(
+            ramp * amp_sigma_x * jnp.sin(omega_x * tracking_time + jnp.pi / 2)
+        )
+
+        return jnp.where(t < tracking_start, q_setpoint, q_tracking)
+
+    return ReferenceTrajectory(ts=ts, x_des_fn=x_des_fn), setpoint_times
 
 
 def run_simulation(
@@ -323,9 +446,10 @@ def run_controller_set(
     *,
     solver_dt: float,
     save_dt: float,
+    controller_pid_controls: dict[str, PIDControl] | None = None,
     verbose: bool = True,
 ) -> dict[str, dict[str, Any]]:
-    """Run a group of controllers against one reference trajectory."""
+    """Run controllers, optionally overriding the PID gains for selected names."""
     all_results: dict[str, dict[str, Any]] = {}
     for name, controller_class in controller_classes.items():
         if verbose:
@@ -333,10 +457,15 @@ def run_controller_set(
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
+            controller_pid_control = (
+                controller_pid_controls.get(name, pid_control)
+                if controller_pid_controls is not None
+                else pid_control
+            )
             controller = controller_class(
                 robot=robot,
                 reference_trajectory=reference_trajectory,
-                pid_control=pid_control,
+                pid_control=controller_pid_control,
             )
 
         results = run_simulation(
@@ -359,6 +488,36 @@ def run_controller_set(
             print(f"  Completed {len(results['t'])} time steps.")
 
     return all_results
+
+
+def slice_results(
+    all_results: dict[str, dict[str, Any]],
+    reference_trajectory: ReferenceTrajectory,
+    *,
+    start: float | None = None,
+    stop: float | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Slice controller results and recompute metrics over the selected interval."""
+    sliced_results: dict[str, dict[str, Any]] = {}
+    for name, results in all_results.items():
+        t = results["t"]
+        mask = jnp.ones_like(t, dtype=bool)
+        if start is not None:
+            mask = jnp.logical_and(mask, t >= start)
+        if stop is not None:
+            mask = jnp.logical_and(mask, t < stop)
+
+        sliced = {key: results[key][mask] for key in ("t", "q", "qd", "u")}
+        if len(sliced["t"]) < 2:
+            raise ValueError("A metrics interval must contain at least two samples.")
+        sliced["metrics"] = compute_metrics(
+            sliced,
+            reference_trajectory.x_des_fn,
+            STRAIN_INDICES,
+        )
+        sliced_results[name] = sliced
+
+    return sliced_results
 
 
 def run_setpoint_comparison(
@@ -442,6 +601,156 @@ def run_setpoint_comparison(
     return run
 
 
+def run_regulation_tracking_comparison(
+    *,
+    t0: float = 0.0,
+    tracking_start: float = 15.0,
+    t1: float = 30.0,
+    tracking_frequency_scale: float = DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE,
+    solver_dt: float = DEFAULT_SOLVER_DT,
+    save_dt: float = DEFAULT_SAVE_DT,
+    verbose: bool = True,
+) -> ComparisonRun:
+    """Run one continuous regulation-then-tracking controller comparison."""
+    robot, num_dofs, num_segments = create_robot()
+    if verbose:
+        print(f"Number of DOFs: {num_dofs}")
+        print(f"Number of actuators: {robot.num_actuators}")
+
+    pid_control = create_pid_control(num_dofs, num_segments)
+    computed_torque_pid_control = normalize_pid_control_for_computed_torque(
+        robot,
+        pid_control,
+    )
+    if verbose:
+        print("Computed-torque gains normalized with M(q=0).")
+    reference_trajectory, setpoint_times = create_regulation_tracking_trajectory(
+        num_dofs,
+        t0,
+        tracking_start,
+        t1,
+        frequency_scale=tracking_frequency_scale,
+    )
+    controllers = {
+        "PID (model-free)": PIDController,
+        "Potential Compensation": PotentialCompensationRegulator,
+        "Feedforward Compensation": FeedforwardCompensationTracker,
+        "Computed Torque": ComputedTorqueTracker,
+    }
+
+    if verbose:
+        print("\n" + "=" * 80)
+        print("SETPOINT REGULATION FOLLOWED BY TRAJECTORY TRACKING")
+        print("=" * 80)
+    combined_results = run_controller_set(
+        robot,
+        controllers,
+        reference_trajectory,
+        pid_control,
+        num_dofs,
+        t0,
+        t1,
+        solver_dt=solver_dt,
+        save_dt=save_dt,
+        controller_pid_controls={
+            "Computed Torque": computed_torque_pid_control,
+        },
+        verbose=verbose,
+    )
+    regulation_results = slice_results(
+        combined_results,
+        reference_trajectory,
+        stop=tracking_start,
+    )
+    tracking_results = slice_results(
+        combined_results,
+        reference_trajectory,
+        start=tracking_start,
+    )
+
+    run = ComparisonRun(
+        example_key="regulation_tracking",
+        title="Setpoint Regulation Followed by Trajectory Tracking",
+        strain_indices=STRAIN_INDICES,
+        strain_names=STRAIN_NAMES,
+        scenarios=(
+            ScenarioInfo("combined", "Complete Task"),
+            ScenarioInfo("regulation", "Setpoint Regulation Phase"),
+            ScenarioInfo("tracking", "Trajectory Tracking Phase"),
+        ),
+        results={
+            "combined": combined_results,
+            "regulation": regulation_results,
+            "tracking": tracking_results,
+        },
+        plot_groups=(
+            PlotGroup(
+                key="combined",
+                scenario_key="combined",
+                title="Regulation and Tracking: Configuration-Space Comparison",
+                filename_prefix="regulation_tracking",
+                controller_names=tuple(controllers.keys()),
+                colors=REGULATION_TRACKING_COLORS,
+                event_times=tuple(float(t) for t in setpoint_times),
+                phase_boundary_time=tracking_start,
+                phase_boundary_label="Trajectory tracking starts",
+            ),
+            PlotGroup(
+                key="tracking-phase",
+                scenario_key="tracking",
+                title="Trajectory Tracking Phase: Configuration-Space Comparison",
+                filename_prefix="trajectory_tracking_phase",
+                controller_names=tuple(controllers.keys()),
+                colors=REGULATION_TRACKING_COLORS,
+            ),
+        ),
+        rmse_summaries=(
+            RmseSummary(
+                key="phase-rmse",
+                filename="regulation_tracking_rmse.pdf",
+                panels=(
+                    RmsePanel(
+                        title="Setpoint Regulation: RMSE",
+                        scenario_key="regulation",
+                        controller_names=tuple(controllers.keys()),
+                    ),
+                    RmsePanel(
+                        title="Trajectory Tracking: RMSE",
+                        scenario_key="tracking",
+                        controller_names=tuple(controllers.keys()),
+                    ),
+                ),
+            ),
+        ),
+        render_targets=(
+            RenderTarget(
+                key="combined",
+                scenario_key="combined",
+                title="Regulation and Tracking",
+                default_controller="Feedforward Compensation",
+            ),
+        ),
+    )
+
+    if verbose:
+        for phase_title, phase_results in (
+            ("Setpoint Regulation Phase", regulation_results),
+            ("Trajectory Tracking Phase", tracking_results),
+        ):
+            for metric_name, metric_title in (
+                ("rmse", "RMSE"),
+                ("max_error", "Maximum Absolute Error"),
+                ("ise", "ISE"),
+            ):
+                print_metrics_table(
+                    phase_results,
+                    STRAIN_NAMES,
+                    f"{phase_title}: {metric_title}",
+                    metric_name=metric_name,
+                )
+    return run
+
+
 def run_trajectory_tracking_comparison(
     *,
     t0: float = 0.0,
@@ -460,6 +769,12 @@ def run_trajectory_tracking_comparison(
         print(f"Number of actuators: {robot.num_actuators}")
 
     pid_control = create_pid_control(num_dofs, num_segments)
+    computed_torque_pid_control = normalize_pid_control_for_computed_torque(
+        robot,
+        pid_control,
+    )
+    if verbose:
+        print("Computed-torque gains normalized with M(q=0).")
 
     trackers = {
         "Computed Torque": ComputedTorqueTracker,
@@ -493,6 +808,9 @@ def run_trajectory_tracking_comparison(
         t1_slow,
         solver_dt=solver_dt,
         save_dt=save_dt,
+        controller_pid_controls={
+            "Computed Torque": computed_torque_pid_control,
+        },
         verbose=verbose,
     )
     if verbose:
@@ -518,6 +836,9 @@ def run_trajectory_tracking_comparison(
         t1_fast,
         solver_dt=solver_dt,
         save_dt=save_dt,
+        controller_pid_controls={
+            "Computed Torque": computed_torque_pid_control,
+        },
         verbose=verbose,
     )
     if verbose:
@@ -602,8 +923,10 @@ def print_metrics_table(
     all_results: dict[str, dict[str, Any]],
     strain_names: tuple[str, ...],
     title: str,
+    *,
+    metric_name: str = "rmse",
 ) -> None:
-    """Print a formatted RMSE table."""
+    """Print a formatted table for one per-strain metric."""
     print(f"\n{'=' * 80}")
     print(title)
     print("=" * 80)
@@ -614,8 +937,8 @@ def print_metrics_table(
     print("-" * 80)
 
     for name, results in all_results.items():
-        rmse = results["metrics"]["rmse"]
-        print(f"{name:<30} {rmse[0]:>15.4f} {rmse[1]:>15.4f} {rmse[2]:>15.4f}")
+        metric = results["metrics"][metric_name]
+        print(f"{name:<30} {metric[0]:>15.4f} {metric[1]:>15.4f} {metric[2]:>15.4f}")
 
 
 def save_comparison_npz(path: str | Path, run: ComparisonRun) -> Path:
@@ -728,6 +1051,8 @@ def _plot_group_to_dict(group: PlotGroup) -> dict[str, Any]:
         "controller_names": list(group.controller_names),
         "colors": group.colors,
         "event_times": list(group.event_times),
+        "phase_boundary_time": group.phase_boundary_time,
+        "phase_boundary_label": group.phase_boundary_label,
     }
 
 
@@ -740,6 +1065,8 @@ def _plot_group_from_dict(data: dict[str, Any]) -> PlotGroup:
         controller_names=tuple(data["controller_names"]),
         colors=dict(data["colors"]),
         event_times=tuple(float(t) for t in data.get("event_times", ())),
+        phase_boundary_time=data.get("phase_boundary_time"),
+        phase_boundary_label=data.get("phase_boundary_label"),
     )
 
 

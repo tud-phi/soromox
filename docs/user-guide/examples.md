@@ -183,6 +183,32 @@ Control examples demonstrate various control algorithms for different control sp
 
 Configuration-space controllers operate directly on the robot's configuration variables (e.g., joint angles, strain parameters).
 
+#### Regulation Followed by Tracking
+
+```bash
+python examples/control/configuration_space/regulation_tracking_comparison.py
+```
+
+This example runs each controller over one uninterrupted task containing several
+setpoints followed by a smooth dynamic trajectory. The tracking phase defaults
+to a frequency scale of 10 and also produces tracking-phase-only position and
+error plots. It compares:
+
+- `PIDController` as a model-free baseline
+- `PotentialCompensationRegulator` as the representative regulator
+- `FeedforwardCompensationTracker` as its dynamic tracking counterpart
+- `ComputedTorqueTracker` as the full feedback-linearization benchmark, with
+  acceleration-domain gains normalized by the inertia matrix at the straight
+  configuration
+
+Potential compensation and feedforward compensation have the same control law
+during constant setpoints. Their behavior separates when the trajectory begins
+and the tracker adds inertial, Coriolis, and damping feedforward terms.
+The saved result contains separate regulation and tracking slices with RMSE,
+maximum-error, and integral-squared-error metrics.
+
+**Key concepts:** Regulation versus tracking, inverse-dynamics feedforward, computed torque
+
 #### Setpoint Regulation
 ```bash
 python examples/control/configuration_space/setpoint_regulation_comparison.py
@@ -325,6 +351,7 @@ Follow these steps to run any example:
    For example:
    ```bash
    python examples/simulation/pendulum/simulate_pendulum.py
+   python examples/control/configuration_space/regulation_tracking_comparison.py
    python examples/control/configuration_space/setpoint_regulation_comparison.py
    python examples/system_identification/identify_soft_tentacle_parameters.py
    ```

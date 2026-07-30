@@ -281,9 +281,9 @@ def add_controller_visibility_selector(
     original_update_frame = renderer._update_frame
 
     def setup_playback_gui_with_controller_selector(
-        on_frame_changed: Callable[[int], None] | None = None,
+        on_frame_seek: Callable[[int], None] | None = None,
     ) -> None:
-        original_setup_playback_gui(on_frame_changed=on_frame_changed)
+        original_setup_playback_gui(on_frame_seek=on_frame_seek)
         with renderer.server.gui.add_folder("Controller"):
             dropdown = renderer.server.gui.add_dropdown(
                 "Visible controller",

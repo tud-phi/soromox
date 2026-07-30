@@ -27,6 +27,41 @@ def output_path(
     return output_dir / filename
 
 
+def add_timing_markers(
+    ax: plt.Axes,
+    group: PlotGroup,
+    *,
+    t0: float,
+    show_phase_label: bool,
+) -> None:
+    """Mark setpoint changes and the regulation-to-tracking boundary."""
+    for event_time in group.event_times:
+        if event_time > t0:
+            ax.axvline(x=event_time, color="gray", linestyle=":", alpha=0.5)
+
+    if group.phase_boundary_time is None:
+        return
+
+    ax.axvline(
+        x=group.phase_boundary_time,
+        color="black",
+        linestyle="--",
+        linewidth=1.5,
+        alpha=0.8,
+    )
+    if show_phase_label and group.phase_boundary_label:
+        ax.text(
+            group.phase_boundary_time,
+            0.98,
+            group.phase_boundary_label,
+            transform=ax.get_xaxis_transform(),
+            ha="right",
+            va="top",
+            rotation=90,
+            fontsize=9,
+        )
+
+
 def plot_tracking_group(
     run: ComparisonRun,
     group: PlotGroup,
@@ -61,9 +96,12 @@ def plot_tracking_group(
                 label=name,
             )
 
-        for event_time in group.event_times:
-            if event_time > t[0]:
-                ax.axvline(x=event_time, color="gray", linestyle=":", alpha=0.5)
+        add_timing_markers(
+            ax,
+            group,
+            t0=float(t[0]),
+            show_phase_label=idx == 0,
+        )
 
         ax.set_ylabel(f"{strain_name}")
         ax.grid(True, alpha=0.3)
@@ -100,9 +138,12 @@ def plot_tracking_group(
                 label=name,
             )
 
-        for event_time in group.event_times:
-            if event_time > all_results[first_controller]["t"][0]:
-                ax.axvline(x=event_time, color="gray", linestyle=":", alpha=0.5)
+        add_timing_markers(
+            ax,
+            group,
+            t0=float(all_results[first_controller]["t"][0]),
+            show_phase_label=idx == 0,
+        )
 
         ax.set_ylabel(f"Error {strain_name}")
         ax.axhline(y=0, color="k", linestyle="-", alpha=0.3)
@@ -137,7 +178,9 @@ def plot_rmse_summary(
     show: bool = True,
 ) -> Path:
     """Plot one RMSE summary figure."""
-    fig, axes = plt.subplots(1, len(summary.panels), figsize=(7 * len(summary.panels), 5))
+    fig, axes = plt.subplots(
+        1, len(summary.panels), figsize=(7 * len(summary.panels), 5)
+    )
     axes = np.atleast_1d(axes)
     width = 0.8 / len(run.strain_names)
 
