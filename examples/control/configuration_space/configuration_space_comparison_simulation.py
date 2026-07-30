@@ -32,6 +32,9 @@ DEFAULT_SETPOINT_OUTPUT = "setpoint_regulation_comparison.npz"
 DEFAULT_TRAJECTORY_OUTPUT = "trajectory_tracking_comparison.npz"
 DEFAULT_REGULATION_TRACKING_OUTPUT = "regulation_tracking_comparison.npz"
 DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE = 10.0
+DEFAULT_FEEDBACK_NATURAL_FREQUENCY = 30.0
+DEFAULT_FEEDBACK_DAMPING_RATIO = 0.9
+DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY = 0.75
 
 STRAIN_INDICES = (1, 2, 3)
 STRAIN_NAMES = (r"$\kappa_y$", r"$\kappa_z$", r"$\sigma_x$")
@@ -166,31 +169,55 @@ def create_robot() -> tuple[PCS, int, int]:
     return robot, int(robot.num_active_strains), num_segments
 
 
-def create_pid_control(num_dofs: int, num_segments: int) -> PIDControl:
-    """Create the generalized-force PID gains used as the comparison baseline."""
-    del num_dofs
+def create_pid_control(
+    robot: PCS,
+    *,
+    natural_frequency: float = DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
+    damping_ratio: float = DEFAULT_FEEDBACK_DAMPING_RATIO,
+    integral_frequency: float = DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
+    q_normalization: jnp.ndarray | None = None,
+) -> PIDControl:
+    """Create inertia-scaled generalized-force PID gains.
 
-    kp_rot = 1e-2
-    ki_rot = 1e-3
-    kd_rot = 1e-4
+    A common acceleration-domain feedback law is selected first,
 
-    kp_lin = 1e-1
-    ki_lin = 1e-3
-    kd_lin = 1e-2
+    ``qdd_fb = kp_acc * e + ki_acc * integral(e) + kd_acc * ed``,
 
-    kp_segment = jnp.array([kp_rot, kp_rot, kp_rot, kp_lin, kp_lin, kp_lin])
-    ki_segment = jnp.array([ki_rot, ki_rot, ki_rot, ki_lin, ki_lin, ki_lin])
-    kd_segment = jnp.array([kd_rot, kd_rot, kd_rot, kd_lin, kd_lin, kd_lin])
+    and then mapped to generalized force using the inertia matrix at the
+    normalization configuration. This gives rotational and linear strains the
+    same local acceleration correction per unit error despite their very
+    different inertias and units.
+    """
+    if natural_frequency <= 0:
+        raise ValueError("natural_frequency must be positive.")
+    if damping_ratio <= 0:
+        raise ValueError("damping_ratio must be positive.")
+    if integral_frequency < 0:
+        raise ValueError("integral_frequency must be nonnegative.")
+    if q_normalization is None:
+        q_normalization = jnp.zeros((robot.num_dofs,))
+    if q_normalization.shape != (robot.num_dofs,):
+        raise ValueError(
+            "q_normalization must have shape "
+            f"({robot.num_dofs},), got {q_normalization.shape}."
+        )
 
-    print("Baseline generalized-force PID gains:")
-    print(f"  Kp: {kp_segment}")
-    print(f"  Ki: {ki_segment}")
-    print(f"  Kd: {kd_segment}")
+    inertia = robot.inertia_matrix(q_normalization)
+    kp_acc = natural_frequency**2
+    kd_acc = 2.0 * damping_ratio * natural_frequency
+    ki_acc = integral_frequency * kp_acc
+
+    print("Inertia-scaled generalized-force PID gains:")
+    print(
+        "  Acceleration-domain gains: "
+        f"Kp={kp_acc:.6g}, Ki={ki_acc:.6g}, Kd={kd_acc:.6g}"
+    )
+    print(f"  Normalization configuration: {q_normalization}")
 
     return PIDControl(
-        Kp=jnp.tile(kp_segment, num_segments),
-        Ki=jnp.tile(ki_segment, num_segments),
-        Kd=jnp.tile(kd_segment, num_segments),
+        Kp=kp_acc * inertia,
+        Ki=ki_acc * inertia,
+        Kd=kd_acc * inertia,
         saturation_fn="tanh",
         gamma=1.0,
     )
@@ -529,12 +556,12 @@ def run_setpoint_comparison(
     verbose: bool = True,
 ) -> ComparisonRun:
     """Run the setpoint regulation comparison."""
-    robot, num_dofs, num_segments = create_robot()
+    robot, num_dofs, _ = create_robot()
     if verbose:
         print(f"Number of DOFs: {num_dofs}")
         print(f"Number of actuators: {robot.num_actuators}")
 
-    pid_control = create_pid_control(num_dofs, num_segments)
+    pid_control = create_pid_control(robot)
     reference_trajectory, step_times = create_setpoint_trajectory(num_dofs, t0, t1)
     controllers = {
         "PID (model-free)": PIDController,
@@ -607,17 +634,25 @@ def run_regulation_tracking_comparison(
     tracking_start: float = 15.0,
     t1: float = 30.0,
     tracking_frequency_scale: float = DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE,
+    feedback_natural_frequency: float = DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
+    feedback_damping_ratio: float = DEFAULT_FEEDBACK_DAMPING_RATIO,
+    feedback_integral_frequency: float = DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
     solver_dt: float = DEFAULT_SOLVER_DT,
     save_dt: float = DEFAULT_SAVE_DT,
     verbose: bool = True,
 ) -> ComparisonRun:
     """Run one continuous regulation-then-tracking controller comparison."""
-    robot, num_dofs, num_segments = create_robot()
+    robot, num_dofs, _ = create_robot()
     if verbose:
         print(f"Number of DOFs: {num_dofs}")
         print(f"Number of actuators: {robot.num_actuators}")
 
-    pid_control = create_pid_control(num_dofs, num_segments)
+    pid_control = create_pid_control(
+        robot,
+        natural_frequency=feedback_natural_frequency,
+        damping_ratio=feedback_damping_ratio,
+        integral_frequency=feedback_integral_frequency,
+    )
     computed_torque_pid_control = normalize_pid_control_for_computed_torque(
         robot,
         pid_control,
@@ -763,12 +798,12 @@ def run_trajectory_tracking_comparison(
     verbose: bool = True,
 ) -> ComparisonRun:
     """Run the trajectory tracking comparison."""
-    robot, num_dofs, num_segments = create_robot()
+    robot, num_dofs, _ = create_robot()
     if verbose:
         print(f"Number of DOFs: {num_dofs}")
         print(f"Number of actuators: {robot.num_actuators}")
 
-    pid_control = create_pid_control(num_dofs, num_segments)
+    pid_control = create_pid_control(robot)
     computed_torque_pid_control = normalize_pid_control_for_computed_torque(
         robot,
         pid_control,

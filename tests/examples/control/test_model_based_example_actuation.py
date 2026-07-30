@@ -79,12 +79,11 @@ def test_regulation_tracking_reference_is_smooth_at_phase_boundary():
 
 
 def test_computed_torque_pid_gains_are_normalized_with_straight_inertia():
-    robot, num_dofs, num_segments = (
+    robot, num_dofs, _ = (
         configuration_space_comparison_simulation.create_robot()
     )
     baseline = configuration_space_comparison_simulation.create_pid_control(
-        num_dofs,
-        num_segments,
+        robot,
     )
     normalized = configuration_space_comparison_simulation.normalize_pid_control_for_computed_torque(
         robot,
@@ -92,22 +91,38 @@ def test_computed_torque_pid_gains_are_normalized_with_straight_inertia():
     )
     inertia_straight = robot.inertia_matrix(jnp.zeros((num_dofs,)))
 
-    for baseline_gain, normalized_gain in (
-        (baseline.Kp, normalized.Kp),
-        (baseline.Ki, normalized.Ki),
-        (baseline.Kd, normalized.Kd),
+    expected_acceleration_gains = (
+        configuration_space_comparison_simulation.DEFAULT_FEEDBACK_NATURAL_FREQUENCY
+        ** 2,
+        configuration_space_comparison_simulation.DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY
+        * configuration_space_comparison_simulation.DEFAULT_FEEDBACK_NATURAL_FREQUENCY
+        ** 2,
+        2.0
+        * configuration_space_comparison_simulation.DEFAULT_FEEDBACK_DAMPING_RATIO
+        * configuration_space_comparison_simulation.DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
+    )
+    for baseline_gain, normalized_gain, expected_acceleration_gain in (
+        (baseline.Kp, normalized.Kp, expected_acceleration_gains[0]),
+        (baseline.Ki, normalized.Ki, expected_acceleration_gains[1]),
+        (baseline.Kd, normalized.Kd, expected_acceleration_gains[2]),
     ):
         assert normalized_gain.shape == (num_dofs, num_dofs)
         assert_allclose(
             inertia_straight @ normalized_gain,
-            jnp.diag(baseline_gain),
+            baseline_gain,
+            rtol=1e-10,
+            atol=1e-10,
+        )
+        assert_allclose(
+            normalized_gain,
+            expected_acceleration_gain * jnp.eye(num_dofs),
             rtol=1e-10,
             atol=1e-10,
         )
 
 
 def test_feedforward_tracker_matches_potential_regulator_at_setpoint():
-    robot, num_dofs, num_segments = (
+    robot, num_dofs, _ = (
         configuration_space_comparison_simulation.create_robot()
     )
     reference, _ = (
@@ -119,8 +134,7 @@ def test_feedforward_tracker_matches_potential_regulator_at_setpoint():
         )
     )
     pid_control = configuration_space_comparison_simulation.create_pid_control(
-        num_dofs,
-        num_segments,
+        robot,
     )
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")

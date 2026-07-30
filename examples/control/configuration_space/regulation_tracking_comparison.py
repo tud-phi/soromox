@@ -12,6 +12,9 @@ import argparse
 
 import jax
 from configuration_space_comparison_simulation import (
+    DEFAULT_FEEDBACK_DAMPING_RATIO,
+    DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
+    DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
     DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE,
     DEFAULT_REGULATION_TRACKING_OUTPUT,
     DEFAULT_SAVE_DT,
@@ -39,6 +42,24 @@ def parse_args() -> argparse.Namespace:
         help="Frequency scale for the dynamic tracking trajectory.",
     )
     parser.add_argument(
+        "--feedback-natural-frequency",
+        type=float,
+        default=DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
+        help="Acceleration-domain feedback natural frequency [rad/s].",
+    )
+    parser.add_argument(
+        "--feedback-damping-ratio",
+        type=float,
+        default=DEFAULT_FEEDBACK_DAMPING_RATIO,
+        help="Acceleration-domain feedback damping ratio.",
+    )
+    parser.add_argument(
+        "--feedback-integral-frequency",
+        type=float,
+        default=DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
+        help="Integral-to-proportional gain ratio [rad/s].",
+    )
+    parser.add_argument(
         "--solver-dt",
         type=float,
         default=DEFAULT_SOLVER_DT,
@@ -64,6 +85,9 @@ def main() -> None:
         tracking_start=args.tracking_start,
         t1=args.t1,
         tracking_frequency_scale=args.tracking_frequency_scale,
+        feedback_natural_frequency=args.feedback_natural_frequency,
+        feedback_damping_ratio=args.feedback_damping_ratio,
+        feedback_integral_frequency=args.feedback_integral_frequency,
         solver_dt=args.solver_dt,
         save_dt=args.save_dt,
     )

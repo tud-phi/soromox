@@ -197,9 +197,16 @@ error plots. It compares:
 - `PIDController` as a model-free baseline
 - `PotentialCompensationRegulator` as the representative regulator
 - `FeedforwardCompensationTracker` as its dynamic tracking counterpart
-- `ComputedTorqueTracker` as the full feedback-linearization benchmark, with
-  acceleration-domain gains normalized by the inertia matrix at the straight
-  configuration
+- `ComputedTorqueTracker` as the full feedback-linearization benchmark
+
+All four controllers use feedback gains selected from one acceleration-domain
+natural frequency, damping ratio, and integral frequency. The generalized-force
+gains are obtained by multiplying these gains by the full inertia matrix at the
+straight configuration. This gives rotational and linear strains comparable
+local feedback action despite their different inertias and units. Computed
+torque recovers the same acceleration-domain gains through inertia
+normalization. The evaluated defaults are a natural frequency of `30 rad/s`, a
+damping ratio of `0.9`, and an integral frequency of `0.75 rad/s`.
 
 Potential compensation and feedforward compensation have the same control law
 during constant setpoints. Their behavior separates when the trajectory begins
