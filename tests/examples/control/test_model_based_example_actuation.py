@@ -72,10 +72,50 @@ def test_regulation_tracking_reference_is_smooth_at_phase_boundary():
         atol=1e-12,
     )
     assert_allclose(
+        reference.x_des_fn(jnp.array(4.0))[1:4],
+        jnp.array([8.0, 4.0, 0.06]),
+        atol=1e-12,
+    )
+    assert_allclose(
+        reference.x_des_fn(jnp.array(7.0))[1:4],
+        jnp.array([-8.0, -4.0, -0.03]),
+        atol=1e-12,
+    )
+    assert_allclose(
         reference.x_des_fn(jnp.array(17.0))[1],
         10.0 * jnp.sin(6.0),
         atol=1e-12,
     )
+
+
+def test_regulation_tracking_robot_is_horizontal_and_gravity_loaded():
+    robot, num_dofs, _ = (
+        configuration_space_comparison_simulation.create_regulation_tracking_robot()
+    )
+    gravity_force = robot.gravitational_force(jnp.zeros((num_dofs,)))
+
+    assert_allclose(
+        robot.base_pose,
+        jnp.array(
+            configuration_space_comparison_simulation.HORIZONTAL_BASE_POSE,
+        ),
+    )
+    assert abs(gravity_force[1]) > 1e-3
+    assert_allclose(gravity_force[2], 0.0, atol=1e-12)
+
+
+def test_model_free_pd_uses_same_proportional_and_derivative_gains():
+    robot, _, _ = (
+        configuration_space_comparison_simulation.create_regulation_tracking_robot()
+    )
+    pid_control = configuration_space_comparison_simulation.create_pid_control(robot)
+    pd_control = configuration_space_comparison_simulation.remove_integral_action(
+        pid_control
+    )
+
+    assert_allclose(pd_control.Kp, pid_control.Kp)
+    assert_allclose(pd_control.Kd, pid_control.Kd)
+    assert_allclose(pd_control.Ki, jnp.zeros_like(pid_control.Ki))
 
 
 def test_computed_torque_pid_gains_are_normalized_with_straight_inertia():

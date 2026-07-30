@@ -35,6 +35,8 @@ DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE = 10.0
 DEFAULT_FEEDBACK_NATURAL_FREQUENCY = 30.0
 DEFAULT_FEEDBACK_DAMPING_RATIO = 0.9
 DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY = 0.75
+DEFAULT_BASE_POSE = (0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0)
+HORIZONTAL_BASE_POSE = (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 STRAIN_INDICES = (1, 2, 3)
 STRAIN_NAMES = (r"$\kappa_y$", r"$\kappa_z$", r"$\sigma_x$")
@@ -55,6 +57,7 @@ TRACKER_COLORS = {
 REGULATOR_COLORS = SETPOINT_COLORS
 
 REGULATION_TRACKING_COLORS = {
+    "PD (model-free)": "#B2B2B2",
     "PID (model-free)": "#7F7F7F",
     "Potential Compensation": "#348ABD",
     "Feedforward Compensation": "#988ED5",
@@ -134,7 +137,10 @@ class ComparisonRun:
         return scenario_key
 
 
-def create_robot() -> tuple[PCS, int, int]:
+def create_robot(
+    *,
+    base_pose: tuple[float, ...] = DEFAULT_BASE_POSE,
+) -> tuple[PCS, int, int]:
     """Create the PCS robot used by the configuration-space examples."""
     num_segments = 1
     rho = 1070 * jnp.ones((num_segments,))
@@ -151,7 +157,7 @@ def create_robot() -> tuple[PCS, int, int]:
         ).flatten()
     )
     params = PCSParams(
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=jnp.asarray(base_pose),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,
@@ -167,6 +173,11 @@ def create_robot() -> tuple[PCS, int, int]:
 
     robot = PCS(params=params)
     return robot, int(robot.num_active_strains), num_segments
+
+
+def create_regulation_tracking_robot() -> tuple[PCS, int, int]:
+    """Create the horizontally mounted robot used by the combined task."""
+    return create_robot(base_pose=HORIZONTAL_BASE_POSE)
 
 
 def create_pid_control(
@@ -220,6 +231,17 @@ def create_pid_control(
         Kd=kd_acc * inertia,
         saturation_fn="tanh",
         gamma=1.0,
+    )
+
+
+def remove_integral_action(pid_control: PIDControl) -> PIDControl:
+    """Return a PD controller with the same proportional and derivative gains."""
+    return PIDControl(
+        Kp=pid_control.Kp,
+        Ki=jnp.zeros_like(pid_control.Ki),
+        Kd=pid_control.Kd,
+        saturation_fn="identity",
+        gamma=pid_control.gamma,
     )
 
 
@@ -345,10 +367,10 @@ def create_regulation_tracking_trajectory(
 ) -> tuple[ReferenceTrajectory, jnp.ndarray]:
     """Create setpoint regulation followed by smooth trajectory tracking.
 
-    The setpoint phase uses the same targets as the standalone regulation example
-    and returns to the neutral configuration before tracking begins. The tracking
-    phase is multiplied by a quintic ramp, making desired position, velocity, and
-    acceleration continuous at the phase boundary.
+    The setpoint phase bends with and against gravity, exercises the orthogonal
+    bending plane, and returns to the neutral configuration before tracking
+    begins. The tracking phase is multiplied by a quintic ramp, making desired
+    position, velocity, and acceleration continuous at the phase boundary.
     """
     if not t0 < tracking_start < t1:
         raise ValueError("Expected t0 < tracking_start < t1.")
@@ -359,8 +381,10 @@ def create_regulation_tracking_trajectory(
 
     ts = jnp.linspace(t0, t1, 1000)
     setpoint_times = jnp.linspace(t0, tracking_start, 6)[:-1]
-    kappa_y_values = jnp.array([0.0, 20.0, -10.0, 15.0, 0.0])
-    kappa_z_values = jnp.array([0.0, 5.0, -8.0, 3.0, 0.0])
+    # With the horizontal mounting, positive/negative kappa_y bends with/against
+    # gravity, while kappa_z exercises the orthogonal bending plane.
+    kappa_y_values = jnp.array([0.0, 8.0, -8.0, 4.0, 0.0])
+    kappa_z_values = jnp.array([0.0, 4.0, -4.0, -6.0, 0.0])
     sigma_x_values = jnp.array([0.0, 0.06, -0.03, 0.03, 0.0])
 
     tracking_duration = t1 - tracking_start
@@ -642,7 +666,7 @@ def run_regulation_tracking_comparison(
     verbose: bool = True,
 ) -> ComparisonRun:
     """Run one continuous regulation-then-tracking controller comparison."""
-    robot, num_dofs, _ = create_robot()
+    robot, num_dofs, _ = create_regulation_tracking_robot()
     if verbose:
         print(f"Number of DOFs: {num_dofs}")
         print(f"Number of actuators: {robot.num_actuators}")
@@ -653,6 +677,7 @@ def run_regulation_tracking_comparison(
         damping_ratio=feedback_damping_ratio,
         integral_frequency=feedback_integral_frequency,
     )
+    pd_control = remove_integral_action(pid_control)
     computed_torque_pid_control = normalize_pid_control_for_computed_torque(
         robot,
         pid_control,
@@ -667,6 +692,7 @@ def run_regulation_tracking_comparison(
         frequency_scale=tracking_frequency_scale,
     )
     controllers = {
+        "PD (model-free)": PIDController,
         "PID (model-free)": PIDController,
         "Potential Compensation": PotentialCompensationRegulator,
         "Feedforward Compensation": FeedforwardCompensationTracker,
@@ -688,6 +714,7 @@ def run_regulation_tracking_comparison(
         solver_dt=solver_dt,
         save_dt=save_dt,
         controller_pid_controls={
+            "PD (model-free)": pd_control,
             "Computed Torque": computed_torque_pid_control,
         },
         verbose=verbose,

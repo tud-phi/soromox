@@ -11,6 +11,7 @@ import numpy as np
 from configuration_space_comparison_simulation import (
     ComparisonRun,
     RenderTarget,
+    create_regulation_tracking_robot,
     create_robot,
     load_comparison_npz,
 )
@@ -365,7 +366,10 @@ def render_run(
         base_plate_color=(0.15, 0.15, 0.15),
     )
 
-    robot, _, _ = create_robot()
+    if run.example_key == "regulation_tracking":
+        robot, _, _ = create_regulation_tracking_robot()
+    else:
+        robot, _, _ = create_robot()
     renderer = ViserRenderer(
         robot,
         num_points=num_points,
