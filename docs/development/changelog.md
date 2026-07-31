@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Reproducible PCS configuration- and operational-space control case studies
+  with shared simulation, plotting, serialization, and Viser workflows.
+
 ### Changed
 
 ### Fixed
