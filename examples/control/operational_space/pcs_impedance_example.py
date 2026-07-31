@@ -155,7 +155,7 @@ def run_impedance_simulation(
     )
     assert reference_trajectory.x_des_fn is not None
 
-    K_x = 5e0 * jnp.ones((osd.n_operational_space,))
+    K_x = 1.0 * jnp.ones((osd.n_operational_space,))
     damping_ratio = 1.0
     Lambda_0 = osd.inertia_matrix(problem.q0)
     D_x = 2.0 * damping_ratio * jnp.sqrt(K_x * jnp.diag(Lambda_0))
