@@ -10,13 +10,12 @@ import jax.numpy as jnp
 import numpy as np
 from matplotlib import colors
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import CameraConfig, Open3DRenderer, RendererColorConfig
 from soromox.rendering.color_config import BackboneColorConfig
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PCS,
     PCSParams,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
@@ -44,9 +43,7 @@ gradient = cmap_target(np.array([0.65, 1.0]))[:, :3]
 jax.config.update("jax_enable_x64", True)
 
 
-def build_rl_robot(
-    arm_length: float = 0.25, arm_radius: float = 0.025
-) -> TendonActuatedPCS:
+def build_rl_robot(arm_length: float = 0.25, arm_radius: float = 0.025) -> PCS:
     """Reconstruct the static robot parameters to match the 1-segment RL environment."""
     num_segments = 1
     rho = 1070 * jnp.ones((num_segments,))
@@ -85,19 +82,32 @@ def build_rl_robot(
         reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
     )
 
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=tendon_routing_params["ry"],
-        z_intercept=tendon_routing_params["rz"],
-        y_slope=tendon_routing_params["my"],
-        z_slope=tendon_routing_params["mz"],
-        attachment_segment_index=tendon_routing_params["idx_seg_att"],
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=jnp.stack(
+            (
+                jnp.zeros_like(tendon_routing_params["ry"]),
+                tendon_routing_params["ry"],
+                tendon_routing_params["rz"],
+            ),
+            axis=-1,
+        ),
+        slope=jnp.stack(
+            (
+                jnp.zeros_like(tendon_routing_params["my"]),
+                tendon_routing_params["my"],
+                tendon_routing_params["mz"],
+            ),
+            axis=-1,
+        ),
+        start_segment_index=0,
+        end_segment_index=tuple(
+            int(index) for index in tendon_routing_params["idx_seg_att"]
+        ),
     )
 
-    return TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
-        )
+    return PCS(
+        params=body_params,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
 

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 import equinox as eqx
 import jax
@@ -9,12 +10,14 @@ import optax
 import optimistix as optx
 import pandas as pd
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
+    GVS,
     CrossSectionGeometry,
-    LinearTendonRoutingParams,
-    TendonActuatedGVS,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 jax.config.update("jax_enable_x64", True)
 
@@ -78,7 +81,7 @@ def _load_marker_data():
     )
     offset = jnp.array([-0.03, -0.013, 0.0], dtype=jnp.float64)
 
-    df = pd.read_csv("data/m1_u01.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u01.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[12:15]
@@ -93,7 +96,7 @@ def _load_marker_data():
     p3_m1u01 = res["p3_tr"]
     p4_m1u01 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u015.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u015.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -108,7 +111,7 @@ def _load_marker_data():
     p3_m1u015 = res["p3_tr"]
     p4_m1u015 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u02.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u02.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -123,7 +126,7 @@ def _load_marker_data():
     p3_m1u02 = res["p3_tr"]
     p4_m1u02 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u025.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u025.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[12:15]
@@ -138,7 +141,7 @@ def _load_marker_data():
     p3_m1u025 = res["p3_tr"]
     p4_m1u025 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u01.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u01.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -153,7 +156,7 @@ def _load_marker_data():
     p3_m2u01 = res["p3_tr"]
     p4_m2u01 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u015.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u015.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -168,7 +171,7 @@ def _load_marker_data():
     p3_m2u015 = res["p3_tr"]
     p4_m2u015 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u02.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u02.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -183,7 +186,7 @@ def _load_marker_data():
     p3_m2u02 = res["p3_tr"]
     p4_m2u02 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u025.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u025.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -222,7 +225,7 @@ def compute_marker_errors(robot, u_batch, q0, measured_markers_batch, E, nu, rho
 
 
 def draw_robot_curve(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     q: jnp.ndarray,
     num_points: int = 50,
 ):
@@ -242,7 +245,7 @@ def draw_robot_curve(
 
 
 # ---- Marker prediction for a fixed q  ----
-def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
+def markers_from_q(robot: GVS, q: jnp.ndarray) -> jnp.ndarray:
     """
     Output [p1; p2; p3; p4] (12,), where:
       p1 @ s=0.1291 with offset [0,0, 0.025]
@@ -264,7 +267,7 @@ def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
     return jnp.concatenate([p1, p2, p3, p4], axis=0)  # (12,)
 
 
-def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+def solve_equilibrium(robot: GVS, u: jnp.ndarray, q0: jnp.ndarray):
     def statics_eq(q, args):
         u = args
         K = robot.stiffness_matrix()
@@ -279,7 +282,7 @@ def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray)
 
 # STATIC EQUILIBRIUM EQUATION SOLVER with UPDATED E,rho AND NU
 def solve_equilibrium_Enurho(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     u: jnp.ndarray,
     q0: jnp.ndarray,
     E: jnp.ndarray,
@@ -408,26 +411,28 @@ if __name__ == "__main__":
     num_gauss_points = [8, 8]
     g = [0.0, 0.0, -9.81]
 
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=jnp.array(
-            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+    tendon_angles = jnp.deg2rad(jnp.array([30.0, 150.0]))
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=0.0114
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        y_slope=jnp.array(
-            [
-                -0.0295 * jnp.cos(jnp.pi / 180 * 30),
-                -0.0295 * jnp.cos(jnp.pi / 180 * 150),
-            ]
+        slope=-0.0295
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        z_intercept=jnp.array(
-            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
-        ),
-        z_slope=jnp.array(
-            [
-                -0.0295 * jnp.sin(jnp.pi / 180 * 30),
-                -0.0295 * jnp.sin(jnp.pi / 180 * 150),
-            ]
-        ),
-        attachment_segment_index=jnp.array([0, 0]),
+        start_segment_index=0,
+        end_segment_index=(0, 0),
     )
     p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
 
@@ -439,11 +444,11 @@ if __name__ == "__main__":
             link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
         ),
     ]
-    robot = TendonActuatedGVS.from_segments(
+    robot = GVS.from_segments(
         segments,
         gravity=jnp.asarray(g),
         base_pose=p0,
-        active_tendon_routing=active_tendon_routing,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
         scale_rotational_basis_by_length=True,
     )
 
@@ -520,7 +525,8 @@ if __name__ == "__main__":
     ]
     measured_markers_batch = jnp.stack(measured_list, axis=1)
     radius = 0.0325
-    levels = jnp.array([-0.1, -0.15, -0.2, -0.25], dtype=jnp.float64) / radius  # (4,)
+    # The tendon preset embeds y_a = -length, so positive controls are tensions.
+    levels = jnp.array([0.1, 0.15, 0.2, 0.25], dtype=jnp.float64) / radius  # (4,)
 
     u_m1 = jnp.stack(
         [jnp.array([lvl, 0.0], dtype=jnp.float64) for lvl in levels], axis=1
@@ -592,16 +598,16 @@ if __name__ == "__main__":
     print("best_step:", best_step)
 
     # save results
-    # onp.save("data/E_hat.npy", onp.asarray(E_hat))
-    # onp.save("data/nu_hat.npy", onp.asarray(nu_hat))
-    # onp.save("data/rho_hat.npy", onp.asarray(rho_hat))
-    # onp.save("data/loss_history.npy", onp.asarray(loss_history))
+    # onp.save(DATA_DIR / "E_hat.npy", onp.asarray(E_hat))
+    # onp.save(DATA_DIR / "nu_hat.npy", onp.asarray(nu_hat))
+    # onp.save(DATA_DIR / "rho_hat.npy", onp.asarray(rho_hat))
+    # onp.save(DATA_DIR / "loss_history.npy", onp.asarray(loss_history))
 
     # load results
-    # E_hat = jnp.array(onp.load("data/E_hat.npy"))
-    # nu_hat = jnp.array(onp.load("data/nu_hat.npy"))
-    # rho_hat = jnp.array(onp.load("data/rho_hat.npy"))
-    # loss_history = onp.load("data/loss_history.npy").tolist()
+    # E_hat = jnp.array(onp.load(DATA_DIR / "E_hat.npy"))
+    # nu_hat = jnp.array(onp.load(DATA_DIR / "nu_hat.npy"))
+    # rho_hat = jnp.array(onp.load(DATA_DIR / "rho_hat.npy"))
+    # loss_history = onp.load(DATA_DIR / "loss_history.npy").tolist()
 
     # ### PLOTTING RESULTS ###
 
@@ -620,10 +626,10 @@ if __name__ == "__main__":
 
     rmse_before = marker_rmse(errors_before)
     rmse_after = marker_rmse(errors_after)
-    # onp.save("data/rmse_before.npy", onp.asarray(rmse_before))
-    # onp.save("data/errors_before.npy", onp.asarray(errors_before))
-    # onp.save("data/rmse_after.npy", onp.asarray(rmse_after))
-    # onp.save("data/errors_after.npy", onp.asarray(errors_after))
+    # onp.save(DATA_DIR / "rmse_before.npy", onp.asarray(rmse_before))
+    # onp.save(DATA_DIR / "errors_before.npy", onp.asarray(errors_before))
+    # onp.save(DATA_DIR / "rmse_after.npy", onp.asarray(rmse_after))
+    # onp.save(DATA_DIR / "errors_after.npy", onp.asarray(errors_after))
 
     marker_names = [f"M{i + 1}" for i in range(4)]
     x = onp.arange(len(marker_names))
@@ -692,7 +698,7 @@ if __name__ == "__main__":
         r_i=0.00642,
         r_f=0.00480,
     )
-    robot_hat = TendonActuatedGVS.from_segments(
+    robot_hat = GVS.from_segments(
         [
             GVSSegment(
                 link=link1_hat,
@@ -709,7 +715,7 @@ if __name__ == "__main__":
         ],
         gravity=jnp.asarray(g),
         base_pose=p0,
-        active_tendon_routing=active_tendon_routing,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
         scale_rotational_basis_by_length=True,
     )
 
@@ -748,11 +754,11 @@ if __name__ == "__main__":
         meas = onp.asarray(measured_markers_batch[:, m].reshape(4, 3))
         measured_pts.append(meas)
 
-    onp.save("data/curves_orig.npy", onp.asarray(curves_orig))
-    onp.save("data/curves_hat.npy", onp.asarray(curves_hat))
-    onp.save("data/markers_orig.npy", onp.asarray(markers_orig))
-    onp.save("data/markers_hat.npy", onp.asarray(markers_hat))
-    onp.save("data/measured_pts.npy", onp.asarray(measured_pts))
+    onp.save(DATA_DIR / "curves_orig.npy", onp.asarray(curves_orig))
+    onp.save(DATA_DIR / "curves_hat.npy", onp.asarray(curves_hat))
+    onp.save(DATA_DIR / "markers_orig.npy", onp.asarray(markers_orig))
+    onp.save(DATA_DIR / "markers_hat.npy", onp.asarray(markers_hat))
+    onp.save(DATA_DIR / "measured_pts.npy", onp.asarray(measured_pts))
 
     # compute plot bounds from all points
     all_pts = []

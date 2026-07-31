@@ -2025,17 +2025,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 )
 
         def _save_frame(i: int, force: bool = False) -> None:
-            save_dir = os.path.abspath("snapshots")
-            os.makedirs(save_dir, exist_ok=True)
-            target_path = os.path.join(save_dir, f"snapshot_frame_{i:05d}.png")
-
-            if force:
-                # Force a dedicated physical PNG write even if video_writer is active
-                vis.capture_screen_image(target_path, do_render=True)
-                print(f"[Open3D Debug] Snapshot successfully saved to: {target_path}")
-                if video_writer is not None:
-                    return
-
             if video_writer is not None:
                 try:
                     img = np.asarray(

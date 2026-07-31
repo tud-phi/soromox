@@ -126,7 +126,7 @@ workflows, or the dependencies used to reproduce the paper results.
 | `examples` | Running the example scripts under `examples/`. | `matplotlib`, `seaborn`, `ipython`, `optax`, `optimistix`, `open3d`, `opencv-python`, `plotly`, `trimesh`, `viser`, `ffmpeg-python` |
 | `rendering` | Using optional rendering backends and exporting plots, videos, or interactive visualizations. | `matplotlib`, `open3d`, `opencv-python`, `plotly`, `trimesh`, `viser`, `ffmpeg-python` |
 | `rl` | Training and evaluating reinforcement-learning controllers with SoRoMoX, including parallel RL workflows. | `gymnasium`, `stable-baselines3`, `matplotlib` |
-| `paper_results` | Reproducing the paper results, including benchmarking scripts, RL experiments, visualization, and comparison baselines. | `cbfpy`, `elastica`, `gymnasium`, `stable-baselines3`, plus the example and rendering stack |
+| `paper_results` | Running the research workflows under `application_case_studies/` and reproducing the figures under `paper_results/`, including benchmarks, RL experiments, visualization, and comparison baselines. | `cbfpy`, `elastica`, `gymnasium`, `stable-baselines3`, plus the example and rendering stack |
 | `test` | Running the test suite without the full development stack. | `pytest`, `pytest-cov`, `pytest-html`, `coverage`, `tox`, `codecov` |
 | `all` | Broad convenience install for users who want one environment with most optional tooling. For reproducible workflows, prefer the task-specific extras above. | See the `all` extra in `pyproject.toml` |
 
@@ -151,6 +151,12 @@ To reproduce the paper results or run RL experiments from the source checkout:
 uv pip install -e ".[paper_results]"
 uv pip install -e ".[rl]"
 ```
+
+Reusable research workflows and their input datasets live under
+`application_case_studies/`. Publication-specific post-processing scripts and
+the committed figure outputs live under `paper_results/`. Use the
+`paper_results` extra for either directory; the narrower `rl` extra remains
+available for reinforcement-learning-only work.
 
 ### Using uv for Project Management
 

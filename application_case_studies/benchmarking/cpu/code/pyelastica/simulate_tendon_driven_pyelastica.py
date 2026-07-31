@@ -5,12 +5,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from elastica import *
 from elastica import (
     AnalyticalLinearDamper,
     BaseSystemCollection,
     CallBackBaseClass,
     CallBacks,
+    Connections,
     Constraints,
     Contact,
     CosseratRod,
@@ -20,7 +20,6 @@ from elastica import (
     OneEndFixedBC,
     PositionVerlet,
     RodSelfContact,
-    defaultdict,
 )
 from elastica._calculus import _isnan_check
 from elastica.timestepper import extend_stepper_interface
@@ -280,15 +279,13 @@ class BaseArmEnvElastica:
         import pickle
 
         filename = f"{self.plot_name}_ROD.dat"
-        file = open(filename, "wb")
-        pickle.dump(self.arm_post_processing, file)
-        file.close()
+        with open(filename, "wb") as file:
+            pickle.dump(self.arm_post_processing, file)
         print(f"ROD Data is saved to {filename}")
 
         filename = f"{self.plot_name}_TENDONS.dat"
-        file = open(filename, "wb")
-        pickle.dump(self.tendon_post_processing_list, file)
-        file.close()
+        with open(filename, "wb") as file:
+            pickle.dump(self.tendon_post_processing_list, file)
         print(f"TENDON Data is saved to {filename}")
 
     def simulate(self, action):

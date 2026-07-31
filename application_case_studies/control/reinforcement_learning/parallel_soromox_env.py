@@ -421,13 +421,12 @@ def build_jax_env_fns(
 
         delta_force = action[:action_dim] * tendon_force_scale
         tendon_force = jnp.clip(env_state.current_force + delta_force, 0.0, 25.0)
-        applied_tendon_force = -tendon_force
 
         action_step_counter = env_state.action_step_counter + jnp.int32(1)
         t1 = action_step_counter * steps_per_action * dt
         trajectory = arm.rollout_to(
             initial_state=SystemState(t=0.0, y=env_state.arm_state.y),
-            u=applied_tendon_force,
+            u=tendon_force,
             t1=steps_per_action * dt,
             solver_dt=dt,
             save_dt=dt,

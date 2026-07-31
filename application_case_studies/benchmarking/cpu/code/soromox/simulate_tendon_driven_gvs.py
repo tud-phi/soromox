@@ -167,7 +167,8 @@ D = robot.damping_matrix(q0)
 B = robot.actuation_matrix(q0)
 C = robot.coriolis_matrix(q0, q0dot)
 
-u = jnp.asarray([-1, -1], dtype=q0.dtype)
+# Threadlike tendon controls are nonnegative tensions.
+u = jnp.asarray([1, 1], dtype=q0.dtype)
 tau = robot.actuation_force(q0, u)
 
 

@@ -10,12 +10,13 @@ from __future__ import annotations
 import argparse
 import importlib.util
 from pathlib import Path
-from typing import Optional
 
 RL_DIR = Path(__file__).resolve().parent
 
 import jax
 import numpy as np
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import VecNormalize
 
 if __package__:
     from .parallel_soromox_env import ParallelSoromoxEnv
@@ -27,8 +28,6 @@ else:
     env_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(env_module)
     ParallelSoromoxEnv = env_module.ParallelSoromoxEnv
-from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import VecNormalize
 
 
 DEFAULT_MODEL_PATH = str(RL_DIR / "checkpoints" / "ppo_model.zip")
@@ -168,7 +167,7 @@ def evaluate(args: argparse.Namespace) -> None:
     vec_env.close()
 
 
-def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments for policy evaluation.
 
     Args:

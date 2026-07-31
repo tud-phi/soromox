@@ -68,7 +68,7 @@ dt: 1e-4 s
 From the repository root:
 
 ```bash
-python examples/control/rl/train.py \
+python application_case_studies/control/reinforcement_learning/train.py \
   --num-envs 64 \
   --total-timesteps 1000000 \
   --n-steps 200
@@ -77,15 +77,15 @@ python examples/control/rl/train.py \
 The training script saves:
 
 ```text
-examples/control/rl/checkpoints/ppo_model.zip
-examples/control/rl/checkpoints/env_vecnormalize.pkl
+application_case_studies/control/reinforcement_learning/checkpoints/ppo_model.zip
+application_case_studies/control/reinforcement_learning/checkpoints/env_vecnormalize.pkl
 ```
 
 You can change the artifact names:
 
 ```bash
-python examples/control/rl/train.py \
-  --save-dir examples/control/rl/checkpoints \
+python application_case_studies/control/reinforcement_learning/train.py \
+  --save-dir application_case_studies/control/reinforcement_learning/checkpoints \
   --model-name my_model \
   --vecnormalize-name my_vecnormalize.pkl
 ```
@@ -93,20 +93,20 @@ python examples/control/rl/train.py \
 ## Evaluation
 
 ```bash
-python examples/control/rl/test.py
+python application_case_studies/control/reinforcement_learning/test.py
 ```
 
 By default, the test script loads the packaged release model:
 
 ```text
-examples/control/rl/checkpoints/ppo_model.zip
-examples/control/rl/checkpoints/env_vecnormalize.pkl
+application_case_studies/control/reinforcement_learning/checkpoints/ppo_model.zip
+application_case_studies/control/reinforcement_learning/checkpoints/env_vecnormalize.pkl
 ```
 
 To test a newly trained model, pass explicit paths:
 
 ```bash
-python examples/control/rl/test.py \
+python application_case_studies/control/reinforcement_learning/test.py \
   --model-path your_model \
   --vecnormalize-path your_vecnormalize.pkl
 ```
@@ -137,7 +137,7 @@ np.linalg.norm(ee_pos - ball_pos, axis=1).mean()
 By default it reads all CSV files from:
 
 ```text
-examples/control/rl/reward_logs
+application_case_studies/control/reinforcement_learning/reward_logs
 ```
 
 Each CSV file must contain these columns:
@@ -154,19 +154,19 @@ File names are used to group runs automatically. For example,
 From the repository root:
 
 ```bash
-python examples/control/rl/plot_reward.py
+python application_case_studies/control/reinforcement_learning/plot_reward.py
 ```
 
 The default output is:
 
 ```text
-examples/control/rl/visualizations/reward_curve.pdf
+application_case_studies/control/reinforcement_learning/visualizations/reward_curve.pdf
 ```
 
 To use another CSV folder or output path:
 
 ```bash
-python examples/control/rl/plot_reward.py \
+python application_case_studies/control/reinforcement_learning/plot_reward.py \
   --csv-dir path/to/reward_logs \
   --output path/to/reward_curve.pdf
 ```
@@ -175,7 +175,7 @@ The script interpolates averaged curves to 500 points and applies light Gaussian
 smoothing by default. You can adjust those settings:
 
 ```bash
-python examples/control/rl/plot_reward.py \
+python application_case_studies/control/reinforcement_learning/plot_reward.py \
   --points 800 \
   --smooth-scale 0
 ```
@@ -187,22 +187,22 @@ Use `--smooth-scale 0` to disable smoothing.
 The release includes checkpoint files in:
 
 ```text
-examples/control/rl/checkpoints/ppo_model.zip
-examples/control/rl/checkpoints/env_vecnormalize.pkl
+application_case_studies/control/reinforcement_learning/checkpoints/ppo_model.zip
+application_case_studies/control/reinforcement_learning/checkpoints/env_vecnormalize.pkl
 ```
 
 Render a parallel rollout directly to MP4 and GIF:
 
 ```bash
-python examples/control/rl/visualize.py
+python application_case_studies/control/reinforcement_learning/visualize.py
 ```
 
 By default this runs 64 environments for 105 control steps, renders them in one
 Open3D grid scene, and saves only:
 
 ```text
-examples/control/rl/visualizations/parallel_track_video.mp4
-examples/control/rl/visualizations/parallel_track_video.gif
+application_case_studies/control/reinforcement_learning/visualizations/parallel_track_video.mp4
+application_case_studies/control/reinforcement_learning/visualizations/parallel_track_video.gif
 ```
 
 No NPZ rollout files, PNG frame folders, or palette files are kept. The script
@@ -211,13 +211,13 @@ prints progress bars for the rollout stage and the render/encode stage.
 Optional smaller preview:
 
 ```bash
-python examples/control/rl/visualize.py \
+python application_case_studies/control/reinforcement_learning/visualize.py \
   --num-envs 16 \
   --max-envs 16 \
   --n-steps 45 \
   --width 960 \
   --height 960 \
-  --output examples/control/rl/visualizations/parallel_track_video.mp4 \
+  --output application_case_studies/control/reinforcement_learning/visualizations/parallel_track_video.mp4 \
   --gif-width 480
 ```
 

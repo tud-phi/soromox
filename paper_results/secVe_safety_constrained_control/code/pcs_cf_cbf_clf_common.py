@@ -11,12 +11,11 @@ import numpy as np
 from cbfpy.cbfs.clf_cbf import CLFCBFConfig
 from jax import Array
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PCS,
     PCSParams,
     SystemState,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 jax.config.update("jax_enable_x64", True)
@@ -80,7 +79,7 @@ def pairwise_h(
 
 
 class SoftRobotDynamics:
-    def __init__(self, robot: TendonActuatedPCS):
+    def __init__(self, robot: PCS):
         self.robot = robot
         self.n_q = int(robot.num_active_strains)
         self.n_u = int(robot.num_actuators)
@@ -192,7 +191,7 @@ class ClosedFormHOCLFHOCBFController:
 
 @dataclass
 class SimulationSetup:
-    robot: TendonActuatedPCS
+    robot: PCS
     dyn: SoftRobotDynamics
     parameters: dict[str, Any]
 
@@ -310,19 +309,22 @@ def build_simulation_setup() -> SimulationSetup:
         ),
     )
 
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=tendon_ry,
-        z_intercept=tendon_rz,
-        y_slope=tendon_my,
-        z_slope=tendon_mz,
-        attachment_segment_index=tendon_idx_seg_att,
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=jnp.stack(
+            (jnp.zeros_like(tendon_ry), tendon_ry, tendon_rz),
+            axis=-1,
+        ),
+        slope=jnp.stack(
+            (jnp.zeros_like(tendon_my), tendon_my, tendon_mz),
+            axis=-1,
+        ),
+        start_segment_index=0,
+        end_segment_index=tuple(int(index) for index in tendon_idx_seg_att),
     )
 
-    robot = TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
-        )
+    robot = PCS(
+        params=body_params,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
     q0 = jnp.repeat(
