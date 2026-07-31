@@ -383,9 +383,9 @@ def create_regulation_tracking_trajectory(
     setpoint_times = jnp.linspace(t0, tracking_start, 6)[:-1]
     # With the horizontal mounting, positive/negative kappa_y bends with/against
     # gravity, while kappa_z exercises the orthogonal bending plane.
-    kappa_y_values = jnp.array([0.0, 8.0, -8.0, 4.0, 0.0])
-    kappa_z_values = jnp.array([0.0, 4.0, -4.0, -6.0, 0.0])
-    sigma_x_values = jnp.array([0.0, 0.06, -0.03, 0.03, 0.0])
+    kappa_y_values = jnp.array([0.0, 14.0, -14.0, 7.0, 0.0])
+    kappa_z_values = jnp.array([0.0, 7.0, -7.0, -10.0, 0.0])
+    sigma_x_values = jnp.array([0.0, 0.10, -0.05, 0.06, 0.0])
 
     tracking_duration = t1 - tracking_start
     ramp_duration = 0.1 * tracking_duration
@@ -393,9 +393,9 @@ def create_regulation_tracking_trajectory(
     omega_z = 0.2 * frequency_scale
     omega_x = 0.25 * frequency_scale
 
-    amp_kappa_y = 10.0
-    amp_kappa_z = 5.0
-    amp_sigma_x = 0.05
+    amp_kappa_y = 12.0
+    amp_kappa_z = 6.0
+    amp_sigma_x = 0.06
 
     def x_des_fn(t):
         setpoint_idx = jnp.searchsorted(setpoint_times, t, side="right") - 1

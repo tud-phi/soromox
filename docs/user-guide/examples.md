@@ -214,7 +214,9 @@ The combined task mounts the robot horizontally, producing a nonzero
 gravity-plane bending load at the straight configuration. Its setpoints bend
 both with and against gravity, as well as in the orthogonal bending plane. The
 PD baseline uses the same proportional and derivative gains as PID, but without
-integral action.
+integral action. The peak setpoint curvatures are `14 m^-1` in the gravity plane
+and `10 m^-1` in the orthogonal plane, while the tracking trajectory uses
+curvature amplitudes of `12 m^-1` and `6 m^-1`, respectively.
 
 Potential compensation and feedforward compensation have the same control law
 during constant setpoints. Their behavior separates when the trajectory begins

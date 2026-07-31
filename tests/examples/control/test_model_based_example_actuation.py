@@ -73,17 +73,23 @@ def test_regulation_tracking_reference_is_smooth_at_phase_boundary():
     )
     assert_allclose(
         reference.x_des_fn(jnp.array(4.0))[1:4],
-        jnp.array([8.0, 4.0, 0.06]),
+        jnp.array([14.0, 7.0, 0.10]),
         atol=1e-12,
     )
     assert_allclose(
         reference.x_des_fn(jnp.array(7.0))[1:4],
-        jnp.array([-8.0, -4.0, -0.03]),
+        jnp.array([-14.0, -7.0, -0.05]),
         atol=1e-12,
     )
     assert_allclose(
-        reference.x_des_fn(jnp.array(17.0))[1],
-        10.0 * jnp.sin(6.0),
+        reference.x_des_fn(jnp.array(17.0))[1:4],
+        jnp.array(
+            [
+                12.0 * jnp.sin(6.0),
+                6.0 * jnp.sin(4.0 + jnp.pi / 4),
+                0.06 * jnp.sin(5.0 + jnp.pi / 2),
+            ]
+        ),
         atol=1e-12,
     )
 
