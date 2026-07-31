@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from unittest.mock import Mock
 
 import jax.numpy as jnp
 import numpy as np
@@ -289,6 +290,11 @@ class FakeViserCamera:
         self.look_at = None
         self.up_direction = None
         self.fov = None
+        self.render = None
+
+    def get_render(self, *, height, width):
+        del height, width
+        return self.render
 
 
 class FakeViserClient:
@@ -611,6 +617,20 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
 
     assert_allclose(client.camera.look_at, np.array([1.0, 0.5, 0.0]), atol=1e-12)
     assert_allclose(client.camera.position, np.array([3.0, 0.5, 0.0]), atol=1e-12)
+
+
+def test_viser_recording_rejects_missing_frame():
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+    client = FakeViserClient()
+    renderer._server = FakeViserServer({"client": client})
+    video_writer = Mock()
+
+    with pytest.raises(RuntimeError, match="did not return a video frame"):
+        renderer._record_viser_frame(video_writer, client, timeout=0.1)
+    video_writer.write.assert_not_called()
 
 
 def test_viser_discrete_backbone_spheres_use_robot_radius():

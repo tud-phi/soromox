@@ -183,49 +183,6 @@ Control examples demonstrate various control algorithms for different control sp
 
 Configuration-space controllers operate directly on the robot's configuration variables (e.g., joint angles, strain parameters).
 
-#### Regulation Followed by Tracking
-
-```bash
-python examples/control/configuration_space/regulation_tracking_comparison.py
-```
-
-This example runs each controller over one uninterrupted task containing several
-setpoints followed by a smooth dynamic trajectory. The tracking phase defaults
-to a frequency scale of 10 and also produces tracking-phase-only position and
-error plots. It compares:
-
-- a model-free PD baseline
-- `PIDController` as a model-free baseline
-- `PotentialCompensationRegulator` as the representative regulator
-- `FeedforwardCompensationTracker` as its dynamic tracking counterpart
-- `ComputedTorqueTracker` as the full feedback-linearization benchmark
-
-All five controllers use proportional and derivative gains selected from one
-acceleration-domain natural frequency and damping ratio. The generalized-force
-gains are obtained by multiplying these gains by the full inertia matrix at the
-straight configuration. This gives rotational and linear strains comparable
-local feedback action despite their different inertias and units. All
-controllers except the PD baseline also use the shared integral frequency.
-Computed torque recovers the same acceleration-domain gains through inertia
-normalization. The evaluated defaults are a natural frequency of `30 rad/s`, a
-damping ratio of `0.9`, and an integral frequency of `0.75 rad/s`.
-
-The combined task mounts the robot horizontally, producing a nonzero
-gravity-plane bending load at the straight configuration. Its setpoints bend
-both with and against gravity, as well as in the orthogonal bending plane. The
-PD baseline uses the same proportional and derivative gains as PID, but without
-integral action. The peak setpoint curvatures are `14 m^-1` in the gravity plane
-and `10 m^-1` in the orthogonal plane, while the tracking trajectory uses
-curvature amplitudes of `12 m^-1` and `6 m^-1`, respectively.
-
-Potential compensation and feedforward compensation have the same control law
-during constant setpoints. Their behavior separates when the trajectory begins
-and the tracker adds inertial, Coriolis, and damping feedforward terms.
-The saved result contains separate regulation and tracking slices with RMSE,
-maximum-error, and integral-squared-error metrics.
-
-**Key concepts:** Regulation versus tracking, inverse-dynamics feedforward, computed torque
-
 #### Setpoint Regulation
 ```bash
 python examples/control/configuration_space/setpoint_regulation_comparison.py
@@ -253,6 +210,19 @@ python examples/control/configuration_space/trajectory_tracking_comparison.py
 - Reference trajectory generation and tracking
 
 **Key concepts:** Trajectory tracking, configuration-space control, reference generation
+
+#### Regulation Followed by Tracking
+
+```bash
+python examples/control/configuration_space/regulation_tracking_comparison.py
+```
+
+**What you'll learn:**
+- Regulation and tracking within one uninterrupted control task
+- Comparison of model-free, feedforward-compensation, and computed-torque controllers
+- Phase-specific tracking metrics and result visualization
+
+**Key concepts:** Regulation versus tracking, inverse-dynamics feedforward, computed torque
 
 ### Operational-Space Controllers
 
@@ -368,7 +338,6 @@ Follow these steps to run any example:
    For example:
    ```bash
    python examples/simulation/pendulum/simulate_pendulum.py
-   python examples/control/configuration_space/regulation_tracking_comparison.py
    python examples/control/configuration_space/setpoint_regulation_comparison.py
    python examples/system_identification/identify_soft_tentacle_parameters.py
    ```

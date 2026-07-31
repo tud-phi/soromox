@@ -1727,7 +1727,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 "exception"
             ]
 
-        video_writer.write(np.asarray(result["frame"], dtype=np.uint8))
+        frame = result.get("frame")
+        if frame is None:
+            raise RuntimeError("Viser did not return a video frame.")
+        video_writer.write(np.asarray(frame, dtype=np.uint8))
         return client
 
     def _setup_playback_gui(

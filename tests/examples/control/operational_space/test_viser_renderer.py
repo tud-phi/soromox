@@ -23,9 +23,10 @@ spec = importlib.util.spec_from_file_location(
     "example_operational_space_viser_renderer",
     VISER_RENDERER_PATH,
 )
+assert spec is not None
+assert spec.loader is not None
 viser_operational_space_renderer = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = viser_operational_space_renderer
-assert spec.loader is not None
 spec.loader.exec_module(viser_operational_space_renderer)
 
 

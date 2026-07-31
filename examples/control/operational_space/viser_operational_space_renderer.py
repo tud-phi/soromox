@@ -1,4 +1,4 @@
-"""Viser science rendering helpers for operational-space control examples.
+"""Viser rendering helpers for operational-space control examples.
 
 This module intentionally lives under ``examples/``. It is shared by example
 scripts in this folder, but it is not part of the public ``soromox`` API.
@@ -44,7 +44,7 @@ def make_transparent_robot_color_config(
     num_points: int,
     opacity: float,
 ) -> RendererColorConfig:
-    """Return a publication-style transparent backbone color configuration."""
+    """Return a transparent backbone color configuration."""
     opacity = float(np.clip(opacity, 0.0, 1.0))
     num_points = max(2, int(num_points))
     start = np.array([0.09, 0.22, 0.42, opacity], dtype=np.float64)
@@ -222,7 +222,7 @@ def render_operational_space_tracking(
     record_frame_timeout: float = 10.0,
     camera_config: CameraConfig | None = None,
 ) -> None:
-    """Render operational-space tracking with Viser science overlays."""
+    """Render operational-space tracking with Viser overlays."""
     if viser_renderer_cls is None:
         raise ImportError(
             "Viser is required to render this example. Install the Viser extras "
@@ -384,7 +384,7 @@ class _OperationalSpaceTrackingOverlay:
                 self._reference_positions,
             )
             scene.add_mesh_simple(
-                name="/science/surface_wire",
+                name="/tracking/surface_wire",
                 vertices=mesh.vertices,
                 faces=mesh.faces,
                 color=(150, 165, 181),
@@ -397,7 +397,7 @@ class _OperationalSpaceTrackingOverlay:
 
         reference_segments = make_polyline_segments(self._reference_positions)
         scene.add_line_segments(
-            name="/science/reference_trajectory",
+            name="/tracking/reference_trajectory",
             points=reference_segments,
             colors=_constant_segment_colors(
                 len(reference_segments),
@@ -408,7 +408,7 @@ class _OperationalSpaceTrackingOverlay:
 
         initial_trail = self._trail_segments(0)
         self._trail_handle = scene.add_line_segments(
-            name="/science/actual_trail",
+            name="/tracking/actual_trail",
             points=initial_trail,
             colors=make_fading_trail_colors(len(initial_trail)),
             line_width=4.2,
@@ -416,7 +416,7 @@ class _OperationalSpaceTrackingOverlay:
 
         target_marker = self._target_marker_segments(0)
         self._goal_marker_handle = scene.add_line_segments(
-            name="/science/current_goal_marker",
+            name="/tracking/current_goal_marker",
             points=target_marker,
             colors=_target_marker_colors(len(target_marker)),
             line_width=2.8,
@@ -426,7 +426,7 @@ class _OperationalSpaceTrackingOverlay:
             frame_stride = max(1, len(self._reference_positions) // 8)
             for frame_idx in range(0, len(self._reference_positions), frame_stride):
                 scene.add_frame(
-                    name=f"/science/reference_frame_{frame_idx}",
+                    name=f"/tracking/reference_frame_{frame_idx}",
                     axes_length=0.32 * self._target_radius,
                     axes_radius=0.010 * self._target_radius,
                     origin_radius=0.025 * self._target_radius,

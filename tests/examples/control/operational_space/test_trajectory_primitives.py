@@ -22,9 +22,10 @@ MODULE_PATH = (
 spec = importlib.util.spec_from_file_location(
     "example_operational_space_trajectory_primitives", MODULE_PATH
 )
+assert spec is not None
+assert spec.loader is not None
 trajectory_primitives = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = trajectory_primitives
-assert spec.loader is not None
 spec.loader.exec_module(trajectory_primitives)
 
 
