@@ -153,3 +153,6 @@ DepthCapture_*.png
 # Generated CLF-CBF outputs
 force_goal_distance_plot.pdf
 force_goal_distance_plot.png
+
+# # requirements
+# requirements.txt
