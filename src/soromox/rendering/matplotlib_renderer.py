@@ -606,7 +606,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         actuator_colors = [
             resolve_actuator_rgba(
                 layer,
-                default_color=self.color_config.actuators.default_color,
+                default_color=self.color_config.actuators.color_for_kind(layer.kind),
                 scalar_colormap=self.color_config.actuators.scalar_colormap,
             )
             for layer in actuator_layers
@@ -636,7 +636,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 artist.set_data(pts[:, 0], pts[:, 1])
                 if self.is_3d:
                     artist.set_3d_properties(pts[:, 2])
-                artist.set_color(actuator_colors[layer_idx][robot_idx, frame_idx, actuator_idx])
+                artist.set_color(
+                    actuator_colors[layer_idx][robot_idx, frame_idx, actuator_idx]
+                )
 
         if mode == "animation":
 
@@ -822,7 +824,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             points = np.asarray(layer.points, dtype=np.float64)
             colors = resolve_actuator_rgba(
                 layer,
-                default_color=color_config.actuators.default_color,
+                default_color=color_config.actuators.color_for_kind(layer.kind),
                 scalar_colormap=color_config.actuators.scalar_colormap,
             )
             line_width = layer.line_width or self.actuator_line_width

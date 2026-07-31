@@ -7,6 +7,11 @@ import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
+from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.threadlike import (
+    BaseThreadlikeRoutingParams,
+    ThreadlikeRouting,
+)
 from soromox.systems.pcs.params import PCSParams
 from soromox.systems.pcs.structures import PCSStructure
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
@@ -20,7 +25,7 @@ from soromox.utils.integration import (
     scale_gaussian_quadrature,
     scale_interior_gaussian_quadrature,
 )
-from soromox.utils.lie_algebra import constant_strain, se3
+from soromox.utils.lie_algebra import constant_strain, se3, so3
 
 
 class PCS(SoftRobot):
@@ -37,7 +42,8 @@ class PCS(SoftRobot):
         g0: Initial pose of the robot base as an SE(3) transformation matrix.
         g: Gravitational acceleration vector (embedded in a 6D vector).
             [0, 0, 0, g_x, g_y, g_z]
-        L, r, E, G, rho, D: Physical properties of each segment (length, radius, elastic/shear modulus, etc.).
+        L, r, E, G, rho: Physical properties of each segment. ``r`` is the
+            radius of the assumed solid circular cross-section.
         num_active_strains: Number of active strain components (based on strain_selector).
         num_strains: Total number of strain components (6 * num_segments).
         B_xi: Basis matrix for projecting active strains (6 * num_segments, num_active_strains).
@@ -50,16 +56,21 @@ class PCS(SoftRobot):
 
     Notes:
     -----
+    - The material-frame local x-axis is the rod's longitudinal axis (the
+      undeformed backbone tangent). This convention is independent of the base
+      pose, which may orient the local x-axis arbitrarily in the inertial frame.
     - The strain vector is composed of 6 components per segment:
-      [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z].
-      By default, the rod is assumed to be straight and aligned with the x-axis,
-        so the reference strain is set to [0, 0, 0, 1, 0, 0].
-        Thus:   - kappa_x corresponds to torsion around the x-axis,
-                - kappa_y corresponds to bending around the y-axis,
-                - kappa_z corresponds to bending around the z-axis,
-                - sigma_x corresponds to axial strain along the x-axis,
-                - sigma_y corresponds to shear along the y-axis,
-                - sigma_z corresponds to shear along the z-axis.
+      [kappa_x, kappa_y, kappa_z, sigma_x, sigma_y, sigma_z]. The default
+      straight, unstretched reference strain is [0, 0, 0, 1, 0, 0]. Thus,
+      kappa_x is torsion about the longitudinal axis, kappa_y and kappa_z are
+      bending strains, sigma_x is axial stretch, and sigma_y and sigma_z are
+      transverse shear strains.
+    - Every segment is assumed to have a solid circular cross-section. Its
+      radius determines the area and second moments used by the mass, material
+      damping, and stiffness matrices.
+    - ``material_damping_coefficient`` is a viscosity-like modulus in Pa*s
+      (N*s/m^2). The assembled damping matrix also contains section geometry
+      and segment-length factors, so its entries do not share one blanket unit.
 
     References:
         Renda, F., Boyer, F., Dias, J., & Seneviratne, L. (2018). Discrete Cosserat
@@ -80,7 +91,6 @@ class PCS(SoftRobot):
     rho: Array
     E: Array  # Young's modulus of the segments
     G: Array  # Shear modulus of the segments
-    D: Array  # Damping coefficient of the segments
 
     num_segments: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True)
@@ -97,7 +107,7 @@ class PCS(SoftRobot):
     integration_weights: Array
     M_segments: Array  # Cached per-segment mass matrices
     K_full: Array  # Cached full stiffness matrix
-    K: Array  # Cached active-coordinate stiffness matrix
+    K_active: Array  # Cached active-coordinate stiffness matrix
     D_full: Array  # Cached full damping matrix
     D_active: Array  # Cached active-coordinate damping matrix
 
@@ -105,6 +115,8 @@ class PCS(SoftRobot):
         self,
         params: PCSParams,
         structure: PCSStructure | None = None,
+        actuators: Actuator | tuple[Actuator, ...] | None = None,
+        passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
         **kwargs: Any,
     ):
         """Initialize the PCS class from typed dynamic parameters."""
@@ -185,8 +197,7 @@ class PCS(SoftRobot):
             )
         self.xi_ref = reference_strain.reshape(num_strains)
 
-        # Number of actuators
-        self.num_actuators = int(self.num_active_strains.item())
+        self._configure_actuation(actuators, passive_elements)
 
         self.precompute()
 
@@ -221,7 +232,7 @@ class PCS(SoftRobot):
         return B_xi
 
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Circular cross-section with segment radius."""
+        """Return the assumed solid circular cross-section and segment radius."""
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
@@ -294,15 +305,64 @@ class PCS(SoftRobot):
             )
         self.G = G
 
-        # Damping matrix of the robot
-        D = params.damping_matrix
-        D = jnp.asarray(D, dtype=jnp.float64)
+    def _explicit_damping_full_matrix(self, params: PCSParams) -> Array:
+        """Return the custom full damping matrix supplied in params."""
+        if params.damping_matrix is None:
+            raise ValueError("damping_matrix is not set.")
         expected_D_shape = (self.num_strains, self.num_strains)
+        D = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
         if D.shape != expected_D_shape:
             raise ValueError(
                 f"damping_matrix must have shape {expected_D_shape}, got {D.shape}"
             )
-        self.D = D
+        return D
+
+    def _material_damping_coefficients(self) -> Array:
+        """Return per-segment material damping coefficients in Pa*s (N*s/m^2)."""
+        params = self._current_body_params()
+        if params.material_damping_coefficient is None:
+            raise ValueError("material_damping_coefficient is not set.")
+        coefficient = jnp.asarray(
+            params.material_damping_coefficient, dtype=jnp.float64
+        )
+        if coefficient.ndim == 0:
+            return jnp.full((self.num_segments,), coefficient, dtype=jnp.float64)
+        if coefficient.shape != (self.num_segments,):
+            raise ValueError(
+                "material_damping_coefficient must be a scalar or have shape "
+                f"({self.num_segments},), got {coefficient.shape}."
+            )
+        return coefficient
+
+    def _compute_material_damping_full_matrix(self) -> Array:
+        """Compute damping using the solid-circle area and second moments."""
+        coefficients = self._material_damping_coefficients()
+
+        def damping_block(i: Array) -> Array:
+            I_i = self._local_second_moment_of_area(i)
+            A_i = self._local_cross_sectional_area(i)
+            damping_diag = jnp.stack(
+                [
+                    I_i[0],
+                    3.0 * I_i[1],
+                    3.0 * I_i[2],
+                    3.0 * A_i,
+                    A_i,
+                    A_i,
+                ],
+                axis=0,
+            )
+            return self.L[i] * coefficients[i] * jnp.diag(damping_diag)
+
+        damping_blocks = vmap(damping_block)(jnp.arange(self.num_segments))
+        return blk_diag(damping_blocks)
+
+    def _compute_damping_full_matrix(self) -> Array:
+        """Compute the current full damping matrix."""
+        params = self._current_body_params()
+        if params.material_damping_coefficient is not None:
+            return self._compute_material_damping_full_matrix()
+        return self._explicit_damping_full_matrix(params)
 
     def _current_body_params(self) -> PCSParams:
         """Return the PCS body params, including for typed actuated wrappers."""
@@ -337,14 +397,7 @@ class PCS(SoftRobot):
         density = jnp.asarray(params.density, dtype=jnp.float64)
         young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
         shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
-        damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
         reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
-
-        expected_D_shape = (self.num_strains, self.num_strains)
-        if damping_matrix.shape != expected_D_shape:
-            raise ValueError(
-                f"damping_matrix must have shape {expected_D_shape}, got {damping_matrix.shape}"
-            )
 
         updated_self = eqx.tree_at(
             lambda m: (
@@ -358,7 +411,6 @@ class PCS(SoftRobot):
                 m.rho,
                 m.E,
                 m.G,
-                m.D,
                 m.xi_ref,
             ),
             self,
@@ -377,7 +429,6 @@ class PCS(SoftRobot):
                 density,
                 young_modulus,
                 shear_modulus,
-                damping_matrix,
                 reference_strain.reshape(self.num_strains),
             ),
         )
@@ -412,10 +463,10 @@ class PCS(SoftRobot):
             jnp.arange(self.num_segments)
         )
         K_full = self._compute_stiffness_full_matrix()
-        K = self.B_xi.T @ K_full @ self.B_xi
-        D_full = self.D
+        K_active = self.B_xi.T @ K_full @ self.B_xi
+        D_full = self._compute_damping_full_matrix()
         D_active = self.B_xi.T @ D_full @ self.B_xi
-        return M_segments, K_full, K, D_full, D_active
+        return M_segments, K_full, K_active, D_full, D_active
 
     def precompute(self) -> None:
         """Refresh state-independent matrices cached by the model."""
@@ -423,13 +474,13 @@ class PCS(SoftRobot):
         (
             M_segments,
             K_full,
-            K,
+            K_active,
             D_full,
             D_active,
         ) = self._precomputed_matrices()
         object.__setattr__(self, "M_segments", M_segments)
         object.__setattr__(self, "K_full", K_full)
-        object.__setattr__(self, "K", K)
+        object.__setattr__(self, "K_active", K_active)
         object.__setattr__(self, "D_full", D_full)
         object.__setattr__(self, "D_active", D_active)
 
@@ -437,10 +488,17 @@ class PCS(SoftRobot):
         """Return a copy with cached state-independent matrices refreshed."""
         B_xi = self._scaled_strain_basis(self.B_xi_unscaled)
         updated_self = eqx.tree_at(lambda m: m.B_xi, self, B_xi)
+        (
+            M_segments,
+            K_full,
+            K_active,
+            D_full,
+            D_active,
+        ) = updated_self._precomputed_matrices()
         return eqx.tree_at(
-            lambda m: (m.M_segments, m.K_full, m.K, m.D_full, m.D_active),
+            lambda m: (m.M_segments, m.K_full, m.K_active, m.D_full, m.D_active),
             updated_self,
-            updated_self._precomputed_matrices(),
+            (M_segments, K_full, K_active, D_full, D_active),
         )
 
     @eqx.filter_jit
@@ -471,6 +529,9 @@ class PCS(SoftRobot):
         """
         Compute the strain vector from the generalized coordinates.
 
+        Components use the rod material frame, whose local x-axis is the
+        longitudinal backbone direction.
+
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
 
@@ -485,6 +546,9 @@ class PCS(SoftRobot):
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a point s along the robot.
+
+        The translational strain components are interpreted in the material
+        frame, with axial stretch along local x and shear along local y and z.
 
         Args:
             q (Array): generalized coordinates of shape (num_active_strains,).
@@ -1893,7 +1957,7 @@ class PCS(SoftRobot):
     @eqx.filter_jit
     def _local_cross_sectional_area(self, i: Array) -> Array:
         """
-        Compute the local cross-sectional area for the i-th segment.
+        Compute the area of the i-th segment's solid circular cross-section.
 
         Args:
             i (Array): index of the segment as array of shape ()
@@ -1908,7 +1972,10 @@ class PCS(SoftRobot):
     @eqx.filter_jit
     def _local_second_moment_of_area(self, i: Array) -> Array:
         """
-        Compute the local second moment of area for the i-th segment.
+        Compute second moments for the i-th segment's solid circular section.
+
+        The local x-axis is longitudinal, so ``I_xx`` is the polar second
+        moment and ``I_yy = I_zz`` are the transverse second moments.
 
         Args:
             i (Array): index of the segment as array of shape ()
@@ -1929,6 +1996,9 @@ class PCS(SoftRobot):
     def _compute_local_mass_matrix(self, i: Array) -> Array:
         """
         Compute the local mass matrix for the i-th segment.
+
+        The rotational entries use the solid circular cross-section's moments
+        expressed about the longitudinal local x-axis and transverse y/z axes.
 
         Args:
             i (Array): index of the segment as array of shape ()
@@ -2218,7 +2288,10 @@ class PCS(SoftRobot):
     @eqx.filter_jit
     def _local_stiffness_matrix(self, i: Array) -> Array:
         """
-        Compute the local stiffness matrix of a planar system for a rod aligned along the x-axis.
+        Compute local stiffness for a spatial rod longitudinally aligned with local x.
+
+        The diagonal constitutive terms use the solid circular cross-section's
+        area and second moments.
 
         Args:
             i (Array): index of the segment as array of shape ()
@@ -2259,7 +2332,7 @@ class PCS(SoftRobot):
         if formulate_in_strain_space:
             return self.K_full
 
-        return self.K
+        return self.K_active
 
     @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
@@ -2279,7 +2352,7 @@ class PCS(SoftRobot):
         Returns:
             K (Array): Stiffness matrix of shape (num_active_strains, num_active_strains).
         """
-        return self.K
+        return self.K_active
 
     @eqx.filter_jit
     def elastic_force(self, q: Array) -> Array:
@@ -2292,7 +2365,7 @@ class PCS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (num_active_strains,).
         """
-        return self.K @ q
+        return self.K_active @ q + self.passive_elastic_force(q)
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:
@@ -2318,21 +2391,145 @@ class PCS(SoftRobot):
         Returns:
             D (Array): Damping matrix of shape (num_active_strains, num_active_strains).
         """
-        return self.D_active
+        return self.D_active + self.passive_damping_matrix(q)
 
-    @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Compute the actuation matrix of the robot.
+    def _elastic_energy(self, q: Array) -> Array:
+        """Return body strain energy plus installed passive-element energy."""
+        return 0.5 * q @ self.K_active @ q + self.passive_elastic_energy(q)
 
-        Args:
-            q (Array): generalized coordinates of shape (num_active_strains,).
+    def _threadlike_local_basis(
+        self,
+        segment_index: Array,
+        strain: Array,
+        s: Array,
+        routing: ThreadlikeRouting,
+        path_params: BaseThreadlikeRoutingParams,
+        start_segment_index: Array,
+        end_segment_index: Array,
+    ) -> Array:
+        """Return one spatial routed-path length gradient density."""
+        active = (start_segment_index <= segment_index) & (
+            segment_index <= end_segment_index
+        )
+        offset = jnp.append(routing.offset(path_params, s), 1.0)
+        offset_derivative = jnp.append(routing.derivative(path_params, s), 1.0)
+        tangent_unnormalized = (offset_derivative + se3.hat(strain) @ offset)[:-1]
+        tangent = tangent_unnormalized / jnp.linalg.norm(tangent_unnormalized)
+        basis = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
+        return active * basis
 
-        Returns:
-            A (Array): Actuation matrix of shape (num_active_strains, num_actuators).
-        """
-        A = jnp.identity(self.num_actuators)
-        return A
+    def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
+        """Integrate raw routed-length moment arms in the PCS strain basis."""
+        params = routing.params
+        count = params.num_paths
+        if count == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        strains = self.strain(q).reshape((self.num_segments, 6))
+
+        def segment_matrix(segment_index: Array) -> Array:
+            points, weights = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[segment_index],
+                self.L_cum[segment_index + 1],
+            )
+
+            def point_matrix(point_index: Array) -> Array:
+                basis = vmap(
+                    self._threadlike_local_basis,
+                    in_axes=(None, None, None, None, 0, 0, 0),
+                    out_axes=1,
+                )(
+                    segment_index,
+                    strains[segment_index],
+                    points[point_index],
+                    routing,
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return weights[point_index] * basis
+
+            return jnp.sum(
+                vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0
+            )
+
+        full_matrix = vmap(segment_matrix)(jnp.arange(self.num_segments)).reshape(
+            self.num_strains, count
+        )
+        return self.B_xi.T @ full_matrix
+
+    def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
+        """Integrate raw threadlike path lengths without signed work scaling."""
+        params = routing.params
+        if params.num_paths == 0:
+            return jnp.zeros((0,), dtype=q.dtype)
+        strains = self.strain(q).reshape((self.num_segments, 6))
+
+        def segment_density(segment_index: Array) -> Array:
+            points, weights = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[segment_index],
+                self.L_cum[segment_index + 1],
+            )
+
+            def point_density(point_index: Array) -> Array:
+                s = points[point_index]
+
+                def path_density(
+                    path_params: BaseThreadlikeRoutingParams,
+                    start_segment_index: Array,
+                    end_segment_index: Array,
+                ) -> Array:
+                    active = (start_segment_index <= segment_index) & (
+                        segment_index <= end_segment_index
+                    )
+                    offset = jnp.append(routing.offset(path_params, s), 1.0)
+                    derivative = jnp.append(routing.derivative(path_params, s), 1.0)
+                    tangent = (derivative + se3.hat(strains[segment_index]) @ offset)[
+                        :-1
+                    ]
+                    return active * jnp.linalg.norm(tangent)
+
+                density = vmap(path_density)(
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return weights[point_index] * density
+
+            return jnp.sum(
+                vmap(point_density)(jnp.arange(self.num_integration_points)), axis=0
+            )
+
+        return jnp.sum(vmap(segment_density)(jnp.arange(self.num_segments)), axis=0)
+
+    def _threadlike_path_positions(
+        self, q: Array, s: Array, routing: ThreadlikeRouting
+    ) -> Array:
+        """Return spatial positions of all routed paths at backbone coordinate ``s``."""
+        params = routing.params
+        if params.num_paths == 0:
+            return jnp.zeros((0, 3), dtype=q.dtype)
+
+        def path_position(
+            path_params: BaseThreadlikeRoutingParams,
+            start_segment_index: Array,
+            end_segment_index: Array,
+        ) -> Array:
+            start = self.L_cum[start_segment_index]
+            end = self.L_cum[end_segment_index + 1]
+            s_clamped = jnp.clip(s, start, end)
+            pose = self.forward_kinematics(q, s_clamped)
+            point = pose @ jnp.append(routing.offset(path_params, s_clamped), 1.0)
+            return point[:-1]
+
+        return vmap(path_position)(
+            params,
+            params.start_segment_index_array,
+            params.end_segment_index_array,
+        )
 
     @eqx.filter_jit
     def _gravitational_energy(self, q: Array) -> Array:
@@ -2677,7 +2874,7 @@ class PCS(SoftRobot):
 
         B, Cqd, G = self.dynamics_terms(q, qd)
         tau_el = self.elastic_force(q)
-        tau_u = self.actuation_force(q, u)
+        tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         qdd = jnp.linalg.solve(B, rhs)

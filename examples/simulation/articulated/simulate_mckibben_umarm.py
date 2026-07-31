@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 from soromox.rendering import MatplotlibRenderer, UMArmViserRenderer
 from soromox.systems import (
     McKibbenActuatedUMArm,
-    McKibbenActuatedUMArmParams,
     SystemState,
 )
 
@@ -40,9 +39,8 @@ def _repo_params_path() -> Path:
 def build_robot(params_path: Path | None = None) -> McKibbenActuatedUMArm:
     """Build the UMArm from repo-local or explicit cached parameters."""
     source_path = _repo_params_path() if params_path is None else params_path
-    params = McKibbenActuatedUMArmParams.from_cached_npz(source_path)
-    params = params.replace(base_pose=UMARM_Z_DOWN_BASE_POSE)
-    return McKibbenActuatedUMArm(params)
+    robot = McKibbenActuatedUMArm.from_cached_parameters(source_path)
+    return robot.update_params(base_pose=UMARM_Z_DOWN_BASE_POSE)
 
 
 def pressure_input(robot: McKibbenActuatedUMArm) -> jax.Array:
@@ -78,9 +76,7 @@ def simulate(
     return trajectory.t, q_ts, qd_ts, pressures
 
 
-def end_effector_positions(
-    robot: McKibbenActuatedUMArm, q_ts: jax.Array
-) -> jax.Array:
+def end_effector_positions(robot: McKibbenActuatedUMArm, q_ts: jax.Array) -> jax.Array:
     """Return end-effector positions over a configuration sequence."""
     tips = jax.vmap(robot.forward_kinematics_tips)(q_ts)
     return tips[:, -1, :3, 3]
@@ -226,7 +222,9 @@ def main() -> None:
     if not args.no_plots:
         plot_results(robot, ts, q_ts, qd_ts)
     if args.render != "none":
-        render_robot(robot, ts, q_ts, pressures, backend=args.render, record_path=args.record)
+        render_robot(
+            robot, ts, q_ts, pressures, backend=args.render, record_path=args.record
+        )
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ from soromox.systems.gvs.structures import (
 def params_and_structure_from_segments(
     segments: list[GVSSegment] | tuple[GVSSegment, ...],
     *,
-    gravity: Array,
+    gravity: Array | None = None,
     base_pose: Array | None = None,
     max_dof: int | None = None,
     max_num_gauss_points: int | None = None,
@@ -29,9 +29,6 @@ def params_and_structure_from_segments(
         raise ValueError("GVS requires at least one segment.")
     input_segments = tuple(segments)
     n_segments = len(input_segments)
-    if base_pose is None:
-        base_pose = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
     dofs_joint = [
         Joint.DICT_JOINT_TYPE_DOF[segment.joint.type] for segment in input_segments
     ]
@@ -90,8 +87,8 @@ def params_and_structure_from_segments(
             semi_minor_initial=jnp.asarray([link.b_i for link in links]),
             semi_minor_final=jnp.asarray([link.b_f for link in links]),
         ),
-        gravity=jnp.asarray(gravity),
-        base_pose=jnp.asarray(base_pose),
+        gravity=gravity,
+        base_pose=base_pose,
         reference_strain=jnp.asarray(
             [segment.basis.xi_ref for segment in input_segments]
         ),

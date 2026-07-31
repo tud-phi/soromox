@@ -5,7 +5,7 @@ use axis-angle coordinates: the vector direction is the rotation axis and its
 Euclidean norm is the rotation angle in radians.
 """
 
-__all__ = ["skew", "exp", "log"]
+__all__ = ["skew", "vee", "exp", "log"]
 
 import jax.numpy as jnp
 from jax import Array, lax
@@ -36,21 +36,28 @@ def _rotation_magnitude(omega: Array, eps: float | Array) -> Array:
     )
 
 
-def _vee(skew_matrix: Array) -> Array:
-    """Extract the vector coordinate from a skew-symmetric ``so(3)`` matrix.
+def vee(matrix: Array) -> Array:
+    """Extract the vector coordinate of the skew part of a matrix.
 
-    This is the inverse of :func:`skew` for matrices in ``so(3)``. For a matrix
-    ``Omega = skew(omega)``, it returns ``omega`` in Cartesian order.
+    This is the inverse of :func:`skew` for matrices in ``so(3)``. For a
+    general matrix, it first projects onto ``so(3)`` using
+    ``0.5 * (matrix - matrix.T)``. In particular,
+    ``vee(skew(omega)) == omega``.
 
     Args:
-        skew_matrix: Skew-symmetric matrix with shape ``(3, 3)``.
+        matrix: Matrix with shape ``(3, 3)``.
 
     Returns:
         Vector with shape ``(3,)`` in ``[x, y, z]`` order.
     """
-    return jnp.array(
-        [skew_matrix[2, 1], skew_matrix[0, 2], skew_matrix[1, 0]],
-        dtype=skew_matrix.dtype,
+    matrix = jnp.asarray(matrix)
+    return 0.5 * jnp.array(
+        [
+            matrix[2, 1] - matrix[1, 2],
+            matrix[0, 2] - matrix[2, 0],
+            matrix[1, 0] - matrix[0, 1],
+        ],
+        dtype=matrix.dtype,
     )
 
 
@@ -202,7 +209,7 @@ def log(R: Array, eps: float | Array = 1e-10) -> Array:
     R = jnp.asarray(R)
     trace_R = jnp.trace(R)
     skew_part = R - R.T
-    skew_vec = _vee(skew_part)
+    skew_vec = vee(skew_part)
     eps_arr = eps_for_dtype(eps, R.dtype)
 
     cos_theta = jnp.clip((trace_R - 1.0) * 0.5, -1.0, 1.0)

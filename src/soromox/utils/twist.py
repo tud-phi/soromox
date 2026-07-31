@@ -15,12 +15,11 @@ from jax import Array
 
 from soromox.utils.geometry.rotations import (
     RotationRepresentation,
-    quaternion_conjugate,
-    quaternion_multiply,
-    quaternion_to_rotation_vector,
+    quaternion_to_rotation_matrix,
     rotation_6d_to_rotation_matrix,
-    rotation_matrix_to_quaternion,
+    rotation_vector_to_rotation_matrix,
 )
+from soromox.utils.lie_algebra import so3
 
 
 def twist_callable_from_pose_callable_factory(
@@ -34,11 +33,10 @@ def twist_callable_from_pose_callable_factory(
     """
     Create a twist (velocity) callable from a pose callable, properly handling rotation.
 
-    For rotation representations like QUATERNION and ROTATION_MATRIX_6D, the
-    velocity (angular velocity) is NOT the simple time derivative of the
-    orientation. This function creates a velocity function that:
+    For 3D rotation representations, angular velocity is NOT generally the
+    simple time derivative of the orientation coordinates. This function:
     - Computes linear velocity as the time derivative of position
-    - Computes angular velocity properly from the orientation derivative
+    - Computes inertial-frame angular velocity as ``vee(R_dot @ R.T)``
 
     The returned velocity is in the FULL velocity space (not task-selected),
     with dimension (n_points * n_velocity_dim,).
@@ -70,14 +68,10 @@ def twist_callable_from_pose_callable_factory(
         A function that takes scalar time t and returns the full twist (velocity)
         of shape (n_points * n_velocity_dim,).
 
-    Notes
-    -----
-    For ROTATION_VECTOR representation, this uses the small-angle approximation
-    where angular_velocity ≈ d(rotation_vector)/dt. This is exact for infinitesimal
-    changes and accurate for smooth trajectories.
-
-    For QUATERNION and ROTATION_MATRIX_6D, this properly converts the orientation
-    derivative to angular velocity using the geometric relationship.
+    The inertial-frame convention matches the operational-space Jacobians used
+    throughout SoRoMoX. Differentiating the rotation matrix also keeps the
+    conversion exact for rotation vectors, quaternions, and the continuous 6D
+    representation, including trajectories whose rotation axis changes.
 
     Examples
     --------
@@ -114,46 +108,29 @@ def twist_callable_from_pose_callable_factory(
                 orient_dot = pose_dot_reshaped[i, :n_orientation_dim]
                 pos_dot = pose_dot_reshaped[i, n_orientation_dim:]
 
-                # Convert orientation derivative to angular velocity
+                # Convert the representation and its tangent to a rotation matrix
+                # and R_dot. The operational-space Jacobian uses inertial-frame
+                # angular velocity, omega_hat = R_dot @ R.T.
                 if rotation_representation == RotationRepresentation.ROTATION_VECTOR:
-                    # For rotation vector: ω ≈ d(rotation_vector)/dt
-                    # This is the small-angle approximation, exact for
-                    # infinitesimal changes
-                    angular_vel = orient_dot
-
+                    orientation_to_rotation_matrix = rotation_vector_to_rotation_matrix
                 elif rotation_representation == RotationRepresentation.QUATERNION:
-                    # For scalar-first quaternion q = [qw, qx, qy, qz]:
-                    # ω = 2 * Im(q^{-1} ⊗ dq/dt)
-                    # where q^{-1} = q* (conjugate) for unit quaternions
-                    q_conj = quaternion_conjugate(orient)
-                    # Note: orient_dot is dq/dt, not a unit quaternion
-                    omega_quat = 2.0 * quaternion_multiply(q_conj, orient_dot)
-                    # Angular velocity is the imaginary (vector) part
-                    angular_vel = omega_quat[1:4]
-
+                    orientation_to_rotation_matrix = quaternion_to_rotation_matrix
                 elif (
                     rotation_representation == RotationRepresentation.ROTATION_MATRIX_6D
                 ):
-                    # For rotation_6d, we need to:
-                    # 1. Convert to rotation matrix R
-                    # 2. Compute dR/dt from d(rotation_6d)/dt
-                    # 3. Compute ω from R^T @ dR/dt (skew-symmetric)
-                    #
-                    # We use autodiff through the full conversion:
-
-                    def orient_to_rotvec(orient_6d):
-                        R = rotation_6d_to_rotation_matrix(orient_6d)
-                        quat = rotation_matrix_to_quaternion(R)
-                        return quaternion_to_rotation_vector(quat)
-
-                    # Compute Jacobian of rotation_vector w.r.t. rotation_6d
-                    J_orient = jax.jacfwd(orient_to_rotvec)(orient)
-                    angular_vel = J_orient @ orient_dot
-
+                    orientation_to_rotation_matrix = rotation_6d_to_rotation_matrix
                 else:
                     raise ValueError(
                         f"Unknown rotation representation: {rotation_representation}"
                     )
+
+                R, R_dot = jax.jvp(
+                    orientation_to_rotation_matrix,
+                    (orient,),
+                    (orient_dot,),
+                )
+                omega_hat = R_dot @ R.T
+                angular_vel = so3.vee(omega_hat)
 
                 # Combine angular velocity and linear velocity
                 point_vel = jnp.concatenate([angular_vel, pos_dot])

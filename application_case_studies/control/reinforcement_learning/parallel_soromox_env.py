@@ -6,8 +6,9 @@ trajectory at reset time, while all environments are stepped in one batched JAX
 call for efficient reinforcement-learning training and evaluation.
 """
 
+from collections.abc import Sequence
 from functools import partial
-from typing import Any, NamedTuple, Optional, Sequence, Tuple
+from typing import Any, NamedTuple
 
 import equinox as eqx
 import jax
@@ -16,15 +17,14 @@ import jax.random as rnd
 import numpy as np
 from diffrax import Tsit5
 from gymnasium import spaces
-from soromox.systems.pcs import (
-    LinearTendonRoutingParams,
-    PCSParams,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
-)
-from soromox.systems.system_state import SystemState
 from stable_baselines3.common.vec_env import VecEnv
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.systems.pcs import (
+    PCS,
+    PCSParams,
+)
+from soromox.systems.system_state import SystemState
 
 jax.config.update("jax_enable_x64", True)
 
@@ -85,7 +85,7 @@ def build_arm(
     density: float,
     youngs_modulus: float,
     poisson_ratio: float,
-) -> TendonActuatedPCS:
+) -> PCS:
     """Build the tendon-actuated SoRoMoX arm model used by the environment.
 
     Args:
@@ -97,7 +97,7 @@ def build_arm(
         poisson_ratio: Poisson ratio.
 
     Returns:
-        A configured ``TendonActuatedPCS`` model.
+        A configured ``PCS`` model with threadlike tendon actuation.
     """
 
     shear_modulus = youngs_modulus / (2.0 * (1.0 + poisson_ratio))
@@ -126,24 +126,22 @@ def build_arm(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),
     )
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=jnp.array([0.0, 0.0, 0.02, -0.02]),
-        z_intercept=jnp.array([0.02, -0.02, 0.0, 0.0]),
-        y_slope=jnp.array([0.0, 0.0, 0.0, 0.0]),
-        z_slope=jnp.array([0.0, 0.0, 0.0, 0.0]),
-        attachment_segment_index=jnp.array([0, 0, 0, 0]),
-    )
-    return TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=jnp.array(
+            [[0.0, 0.0, 0.02], [0.0, 0.0, -0.02], [0.0, 0.02, 0.0], [0.0, -0.02, 0.0]]
         ),
+        start_segment_index=0,
+        end_segment_index=(0, 0, 0, 0),
+    )
+    return PCS(
+        params=body_params,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
 
 def build_jax_env_fns(
     *,
-    arm: TendonActuatedPCS,
+    arm: PCS,
     y0: jnp.ndarray,
     dt: float,
     steps_per_action: int,
@@ -153,10 +151,10 @@ def build_jax_env_fns(
     game_time: float,
     success_threshold: float,
     success_reward: float,
-    ball_center: Tuple[float, float, float],
+    ball_center: tuple[float, float, float],
     ball_radius: float,
     ball_surface_vmax: float,
-) -> Tuple[Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any]:
     """Build JIT-compiled reset and step functions for batched simulation.
 
     Args:
@@ -199,7 +197,7 @@ def build_jax_env_fns(
         ball_pos: jnp.ndarray,
         ee_vel: jnp.ndarray,
         ball_vel: jnp.ndarray,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Compute shaped tracking reward and success flag for one env.
 
         Args:
@@ -225,7 +223,7 @@ def build_jax_env_fns(
         reward = reward + jnp.where(success, success_reward_jnp, 0.0)
         return reward, success
 
-    def terminate_fn(env_state: EnvState) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def terminate_fn(env_state: EnvState) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Evaluate episode termination and truncation for one env.
 
         Args:
@@ -239,7 +237,7 @@ def build_jax_env_fns(
         terminated = jnp.array(False)
         return terminated, truncated
 
-    def get_ee_state(env_state: EnvState) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    def get_ee_state(env_state: EnvState) -> tuple[jnp.ndarray, jnp.ndarray]:
         """Compute end-effector position and linear velocity for one env.
 
         Args:
@@ -280,7 +278,7 @@ def build_jax_env_fns(
 
     def make_ball_traj(
         key: jnp.ndarray,
-    ) -> Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
+    ) -> tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]:
         """Sample one random target-ball trajectory on a hemisphere.
 
         Args:
@@ -351,7 +349,7 @@ def build_jax_env_fns(
         acc = acc - jnp.sum(acc * normal, axis=1, keepdims=True) * normal
         return pos.astype(jnp.float32), vel.astype(jnp.float32), acc.astype(jnp.float32)
 
-    def reset_single(key: jnp.ndarray) -> Tuple[EnvState, jnp.ndarray]:
+    def reset_single(key: jnp.ndarray) -> tuple[EnvState, jnp.ndarray]:
         """Reset one environment from a PRNG key.
 
         Args:
@@ -385,7 +383,7 @@ def build_jax_env_fns(
         )
         return env_state, obs
 
-    def reset_batch(keys: jnp.ndarray) -> Tuple[EnvState, jnp.ndarray]:
+    def reset_batch(keys: jnp.ndarray) -> tuple[EnvState, jnp.ndarray]:
         """Reset a batch of environments.
 
         Args:
@@ -401,7 +399,7 @@ def build_jax_env_fns(
     def step_single(
         env_state: EnvState,
         action: jnp.ndarray,
-    ) -> Tuple[
+    ) -> tuple[
         EnvState,
         jnp.ndarray,
         jnp.ndarray,
@@ -557,8 +555,8 @@ class ParallelSoromoxEnv(VecEnv):
             ball_surface_vmax=self.ball_surface_vmax,
         )
 
-        self._env_states: Optional[EnvState] = None
-        self._last_actions: Optional[np.ndarray] = None
+        self._env_states: EnvState | None = None
+        self._last_actions: np.ndarray | None = None
         self._rng_key = rnd.PRNGKey(int(kwargs.get("seed", 0)))
 
     def reset(self) -> np.ndarray:
@@ -582,7 +580,7 @@ class ParallelSoromoxEnv(VecEnv):
 
         self._last_actions = np.asarray(actions, dtype=np.float32)
 
-    def step_wait(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Sequence[dict]]:
+    def step_wait(self) -> tuple[np.ndarray, np.ndarray, np.ndarray, Sequence[dict]]:
         """Apply the stored actions and return SB3 VecEnv step outputs.
 
         Returns:
@@ -632,7 +630,7 @@ class ParallelSoromoxEnv(VecEnv):
         a no-op required by the VecEnv interface.
         """
 
-    def get_attr(self, name: str, indices: Optional[Sequence[int]] = None) -> list:
+    def get_attr(self, name: str, indices: Sequence[int] | None = None) -> list:
         """Return a repeated environment attribute for SB3 compatibility.
 
         Args:
@@ -650,7 +648,7 @@ class ParallelSoromoxEnv(VecEnv):
         self,
         name: str,
         values: Any,
-        indices: Optional[Sequence[int]] = None,
+        indices: Sequence[int] | None = None,
     ) -> None:
         """Set an environment attribute for SB3 compatibility.
 
@@ -671,7 +669,7 @@ class ParallelSoromoxEnv(VecEnv):
         self,
         method_name: str,
         *method_args: Any,
-        indices: Optional[Sequence[int]] = None,
+        indices: Sequence[int] | None = None,
         **method_kwargs: Any,
     ) -> list:
         """Call an environment method for SB3 compatibility.
@@ -693,7 +691,7 @@ class ParallelSoromoxEnv(VecEnv):
     def env_is_wrapped(
         self,
         wrapper_class: Any,
-        indices: Optional[Sequence[int]] = None,
+        indices: Sequence[int] | None = None,
     ) -> list:
         """Report wrapper status for SB3 compatibility.
 

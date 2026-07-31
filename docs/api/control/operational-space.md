@@ -40,12 +40,43 @@ All operational-space controllers inherit from `OperationalSpaceBaseController`:
 !!! note "Full Actuation Required"
     This controller requires the system to be **fully actuated** (number of actuators equals number of DOFs, \(n = m\)). For under-actuated systems, consider using `OperationalSpaceSynergisticController`.
 
-Operational-space impedance control implements partial feedback linearization to cancel the original task dynamics and replace them with desired linear impedance behavior.
+Operational-space impedance control combines selectable feedback linearization
+with moving-reference feedforward. Set `feedback_linearization="full"` (the
+default) or `"partial"`.
 
-The closed-loop dynamics in operational space become:
+Both modes cancel task-projected elasticity and damping, cancel gravity, feed
+forward \(\Lambda\ddot{x}^d\), and inject the requested stiffness and damping.
+They differ only in their Coriolis/centrifugal compensation:
+
+| Mode | Compensated task force | Result |
+| --- | --- | --- |
+| `full` | \(\mu_x\dot{q}\) | Cancels the complete task-space Coriolis force |
+| `partial` | \(\mu_x(I-\bar{J}J)\dot{q}\) | Cancels only null-space Coriolis coupling and retains \(\mu_x\bar{J}\dot{x}\) |
+
+!!! info "Historical provenance"
+    The `partial` mode follows the Cartesian impedance structure proposed in
+    Section 3.3, equations 49 and 56–60, of
+    [Della Santina et al. (2020)](https://doi.org/10.1177/0278364919897292).
+    That controller removes dynamic coupling from the residual/null-space
+    degrees of freedom while deliberately retaining the natural task-space
+    Coriolis term. The implementation here extends the paper's set-point law
+    with desired velocity and acceleration feedforward for moving-reference
+    tracking.
+
+    The `full` mode instead uses a Khatib-style operational-space nonlinear
+    dynamic-decoupling structure. Section IV, equations 29–31, of
+    [Khatib (1987)](https://doi.org/10.1109/JRA.1987.1087068) compensates the
+    complete operational-space centrifugal/Coriolis and gravity terms before
+    applying desired acceleration and tracking feedback. The implementation
+    here is not a verbatim reproduction: its stiffness and damping are physical
+    task-space impedance forces, so the closed-loop error dynamics retain
+    \(\Lambda\) rather than being presented as unit-mass dynamics.
+
+With full linearization and \(e_x\) denoting the geometric correction from the
+current pose to the desired pose, the local closed-loop error dynamics become:
 
 $$
-\Lambda \ddot{x} + D_x \dot{x} + K_x (x - x^d) = 0
+\Lambda \ddot{e}_x + D_x \dot{e}_x + K_x e_x = 0
 $$
 
 where:
@@ -53,15 +84,32 @@ where:
 - \(\Lambda\) is the operational-space inertia matrix (preserved)
 - \(D_x\) is the desired damping matrix
 - \(K_x\) is the desired stiffness matrix
-- \(x^d\) is the reference position
+- \(x^d\), \(\dot{x}^d\), and \(\ddot{x}^d\) define the moving reference
 
-The control law implements five key terms:
+The control law implements six key terms:
 
 1. **Cancel elastic and damping forces** projected to task space
 2. **Cancel gravity**
-3. **Cancel null-space Coriolis coupling** to prevent null-space motion from affecting the task
-4. **Inject desired stiffness**: \(K_x (x^d - x)\)
-5. **Inject desired damping**: \(D_x (\dot{x}^d - \dot{x})\)
+3. **Apply the selected Coriolis cancellation**
+4. **Feed forward desired acceleration**: \(\Lambda\ddot{x}^d\)
+5. **Inject desired stiffness**: \(K_x e_x\)
+6. **Inject desired damping**: \(D_x (\dot{x}^d - \dot{x})\)
+
+!!! tip "Choosing the mode"
+    Use `full` when moving-reference tracking accuracy is the priority and the
+    model is sufficiently accurate. Use `partial` when retaining the natural
+    task-space velocity-dependent dynamics is desired. Partial mode generally
+    exhibits more tracking error on fast trajectories because that term is
+    intentionally not cancelled.
+
+!!! tip "Gain scaling"
+    Translational and rotational gains have different units and should be tuned
+    separately. For approximately decoupled modes at a representative
+    configuration, a useful initialization is
+    \(K_i = \lambda_i\omega_{n,i}^2\) and
+    \(D_i = 2\zeta_i\lambda_i\omega_{n,i}\), where \(\lambda_i\) is the
+    corresponding operational-space inertia. Do not use the same numeric gains
+    for position and orientation without accounting for this scaling.
 
 !!! info "Assumptions"
     The impedance controller assumes:
@@ -166,6 +214,7 @@ controller = OperationalSpaceImpedanceControlTracker(
     reference_trajectory=ref_traj,
     K_x=100.0,  # Stiffness (scalar, vector, or matrix)
     D_x=10.0,   # Damping (scalar, vector, or matrix)
+    feedback_linearization="full",  # Or "partial"
 )
 ```
 

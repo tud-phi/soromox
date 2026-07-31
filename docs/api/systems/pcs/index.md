@@ -15,7 +15,7 @@ PCS systems model continuum soft robots by dividing them into segments, each wit
 
 ### Base Implementations
 
-#### [PCS (Spatial)](pcs.md)
+#### [Spatial PCS](pcs.md)
 
 Core 3D PCS implementation for spatial continuum robots.
 
@@ -31,33 +31,14 @@ Core 3D PCS implementation for spatial continuum robots.
 - SE(2) kinematics with [theta, x, y] pose representation
 - Suitable for real-time applications
 
-### Tendon Actuated
+### Composable actuation
 
-#### [Tendon Actuated PCS](tendon-actuated-pcs.md)
+`PCS` and `PlanarPCS` accept actuator models through `actuators=`. Tendons,
+pushing rods, simplified muscles, and equivalent pressure chambers use the
+shared [threadlike actuation model](../../actuation/threadlike.md). Passive
+routed mechanics are installed separately with `ThreadlikeImpedance`.
 
-3D PCS robots with active and passive tendon actuation.
-
-- Tendon routing with configurable paths
-- Active tendon tension control
-- Passive spring-damper tendons
-
-#### [Tendon Actuated Planar PCS](tendon-actuated-planar-pcs.md)
-
-2D PCS robots with tendon actuation.
-
-- Cable-driven planar continuum robots
-- Configurable tendon distances from backbone
-- Segment-selective actuation
-
-### Pressure Actuated
-
-#### [Pressure Actuated Planar PCS](pressure-actuated-planar-pcs.md)
-
-2D PCS robots with prescribed chamber-pressure actuation.
-
-- Pressure chamber modeling
-- Pressure-based control
-- Configurable chamber geometry
+### Pneumatic actuation
 
 #### [I-Support](isupport.md)
 
@@ -70,12 +51,9 @@ Core 3D PCS implementation for spatial continuum robots.
 
 | System | Dimension | Actuation | Use Case |
 |--------|-----------|-----------|----------|
-| `PCS` | 3D | None (strain input) | General 3D continuum modeling |
-| `PlanarPCS` | 2D | None (strain input) | General 2D continuum modeling |
-| `TendonActuatedPCS` | 3D | Tendons | 3D cable-driven robots |
-| `TendonActuatedPlanarPCS` | 2D | Active/passive routed tendons | 2D cable-driven robots |
-| `PressureActuatedPlanarPCS` | 2D | Pressure | Pressure-driven soft actuators |
-| `ISupport` | 3D | Pneumatic | I-Support robot platform |
+| `PCS` | 3D | Identity or [composable](../../actuation/index.md) | General 3D continuum modeling |
+| `PlanarPCS` | 2D | Identity or [composable](../../actuation/index.md) | General 2D continuum modeling |
+| `ISupport` | 3D | [Threadlike pneumatic](../../actuation/threadlike.md#modality-presets) | I-Support robot platform |
 
 ## References
 

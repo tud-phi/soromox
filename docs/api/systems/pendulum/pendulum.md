@@ -4,6 +4,10 @@ The `Pendulum` system is the planar benchmark entry in the articulated systems
 family. It provides N-link rigid-body chain dynamics for benchmarking and
 comparison with soft robot systems.
 
+It accepts the shared `actuators=` and `passive_elements=` interface. Omitting
+`actuators` installs identity joint-torque actuation; passing an empty tuple
+creates an unactuated model.
+
 ## Overview
 
 The pendulum system implements classical rigid-body dynamics for articulated robots with revolute joints. This serves as a baseline for comparing with continuum soft robot models.
@@ -20,7 +24,6 @@ params = PendulumParams(
     moment_inertia=jnp.array([0.1, 0.05]),
     length=jnp.array([0.5, 0.3]),
     center_of_mass_length=jnp.array([0.25, 0.15]),
-    gravity=jnp.array([0.0, -9.81]),
     joint_stiffness=jnp.zeros((2, 2)),
     joint_damping=jnp.zeros((2, 2)),
     joint_rest_configuration=jnp.zeros(2),
@@ -45,6 +48,36 @@ u = jnp.zeros_like(q)
 y = jnp.concatenate([q, qd])
 yd = robot.forward_dynamics(jnp.zeros(()), y, (u,))
 ```
+
+For cable-driven mechanisms, compose an articulated tendon model with the same
+host:
+
+```python
+from soromox.actuation import (
+    ArticulatedTendonActuator,
+    ArticulatedTendonImpedance,
+)
+
+routing = jnp.array([[-0.02, -0.02]])
+active = ArticulatedTendonActuator.from_routing(
+    routing,
+    coordinate_offset=jnp.array([0.016]),
+)
+passive = ArticulatedTendonImpedance.from_routing(
+    routing,
+    stiffness=jnp.array([100.0]),
+    damping=jnp.array([2.0]),
+    coordinate_offset=jnp.array([0.016]),
+)
+robot = Pendulum(
+    params=params,
+    actuators=active,
+    passive_elements=(passive,),
+)
+```
+
+See [Joint-space actuation](../../actuation/joint-space.md) for coordinate,
+sign, power, and update conventions.
 
 ## API Reference
 

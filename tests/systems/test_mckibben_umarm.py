@@ -5,10 +5,12 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
+from system_param_builders import pcs_params
 
 from examples.simulation.articulated.simulate_mckibben_umarm import (
     UMARM_Z_DOWN_BASE_POSE,
@@ -16,11 +18,14 @@ from examples.simulation.articulated.simulate_mckibben_umarm import (
 from examples.simulation.articulated.simulate_mckibben_umarm import (
     build_robot as build_example_robot,
 )
+from soromox.actuation import ArticulatedMcKibbenActuator
 from soromox.rendering.viser_renderer import VISER_AVAILABLE
 from soromox.systems import (
+    PCS,
     ArticulatedSoftRobot,
     McKibbenActuatedUMArm,
     McKibbenActuatedUMArmParams,
+    PCSStructure,
 )
 
 ASSET_PARAMS_PATH = (
@@ -33,28 +38,74 @@ ASSET_PARAMS_PATH = (
 
 
 def make_robot() -> McKibbenActuatedUMArm:
-    return McKibbenActuatedUMArm(
-        McKibbenActuatedUMArmParams.from_cached_npz(ASSET_PARAMS_PATH)
-    )
+    return McKibbenActuatedUMArm.from_cached_parameters(ASSET_PARAMS_PATH)
 
 
 def make_zero_actuator_robot() -> McKibbenActuatedUMArm:
-    params = McKibbenActuatedUMArmParams.from_cached_npz(ASSET_PARAMS_PATH).replace(
-        mckibben_moving_base_transform=jnp.zeros((0, 4, 4), dtype=jnp.float64),
-        mckibben_moving_points=jnp.zeros((0, 4, 3), dtype=jnp.float64),
-        mckibben_fixed_points=jnp.zeros((0, 4, 3), dtype=jnp.float64),
-        mckibben_reference_length=jnp.zeros((0, 4), dtype=jnp.float64),
-        mckibben_length_offset=jnp.zeros((0, 4), dtype=jnp.float64),
-        mckibben_thread_length=jnp.zeros((0, 4), dtype=jnp.float64),
-        mckibben_num_turns=jnp.zeros((0, 4), dtype=jnp.float64),
-        mckibben_joint_pair_indices=jnp.zeros((0, 2), dtype=jnp.int32),
+    params = McKibbenActuatedUMArmParams.from_cached_npz(ASSET_PARAMS_PATH)
+    return McKibbenActuatedUMArm(
+        params,
+        actuator=ArticulatedMcKibbenActuator.empty(),
     )
-    return McKibbenActuatedUMArm(params)
+
+
+def _legacy_local_segments_and_lengths(robot, q):
+    """Independent transcription of the pre-composition UMArm geometry."""
+    params = robot.actuators[0].params.transmission
+    groups = []
+    for group_index in range(params.num_groups):
+        transform = params.moving_base_transform[group_index]
+        joint_pair = params.joint_pair_indices[group_index]
+        qx, qy = q[joint_pair[0]], q[joint_pair[1]]
+        cx, sx = jnp.cos(qx), jnp.sin(qx)
+        cy, sy = jnp.cos(qy), jnp.sin(qy)
+        rotation_x = jnp.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]])
+        rotation_y = jnp.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]])
+        rotation = transform[:3, :3] @ rotation_x @ rotation_y
+        moving = params.moving_points[group_index] @ rotation.T + transform[:3, 3]
+        fixed = params.fixed_points[group_index]
+        groups.append(jnp.stack([fixed, moving], axis=1))
+    local_segments = jnp.stack(groups)
+    geometric_length = jnp.linalg.norm(
+        local_segments[:, :, 1] - local_segments[:, :, 0], axis=-1
+    )
+    effective_length = geometric_length - params.reference_length + params.length_offset
+    return local_segments, effective_length
+
+
+def _legacy_coordinates(robot, q):
+    params = robot.actuators[0].params.transmission
+    _, length = _legacy_local_segments_and_lengths(robot, q)
+    return (
+        (params.thread_length**2 - length**2)
+        * length
+        / (4.0 * jnp.pi * params.num_turns**2)
+    ).reshape((-1,))
+
+
+def _legacy_world_segments(robot, q):
+    params = robot.actuators[0].params.transmission
+    local_segments, _ = _legacy_local_segments_and_lengths(robot, q)
+    joint_frames, link_frames, _, _ = robot._kinematic_frames(q)
+    frames = []
+    for group_index in range(params.num_groups):
+        pair_start = params.joint_pair_indices[group_index, 0]
+        if group_index % 2:
+            frames.append(link_frames[jnp.maximum(pair_start - 1, 0)])
+        else:
+            frames.append(joint_frames[pair_start])
+    frames = jnp.stack(frames)
+    world = (
+        jnp.einsum("gij,gapj->gapi", frames[:, :3, :3], local_segments)
+        + frames[:, :3, 3][:, None, None, :]
+    )
+    return world.reshape((-1, 2, 3))
 
 
 def test_cached_params_shapes() -> None:
     params = McKibbenActuatedUMArmParams.from_cached_npz(ASSET_PARAMS_PATH)
-    robot = McKibbenActuatedUMArm(params)
+    robot = make_robot()
+    actuator_params = robot.actuators[0].params.transmission
 
     with np.load(ASSET_PARAMS_PATH) as data:
         assert str(data["schema_version"]) == "mckibben_umarm_params_v1"
@@ -66,14 +117,14 @@ def test_cached_params_shapes() -> None:
     assert robot.num_actuators == 24
     assert robot.num_segments == 3
     assert params.joint_armature.shape == (12,)
-    assert params.mckibben_moving_base_transform.shape == (6, 4, 4)
-    assert params.mckibben_moving_points.shape == (6, 4, 3)
-    assert params.mckibben_fixed_points.shape == (6, 4, 3)
-    assert params.mckibben_reference_length.shape == (6, 4)
-    assert params.mckibben_length_offset.shape == (6, 4)
-    assert params.mckibben_thread_length.shape == (6, 4)
-    assert params.mckibben_num_turns.shape == (6, 4)
-    assert params.mckibben_joint_pair_indices.shape == (6, 2)
+    assert actuator_params.moving_base_transform.shape == (6, 4, 4)
+    assert actuator_params.moving_points.shape == (6, 4, 3)
+    assert actuator_params.fixed_points.shape == (6, 4, 3)
+    assert actuator_params.reference_length.shape == (6, 4)
+    assert actuator_params.length_offset.shape == (6, 4)
+    assert actuator_params.thread_length.shape == (6, 4)
+    assert actuator_params.num_turns.shape == (6, 4)
+    assert actuator_params.joint_pair_indices.shape == (6, 2)
 
 
 def test_zero_actuator_umarm_exposes_empty_actuator_interface() -> None:
@@ -85,14 +136,41 @@ def test_zero_actuator_umarm_exposes_empty_actuator_interface() -> None:
 
     assert robot.num_actuators == 0
     assert robot.num_mckibben_groups == 0
-    assert robot.mckibben_actuator_segments(q).shape == (0, 2, 3)
-    assert robot.effective_lengths(q).shape == (0,)
-    assert robot._potential_per_pressure(q).shape == (0,)
-    assert robot.actuator_forces(q, pressures).shape == (0,)
+    actuator = robot.actuators[0]
+    assert actuator.segments(robot, q).shape == (0, 2, 3)
+    assert actuator.effective_lengths(q).shape == (0,)
+    assert robot.actuator_coordinates(q).shape == (0,)
+    assert actuator.axial_forces(q, pressures).shape == (0,)
     assert robot.actuation_matrix(q).shape == (robot.num_dofs, 0)
     assert_allclose(robot.actuation_force(q, pressures), jnp.zeros((robot.num_dofs,)))
     assert robot.actuator_visual_layers(q, jnp.linspace(0.0, 1.0, 3)) == ()
     assert robot.forward_dynamics(jnp.array(0.0), y, (pressures, None)).shape == y.shape
+
+
+def test_articulated_mckibben_actuator_rejects_continuum_host() -> None:
+    params = pcs_params(
+        length=jnp.array([0.1]),
+        radius=jnp.array([0.01]),
+        density=jnp.array([1000.0]),
+        young_modulus=jnp.array([1.0e5]),
+        shear_modulus=jnp.array([5.0e4]),
+        damping_matrix=jnp.eye(6),
+        gravity=jnp.zeros(3),
+    )
+    actuator = ArticulatedMcKibbenActuator.from_cached_npz(ASSET_PARAMS_PATH)
+    with pytest.raises(TypeError, match="spatial articulated host"):
+        PCS(params, PCSStructure(num_gauss_points=3), actuators=actuator)
+
+
+def test_mckibben_transmission_rejects_duplicate_joint_pair_indices() -> None:
+    actuator = ArticulatedMcKibbenActuator.from_cached_npz(ASSET_PARAMS_PATH)
+    transmission = actuator.params.transmission
+    duplicate_pair_indices = transmission.joint_pair_indices.at[0, 1].set(
+        transmission.joint_pair_indices[0, 0]
+    )
+
+    with pytest.raises(ValueError, match="two distinct DOF indices"):
+        transmission.replace(joint_pair_indices=duplicate_pair_indices)
 
 
 def test_cached_params_use_soromox_base_axis() -> None:
@@ -133,9 +211,10 @@ def test_mckibben_dynamics_terms_are_finite() -> None:
     pressures = jnp.linspace(0.0, 8.0e4, robot.num_actuators)
     y = jnp.concatenate([q, qd])
 
-    segments = robot.mckibben_actuator_segments(q)
-    lengths = robot.effective_lengths(q)
-    forces = robot.actuator_forces(q, pressures)
+    actuator = robot.actuators[0]
+    segments = actuator.segments(robot, q)
+    lengths = actuator.effective_lengths(q)
+    forces = actuator.axial_forces(q, pressures)
     actuation = robot.actuation_matrix(q)
     inertia = robot.inertia_matrix(q)
     yd = robot.forward_dynamics(jnp.array(0.0), y, (pressures, None))
@@ -165,12 +244,117 @@ def test_mckibben_actuation_matrix_matches_potential_gradient() -> None:
     )
 
     for q in q_samples:
-        expected = jax.jacobian(robot._potential_per_pressure)(q).T
+        expected = jax.jacobian(robot.actuator_coordinates)(q).T
         assert_allclose(robot.actuation_matrix(q), expected, rtol=1e-10, atol=1e-10)
 
 
+def test_mckibben_component_matches_legacy_geometry_and_constitutive_oracle() -> None:
+    robot = make_robot()
+    actuator = robot.actuators[0]
+    params = actuator.params.transmission
+    q_samples = jnp.stack(
+        [
+            jnp.zeros((robot.num_dofs,)),
+            jnp.linspace(-0.2, 0.2, robot.num_dofs),
+            0.17 * jnp.sin(jnp.arange(robot.num_dofs)),
+        ]
+    )
+
+    for q in q_samples:
+        legacy_local, legacy_length = _legacy_local_segments_and_lengths(robot, q)
+        legacy_coordinate = _legacy_coordinates(robot, q)
+        pressure = jnp.linspace(0.0, 8.0e4, robot.num_actuators)
+        legacy_force = (
+            pressure.reshape(params.group_shape)
+            * (params.thread_length**2 - 3.0 * legacy_length**2)
+            / (4.0 * jnp.pi * params.num_turns**2)
+        ).reshape((-1,))
+
+        assert_allclose(
+            actuator.local_segments(q), legacy_local, rtol=1e-10, atol=1e-12
+        )
+        assert_allclose(
+            actuator.segments(robot, q),
+            _legacy_world_segments(robot, q),
+            rtol=1e-10,
+            atol=1e-12,
+        )
+        assert_allclose(
+            actuator.effective_lengths(q),
+            legacy_length.reshape((-1,)),
+            rtol=1e-10,
+            atol=1e-12,
+        )
+        assert_allclose(
+            robot.actuator_coordinates(q),
+            legacy_coordinate,
+            rtol=1e-10,
+            atol=1e-12,
+        )
+        assert_allclose(
+            actuator.axial_forces(q, pressure),
+            legacy_force,
+            rtol=1e-10,
+            atol=1e-12,
+        )
+        assert_allclose(
+            robot.actuation_matrix(q),
+            jax.jacrev(lambda q_: _legacy_coordinates(robot, q_))(q).T,
+            rtol=1e-10,
+            atol=1e-12,
+        )
+
+
+def test_mckibben_optional_qd_power_jit_and_independent_updates() -> None:
+    robot = make_robot()
+    q = jnp.linspace(-0.13, 0.16, robot.num_dofs)
+    qd = jnp.linspace(0.08, -0.05, robot.num_dofs)
+    pressure = jnp.linspace(1.0e4, 7.0e4, robot.num_actuators)
+
+    tau = robot.actuation_force(q, pressure)
+    assert_allclose(
+        tau,
+        robot.actuation_force(q, pressure, qd=qd),
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    assert_allclose(
+        qd @ tau,
+        robot.actuator_velocities(q, qd) @ pressure,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+    assert_allclose(
+        eqx.filter_jit(robot.actuation_force)(q, pressure, qd),
+        tau,
+        rtol=1e-10,
+        atol=1e-12,
+    )
+
+    updated_body = robot.update_params(
+        joint_armature=robot.params.joint_armature + 1.0e-5
+    )
+    assert_allclose(
+        updated_body.actuators[0].params.transmission.length_offset,
+        robot.actuators[0].params.transmission.length_offset,
+    )
+
+    actuator_params = robot.actuators[0].params
+    transmission = actuator_params.transmission.replace(
+        length_offset=actuator_params.transmission.length_offset + 1.0e-5
+    )
+    updated_actuator = robot.update_actuator_params(0, transmission=transmission)
+    assert_allclose(updated_actuator.params.joint_armature, robot.params.joint_armature)
+    assert_allclose(
+        updated_actuator.actuators[0].params.transmission.length_offset,
+        transmission.length_offset,
+    )
+
+
 def test_mckibben_forward_dynamics_is_inherited_and_matches_dense_equation() -> None:
-    assert McKibbenActuatedUMArm.forward_dynamics is ArticulatedSoftRobot.forward_dynamics
+    assert (
+        McKibbenActuatedUMArm.forward_dynamics is ArticulatedSoftRobot.forward_dynamics
+    )
 
     robot = make_robot()
     q = jnp.linspace(-0.12, 0.15, robot.num_dofs)
@@ -306,7 +490,7 @@ def test_umarm_viser_live_mode_smoke() -> None:
 def test_mckibben_actuator_segments_are_in_backbone_frame() -> None:
     robot = make_robot()
     q = jnp.zeros((robot.num_dofs,))
-    actuator_segments = np.asarray(robot.mckibben_actuator_segments(q))
+    actuator_segments = np.asarray(robot.actuators[0].segments(robot, q))
     joint_positions = np.asarray(robot.forward_kinematics_joints(q))[:, :3, 3]
     tip_positions = np.asarray(robot.forward_kinematics_tips(q))[:, :3, 3]
     backbone_positions = np.concatenate([joint_positions, tip_positions], axis=0)

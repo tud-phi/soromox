@@ -80,7 +80,7 @@ def main():
         sys.exit(1)
 
     if args.output:
-        Path(args.output).write_text(changelog_content)
+        Path(args.output).write_text(f"{changelog_content}\n")
         print(f"✓ Changelog for v{args.version} written to {args.output}")
     else:
         print(changelog_content)

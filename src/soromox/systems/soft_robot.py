@@ -11,6 +11,12 @@ import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, vmap
 from jax import numpy as jnp
 
+from soromox.actuation.core import (
+    Actuator,
+    ActuatorMetadata,
+    IdentityActuator,
+    PassiveElement,
+)
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.params import (
@@ -55,8 +61,9 @@ class SoftRobot(DynamicalSystem):
             scalar-first Hamilton quaternions, normalized before use, and
             represent the base-frame orientation; translations are inserted
             directly. Configured spatial quaternions must have nonzero finite
-            norm. In the standard zero-rotation base pose, the soft robot
-            backbone is aligned with the positive base-frame x-axis.
+            norm. When omitted, the base pose is upright: the backbone points
+            along world +y for planar robots and world +z for spatial robots.
+            In an explicit zero-rotation pose, the backbone is aligned with +x.
         num_gauss_points (int | Array | None): Requested nonzero
             Gauss-Legendre quadrature point count. May be scalar for systems
             with a uniform grid or an array for systems with per-segment grids.
@@ -76,6 +83,8 @@ class SoftRobot(DynamicalSystem):
     num_integration_points: int | Array | None
     integration_points: Array | None
     integration_weights: Array | None
+    actuators: tuple[Actuator, ...]
+    passive_elements: tuple[PassiveElement, ...]
 
     @property
     def tangent_eps(self) -> Array:
@@ -102,9 +111,8 @@ class SoftRobot(DynamicalSystem):
                 expect shape ``(7,)`` with ``[qw, qx, qy, qz, x, y, z]``.
                 Spatial quaternions are scalar-first Hamilton quaternions,
                 normalized before use, and must have nonzero finite norm. If
-                omitted, the zero-rotation base pose is used in the appropriate
-                dimension. With zero base rotation, the soft robot backbone is
-                aligned with the positive base-frame x-axis.
+                omitted, the upright pose is used: the backbone points along
+                world +y for planar robots and world +z for spatial robots.
             **kwargs: Additional keyword arguments (unused, kept for API compatibility).
         """
         # Note: We don't call super().__init__() here because Equinox modules
@@ -112,10 +120,12 @@ class SoftRobot(DynamicalSystem):
         # parent __init__ calls. Child classes must set num_dofs and num_actuators.
         if base_pose is None:
             if self.is_planar:
-                base_pose = jnp.zeros(3, dtype=jnp.float64)
+                base_pose = jnp.array([jnp.pi / 2, 0.0, 0.0], dtype=jnp.float64)
             else:
+                sqrt_half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float64))
                 base_pose = jnp.array(
-                    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64
+                    [sqrt_half, 0.0, -sqrt_half, 0.0, 0.0, 0.0, 0.0],
+                    dtype=jnp.float64,
                 )
         if self.is_planar:
             validate_planar_base_pose("base_pose", base_pose)
@@ -126,6 +136,8 @@ class SoftRobot(DynamicalSystem):
         self.num_integration_points = None
         self.integration_points = None
         self.integration_weights = None
+        self.actuators = ()
+        self.passive_elements = ()
         if eps is not None:
             self.global_eps = eps
         else:
@@ -140,6 +152,80 @@ class SoftRobot(DynamicalSystem):
         without such caches can inherit this no-op implementation.
         """
         return None
+
+    def _configure_actuation(
+        self,
+        actuators: Actuator | tuple[Actuator, ...] | None,
+        passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
+    ) -> None:
+        """Install immutable actuator/passive components after DOFs are known."""
+        if actuators is None:
+            normalized_actuators = (IdentityActuator(self.num_dofs),)
+        elif isinstance(actuators, Actuator):
+            normalized_actuators = (actuators,)
+        else:
+            normalized_actuators = tuple(actuators)
+        if any(not isinstance(actuator, Actuator) for actuator in normalized_actuators):
+            raise TypeError("actuators must contain only Actuator instances.")
+
+        if passive_elements is None:
+            normalized_passive = ()
+        elif isinstance(passive_elements, PassiveElement):
+            normalized_passive = (passive_elements,)
+        else:
+            normalized_passive = tuple(passive_elements)
+        if any(
+            not isinstance(element, PassiveElement) for element in normalized_passive
+        ):
+            raise TypeError(
+                "passive_elements must contain only PassiveElement instances."
+            )
+
+        for component in (*normalized_actuators, *normalized_passive):
+            component.validate_for_robot(self)
+
+        self.actuators = normalized_actuators
+        self.passive_elements = normalized_passive
+        self.num_actuators = sum(actuator.num_channels for actuator in self.actuators)
+
+    @property
+    def actuator_input_metadata(self) -> tuple[ActuatorMetadata, ...]:
+        """Metadata groups in the same order used to concatenate controls."""
+        return tuple(actuator.metadata for actuator in self.actuators)
+
+    def with_actuator_params(self, index: int, params) -> "SoftRobot":
+        """Return a robot with one actuator's complete parameter object replaced."""
+        if not 0 <= index < len(self.actuators):
+            raise IndexError(f"actuator index {index} is out of range.")
+        actuators = list(self.actuators)
+        actuators[index] = actuators[index].with_params(params)
+        actuators[index].validate_for_robot(self)
+        return eqx.tree_at(lambda robot: robot.actuators, self, tuple(actuators))
+
+    def update_actuator_params(self, index: int, **updates) -> "SoftRobot":
+        """Return a robot with selected fields of one actuator's params replaced."""
+        if not 0 <= index < len(self.actuators):
+            raise IndexError(f"actuator index {index} is out of range.")
+        return self.with_actuator_params(
+            index, self.actuators[index].params.replace(**updates)
+        )
+
+    def with_passive_element_params(self, index: int, params) -> "SoftRobot":
+        """Return a robot with one passive element's complete params replaced."""
+        if not 0 <= index < len(self.passive_elements):
+            raise IndexError(f"passive element index {index} is out of range.")
+        elements = list(self.passive_elements)
+        elements[index] = elements[index].with_params(params)
+        elements[index].validate_for_robot(self)
+        return eqx.tree_at(lambda robot: robot.passive_elements, self, tuple(elements))
+
+    def update_passive_element_params(self, index: int, **updates) -> "SoftRobot":
+        """Return a robot with selected passive-element parameter fields replaced."""
+        if not 0 <= index < len(self.passive_elements):
+            raise IndexError(f"passive element index {index} is out of range.")
+        return self.with_passive_element_params(
+            index, self.passive_elements[index].params.replace(**updates)
+        )
 
     @property
     def length(self) -> Array:
@@ -157,6 +243,11 @@ class SoftRobot(DynamicalSystem):
     def is_planar(self) -> bool:
         """Return True for planar (SE(2)) robots, False for spatial (SE(3))."""
         ...
+
+    @property
+    def supports_articulated_tendon_routing(self) -> bool:
+        """Whether joint indices describe a serial articulated routing topology."""
+        return False
 
     @property
     def base_transform(self) -> Array:
@@ -915,39 +1006,90 @@ class SoftRobot(DynamicalSystem):
         """
         return grad(lambda q_: self._gravitational_energy(q_))(q)
 
-    @eqx.filter_jit
+    def actuator_coordinates(self, q: Array) -> Array:
+        """Return all work-conjugate actuator coordinates in control order."""
+        if not self.actuators:
+            return jnp.zeros((0,), dtype=q.dtype)
+        return jnp.concatenate(
+            tuple(actuator.coordinates(self, q) for actuator in self.actuators)
+        )
+
+    def actuator_velocities(self, q: Array, qd: Array) -> Array:
+        """Return all actuator-coordinate velocities in control order."""
+        if not self.actuators:
+            return jnp.zeros((0,), dtype=q.dtype)
+        return jnp.concatenate(
+            tuple(actuator.velocities(self, q, qd) for actuator in self.actuators)
+        )
+
     def actuation_matrix(self, q: Array) -> Array:
-        """
-        Compute the actuation matrix of the robot.
+        """Return the concatenated transmission moment matrix."""
+        if not self.actuators:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        return jnp.concatenate(
+            tuple(actuator.moment_matrix(self, q) for actuator in self.actuators),
+            axis=1,
+        )
 
-        Args:
-            q (Array): generalized coordinates of shape (num_dofs,).
+    def actuator_efforts(self, q: Array, u: Array, qd: Array | None = None) -> Array:
+        """Map ordered user controls to ordered work-conjugate efforts."""
+        if qd is None:
+            qd = jnp.zeros_like(q)
+        u = jnp.asarray(u)
+        if u.shape != (self.num_actuators,):
+            raise ValueError(
+                f"u must have shape ({self.num_actuators},), got {u.shape}."
+            )
+        if not self.actuators:
+            # Legacy SoftRobot subclasses may provide their own actuation_matrix
+            # without installing composable actuator objects.
+            return u
+        efforts = []
+        start = 0
+        for actuator in self.actuators:
+            stop = start + actuator.num_channels
+            efforts.append(actuator.efforts(self, q, u[start:stop], qd=qd))
+            start = stop
+        return jnp.concatenate(tuple(efforts))
 
-        Returns:
-            A (Array): Actuation matrix of shape (num_dofs, num_actuators).
-        """
-        A = jnp.zeros((self.num_dofs, self.num_actuators))
-        return A
+    def actuation_force(self, q: Array, u: Array, qd: Array | None = None) -> Array:
+        """Return generalized actuation force ``A(q) @ effort``."""
+        return self.actuation_matrix(q) @ self.actuator_efforts(q, u, qd=qd)
 
-    @eqx.filter_jit
-    def actuation_force(self, q: Array, u: Array) -> Array:
-        """
-        Compute the actuation force acting on the robot.
+    def passive_elastic_force(self, q: Array) -> Array:
+        """Return the sum of installed passive conservative forces."""
+        force = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        for element in self.passive_elements:
+            force = force + element.elastic_force(self, q)
+        return force
 
-        Args:
-            q (Array): generalized coordinates of shape (num_dofs,).
-            u (Array): actuation/control input of shape (num_actuators,).
+    def passive_damping_matrix(self, q: Array) -> Array:
+        """Return the sum of installed passive damping matrices."""
+        matrix = jnp.zeros((self.num_dofs, self.num_dofs), dtype=q.dtype)
+        for element in self.passive_elements:
+            matrix = matrix + element.damping_matrix(self, q)
+        return matrix
 
-        Returns:
-            tau_u (Array): Actuation force of shape (num_dofs, ).
-        """
-        # evaluate the actuation matrix
-        A = self.actuation_matrix(q)
+    def passive_elastic_energy(self, q: Array) -> Array:
+        """Return the sum of installed passive elastic energies."""
+        energy = jnp.zeros((), dtype=q.dtype)
+        for element in self.passive_elements:
+            energy = energy + element.elastic_energy(self, q)
+        return energy
 
-        # compute the actuation force
-        tau_u = A @ u
+    def actuator_visual_layers(
+        self,
+        q: Array,
+        s_points: Array,
+        *,
+        actuator_inputs: Array | None = None,
+    ):
+        """Return semantic active and passive actuator geometry for renderers."""
+        from soromox.rendering.actuation import actuator_visual_layers
 
-        return tau_u
+        return actuator_visual_layers(
+            self, q, s_points, actuator_inputs=actuator_inputs
+        )
 
     # -----------------------------------------
     # Energy methods
@@ -1320,7 +1462,7 @@ class SoftRobot(DynamicalSystem):
         M, Cqd, G = self.dynamics_terms(q, qd)
         K = self.elastic_force(q)
         D = self.damping_matrix(q)
-        tau_u = self.actuation_force(q, u)
+        tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
         qdd = jnp.linalg.solve(M, rhs)

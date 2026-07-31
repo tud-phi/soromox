@@ -103,7 +103,7 @@ After installing the Ruff extension, your code will be automatically formatted a
 
 Ruff is configured in `pyproject.toml` with the following key settings:
 - Line length: 88 characters
-- Target Python version: 3.10+
+- Target Python version: 3.11+
 - Enabled lint rules: pycodestyle, Pyflakes, isort, flake8-bugbear, and more
 - Quote style: double quotes
 - Import organization: first-party imports from `soromox`

@@ -31,14 +31,7 @@ if __name__ == "__main__":
         (num_segments,)
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
-    damping_matrix = 1e-3 * jnp.diag(
-        (
-            jnp.repeat(
-                jnp.array([[1e0, 1e0, 1e0, 1e3, 1e3, 1e3]]), num_segments, axis=0
-            )
-            * segment_lengths[:, None]
-        ).flatten()
-    )
+    material_damping_coefficient = 362.0
     params = PCSParams(
         base_pose=jnp.array(
             [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
@@ -49,7 +42,7 @@ if __name__ == "__main__":
         gravity=jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
         young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
         shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        damping_matrix=damping_matrix,
+        material_damping_coefficient=material_damping_coefficient,
         reference_strain=jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         ),
@@ -185,7 +178,7 @@ if __name__ == "__main__":
     # ViserRenderer provides interactive 3D visualization in the browser
     # with GUI controls for playback, speed, and looping.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
-    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer = ViserRenderer(robot, num_points=50)
 
     # Create custom strain plots for PCS
     # Reshape to (T, num_segments, 6)

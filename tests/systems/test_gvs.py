@@ -6,11 +6,10 @@ from jax import Array, jacfwd, jacrev, jvp
 from numpy.testing import assert_allclose
 from system_param_builders import (
     gvs_params_from_segments,
-    pcs_params,
     spatial_base_pose,
 )
 
-from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSStructure
+from soromox.systems import CrossSectionGeometry, GVS, PCS, PCSParams, PCSStructure
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.lie_algebra import se3
 from soromox.utils.tolerance import Tolerance
@@ -24,7 +23,11 @@ ATOL = Tolerance.atol()
 NUM_RANDOM_SAMPLES = 5
 
 
-def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS, PCS]:
+def build_matched_gvs_pcs(
+    num_segments: int = 1,
+    n_gauss: int = 5,
+    material_damping_coefficient: float = 0.0,
+) -> tuple[GVS, PCS]:
     """
     Build a GVS model with constant-strain basis (monomial order 0) and fixed joints
     and a PCS model with the same physical parameters, so their predictions match.
@@ -52,7 +55,7 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
                 E=float(E[i]),
                 nu=float(nu[i]),
                 rho=float(rhos[i]),
-                eta=0.0,  # no damping in this cross-model comparison
+                eta=material_damping_coefficient,
                 L=float(Ls[i]),
                 r_i=float(rs[i]),
                 r_f=float(rs[i]),
@@ -79,7 +82,7 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
     robot_gvs = GVS(params=gvs_params, structure=gvs_structure)
 
     # PCS definition with identical geometry and material params
-    params = pcs_params(
+    params = PCSParams(
         base_pose=spatial_base_pose(),
         length=Ls,
         radius=rs,
@@ -87,7 +90,9 @@ def build_matched_gvs_pcs(num_segments: int = 1, n_gauss: int = 5) -> tuple[GVS,
         gravity=g,
         young_modulus=E,
         shear_modulus=Gpcs,
-        damping_matrix=jnp.zeros((6 * num_segments, 6 * num_segments)),
+        material_damping_coefficient=jnp.asarray(
+            material_damping_coefficient, dtype=jnp.float64
+        ),
         reference_strain=jnp.tile(
             jnp.array([0, 0, 0, 1, 0, 0]), (num_segments, 1)
         ).reshape(6 * num_segments),
@@ -136,6 +141,37 @@ def test_params_from_segments_stores_resolved_max_dof():
         oversized.validate_against_structure(structure)
     with pytest.raises(ValueError, match="joint_stiffness"):
         GVS(params=oversized, structure=structure)
+
+
+def test_params_from_segments_uses_spatial_environment_defaults():
+    segment = GVSSegment(
+        link=LinkSpec(
+            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
+            E=1e6,
+            nu=0.45,
+            rho=1000.0,
+            eta=0.0,
+            L=0.2,
+            r_i=0.02,
+            r_f=0.02,
+        ),
+        joint=JointSpec(type="fixed"),
+        basis=StrainBasisSpec(
+            type="monomial",
+            active=[1, 1, 1, 1, 1, 1],
+            orders=[0, 0, 0, 0, 0, 0],
+            xi_ref=[0, 0, 0, 1, 0, 0],
+        ),
+        num_gauss_points=5,
+    )
+
+    params, _ = GVS.params_from_segments([segment])
+
+    assert_allclose(
+        params.base_pose,
+        jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+    )
+    assert_allclose(params.gravity, jnp.array([0.0, 0.0, -9.81]))
 
 
 def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
@@ -1781,6 +1817,33 @@ def test_strain_basis_consistency_kinematics_jacobians_and_dynamics(
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_gvs_pcs_coherence(num_segments: int) -> None:
     _assert_gvs_pcs_coherence(num_segments)
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+def test_constant_strain_material_damping_matches_pcs(num_segments: int) -> None:
+    material_damping_coefficient = 17.5
+    robot_gvs, robot_pcs = build_matched_gvs_pcs(
+        num_segments=num_segments,
+        material_damping_coefficient=material_damping_coefficient,
+    )
+    q = jnp.zeros((robot_gvs.num_dofs,), dtype=jnp.float64)
+
+    link_block_indices = []
+    for i in range(num_segments):
+        block_start = (2 * i + 1) * robot_gvs.max_dof
+        link_block_indices.extend(range(block_start, block_start + 6))
+    link_block_indices = jnp.asarray(link_block_indices)
+    D_gvs_link_full = robot_gvs.D_full[
+        link_block_indices[:, None], link_block_indices[None, :]
+    ]
+
+    assert_allclose(D_gvs_link_full, robot_pcs.D_full, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        robot_gvs.damping_matrix(q),
+        robot_pcs.damping_matrix(q),
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])

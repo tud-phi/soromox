@@ -1,8 +1,9 @@
-__all__ = ["ImpedanceControlTracker"]
+__all__ = ["FeedbackLinearizationMode", "ImpedanceControlTracker"]
 
 import warnings
-from typing import Any
+from typing import Any, Literal
 
+import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
@@ -19,30 +20,57 @@ from soromox.coordinate_transformations.operational_space_dynamics import (
 )
 from soromox.systems.system_state import SystemState
 
+FeedbackLinearizationMode = Literal["full", "partial"]
+
 
 class ImpedanceControlTracker(OperationalSpaceBaseController):
     """
     Operational-space impedance controller for soft robots.
 
-    This controller implements partial feedback linearization to cancel the original
-    task dynamics and replace them with a new set of linear dynamics in operational
-    space. The closed-loop dynamics in operational space become:
+    This controller supports two feedback-linearization modes:
 
-        Λ ẍ + D_x ẋ + K_x (x - x^d) = 0
+    - ``"full"`` cancels the complete task-space Coriolis/centrifugal force.
+      For a moving reference, the local closed-loop error dynamics become
+      ``Λ ë_x + D_x ė_x + K_x e_x = 0``.
+    - ``"partial"`` cancels only the null-space Coriolis coupling
+      ``μ_x (I - J_bar J) q̇``. It preserves the natural task-space term
+      ``μ_x J_bar ẋ`` instead of fully linearizing it.
 
-    where Λ is the operational space inertia matrix, D_x is the desired damping,
-    K_x is the desired stiffness, and x^d is the reference position.
+    Historical provenance:
+        - The ``"partial"`` mode follows the Cartesian impedance structure
+          proposed by Della Santina et al. (2020, Sec. 3.3, Eqs. 49 and
+          56--60). That law compensates coupling from the residual/null-space
+          dynamics while deliberately retaining the natural task-space
+          Coriolis term. This implementation extends the paper's set-point
+          formulation with desired velocity and acceleration feedforward for
+          moving-reference tracking.
+        - The ``"full"`` mode is a Khatib-style operational-space nonlinear
+          dynamic-decoupling variant (Khatib, 1987, Sec. IV, Eqs. 29--31):
+          it compensates the complete task-space Coriolis/centrifugal force
+          before applying desired acceleration and tracking feedback. It is
+          not a verbatim reproduction of Khatib's controller. Here the
+          stiffness and damping are physical task-space impedance forces, so
+          the closed-loop error dynamics retain the operational-space inertia
+          ``Λ`` rather than being presented as unit-mass dynamics.
+
+    Here, Λ is the operational-space inertia matrix, D_x is the desired damping,
+    K_x is the desired stiffness, and ``e_x`` is the geometric correction from
+    the current pose to the desired pose. Full linearization is the default.
 
     The control law is:
 
         τ = A^{-1}(q) [
             J^T(q) J_bar^T(q) (τ_el(q) + D(q) q̇)     (Cancel elastic & damping forces on task)
             + G(q)                                    (Cancel gravity)
-            + J^T(q) μ_x(q,q̇) (I - J_bar(q) J(q)) q̇   (Cancel null-space Coriolis coupling to task)
-            + J^T(q) (K_x (x^d - x) - D_x ẋ)         (PD for shaping operational space impedance)
+            + J^T(q) f_μ(q,q̇)                        (Selected Coriolis cancellation)
+            + J^T(q) Λ(q) ẍ^d                         (Reference acceleration feedforward)
+            + J^T(q) (K_x e_x + D_x (ẋ^d - ẋ))       (Desired task impedance)
         ]
 
-    where:
+    where ``f_μ = μ_x q̇`` in full mode and
+    ``f_μ = μ_x (I - J_bar J) q̇`` in partial mode.
+
+    with:
         - A(q) is the actuation matrix (must be square and invertible)
         - J(q) is the operational space Jacobian
         - J_bar(q) = M^{-1} J^T Λ is the dynamically-consistent pseudo-inverse
@@ -54,6 +82,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         - K_x is the operational space stiffness gain matrix
         - D_x is the operational space damping gain matrix
         - x^d is the desired operational space position
+        - ẋ^d and ẍ^d are the desired operational space velocity and acceleration
         - x is the current operational space position
         - ẋ is the current operational space velocity
 
@@ -72,11 +101,14 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         reference_trajectory: The desired trajectory in operational space.
         K_x: Operational space stiffness gain matrix, shape (o, o) or (o,).
         D_x: Operational space damping gain matrix, shape (o, o) or (o,).
+        feedback_linearization: Coriolis cancellation mode, either ``"full"``
+            or ``"partial"``.
 
     References:
         Khatib, O. (1987). A unified approach for motion and force control of robot
         manipulators: The operational space formulation. IEEE Journal on Robotics
         and Automation, 3(1), 43-53.
+        https://doi.org/10.1109/JRA.1987.1087068
 
         Ott, C. (2008). Cartesian impedance control of redundant and flexible-joint robots. Springer.
 
@@ -84,6 +116,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         Model-based dynamic feedback control of a planar soft robot: trajectory
         tracking and interaction with the environment. The International Journal
         of Robotics Research, 39(4-5), 490-513.
+        https://doi.org/10.1177/0278364919897292
 
         Stölzle, M. (2025). Safe yet Precise Soft Robots: Incorporating Physics
         into Learned Models for Control. Dissertation, Delft University of Technology.
@@ -92,6 +125,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
 
     K_x: Array  # Operational space stiffness gain
     D_x: Array  # Operational space damping gain
+    feedback_linearization: FeedbackLinearizationMode = eqx.field(static=True)
 
     def __init__(
         self,
@@ -99,6 +133,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         reference_trajectory: ReferenceTrajectory,
         K_x: float | Array,
         D_x: float | Array,
+        feedback_linearization: FeedbackLinearizationMode = "full",
     ):
         """
         Initialize the operational-space impedance controller.
@@ -108,9 +143,10 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
                 defines the task space and provides transformations between
                 configuration and operational space.
             reference_trajectory: The desired trajectory in operational space.
-                Must provide x_des_fn (desired position) and xd_des_fn (desired
-                velocity) as functions of time. The trajectory dimension must match
-                the operational space dimension (n_operational_space).
+                Must provide desired pose, velocity, and acceleration functions.
+                ``ReferenceTrajectory`` derives missing velocity and acceleration
+                functions automatically. The trajectory dimension must match the
+                operational space dimension (n_operational_space).
             K_x: Operational space stiffness gain. Can be:
                 - A scalar (float): applied uniformly to all operational space dimensions.
                 - A 1-d array of shape (o,): diagonal stiffness.
@@ -118,9 +154,14 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
                 Should be positive definite for stability.
             D_x: Operational space damping gain. Same format options as K_x.
                 Should be positive definite for stability.
+            feedback_linearization: Coriolis cancellation mode:
+                - ``"full"`` cancels all task-space Coriolis/centrifugal forces.
+                - ``"partial"`` cancels only their null-space contribution.
+                Defaults to ``"full"``.
 
         Raises:
-            ValueError: If the actuation matrix is not square or not invertible.
+            ValueError: If the feedback-linearization mode is unknown, or if the
+                actuation matrix is not square or not invertible.
         """
         self.operational_space_dynamics = operational_space_dynamics
         self.reference_trajectory = reference_trajectory
@@ -130,6 +171,12 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         n_op = operational_space_dynamics.n_operational_space
         self.K_x = self._process_gain(K_x, n_op, "K_x")
         self.D_x = self._process_gain(D_x, n_op, "D_x")
+        if feedback_linearization not in ("full", "partial"):
+            raise ValueError(
+                "feedback_linearization must be either 'full' or 'partial', "
+                f"got {feedback_linearization!r}."
+            )
+        self.feedback_linearization = feedback_linearization
 
         # Check that the actuation matrix is square and invertible
         self._check_actuation()
@@ -192,9 +239,9 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         """
         Compute the operational-space impedance control action.
 
-        This method implements the full operational-space impedance control law
-        that cancels elastic, damping, gravitational, and Coriolis forces while
-        injecting the desired operational-space impedance behavior.
+        This method cancels elastic, damping, and gravitational forces, applies
+        the selected Coriolis cancellation mode, and injects the desired
+        operational-space impedance behavior.
 
         Args:
             system_state: The current state of the system, containing:
@@ -213,33 +260,32 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
 
         # Get operational space dynamics instance and robot
         osd = self.operational_space_dynamics
-        n_dof = self.robot.num_dofs
-
         # Get reference trajectory at current time
         # IMPORTANT: The reference trajectory should provide FULL poses (all points,
         # all dimensions), not task-selected pose components. Some components may be ignored
         # by the controller based on task selection.
         # - x_des_full: shape (n_points * n_pose_dim,) - full pose
         # - xd_des_full: shape (n_points * n_velocity_dim,) - full velocity
+        # - xdd_des_full: shape (n_points * n_velocity_dim,) - full acceleration
         assert self.reference_trajectory.x_des_fn is not None
         assert self.reference_trajectory.xd_des_fn is not None
+        assert self.reference_trajectory.xdd_des_fn is not None
         x_des_full = self.reference_trajectory.x_des_fn(t)
         xd_des_full = self.reference_trajectory.xd_des_fn(t)
+        xdd_des_full = self.reference_trajectory.xdd_des_fn(t)
 
-        # Apply task selection to velocity trajectory
-        # (velocity space is where the Jacobian and dynamics operate)
+        # Apply task selection in the velocity/acceleration tangent space.
         xd_des = osd.B_task.T @ xd_des_full
+        xdd_des = osd.B_task.T @ xdd_des_full
 
         # Compute operational space quantities
-        J, Jd = osd.jacobian_and_time_derivative(q, qd)
+        J, _ = osd.jacobian_and_time_derivative(q, qd)
         J_bar = osd.dynamically_consistent_pseudoinverse(q)
+        Lambda = osd.inertia_matrix(q)
 
         # Current operational space FULL pose (for error computation) and task-selected velocity
         x_full = osd.operational_space_poses(q)
         xd = J @ qd  # Task-selected velocity
-
-        # Null-space projector: N = I - J_bar @ J
-        N = jnp.eye(n_dof) - J_bar @ J
 
         # Configuration-space forces
         tau_el = self.robot.elastic_force(q)  # Elastic force
@@ -258,17 +304,21 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         # 2. Cancel gravity
         tau_cancel_gravity = G
 
-        # 3. Cancel null-space Coriolis coupling to task
-        # The null-space Coriolis coupling term cancels the effect of null-space
-        # motions on the task dynamics through the Coriolis matrix.
-        # From the formula: J^T @ Lambda @ (J @ M^{-1} @ C - Jd) @ N @ qd
-        # tau_cancel_coriolis = J.T @ mu_x @ qd_null
-        # This projects the null-space Coriolis force to the task space and then back.
+        # 3. Select the Coriolis/centrifugal cancellation. Partial feedback
+        # linearization removes only the null-space velocity contribution,
+        # whereas full feedback linearization removes the complete task force.
         mu_x = osd.mu_x(q, qd)
-        qd_null = N @ qd  # Null-space velocity
-        tau_cancel_coriolis = J.T @ mu_x @ qd_null
+        if self.feedback_linearization == "full":
+            qd_coriolis = qd
+        else:
+            null_space_projector = jnp.eye(q.shape[0], dtype=q.dtype) - J_bar @ J
+            qd_coriolis = null_space_projector @ qd
+        tau_cancel_coriolis = J.T @ (mu_x @ qd_coriolis)
 
-        # 4. PD control in operational space
+        # 4. Feed forward the desired task acceleration.
+        tau_feedforward = J.T @ (Lambda @ xdd_des)
+
+        # 5. PD control in operational space
         # tau_pd = J^T @ (K_x @ e_x + D_x @ ed_x)
         #
         # IMPORTANT: For orientation, we use the geometric error (shortest path)
@@ -294,7 +344,11 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
 
         # Total generalized torque
         tau_control = (
-            tau_cancel_task + tau_cancel_gravity + tau_cancel_coriolis + tau_pd
+            tau_cancel_task
+            + tau_cancel_gravity
+            + tau_cancel_coriolis
+            + tau_feedforward
+            + tau_pd
         )
 
         # Get the actuation matrix and compute actuator input

@@ -89,6 +89,27 @@ class SoftRobot(DynamicalSystem):
         ...
 ```
 
+#### Soft-Robot Parameter Classes
+
+Parameter classes derived from `BaseSoftRobotParams` declare their world-frame
+dimensionality explicitly:
+
+```python
+from typing import ClassVar
+from soromox.systems import BaseSoftRobotParams
+
+class MyPlanarParams(BaseSoftRobotParams):
+    is_planar: ClassVar[bool] = True
+    # Additional numeric fields...
+```
+
+Use `False` for SE(3) systems. This mirrors the `SoftRobot.is_planar` property
+and lets the base class materialize
+the upright pose and negative-vertical Earth gravity when those keyword inputs
+are omitted, and provides inherited `.horizontal(...)`, `.upright(...)`, and
+`.hanging(...)` constructors. Do not infer the convention from an input array
+shape. Explicit `base_pose` and `gravity` values continue to override defaults.
+
 ### Step-by-Step: Implementing a New System
 
 #### 1. Choose Your Base Class
@@ -1052,10 +1073,8 @@ params = PlanarPCSParams(
     density=jnp.array([1000.0, 1000.0, 1000.0]),
     young_modulus=jnp.array([1e6, 1e6, 1e6]),
     shear_modulus=jnp.array([1e5, 1e5, 1e5]),
-    damping_matrix=jnp.eye(9),
-    gravity=jnp.array([0.0, -9.81]),
+    material_damping_coefficient=jnp.array([318.0, 318.0, 318.0]),
     reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 3),
-    base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
 )
 robot = PlanarPCS(params=params)
 
@@ -1129,7 +1148,12 @@ class OperationalSpaceController(ClosedFormModelBasedController):
 
 #### Actuation-Space Controllers
 
-Operate directly in actuation coordinates (tendon lengths, pressures):
+New actuator modalities should implement the composable `Transmission` and
+`EffortModel` contracts described in the
+[actuation model](../api/actuation/index.md), rather than introducing a new
+continuum host subclass.
+
+Operate directly in the transmission's work coordinates:
 
 ```python
 class ActuationSpaceController(ClosedFormModelBasedController):
@@ -1138,11 +1162,11 @@ class ActuationSpaceController(ClosedFormModelBasedController):
         num_dofs = self.robot.num_dofs
         q = system_state.y[:num_dofs]
 
-        # Get actuation coordinates (e.g., tendon lengths)
-        if hasattr(self.robot, 'tendon_length'):
-            l = self.robot.tendon_length(q)
-            # Compute directly in actuation space
-            u = ...  # Your actuation-space control law
+        # Coordinates follow the installed transmissions. For a tendon preset,
+        # these are negative path lengths; raw lengths remain available from
+        # the threadlike actuator when needed.
+        y_a = self.robot.actuator_coordinates(q)
+        u = ...  # Your actuation-space control law using y_a
 
         return u, None
 ```

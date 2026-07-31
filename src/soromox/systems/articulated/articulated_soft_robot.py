@@ -7,6 +7,7 @@ import jax
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
+from soromox.actuation.core import Actuator, PassiveElement
 from soromox.systems.articulated.params import ArticulatedSoftRobotParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.lie_algebra import se3, so3
@@ -107,7 +108,14 @@ class ArticulatedSoftRobot(SoftRobot):
     q_ref_k: Array
     r: Array
 
-    def __init__(self, params: ArticulatedSoftRobotParams, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        params: ArticulatedSoftRobotParams,
+        *,
+        actuators: Actuator | tuple[Actuator, ...] | None = None,
+        passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
+        **kwargs: Any,
+    ) -> None:
         """Initialize an articulated soft robot from typed dynamic parameters."""
         if not isinstance(params, ArticulatedSoftRobotParams):
             raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
@@ -143,7 +151,6 @@ class ArticulatedSoftRobot(SoftRobot):
 
         self.num_links = int(n)
         self.num_dofs = self.num_links
-        self.num_actuators = self.num_links
 
         self.joint_screw = joint_screw
         self.g_parent_joint = g_parent_joint
@@ -166,11 +173,17 @@ class ArticulatedSoftRobot(SoftRobot):
             raise ValueError(f"joint_rest_configuration must have shape {(n,)}.")
         if self.r.shape != (n,):
             raise ValueError(f"radius must have shape {(n,)}.")
+        self._configure_actuation(actuators, passive_elements)
 
     @property
     def is_planar(self) -> bool:
         """Return False because this is a spatial SE(3) system."""
         return False
+
+    @property
+    def supports_articulated_tendon_routing(self) -> bool:
+        """The generalized coordinates form a serial articulated joint chain."""
+        return True
 
     @property
     def segment_length(self) -> Array:
@@ -686,7 +699,7 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Elastic force vector, shape `(num_links,)`.
         """
-        return self.K @ (q - self.q_ref_k)
+        return self.K @ (q - self.q_ref_k) + self.passive_elastic_force(q)
 
     @eqx.filter_jit
     def _elastic_energy(self, q: Array) -> Array:
@@ -700,7 +713,7 @@ class ArticulatedSoftRobot(SoftRobot):
             Elastic potential energy as a scalar.
         """
         dq = q - self.q_ref_k
-        return 0.5 * dq @ self.K @ dq
+        return 0.5 * dq @ self.K @ dq + self.passive_elastic_energy(q)
 
     @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:
@@ -713,33 +726,7 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Damping matrix, shape `(num_links, num_links)`.
         """
-        return self.D
-
-    @eqx.filter_jit
-    def actuation_matrix(self, q: Array) -> Array:
-        """
-        Return the direct joint actuation matrix.
-
-        Args:
-            q: Joint coordinates, shape `(num_links,)`.
-
-        Returns:
-            Identity actuation matrix, shape `(num_links, num_links)`.
-        """
-        return jnp.eye(self.num_links, dtype=q.dtype)
-
-    def actuation_force(self, q: Array, u: Array) -> Array:
-        """
-        Map joint inputs to generalized forces.
-
-        Args:
-            q: Joint coordinates, shape `(num_links,)`.
-            u: Joint actuation inputs, shape `(num_links,)`.
-
-        Returns:
-            Generalized actuation force, shape `(num_links,)`.
-        """
-        return self.actuation_matrix(q) @ u
+        return self.D + self.passive_damping_matrix(q)
 
     def _joint_armature(self, q: Array) -> Array:
         """
@@ -892,7 +879,7 @@ class ArticulatedSoftRobot(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((self.num_dofs,), dtype=y.dtype)
 
-        tau = self.actuation_force(q, u) + tau_ext
+        tau = self.actuation_force(q, u, qd=qd) + tau_ext
         qdd = self._aba_forward_accelerations(q, qd, tau)
         return jnp.concatenate([qd, qdd])
 

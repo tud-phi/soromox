@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import jax
 import pandas as pd
 import jax.numpy as jnp
@@ -9,15 +11,17 @@ from jax import Array
 import numpy as onp
 import seaborn as sns
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
+    GVS,
     CrossSectionGeometry,
     GVSSegment,
     JointSpec,
     LinkSpec,
-    LinearTendonRoutingParams,
     StrainBasisSpec,
-    TendonActuatedGVS,
 )
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 jax.config.update("jax_enable_x64", True)
 # print("JAX default backend:", jax.default_backend())
@@ -84,7 +88,7 @@ def compute_marker_errors(robot, u_batch, q0, measured_markers_batch, tau_batch)
 
 ###drawing plots
 def draw_robot_curve(
-    robot: TendonActuatedGVS,
+    robot: GVS,
     q: Array,
     num_points: int = 50,
 ):
@@ -101,7 +105,7 @@ def draw_robot_curve(
 ### SOFT ROBOT UTILITIES FUNCTIONS ###
 
 # ---- Marker prediction for a fixed q  ----
-def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
+def markers_from_q(robot: GVS, q: jnp.ndarray) -> jnp.ndarray:
     """
     Output [p1; p2; p3; p4] (12,), where:
       p1 @ s=0.1291 with offset [0,0, 0.025]
@@ -120,10 +124,12 @@ def markers_from_q(robot: TendonActuatedGVS, q: jnp.ndarray) -> jnp.ndarray:
     p4 = tip_at_s(robot.length, jnp.array([0.008, 0.0, 0.0]))
     return jnp.concatenate([p1, p2, p3, p4], axis=0)  # (12,)
 
-def solve_equilibrium_with_tau(robot: TendonActuatedGVS,
-                               u: jnp.ndarray,          # (na,)
-                               tau_ext: jnp.ndarray,    # (dof,)
-                               q0: jnp.ndarray):        # (dof,)
+def solve_equilibrium_with_tau(
+    robot: GVS,
+    u: jnp.ndarray,  # (na,)
+    tau_ext: jnp.ndarray,  # (dof,)
+    q0: jnp.ndarray,
+):  # (dof,)
     """
     Solve static equilibrium with an additive generalized external force tau_ext:
       K(q) q + G(q) - B(q) u - tau_ext = 0
@@ -141,11 +147,13 @@ def solve_equilibrium_with_tau(robot: TendonActuatedGVS,
     return optx.root_find(statics_eq_jit, solver, q0, (u, tau_ext), max_steps=200)
 
 
-def make_tau_loss_for_sample(robot: TendonActuatedGVS,
-                             u_i: jnp.ndarray,           # (na,)
-                             p_meas_i: jnp.ndarray,      # (12,)
-                             q0: jnp.ndarray,
-                             lambda_reg: float):
+def make_tau_loss_for_sample(
+    robot: GVS,
+    u_i: jnp.ndarray,  # (na,)
+    p_meas_i: jnp.ndarray,  # (12,)
+    q0: jnp.ndarray,
+    lambda_reg: float,
+):
 
     def loss_tau(tau):
 
@@ -169,13 +177,15 @@ def make_tau_loss_for_sample(robot: TendonActuatedGVS,
     return loss_tau
 
 
-def solve_tau_star_for_batch(robot: TendonActuatedGVS,
-                             u_batch: jnp.ndarray,                 # (na, M)
-                             measured_markers_batch: jnp.ndarray,  # (12, M)
-                             q0: jnp.ndarray,
-                             lambda_reg: float = 1e-6,
-                             steps: int = 50,
-                             lr: float = 1e-2):
+def solve_tau_star_for_batch(
+    robot: GVS,
+    u_batch: jnp.ndarray,  # (na, M)
+    measured_markers_batch: jnp.ndarray,  # (12, M)
+    q0: jnp.ndarray,
+    lambda_reg: float = 1e-6,
+    steps: int = 50,
+    lr: float = 1e-2,
+):
 
     M = u_batch.shape[1]
     dof = q0.shape[0]
@@ -306,7 +316,7 @@ if __name__ == "__main__":
                         [0.0, 0.0, 1.0]], dtype=jnp.float64)
     offset = jnp.array([-0.03, -0.013, 0.0], dtype=jnp.float64)
 
-    df = pd.read_csv("data/m1_u01.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u01.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[12:15]
@@ -321,7 +331,7 @@ if __name__ == "__main__":
     p3_m1u01 = res["p3_tr"]
     p4_m1u01 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u015.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u015.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -336,7 +346,7 @@ if __name__ == "__main__":
     p3_m1u015 = res["p3_tr"]
     p4_m1u015 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u02.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u02.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -351,7 +361,7 @@ if __name__ == "__main__":
     p3_m1u02 = res["p3_tr"]
     p4_m1u02 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u025.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u025.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[12:15]
@@ -366,7 +376,7 @@ if __name__ == "__main__":
     p3_m1u025 = res["p3_tr"]
     p4_m1u025 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u01.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u01.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -381,7 +391,7 @@ if __name__ == "__main__":
     p3_m2u01 = res["p3_tr"]
     p4_m2u01 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u015.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u015.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -396,7 +406,7 @@ if __name__ == "__main__":
     p3_m2u015 = res["p3_tr"]
     p4_m2u015 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u02.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u02.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -411,7 +421,7 @@ if __name__ == "__main__":
     p3_m2u02 = res["p3_tr"]
     p4_m2u02 = res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u025.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u025.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -426,7 +436,7 @@ if __name__ == "__main__":
     p3_m2u025 = res["p3_tr"]
     p4_m2u025 = res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u005.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u005.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -437,7 +447,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m1_005, p1_m1_005, p2_m1_005, p3_m1_005, p4_m1_005 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u012.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u012.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -448,7 +458,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m1_012, p1_m1_012, p2_m1_012, p3_m1_012, p4_m1_012 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m1_u018.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m1_u018.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -459,7 +469,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m1_018, p1_m1_018, p2_m1_018, p3_m1_018, p4_m1_018 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u005.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u005.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -470,7 +480,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m2_005, p1_m2_005, p2_m2_005, p3_m2_005, p4_m2_005 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u012.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u012.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -481,7 +491,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m2_012, p1_m2_012, p2_m2_012, p3_m2_012, p4_m2_012 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m2_u018.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m2_u018.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[3:6]
@@ -492,7 +502,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m2_018, p1_m2_018, p2_m2_018, p3_m2_018, p4_m2_018 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u001.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u001.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[6:9]
@@ -503,7 +513,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_01, p1_m12_01, p2_m12_01, p3_m12_01, p4_m12_01 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u002.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u002.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -514,7 +524,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_02, p1_m12_02, p2_m12_02, p3_m12_02, p4_m12_02 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u001002.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u001002.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -525,7 +535,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_0102, p1_m12_0102, p2_m12_0102, p3_m12_0102, p4_m12_0102 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u0015002.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u0015002.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[12:15]
@@ -536,7 +546,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_01502, p1_m12_01502, p2_m12_01502, p3_m12_01502, p4_m12_01502 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u002001.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u002001.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[12:15]
@@ -547,7 +557,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_0201, p1_m12_0201, p2_m12_0201, p3_m12_0201, p4_m12_0201 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u0020015.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u0020015.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -558,7 +568,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_02015, p1_m12_02015, p2_m12_02015, p3_m12_02015, p4_m12_02015 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u00100005.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u00100005.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -569,7 +579,7 @@ if __name__ == "__main__":
     res = _transform_points(pb, p1, p2, p3, p4, Rot, R_alg1, R_alg2, offset, dyn_sel=False)
     pb_m12_01005, p1_m12_01005, p2_m12_01005, p3_m12_01005, p4_m12_01005 = res["pb_tr"], res["p1_tr"], res["p2_tr"], res["p3_tr"], res["p4_tr"]
 
-    df = pd.read_csv("data/m12_u00050010.csv", header=None)
+    df = pd.read_csv(DATA_DIR / "m12_u00050010.csv", header=None)
     vals = df.iloc[:, 2:].to_numpy(dtype=float)
     filtered = jnp.asarray(vals.mean(axis=0))
     pb = filtered[9:12]
@@ -618,24 +628,32 @@ if __name__ == "__main__":
     num_gauss_points = [8, 8]
     g = [0.0, 0.0, -9.81]
 
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=jnp.array(
-            [0.0114 * jnp.cos(jnp.pi / 180 * 30), 0.0114 * jnp.cos(jnp.pi / 180 * 150)]
+    tendon_angles = jnp.deg2rad(jnp.array([30.0, 150.0]))
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=0.0114
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        y_slope=jnp.array(
-            [-0.0295 * jnp.cos(jnp.pi / 180 * 30), -0.0295 * jnp.cos(jnp.pi / 180 * 150)]
+        slope=-0.0295
+        * jnp.stack(
+            (
+                jnp.zeros_like(tendon_angles),
+                jnp.cos(tendon_angles),
+                jnp.sin(tendon_angles),
+            ),
+            axis=-1,
         ),
-        z_intercept=jnp.array(
-            [0.0114 * jnp.sin(jnp.pi / 180 * 30), 0.0114 * jnp.sin(jnp.pi / 180 * 150)]
-        ),
-        z_slope=jnp.array(
-            [-0.0295 * jnp.sin(jnp.pi / 180 * 30), -0.0295 * jnp.sin(jnp.pi / 180 * 150)]
-        ),
-        attachment_segment_index=jnp.array([0, 0]),
+        start_segment_index=0,
+        end_segment_index=(0, 0),
     )
     p0 = jnp.array([-jnp.pi / 2, jnp.pi / 2, jnp.pi / 2, 0.0, 0.0, 0.0])
 
-    robot = TendonActuatedGVS.from_segments(
+    robot = GVS.from_segments(
         [
             GVSSegment(
                 link=link1, joint=joint1, basis=basis1, num_gauss_points=num_gauss_points[0]
@@ -646,7 +664,7 @@ if __name__ == "__main__":
         ],
         gravity=jnp.asarray(g),
         base_pose=p0,
-        active_tendon_routing=active_tendon_routing,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
         scale_rotational_basis_by_length=True,
     )
 
@@ -687,35 +705,34 @@ if __name__ == "__main__":
     measured_markers_batch = jnp.stack(measured_list, axis=1)
     radius = 0.0325
 
-    def _neg(val):
-        return -float(val) / float(radius)
+    def _tension(val):
+        """Convert the applied load to a positive tendon tension."""
+        return float(val) / float(radius)
 
     # Define mapping from sample name to u
     sample_to_u = {
-        "m1u01":      jnp.array([_neg(0.1), 0.0]),
-        "m1u015":     jnp.array([_neg(0.15), 0.0]),
-        "m1u02":      jnp.array([_neg(0.2), 0.0]),
-        "m1u025":     jnp.array([_neg(0.25), 0.0]),
-        "m2u01":      jnp.array([0.0, _neg(0.1)]),
-        "m2u015":     jnp.array([0.0, _neg(0.15)]),
-        "m2u02":      jnp.array([0.0, _neg(0.2)]),
-        "m2u025":     jnp.array([0.0, _neg(0.25)]),
-
-        "m1_005":      jnp.array([_neg(0.05), 0.0]),
-        "m1_012":      jnp.array([_neg(0.12), 0.0]),
-        "m1_018":      jnp.array([_neg(0.18), 0.0]),
-        "m2_005":      jnp.array([0.0, _neg(0.05)]),
-        "m2_012":      jnp.array([0.0, _neg(0.12)]),
-        "m2_018":      jnp.array([0.0, _neg(0.18)]),
-
-        "m12_001":         jnp.array([_neg(0.1), _neg(0.1)]),
-        "m12_002":         jnp.array([_neg(0.2), _neg(0.2)]),
-        "m12_001002":      jnp.array([_neg(0.1), _neg(0.2)]),
-        "m12_0015002":     jnp.array([_neg(0.15), _neg(0.2)]),
-        "m12_002001":      jnp.array([_neg(0.2), _neg(0.1)]),
-        "m12_0020015":     jnp.array([_neg(0.2), _neg(0.15)]),
-        "m12_00100005":    jnp.array([_neg(0.1), _neg(0.05)]),
-        "m12_00050010":    jnp.array([_neg(0.05), _neg(0.1)]),
+        "m1u01": jnp.array([_tension(0.1), 0.0]),
+        "m1u015": jnp.array([_tension(0.15), 0.0]),
+        "m1u02": jnp.array([_tension(0.2), 0.0]),
+        "m1u025": jnp.array([_tension(0.25), 0.0]),
+        "m2u01": jnp.array([0.0, _tension(0.1)]),
+        "m2u015": jnp.array([0.0, _tension(0.15)]),
+        "m2u02": jnp.array([0.0, _tension(0.2)]),
+        "m2u025": jnp.array([0.0, _tension(0.25)]),
+        "m1_005": jnp.array([_tension(0.05), 0.0]),
+        "m1_012": jnp.array([_tension(0.12), 0.0]),
+        "m1_018": jnp.array([_tension(0.18), 0.0]),
+        "m2_005": jnp.array([0.0, _tension(0.05)]),
+        "m2_012": jnp.array([0.0, _tension(0.12)]),
+        "m2_018": jnp.array([0.0, _tension(0.18)]),
+        "m12_001": jnp.array([_tension(0.1), _tension(0.1)]),
+        "m12_002": jnp.array([_tension(0.2), _tension(0.2)]),
+        "m12_001002": jnp.array([_tension(0.1), _tension(0.2)]),
+        "m12_0015002": jnp.array([_tension(0.15), _tension(0.2)]),
+        "m12_002001": jnp.array([_tension(0.2), _tension(0.1)]),
+        "m12_0020015": jnp.array([_tension(0.2), _tension(0.15)]),
+        "m12_00100005": jnp.array([_tension(0.1), _tension(0.05)]),
+        "m12_00050010": jnp.array([_tension(0.05), _tension(0.1)]),
     }
 
     u_list = [
@@ -767,13 +784,13 @@ if __name__ == "__main__":
     # )  # (dof, M)
 
     # # # Save
-    # onp.save("data/tau_star_batch.npy", onp.asarray(tau_star_batch))
-    # onp.savetxt("data/tau_star_batch.txt", onp.asarray(tau_star_batch))
+    # onp.save(DATA_DIR / "tau_star_batch.npy", onp.asarray(tau_star_batch))
+    # onp.savetxt(DATA_DIR / "tau_star_batch.txt", onp.asarray(tau_star_batch))
 
     # Load (later)
-    tau_star_batch_1act1 = jnp.array(onp.load("data/tau_star_batch_1actpt1.npy"))
-    tau_star_batch_1act2 = jnp.array(onp.load("data/tau_star_batch_1actpt2.npy"))
-    tau_star_batch_2act = jnp.array(onp.load("data/tau_star_batch_2act.npy"))
+    tau_star_batch_1act1 = jnp.array(onp.load(DATA_DIR / "tau_star_batch_1actpt1.npy"))
+    tau_star_batch_1act2 = jnp.array(onp.load(DATA_DIR / "tau_star_batch_1actpt2.npy"))
+    tau_star_batch_2act = jnp.array(onp.load(DATA_DIR / "tau_star_batch_2act.npy"))
     tau_star_batch = jnp.concatenate([tau_star_batch_1act1,tau_star_batch_1act2, tau_star_batch_2act], axis=1)
 
     print("Identified tau* shape:", tau_star_batch.shape)
@@ -928,7 +945,7 @@ if __name__ == "__main__":
 
     # # Load model
     model = TauNN(in_dim=na, out_dim=dof, width=512, depth=4, key=jax.random.PRNGKey(0))
-    model = eqx.tree_deserialise_leaves("data/tau_nn_model.eqx", model)
+    model = eqx.tree_deserialise_leaves(DATA_DIR / "tau_nn_model.eqx", model)
 
     # Evaluate marker errors with tau_NN prediction
     tau_pred = []
@@ -975,7 +992,7 @@ if __name__ == "__main__":
 
 
     # Calculate RMS error per marker for initial parameters
-    errors_before_id = onp.asarray(onp.load("data/errors_before.npy"))
+    errors_before_id = onp.asarray(onp.load(DATA_DIR / "errors_before.npy"))
     errs_before_id = onp.asarray(errors_before_id).reshape(-1, 4, 3)  # (M, 4, 3)
     errnorms_before_id = onp.linalg.norm(errs_before_id, axis=2)      # (M, 4)
     errnorm_before_id_per_marker = onp.mean(errnorms_before_id, axis=0)  # RMS for each marker
@@ -1066,47 +1083,46 @@ if __name__ == "__main__":
     plt.show()
 
 
-# 1. Save Radar Plot Data (Directly using your variables)
-onp.save("data/errnorm_before_id.npy", errnorm_before_id_per_marker)
-onp.save("data/errnorm_zero.npy", errnorm_zero_per_marker)
-onp.save("data/errnorm_star.npy", errnorm_star_per_marker)
-onp.save("data/errnorm_pred.npy", errnorm_pred_per_marker)
+    # 1. Save Radar Plot Data (Directly using your variables)
+    onp.save(DATA_DIR / "errnorm_before_id.npy", errnorm_before_id_per_marker)
+    onp.save(DATA_DIR / "errnorm_zero.npy", errnorm_zero_per_marker)
+    onp.save(DATA_DIR / "errnorm_star.npy", errnorm_star_per_marker)
+    onp.save(DATA_DIR / "errnorm_pred.npy", errnorm_pred_per_marker)
 
-# 2. Derive and Save Overall RMSE for the Bar Plot
-rmse_overall = onp.array([
-    onp.mean(errnorm_before_id_per_marker),
-    onp.mean(errnorm_zero_per_marker),
-    onp.mean(errnorm_star_per_marker),
-    onp.mean(errnorm_pred_per_marker)
-])
-onp.save("data/rmse_overall.npy", rmse_overall)
+    # 2. Derive and Save Overall RMSE for the Bar Plot
+    rmse_overall = onp.array([
+        onp.mean(errnorm_before_id_per_marker),
+        onp.mean(errnorm_zero_per_marker),
+        onp.mean(errnorm_star_per_marker),
+        onp.mean(errnorm_pred_per_marker)
+    ])
+    onp.save(DATA_DIR / "rmse_overall.npy", rmse_overall)
 
-# 3. Save Violin Plot Data
-df_violin.to_csv("data/violin_data.csv", index=False)
+    # 3. Save Violin Plot Data
+    df_violin.to_csv(DATA_DIR / "violin_data.csv", index=False)
 
-# 4. Generate the missing tau=0 (Original) 3D shapes
-curves_zero_list = []
-markers_zero_list = []
+    # 4. Generate the missing tau=0 (Original) 3D shapes
+    curves_zero_list = []
+    markers_zero_list = []
 
-for m in range(M):
-    # Solve statics for the baseline (tau=0) case
-    res_zero = solve_equilibrium_with_tau(robot, u_batch[:, m], tau_zero_batch[:, m], q0)
-    
-    # Store the curve and predicted markers
-    curves_zero_list.append(draw_robot_curve(robot, res_zero.value, num_points=80))
-    markers_zero_list.append(markers_from_q(robot, res_zero.value).reshape(4, 3))
+    for m in range(M):
+        # Solve statics for the baseline (tau=0) case
+        res_zero = solve_equilibrium_with_tau(robot, u_batch[:, m], tau_zero_batch[:, m], q0)
 
-# 5. Format and Save 3D Data
-onp.save("data/curves_orig.npy", onp.array(curves_zero_list))
-onp.save("data/curves_tau_star.npy", onp.array(curves_list))
-onp.save("data/markers_orig.npy", onp.array(markers_zero_list))
+        # Store the curve and predicted markers
+        curves_zero_list.append(draw_robot_curve(robot, res_zero.value, num_points=80))
+        markers_zero_list.append(markers_from_q(robot, res_zero.value).reshape(4, 3))
 
-# Reformat the marker batches from (12, M) to (M, 4, 3) to match the plotting logic
-markers_star_reshaped = onp.array(predicted_markers_batch).T.reshape(M, 4, 3)
-onp.save("data/markers_tau_star.npy", markers_star_reshaped)
+    # 5. Format and Save 3D Data
+    onp.save(DATA_DIR / "curves_orig.npy", onp.array(curves_zero_list))
+    onp.save(DATA_DIR / "curves_tau_star.npy", onp.array(curves_list))
+    onp.save(DATA_DIR / "markers_orig.npy", onp.array(markers_zero_list))
 
-measured_reshaped = onp.array(measured_markers_batch).T.reshape(M, 4, 3)
-onp.save("data/measured_pts.npy", measured_reshaped)
+    # Reformat the marker batches from (12, M) to (M, 4, 3) to match the plotting logic
+    markers_star_reshaped = onp.array(predicted_markers_batch).T.reshape(M, 4, 3)
+    onp.save(DATA_DIR / "markers_tau_star.npy", markers_star_reshaped)
 
-print("All visualization data successfully exported to /data directory.")
+    measured_reshaped = onp.array(measured_markers_batch).T.reshape(M, 4, 3)
+    onp.save(DATA_DIR / "measured_pts.npy", measured_reshaped)
 
+    print("All visualization data successfully exported to /data directory.")

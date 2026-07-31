@@ -9,13 +9,12 @@ import numpy as onp
 from cbfpy.cbfs.clf_cbf import CLFCBFConfig
 from jax import Array
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer, RendererColorConfig
 from soromox.systems import (
-    LinearTendonRoutingParams,
+    PCS,
     PCSParams,
     SystemState,
-    TendonActuatedPCS,
-    TendonActuatedPCSParams,
 )
 
 plt.rcParams["pdf.fonttype"] = 42  # For editable text in Illustrator
@@ -74,7 +73,7 @@ def pairwise_h(
 # y = [q, qd]
 # ======================================================
 class SoftRobotDynamics:
-    def __init__(self, robot: TendonActuatedPCS):
+    def __init__(self, robot: PCS):
         self.robot = robot
         self.n_q = int(robot.num_active_strains)
         self.n_u = int(robot.num_actuators)
@@ -265,19 +264,32 @@ if __name__ == "__main__":
         ),
     )
 
-    active_tendon_routing = LinearTendonRoutingParams(
-        y_intercept=tendon_routing_params["ry"],
-        z_intercept=tendon_routing_params["rz"],
-        y_slope=tendon_routing_params["my"],
-        z_slope=tendon_routing_params["mz"],
-        attachment_segment_index=tendon_routing_params["idx_seg_att"],
+    active_tendon_routing = ThreadlikeRouting.linear(
+        intercept=jnp.stack(
+            (
+                jnp.zeros_like(tendon_routing_params["ry"]),
+                tendon_routing_params["ry"],
+                tendon_routing_params["rz"],
+            ),
+            axis=-1,
+        ),
+        slope=jnp.stack(
+            (
+                jnp.zeros_like(tendon_routing_params["my"]),
+                tendon_routing_params["my"],
+                tendon_routing_params["mz"],
+            ),
+            axis=-1,
+        ),
+        start_segment_index=0,
+        end_segment_index=tuple(
+            int(index) for index in tendon_routing_params["idx_seg_att"]
+        ),
     )
 
-    robot = TendonActuatedPCS(
-        params=TendonActuatedPCSParams(
-            body=body_params,
-            active_tendon_routing=active_tendon_routing,
-        )
+    robot = PCS(
+        params=body_params,
+        actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
     print("num_active_strains:", robot.num_active_strains)

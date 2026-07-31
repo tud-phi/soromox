@@ -8,11 +8,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import optimistix as optx
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
+    GVS,
     CrossSectionGeometry,
-    LinearTendonRoutingParams,
     SystemState,
-    TendonActuatedGVS,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
@@ -26,7 +26,7 @@ print("JAX devices:", jax.devices())
 
 
 # STATIC EQUILIBRIUM EQUATION SOLVER
-def solve_equilibrium(robot: TendonActuatedGVS, u: jnp.ndarray, q0: jnp.ndarray):
+def solve_equilibrium(robot: GVS, u: jnp.ndarray, q0: jnp.ndarray):
     def statics_eq(q, args):
         u = args
         K = robot.stiffness_matrix()
@@ -87,12 +87,10 @@ basis2 = StrainBasisSpec(
 num_gauss_points = [5, 5]
 g = [0.0, 0.0, -9.81]
 
-active_tendon_routing = LinearTendonRoutingParams(
-    y_intercept=jnp.array([0, 0.02 * 1]),
-    y_slope=jnp.array([0, 0]),
-    z_intercept=jnp.array([0.02 * 1, 0.0]),
-    z_slope=jnp.array([0, 0]),
-    attachment_segment_index=jnp.array([1, 1]),
+active_tendon_routing = ThreadlikeRouting.linear(
+    intercept=jnp.array([[0.0, 0.0, 0.02], [0.0, 0.02, 0.0]]),
+    start_segment_index=0,
+    end_segment_index=(1, 1),
 )
 
 
@@ -110,11 +108,11 @@ segments = [
         link=link2, joint=joint2, basis=basis2, num_gauss_points=num_gauss_points[1]
     ),
 ]
-robot = TendonActuatedGVS.from_segments(
+robot = GVS.from_segments(
     segments,
     gravity=jnp.asarray(g),
     base_pose=p0,
-    active_tendon_routing=active_tendon_routing,
+    actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     # max_dof=6,
     scale_rotational_basis_by_length=True,
 )
@@ -194,7 +192,7 @@ tau = robot.actuation_force(q0, u)
 # y = jnp.concatenate([q0, q0dot])
 tau_ext = 0 * jnp.ones((dof,))
 
-l_tendons = robot.tendon_length(q0)  # jax.Array (num_actuators,)
+l_tendons = robot.actuators[0].path_lengths(robot, q0)
 # print("tendon lengths (m):", jax.device_get(l_tendons))
 
 

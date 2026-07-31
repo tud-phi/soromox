@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -44,7 +45,18 @@ class ActuatorStyleConfig:
     """Default style configuration for rendered actuator visual layers."""
 
     default_color: tuple[float, float, float] = (0.9, 0.15, 0.15)
+    default_radius: float | None = None
     scalar_colormap: str = "viridis"
+    kind_colors: Mapping[str, tuple[float, float, float]] = field(default_factory=dict)
+    kind_radii: Mapping[str, float] = field(default_factory=dict)
+
+    def color_for_kind(self, kind: str) -> tuple[float, float, float]:
+        """Return the configured color for an actuator semantic kind."""
+        return self.kind_colors.get(kind, self.default_color)
+
+    def radius_for_kind(self, kind: str) -> float | None:
+        """Return the configured tube radius for an actuator semantic kind."""
+        return self.kind_radii.get(kind, self.default_radius)
 
 
 @dataclass(frozen=True)
@@ -207,6 +219,21 @@ def get_color_theme(name: str) -> RendererColorConfig:
     if name not in BUILTIN_THEMES:
         raise KeyError(f"Unknown theme {name!r}. Available: {sorted(BUILTIN_THEMES)}")
     return BUILTIN_THEMES[name]
+
+
+def validate_rgb(color: tuple[float, float, float], *, name: str = "color") -> None:
+    """Validate a normalized RGB tuple used by renderer configuration objects."""
+    try:
+        color_array = np.asarray(color, dtype=np.float64)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an RGB tuple with values in [0, 1].") from exc
+    if (
+        color_array.shape != (3,)
+        or not np.all(np.isfinite(color_array))
+        or np.any(color_array < 0.0)
+        or np.any(color_array > 1.0)
+    ):
+        raise ValueError(f"{name} must be an RGB tuple with values in [0, 1].")
 
 
 def ensure_rgba(colors: np.ndarray) -> np.ndarray:

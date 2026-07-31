@@ -17,7 +17,7 @@ name = "soromox"  # Required
 #
 # For a discussion on single-sourcing the version, see
 # https://packaging.python.org/guides/single-sourcing-package-version/
-version = "0.1.0"  # Required
+version = "0.2.0"  # Required
 
 # This is a one-line description or tagline of what your project does. This
 # corresponds to the "Summary" metadata field:
@@ -38,12 +38,13 @@ readme = "README.md" # Optional
 # 'Programming Language' classifiers above, 'pip install' will check this
 # and refuse to install the project if the version does not match. See
 # https://packaging.python.org/guides/distributing-packages-using-setuptools/#python-requires
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 
-# This is either text indicating the license for the distribution, or a file
-# that contains the license
+# Use an SPDX license expression and include the full license text in
+# distributions.
 # https://packaging.python.org/en/latest/specifications/core-metadata/#license
-license = {file = "LICENSE.txt"}
+license = "MIT"
+license-files = ["LICENSE.txt"]
 
 # This field adds keywords for your project which will appear on the
 # project page. What does your project relate to?
@@ -54,18 +55,24 @@ license = {file = "LICENSE.txt"}
 keywords = ["JAX", "Soft Robotics", "Kinematics", "Dynamics"]  # Optional
 
 # This should be your name or the name of the organization who originally
-# authored the project, and a valid email address corresponding to the name
-# listed.
+# authored the project. Email addresses are optional and intentionally omitted
+# from the package metadata.
 authors = [
-  {name = "Maximilian Stölzle", email = "maximilian@stoelzle.ch" },
-  {name = "Solange Gribonval", email = "solange.gribonval@polytechnique.edu" },
+  {name = "Maximilian Stölzle" },
+  {name = "Solange Gribonval" },
+  {name = "Daniel Feliu-Talegon" },
+  {name = "Vito Daniele Perfetta" },
+  {name = "Michele Martini" },
+  {name = "Chuhan Zhang" },
+  {name = "Kiwan Wong" },
+  {name = "Daniela Rus" },
+  {name = "Cosimo Della Santina" },
 ]
 
 # This should be your name or the names of the organization who currently
-# maintains the project, and a valid email address corresponding to the name
-# listed.
+# maintains the project. Public contact details live in the documentation.
 maintainers = [
-  {name = "Maximilian Stölzle", email = "maximilian@stoelzle.ch" } # Optional
+  {name = "Maximilian Stölzle" } # Optional
 ]
 
 # Classifiers help users find your project by categorizing it.
@@ -80,16 +87,13 @@ classifiers = [  # Optional
 
   # Indicate who your project is intended for
   "Intended Audience :: Developers",
-  "Topic :: Software Development :: Build Tools",
-
-  # Pick your license as you wish
-  "License :: OSI Approved :: MIT License",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering",
 
   # Specify the Python versions you support here. In particular, ensure
   # that you indicate you support Python 3. These classifiers are *not*
   # checked by "pip install". See instead "python_requires" below.
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -104,10 +108,10 @@ classifiers = [  # Optional
 # For an analysis of this field vs pip's requirements files see:
 # https://packaging.python.org/discussions/install-requires-vs-requirements/
 dependencies = [
-  "diffrax",
+  "diffrax>=0.7.2",
   "dill",
   "equinox",
-  "jax",
+  "jax>=0.10.0",
   "numpy",
   "scipy",
   "sympy",
@@ -194,10 +198,15 @@ rl = [
 test = [
     "codecov",
     "coverage[toml]",
+    "matplotlib",
+    "opencv-python",
+    "plotly",
     "pytest",
     "pytest-cov",
     "pytest-html",
     "tox",
+    "trimesh",
+    "viser",
 ]
 all = [
     "bump2version",
@@ -245,6 +254,8 @@ all = [
 # what's used to render the link text on PyPI.
 [project.urls]  # Optional
 "Homepage" = "https://github.com/tud-phi/soromox"
+"Documentation" = "https://tud-phi.github.io/soromox"
+"Changelog" = "https://tud-phi.github.io/soromox/development/changelog/"
 "Bug Reports" = "https://github.com/tud-phi/soromox/issues"
 "Source" = "https://github.com/tud-phi/soromox"
 
@@ -266,10 +277,35 @@ where = ["src"]  # list of folders that contain the packages (["."] by default)
 [tool.setuptools.package-data]
 soromox = ["symbolic_expressions/*.dill"]
 
+[tool.check-manifest]
+# The PyPI source distribution intentionally contains the installable package
+# and packaging metadata, not the repository's research data, examples, docs,
+# development tools, or generated media.
+ignore = [
+  ".flake8",
+  ".pre-commit-config.yaml",
+  ".vscode/**",
+  "CITATION.cff",
+  "Makefile",
+  "VERSION_BUMP_README.md",
+  "assets/**",
+  "benchmarks/**",
+  "bump_version.py",
+  "docs/**",
+  "examples/**",
+  "extract_changelog.py",
+  "mkdocs.yml",
+  "overrides/**",
+  "paper_results/**",
+  "tests/**",
+  "tools/**",
+  "uv.lock",
+]
+
 [build-system]
 # These are the assumed default build requirements from pip:
 # https://pip.pypa.io/en/stable/reference/pip/#pep-517-and-518-support
-requires = ["pip>=23.1", "setuptools>=68.0.0", "wheel"]
+requires = ["pip>=23.1", "setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 # ==================== Coverage Configuration ====================
@@ -283,7 +319,7 @@ skip_covered = true
 # ==================== Ruff Configuration ====================
 [tool.ruff]
 # Target Python version
-target-version = "py310"
+target-version = "py311"
 
 # Line length (same as Black)
 line-length = 88
@@ -316,7 +352,7 @@ select = [
 ignore = [
     "E501",   # line too long (handled by formatter)
     "B008",   # do not perform function calls in argument defaults
-    "B905",   # zip without strict= (Python 3.10+ only)
+    "B905",   # allow zip calls without an explicit strict= argument
     "SIM108", # use ternary operator instead of if-else
 ]
 

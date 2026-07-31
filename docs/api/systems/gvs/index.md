@@ -45,9 +45,9 @@ GVS systems generalize PCS by allowing arbitrary strain basis functions instead 
 
 Core 3D GVS implementation for generalized continuum robots.
 
-### [Tendon Actuated GVS](tendon-actuated-gvs.md)
-
-3D GVS robots with cable-driven actuation.
+`GVS` accepts the same composable `actuators=` interface as PCS. Routed tendons,
+pushing rods, muscles, and equivalent chambers are described in the
+[threadlike actuation guide](../../actuation/threadlike.md).
 
 !!! tip "GVS vs PCS"
     Use **PCS** when piecewise constant strain is sufficient. Use **GVS** when you need flexible basis functions, segment-specific joints, or hybrid soft-rigid parametrizations.

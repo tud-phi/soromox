@@ -19,9 +19,10 @@
 ## 🔧 Requirements
 
 !!! note "System Requirements"
-    - **Python** >= 3.10
-    - **JAX** >= 0.4.0
-    - **NumPy** >= 1.21.0
+    - **Python** >= 3.11
+    - **JAX** >= 0.10.0
+    - **Diffrax** >= 0.7.2
+    - **NumPy**
 
 !!! warning "Python Version Compatibility"
     - **Open3D Rendering**: Open3D rendering is currently not compatible with Python 3.13+
@@ -178,10 +179,8 @@ Test your installation with this quick verification script:
         density=jnp.array([1000.0]),
         young_modulus=jnp.array([1e6]),
         shear_modulus=jnp.array([1e5]),
-        damping_matrix=jnp.eye(3),
-        gravity=jnp.array([0.0, -9.81]),
+        material_damping_coefficient=jnp.array([318.0]),
         reference_strain=jnp.array([0.0, 1.0, 0.0]),
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     robot = PlanarPCS(params=params)
     robot.forward_kinematics(jnp.zeros(robot.num_dofs), s=0.1)
@@ -202,10 +201,8 @@ Test your installation with this quick verification script:
         density=jnp.array([1000.0, 1000.0]),
         young_modulus=jnp.array([1e6, 1e6]),
         shear_modulus=jnp.array([1e5, 1e5]),
-        damping_matrix=jnp.eye(6),
-        gravity=jnp.array([0.0, -9.81]),
+        material_damping_coefficient=jnp.array([318.0, 318.0]),
         reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 2),
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
     )
     robot = PlanarPCS(params=params)
 
@@ -238,9 +235,9 @@ Test your installation with this quick verification script:
         
         **Problem:** `ImportError` or compatibility issues
         
-        **Solution:** Ensure you're using Python 3.10 or later:
+        **Solution:** Ensure you're using Python 3.11 or later:
         ```bash
-        python --version  # Should be >= 3.10
+        python --version  # Should be >= 3.11
         ```
 
     === "📦 JAX Installation"

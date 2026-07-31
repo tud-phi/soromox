@@ -9,7 +9,7 @@
 [![Test](https://github.com/tud-phi/soromox/actions/workflows/test.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/test.yml)
 [![Documentation](https://github.com/tud-phi/soromox/actions/workflows/docs.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/docs.yml)
 [![PyPI version](https://badge.fury.io/py/soromox.svg)](https://badge.fury.io/py/soromox)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
 [![Coverage](https://img.shields.io/badge/coverage-local%20report-blue.svg)](#running-tests-with-coverage)
@@ -29,7 +29,7 @@ SoRoMoX includes strain-based continuum models for slender structures (Cosserat 
 | System Type | Variants |
 |-------------|----------|
 | Articulated Systems | [Pendulum](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated Pendulum](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py), [Articulated Soft Robot](examples/simulation/articulated/simulate_articulated_soft_robot.py) |
-| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Tendon-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [Pressure-Actuated](examples/simulation/pcs/simulate_pressure_actuated_planar_pcs.py) |
+| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Threadlike-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [I-SUPPORT](examples/simulation/pcs/simulate_isupport.py) |
 | GVS (Geometric Variable Strain) | [Spatial](examples/simulation/gvs/simulate_gvs.py), [Tendon-Actuated](examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
 | HSA (Handed Shearing Auxetics) | [Planar](examples/simulation/hsa/simulate_planar_hsa.py) |
 
@@ -42,12 +42,12 @@ Please use the following citation if you use our software in your (scientific) w
 ### Software Citation
 
 ```bibtex
-@software{soromox2025,
+@software{soromox2026,
   title = {SoRoMoX: Soft Robot Models in JAX},
-  author = {Stölzle, Maximilian and Gribonval, Solange and {Feliu Talegón}, Daniel and {Della Santina}, Cosimo},
-  year = {2025},
+  author = {Stölzle, Maximilian and Gribonval, Solange and {Feliu-Talegon}, Daniel and Perfetta, Vito Daniele and Martini, Michele and Zhang, Chuhan and Wong, Kiwan and Rus, Daniela and {Della Santina}, Cosimo},
+  year = {2026},
   url = {https://github.com/tud-phi/soromox},
-  version = {0.1.0},
+  version = {0.2.0},
   abstract = {Kinematic and dynamic models of continuum and articulated soft robots implemented in JAX.}
 }
 ```
@@ -206,6 +206,8 @@ For model-based control examples:
 
 ```bash
 python examples/control/configuration_space/setpoint_regulation_comparison.py
+python examples/control/configuration_space/trajectory_tracking_comparison.py
+python examples/control/configuration_space/regulation_tracking_comparison.py
 ```
 
 ## Documentation
@@ -314,9 +316,13 @@ The dry run mode will show you:
 
 The version bump process automatically updates:
 - `pyproject.toml` - Main project version
-- `CITATION.cff` - GitHub citation file version
-- `docs/development/changelog.md` - Adds new version entry with current date
-- `src/soromox.egg-info/PKG-INFO` - Package metadata (if exists)
+- `CITATION.cff` - Citation version and release date
+- `README.md` and `docs/index.md` - BibTeX version, year, and citation key
+- `docs/development/changelog.md` - Moves unreleased notes into a dated release
+- `uv.lock` - Local package version
+
+Generated `*.egg-info` metadata is not tracked or edited; package builds
+regenerate it from `pyproject.toml`.
 
 ### Automated Release Process
 
@@ -325,7 +331,11 @@ When you use the `release-*` commands, the following happens automatically:
 2. Changes are committed to git
 3. A version tag (e.g., `v0.1.1`) is created
 4. Changes and tags are pushed to GitHub
-5. GitHub Actions creates a release with changelog content
-6. The package is published to PyPI
+5. GitHub Actions verifies the tag, builds and validates the distributions once
+6. The validated artifacts are attached to a GitHub release
+7. The same artifacts are published to PyPI through trusted publishing
+
+Only the release metadata files listed above are staged automatically. Other
+tracked or untracked worktree files are left untouched.
 
 For more detailed information, see `VERSION_BUMP_README.md`.

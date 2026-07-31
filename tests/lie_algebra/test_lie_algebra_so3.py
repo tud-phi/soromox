@@ -25,6 +25,24 @@ def test_skew_so3_matches_z_axis_planar_generator():
     assert_allclose(result[2, :], jnp.array([0.0, 0.0, 0.0]), rtol=RTOL, atol=ATOL)
 
 
+def test_vee_so3_inverts_skew_so3():
+    omega = jnp.array([0.2, -0.4, 0.3])
+
+    result = so3.vee(so3.skew(omega))
+
+    assert_allclose(result, omega, rtol=RTOL, atol=ATOL)
+
+
+def test_vee_so3_projects_matrix_onto_skew_part():
+    matrix = so3.skew(jnp.array([0.2, -0.4, 0.3])) + jnp.array(
+        [[1.0, 0.1, 0.2], [0.1, -2.0, 0.3], [0.2, 0.3, 4.0]]
+    )
+
+    result = so3.vee(matrix)
+
+    assert_allclose(result, jnp.array([0.2, -0.4, 0.3]), rtol=RTOL, atol=ATOL)
+
+
 def test_exp_so3_matches_z_axis_planar_rotation():
     theta = jnp.pi / 4.0
     omega = jnp.array([0.0, 0.0, theta])

@@ -278,7 +278,8 @@ class TestReferenceTrajectoryWithPoses:
             n_points=1,
         )
 
-        # For ROTATION_VECTOR, velocity ≈ d(pose)/dt
+        # Rotation about a fixed axis has angular velocity equal to the
+        # rotation-vector derivative.
         xd = ref.xd_des_fn(0.5)
         expected_xd = jnp.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.05])
 
@@ -309,7 +310,8 @@ class TestReferenceTrajectoryWithPoses:
             n_points=1,
         )
 
-        # For ROTATION_VECTOR, velocity ≈ d(pose)/dt
+        # Rotation about a fixed axis has angular velocity equal to the
+        # rotation-vector derivative.
         xd = ref.xd_des_fn(0.5)
         expected_xd = jnp.array([0.0, 0.0, 0.1, 0.0, 0.0, 0.05])
 

@@ -12,6 +12,12 @@ for controller and coordinate-transformation APIs, and forward dynamics is
 implemented through a dedicated articulated-body path that is validated against
 the dense equations of motion.
 
+The constructor accepts the shared `actuators=` and `passive_elements=`
+interface. `actuators=None` installs identity joint-effort actuation, while an
+empty tuple creates an unactuated chain. Affine joint transmissions and
+articulated tendons use the same API as the planar `Pendulum`; see
+[Joint-space actuation](../../actuation/joint-space.md).
+
 ## Usage
 
 ```python
@@ -36,7 +42,6 @@ params = ArticulatedSoftRobotParams(
         jnp.diag(jnp.array([0.02, 0.03, 0.04])),
         jnp.diag(jnp.array([0.01, 0.02, 0.03])),
     ]),
-    gravity=jnp.array([0.0, 0.0, -9.81]),
     joint_stiffness=jnp.diag(jnp.array([0.5, 0.3])),
     joint_damping=jnp.diag(jnp.array([0.02, 0.01])),
     joint_rest_configuration=jnp.zeros(2),

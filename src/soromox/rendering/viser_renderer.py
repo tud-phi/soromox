@@ -83,6 +83,7 @@ class SceneHandles:
     backbone_points: list[list] = field(default_factory=list)
     actuator_lines: list = field(default_factory=list)
     actuator_line_keys: list[str] = field(default_factory=list)
+    actuator_meshes: list = field(default_factory=list)
 
     # Track if geometry has been initially built (for efficient updates)
     geometry_initialized: bool = False
@@ -163,6 +164,46 @@ def _direction_to_quaternion(
     return (float(w), float(xyz[0]), float(xyz[1]), float(xyz[2]))
 
 
+def _oriented_tube_segment_mesh(
+    p0: np.ndarray,
+    p1: np.ndarray,
+    frame0: np.ndarray,
+    frame1: np.ndarray,
+    radius: float,
+    sections: int,
+    *,
+    cap_end: bool = False,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return a tube segment whose endpoint rings use the FK material frames."""
+    angles = np.linspace(0.0, 2.0 * np.pi, int(sections), endpoint=False)
+    local_offsets = np.stack(
+        [
+            np.zeros_like(angles),
+            float(radius) * np.cos(angles),
+            float(radius) * np.sin(angles),
+        ],
+        axis=1,
+    )
+    ring0 = np.asarray(p0) + local_offsets @ np.asarray(frame0).T
+    ring1 = np.asarray(p1) + local_offsets @ np.asarray(frame1).T
+    vertex_groups = [ring0, ring1]
+    if cap_end:
+        vertex_groups.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
+    vertices = np.concatenate(vertex_groups, axis=0).astype(np.float32)
+
+    faces: list[tuple[int, int, int]] = []
+    for idx in range(int(sections)):
+        nxt = (idx + 1) % int(sections)
+        faces.append((idx, nxt, int(sections) + idx))
+        faces.append((nxt, int(sections) + nxt, int(sections) + idx))
+    if cap_end:
+        center_idx = 2 * int(sections)
+        for idx in range(int(sections)):
+            nxt = (idx + 1) % int(sections)
+            faces.append((center_idx, int(sections) + idx, int(sections) + nxt))
+    return vertices, np.asarray(faces, dtype=np.uint32)
+
+
 # =============================================================================
 # ViserRenderer
 # =============================================================================
@@ -200,7 +241,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         host: str = "0.0.0.0",
         port: int = 8080,
-        backbone_style: Literal["discrete", "swept"] = "discrete",
+        backbone_style: Literal["discrete", "swept"] = "swept",
         sphere_resolution: int = 3,
         cylinder_sections: int = 48,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
@@ -240,7 +281,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration
             host: Server bind address (0.0.0.0 for all interfaces)
             port: Server port number
-            backbone_style: "discrete" (spheres) or "swept" (cylinders)
+            backbone_style: "swept" (material-frame surface) or "discrete" (spheres)
             sphere_resolution: Icosphere subdivision level (1=low, 2=medium, 3=good, 4=high)
             cylinder_sections: Number of cylinder cross-section segments (higher=smoother)
             grid_spacing: (x, y) spacing for multi-robot grid layout
@@ -436,6 +477,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         curves: np.ndarray,
         point_colors: np.ndarray,
         *,
+        material_frames: np.ndarray,
         base_plate_color: tuple[float, float, float],
     ) -> None:
         """Build robot backbone geometry in the scene.
@@ -456,6 +498,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
+            robot_frames = material_frames[robot_idx]
 
             # Create backbone geometry
             robot_points = []
@@ -469,7 +512,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
                     handle = self._server.scene.add_icosphere(
                         name=f"/robots/robot_{robot_idx}/backbone/pt_{pt_idx}",
-                        radius=self._robot_radius * 0.8,
+                        radius=self._robot_radius,
                         color=color,
                         opacity=opacity,
                         subdivisions=self._sphere_resolution,
@@ -488,55 +531,27 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     color_rgba = point_colors[robot_idx, pt_idx]
                     color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
 
-                    # Compute cylinder parameters
-                    direction = p1 - p0
-                    length = float(np.linalg.norm(direction))
-                    if length < 1e-9:
-                        continue
-
-                    center = (p0 + p1) / 2.0
-                    # Compute quaternion for orientation (Z-aligned cylinder rotated to direction)
-                    wxyz = _direction_to_quaternion(direction)
-
-                    # Create Z-aligned cylinder mesh, apply rotation via handle
-                    cylinder_mesh = self._make_cylinder_trimesh(
-                        length=length,
-                        radius=self._robot_radius,
-                        color=color_rgba[:3],
-                        direction=None,  # Keep Z-aligned for efficient updates
+                    vertices, faces = _oriented_tube_segment_mesh(
+                        p0,
+                        p1,
+                        robot_frames[pt_idx],
+                        robot_frames[pt_idx + 1],
+                        self._robot_radius,
+                        self._cylinder_sections,
+                        cap_end=pt_idx == num_points - 2,
                     )
                     handle = self._server.scene.add_mesh_simple(
                         name=f"/robots/robot_{robot_idx}/backbone/seg_{pt_idx}",
-                        vertices=cylinder_mesh.vertices,
-                        faces=cylinder_mesh.faces,
+                        vertices=vertices,
+                        faces=faces,
                         color=color,
                         opacity=opacity,
                         wireframe=self._wireframe,
                         material=self._material,
                         flat_shading=self._flat_shading,
                         cast_shadow=self._backbone_cast_shadow,
-                        position=tuple(center),
-                        wxyz=wxyz,
                     )
                     robot_points.append(handle)
-
-                # Add sphere at tip
-                tip_pos = curve[-1]
-                color_rgba = point_colors[robot_idx, -1]
-                color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
-                handle = self._server.scene.add_icosphere(
-                    name=f"/robots/robot_{robot_idx}/backbone/tip",
-                    radius=self._robot_radius,
-                    color=color,
-                    opacity=opacity,
-                    subdivisions=self._sphere_resolution,
-                    position=tuple(tip_pos),
-                    material=self._material,
-                    flat_shading=self._flat_shading,
-                    wireframe=self._wireframe,
-                    cast_shadow=self._backbone_cast_shadow,
-                )
-                robot_points.append(handle)
 
             self._scene_handles.backbone_points.append(robot_points)
 
@@ -588,7 +603,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         actuator_inputs: Array | None = None,
     ) -> None:
-        """Build actuator line geometry in the scene.
+        """Build semantic actuator geometry in the scene.
 
         Args:
             q: Robot configurations (num_robots, DOF)
@@ -611,6 +626,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         )
         cfg = color_config or self.color_config
         line_specs = []
+        mesh_specs = []
 
         if len(self._scene_handles.actuator_line_keys) > len(
             self._scene_handles.actuator_lines
@@ -625,33 +641,77 @@ class ViserRenderer(BaseSoftRobotRenderer):
             layer_points = np.asarray(layer.points)
             layer_colors = resolve_actuator_rgba(
                 layer,
-                default_color=cfg.actuators.default_color,
+                default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
             line_width = layer.line_width or self._actuator_line_width
+            configured_radius = cfg.actuators.radius_for_kind(layer.kind)
+            if layer.radius is None:
+                layer_radii = (
+                    None if configured_radius is None else np.asarray(configured_radius)
+                )
+            else:
+                layer_radii = np.asarray(layer.radius)
             for robot_idx in range(num_robots):
                 for actuator_idx in range(layer_points.shape[1]):
                     curve = layer_points[robot_idx, actuator_idx]
+                    if curve.shape[-1] == 2:
+                        curve = np.pad(curve, ((0, 0), (0, 1)))
                     num_segments = len(curve) - 1
                     if num_segments <= 0:
                         continue
-                    points = np.stack(
-                        [curve[:-1], curve[1:]], axis=1
+                    radius = None
+                    if layer_radii is not None:
+                        if layer_radii.ndim == 0:
+                            radius = float(layer_radii)
+                        elif layer_radii.ndim == 1:
+                            radius = float(layer_radii[actuator_idx])
+                        else:
+                            radius = float(layer_radii[robot_idx, actuator_idx])
+                    name = (
+                        f"/robots/robot_{robot_idx}/actuators/"
+                        f"{layer_idx}_{layer.name}_{actuator_idx}"
                     )
+                    if radius is not None and radius > 0.0:
+                        segment_meshes = []
+                        for p0, p1 in zip(curve[:-1], curve[1:]):
+                            direction = p1 - p0
+                            length = float(np.linalg.norm(direction))
+                            if length <= 1e-12:
+                                continue
+                            mesh = self._make_cylinder_trimesh(
+                                length=length,
+                                radius=radius,
+                                color=layer_colors[robot_idx, actuator_idx],
+                                direction=direction,
+                            )
+                            mesh.apply_translation(0.5 * (p0 + p1))
+                            segment_meshes.append(mesh)
+                        if segment_meshes:
+                            mesh_specs.append(
+                                (name, trimesh.util.concatenate(segment_meshes))
+                            )
+                        continue
+                    points = np.stack([curve[:-1], curve[1:]], axis=1)
                     color = _rgb_to_viser_color(
                         layer_colors[robot_idx, actuator_idx, :3]
                     )
                     line_specs.append(
                         (
-                            (
-                                f"/robots/robot_{robot_idx}/actuators/"
-                                f"{layer_idx}_{layer.name}_{actuator_idx}"
-                            ),
+                            name,
                             points.astype(np.float32),
                             np.tile(color, (num_segments, 2, 1)).astype(np.uint8),
                             line_width,
                         )
                     )
+
+        for handle in self._scene_handles.actuator_meshes:
+            if hasattr(handle, "remove"):
+                handle.remove()
+        self._scene_handles.actuator_meshes = [
+            self._server.scene.add_mesh_trimesh(name=name, mesh=mesh)
+            for name, mesh in mesh_specs
+        ]
 
         if len(self._scene_handles.actuator_lines) > len(line_specs):
             for handle in self._scene_handles.actuator_lines[len(line_specs) :]:
@@ -757,63 +817,48 @@ class ViserRenderer(BaseSoftRobotRenderer):
     def _update_robot_geometry(
         self,
         curves: np.ndarray,
+        material_frames: np.ndarray,
     ) -> None:
-        """Update existing robot geometry positions (and orientations for swept mode).
-
-        This is more efficient than rebuilding geometry each frame:
-        - Discrete mode: Only updates sphere positions
-        - Swept mode: Updates cylinder positions and orientations via handle properties
-
-        Args:
-            curves: Backbone curves of shape (num_robots, num_points, 3)
-        """
-        if self._scene_handles is None:
+        """Atomically update all robot geometry for one animation frame."""
+        if self._scene_handles is None or self._server is None:
             return
 
-        num_robots = min(len(curves), len(self._scene_handles.backbone_points))
-        num_points = curves.shape[1]
+        with self._server.atomic():
+            num_robots = min(len(curves), len(self._scene_handles.backbone_points))
+            num_points = curves.shape[1]
 
-        for robot_idx in range(num_robots):
-            curve = curves[robot_idx]  # (num_points, 3)
-            if robot_idx < len(self._scene_handles.base_plates):
-                base_handle = self._scene_handles.base_plates[robot_idx]
-                base_pos, base_wxyz = self._base_plate_pose(curve[0])
-                base_handle.position = tuple(base_pos)
-                base_handle.wxyz = base_wxyz
+            for robot_idx in range(num_robots):
+                curve = curves[robot_idx]  # (num_points, 3)
+                robot_frames = material_frames[robot_idx]
+                if robot_idx < len(self._scene_handles.base_plates):
+                    base_handle = self._scene_handles.base_plates[robot_idx]
+                    base_pos, base_wxyz = self._base_plate_pose(curve[0])
+                    base_handle.position = tuple(base_pos)
+                    base_handle.wxyz = base_wxyz
 
-            robot_points = self._scene_handles.backbone_points[robot_idx]
+                robot_points = self._scene_handles.backbone_points[robot_idx]
 
-            if self._backbone_style == "discrete":
-                # Update sphere positions only
-                for pt_idx, handle in enumerate(robot_points):
-                    if pt_idx < len(curve):
-                        handle.position = tuple(curve[pt_idx])
-            else:
-                # Swept style: update cylinder positions and orientations
-                # robot_points contains (num_points - 1) cylinders + 1 tip sphere
-                num_segments = num_points - 1
-                for seg_idx in range(min(len(robot_points) - 1, num_segments)):
-                    handle = robot_points[seg_idx]
-                    p0 = curve[seg_idx]
-                    p1 = curve[seg_idx + 1]
+                if self._backbone_style == "discrete":
+                    for pt_idx, handle in enumerate(robot_points):
+                        if pt_idx < len(curve):
+                            handle.position = tuple(curve[pt_idx])
+                else:
+                    num_segments = num_points - 1
+                    for seg_idx in range(min(len(robot_points), num_segments)):
+                        handle = robot_points[seg_idx]
+                        p0 = curve[seg_idx]
+                        p1 = curve[seg_idx + 1]
 
-                    # Compute new center and orientation
-                    direction = p1 - p0
-                    length = float(np.linalg.norm(direction))
-                    if length < 1e-9:
-                        continue
-
-                    center = (p0 + p1) / 2.0
-                    wxyz = _direction_to_quaternion(direction)
-
-                    # Update handle properties (no mesh recreation!)
-                    handle.position = tuple(center)
-                    handle.wxyz = wxyz
-
-                # Update tip sphere position (last element in robot_points)
-                if len(robot_points) > 0:
-                    tip_handle = robot_points[-1]
-                    tip_handle.position = tuple(curve[-1])
+                        vertices, _ = _oriented_tube_segment_mesh(
+                            p0,
+                            p1,
+                            robot_frames[seg_idx],
+                            robot_frames[seg_idx + 1],
+                            self._robot_radius,
+                            self._cylinder_sections,
+                            cap_end=seg_idx == num_segments - 1,
+                        )
+                        handle.vertices = vertices
 
     def _build_static_spheres(
         self,
@@ -918,7 +963,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Use a Viser-specific auto-distance. CameraConfig's default distance
         # factor is tuned for backends with an additional zoom control, while
         # Viser uses the camera position as a true perspective eye point.
-        config = camera_config or CameraConfig(fov=self._camera_fov, distance_factor=1.0)
+        config = camera_config or CameraConfig(
+            fov=self._camera_fov, distance_factor=1.0
+        )
 
         # Compute bounding box of all curves
         all_points = curves.reshape(-1, 3)
@@ -1056,8 +1103,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
             allow_extra_rows=uses_configured_offsets,
         )
 
-        # Compute backbone curves
-        curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
+        curves, material_frames = self.compute_backbone_curves_and_frames_batched(
+            q, base_offsets
+        )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
@@ -1067,6 +1117,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._build_robot_geometry(
             curves,
             resolved_colors.per_robot_point_rgba,
+            material_frames=material_frames,
             base_plate_color=cfg.base_plate_color,
         )
 
@@ -1167,8 +1218,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
             allow_extra_rows=uses_configured_offsets,
         )
 
-        # Compute backbone curves
-        curves = np.asarray(self.compute_backbone_curves_batched(q, base_offsets))
+        curves, material_frames = self.compute_backbone_curves_and_frames_batched(
+            q, base_offsets
+        )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         cfg = color_config or self.color_config
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
@@ -1178,6 +1232,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._build_robot_geometry(
             curves,
             resolved_colors.per_robot_point_rgba,
+            material_frames=material_frames,
             base_plate_color=cfg.base_plate_color,
         )
 
@@ -1231,6 +1286,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
         loop: bool = False,
         record_path: str | None = None,
         record_every_n: int = 1,
+        stop_when_recording_done: bool = False,
+        record_client_timeout: float = 10.0,
+        record_frame_timeout: float = 10.0,
         video_config: VideoEncodingConfig | None = None,
         camera_config: CameraConfig | None = None,
         base_offsets: Array | None = None,
@@ -1260,6 +1318,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
             loop: Loop animation
             record_path: Path to save video (mp4, mov)
             record_every_n: Record every N frames
+            stop_when_recording_done: If True, return after recording one non-looping
+                pass through the sequence.
+            record_client_timeout: Seconds to wait for a browser client before video
+                recording fails.
+            record_frame_timeout: Seconds to wait for each browser render before video
+                recording fails.
             video_config: FFmpeg encoding settings
             camera_config: Camera configuration (fov, position, look_at, etc.)
             base_offsets: Base position offsets (N, 2/3)
@@ -1285,6 +1349,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
+        record_every_n = max(1, int(record_every_n))
 
         if q_ts.ndim == 3 and (plot_configurations or plot_actuator_positions):
             raise ValueError(
@@ -1326,9 +1391,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         resolved_colors = self.resolve_backbone_colors(num_robots, color_config=cfg)
 
         # Precompute backbone curves for the first frame used to build geometry.
-        curves_0 = np.asarray(
-            self.compute_backbone_curves_batched(q_ts[:, 0, :], base_offsets)
+        curves_0, material_frames_0 = self.compute_backbone_curves_and_frames_batched(
+            q_ts[:, 0, :], base_offsets
         )
+        curves_0 = np.asarray(curves_0)
+        material_frames_0 = np.asarray(material_frames_0)
 
         # Fit the initial camera to the full animated trajectory, matching
         # Open3DRenderer.render_sequence and avoiding under-framing on motion.
@@ -1347,6 +1414,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._build_robot_geometry(
             curves_0,
             resolved_colors.per_robot_point_rgba,
+            material_frames=material_frames_0,
             base_plate_color=cfg.base_plate_color,
         )
 
@@ -1405,8 +1473,25 @@ class ViserRenderer(BaseSoftRobotRenderer):
             ts=ts,
         )
 
+        def seek_frame(frame_idx: int) -> None:
+            self._update_frame(
+                frame_idx,
+                q_ts,
+                base_offsets,
+                resolved_colors.per_robot_point_rgba,
+                base_plate_color=cfg.base_plate_color,
+                render_actuators=render_actuators,
+                actuator_inputs=self._actuator_inputs_for_timestep(
+                    actuator_inputs,
+                    num_robots=int(num_robots),
+                    num_steps=int(num_frames),
+                    frame_idx=frame_idx,
+                ),
+                color_config=cfg,
+            )
+
         # Setup GUI controls
-        self._setup_playback_gui()
+        self._setup_playback_gui(on_frame_seek=seek_frame)
 
         # Add plots after playback controls (so they appear at the end)
         if plot_configurations or plot_actuator_positions or custom_plots:
@@ -1421,7 +1506,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     actuator_fig = self.create_actuator_position_plot(
                         ts, q_ts_for_plots, self.robot, robot_name=robot_name
                     )
-                    self.add_gui_plotly("Actuator Coordinates", actuator_fig, aspect=2.0)
+                    self.add_gui_plotly(
+                        "Actuator Coordinates", actuator_fig, aspect=2.0
+                    )
 
                 # Add custom plots
                 if custom_plots:
@@ -1437,7 +1524,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Video recording setup
         video_writer = None
+        record_client = None
         if record_path is not None:
+            record_client = self._wait_for_recording_client(record_client_timeout)
+            if record_client is None:
+                raise RuntimeError(
+                    "Viser video recording requires a connected browser client. "
+                    "Open the Viser URL or enable browser auto-open."
+                )
             fps = 1.0 / np.mean(np.diff(ts)) if len(ts) > 1 else 30.0
             video_writer = FFmpegVideoWriter(
                 record_path,
@@ -1448,6 +1542,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 video_config=video_config,
             )
             print(f"[ViserRenderer] Recording to {record_path}")
+            self._record_viser_frame(
+                video_writer,
+                record_client,
+                timeout=record_frame_timeout,
+            )
 
         # Animation loop
         try:
@@ -1477,36 +1576,27 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
                             if next_idx != state.frame_idx:
                                 state.frame_idx = next_idx
-                                self._update_frame(
-                                    next_idx,
-                                    q_ts,
-                                    base_offsets,
-                                    resolved_colors.per_robot_point_rgba,
-                                    base_plate_color=cfg.base_plate_color,
-                                    render_actuators=render_actuators,
-                                    actuator_inputs=self._actuator_inputs_for_timestep(
-                                        actuator_inputs,
-                                        num_robots=int(num_robots),
-                                        num_steps=int(num_frames),
-                                        frame_idx=next_idx,
-                                    ),
-                                    color_config=cfg,
+                                seek_frame(next_idx)
+                                recording_final_frame = (
+                                    stop_when_recording_done
+                                    and video_writer is not None
+                                    and not state.loop
+                                    and next_idx >= state.num_frames - 1
                                 )
 
                                 # Record frame
-                                if (
-                                    video_writer is not None
-                                    and next_idx % record_every_n == 0
+                                if video_writer is not None and (
+                                    next_idx % record_every_n == 0
+                                    or recording_final_frame
                                 ):
-                                    clients = list(self._server.get_clients().values())
-                                    if clients:
-                                        try:
-                                            frame = clients[0].camera.get_render(
-                                                height=self.height, width=self.width
-                                            )
-                                            video_writer.write(np.array(frame))
-                                        except Exception:
-                                            pass
+                                    record_client = self._record_viser_frame(
+                                        video_writer,
+                                        record_client,
+                                        timeout=record_frame_timeout,
+                                    )
+
+                                if video_writer is not None and recording_final_frame:
+                                    break
 
                     # Update GUI
                     self._update_playback_gui(state)
@@ -1544,8 +1634,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
         q_frame = q_ts[:, frame_idx, :]  # (num_robots, DOF)
         num_robots = q_frame.shape[0]
 
-        # Compute new curves
-        curves = np.asarray(self.compute_backbone_curves_batched(q_frame, base_offsets))
+        curves, material_frames = self.compute_backbone_curves_and_frames_batched(
+            q_frame, base_offsets
+        )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         # Check if we can use efficient updates (geometry already built with same config)
         can_update = (
@@ -1557,11 +1650,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         if can_update:
             # Efficient update: only modify position/orientation properties
-            self._update_robot_geometry(curves)
+            self._update_robot_geometry(curves, material_frames)
         else:
             # Full rebuild needed (first frame or configuration changed)
             self._build_robot_geometry(
-                curves, point_colors, base_plate_color=base_plate_color
+                curves,
+                point_colors,
+                material_frames=material_frames,
+                base_plate_color=base_plate_color,
             )
 
         if render_actuators and self._has_actuator_visuals:
@@ -1576,7 +1672,71 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Update dynamic spheres
         self._update_dynamic_spheres(frame_idx)
 
-    def _setup_playback_gui(self) -> None:
+    def _wait_for_recording_client(self, timeout: float) -> Any | None:
+        """Wait briefly for a Viser browser client used for video capture."""
+        if self._server is None:
+            return None
+
+        deadline = time.time() + max(0.0, float(timeout))
+        while time.time() <= deadline:
+            clients = list(self._server.get_clients().values())
+            if clients:
+                return clients[0]
+            time.sleep(0.05)
+        return None
+
+    def _record_viser_frame(
+        self,
+        video_writer: FFmpegVideoWriter,
+        client: Any | None,
+        *,
+        timeout: float,
+    ) -> Any | None:
+        """Capture one Viser frame and return the client used."""
+        if self._server is None:
+            return client
+
+        clients = list(self._server.get_clients().values())
+        if clients and client not in clients:
+            client = clients[0]
+        if client is None:
+            return client
+
+        result: dict[str, Any] = {}
+        error: dict[str, BaseException] = {}
+
+        def capture() -> None:
+            try:
+                result["frame"] = client.camera.get_render(
+                    height=self.height,
+                    width=self.width,
+                )
+            except BaseException as exc:
+                error["exception"] = exc
+
+        thread = threading.Thread(target=capture, daemon=True)
+        thread.start()
+        thread.join(timeout=max(0.0, float(timeout)))
+        if thread.is_alive():
+            raise RuntimeError(
+                "Timed out while capturing a Viser video frame. Make sure the "
+                "Viser browser tab is open, foregrounded, and connected."
+            )
+        if "exception" in error:
+            raise RuntimeError("Failed to capture a Viser video frame.") from error[
+                "exception"
+            ]
+
+        frame = result.get("frame")
+        if frame is None:
+            raise RuntimeError("Viser did not return a video frame.")
+        video_writer.write(np.asarray(frame, dtype=np.uint8))
+        return client
+
+    def _setup_playback_gui(
+        self,
+        on_frame_seek: Callable[[int], None] | None = None,
+    ) -> None:
         """Setup playback control GUI elements."""
         if self._server is None:
             return
@@ -1620,7 +1780,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
         @self._gui_handles["frame_slider"].on_update
         def _(event):
             if self._animation_state is not None and not self._animation_state.playing:
-                self._animation_state.frame_idx = int(event.target.value)
+                max_frame_idx = max(0, self._animation_state.num_frames - 1)
+                frame_idx = min(max(int(event.target.value), 0), max_frame_idx)
+                if frame_idx != self._animation_state.frame_idx:
+                    self._animation_state.frame_idx = frame_idx
+                    self._animation_state.last_tick = time.time()
+                    if on_frame_seek is not None:
+                        on_frame_seek(frame_idx)
+                    self._update_playback_gui(self._animation_state)
 
         @self._gui_handles["speed_slider"].on_update
         def _(event):
@@ -1732,7 +1899,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         Args:
             ts: Time array (T,)
             q_ts: Configuration array (T, DOF)
-            robot: Robot instance with actuated_coordinates or tendon_length method
+            robot: Robot instance with an ``actuator_coordinates`` method
             robot_name: Name for the plot title
 
         Returns:
@@ -1741,16 +1908,10 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if go is None:
             raise ImportError("plotly is required. Install with: pip install plotly")
 
-        if hasattr(robot, "actuated_coordinates"):
-            coordinate_fn = robot.actuated_coordinates
-            yaxis_title = "Actuated coordinate"
-        elif hasattr(robot, "tendon_length"):
-            coordinate_fn = robot.tendon_length
-            yaxis_title = "Actuator length [m]"
-        else:
-            raise AttributeError(
-                "Robot does not have actuated_coordinates or tendon_length method"
-            )
+        if not hasattr(robot, "actuator_coordinates"):
+            raise AttributeError("Robot does not have an actuator_coordinates method")
+        coordinate_fn = robot.actuator_coordinates
+        yaxis_title = "Actuated coordinate"
 
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
@@ -2122,10 +2283,11 @@ class LiveModeController:
             target_dim=3,
         )
 
-        # Compute curves
-        curves = np.asarray(
-            self._renderer.compute_backbone_curves_batched(q, base_offsets)
+        curves, material_frames = (
+            self._renderer.compute_backbone_curves_and_frames_batched(q, base_offsets)
         )
+        curves = np.asarray(curves)
+        material_frames = np.asarray(material_frames)
 
         if (
             self._resolved_colors is None
@@ -2145,11 +2307,12 @@ class LiveModeController:
 
         if can_update:
             # Efficient update: only modify position/orientation properties
-            self._renderer._update_robot_geometry(curves)
+            self._renderer._update_robot_geometry(curves, material_frames)
         else:
             # Full rebuild needed (first frame or configuration changed)
             self._renderer._build_robot_geometry(
                 curves,
                 self._resolved_colors.per_robot_point_rgba,
+                material_frames=material_frames,
                 base_plate_color=self._renderer.color_config.base_plate_color,
             )

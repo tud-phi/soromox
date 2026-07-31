@@ -2,6 +2,10 @@
 
 Visualization and rendering utilities for robot systems.
 
+Composable actuators expose semantic geometry through
+`robot.actuator_visual_layers(...)`; see
+[Threadlike actuation](../actuation/threadlike.md#rendering).
+
 ## Overview
 
 The rendering module provides a class-based architecture for visualizing soft robots. All renderers inherit from a common base class `BaseSoftRobotRenderer` which provides cached forward kinematics and a unified interface.

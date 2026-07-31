@@ -190,7 +190,7 @@ This clean separation means the two terms can be designed, tuned, and analyzed i
 | Controller                                                                                                            | Type    | Description                                                              |
 |-----------------------------------------------------------------------------------------------------------------------|---------|--------------------------------------------------------------------------|
 | [`OperationalSpaceSynergisticController`](operational-space.md#operationalspacesynergisticcontroller)                | Regulator | Synergistic control for under-actuated systems (requires $o = m$)       |
-| [`OperationalSpaceImpedanceControlTracker`](operational-space.md#operationalspaceimpedancecontroltracker)            | Tracker | Operational-space impedance control with partial feedback linearization |
+| [`OperationalSpaceImpedanceControlTracker`](operational-space.md#operationalspaceimpedancecontroltracker)            | Tracker | Operational-space impedance control with selectable full or partial feedback linearization |
 
 ### Actuation-Space Controllers
 

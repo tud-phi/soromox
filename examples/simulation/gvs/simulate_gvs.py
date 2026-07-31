@@ -219,7 +219,7 @@ if __name__ == "__main__":
             ]
         )
     )
-    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
+    viser_renderer = ViserRenderer(robot, num_points=50)
     viser_renderer.render_sequence(
         ts=ts,
         q_ts=q_ts_overlay,

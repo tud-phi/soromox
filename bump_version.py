@@ -1,310 +1,308 @@
 #!/usr/bin/env python3
-"""
-Version bump script for SoRoMoX project.
+"""Synchronize SoRoMoX release metadata and optionally create a release tag.
 
-This script updates version information across all relevant files:
-- pyproject.toml
-- CITATION.cff
-- docs/development/changelog.md
-- src/soromox.egg-info/PKG-INFO (if it exists)
+The script updates the tracked sources of release metadata:
 
-Usage:
-    python bump_version.py <new_version>
-    python bump_version.py --patch  # increment patch version (0.1.0 -> 0.1.1)
-    python bump_version.py --minor  # increment minor version (0.1.0 -> 0.2.0)
-    python bump_version.py --major  # increment major version (0.1.0 -> 1.0.0)
+- ``pyproject.toml``
+- ``CITATION.cff``
+- ``README.md``
+- ``docs/index.md``
+- ``docs/development/changelog.md``
+- ``uv.lock``
 
-Examples:
-    python bump_version.py 0.2.0
-    python bump_version.py --minor
+Generated ``*.egg-info`` metadata is deliberately excluded. Build tools
+regenerate it from ``pyproject.toml``.
 """
 
 import argparse
 import re
 import subprocess
 import sys
-from datetime import datetime
+from datetime import date
 from pathlib import Path
+
+RELEASE_FILES = (
+    Path("pyproject.toml"),
+    Path("CITATION.cff"),
+    Path("README.md"),
+    Path("docs/index.md"),
+    Path("docs/development/changelog.md"),
+    Path("uv.lock"),
+)
 
 
 def parse_version(version_string: str) -> tuple[int, int, int]:
-    """Parse a semantic version string into major, minor, patch components."""
-    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:-.*)?$", version_string)
+    """Parse a semantic version into major, minor, and patch components."""
+    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)(?:-.*)?", version_string)
     if not match:
         raise ValueError(f"Invalid version format: {version_string}")
-    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+    return tuple(int(component) for component in match.groups())
 
 
 def format_version(major: int, minor: int, patch: int) -> str:
-    """Format version components into a semantic version string."""
+    """Format semantic-version components."""
     return f"{major}.{minor}.{patch}"
 
 
 def get_current_version(file_path: Path) -> str:
-    """Extract current version from pyproject.toml."""
-    content = file_path.read_text()
-    match = re.search(r'^version = "([^"]+)"', content, re.MULTILINE)
+    """Read the project version from ``pyproject.toml``."""
+    match = re.search(
+        r'^version = "([^"]+)"', file_path.read_text(), flags=re.MULTILINE
+    )
     if not match:
         raise ValueError(f"Could not find version in {file_path}")
     return match.group(1)
 
 
-def update_pyproject_toml(file_path: Path, new_version: str) -> None:
-    """Update version in pyproject.toml."""
-    content = file_path.read_text()
-    updated_content = re.sub(
-        r'^version = "[^"]+"', f'version = "{new_version}"', content, flags=re.MULTILINE
-    )
-    file_path.write_text(updated_content)
-    print(f"✓ Updated {file_path}")
-
-
-def update_citation_cff(file_path: Path, new_version: str) -> None:
-    """Update version in CITATION.cff."""
-    if not file_path.exists():
-        print(f"⚠ {file_path} does not exist, skipping")
-        return
-
-    content = file_path.read_text()
-    updated_content = re.sub(
-        r'^version: "[^"]+"', f'version: "{new_version}"', content, flags=re.MULTILINE
-    )
-    file_path.write_text(updated_content)
-    print(f"✓ Updated {file_path}")
-
-
-def update_changelog(file_path: Path, new_version: str, old_version: str) -> None:
-    """Update changelog with new version entry."""
-    if not file_path.exists():
-        print(f"⚠ {file_path} does not exist, skipping")
-        return
-
-    content = file_path.read_text()
-    today = datetime.now().strftime("%Y-%m-%d")
-
-    # Replace the unreleased version with the new version and date
-    if f"## [{old_version}]" in content:
-        updated_content = content.replace(
-            f"## [{old_version}] - TBD", f"## [{new_version}] - {today}"
-        ).replace(f"## [{old_version}] - 2025-XX-XX", f"## [{new_version}] - {today}")
-    else:
-        # Add new version entry at the top of the changelog
-        changelog_entry = f"""
-## [{new_version}] - {today}
-
-### Added
-- Version bump to {new_version}
-
-"""
-        # Find the position after the header to insert new entry
-        lines = content.split("\n")
-        insert_pos = 0
-        for i, line in enumerate(lines):
-            if line.strip().startswith("## [") and "Unreleased" not in line:
-                insert_pos = i
-                break
-
-        if insert_pos > 0:
-            lines.insert(insert_pos, changelog_entry.strip())
-            updated_content = "\n".join(lines)
-        else:
-            updated_content = content + changelog_entry
-
-    file_path.write_text(updated_content)
-    print(f"✓ Updated {file_path}")
-
-
-def update_pkg_info(file_path: Path, new_version: str) -> None:
-    """Update version in PKG-INFO if it exists."""
-    if not file_path.exists():
-        print(f"⚠ {file_path} does not exist, skipping")
-        return
-
-    content = file_path.read_text()
-    updated_content = re.sub(
-        r"^Version: [^\n]+", f"Version: {new_version}", content, flags=re.MULTILINE
-    )
-    file_path.write_text(updated_content)
-    print(f"✓ Updated {file_path}")
-
-
 def increment_version(current_version: str, bump_type: str) -> str:
-    """Increment version based on bump type."""
+    """Increment a semantic version."""
     major, minor, patch = parse_version(current_version)
-
     if bump_type == "major":
         return format_version(major + 1, 0, 0)
-    elif bump_type == "minor":
+    if bump_type == "minor":
         return format_version(major, minor + 1, 0)
-    elif bump_type == "patch":
+    if bump_type == "patch":
         return format_version(major, minor, patch + 1)
-    else:
-        raise ValueError(f"Invalid bump type: {bump_type}")
+    raise ValueError(f"Invalid bump type: {bump_type}")
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Bump version across all SoRoMoX project files",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__.split("Usage:")[1] if "Usage:" in __doc__ else "",
+def replace_required(
+    content: str, pattern: str, replacement: str, *, description: str
+) -> str:
+    """Replace one required metadata value."""
+    updated, count = re.subn(pattern, replacement, content, count=1, flags=re.MULTILINE)
+    if count != 1:
+        raise ValueError(f"Could not update {description}")
+    return updated
+
+
+def update_pyproject_toml(file_path: Path, new_version: str) -> None:
+    """Update the canonical package version."""
+    content = replace_required(
+        file_path.read_text(),
+        r'^version = "[^"]+"',
+        f'version = "{new_version}"',
+        description=f"version in {file_path}",
+    )
+    file_path.write_text(content)
+
+
+def update_citation_cff(file_path: Path, new_version: str, release_date: date) -> None:
+    """Update the CFF version and release date."""
+    content = file_path.read_text()
+    content = replace_required(
+        content,
+        r'^version: "[^"]+"',
+        f'version: "{new_version}"',
+        description=f"version in {file_path}",
+    )
+    content = replace_required(
+        content,
+        r'^date-released: "[^"]+"',
+        f'date-released: "{release_date.isoformat()}"',
+        description=f"release date in {file_path}",
+    )
+    file_path.write_text(content)
+
+
+def update_bibtex_citation(
+    file_path: Path, new_version: str, release_date: date
+) -> None:
+    """Update the software BibTeX block embedded in Markdown."""
+    content = file_path.read_text()
+    block_match = re.search(
+        r"@software\{soromox\d{4},.*?\n\s*\}", content, flags=re.DOTALL
+    )
+    if not block_match:
+        raise ValueError(f"Could not find software citation in {file_path}")
+
+    block = block_match.group(0)
+    block = re.sub(
+        r"@software\{soromox\d{4},",
+        f"@software{{soromox{release_date.year},",
+        block,
+        count=1,
+    )
+    block = replace_required(
+        block,
+        r"^(\s*year = )\{\d{4}\},$",
+        rf"\g<1>{{{release_date.year}}},",
+        description=f"citation year in {file_path}",
+    )
+    block = replace_required(
+        block,
+        r"^(\s*version = )\{[^}]+\},$",
+        rf"\g<1>{{{new_version}}},",
+        description=f"citation version in {file_path}",
+    )
+    file_path.write_text(
+        content[: block_match.start()] + block + content[block_match.end() :]
     )
 
+
+def update_changelog(file_path: Path, new_version: str, release_date: date) -> None:
+    """Move unreleased notes into a new entry while retaining release history."""
+    content = file_path.read_text()
+    if re.search(rf"^## \[{re.escape(new_version)}\]", content, flags=re.MULTILINE):
+        raise ValueError(f"Changelog already contains version {new_version}")
+
+    match = re.search(
+        r"^## \[Unreleased\]\s*\n(?P<body>.*?)(?=^## \[)",
+        content,
+        flags=re.DOTALL | re.MULTILINE,
+    )
+    if not match:
+        raise ValueError(
+            f"Could not find a bounded [Unreleased] section in {file_path}"
+        )
+
+    notes = match.group("body").strip()
+    if not re.search(r"(?m)^- ", notes):
+        notes = f"### Changed\n\n- Release version {new_version}."
+
+    replacement = (
+        "## [Unreleased]\n\n"
+        "### Added\n\n"
+        "### Changed\n\n"
+        "### Fixed\n\n"
+        f"## [{new_version}] - {release_date.isoformat()}\n\n"
+        f"{notes}\n\n"
+    )
+    file_path.write_text(
+        content[: match.start()] + replacement + content[match.end() :]
+    )
+
+
+def update_uv_lock(file_path: Path, new_version: str) -> None:
+    """Update only the local SoRoMoX package entry in ``uv.lock``."""
+    content = file_path.read_text()
+    content, count = re.subn(
+        r'(\[\[package\]\]\nname = "soromox"\nversion = ")[^"]+(")',
+        rf"\g<1>{new_version}\g<2>",
+        content,
+        count=1,
+    )
+    if count != 1:
+        raise ValueError(f"Could not find the local soromox entry in {file_path}")
+    file_path.write_text(content)
+
+
+def stage_commit_tag_and_push(
+    root_dir: Path,
+    new_version: str,
+    *,
+    create_tag: bool,
+    push: bool,
+) -> None:
+    """Commit only managed release files, then optionally tag and push."""
+    subprocess.run(
+        ["git", "add", "--", *(str(path) for path in RELEASE_FILES)],
+        check=True,
+        cwd=root_dir,
+    )
+    subprocess.run(
+        ["git", "commit", "-m", f"Release SoRoMoX {new_version}"],
+        check=True,
+        cwd=root_dir,
+    )
+
+    tag_name = f"v{new_version}"
+    if create_tag:
+        subprocess.run(
+            ["git", "tag", "-a", tag_name, "-m", f"SoRoMoX {new_version}"],
+            check=True,
+            cwd=root_dir,
+        )
+    if push:
+        subprocess.run(["git", "push"], check=True, cwd=root_dir)
+        if create_tag:
+            subprocess.run(
+                ["git", "push", "origin", tag_name], check=True, cwd=root_dir
+            )
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser."""
+    parser = argparse.ArgumentParser(description=__doc__)
     version_group = parser.add_mutually_exclusive_group(required=True)
-    version_group.add_argument(
-        "version", nargs="?", help="New version number (e.g., 0.2.0)"
-    )
-    version_group.add_argument(
-        "--major", action="store_true", help="Increment major version"
-    )
-    version_group.add_argument(
-        "--minor", action="store_true", help="Increment minor version"
-    )
-    version_group.add_argument(
-        "--patch", action="store_true", help="Increment patch version"
-    )
+    version_group.add_argument("version", nargs="?", help="New version, e.g. 0.2.0")
+    version_group.add_argument("--major", action="store_true")
+    version_group.add_argument("--minor", action="store_true")
+    version_group.add_argument("--patch", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--yes", "-y", action="store_true")
+    parser.add_argument("--create-tag", action="store_true")
+    parser.add_argument("--push", action="store_true")
+    return parser
 
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show what would be changed without making changes",
-    )
-    parser.add_argument(
-        "--yes", "-y", action="store_true", help="Skip confirmation prompt"
-    )
-    parser.add_argument(
-        "--create-tag",
-        action="store_true",
-        help="Create and push git tag after version bump",
-    )
-    parser.add_argument(
-        "--push",
-        action="store_true",
-        help="Push changes and tags to origin after version bump",
-    )
 
-    args = parser.parse_args()
+def main() -> None:
+    """Run the version update."""
+    args = build_parser().parse_args()
+    root_dir = Path(__file__).resolve().parent
+    paths = {path: root_dir / path for path in RELEASE_FILES}
 
-    # Define file paths
-    root_dir = Path(__file__).parent
-    pyproject_path = root_dir / "pyproject.toml"
-    citation_path = root_dir / "CITATION.cff"
-    changelog_path = root_dir / "docs" / "development" / "changelog.md"
-    pkg_info_path = root_dir / "src" / "soromox.egg-info" / "PKG-INFO"
-
-    # Get current version
     try:
-        current_version = get_current_version(pyproject_path)
-        print(f"Current version: {current_version}")
-    except Exception as e:
-        print(f"Error reading current version: {e}")
-        sys.exit(1)
-
-    # Determine new version
-    if args.version:
-        new_version = args.version
-        try:
-            parse_version(new_version)  # Validate format
-        except ValueError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
-    else:
-        bump_type = "major" if args.major else "minor" if args.minor else "patch"
-        try:
+        current_version = get_current_version(paths[Path("pyproject.toml")])
+        if args.version:
+            parse_version(args.version)
+            new_version = args.version
+        else:
+            bump_type = "major" if args.major else "minor" if args.minor else "patch"
             new_version = increment_version(current_version, bump_type)
-        except ValueError as e:
-            print(f"Error: {e}")
-            sys.exit(1)
+    except ValueError as error:
+        print(f"Error: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
 
+    release_date = date.today()
+    print(f"Current version: {current_version}")
     print(f"New version: {new_version}")
+    print(f"Release date: {release_date.isoformat()}")
+
+    if current_version == new_version:
+        print("Error: new version matches the current version", file=sys.stderr)
+        raise SystemExit(1)
 
     if args.dry_run:
-        print("\n🔍 DRY RUN - No files will be modified")
-        print(f"Would update version from {current_version} to {new_version} in:")
-        print(f"  - {pyproject_path}")
-        print(f"  - {citation_path}")
-        print(f"  - {changelog_path}")
-        print(f"  - {pkg_info_path}")
+        print("Dry run; would update:")
+        for relative_path in RELEASE_FILES:
+            print(f"  - {relative_path}")
         return
-
-    # Confirm before making changes
-    if current_version == new_version:
-        print("⚠ New version is the same as current version. Proceeding anyway...")
 
     if not args.yes:
         response = input(
-            f"\nUpdate version from {current_version} to {new_version}? [y/N]: "
+            f"Update version from {current_version} to {new_version}? [y/N]: "
         )
-        if response.lower() not in ("y", "yes"):
+        if response.lower() not in {"y", "yes"}:
             print("Aborted.")
-            sys.exit(0)
-    else:
-        print(
-            f"\n✓ Auto-confirmed version update from {current_version} to {new_version}"
-        )
-
-    # Update files
-    print(f"\n🚀 Updating version to {new_version}...")
+            return
 
     try:
-        update_pyproject_toml(pyproject_path, new_version)
-        update_citation_cff(citation_path, new_version)
-        update_changelog(changelog_path, new_version, current_version)
-        update_pkg_info(pkg_info_path, new_version)
-
-        print(f"\n✅ Successfully updated version to {new_version}")
-
-        # Git operations
-        if args.create_tag or args.push:
-            print("\n� Performing git operations...")
-            try:
-                # Stage and commit changes
-                subprocess.run(["git", "add", "."], check=True, cwd=root_dir)
-                subprocess.run(
-                    ["git", "commit", "-m", f"Bump version to {new_version}"],
-                    check=True,
-                    cwd=root_dir,
-                )
-                print("✓ Committed version bump")
-
-                if args.create_tag:
-                    # Create git tag
-                    subprocess.run(
-                        ["git", "tag", f"v{new_version}"], check=True, cwd=root_dir
-                    )
-                    print(f"✓ Created git tag v{new_version}")
-
-                if args.push:
-                    # Push changes and tags
-                    subprocess.run(["git", "push"], check=True, cwd=root_dir)
-                    if args.create_tag:
-                        subprocess.run(
-                            ["git", "push", "--tags"], check=True, cwd=root_dir
-                        )
-                    print("✓ Pushed changes and tags to origin")
-
-            except subprocess.CalledProcessError as e:
-                print(f"❌ Git operation failed: {e}")
-                print("You may need to perform git operations manually.")
-                sys.exit(1)
-
-        print("\n�📝 Next steps:")
-        if not (args.create_tag and args.push):
-            print("1. Review the changes with: git diff")
-            if not args.create_tag:
-                print(
-                    f"2. Commit the changes: git add . && git commit -m 'Bump version to {new_version}'"
-                )
-                print(f"3. Create a git tag: git tag v{new_version}")
-            if not args.push:
-                print("4. Push changes: git push && git push --tags")
-        print(
-            "5. GitHub Actions will automatically create a release when the tag is pushed"
+        update_pyproject_toml(paths[Path("pyproject.toml")], new_version)
+        update_citation_cff(paths[Path("CITATION.cff")], new_version, release_date)
+        update_bibtex_citation(paths[Path("README.md")], new_version, release_date)
+        update_bibtex_citation(paths[Path("docs/index.md")], new_version, release_date)
+        update_changelog(
+            paths[Path("docs/development/changelog.md")],
+            new_version,
+            release_date,
         )
-        print("6. The release will include changelog content extracted automatically")
+        update_uv_lock(paths[Path("uv.lock")], new_version)
 
-    except Exception as e:
-        print(f"❌ Error updating files: {e}")
-        sys.exit(1)
+        if args.create_tag or args.push:
+            stage_commit_tag_and_push(
+                root_dir,
+                new_version,
+                create_tag=args.create_tag,
+                push=args.push,
+            )
+    except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        print(f"Release update failed: {error}", file=sys.stderr)
+        raise SystemExit(1) from error
+
+    print(f"Updated release metadata to {new_version}.")
+    if not (args.create_tag and args.push):
+        print("Review and commit the scoped changes before creating the release tag.")
 
 
 if __name__ == "__main__":
