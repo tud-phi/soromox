@@ -33,6 +33,8 @@ jax.config.update("jax_enable_x64", True)
 DEFAULT_SOLVER_DT = 2e-5
 DEFAULT_SAVE_DT = 0.01
 DEFAULT_TRAJECTORY_OUTPUT = "control_pcs_with_impedance_trajectory.npz"
+POSITION_STIFFNESS = 1.0
+DAMPING_RATIO = 1.0
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,29 @@ def print_problem_summary(problem: PCSImpedanceProblem) -> None:
     print(f"Full pose dimension: {osd.n_points * osd.n_pose_dim}")
 
 
+def _compute_impedance_gains(problem: PCSImpedanceProblem) -> tuple[Array, Array]:
+    """Scale full-pose stiffness to the position-task modal bandwidth."""
+    osd = problem.osd
+    Lambda_diag = jnp.diag(osd.inertia_matrix(problem.q0))
+    K_x = POSITION_STIFFNESS * jnp.ones((osd.n_operational_space,))
+
+    if problem.trajectory_config.tracking == "pose":
+        n_angular = osd.n_angular_velocity_dim
+        Lambda_rot = Lambda_diag[:n_angular]
+        Lambda_pos = Lambda_diag[n_angular:]
+
+        # Preserve the origin/main positional stiffness and use its mean
+        # operational inertia to define a common target natural frequency.
+        # Rotational stiffness then produces the same modal bandwidth instead
+        # of the much faster response caused by assigning the same numerical
+        # stiffness to angular errors in radians and position errors in metres.
+        omega_n = jnp.sqrt(POSITION_STIFFNESS / jnp.mean(Lambda_pos))
+        K_x = K_x.at[:n_angular].set(Lambda_rot * omega_n**2)
+
+    D_x = 2.0 * DAMPING_RATIO * jnp.sqrt(K_x * Lambda_diag)
+    return K_x, D_x
+
+
 def run_impedance_simulation(
     problem: PCSImpedanceProblem,
     *,
@@ -155,10 +180,7 @@ def run_impedance_simulation(
     )
     assert reference_trajectory.x_des_fn is not None
 
-    K_x = 1.0 * jnp.ones((osd.n_operational_space,))
-    damping_ratio = 1.0
-    Lambda_0 = osd.inertia_matrix(problem.q0)
-    D_x = 2.0 * damping_ratio * jnp.sqrt(K_x * jnp.diag(Lambda_0))
+    K_x, D_x = _compute_impedance_gains(problem)
     feedback_linearization = "partial"
     controller = OperationalSpaceImpedanceControlTracker(
         operational_space_dynamics=osd,
