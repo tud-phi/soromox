@@ -45,21 +45,29 @@ JAX compilation and may take several minutes. Viser video output additionally
 requires the rendering dependencies and a working video encoder; no physical
 robot hardware is required.
 
+## Canonical Paper Figure
+
+Generate the six-panel trajectory and feedback-linearization figure from the
+two committed NPZ files:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/operational_space_impedance_control/code/plot_operational_space_impedance_paper_figure.py --force
+```
+
 ## Artifacts
 
 - `data/control_pcs_with_impedance_trajectory.npz` stores the canonical trajectory
   study, controller metadata, states, references, and inputs.
 - `data/impedance_feedback_linearization_comparison.npz` stores both matched
   feedback-linearization rollouts, geometric errors, settings, and runtimes.
-- `outputs/control_pcs_with_impedance_*_{results,config}.pdf` contains trajectory
-  and configuration plots for explicit scenarios.
-- `outputs/operational_space_impedance_full_vs_partial_*_tracking.{pdf,png}`
-  contains the feedback-linearization comparison figures.
+- `outputs/operational_space_impedance_control.pdf` is the canonical paper
+  figure combining trajectory tracking, geometric errors, and the matched
+  full-versus-partial feedback-linearization comparison.
 - `outputs/control_pcs_with_impedance_trajectory-render.mp4` is the prior
   canonical rendering of the saved operational-space rollout. Additional MP4
   files can be rendered from any saved NPZ data.
 
-The checked-in NPZ files were regenerated from scratch with the current Section
-Vc generators. The PDFs, PNGs, and MP4 are the prior pre-migration paper
-artifacts and were not replaced by validation renders. Canonical artifacts are
-tracked with Git LFS; use temporary custom paths for reproduction checks.
+Standalone trajectory, configuration, and feedback-linearization plots are
+reproducible diagnostics and remain uncommitted. The checked-in NPZ files were
+regenerated from scratch with the current Section Vc generators. Canonical
+media are tracked with Git LFS.

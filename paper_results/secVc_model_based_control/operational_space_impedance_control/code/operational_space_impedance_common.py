@@ -1,12 +1,8 @@
-"""Shared helpers for the PCS operational-space impedance example.
-
-This module intentionally lives under ``examples/``. It keeps the simulation
-script and the plotting/rendering script synchronized without adding public
-package API.
-"""
+"""Shared simulation, plotting, and rendering helpers for the impedance case."""
 
 from __future__ import annotations
 
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +11,7 @@ import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import numpy as np
 from jax import Array
+from matplotlib.lines import Line2D
 from trajectory_primitives import (
     TaskSpaceTrajectoryConfig,
     make_end_effector_task_selector,
@@ -33,12 +30,54 @@ jax.config.update("jax_enable_x64", True)
 CASE_DIR = Path(__file__).parent.parent
 DATA_DIR = CASE_DIR / "data"
 OUTPUTS_DIR = CASE_DIR / "outputs"
+PAPER_STYLE = Path(__file__).parents[3] / "paper.mplstyle"
+CM_TO_INCH = 1.0 / 2.54
+
+COORDINATE_COLORS = ("#2a9d8f", "#e9c46a", "#D81159")
 
 DEFAULT_SOLVER_DT = 2e-5
 DEFAULT_SAVE_DT = 0.01
 DEFAULT_TRAJECTORY_OUTPUT = DATA_DIR / "control_pcs_with_impedance_trajectory.npz"
 POSITION_STIFFNESS = 1.0
 DAMPING_RATIO = 1.0
+
+
+def configure_matplotlib() -> None:
+    """Apply the shared publication style with dense multi-panel sizing."""
+    plt.style.use(PAPER_STYLE)
+    plt.rcParams.update(
+        {
+            "font.size": 7,
+            "axes.labelsize": 7,
+            "axes.titlesize": 8,
+            "legend.fontsize": 6,
+            "figure.dpi": 300,
+            "savefig.dpi": 300,
+            "savefig.bbox": None,
+        }
+    )
+    if shutil.which("latex") is not None:
+        plt.rcParams.update({"text.usetex": True})
+
+
+def cm_to_inches(size_cm: tuple[float, float]) -> tuple[float, float]:
+    """Convert a figure size in centimeters to inches."""
+    return tuple(value * CM_TO_INCH for value in size_cm)
+
+
+def add_panel_label(ax: plt.Axes, label: str) -> None:
+    """Place a paper panel label inside the upper-left corner."""
+    ax.text(
+        0.015,
+        0.96,
+        label,
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        fontweight="bold",
+        zorder=10,
+    )
 
 
 @dataclass(frozen=True)
@@ -327,6 +366,7 @@ def plot_run(
     force: bool = False,
 ) -> tuple[str, str, Array, Array | None]:
     """Plot tracking and configuration results for a saved rollout."""
+    configure_matplotlib()
     tracking_output, tracking_error_pos, pose_error = _plot_tracking_results(
         run,
         problem,
@@ -404,6 +444,122 @@ def render_run(
     )
 
 
+def operational_tracking_data(
+    run: PCSImpedanceRun,
+    problem: PCSImpedanceProblem,
+) -> tuple[Array, Array, Array, Array | None]:
+    """Return position trajectories, position error, and geometric pose error."""
+    pos_indices = _position_indices(problem.osd)
+    x_traj_pos = run.x_traj_full[:, pos_indices]
+    x_des_traj_pos = run.x_des_traj_full[:, pos_indices]
+    tracking_error_pos = x_des_traj_pos - x_traj_pos
+    pose_error = None
+    if run.trajectory_config.tracking == "pose":
+        pose_error = jax.vmap(problem.osd.compute_pose_error)(
+            run.x_traj_full,
+            run.x_des_traj_full,
+        )
+    return x_traj_pos, x_des_traj_pos, tracking_error_pos, pose_error
+
+
+def plot_operational_tracking_axes(
+    run: PCSImpedanceRun,
+    problem: PCSImpedanceProblem,
+    axes: np.ndarray,
+    *,
+    panel_labels: tuple[str, ...] = (),
+) -> tuple[Array, Array | None]:
+    """Plot position/orientation tracking and errors into caller-owned axes."""
+    x_pos, x_des_pos, position_error, pose_error = operational_tracking_data(
+        run, problem
+    )
+    t = np.asarray(run.t_traj)
+    coordinate_labels = ("x", "y", "z")[: x_pos.shape[1]]
+
+    for component, label in enumerate(coordinate_labels):
+        color = COORDINATE_COLORS[component]
+        axes[0].plot(
+            t,
+            x_pos[:, component],
+            color=color,
+            linewidth=1.3,
+            label=rf"$p_{label}$",
+        )
+        axes[0].plot(
+            t,
+            x_des_pos[:, component],
+            color=color,
+            linestyle="--",
+            linewidth=1.1,
+            label=rf"$p_{{{label},\mathrm{{des}}}}$",
+        )
+        axes[1].plot(
+            t,
+            np.asarray(position_error[:, component]) * 1000.0,
+            color=color,
+            linewidth=1.3,
+            label=rf"$e_{{p_{label}}}$",
+        )
+    axes[0].set_ylabel(r"Position $\mathrm{[m]}$")
+    axes[1].set_ylabel(r"Position error $\mathrm{[mm]}$")
+    axes[1].axhline(0.0, color="0.25", linewidth=0.7, alpha=0.7, zorder=0)
+
+    if run.trajectory_config.tracking == "pose":
+        assert pose_error is not None
+        orientation_dim = problem.osd.n_orientation_dim
+        orientation_error = pose_error[:, : problem.osd.n_angular_velocity_dim]
+        for component, label in enumerate(("x", "y", "z")[:orientation_dim]):
+            color = COORDINATE_COLORS[component]
+            axes[2].plot(
+                t,
+                run.x_traj_full[:, component],
+                color=color,
+                linewidth=1.3,
+                label=rf"$r_{label}$",
+            )
+            axes[2].plot(
+                t,
+                run.x_des_traj_full[:, component],
+                color=color,
+                linestyle="--",
+                linewidth=1.1,
+                label=rf"$r_{{{label},\mathrm{{des}}}}$",
+            )
+            axes[3].plot(
+                t,
+                np.rad2deg(np.asarray(orientation_error[:, component])),
+                color=color,
+                linewidth=1.3,
+                label=rf"$e_{{r_{label}}}$",
+            )
+        axes[2].set_ylabel(r"Orientation $\mathrm{[rad]}$")
+        axes[3].set_ylabel(r"Orientation error $\mathrm{[deg]}$")
+        axes[3].axhline(0.0, color="0.25", linewidth=0.7, alpha=0.7, zorder=0)
+
+    for index, ax in enumerate(axes):
+        ax.set_xlim(float(t[0]), float(t[-1]))
+        if panel_labels:
+            add_panel_label(ax, panel_labels[index])
+    return position_error, pose_error
+
+
+def tracking_legend_handles() -> tuple[list[Line2D], list[str]]:
+    """Return decoupled coordinate and desired/actual legend handles."""
+    handles: list[Line2D] = [
+        Line2D([], [], color=color, marker="o", linestyle="none", markersize=4)
+        for color in COORDINATE_COLORS
+    ]
+    labels = [r"$x$", r"$y$", r"$z$"]
+    handles.extend(
+        [
+            Line2D([], [], color="black", linestyle="-", linewidth=1.3),
+            Line2D([], [], color="black", linestyle="--", linewidth=1.1),
+        ]
+    )
+    labels.extend(["Actual", "Desired"])
+    return handles, labels
+
+
 def _plot_tracking_results(
     run: PCSImpedanceRun,
     problem: PCSImpedanceProblem,
@@ -412,136 +568,41 @@ def _plot_tracking_results(
     no_show: bool,
     force: bool,
 ) -> tuple[str, Array, Array | None]:
-    osd = problem.osd
     config = run.trajectory_config
-    pos_indices = _position_indices(osd)
-    x_traj_pos = run.x_traj_full[:, pos_indices]
-    x_des_traj_pos = run.x_des_traj_full[:, pos_indices]
-    tracking_error_pos = x_des_traj_pos - x_traj_pos
-
-    pose_error = None
-    if config.tracking == "pose":
-        pose_error = jax.vmap(osd.compute_pose_error)(
-            run.x_traj_full,
-            run.x_des_traj_full,
-        )
-
     n_rows = 5 if config.tracking == "pose" else 3
-    fig, axes = plt.subplots(n_rows, 1, figsize=(10, 3.2 * n_rows), sharex=True)
-    colors = plt.cm.tab10.colors
-    axis_labels = ["x", "y", "z"][: x_traj_pos.shape[1]]
+    height_cm = 16.5 if config.tracking == "pose" else 10.5
+    fig, axes = plt.subplots(
+        n_rows,
+        1,
+        figsize=cm_to_inches((16.5, height_cm)),
+        sharex=True,
+        constrained_layout=True,
+    )
+    tracking_axes = axes[:4] if config.tracking == "pose" else axes[:2]
+    tracking_error_pos, pose_error = plot_operational_tracking_axes(
+        run, problem, tracking_axes
+    )
 
-    ax = axes[0]
-    for i, label in enumerate(axis_labels):
-        color = colors[i % len(colors)]
-        ax.plot(
-            run.t_traj,
-            x_traj_pos[:, i],
-            color=color,
-            linewidth=2,
-            label=f"$p_{label}$",
-        )
-        ax.plot(
-            run.t_traj,
-            x_des_traj_pos[:, i],
-            "--",
-            color=color,
-            linewidth=1.5,
-            alpha=0.7,
-            label=f"$p_{{{label},des}}$",
-        )
-    ax.set_ylabel("Position [m]")
-    ax.set_title("End-Effector Position Tracking")
-    ax.legend(loc="upper right", ncol=2)
-    ax.grid(True, alpha=0.3)
-
-    ax = axes[1]
-    for i, label in enumerate(axis_labels):
-        color = colors[i % len(colors)]
-        ax.plot(
-            run.t_traj,
-            tracking_error_pos[:, i] * 1000.0,
-            color=color,
-            linewidth=2,
-            label=f"$e_{label}$",
-        )
-    ax.set_ylabel("Position Error [mm]")
-    ax.set_title("Position Tracking Error")
-    ax.legend(loc="upper right")
-    ax.grid(True, alpha=0.3)
-
-    control_axis_index = 2
-    if config.tracking == "pose":
-        assert pose_error is not None
-        orientation_dim = osd.n_orientation_dim
-        orientation_error = pose_error[:, : osd.n_angular_velocity_dim]
-        orientation_labels = ["x", "y", "z"][:orientation_dim]
-
-        ax = axes[2]
-        for i, label in enumerate(orientation_labels):
-            color = colors[i % len(colors)]
-            ax.plot(
-                run.t_traj,
-                run.x_traj_full[:, i],
-                color=color,
-                linewidth=2,
-                label=f"$r_{label}$",
-            )
-            ax.plot(
-                run.t_traj,
-                run.x_des_traj_full[:, i],
-                "--",
-                color=color,
-                linewidth=1.5,
-                alpha=0.7,
-                label=f"$r_{{{label},des}}$",
-            )
-        ax.set_ylabel("Orientation")
-        ax.set_title("End-Effector Orientation Tracking")
-        ax.legend(loc="upper right", ncol=2)
-        ax.grid(True, alpha=0.3)
-
-        ax = axes[3]
-        error_labels = ["x", "y", "z"][: orientation_error.shape[1]]
-        for i, label in enumerate(error_labels):
-            color = colors[i % len(colors)]
-            ax.plot(
-                run.t_traj,
-                jnp.rad2deg(orientation_error[:, i]),
-                color=color,
-                linewidth=2,
-                label=f"$e_{{r,{label}}}$",
-            )
-        ax.set_ylabel("Orientation Error [deg]")
-        ax.set_title("Geometric Orientation Error")
-        ax.legend(loc="upper right")
-        ax.grid(True, alpha=0.3)
-        control_axis_index = 4
-
-    ax = axes[control_axis_index]
+    ax = axes[-1]
     num_actuators_to_plot = min(problem.robot.num_actuators, 6)
     for i in range(num_actuators_to_plot):
-        color = colors[i % len(colors)]
         ax.plot(
             run.t_traj,
             run.u_traj[:, i],
-            color=color,
             label=f"$u_{i}$",
-            linewidth=1.5,
+            linewidth=1.1,
         )
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Control Input")
-    ax.set_title("Actuator Inputs")
-    ax.legend(loc="upper right", ncol=2)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
+    ax.set_xlabel(r"Time $\mathrm{[s]}$")
+    ax.set_ylabel("Generalized actuation")
+    ax.legend(loc="upper right", ncol=3)
+    handles, labels = tracking_legend_handles()
+    fig.legend(handles, labels, loc="outside upper center", ncol=5)
     output = _output_path(
         output_prefix,
         f"{config.tracking}_{config.position_primitive}_{config.orientation_primitive}_results",
     )
     _ensure_writable(output, force=force)
-    plt.savefig(output, dpi=200)
+    fig.savefig(output, bbox_inches=None)
     if no_show:
         plt.close(fig)
     else:
@@ -559,44 +620,38 @@ def _plot_configuration_results(
     force: bool,
 ) -> str:
     config = run.trajectory_config
-    fig, axes = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
-    colors = plt.cm.tab10.colors
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=cm_to_inches((16.5, 7.5)),
+        sharex=True,
+        constrained_layout=True,
+    )
     num_dofs_to_plot = min(problem.num_dofs, 6)
 
     ax = axes[0]
     for i in range(num_dofs_to_plot):
-        color = colors[i % len(colors)]
-        ax.plot(
-            run.t_traj, run.q_traj[:, i], color=color, label=f"$q_{i}$", linewidth=2
-        )
-    ax.set_ylabel("Configuration")
-    ax.set_title("Configuration Space Evolution")
-    ax.legend(loc="upper right", ncol=2)
-    ax.grid(True, alpha=0.3)
+        ax.plot(run.t_traj, run.q_traj[:, i], label=f"$q_{i}$", linewidth=1.2)
+    ax.set_ylabel("Generalized strain")
+    ax.legend(loc="upper right", ncol=3)
 
     ax = axes[1]
     for i in range(num_dofs_to_plot):
-        color = colors[i % len(colors)]
         ax.plot(
             run.t_traj,
             run.qd_traj[:, i],
-            color=color,
             label=f"$\\dot{{q}}_{i}$",
-            linewidth=2,
+            linewidth=1.2,
         )
-    ax.set_xlabel("Time [s]")
-    ax.set_ylabel("Velocity")
-    ax.set_title("Configuration Space Velocities")
-    ax.legend(loc="upper right", ncol=2)
-    ax.grid(True, alpha=0.3)
-
-    plt.tight_layout()
+    ax.set_xlabel(r"Time $\mathrm{[s]}$")
+    ax.set_ylabel("Generalized strain rate")
+    ax.legend(loc="upper right", ncol=3)
     output = _output_path(
         output_prefix,
         f"{config.tracking}_{config.position_primitive}_{config.orientation_primitive}_config",
     )
     _ensure_writable(output, force=force)
-    plt.savefig(output, dpi=200)
+    fig.savefig(output, bbox_inches=None)
     if no_show:
         plt.close(fig)
     else:
@@ -637,11 +692,16 @@ __all__ = [
     "PCSImpedanceProblem",
     "PCSImpedanceRun",
     "build_problem",
+    "configure_matplotlib",
+    "cm_to_inches",
     "load_run_npz",
+    "operational_tracking_data",
+    "plot_operational_tracking_axes",
     "plot_run",
     "print_problem_summary",
     "print_tracking_summary",
     "render_run",
     "run_impedance_simulation",
     "save_run_npz",
+    "tracking_legend_handles",
 ]

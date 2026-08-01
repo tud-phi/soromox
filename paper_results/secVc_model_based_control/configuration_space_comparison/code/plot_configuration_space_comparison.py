@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -11,10 +12,57 @@ from configuration_space_comparison_simulation import (
     OUTPUTS_DIR,
     ComparisonRun,
     PlotGroup,
+    RmsePanel,
     RmseSummary,
     load_comparison_npz,
     print_metrics_table,
 )
+
+SCRIPT_PATH = Path(__file__)
+CASE_DIR = SCRIPT_PATH.parent.parent
+PAPER_STYLE = SCRIPT_PATH.parents[3] / "paper.mplstyle"
+CM_TO_INCH = 1.0 / 2.54
+CANONICAL_INPUT = CASE_DIR / "data" / "regulation_tracking_comparison.npz"
+CANONICAL_OUTPUT = OUTPUTS_DIR / "configuration_space_comparison.pdf"
+
+STRAIN_UNITS = (
+    r"rad\,m^{-1}",
+    r"rad\,m^{-1}",
+    "-",
+)
+CONTROLLER_LINESTYLES = {
+    "PD (model-free)": ":",
+    "PID (model-free)": "-.",
+    "Potential Compensation": "--",
+    "Potential Cancellation": "--",
+    "Gravity Cancellation": "-.",
+    "Feedforward Compensation": "-",
+    "Computed Torque": "-",
+    "Mixed State Feedback": "-.",
+}
+
+
+def configure_matplotlib() -> None:
+    """Apply the shared publication style with dense multi-panel sizing."""
+    plt.style.use(PAPER_STYLE)
+    plt.rcParams.update(
+        {
+            "font.size": 7,
+            "axes.labelsize": 7,
+            "axes.titlesize": 8,
+            "legend.fontsize": 6,
+            "figure.dpi": 300,
+            "savefig.dpi": 300,
+            "savefig.bbox": None,
+        }
+    )
+    if shutil.which("latex") is not None:
+        plt.rcParams.update({"text.usetex": True})
+
+
+def cm_to_inches(size_cm: tuple[float, float]) -> tuple[float, float]:
+    """Convert a figure size in centimeters to inches."""
+    return tuple(value * CM_TO_INCH for value in size_cm)
 
 
 def output_path(
@@ -34,41 +82,184 @@ def ensure_writable(path: Path, *, force: bool) -> None:
         raise FileExistsError(
             f"Output already exists: {path}. Pass --force to replace it."
         )
+    path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def add_timing_markers(
-    ax: plt.Axes,
-    group: PlotGroup,
-    *,
-    t0: float,
-    show_phase_label: bool,
-) -> None:
+def add_panel_label(ax: plt.Axes, label: str) -> None:
+    """Place a paper panel label inside the upper-left corner."""
+    ax.text(
+        0.015,
+        0.96,
+        label,
+        transform=ax.transAxes,
+        ha="left",
+        va="top",
+        fontsize=9,
+        fontweight="bold",
+        zorder=10,
+    )
+
+
+def add_timing_markers(ax: plt.Axes, group: PlotGroup, *, t0: float) -> None:
     """Mark setpoint changes and the regulation-to-tracking boundary."""
     for event_time in group.event_times:
         if event_time > t0:
-            ax.axvline(x=event_time, color="gray", linestyle=":", alpha=0.5)
-
-    if group.phase_boundary_time is None:
-        return
-
-    ax.axvline(
-        x=group.phase_boundary_time,
-        color="black",
-        linestyle="--",
-        linewidth=1.5,
-        alpha=0.8,
-    )
-    if show_phase_label and group.phase_boundary_label:
-        ax.text(
+            ax.axvline(
+                event_time,
+                color="0.55",
+                linestyle=":",
+                linewidth=0.8,
+                alpha=0.7,
+                zorder=0,
+            )
+    if group.phase_boundary_time is not None:
+        ax.axvline(
             group.phase_boundary_time,
-            0.98,
-            group.phase_boundary_label,
-            transform=ax.get_xaxis_transform(),
-            ha="right",
-            va="top",
-            rotation=90,
-            fontsize=9,
+            color="black",
+            linestyle="--",
+            linewidth=1.0,
+            alpha=0.8,
+            zorder=0,
         )
+
+
+def _group_results(
+    run: ComparisonRun, group: PlotGroup
+) -> dict[str, dict[str, np.ndarray]]:
+    return {
+        name: run.results[group.scenario_key][name] for name in group.controller_names
+    }
+
+
+def plot_tracking_axes(
+    run: ComparisonRun,
+    group: PlotGroup,
+    axes: np.ndarray,
+    *,
+    errors: bool,
+    panel_labels: tuple[str, ...] = (),
+) -> None:
+    """Plot tracking signals or errors into caller-owned strain axes."""
+    all_results = _group_results(run, group)
+    first = all_results[group.controller_names[0]]
+    t = np.asarray(first["t"])
+    q_des = np.asarray(first["metrics"]["q_des"])
+
+    for row, (ax, strain_idx, strain_name, unit) in enumerate(
+        zip(axes, run.strain_indices, run.strain_names, STRAIN_UNITS)
+    ):
+        if not errors:
+            ax.plot(
+                t,
+                q_des[:, strain_idx],
+                color="black",
+                linestyle="--",
+                linewidth=1.4,
+                label="Desired",
+                zorder=4,
+            )
+
+        for name in group.controller_names:
+            results = all_results[name]
+            values = (
+                results["metrics"]["tracking_error"][:, strain_idx]
+                if errors
+                else results["q"][:, strain_idx]
+            )
+            ax.plot(
+                results["t"],
+                values,
+                color=group.colors[name],
+                linestyle=CONTROLLER_LINESTYLES.get(name, "-"),
+                linewidth=1.2,
+                label=name,
+            )
+
+        add_timing_markers(ax, group, t0=float(t[0]))
+        if errors:
+            ax.axhline(0.0, color="0.25", linewidth=0.7, alpha=0.7, zorder=0)
+        symbol = rf"$e_{{{strain_name.strip('$')}}}$" if errors else strain_name
+        ax.set_ylabel(rf"{symbol} $\mathrm{{[{unit}]}}$")
+        ax.set_xlim(float(t[0]), float(t[-1]))
+        if panel_labels:
+            add_panel_label(ax, panel_labels[row])
+
+
+def _phase_labels(axes: np.ndarray, boundary_time: float, t1: float) -> None:
+    split = boundary_time / t1
+    for ax in axes:
+        ax.text(
+            split / 2.0,
+            1.025,
+            "Setpoint regulation",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+        ax.text(
+            split + (1.0 - split) / 2.0,
+            1.025,
+            "Trajectory tracking",
+            transform=ax.transAxes,
+            ha="center",
+            va="bottom",
+            fontsize=7,
+        )
+
+
+def build_configuration_space_paper_figure(run: ComparisonRun) -> plt.Figure:
+    """Build the canonical regulation-to-tracking comparison figure."""
+    group = next((item for item in run.plot_groups if item.key == "combined"), None)
+    if group is None or group.phase_boundary_time is None:
+        raise ValueError("The canonical figure requires the combined phase plot group.")
+
+    configure_matplotlib()
+    fig, axes = plt.subplots(
+        3,
+        2,
+        figsize=cm_to_inches((16.5, 12.0)),
+        sharex=True,
+        constrained_layout=True,
+    )
+    plot_tracking_axes(
+        run, group, axes[:, 0], errors=False, panel_labels=("A", "C", "E")
+    )
+    plot_tracking_axes(
+        run, group, axes[:, 1], errors=True, panel_labels=("B", "D", "F")
+    )
+    axes[-1, 0].set_xlabel(r"Time $\mathrm{[s]}$")
+    axes[-1, 1].set_xlabel(r"Time $\mathrm{[s]}$")
+
+    t1 = float(_group_results(run, group)[group.controller_names[0]]["t"][-1])
+    _phase_labels(axes[0, :], group.phase_boundary_time, t1)
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="outside upper center",
+        ncol=3,
+        columnspacing=1.2,
+        handlelength=2.5,
+    )
+    return fig
+
+
+def save_configuration_space_paper_figure(
+    run: ComparisonRun,
+    output: Path,
+    *,
+    show: bool,
+    force: bool,
+) -> Path:
+    """Save the canonical configuration-space comparison PDF."""
+    ensure_writable(output, force=force)
+    fig = build_configuration_space_paper_figure(run)
+    fig.savefig(output, bbox_inches=None)
+    if show:
+        plt.show()
+    plt.close(fig)
+    return output
 
 
 def plot_tracking_group(
@@ -81,104 +272,111 @@ def plot_tracking_group(
     force: bool = False,
 ) -> tuple[Path, Path]:
     """Plot desired/actual strains and tracking errors for one controller group."""
-    all_results = {
-        name: run.results[group.scenario_key][name] for name in group.controller_names
-    }
-    first_controller = group.controller_names[0]
-    strain_indices = run.strain_indices
-    strain_names = run.strain_names
-
-    fig, axes = plt.subplots(len(strain_indices), 1, figsize=(12, 10), sharex=True)
-    axes = np.atleast_1d(axes)
-
-    for idx, (strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
-        ax = axes[idx]
-        t = all_results[first_controller]["t"]
-        q_des = all_results[first_controller]["metrics"]["q_des"]
-        ax.plot(t, q_des[:, strain_idx], "k--", linewidth=2, label="Desired", alpha=0.7)
-
-        for name, results in all_results.items():
-            ax.plot(
-                results["t"],
-                results["q"][:, strain_idx],
-                color=group.colors[name],
-                linewidth=1.5,
-                label=name,
-            )
-
-        add_timing_markers(
-            ax,
-            group,
-            t0=float(t[0]),
-            show_phase_label=idx == 0,
+    configure_matplotlib()
+    outputs: list[Path] = []
+    for errors, suffix in ((False, "tracking"), (True, "errors")):
+        fig, axes = plt.subplots(
+            3,
+            1,
+            figsize=cm_to_inches((16.5, 9.5)),
+            sharex=True,
+            constrained_layout=True,
         )
-
-        ax.set_ylabel(f"{strain_name}")
-        ax.grid(True, alpha=0.3)
-        if idx == 0:
-            ax.legend(loc="upper right", fontsize=8, ncol=2)
-
-    axes[-1].set_xlabel("Time [s]")
-    axes[0].set_title(group.title)
-    plt.tight_layout()
-
-    tracking_output = output_path(
-        output_dir,
-        f"{group.filename_prefix}_tracking.pdf",
-        output_prefix,
-    )
-    ensure_writable(tracking_output, force=force)
-    fig.savefig(tracking_output, dpi=200, bbox_inches="tight")
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-
-    fig, axes = plt.subplots(len(strain_indices), 1, figsize=(12, 8), sharex=True)
-    axes = np.atleast_1d(axes)
-
-    for idx, (strain_idx, strain_name) in enumerate(zip(strain_indices, strain_names)):
-        ax = axes[idx]
-        for name, results in all_results.items():
-            tracking_error = results["metrics"]["tracking_error"]
-            ax.plot(
-                results["t"],
-                tracking_error[:, strain_idx],
-                color=group.colors[name],
-                linewidth=1.5,
-                label=name,
-            )
-
-        add_timing_markers(
-            ax,
-            group,
-            t0=float(all_results[first_controller]["t"][0]),
-            show_phase_label=idx == 0,
+        plot_tracking_axes(run, group, axes, errors=errors)
+        axes[-1].set_xlabel(r"Time $\mathrm{[s]}$")
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="outside upper center", ncol=3)
+        output = output_path(
+            output_dir,
+            f"{group.filename_prefix}_{suffix}.pdf",
+            output_prefix,
         )
-
-        ax.set_ylabel(f"Error {strain_name}")
-        ax.axhline(y=0, color="k", linestyle="-", alpha=0.3)
-        ax.grid(True, alpha=0.3)
-        if idx == 0:
-            ax.legend(loc="upper right", fontsize=8, ncol=2)
-
-    axes[-1].set_xlabel("Time [s]")
-    axes[0].set_title(f"{group.title}: Tracking Errors")
-    plt.tight_layout()
-
-    error_output = output_path(
-        output_dir,
-        f"{group.filename_prefix}_errors.pdf",
-        output_prefix,
-    )
-    ensure_writable(error_output, force=force)
-    fig.savefig(error_output, dpi=200, bbox_inches="tight")
-    if show:
-        plt.show()
-    else:
+        ensure_writable(output, force=force)
+        fig.savefig(output, bbox_inches=None)
+        if show:
+            plt.show()
         plt.close(fig)
+        outputs.append(output)
+    return outputs[0], outputs[1]
 
-    return tracking_output, error_output
+
+def rmse_values(run: ComparisonRun, panel: RmsePanel, strain_offset: int) -> np.ndarray:
+    """Return controller RMSE values for one saved phase and strain."""
+    return np.asarray(
+        [
+            run.results[panel.scenario_key][name]["metrics"]["rmse"][strain_offset]
+            for name in panel.controller_names
+        ],
+        dtype=float,
+    )
+
+
+def _controller_colors(run: ComparisonRun) -> dict[str, str]:
+    colors: dict[str, str] = {}
+    for group in run.plot_groups:
+        colors.update(group.colors)
+    return colors
+
+
+def _format_bar_value(value: float) -> str:
+    if value == 0.0:
+        return "0"
+    if abs(value) < 0.01:
+        return f"{value:.1e}"
+    return f"{value:.2f}"
+
+
+def build_rmse_summary_figure(run: ComparisonRun, summary: RmseSummary) -> plt.Figure:
+    """Build a phase-by-strain RMSE matrix with unit-correct axes."""
+    configure_matplotlib()
+    n_columns = len(summary.panels)
+    width_cm = 8.2 if n_columns == 1 else 16.5
+    fig, axes = plt.subplots(
+        len(run.strain_names),
+        n_columns,
+        figsize=cm_to_inches((width_cm, 10.5)),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    colors = _controller_colors(run)
+
+    for row, (_strain_name, unit) in enumerate(zip(run.strain_names, STRAIN_UNITS)):
+        row_values = [rmse_values(run, panel, row) for panel in summary.panels]
+        row_limit = max(float(values.max(initial=0.0)) for values in row_values)
+        row_limit = max(row_limit * 1.22, 1e-12)
+
+        for column, (panel, values) in enumerate(zip(summary.panels, row_values)):
+            ax = axes[row, column]
+            names = list(panel.controller_names)
+            y = np.arange(len(names))
+            bars = ax.barh(
+                y,
+                values,
+                color=[colors.get(name, "0.5") for name in names],
+                height=0.7,
+            )
+            ax.set_xlim(0.0, row_limit)
+            ax.invert_yaxis()
+            ax.grid(True, axis="x")
+            ax.grid(False, axis="y")
+            ax.set_xlabel(rf"RMSE $\mathrm{{[{unit}]}}$")
+            ax.set_yticks(y)
+            ax.set_yticklabels(names if column == 0 else [])
+            if row == 0:
+                title = panel.title.replace(": RMSE", "")
+                ax.set_title(title)
+            add_panel_label(ax, chr(ord("A") + row * n_columns + column))
+
+            for bar, value in zip(bars, values):
+                ax.text(
+                    min(float(value) + 0.015 * row_limit, 0.98 * row_limit),
+                    bar.get_y() + bar.get_height() / 2.0,
+                    _format_bar_value(float(value)),
+                    ha="left",
+                    va="center",
+                    fontsize=5.5,
+                )
+    return fig
 
 
 def plot_rmse_summary(
@@ -190,39 +388,14 @@ def plot_rmse_summary(
     show: bool = True,
     force: bool = False,
 ) -> Path:
-    """Plot one RMSE summary figure."""
-    fig, axes = plt.subplots(
-        1, len(summary.panels), figsize=(7 * len(summary.panels), 5)
-    )
-    axes = np.atleast_1d(axes)
-    width = 0.8 / len(run.strain_names)
-
-    for ax, panel in zip(axes, summary.panels):
-        controller_names = list(panel.controller_names)
-        x = np.arange(len(controller_names))
-        for strain_offset, strain_name in enumerate(run.strain_names):
-            rmse_values = [
-                run.results[panel.scenario_key][name]["metrics"]["rmse"][strain_offset]
-                for name in controller_names
-            ]
-            ax.bar(x + strain_offset * width, rmse_values, width, label=strain_name)
-
-        ax.set_xlabel("Controller")
-        ax.set_ylabel("RMSE")
-        ax.set_title(panel.title)
-        ax.set_xticks(x + width * (len(run.strain_names) - 1) / 2)
-        ax.set_xticklabels(controller_names, rotation=30, ha="right", fontsize=8)
-        ax.legend()
-        ax.grid(True, alpha=0.3, axis="y")
-
-    plt.tight_layout()
+    """Save a unit-correct phase-by-strain RMSE summary figure."""
     output = output_path(output_dir, summary.filename, output_prefix)
     ensure_writable(output, force=force)
-    fig.savefig(output, dpi=200, bbox_inches="tight")
+    fig = build_rmse_summary_figure(run, summary)
+    fig.savefig(output, bbox_inches=None)
     if show:
         plt.show()
-    else:
-        plt.close(fig)
+    plt.close(fig)
     return output
 
 
@@ -237,8 +410,6 @@ def plot_run(
 ) -> list[Path]:
     """Generate all selected plots for a saved comparison run."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    outputs: list[Path] = []
-
     selected_groups = [
         group
         for group in run.plot_groups
@@ -256,6 +427,7 @@ def plot_run(
         unknown = ", ".join(sorted(group_keys - selected_keys))
         raise ValueError(f"Unknown plot group(s): {unknown}")
 
+    outputs: list[Path] = []
     for group in selected_groups:
         outputs.extend(
             plot_tracking_group(
@@ -267,7 +439,6 @@ def plot_run(
                 force=force,
             )
         )
-
     for summary in selected_summaries:
         outputs.append(
             plot_rmse_summary(
@@ -279,7 +450,6 @@ def plot_run(
                 force=force,
             )
         )
-
     return outputs
 
 
@@ -287,40 +457,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("trajectory", help="Saved comparison .npz file.")
     parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=OUTPUTS_DIR,
-        help="Directory for generated PDF plots.",
+        "--output-dir", type=Path, default=OUTPUTS_DIR, help="Generated PDF directory."
     )
-    parser.add_argument(
-        "--output-prefix",
-        default=None,
-        help="Optional string prepended to each generated filename.",
-    )
-    parser.add_argument(
-        "--group",
-        action="append",
-        default=None,
-        help="Plot only this group key. Can be passed multiple times.",
-    )
-    parser.add_argument("--no-show", action="store_true", help="Do not show plots.")
-    parser.add_argument(
-        "--force", action="store_true", help="Replace existing plot files."
-    )
+    parser.add_argument("--output-prefix", default=None)
+    parser.add_argument("--group", action="append", default=None)
+    parser.add_argument("--no-show", action="store_true")
+    parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     run = load_comparison_npz(args.trajectory)
-
     for scenario in run.scenarios:
         print_metrics_table(
-            run.results[scenario.key],
-            run.strain_names,
-            f"{scenario.title}: RMSE",
+            run.results[scenario.key], run.strain_names, f"{scenario.title}: RMSE"
         )
-
     outputs = plot_run(
         run,
         output_dir=args.output_dir,
@@ -329,7 +481,6 @@ def main() -> None:
         show=not args.no_show,
         force=args.force,
     )
-
     print("\nPlots saved to:")
     for output in outputs:
         print(f"  - {output}")

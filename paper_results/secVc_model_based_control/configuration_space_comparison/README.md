@@ -24,6 +24,20 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/conf
 uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_comparison.py /tmp/soromox-secVc/configuration/data/regulation_tracking_comparison.npz --output-dir /tmp/soromox-secVc/configuration/outputs --no-show
 ```
 
+Generate the canonical regulation-to-tracking paper figure from the committed
+data:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_paper_figure.py --force
+```
+
+Generate the phase-separated RMSE diagnostic, with independent setpoint and
+trajectory-tracking columns and one row per strain:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_comparison.py paper_results/secVc_model_based_control/configuration_space_comparison/data/regulation_tracking_comparison.npz --group phase-rmse --no-show --force
+```
+
 Record a saved rollout with the Viser renderer, selecting a target listed by the
 plotter or renderer CLI:
 
@@ -40,8 +54,8 @@ requires Viser and a working video encoder, but no robot hardware.
 
 `data/` contains one NPZ per workflow. Each archive records metadata, scenario
 and controller names, time vectors, states, inputs, references, and metrics.
-`outputs/` contains scenario-specific tracking, error, RMSE, and optional MP4
-artifacts. The checked-in NPZ files were regenerated from scratch with the
-current Section Vc generators. The checked-in setpoint PDFs are the prior
-pre-migration paper artifacts rather than plots regenerated from those new NPZ
-files. Validation runs should use temporary output directories.
+`outputs/configuration_space_comparison.pdf` is the canonical paper figure. It
+contains the complete regulation-to-tracking trajectory and tracking errors for
+all three controlled strains. Scenario-specific tracking, error, and RMSE plots
+are reproducible diagnostics and remain uncommitted. The checked-in NPZ files
+were regenerated from scratch with the current Section Vc generators.

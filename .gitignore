@@ -148,6 +148,13 @@ examples/**/videos/*
 !paper_results/secVc_model_based_control/**/*.mp4
 !paper_results/secVc_model_based_control/**/*.gif
 
+# Section Vc diagnostics are reproducible; only paper figures and video are canonical.
+paper_results/secVc_model_based_control/configuration_space_comparison/outputs/*
+!paper_results/secVc_model_based_control/configuration_space_comparison/outputs/configuration_space_comparison.pdf
+paper_results/secVc_model_based_control/operational_space_impedance_control/outputs/*
+!paper_results/secVc_model_based_control/operational_space_impedance_control/outputs/operational_space_impedance_control.pdf
+!paper_results/secVc_model_based_control/operational_space_impedance_control/outputs/control_pcs_with_impedance_trajectory-render.mp4
+
 # Documentation build
 site/
 

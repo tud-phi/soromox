@@ -10,7 +10,7 @@ or generated artifacts under `data/`, and publication figures/videos under
 | IVa, sequential CPU benchmarks | `secIVa_benchmarking_sequential_cpu/` | rollout comparison figures |
 | IVb, parallel GPU rollouts | `secIVb_parallel_rollouts_gpu/` | batch-scaling figures |
 | Va, system identification | `secVa_system_identification/` | shape, error, and RMSE figures |
-| Vc, model-based control | [`secVc_model_based_control/`](secVc_model_based_control/README.md) | configuration- and operational-space comparisons |
+| Vc, model-based control | [`secVc_model_based_control/`](secVc_model_based_control/README.md) | standardized configuration- and operational-space figures |
 | Vd, control-gain optimization | `secVd_control_gain_optimization/` | optimized-gain comparison |
 | Ve, safety-constrained control | `secVe_safety_constrained_control/` | rollout data, plots, and videos |
 | Vf, parallel reinforcement learning | `secVf_parallel_rl/` | reward curve and rollout media |

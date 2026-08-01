@@ -22,6 +22,7 @@ ENTRY_POINTS = (
     "trajectory_tracking_comparison.py",
     "regulation_tracking_comparison.py",
     "plot_configuration_space_comparison.py",
+    "plot_configuration_space_paper_figure.py",
     "render_configuration_space_comparison.py",
 )
 
