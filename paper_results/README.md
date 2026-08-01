@@ -5,9 +5,6 @@ to produce the reported results. Each section keeps scripts under `code/`, sourc
 or generated artifacts under `data/`, and publication figures/videos under
 `outputs/`.
 
-The latest end-to-end validation results and unresolved reproducibility gaps are
-recorded in [`REPRODUCTION_REPORT.md`](REPRODUCTION_REPORT.md).
-
 | Paper section | Directory | Reproduced artifacts |
 | --- | --- | --- |
 | IVa, sequential CPU benchmarks | `secIVa_benchmarking_sequential_cpu/` | rollout comparison figures |

@@ -395,12 +395,10 @@ To create a new example:
 1. **Choose a base example** similar to your use case from the appropriate category:
    - `examples/simulation/` for new robot systems
    - `examples/control/` for new control algorithms
-   - `paper_results/` for reproducible benchmark or application-study workflows
 
 2. **Copy and modify** parameters and logic
 3. **Test thoroughly** with different configurations
 4. **Write generated artifacts to sibling `figures/` or `videos/` directories**
-5. **Move paper-specific studies to `paper_results/<section>/<case>/`**
 
 ### Example Template
 
