@@ -51,8 +51,8 @@ def factory_fn(
 
     def residual_fn(q: Array, phi: Array) -> Array:
         G = robot.gravitational_force(q)
-        K = robot.stiffness_vector(q)
-        alpha = robot.actuation_matrix(q, phi)
+        K = robot.elastic_force(q)
+        alpha = robot.actuation_force(q, phi)
         res = alpha - G - K
         return jnp.square(res).mean()
 

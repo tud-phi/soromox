@@ -1,0 +1,47 @@
+# Configuration-Space Comparison
+
+This case reproduces the Section Vc configuration-space controller comparisons.
+The three generators share the robot, controller, trajectory, serialization,
+plotting, and rendering implementation in `code/configuration_space_comparison_simulation.py`.
+
+## Reproduce
+
+From the repository root, generate all three datasets without touching the
+checked-in artifacts:
+
+```bash
+mkdir -p /tmp/soromox-secVc/configuration/{data,outputs}
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/setpoint_regulation_comparison.py --output /tmp/soromox-secVc/configuration/data/setpoint_regulation_comparison.npz
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/trajectory_tracking_comparison.py --output /tmp/soromox-secVc/configuration/data/trajectory_tracking_comparison.npz
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/regulation_tracking_comparison.py --output /tmp/soromox-secVc/configuration/data/regulation_tracking_comparison.npz
+```
+
+Plot all datasets without opening interactive windows:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_comparison.py /tmp/soromox-secVc/configuration/data/setpoint_regulation_comparison.npz --output-dir /tmp/soromox-secVc/configuration/outputs --no-show
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_comparison.py /tmp/soromox-secVc/configuration/data/trajectory_tracking_comparison.npz --output-dir /tmp/soromox-secVc/configuration/outputs --no-show
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_comparison.py /tmp/soromox-secVc/configuration/data/regulation_tracking_comparison.npz --output-dir /tmp/soromox-secVc/configuration/outputs --no-show
+```
+
+Record a saved rollout with the Viser renderer, selecting a target listed by the
+plotter or renderer CLI:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/render_configuration_space_comparison.py /tmp/soromox-secVc/configuration/data/setpoint_regulation_comparison.npz --target setpoint-pid --video-output /tmp/soromox-secVc/configuration/outputs/setpoint-pid.mp4
+```
+
+Use `--force` to replace existing data or outputs. Custom `--output`,
+`--output-dir`, and `--video-output` paths are supported. A first JAX run incurs
+compilation overhead; full CPU runs can take several minutes. Video recording
+requires Viser and a working video encoder, but no robot hardware.
+
+## Artifacts
+
+`data/` contains one NPZ per workflow. Each archive records metadata, scenario
+and controller names, time vectors, states, inputs, references, and metrics.
+`outputs/` contains scenario-specific tracking, error, RMSE, and optional MP4
+artifacts. The checked-in NPZ files were regenerated from scratch with the
+current Section Vc generators. The checked-in setpoint PDFs are the prior
+pre-migration paper artifacts rather than plots regenerated from those new NPZ
+files. Validation runs should use temporary output directories.

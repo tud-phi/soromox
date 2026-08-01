@@ -5,6 +5,9 @@ tensions to generate multiple trajectories from the same initial condition,
 and visualizes them in a grid using Matplotlib, Open3D, and Viser renderers.
 """
 
+import argparse
+from pathlib import Path
+
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -24,6 +27,17 @@ from soromox.systems import (
     PCSParams,
     PCSStructure,
     SystemState,
+)
+
+DEFAULT_OPEN3D_VIDEO_PATH = (
+    Path(__file__).resolve().parent
+    / "videos"
+    / "simulate_batched_tendon_actuated_pcs_open3d.mp4"
+)
+DEFAULT_VISER_VIDEO_PATH = (
+    Path(__file__).resolve().parent
+    / "videos"
+    / "simulate_batched_tendon_actuated_pcs_viser.mp4"
 )
 
 
@@ -105,7 +119,7 @@ def simulate_batched(robot: PCS, num_robots: int, rng_key: jax.Array):
     return ts, q_ts
 
 
-def main():
+def main(*, open3d_video_output: Path, viser_video_output: Path):
     if Open3DRenderer is None:
         raise ImportError(
             "Open3D is required for this example. Install with `pip install open3d`."
@@ -144,7 +158,7 @@ def main():
     renderer.render_sequence(
         ts=ts,
         q_ts=q_ts_batched,
-        record_path="videos/batched_tendon_actuated_pcs_open3d.mp4",
+        record_path=str(open3d_video_output),
     )
 
     # render using the ViserRenderer
@@ -166,9 +180,20 @@ def main():
         autoplay=True,
         loop=True,
         render_actuators=True,
-        record_path="videos/batched_tendon_actuated_pcs_viser.mp4",
+        record_path=str(viser_video_output),
     )
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--open3d-video-output", type=Path, default=DEFAULT_OPEN3D_VIDEO_PATH
+    )
+    parser.add_argument(
+        "--viser-video-output", type=Path, default=DEFAULT_VISER_VIDEO_PATH
+    )
+    args = parser.parse_args()
+    main(
+        open3d_video_output=args.open3d_video_output,
+        viser_video_output=args.viser_video_output,
+    )

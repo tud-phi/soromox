@@ -9,12 +9,13 @@ This page provides a comprehensive overview of the example scripts included with
 
 ## Overview
 
-SoRoMoX examples are organized into four main categories:
+SoRoMoX examples are organized into two main categories:
 
 - **[Simulation Examples](#simulation-examples)** - Dynamic simulations of various robot systems
 - **[Control Examples](#control-examples)** - Control algorithms for different control spaces
-- **[System Identification Examples](#system-identification-examples)** - Parameter estimation from experimental data
-- **[Analysis Examples](#analysis-examples)** - Numerical analysis and stability studies
+
+Reproducible paper benchmarks, system identification, optimization, and
+application studies are catalogued separately in `paper_results/README.md`.
 
 ---
 
@@ -179,67 +180,21 @@ python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
 
 Control examples demonstrate various control algorithms for different control spaces. These examples are located in `examples/control/` and are organized by control space type.
 
-### Configuration-Space Controllers
-
-Configuration-space controllers operate directly on the robot's configuration variables (e.g., joint angles, strain parameters).
-
-#### Setpoint Regulation
-```bash
-python examples/control/configuration_space/setpoint_regulation_comparison.py
-```
-
-**What you'll learn:**
-- Comparison of different configuration-space regulators:
-  - `PIDController` (model-free baseline)
-  - `PotentialCompensationRegulator` (feedforward: G(q_des) + τ_el(q_des))
-  - `PotentialCancellationRegulator` (feedforward: G(q) + τ_el(q))
-  - `GravityCancellationRegulator` (feedforward: G(q) + τ_el(q_des))
-- Model-based feedforward control design
-- Performance comparison of control strategies
-
-**Key concepts:** Configuration-space control, feedforward compensation, gravity cancellation
-
-#### Trajectory Tracking
-```bash
-python examples/control/configuration_space/trajectory_tracking_comparison.py
-```
-
-**What you'll learn:**
-- Trajectory tracking in configuration space
-- Comparison of different tracking controllers
-- Reference trajectory generation and tracking
-
-**Key concepts:** Trajectory tracking, configuration-space control, reference generation
-
-#### Regulation Followed by Tracking
-
-```bash
-python examples/control/configuration_space/regulation_tracking_comparison.py
-```
-
-**What you'll learn:**
-- Regulation and tracking within one uninterrupted control task
-- Comparison of model-free, feedforward-compensation, and computed-torque controllers
-- Phase-specific tracking metrics and result visualization
-
-**Key concepts:** Regulation versus tracking, inverse-dynamics feedforward, computed torque
-
 ### Operational-Space Controllers
 
 Operational-space controllers operate on the robot's end-effector or task-space coordinates.
 
-#### Impedance Control
+#### Synergistic Control
 ```bash
-python examples/control/operational_space/control_pcs_with_impedance.py
+python examples/control/operational_space/control_tendon_actuated_pcs_with_synergistic.py
 ```
 
 **What you'll learn:**
-- Operational-space impedance control for PCS robots
-- Partial feedback linearization
-- End-effector position tracking
-- Impedance behavior design (stiffness and damping)
+- Operational-space control for an underactuated tendon-driven PCS robot
+- End-effector position tracking with actuation synergies
+- Task-space reference generation
 
-**Key concepts:** Operational-space control, impedance control, feedback linearization, task-space control
+**Key concepts:** Operational-space control, underactuation, synergistic control
 
 ### Actuation-Space Controllers
 
@@ -256,50 +211,6 @@ python examples/control/actuation_space/setpoint_regulation_comparison.py
 - Comparison of actuation-space control strategies
 
 **Key concepts:** Actuation-space control, actuator mapping, direct control
-
----
-
-## System Identification Examples
-
-System identification examples demonstrate how to estimate model parameters from experimental data. These examples are located in `examples/system_identification/`.
-
-### Parameter Identification
-
-#### Soft Tentacle Parameter Identification
-```bash
-python examples/system_identification/identify_soft_tentacle_parameters.py
-```
-
-**What you'll learn:**
-- Parameter estimation from experimental data
-- Gradient-based optimization for system identification
-- Model fitting techniques using JAX and Optimistix
-- Validation against measurements
-- Working with motion capture (MoCap) data
-
-**Key concepts:** System identification, parameter estimation, optimization, experimental validation
-
-**Data:** The example uses experimental data from the `examples/system_identification/data/` directory, including various motion capture recordings with different actuation inputs.
-
----
-
-## Analysis Examples
-
-Analysis examples demonstrate numerical analysis techniques and stability studies. These examples are located in `examples/analysis/`.
-
-### Singularities and Differentiability
-
-```bash
-# Located in examples/analysis/singularities_and_differentiability/
-```
-
-**What you'll learn:**
-- Singular configuration analysis
-- Differentiability properties of robot models
-- Numerical stability assessment
-- Workspace analysis
-
-**Key concepts:** Singularities, differentiability, numerical stability, workspace analysis
 
 ---
 
@@ -338,8 +249,7 @@ Follow these steps to run any example:
    For example:
    ```bash
    python examples/simulation/pendulum/simulate_pendulum.py
-   python examples/control/configuration_space/setpoint_regulation_comparison.py
-   python examples/system_identification/identify_soft_tentacle_parameters.py
+   python examples/control/actuation_space/setpoint_regulation_comparison.py
    ```
 
 3. **Analyze results** in generated plots and videos
@@ -485,12 +395,12 @@ To create a new example:
 1. **Choose a base example** similar to your use case from the appropriate category:
    - `examples/simulation/` for new robot systems
    - `examples/control/` for new control algorithms
-   - `examples/system_identification/` for parameter estimation methods
-   - `examples/analysis/` for numerical analysis studies
+   - `paper_results/` for reproducible benchmark or application-study workflows
 
 2. **Copy and modify** parameters and logic
 3. **Test thoroughly** with different configurations
-4. **Follow the existing structure** and naming conventions
+4. **Write generated artifacts to sibling `figures/` or `videos/` directories**
+5. **Move paper-specific studies to `paper_results/<section>/<case>/`**
 
 ### Example Template
 

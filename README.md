@@ -208,12 +208,14 @@ or to simulate the planar PCS robot:
 python examples/simulation/pcs/simulate_planar_pcs.py
 ```
 
-For model-based control examples:
+The lightweight example catalogue and output conventions are documented in
+[`examples/README.md`](examples/README.md). Reproducible paper workflows,
+including the Section Vc model-based control studies, are under
+[`paper_results/`](paper_results/README.md):
 
 ```bash
-python examples/control/configuration_space/setpoint_regulation_comparison.py
-python examples/control/configuration_space/trajectory_tracking_comparison.py
-python examples/control/configuration_space/regulation_tracking_comparison.py
+python paper_results/secVc_model_based_control/configuration_space_comparison/code/setpoint_regulation_comparison.py
+python paper_results/secVc_model_based_control/operational_space_impedance_control/code/control_pcs_with_impedance.py
 ```
 
 ## Documentation

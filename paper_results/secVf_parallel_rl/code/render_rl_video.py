@@ -223,6 +223,7 @@ def main():
         autoplay=True,
         loop=False,
         record_path=args.output,
+        close_when_recording_done=True,
         render_actuators=True,
         camera_config=camera_config,
         static_spheres_positions=static_spheres_positions,

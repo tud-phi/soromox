@@ -17,6 +17,7 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 os.environ.setdefault("MPLCONFIGDIR", str(SCRIPT_DIR / ".matplotlib_cache"))
+PAPER_STYLE = SCRIPT_DIR.parent / "paper.mplstyle"
 
 # --- Configuration Constants ---
 REWARD_KEY = "episode_reward_mean"
@@ -54,37 +55,13 @@ class Curve:
 
 def configure_matplotlib() -> None:
     """Configure a compact publication-style matplotlib theme."""
+    plt.style.use(PAPER_STYLE)
     plt.rcParams.update(
         {
-            # Adjust white padding around image
-            # --- Grid Configuration ---
-            "axes.grid": True,
-            "grid.alpha": 0.5,
-            "grid.linestyle": "-",
-            "grid.linewidth": 0.8,
-            "grid.color": "#B0B0B0",
-            # --- Font Configuration ---
-            "font.family": "serif",
-            "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
-            "mathtext.fontset": "cm",
-            "axes.formatter.use_mathtext": True,
             "font.size": 11,
             "axes.labelsize": 11,
-            # --- Legend Configuration ---
             "legend.fontsize": 11,
-            "legend.frameon": True,
-            "legend.facecolor": "white",
-            "legend.framealpha": 0.8,
-            "legend.edgecolor": "#A0A0A0",
-            "legend.fancybox": False,
-            "patch.linewidth": 0.7,
-            # --- Axes and Spines ---
-            "axes.linewidth": 0.8,
-            "xtick.direction": "out",
-            "ytick.direction": "out",
-            "savefig.bbox": "tight",
             "figure.dpi": 300,
-            "lines.linewidth": 1.8,
         }
     )
 

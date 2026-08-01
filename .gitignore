@@ -140,6 +140,14 @@ dmypy.json
 *.mp4
 *.gif
 
+# Generated example artifacts stay next to the script that creates them.
+examples/**/figures/*
+examples/**/videos/*
+
+# Canonical paper media is versioned with Git LFS.
+!paper_results/secVc_model_based_control/**/*.mp4
+!paper_results/secVc_model_based_control/**/*.gif
+
 # Documentation build
 site/
 

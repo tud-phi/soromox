@@ -1,3 +1,4 @@
+import argparse
 from functools import partial
 from pathlib import Path
 
@@ -35,10 +36,20 @@ save_dt = jnp.array(0.01)
 
 # video settings
 video_width, video_height = 700, 700  # img height and width
-video_path = Path("videos") / f"pendulum_nl-{num_links}.mp4"
+video_path = (
+    Path(__file__).resolve().parent / "videos" / f"simulate_pendulum_nl-{num_links}.mp4"
+)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simulate an N-link pendulum.")
+    parser.add_argument("--no-viser", action="store_true")
+    parser.add_argument("--video-output", type=Path, default=video_path)
+    args = parser.parse_args()
+    output_path = args.video_output
+    if not output_path.is_absolute():
+        output_path = Path(__file__).resolve().parent / output_path
+
     # Instantiate the pendulum model directly
     robot = Pendulum(params=params)
 
@@ -142,7 +153,7 @@ if __name__ == "__main__":
     plt.show()
 
     # create video
-    video_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     renderer = OpenCVPlanarRenderer(
         robot,
         width=video_width,
@@ -150,8 +161,8 @@ if __name__ == "__main__":
         backbone_color=(0, 0, 0),
         length_scale=2.5,
     )
-    renderer.render_sequence(video_ts, q_ts, record_path=str(video_path))
-    print(f"Video saved to {video_path}")
+    renderer.render_sequence(video_ts, q_ts, record_path=str(output_path))
+    print(f"Video saved to {output_path}")
 
     # =====================================================
     # Viser web-based visualization with plotly plots
@@ -160,13 +171,16 @@ if __name__ == "__main__":
     # may not work well for this planar pendulum system. However, we can still
     # use it to display plotly plots in the GUI.
     # Plotly plots are automatically added to the GUI at the end of the sidebar
-    viser_renderer = ViserRenderer(robot, num_points=50, backbone_style="discrete")
-    viser_renderer.render_sequence(
-        ts,
-        q_ts,
-        playback_speed=1.0,
-        loop=True,
-        autoplay=True,
-        plot_configurations=True,
-        robot_name="Pendulum",
-    )
+    if not args.no_viser:
+        viser_renderer = ViserRenderer(
+            robot, num_points=50, backbone_style="discrete"
+        )
+        viser_renderer.render_sequence(
+            ts,
+            q_ts,
+            playback_speed=1.0,
+            loop=True,
+            autoplay=True,
+            plot_configurations=True,
+            robot_name="Pendulum",
+        )

@@ -22,6 +22,7 @@ SCRIPT_DIR = Path(__file__).resolve()
 BENCHMARK_DIR = SCRIPT_DIR.parents[1]
 DEFAULT_DATA_DIR = BENCHMARK_DIR / "data"
 DEFAULT_OUTPUT_DIR = BENCHMARK_DIR / "outputs"
+PAPER_STYLE = SCRIPT_DIR.parents[2] / "paper.mplstyle"
 
 COLORS = {
     "pre_opt_1": "#006BA6",
@@ -128,36 +129,13 @@ CASES: dict[str, CaseSpec] = {
 
 def configure_matplotlib() -> None:
     """Configure a compact publication-style matplotlib theme."""
+    plt.style.use(PAPER_STYLE)
     plt.rcParams.update(
         {
-            # --- Grid Configuration ---
-            "axes.grid": True,
-            "grid.alpha": 0.5,
-            "grid.linestyle": "-",
-            "grid.linewidth": 0.8,
-            "grid.color": "#B0B0B0",
-            # --- Font Configuration ---
-            "font.family": "serif",
-            "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
-            "mathtext.fontset": "cm",
-            "axes.formatter.use_mathtext": True,
             "font.size": 9,
             "axes.labelsize": 9,
-            # --- Legend Configuration ---
             "legend.fontsize": 8,
-            "legend.frameon": True,
-            "legend.facecolor": "white",
-            "legend.framealpha": 0.8,
-            "legend.edgecolor": "#A0A0A0",
-            "legend.fancybox": False,
-            "patch.linewidth": 0.7,
-            # --- Axes and Spines ---
-            "axes.linewidth": 0.8,
-            "xtick.direction": "out",
-            "ytick.direction": "out",
-            "savefig.bbox": "tight",
             "figure.dpi": 150,
-            "lines.linewidth": 1.8,
         }
     )
 

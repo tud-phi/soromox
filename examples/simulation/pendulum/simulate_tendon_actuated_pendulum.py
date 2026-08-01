@@ -1,9 +1,11 @@
+import argparse
+from functools import partial
+from pathlib import Path
+
 import cv2  # importing cv2
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
-from functools import partial
-from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as onp
@@ -54,7 +56,11 @@ save_dt = solver_dt * 100
 
 # video settings
 video_width, video_height = 1080, 1080  # img height and width
-video_path = Path("videos") / f"tendon_actuated_pendulum_nl-{num_links}.mp4"
+video_path = (
+    Path(__file__).resolve().parent
+    / "videos"
+    / f"simulate_tendon_actuated_pendulum_nl-{num_links}.mp4"
+)
 
 
 def draw_robot(
@@ -196,6 +202,10 @@ def draw_robot(
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simulate a tendon-actuated pendulum.")
+    parser.add_argument("--video-output", type=Path, default=video_path)
+    args = parser.parse_args()
+    output_path = args.video_output
     # Instantiate the pendulum model directly
     robot = Pendulum(
         params=body_params,
@@ -259,9 +269,9 @@ if __name__ == "__main__":
     # Create video
     # =====================================================
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    video_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     video = cv2.VideoWriter(
-        str(video_path),
+        str(output_path),
         fourcc,
         1 / save_dt,  # fps
         (video_width, video_height),
@@ -277,4 +287,4 @@ if __name__ == "__main__":
         video.write(img)
 
     video.release()
-    print(f"Video saved to {video_path}")
+    print(f"Video saved to {output_path}")

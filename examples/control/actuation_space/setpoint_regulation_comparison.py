@@ -21,7 +21,9 @@ the open-loop system with constant tendon tensions until steady-state, then use
 the final configuration as the setpoint for the closed-loop regulation.
 """
 
+import argparse
 import warnings
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -44,6 +46,8 @@ from soromox.systems import (
     PCSParams,
     SystemState,
 )
+
+FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 
 
 def create_robot() -> tuple[PCS, int]:
@@ -289,7 +293,12 @@ def compute_metrics(results: dict, q_des: jnp.ndarray, strain_indices: list) -> 
     }
 
 
-def main():
+def main(
+    *,
+    show: bool = True,
+    render: bool = True,
+    figures_dir: Path = FIGURES_DIR,
+):
     # =========================================================================
     # Setup
     # =========================================================================
@@ -467,8 +476,16 @@ def main():
     axes[0].set_title("Actuation-Space Setpoint Regulation: Strain Tracking Comparison")
 
     plt.tight_layout()
-    plt.savefig("actuation_space_regulation_tracking.pdf", dpi=200, bbox_inches="tight")
-    plt.show()
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(
+        figures_dir / "setpoint_regulation_comparison_tracking.pdf",
+        dpi=200,
+        bbox_inches="tight",
+    )
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
     # Create figure for tracking errors
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -499,8 +516,15 @@ def main():
     axes[0].set_title("Actuation-Space Setpoint Regulation: Tracking Error Comparison")
 
     plt.tight_layout()
-    plt.savefig("actuation_space_regulation_errors.pdf", dpi=200, bbox_inches="tight")
-    plt.show()
+    plt.savefig(
+        figures_dir / "setpoint_regulation_comparison_errors.pdf",
+        dpi=200,
+        bbox_inches="tight",
+    )
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
     # Create figure for control inputs (tendon tensions)
     fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -540,8 +564,15 @@ def main():
     )
 
     plt.tight_layout()
-    plt.savefig("actuation_space_regulation_inputs.pdf", dpi=200, bbox_inches="tight")
-    plt.show()
+    plt.savefig(
+        figures_dir / "setpoint_regulation_comparison_inputs.pdf",
+        dpi=200,
+        bbox_inches="tight",
+    )
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
     # Create bar chart for RMSE comparison
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -568,15 +599,24 @@ def main():
     ax.grid(True, alpha=0.3, axis="y")
 
     plt.tight_layout()
-    plt.savefig("actuation_space_regulation_rmse.pdf", dpi=200, bbox_inches="tight")
-    plt.show()
+    plt.savefig(
+        figures_dir / "setpoint_regulation_comparison_rmse.pdf",
+        dpi=200,
+        bbox_inches="tight",
+    )
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
     print("\nPlots saved to:")
-    print("  - actuation_space_regulation_tracking.pdf")
-    print("  - actuation_space_regulation_errors.pdf")
-    print("  - actuation_space_regulation_inputs.pdf")
-    print("  - actuation_space_regulation_rmse.pdf")
+    print("  - figures/setpoint_regulation_comparison_tracking.pdf")
+    print("  - figures/setpoint_regulation_comparison_errors.pdf")
+    print("  - figures/setpoint_regulation_comparison_inputs.pdf")
+    print("  - figures/setpoint_regulation_comparison_rmse.pdf")
 
+    if not render:
+        return
     if Open3DRenderer is None:
         print("Open3DRenderer unavailable. Install open3d to view the animation.")
     else:
@@ -594,4 +634,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-show", action="store_true")
+    parser.add_argument("--no-render", action="store_true")
+    parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
+    args = parser.parse_args()
+    main(
+        show=not args.no_show,
+        render=not args.no_render,
+        figures_dir=args.figures_dir,
+    )

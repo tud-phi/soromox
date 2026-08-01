@@ -1,3 +1,4 @@
+import argparse
 from pathlib import Path
 
 import cv2  # importing cv2
@@ -20,9 +21,15 @@ jnp.set_printoptions(
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
 
+DEFAULT_VIDEO_PATH = (
+    Path(__file__).resolve().parent / "videos" / "simulate_planar_hsa.mp4"
+)
+
 
 def _repo_hsa_params_path(consider_hysteresis: bool) -> Path:
-    filename = "fpu_hysteresis_control.npz" if consider_hysteresis else "fpu_control.npz"
+    filename = (
+        "fpu_hysteresis_control.npz" if consider_hysteresis else "fpu_control.npz"
+    )
     return (
         Path(__file__).resolve().parents[3]
         / "assets"
@@ -33,6 +40,9 @@ def _repo_hsa_params_path(consider_hysteresis: bool) -> Path:
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simulate the planar HSA robot.")
+    parser.add_argument("--video-output", type=Path, default=DEFAULT_VIDEO_PATH)
+    args = parser.parse_args()
     num_segments = 1
     num_rods_per_segment = 2
 
@@ -120,7 +130,7 @@ if __name__ == "__main__":
     )
 
     # create video
-    video_path = Path("videos") / "planar_hsa.mp4"
+    video_path = args.video_output
     video_path.parent.mkdir(parents=True, exist_ok=True)
 
     renderer.render_sequence(

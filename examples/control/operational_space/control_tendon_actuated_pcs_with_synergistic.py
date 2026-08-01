@@ -12,6 +12,9 @@ References:
     2508-2515.
 """
 
+import argparse
+from pathlib import Path
+
 import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
@@ -33,8 +36,15 @@ from soromox.systems import (
     SystemState,
 )
 
+FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 
-def main():
+
+def main(
+    *,
+    show: bool = True,
+    render: bool = True,
+    figures_dir: Path = FIGURES_DIR,
+):
     # =========================================================================
     # Robot Configuration: Two-Segment tendon-actuated PCS
     # =========================================================================
@@ -301,8 +311,15 @@ def main():
     ax3.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig("control_pcs_with_impedance_results.pdf", dpi=200)
-    plt.show()
+    figures_dir.mkdir(parents=True, exist_ok=True)
+    plt.savefig(
+        figures_dir / "control_tendon_actuated_pcs_with_synergistic_results.pdf",
+        dpi=200,
+    )
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
     # Plot configuration space evolution
     fig2, axes2 = plt.subplots(2, 1, figsize=(10, 6), sharex=True)
@@ -332,8 +349,14 @@ def main():
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
-    plt.savefig("control_pcs_with_impedance_config.pdf", dpi=200)
-    plt.show()
+    plt.savefig(
+        figures_dir / "control_tendon_actuated_pcs_with_synergistic_config.pdf",
+        dpi=200,
+    )
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
     # Compute and print summary statistics
     rmse = jnp.sqrt(jnp.mean(tracking_error**2, axis=0))
@@ -341,9 +364,11 @@ def main():
     print(f"Mean RMSE: {jnp.mean(rmse) * 1000:.3f} mm")
 
     print("\nPlots saved to:")
-    print("  - control_pcs_with_impedance_results.pdf")
-    print("  - control_pcs_with_impedance_config.pdf")
+    print("  - figures/control_tendon_actuated_pcs_with_synergistic_results.pdf")
+    print("  - figures/control_tendon_actuated_pcs_with_synergistic_config.pdf")
 
+    if not render:
+        return
     if Open3DRenderer is None:
         print("\nOpen3DRenderer unavailable. Install open3d to view the animation.")
     else:
@@ -362,4 +387,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--no-show", action="store_true")
+    parser.add_argument("--no-render", action="store_true")
+    parser.add_argument("--figures-dir", type=Path, default=FIGURES_DIR)
+    args = parser.parse_args()
+    main(
+        show=not args.no_show,
+        render=not args.no_render,
+        figures_dir=args.figures_dir,
+    )

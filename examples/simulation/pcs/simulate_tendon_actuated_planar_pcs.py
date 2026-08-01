@@ -1,5 +1,4 @@
 from functools import partial
-from pathlib import Path
 
 import jax
 import matplotlib.pyplot as plt
@@ -15,10 +14,6 @@ from soromox.systems import (
     PlanarPCSStructure,
     SystemState,
 )
-
-videos_dir = Path("videos")
-videos_dir.mkdir(parents=True, exist_ok=True)
-
 
 if __name__ == "__main__":
     num_segments = 2  # number of segments in the robot

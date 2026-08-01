@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Plot soft tentacle residual identification results with standard template aesthetics."""
 
+import argparse
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ from matplotlib.lines import Line2D
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_DIR = SCRIPT_DIR / "data"
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "outputs"
+PAPER_STYLE = SCRIPT_DIR.parent / "paper.mplstyle"
 
 # Standardized color palette
 COLORS = {
@@ -68,38 +70,14 @@ def cm2inch(*tupl: float) -> tuple[float, ...]:
 
 def configure_matplotlib() -> None:
     """Configure a compact publication-style matplotlib theme."""
+    plt.style.use(PAPER_STYLE)
     plt.rcParams.update(
         {
-            # Adjust white padding around image
             "savefig.pad_inches": 0.1,
-            # --- Grid Configuration ---
-            "axes.grid": True,
-            "grid.alpha": 0.5,
-            "grid.linestyle": "-",
-            "grid.linewidth": 0.8,
-            "grid.color": "#B0B0B0",
-            # --- Font Configuration ---
-            "font.family": "serif",
-            "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
-            "mathtext.fontset": "cm",
-            "axes.formatter.use_mathtext": True,
             "font.size": 7,
             "axes.labelsize": 7,
-            # --- Legend Configuration ---
             "legend.fontsize": 6,
-            "legend.frameon": True,
-            "legend.facecolor": "white",
-            "legend.framealpha": 0.8,
-            "legend.edgecolor": "#A0A0A0",
-            "legend.fancybox": False,
-            "patch.linewidth": 0.7,
-            # --- Axes and Spines ---
-            "axes.linewidth": 0.8,
-            "xtick.direction": "out",
-            "ytick.direction": "out",
-            "savefig.bbox": "tight",
             "figure.dpi": 150,
-            "lines.linewidth": 1.8,
         }
     )
 
@@ -491,16 +469,24 @@ def save_figure(
     print(f"Saved {filepath.resolve()}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     configure_matplotlib()
 
     # 1. Load Radar Data
     try:
         rmse_data = RmseData(
-            initial=np.load(DEFAULT_DATA_DIR / "errnorm_before_id.npy"),
-            optimal=np.load(DEFAULT_DATA_DIR / "errnorm_zero.npy"),
-            residual=np.load(DEFAULT_DATA_DIR / "errnorm_star.npy"),
-            nn_pred=np.load(DEFAULT_DATA_DIR / "errnorm_pred.npy"),
+            initial=np.load(args.data_dir / "errnorm_before_id.npy"),
+            optimal=np.load(args.data_dir / "errnorm_zero.npy"),
+            residual=np.load(args.data_dir / "errnorm_star.npy"),
+            nn_pred=np.load(args.data_dir / "errnorm_pred.npy"),
         )
     except FileNotFoundError as e:
         print(f"Error loading RMSE radar data: {e}")
@@ -508,7 +494,7 @@ def main() -> int:
 
     # 2. Load Bar Chart Data (Overall RMSE)
     try:
-        overall_rmse_arr = np.load(DEFAULT_DATA_DIR / "rmse_overall.npy")
+        overall_rmse_arr = np.load(args.data_dir / "rmse_overall.npy")
         overall_rmse_dict = {
             "Initial": float(overall_rmse_arr[0]),
             "Opt. Param": float(overall_rmse_arr[1]),
@@ -521,7 +507,7 @@ def main() -> int:
 
     # 3. Load Violin Plot Data
     try:
-        df_violin = pd.read_csv(DEFAULT_DATA_DIR / "violin_data.csv")
+        df_violin = pd.read_csv(args.data_dir / "violin_data.csv")
     except FileNotFoundError as e:
         print(f"Error loading violin dataframe: {e}")
         return 1
@@ -529,11 +515,11 @@ def main() -> int:
     # 4. Load 3D Shape Data
     try:
         shape_data = ShapeComparisonData(
-            curves_orig=np.load(DEFAULT_DATA_DIR / "curves_orig.npy")[::2],
-            curves_tau_star=np.load(DEFAULT_DATA_DIR / "curves_tau_star.npy")[::2],
-            markers_orig=np.load(DEFAULT_DATA_DIR / "markers_orig.npy")[::2],
-            markers_tau_star=np.load(DEFAULT_DATA_DIR / "markers_tau_star.npy")[::2],
-            measured_pts=np.load(DEFAULT_DATA_DIR / "measured_pts.npy")[::2],
+            curves_orig=np.load(args.data_dir / "curves_orig.npy")[::2],
+            curves_tau_star=np.load(args.data_dir / "curves_tau_star.npy")[::2],
+            markers_orig=np.load(args.data_dir / "markers_orig.npy")[::2],
+            markers_tau_star=np.load(args.data_dir / "markers_tau_star.npy")[::2],
+            measured_pts=np.load(args.data_dir / "measured_pts.npy")[::2],
         )
     except FileNotFoundError as e:
         print(f"Error loading 3D shape arrays: {e}")
@@ -542,21 +528,21 @@ def main() -> int:
     # Generate and save all figures
     # Radar Plot
     fig_radar = plot_radar_rmse(rmse_data, (8, 8))
-    save_figure(fig_radar, DEFAULT_OUTPUT_DIR, "radar_rmse_per_marker", "pdf")
+    save_figure(fig_radar, args.output_dir, "radar_rmse_per_marker", "pdf")
 
     # Bar Plot
     fig_bar = plot_bar_overall_rmse(overall_rmse_dict, figsize_cm=(6.5, 5.0), box=True)
-    save_figure(fig_bar, DEFAULT_OUTPUT_DIR, "bar_overall_rmse", "pdf")
+    save_figure(fig_bar, args.output_dir, "bar_overall_rmse", "pdf")
 
     # Violin Plot
     fig_violin = plot_violin_error_distribution(
         df_violin, figsize_cm=(15.0, 10.0), legend_loc="upper right", box=True
     )
-    save_figure(fig_violin, DEFAULT_OUTPUT_DIR, "violin_error_distribution", "pdf")
+    save_figure(fig_violin, args.output_dir, "violin_error_distribution", "pdf")
 
     # 3D Comparison
     fig_3d = plot_3d_comparison(shape_data, (8, 8), legend_loc="upper left")
-    save_figure(fig_3d, DEFAULT_OUTPUT_DIR, "3d_shape_comparison", "pdf")
+    save_figure(fig_3d, args.output_dir, "3d_shape_comparison", "pdf")
 
     return 0
 

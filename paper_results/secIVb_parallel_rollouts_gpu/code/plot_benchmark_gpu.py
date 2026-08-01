@@ -18,6 +18,7 @@ from matplotlib.lines import Line2D
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
+PAPER_STYLE = SCRIPT_DIR.parent / "paper.mplstyle"
 
 # --- Configuration Constants ---
 COLORS = {
@@ -63,37 +64,13 @@ SEGMENT_SIZE_LABELS = {"num_segments", "num_links"}
 
 def configure_matplotlib() -> None:
     """Configure the standardized CMU Serif publication theme."""
+    plt.style.use(PAPER_STYLE)
     plt.rcParams.update(
         {
-            # Adjust white padding around image
-            # --- Grid Configuration ---
-            "axes.grid": True,
-            "grid.alpha": 0.5,
-            "grid.linestyle": "-",
-            "grid.linewidth": 0.8,
-            "grid.color": "#B0B0B0",
-            # --- Font Configuration ---
-            "font.family": "serif",
-            "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
-            "mathtext.fontset": "cm",
-            "axes.formatter.use_mathtext": True,
             "font.size": 14,
             "axes.labelsize": 14,
-            # --- Legend Configuration ---
             "legend.fontsize": 12,
-            "legend.frameon": True,
-            "legend.facecolor": "white",
-            "legend.framealpha": 0.8,
-            "legend.edgecolor": "#A0A0A0",
-            "legend.fancybox": False,
-            "patch.linewidth": 0.7,
-            # --- Axes and Spines ---
-            "axes.linewidth": 0.8,
-            "xtick.direction": "out",
-            "ytick.direction": "out",
-            "savefig.bbox": "tight",
             "figure.dpi": 300,
-            "lines.linewidth": 1.8,
         }
     )
 

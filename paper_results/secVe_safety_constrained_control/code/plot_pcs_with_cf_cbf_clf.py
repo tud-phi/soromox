@@ -25,40 +25,18 @@ COLORS = {
     "y_t": "#e9c46a",
     "z_t": "#D81159",
 }
+PAPER_STYLE = Path(__file__).resolve().parents[2] / "paper.mplstyle"
 
 
 def configure_matplotlib() -> None:
     """Configure a compact publication-style matplotlib theme."""
+    plt.style.use(PAPER_STYLE)
     plt.rcParams.update(
         {
-            # --- Grid Configuration ---
-            "axes.grid": True,
-            "grid.alpha": 0.5,
-            "grid.linestyle": "-",
-            "grid.linewidth": 0.8,
-            "grid.color": "#B0B0B0",
-            # --- Font Configuration ---
-            "font.family": "serif",
-            "font.serif": ["cmr10", "Computer Modern Serif", "DejaVu Serif"],
-            "mathtext.fontset": "cm",
-            "axes.formatter.use_mathtext": True,
             "font.size": 14,
             "axes.labelsize": 14,
-            # --- Legend Configuration ---
             "legend.fontsize": 12,
-            "legend.frameon": True,
-            "legend.facecolor": "white",
-            "legend.framealpha": 0.8,
-            "legend.edgecolor": "#A0A0A0",
-            "legend.fancybox": False,
-            "patch.linewidth": 0.7,
-            # --- Axes and Spines ---
-            "axes.linewidth": 0.8,
-            "xtick.direction": "out",
-            "ytick.direction": "out",
-            "savefig.bbox": "tight",
             "figure.dpi": 300,
-            "lines.linewidth": 1.8,
         }
     )
 

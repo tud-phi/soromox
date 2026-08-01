@@ -1,4 +1,6 @@
+import argparse
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -15,8 +17,15 @@ jnp.set_printoptions(
     formatter={"float_kind": lambda x: "0" if x == 0 else f"{x:.2e}"},
 )
 
+DEFAULT_VIDEO_PATH = (
+    Path(__file__).resolve().parent / "videos" / "simulate_planar_pcs_opencv.mp4"
+)
+
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simulate a planar PCS robot.")
+    parser.add_argument("--video-output", type=Path, default=DEFAULT_VIDEO_PATH)
+    args = parser.parse_args()
     num_segments = 1
     rho = 1070 * jnp.ones(
         (num_segments,)
@@ -185,5 +194,7 @@ if __name__ == "__main__":
         robot, num_points=50, width=700, height=700, length_scale=3.0
     )
     opencv_renderer.render_sequence(
-        ts, q_ts, record_path="videos/planar_pcs_opencv.mp4"
+        ts,
+        q_ts,
+        record_path=str(args.video_output),
     )

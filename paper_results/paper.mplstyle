@@ -1,0 +1,24 @@
+# Shared publication defaults. Individual figures override scale and DPI as needed.
+axes.grid: True
+grid.alpha: 0.5
+grid.linestyle: -
+grid.linewidth: 0.8
+grid.color: b0b0b0
+
+font.family: serif
+font.serif: cmr10, Computer Modern Serif, DejaVu Serif
+mathtext.fontset: cm
+axes.formatter.use_mathtext: True
+
+legend.frameon: True
+legend.facecolor: white
+legend.framealpha: 0.8
+legend.edgecolor: a0a0a0
+legend.fancybox: False
+patch.linewidth: 0.7
+
+axes.linewidth: 0.8
+xtick.direction: out
+ytick.direction: out
+savefig.bbox: tight
+lines.linewidth: 1.8

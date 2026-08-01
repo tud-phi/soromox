@@ -1,5 +1,7 @@
+import argparse
 import time
 from functools import partial
+from pathlib import Path
 
 import jax
 import jax.numpy as jnp
@@ -29,7 +31,14 @@ jax.config.update("jax_enable_x64", True)  # double precision
 
 jnp.set_printoptions(precision=4, suppress=True)
 
+DEFAULT_VIDEO_PATH = (
+    Path(__file__).resolve().parent / "videos" / "simulate_tendon_actuated_pcs.mp4"
+)
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Simulate a tendon-actuated PCS robot.")
+    parser.add_argument("--video-output", type=Path, default=DEFAULT_VIDEO_PATH)
+    args = parser.parse_args()
     num_segments = 2
     rho = 1070 * jnp.ones(
         (num_segments,)
@@ -222,7 +231,9 @@ if __name__ == "__main__":
     # render using the Open3DRenderer
     renderer = Open3DRenderer(robot)
     renderer.render_sequence(
-        ts=ts, q_ts=q_ts, record_path="videos/tendon_actuated_pcs.mp4"
+        ts=ts,
+        q_ts=q_ts,
+        record_path=str(args.video_output),
     )
 
     # =====================================================

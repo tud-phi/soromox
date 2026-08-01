@@ -19,7 +19,9 @@ from soromox.systems import (
 )
 
 PSI_TO_PA = 6894.75729
-DEFAULT_VIDEO_PATH = Path("videos") / "mckibben_umarm.mp4"
+DEFAULT_VIDEO_PATH = (
+    Path(__file__).resolve().parent / "videos" / "simulate_mckibben_umarm.mp4"
+)
 UMARM_Z_DOWN_BASE_POSE = jnp.array(
     [2**-0.5, 0.0, 2**-0.5, 0.0, 0.0, 0.0, 1.2],
     dtype=jnp.float64,
