@@ -30,21 +30,7 @@ figure-specific font sizes, DPI, padding, and layout settings next to the figure
 code. This centralizes typography, grids, legends, spines, and line defaults
 without forcing differently sized paper panels to use one font scale.
 
-The retained Section Vc artifacts and their migrated plotters are a documented
-exception: they use the earlier DejaVu Sans styling, while the standardized
-sections use Computer Modern. Applying the shared style would change the prior
-canonical plots that this migration was required to preserve. Standardizing
-Section Vc therefore needs a separate visual change that updates plot code and
-canonical outputs together under visual-regression review.
-
 Artifact paths remain case-local. Entry points derive their case directory from
-`Path(__file__).resolve()` and default to that case's `data/` and `outputs/`
-directories, so commands work from any current working directory. A global path
-helper would hide this short convention without eliminating case-specific
-filenames. When several scripts within one case share schemas or filename rules,
-those details belong in a case-local common module, as in Sections Vc and Ve.
-
-The semantic color palette is currently repeated where plots assign colors by
-meaning rather than by series order. It can be extracted separately once all
-legacy figures have visual-regression coverage; changing palette imports during
-this migration would add risk without changing the committed canonical figures.
+the script location and default to that case's `data/` and `outputs/`
+directories, so commands work from any current working directory. Shared schemas
+and filename rules within a case live in its common module.

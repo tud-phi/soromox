@@ -10,7 +10,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 
-CASE_DIR = Path(__file__).resolve().parent.parent
+CASE_DIR = Path(__file__).parent.parent
 DEFAULT_DATA_INPUT = (
     CASE_DIR / "data" / "impedance_feedback_linearization_comparison.npz"
 )

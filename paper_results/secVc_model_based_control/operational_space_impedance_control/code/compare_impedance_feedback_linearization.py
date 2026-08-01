@@ -23,7 +23,7 @@ from soromox.utils.geometry.rotations import (
     rotation_vector_to_rotation_matrix,
 )
 
-CASE_DIR = Path(__file__).resolve().parent.parent
+CASE_DIR = Path(__file__).parent.parent
 DEFAULT_DATA_OUTPUT = (
     CASE_DIR / "data" / "impedance_feedback_linearization_comparison.npz"
 )

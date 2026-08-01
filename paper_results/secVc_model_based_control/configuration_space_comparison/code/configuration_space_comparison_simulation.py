@@ -28,7 +28,7 @@ from soromox.control.configuration_space import (
 )
 from soromox.systems import PCS, PCSParams, SystemState
 
-CASE_DIR = Path(__file__).resolve().parent.parent
+CASE_DIR = Path(__file__).parent.parent
 DATA_DIR = CASE_DIR / "data"
 OUTPUTS_DIR = CASE_DIR / "outputs"
 

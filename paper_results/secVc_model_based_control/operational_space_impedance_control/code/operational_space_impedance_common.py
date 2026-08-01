@@ -30,7 +30,7 @@ from soromox.systems import PCS, PCSParams, SystemState
 
 jax.config.update("jax_enable_x64", True)
 
-CASE_DIR = Path(__file__).resolve().parent.parent
+CASE_DIR = Path(__file__).parent.parent
 DATA_DIR = CASE_DIR / "data"
 OUTPUTS_DIR = CASE_DIR / "outputs"
 
