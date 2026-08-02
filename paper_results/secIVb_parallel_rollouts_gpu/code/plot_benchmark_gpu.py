@@ -60,6 +60,8 @@ SIZE_STYLES = {
 FALLBACK_LINESTYLES = ["-", "--", "-.", ":", (0, (5, 2)), (0, (1, 1))]
 FALLBACK_MARKERS = ["o", "s", "^", "D", "p", "x", "v", "*"]
 SEGMENT_SIZE_LABELS = {"num_segments", "num_links"}
+MAX_SYSTEM_COLUMNS = 2
+SYSTEM_COLUMN_WIDTH_CM = 9.0
 
 
 def configure_matplotlib() -> None:
@@ -81,6 +83,15 @@ def cm2inch(*tupl: float) -> tuple[float, ...]:
     if isinstance(tupl[0], tuple):
         return tuple(i / inch for i in tupl[0])
     return tuple(i / inch for i in tupl)
+
+
+def _subplot_grid(num_systems: int) -> tuple[int, int]:
+    """Return a paper-width grid for one panel per system."""
+    if num_systems < 1:
+        raise ValueError("At least one system is required.")
+    columns = min(MAX_SYSTEM_COLUMNS, num_systems)
+    rows = (num_systems + columns - 1) // columns
+    return rows, columns
 
 
 # --- Data Processing Helpers ---
@@ -310,20 +321,23 @@ def _plot(
     log_y: bool,
 ) -> None:
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
+    system_rows, system_columns = _subplot_grid(len(systems))
 
-    width_cm = 15.0 * len(systems)
     fig, axes = plt.subplots(
-        2,
-        len(systems),
-        figsize=cm2inch(width_cm, 20.0),
+        2 * system_rows,
+        system_columns,
+        figsize=cm2inch(
+            SYSTEM_COLUMN_WIDTH_CM * system_columns,
+            12.0 * system_rows,
+        ),
         squeeze=False,
-        sharex="col",
         constrained_layout=True,
     )
 
-    for col, system in enumerate(systems):
-        ax_per_env = axes[0, col]
-        ax_total = axes[1, col]
+    for system_index, system in enumerate(systems):
+        system_row, col = divmod(system_index, system_columns)
+        ax_per_env = axes[2 * system_row, col]
+        ax_total = axes[2 * system_row + 1, col]
         subset = [row for row in rows if row["system"] == system]
         size_label = subset[0]["size_label"]
         segment_values = sorted({_size_value(row) for row in subset})
@@ -348,9 +362,12 @@ def _plot(
                 ax_per_env.plot(x, y_per_env, marker="o", label=label)
                 ax_total.plot(x, y_total, marker="o", label=label)
 
-        ax_per_env.set_title(f"{_model_label(system)} - per-env speed")
-        ax_total.set_title(f"{_model_label(system)} - total throughput")
+        ax_per_env.set_title(f"{_model_label(system)}\nPer-Environment Speed")
+        ax_total.set_title(f"{_model_label(system)}\nTotal Throughput")
         ax_total.set_xlabel(r"Number of environments $n_\mathrm{b}$")
+        if col == 0:
+            ax_per_env.set_ylabel("Per-environment speed ratio")
+            ax_total.set_ylabel(r"Total throughput $\Gamma_\mathrm{sim}$")
 
         for axis in (ax_per_env, ax_total):
             if log_x:
@@ -359,8 +376,10 @@ def _plot(
                 axis.set_yscale("log")
         ax_per_env.legend()
 
-    axes[0, 0].set_ylabel(r"Simulated time / wall time (per env)")
-    axes[1, 0].set_ylabel(r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)")
+    for system_index in range(len(systems), system_rows * system_columns):
+        system_row, col = divmod(system_index, system_columns)
+        axes[2 * system_row, col].set_visible(False)
+        axes[2 * system_row + 1, col].set_visible(False)
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -382,19 +401,22 @@ def _plot_total_throughput(
         return
 
     systems = sorted({row["system"] for row in rows}, key=_system_sort_key)
-    width_cm = 15.0 * len(systems)
+    system_rows, system_columns = _subplot_grid(len(systems))
 
     fig, axes = plt.subplots(
-        1,
-        len(systems),
-        figsize=cm2inch(width_cm, 10.0),
+        system_rows,
+        system_columns,
+        figsize=cm2inch(
+            SYSTEM_COLUMN_WIDTH_CM * system_columns,
+            8.0 * system_rows,
+        ),
         squeeze=False,
-        sharex="col",
         constrained_layout=True,
     )
 
-    for col, system in enumerate(systems):
-        ax = axes[0, col]
+    for system_index, system in enumerate(systems):
+        system_row, col = divmod(system_index, system_columns)
+        ax = axes[system_row, col]
         subset = [row for row in rows if row["system"] == system]
         size_label = subset[0]["size_label"]
         segment_values = sorted({_size_value(row) for row in subset})
@@ -413,13 +435,17 @@ def _plot_total_throughput(
 
         ax.set_title(_model_label(system))
         ax.set_xlabel(r"Number of environments $n_\mathrm{b}$")
+        if col == 0:
+            ax.set_ylabel(r"Total throughput $\Gamma_\mathrm{sim}$")
         if log_x:
             ax.set_xscale("log")
         if log_y:
             ax.set_yscale("log")
         ax.legend()
 
-    axes[0, 0].set_ylabel(r"Total simulated time / wall time ($\Gamma_\mathrm{sim}$)")
+    for system_index in range(len(systems), system_rows * system_columns):
+        system_row, col = divmod(system_index, system_columns)
+        axes[system_row, col].set_visible(False)
 
     if output is not None:
         output.parent.mkdir(parents=True, exist_ok=True)

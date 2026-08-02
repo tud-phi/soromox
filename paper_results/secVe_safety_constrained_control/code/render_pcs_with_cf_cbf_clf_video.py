@@ -85,6 +85,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _trajectory_controller_key(result: dict[str, np.ndarray], fallback: str) -> str:
+    """Read controller semantics from trajectory metadata when available."""
+    if "controller_key" in result:
+        controller_key = str(np.asarray(result["controller_key"]).item())
+    elif "use_cbf" in result:
+        controller_key = (
+            "with-cbf" if bool(np.asarray(result["use_cbf"]).item()) else "without-cbf"
+        )
+    else:
+        controller_key = fallback
+
+    if controller_key not in CONTROL_STRATEGIES:
+        valid_keys = ", ".join(sorted(CONTROL_STRATEGIES))
+        raise ValueError(
+            f"Unknown controller_key {controller_key!r} in trajectory; expected one of {valid_keys}."
+        )
+    return controller_key
+
+
 def main() -> None:
     args = parse_args()
     data_path = args.trajectory or trajectory_path(args.controller, args.data_dir)
@@ -94,7 +113,12 @@ def main() -> None:
         )
 
     result = load_trajectory(data_path)
-    label = str(result["label"].item()) if "label" in result else args.controller
+    controller_key = _trajectory_controller_key(result, args.controller)
+    label = (
+        str(np.asarray(result["label"]).item())
+        if "label" in result
+        else str(CONTROL_STRATEGIES[controller_key]["label"])
+    )
 
     output_path = args.output
     if output_path is None:
@@ -113,7 +137,7 @@ def main() -> None:
         (obs_radii.shape[0], 1),
     )
     target_radius = np.array([0.015], dtype=np.float64)
-    if args.controller == "with-cbf":
+    if controller_key == "with-cbf":
         gradient = cmap_post_opt_1(np.array([0.75, 1.0]))[:, :3]
     else:
         gradient = cmap_pre_opt_1(np.array([0.75, 1.0]))[:, :3]
@@ -153,15 +177,14 @@ def main() -> None:
     )
 
     render_stride = max(1, len(ts) // 300)
-    print(
-        f"Rendering {CONTROL_STRATEGIES.get(args.controller, {}).get('label', label)} to {output_path}"
-    )
+    print(f"Rendering {label} to {output_path}")
     renderer.render_sequence(
         ts=ts[::render_stride],
         q_ts=q_ts[::render_stride],
         playback_speed=1.0,
         loop=args.loop,
         record_path=str(output_path),
+        close_when_recording_done=not args.loop,
         render_actuators=True,
         camera_config=camera_config,
         static_spheres_positions=static_spheres_positions,

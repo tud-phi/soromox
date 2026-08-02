@@ -21,6 +21,14 @@ jnp.set_printoptions(
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
+
+def _planar_position_from_pose(chi_ts: jax.Array) -> jax.Array:
+    """Extract the two translational coordinates from ``[theta, x, y]`` poses."""
+    if chi_ts.ndim != 2 or chi_ts.shape[1] != 3:
+        raise ValueError(f"Expected planar poses with shape (T, 3), got {chi_ts.shape}")
+    return chi_ts[:, 1:3]
+
+
 if __name__ == "__main__":
     num_segments = 2
     rho = 1000 * jnp.ones(
@@ -107,15 +115,10 @@ if __name__ == "__main__":
         )
     )
     chi_ee_ts = jax.vmap(forward_kinematics_end_effector)(q_ts)
+    p_ee_ts = _planar_position_from_pose(chi_ee_ts)
 
     # build [t, x, z]
-    data_jnp = jnp.column_stack(
-        (
-            ts,
-            chi_ee_ts[:, 1],
-            chi_ee_ts[:, 2],
-        )
-    )
+    data_jnp = jnp.column_stack((ts, p_ee_ts))
 
     # convert to numpy before saving
     data_np = np.array(data_jnp)
@@ -156,8 +159,8 @@ if __name__ == "__main__":
     # plot end-effector position vs time
     plt.figure()
 
-    plt.plot(ts, chi_ee_ts[:, 1], label="End-effector x [m]")
-    plt.plot(ts, chi_ee_ts[:, 3], label="End-effector z [m]")
+    plt.plot(ts, p_ee_ts[:, 0], label="End-effector x [m]")
+    plt.plot(ts, p_ee_ts[:, 1], label="End-effector z [m]")
     plt.xlabel("Time [s]")
     plt.ylabel("End-effector position [m]")
     plt.legend()
