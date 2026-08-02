@@ -80,10 +80,10 @@ combined regulation/tracking archive additionally stores the four terminal
 setpoint-window MAEs and their equal-weight aggregate for regulation.
 `outputs/configuration_space_comparison.pdf` contains the complete
 regulation-to-tracking trajectory for all three controlled strains.
-`outputs/regulation_tracking_rmse.pdf` reports the corresponding RMSE values
-separately for the setpoint-regulation and trajectory-tracking phases, together
-with the steady-state regulation MAE computed over the final quarter of each
-setpoint interval and averaged equally across the four setpoints.
+`outputs/regulation_tracking_rmse.pdf` places the full setpoint-regulation RMSE
+next to the steady-state regulation MAE, followed by the trajectory-tracking
+RMSE. The steady-state MAE is computed over the final quarter of each setpoint
+interval and averaged equally across the four setpoints.
 Scenario-specific tracking and error plots are reproducible diagnostics and
 remain uncommitted. The checked-in NPZ files were regenerated from scratch with
 the current Section Vc generators.

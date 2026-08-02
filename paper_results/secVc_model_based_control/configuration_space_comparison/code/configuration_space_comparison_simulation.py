@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import sys
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -872,21 +872,21 @@ def run_regulation_tracking_comparison(
                 filename="regulation_tracking_rmse.pdf",
                 panels=(
                     RmsePanel(
-                        title="Setpoint Regulation: RMSE",
+                        title="Setpoint Regulation\n(Full Phase): RMSE",
                         scenario_key="regulation",
                         controller_names=tuple(controllers.keys()),
+                    ),
+                    RmsePanel(
+                        title="Setpoint Regulation\n(Steady State): MAE",
+                        scenario_key="regulation",
+                        controller_names=tuple(controllers.keys()),
+                        metric_name="steady_state_mae",
+                        metric_label="MAE",
                     ),
                     RmsePanel(
                         title="Trajectory Tracking: RMSE",
                         scenario_key="tracking",
                         controller_names=tuple(controllers.keys()),
-                    ),
-                    RmsePanel(
-                        title="Steady-State Regulation: MAE",
-                        scenario_key="regulation",
-                        controller_names=tuple(controllers.keys()),
-                        metric_name="steady_state_mae",
-                        metric_label="MAE",
                     ),
                 ),
             ),
@@ -1297,28 +1297,53 @@ def load_comparison_npz(path: str | Path) -> ComparisonRun:
         _rmse_summary_from_dict(summary) for summary in metadata["rmse_summaries"]
     )
     if metadata["example_key"] == "regulation_tracking":
-        rmse_summaries = tuple(
-            RmseSummary(
-                key=summary.key,
-                filename=summary.filename,
-                panels=(
-                    *summary.panels,
-                    RmsePanel(
-                        title="Steady-State Regulation: MAE",
-                        scenario_key="regulation",
-                        controller_names=summary.panels[0].controller_names,
-                        metric_name="steady_state_mae",
-                        metric_label="MAE",
-                    ),
+        upgraded_summaries = []
+        for summary in rmse_summaries:
+            if summary.key != "phase-rmse":
+                upgraded_summaries.append(summary)
+                continue
+            regulation_panel = next(
+                panel
+                for panel in summary.panels
+                if panel.scenario_key == "regulation" and panel.metric_name == "rmse"
+            )
+            tracking_panel = next(
+                panel
+                for panel in summary.panels
+                if panel.scenario_key == "tracking" and panel.metric_name == "rmse"
+            )
+            steady_state_panel = next(
+                (
+                    panel
+                    for panel in summary.panels
+                    if panel.metric_name == "steady_state_mae"
+                ),
+                RmsePanel(
+                    title="Setpoint Regulation\n(Steady State): MAE",
+                    scenario_key="regulation",
+                    controller_names=regulation_panel.controller_names,
+                    metric_name="steady_state_mae",
+                    metric_label="MAE",
                 ),
             )
-            if summary.key == "phase-rmse"
-            and not any(
-                panel.metric_name == "steady_state_mae" for panel in summary.panels
+            upgraded_summaries.append(
+                RmseSummary(
+                    key=summary.key,
+                    filename=summary.filename,
+                    panels=(
+                        replace(
+                            regulation_panel,
+                            title="Setpoint Regulation\n(Full Phase): RMSE",
+                        ),
+                        replace(
+                            steady_state_panel,
+                            title="Setpoint Regulation\n(Steady State): MAE",
+                        ),
+                        replace(tracking_panel, title="Trajectory Tracking: RMSE"),
+                    ),
+                )
             )
-            else summary
-            for summary in rmse_summaries
-        )
+        rmse_summaries = tuple(upgraded_summaries)
     return ComparisonRun(
         example_key=metadata["example_key"],
         title=metadata["title"],

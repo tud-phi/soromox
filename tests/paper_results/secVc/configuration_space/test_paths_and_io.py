@@ -98,10 +98,12 @@ def test_canonical_regulation_tracking_archive_gets_steady_state_panel():
 
     assert [panel.metric_name for panel in summary.panels] == [
         "rmse",
-        "rmse",
         "steady_state_mae",
+        "rmse",
     ]
-    assert summary.panels[-1].metric_label == "MAE"
+    assert summary.panels[1].metric_label == "MAE"
+    assert summary.panels[0].title == "Setpoint Regulation\n(Full Phase): RMSE"
+    assert summary.panels[1].title == "Setpoint Regulation\n(Steady State): MAE"
 
 
 @pytest.mark.parametrize("entry_point", ENTRY_POINTS)
