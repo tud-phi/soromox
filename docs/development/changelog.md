@@ -9,10 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Section-scoped `paper_results/` workflows that colocate generation and
+  plotting code, source or generated data, canonical figures and videos, and
+  reproduction instructions for the results reported in the paper.
 - Reproducible PCS configuration- and operational-space control case studies
-  with shared simulation, plotting, serialization, and Viser workflows.
+  with shared simulation, plotting, serialization, Viser, phase-separated RMSE,
+  and canonical paper-figure workflows.
+- A shared Matplotlib publication style and case-specific figure composers for
+  consistent typography, sizing, colors, labels, grids, and legends.
+- Focused Section Vc tests for case-relative paths, NPZ schemas, overwrite
+  protection, plotting, controller setup, trajectory primitives, and rendering.
 
 ### Changed
+
+- Separated lightweight demonstrations under `examples/`, reusable research
+  workflows and datasets under `application_case_studies/`, and
+  publication-specific reproduction artifacts under `paper_results/`.
+- Made generated example figures and videos topic-local instead of writing them
+  to the repository root, and organized paper sections into independent
+  `code/`, `data/`, and `outputs/` ownership.
+- Made affected example and paper entry points independent of the current
+  working directory, added configurable artifact paths and overwrite guards,
+  and migrated visualization workflows to the current renderer APIs.
+- Standardized the Section Vc paper figures around full-width
+  configuration-space tracking and partial-feedback-linearization
+  operational-space tracking, with explicit strain labels and prominent
+  reference trajectories.
+- Store canonical binary paper data and media through Git LFS while leaving
+  generated example artifacts ignored.
 
 ### Fixed
 
