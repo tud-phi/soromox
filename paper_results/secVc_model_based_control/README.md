@@ -21,6 +21,25 @@ and renderers consume saved NPZ data and write only to their case `outputs/`
 directory by default. The case READMEs list complete reproduction commands and
 artifact inventories.
 
+## Evaluation metrics
+
+Generate the complete human-readable report and its machine-readable JSON from
+the committed trajectory artifacts without rerunning either simulation:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/code/report_metrics.py --json-output
+```
+
+The configuration-space report contains component-wise RMSE for all six strain
+coordinates in the regulation and tracking phases. For regulation it also
+reports the mean absolute error over the final 10% of each post-change setpoint
+interval, first per setpoint and then as an equal-weight mean over the four
+setpoints. The initial zero-reference interval is excluded. The operational
+report contains Euclidean position and geodesic orientation RMSE, the maximum
+pairwise reference span for each task quantity, and RMSE normalized by that
+span in percent. The command writes `data/metrics.json` by default; an explicit
+path may be supplied after `--json-output`.
+
 The committed Section Vc paper figures are:
 
 - `configuration_space_comparison/outputs/configuration_space_comparison.pdf`

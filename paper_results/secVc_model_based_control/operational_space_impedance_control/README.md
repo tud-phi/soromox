@@ -57,7 +57,8 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/oper
 ## Artifacts
 
 - `data/control_pcs_with_impedance_trajectory.npz` stores the canonical trajectory
-  study, controller metadata, states, references, and inputs.
+  study, controller metadata, states, references, inputs, and the geometric
+  position/orientation RMSE, reference-span, and NRMSE values used in the paper.
 - `data/impedance_feedback_linearization_comparison.npz` stores both matched
   feedback-linearization rollouts, geometric errors, settings, and runtimes for
   the standalone comparison diagnostic.

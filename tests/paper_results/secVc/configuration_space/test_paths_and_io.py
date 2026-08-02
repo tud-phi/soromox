@@ -66,6 +66,11 @@ def test_comparison_npz_round_trip_and_overwrite_protection(tmp_path):
     assert actual.scenarios == expected.scenarios
     assert tuple(actual.results["setpoint"]) == ("PID",)
     np.testing.assert_allclose(actual.results["setpoint"]["PID"]["q"], 1.0)
+    np.testing.assert_allclose(
+        actual.results["setpoint"]["PID"]["metrics"]["rmse"], 1.0
+    )
+    assert "max_error" not in actual.results["setpoint"]["PID"]["metrics"]
+    assert "ise" not in actual.results["setpoint"]["PID"]["metrics"]
     with pytest.raises(FileExistsError, match="--force"):
         simulation.save_comparison_npz(output, expected)
 

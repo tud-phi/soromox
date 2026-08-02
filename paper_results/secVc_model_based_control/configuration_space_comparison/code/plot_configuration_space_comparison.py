@@ -278,9 +278,10 @@ def plot_tracking_group(
 
 def rmse_values(run: ComparisonRun, panel: RmsePanel, strain_offset: int) -> np.ndarray:
     """Return controller RMSE values for one saved phase and strain."""
+    strain_index = run.strain_indices[strain_offset]
     return np.asarray(
         [
-            run.results[panel.scenario_key][name]["metrics"]["rmse"][strain_offset]
+            run.results[panel.scenario_key][name]["metrics"]["rmse"][strain_index]
             for name in panel.controller_names
         ],
         dtype=float,
@@ -445,7 +446,9 @@ def main() -> None:
     run = load_comparison_npz(args.trajectory)
     for scenario in run.scenarios:
         print_metrics_table(
-            run.results[scenario.key], run.strain_names, f"{scenario.title}: RMSE"
+            run.results[scenario.key],
+            run.evaluation_strain_names,
+            f"{scenario.title}: RMSE",
         )
     outputs = plot_run(
         run,

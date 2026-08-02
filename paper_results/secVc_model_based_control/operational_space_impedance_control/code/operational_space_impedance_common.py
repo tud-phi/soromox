@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import shutil
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import jax
@@ -12,6 +13,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 from jax import Array
 from matplotlib.lines import Line2D
+
+SECVC_CODE_DIR = Path(__file__).parents[2] / "code"
+if str(SECVC_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(SECVC_CODE_DIR))
+
+from evaluation_metrics import operational_space_metrics  # noqa: E402
 from trajectory_primitives import (
     TaskSpaceTrajectoryConfig,
     make_end_effector_task_selector,
@@ -92,6 +99,7 @@ class PCSImpedanceRun:
     u_traj: Array
     x_traj_full: Array
     x_des_traj_full: Array
+    metrics: dict[str, float] = field(default_factory=dict)
 
 
 def build_problem(trajectory_config: TaskSpaceTrajectoryConfig) -> PCSImpedanceProblem:
@@ -252,6 +260,7 @@ def run_impedance_simulation(
     if verbose:
         print(f"Simulation completed. {len(t_traj)} time steps saved.")
 
+    metrics = compute_operational_metrics(x_traj_full, x_des_traj_full)
     return PCSImpedanceRun(
         trajectory_config=problem.trajectory_config,
         t1=float(t1),
@@ -263,7 +272,37 @@ def run_impedance_simulation(
         u_traj=u_traj,
         x_traj_full=x_traj_full,
         x_des_traj_full=x_des_traj_full,
+        metrics=_scalar_operational_metrics(metrics),
     )
+
+
+def compute_operational_metrics(
+    x_traj_full: Array | np.ndarray,
+    x_des_traj_full: Array | np.ndarray,
+) -> dict[str, np.ndarray | float]:
+    """Compute Section V.C geometric pose errors, RMSE, spans, and NRMSE."""
+    x = np.asarray(x_traj_full, dtype=float)
+    x_des = np.asarray(x_des_traj_full, dtype=float)
+    if x.shape != x_des.shape or x.ndim != 2 or x.shape[1] != 6:
+        raise ValueError(
+            "Section V.C pose trajectories must have matching shape (samples, 6)."
+        )
+    return operational_space_metrics(
+        position=x[:, 3:6],
+        position_reference=x_des[:, 3:6],
+        orientation=x[:, :3],
+        orientation_reference=x_des[:, :3],
+    )
+
+
+def _scalar_operational_metrics(
+    metrics: dict[str, np.ndarray | float],
+) -> dict[str, float]:
+    return {
+        name: float(value)
+        for name, value in metrics.items()
+        if name not in {"position_error", "orientation_error"}
+    }
 
 
 def save_run_npz(
@@ -277,6 +316,9 @@ def save_run_npz(
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     config = run.trajectory_config
+    metrics = run.metrics or _scalar_operational_metrics(
+        compute_operational_metrics(run.x_traj_full, run.x_des_traj_full)
+    )
     np.savez(
         path,
         tracking=np.array(config.tracking),
@@ -303,6 +345,10 @@ def save_run_npz(
         u_traj=np.asarray(run.u_traj),
         x_traj_full=np.asarray(run.x_traj_full),
         x_des_traj_full=np.asarray(run.x_des_traj_full),
+        **{
+            f"metrics_{name}": np.array(value, dtype=float)
+            for name, value in metrics.items()
+        },
     )
     return path
 
@@ -328,6 +374,17 @@ def load_run_npz(path: str | Path) -> PCSImpedanceRun:
             orientation_amplitude=float(data["orientation_amplitude"]),
             surface_radius=float(data["surface_radius"]),
         )
+        metrics = {
+            key.removeprefix("metrics_"): float(data[key])
+            for key in data.files
+            if key.startswith("metrics_")
+        }
+        x_traj_full = jnp.asarray(data["x_traj_full"])
+        x_des_traj_full = jnp.asarray(data["x_des_traj_full"])
+        if not metrics:
+            metrics = _scalar_operational_metrics(
+                compute_operational_metrics(x_traj_full, x_des_traj_full)
+            )
         return PCSImpedanceRun(
             trajectory_config=config,
             t1=float(data["t1"]),
@@ -337,8 +394,9 @@ def load_run_npz(path: str | Path) -> PCSImpedanceRun:
             q_traj=jnp.asarray(data["q_traj"]),
             qd_traj=jnp.asarray(data["qd_traj"]),
             u_traj=jnp.asarray(data["u_traj"]),
-            x_traj_full=jnp.asarray(data["x_traj_full"]),
-            x_des_traj_full=jnp.asarray(data["x_des_traj_full"]),
+            x_traj_full=x_traj_full,
+            x_des_traj_full=x_des_traj_full,
+            metrics=metrics,
         )
 
 
@@ -369,21 +427,23 @@ def plot_run(
     return tracking_output, config_output, tracking_error_pos, pose_error
 
 
-def print_tracking_summary(
-    problem: PCSImpedanceProblem,
-    tracking_error_pos: Array,
-    pose_error: Array | None,
-) -> None:
-    """Print RMSE summary statistics."""
-    pos_rmse = jnp.sqrt(jnp.mean(tracking_error_pos**2, axis=0))
-    print(f"\nPosition RMSE tracking error: {pos_rmse * 1000} mm")
-    print(f"Mean position RMSE: {jnp.mean(pos_rmse) * 1000:.3f} mm")
-
-    if pose_error is not None:
-        orientation_error = pose_error[:, : problem.osd.n_angular_velocity_dim]
-        orient_rmse = jnp.sqrt(jnp.mean(orientation_error**2, axis=0))
-        print(f"Orientation RMSE tracking error: {jnp.rad2deg(orient_rmse)} deg")
-        print(f"Mean orientation RMSE: {jnp.rad2deg(jnp.mean(orient_rmse)):.3f} deg")
+def print_tracking_summary(run: PCSImpedanceRun) -> None:
+    """Print the axis-independent pose metrics reported in Section V.C."""
+    metrics = run.metrics or _scalar_operational_metrics(
+        compute_operational_metrics(run.x_traj_full, run.x_des_traj_full)
+    )
+    print("\nOperational-space tracking metrics:")
+    print(f"  Position RMSE: {1e3 * metrics['position_rmse']:.6f} mm")
+    print(
+        f"  Position reference span: {1e3 * metrics['position_reference_span']:.6f} mm"
+    )
+    print(f"  Position NRMSE: {metrics['position_nrmse_percent']:.6f} %")
+    print(f"  Orientation RMSE: {np.rad2deg(metrics['orientation_rmse']):.6f} deg")
+    print(
+        "  Orientation reference span: "
+        f"{np.rad2deg(metrics['orientation_reference_span']):.6f} deg"
+    )
+    print(f"  Orientation NRMSE: {metrics['orientation_nrmse_percent']:.6f} %")
 
 
 def render_run(

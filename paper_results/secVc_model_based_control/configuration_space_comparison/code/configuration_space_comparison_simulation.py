@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import warnings
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,17 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+
+SECVC_CODE_DIR = Path(__file__).parents[2] / "code"
+if str(SECVC_CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(SECVC_CODE_DIR))
+
+from evaluation_metrics import (  # noqa: E402
+    REGULATION_SETPOINT_INTERVALS,
+    STEADY_STATE_FRACTION,
+    componentwise_rmse,
+    steady_state_mae,
+)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -46,6 +58,15 @@ HORIZONTAL_BASE_POSE = (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 STRAIN_INDICES = (1, 2, 3)
 STRAIN_NAMES = (r"$\kappa_y$", r"$\kappa_z$", r"$\sigma_x$")
+EVALUATION_STRAIN_INDICES = (0, 1, 2, 3, 4, 5)
+EVALUATION_STRAIN_NAMES = (
+    "kappa_x",
+    "kappa_y",
+    "kappa_z",
+    "sigma_x",
+    "sigma_y",
+    "sigma_z",
+)
 
 SETPOINT_COLORS = {
     "PID (model-free)": "#E24A33",
@@ -135,6 +156,10 @@ class ComparisonRun:
     plot_groups: tuple[PlotGroup, ...]
     rmse_summaries: tuple[RmseSummary, ...]
     render_targets: tuple[RenderTarget, ...]
+    evaluation_strain_indices: tuple[int, ...] = ()
+    evaluation_strain_names: tuple[str, ...] = ()
+    steady_state_intervals: tuple[tuple[float, float], ...] = ()
+    steady_state_fraction: float = STEADY_STATE_FRACTION
 
     def scenario_title(self, scenario_key: str) -> str:
         for scenario in self.scenarios:
@@ -473,20 +498,15 @@ def run_simulation(
 def compute_metrics(
     results: dict[str, Any],
     q_des_fn: Any,
-    strain_indices: tuple[int, ...],
 ) -> dict[str, Any]:
-    """Compute tracking metrics for one simulation result."""
+    """Compute the six-coordinate tracking RMSE used in Section V.C."""
     t = results["t"]
     q = results["q"]
     q_des = jax.vmap(q_des_fn)(t)
     tracking_error = q_des - q
-    tracked_error = tracking_error[:, list(strain_indices)]
-    dt = t[1] - t[0]
 
     return {
-        "rmse": jnp.sqrt(jnp.mean(tracked_error**2, axis=0)),
-        "max_error": jnp.max(jnp.abs(tracked_error), axis=0),
-        "ise": jnp.sum(tracked_error**2, axis=0) * dt,
+        "rmse": jnp.asarray(componentwise_rmse(np.asarray(tracking_error))),
         "tracking_error": tracking_error,
         "q_des": q_des,
     }
@@ -537,7 +557,6 @@ def run_controller_set(
         results["metrics"] = compute_metrics(
             results,
             reference_trajectory.x_des_fn,
-            STRAIN_INDICES,
         )
         all_results[name] = results
 
@@ -553,6 +572,7 @@ def slice_results(
     *,
     start: float | None = None,
     stop: float | None = None,
+    steady_state_intervals: tuple[tuple[float, float], ...] | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Slice controller results and recompute metrics over the selected interval."""
     sliced_results: dict[str, dict[str, Any]] = {}
@@ -570,8 +590,18 @@ def slice_results(
         sliced["metrics"] = compute_metrics(
             sliced,
             reference_trajectory.x_des_fn,
-            STRAIN_INDICES,
         )
+        if steady_state_intervals is not None:
+            aggregate, per_setpoint = steady_state_mae(
+                np.asarray(sliced["t"]),
+                np.asarray(sliced["metrics"]["tracking_error"]),
+                steady_state_intervals,
+                fraction=STEADY_STATE_FRACTION,
+            )
+            sliced["metrics"]["steady_state_mae"] = jnp.asarray(aggregate)
+            sliced["metrics"]["steady_state_mae_per_setpoint"] = jnp.asarray(
+                per_setpoint
+            )
         sliced_results[name] = sliced
 
     return sliced_results
@@ -652,9 +682,13 @@ def run_setpoint_comparison(
                 default_controller="PID (model-free)",
             ),
         ),
+        evaluation_strain_indices=EVALUATION_STRAIN_INDICES,
+        evaluation_strain_names=EVALUATION_STRAIN_NAMES,
     )
     if verbose:
-        print_metrics_table(results, STRAIN_NAMES, "Setpoint Regulation: RMSE")
+        print_metrics_table(
+            results, EVALUATION_STRAIN_NAMES, "Setpoint Regulation: RMSE"
+        )
     return run
 
 
@@ -725,10 +759,18 @@ def run_regulation_tracking_comparison(
         },
         verbose=verbose,
     )
+    steady_state_intervals = tuple(
+        (float(start), float(stop))
+        for start, stop in zip(
+            setpoint_times[1:],
+            (*setpoint_times[2:], tracking_start),
+        )
+    )
     regulation_results = slice_results(
         combined_results,
         reference_trajectory,
         stop=tracking_start,
+        steady_state_intervals=steady_state_intervals,
     )
     tracking_results = slice_results(
         combined_results,
@@ -798,6 +840,9 @@ def run_regulation_tracking_comparison(
                 default_controller="Feedforward Compensation",
             ),
         ),
+        evaluation_strain_indices=EVALUATION_STRAIN_INDICES,
+        evaluation_strain_names=EVALUATION_STRAIN_NAMES,
+        steady_state_intervals=steady_state_intervals,
     )
 
     if verbose:
@@ -805,17 +850,17 @@ def run_regulation_tracking_comparison(
             ("Setpoint Regulation Phase", regulation_results),
             ("Trajectory Tracking Phase", tracking_results),
         ):
-            for metric_name, metric_title in (
-                ("rmse", "RMSE"),
-                ("max_error", "Maximum Absolute Error"),
-                ("ise", "ISE"),
-            ):
-                print_metrics_table(
-                    phase_results,
-                    STRAIN_NAMES,
-                    f"{phase_title}: {metric_title}",
-                    metric_name=metric_name,
-                )
+            print_metrics_table(
+                phase_results,
+                EVALUATION_STRAIN_NAMES,
+                f"{phase_title}: RMSE",
+            )
+        print_metrics_table(
+            regulation_results,
+            EVALUATION_STRAIN_NAMES,
+            "Setpoint Regulation Phase: steady-state MAE",
+            metric_name="steady_state_mae",
+        )
     return run
 
 
@@ -882,7 +927,9 @@ def run_trajectory_tracking_comparison(
         verbose=verbose,
     )
     if verbose:
-        print_metrics_table(slow_results, STRAIN_NAMES, "Slow Trajectory: RMSE")
+        print_metrics_table(
+            slow_results, EVALUATION_STRAIN_NAMES, "Slow Trajectory: RMSE"
+        )
 
     if verbose:
         print("\n" + "=" * 80)
@@ -912,7 +959,7 @@ def run_trajectory_tracking_comparison(
     if verbose:
         print_metrics_table(
             fast_results,
-            STRAIN_NAMES,
+            EVALUATION_STRAIN_NAMES,
             "Fast Trajectory: RMSE Comparison (Trackers)",
         )
 
@@ -984,6 +1031,8 @@ def run_trajectory_tracking_comparison(
                 default_controller="Computed Torque",
             ),
         ),
+        evaluation_strain_indices=EVALUATION_STRAIN_INDICES,
+        evaluation_strain_names=EVALUATION_STRAIN_NAMES,
     )
 
 
@@ -995,18 +1044,21 @@ def print_metrics_table(
     metric_name: str = "rmse",
 ) -> None:
     """Print a formatted table for one per-strain metric."""
-    print(f"\n{'=' * 80}")
+    width = max(80, 31 + 16 * len(strain_names))
+    print(f"\n{'=' * width}")
     print(title)
-    print("=" * 80)
-    print(
-        f"{'Controller':<30} "
-        f"{strain_names[0]:>15} {strain_names[1]:>15} {strain_names[2]:>15}"
-    )
-    print("-" * 80)
+    print("=" * width)
+    print(f"{'Controller':<30} " + " ".join(f"{name:>15}" for name in strain_names))
+    print("-" * width)
 
     for name, results in all_results.items():
-        metric = results["metrics"][metric_name]
-        print(f"{name:<30} {metric[0]:>15.4f} {metric[1]:>15.4f} {metric[2]:>15.4f}")
+        metric = np.asarray(results["metrics"][metric_name])
+        if metric.shape != (len(strain_names),):
+            raise ValueError(
+                f"{metric_name} has shape {metric.shape}, expected "
+                f"({len(strain_names)},)."
+            )
+        print(f"{name:<30} " + " ".join(f"{value:>15.4g}" for value in metric))
 
 
 def save_comparison_npz(
@@ -1020,17 +1072,51 @@ def save_comparison_npz(
         )
     output.parent.mkdir(parents=True, exist_ok=True)
 
+    first_result = next(iter(next(iter(run.results.values())).values()))
+    num_coordinates = int(np.asarray(first_result["q"]).shape[1])
+    evaluation_indices = run.evaluation_strain_indices or tuple(range(num_coordinates))
+    evaluation_names = run.evaluation_strain_names or tuple(
+        (
+            EVALUATION_STRAIN_NAMES[index]
+            if num_coordinates == len(EVALUATION_STRAIN_NAMES)
+            else f"q_{index}"
+        )
+        for index in evaluation_indices
+    )
+    saved_metric_names = (
+        "rmse",
+        "steady_state_mae",
+        "steady_state_mae_per_setpoint",
+        "tracking_error",
+        "q_des",
+    )
     metadata = {
-        "format_version": 1,
+        "format_version": 2,
         "example_key": run.example_key,
         "title": run.title,
         "strain_indices": list(run.strain_indices),
         "strain_names": list(run.strain_names),
+        "evaluation": {
+            "strain_indices": list(evaluation_indices),
+            "strain_names": list(evaluation_names),
+            "steady_state_fraction": run.steady_state_fraction,
+            "steady_state_setpoint_intervals": [
+                list(interval) for interval in run.steady_state_intervals
+            ],
+            "initial_interval_excluded": True,
+            "steady_state_aggregation": "equal mean across setpoints",
+        },
         "scenarios": [
             {
                 "key": scenario.key,
                 "title": scenario.title,
                 "controller_names": list(run.results[scenario.key].keys()),
+                "metric_names": [
+                    metric_name
+                    for metric_name in saved_metric_names
+                    if metric_name
+                    in next(iter(run.results[scenario.key].values()))["metrics"]
+                ],
             }
             for scenario in run.scenarios
         ],
@@ -1055,7 +1141,9 @@ def save_comparison_npz(
             arrays[f"{prefix}_u"] = np.asarray(result["u"])
 
             metrics = result["metrics"]
-            for metric_name in ("rmse", "max_error", "ise", "tracking_error", "q_des"):
+            for metric_name in saved_metric_names:
+                if metric_name not in metrics:
+                    continue
                 arrays[f"{prefix}_metrics_{metric_name}"] = np.asarray(
                     metrics[metric_name]
                 )
@@ -1082,21 +1170,64 @@ def load_comparison_npz(path: str | Path) -> ComparisonRun:
                 scenario["controller_names"]
             ):
                 prefix = f"s{scenario_idx}_c{controller_idx}"
+                metric_prefix = f"{prefix}_metrics_"
+                metric_names = scenario.get("metric_names") or [
+                    key.removeprefix(metric_prefix)
+                    for key in data.files
+                    if key.startswith(metric_prefix)
+                ]
+                metrics = {
+                    metric_name: np.asarray(data[f"{metric_prefix}{metric_name}"])
+                    for metric_name in metric_names
+                    if metric_name
+                    in {
+                        "rmse",
+                        "steady_state_mae",
+                        "steady_state_mae_per_setpoint",
+                        "tracking_error",
+                        "q_des",
+                    }
+                }
+                q = np.asarray(data[f"{prefix}_q"])
+                if metrics["rmse"].shape != (q.shape[1],):
+                    metrics["rmse"] = componentwise_rmse(metrics["tracking_error"])
+                if scenario_key == "regulation" and "steady_state_mae" not in metrics:
+                    intervals = tuple(
+                        tuple(float(value) for value in interval)
+                        for interval in metadata.get("evaluation", {}).get(
+                            "steady_state_setpoint_intervals",
+                            REGULATION_SETPOINT_INTERVALS,
+                        )
+                    )
+                    aggregate, per_setpoint = steady_state_mae(
+                        np.asarray(data[f"{prefix}_t"]),
+                        metrics["tracking_error"],
+                        intervals,
+                        fraction=float(
+                            metadata.get("evaluation", {}).get(
+                                "steady_state_fraction", STEADY_STATE_FRACTION
+                            )
+                        ),
+                    )
+                    metrics["steady_state_mae"] = aggregate
+                    metrics["steady_state_mae_per_setpoint"] = per_setpoint
                 scenario_results[controller_name] = {
-                    "t": data[f"{prefix}_t"],
-                    "q": data[f"{prefix}_q"],
-                    "qd": data[f"{prefix}_qd"],
-                    "u": data[f"{prefix}_u"],
-                    "metrics": {
-                        "rmse": data[f"{prefix}_metrics_rmse"],
-                        "max_error": data[f"{prefix}_metrics_max_error"],
-                        "ise": data[f"{prefix}_metrics_ise"],
-                        "tracking_error": data[f"{prefix}_metrics_tracking_error"],
-                        "q_des": data[f"{prefix}_metrics_q_des"],
-                    },
+                    "t": np.asarray(data[f"{prefix}_t"]),
+                    "q": q,
+                    "qd": np.asarray(data[f"{prefix}_qd"]),
+                    "u": np.asarray(data[f"{prefix}_u"]),
+                    "metrics": metrics,
                 }
             results[scenario_key] = scenario_results
 
+    evaluation = metadata.get("evaluation", {})
+    first_q = next(iter(next(iter(results.values())).values()))["q"]
+    default_indices = tuple(range(first_q.shape[1]))
+    default_names = (
+        EVALUATION_STRAIN_NAMES
+        if first_q.shape[1] == len(EVALUATION_STRAIN_NAMES)
+        else tuple(f"q_{index}" for index in default_indices)
+    )
     return ComparisonRun(
         example_key=metadata["example_key"],
         title=metadata["title"],
@@ -1112,6 +1243,20 @@ def load_comparison_npz(path: str | Path) -> ComparisonRun:
         ),
         render_targets=tuple(
             _render_target_from_dict(target) for target in metadata["render_targets"]
+        ),
+        evaluation_strain_indices=tuple(
+            int(index) for index in evaluation.get("strain_indices", default_indices)
+        ),
+        evaluation_strain_names=tuple(evaluation.get("strain_names", default_names)),
+        steady_state_intervals=tuple(
+            tuple(float(value) for value in interval)
+            for interval in evaluation.get(
+                "steady_state_setpoint_intervals",
+                REGULATION_SETPOINT_INTERVALS if "regulation" in results else (),
+            )
+        ),
+        steady_state_fraction=float(
+            evaluation.get("steady_state_fraction", STEADY_STATE_FRACTION)
         ),
     )
 

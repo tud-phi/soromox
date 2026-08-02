@@ -54,7 +54,10 @@ requires Viser and a working video encoder, but no robot hardware.
 ## Artifacts
 
 `data/` contains one NPZ per workflow. Each archive records metadata, scenario
-and controller names, time vectors, states, inputs, references, and metrics.
+and controller names, time vectors, states, inputs, references, and the
+Section-Vc evaluation metrics. RMSE retains all six strain coordinates; the
+combined regulation/tracking archive additionally stores the four terminal
+setpoint-window MAEs and their equal-weight aggregate for regulation.
 `outputs/configuration_space_comparison.pdf` contains the complete
 regulation-to-tracking trajectory for all three controlled strains.
 `outputs/regulation_tracking_rmse.pdf` reports the corresponding RMSE values

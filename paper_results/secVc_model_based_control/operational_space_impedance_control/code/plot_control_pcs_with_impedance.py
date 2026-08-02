@@ -101,14 +101,14 @@ def main() -> None:
     problem = build_problem(run.trajectory_config)
     print_problem_summary(problem)
     output_prefix = args.output_prefix or OUTPUTS_DIR / Path(args.trajectory).stem
-    tracking_output, config_output, tracking_error_pos, pose_error = plot_run(
+    tracking_output, config_output, _, _ = plot_run(
         run,
         problem,
         output_prefix=str(output_prefix),
         no_show=args.no_show,
         force=args.force,
     )
-    print_tracking_summary(problem, tracking_error_pos, pose_error)
+    print_tracking_summary(run)
     print("\nPlots saved to:")
     print(f"  - {tracking_output}")
     print(f"  - {config_output}")

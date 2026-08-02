@@ -48,6 +48,14 @@ def test_save_and_load_run_npz_preserves_rollout_and_config(tmp_path):
         u_traj=3.0 * jnp.ones((3, 4)),
         x_traj_full=4.0 * jnp.ones((3, 6)),
         x_des_traj_full=5.0 * jnp.ones((3, 6)),
+        metrics={
+            "position_rmse": 1.0,
+            "orientation_rmse": 2.0,
+            "position_reference_span": 3.0,
+            "orientation_reference_span": 4.0,
+            "position_nrmse_percent": 5.0,
+            "orientation_nrmse_percent": 6.0,
+        },
     )
 
     output = operational_space_impedance_common.save_run_npz(
@@ -65,6 +73,7 @@ def test_save_and_load_run_npz_preserves_rollout_and_config(tmp_path):
     assert jnp.allclose(loaded.u_traj, run.u_traj)
     assert jnp.allclose(loaded.x_traj_full, run.x_traj_full)
     assert jnp.allclose(loaded.x_des_traj_full, run.x_des_traj_full)
+    assert loaded.metrics == run.metrics
 
 
 def test_save_run_npz_requires_force_to_overwrite(tmp_path):
