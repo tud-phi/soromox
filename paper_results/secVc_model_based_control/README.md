@@ -22,9 +22,10 @@ and renderers consume saved NPZ data and write only to their case `outputs/`
 directory by default. The case READMEs list complete reproduction commands and
 artifact inventories.
 
-The two canonical paper figures are:
+The committed Section Vc paper figures are:
 
 - `configuration_space_comparison/outputs/configuration_space_comparison.pdf`
+- `configuration_space_comparison/outputs/regulation_tracking_rmse.pdf`
 - `operational_space_impedance_control/outputs/operational_space_impedance_control.pdf`
 
 Both use the shared `paper_results/paper.mplstyle` publication settings and the

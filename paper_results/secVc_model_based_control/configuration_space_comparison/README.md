@@ -55,8 +55,10 @@ requires Viser and a working video encoder, but no robot hardware.
 
 `data/` contains one NPZ per workflow. Each archive records metadata, scenario
 and controller names, time vectors, states, inputs, references, and metrics.
-`outputs/configuration_space_comparison.pdf` is the canonical paper figure. It
-contains the complete regulation-to-tracking trajectory for all three controlled
-strains. Scenario-specific tracking, error, and RMSE plots are reproducible
-diagnostics and remain uncommitted. The checked-in NPZ files were regenerated
-from scratch with the current Section Vc generators.
+`outputs/configuration_space_comparison.pdf` contains the complete
+regulation-to-tracking trajectory for all three controlled strains.
+`outputs/regulation_tracking_rmse.pdf` reports the corresponding RMSE values
+separately for the setpoint-regulation and trajectory-tracking phases.
+Scenario-specific tracking and error plots are reproducible diagnostics and
+remain uncommitted. The checked-in NPZ files were regenerated from scratch with
+the current Section Vc generators.
