@@ -333,6 +333,19 @@ class TestPIDControlValidation:
         with pytest.raises(ValueError, match="match the error size"):
             pid(jnp.ones(2), jnp.zeros(2), jnp.zeros(2))
 
+    def test_matrix_gamma_requires_one_dimensional_error(self):
+        pid = PIDControl(
+            Kp=1.0,
+            Ki=0.5,
+            Kd=0.1,
+            saturation_fn="tanh",
+            gamma=jnp.eye(4),
+        )
+
+        error = jnp.ones((2, 2))
+        with pytest.raises(ValueError, match="one-dimensional error vector"):
+            pid(error, jnp.zeros_like(error), jnp.zeros_like(error))
+
 
 class TestPIDControlJAXCompatibility:
     """Tests for JAX compatibility (jit, vmap, grad)."""
@@ -378,6 +391,46 @@ class TestPIDControlJAXCompatibility:
                 1.0 * e_batch[i] + 0.5 * integral_error_batch[i] + 0.1 * ed_batch[i]
             )
             assert jnp.allclose(u_batch[i], expected_u, atol=1e-10)
+
+    def test_vmap_with_tanh_saturation_and_vector_gamma(self):
+        """Test vmap compatibility with componentwise tanh saturation scales."""
+        gamma = jnp.array([0.5, 2.0])
+        pid = PIDControl(
+            Kp=1.0,
+            Ki=0.5,
+            Kd=0.1,
+            saturation_fn="tanh",
+            gamma=gamma,
+        )
+        e_batch = jnp.array([[1.0, 2.0], [-3.0, 0.25], [0.1, -0.2]])
+        zeros = jnp.zeros_like(e_batch)
+
+        _, integral_error_dot_batch = jax.vmap(pid)(e_batch, zeros, zeros)
+
+        expected = jnp.tanh(gamma * e_batch) / gamma
+        assert integral_error_dot_batch.shape == e_batch.shape
+        assert jnp.allclose(integral_error_dot_batch, expected, atol=1e-10)
+
+    def test_vmap_with_tanh_saturation_and_matrix_gamma(self):
+        """Test vmap compatibility with transformed-coordinate tanh saturation."""
+        gamma = jnp.array([[1.0, 0.2], [0.2, 1.5]])
+        pid = PIDControl(
+            Kp=1.0,
+            Ki=0.5,
+            Kd=0.1,
+            saturation_fn="tanh",
+            gamma=gamma,
+        )
+        e_batch = jnp.array([[1.0, 2.0], [-3.0, 0.25], [0.1, -0.2]])
+        zeros = jnp.zeros_like(e_batch)
+
+        _, integral_error_dot_batch = jax.vmap(pid)(e_batch, zeros, zeros)
+
+        expected = jax.vmap(
+            lambda e: jnp.linalg.solve(gamma, jnp.tanh(gamma @ e))
+        )(e_batch)
+        assert integral_error_dot_batch.shape == e_batch.shape
+        assert jnp.allclose(integral_error_dot_batch, expected, atol=1e-10)
 
     def test_jit_with_tanh_saturation(self):
         """Test jit compatibility with tanh saturation."""

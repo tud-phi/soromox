@@ -215,9 +215,10 @@ class PIDControl(eqx.Module):
                 )
             return jnp.tanh(gamma * e) / gamma
         elif gamma.ndim == 2:
-            if gamma.shape != (e.size, e.size):
+            if e.ndim != 1 or gamma.shape != (e.shape[0], e.shape[0]):
                 raise ValueError(
-                    "A matrix gamma must be square and match the error size; "
+                    "A matrix gamma must match the error size of a one-dimensional "
+                    "error vector; "
                     f"got gamma shape {gamma.shape} for error shape {e.shape}."
                 )
             return jnp.linalg.solve(gamma, jnp.tanh(gamma @ e))
