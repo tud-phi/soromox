@@ -678,6 +678,53 @@ def test_open3d_defaults_to_swept_backbone():
     assert renderer._backbone_mode == "swept"
 
 
+def test_open3d_closes_window_when_recording_finishes(monkeypatch):
+    pytest.importorskip("open3d")
+    from soromox.rendering.open3d_renderer import Open3DRenderer, RecordingConfig
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = Open3DRenderer(robot)
+    vis = Mock()
+    vis.poll_events.side_effect = [True, True, True]
+    ctrl = Mock()
+    ctrl.convert_to_pinhole_camera_parameters.return_value = Mock()
+    scene_data = type(
+        "SceneDataStub",
+        (),
+        {"ts": np.array([0.0, 1.0]), "num_frames": 2},
+    )()
+
+    monkeypatch.setattr(renderer, "_create_visualizer", Mock(return_value=(vis, ctrl)))
+    monkeypatch.setattr(renderer, "_build_scene", Mock(return_value=Mock()))
+    monkeypatch.setattr(renderer, "_setup_interactive_camera", Mock())
+    monkeypatch.setattr(
+        renderer, "_frame_intervals_from_ts", Mock(return_value=np.zeros(2))
+    )
+    monkeypatch.setattr(
+        renderer,
+        "_init_recorder",
+        Mock(return_value=(None, None, "rollout.mp4")),
+    )
+    monkeypatch.setattr(renderer, "_register_key_callbacks", Mock())
+    update_scene = Mock()
+    monkeypatch.setattr(renderer, "_update_scene", update_scene)
+
+    renderer._run_viewer(
+        scene_data,
+        playback_speed=1.0,
+        autoplay=True,
+        loop=False,
+        record_cfg=RecordingConfig(
+            path="rollout.mp4",
+            close_when_done=True,
+        ),
+        window_name="test",
+    )
+
+    assert update_scene.call_count == 2
+    vis.destroy_window.assert_called_once_with()
+
+
 def test_viser_swept_backbone_uses_material_frame_rings():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 

@@ -1623,6 +1623,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         def cb_quit(_):
             state["playing"] = False
             vis.destroy_window()
+            state["window_destroyed"] = True
             return False
 
         vis.register_key_callback(ord(" "), cb_space)
@@ -2007,6 +2008,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             "playing": bool(autoplay),
             "last_tick": time.time(),
             "dt_seq": dt_seq,
+            "window_destroyed": False,
         }
 
         def _fallback_to_frames(reason: str):
@@ -2079,31 +2081,38 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             print_prefix="[Open3D]",
         )
 
-        update_frame(0)
+        try:
+            update_frame(0)
 
-        print(
-            f"{window_name}: Space=Play/Pause  ←/→=Step  H=Home  "
-            "S=Snapshot  R=ResetCam  C=CaptureCam  L=LoadCam  V=PrintCam  Q/Esc=Quit"
-        )
+            print(
+                f"{window_name}: Space=Play/Pause  ←/→=Step  H=Home  "
+                "S=Snapshot  R=ResetCam  C=CaptureCam  L=LoadCam  "
+                "V=PrintCam  Q/Esc=Quit"
+            )
 
-        while vis.poll_events():
-            now = time.time()
-            dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
-            if state["playing"] and (now - state["last_tick"] >= dt_now):
-                nxt = state["idx"] + 1
-                if nxt >= scene_data.num_frames:
-                    nxt = 0 if loop else scene_data.num_frames - 1
-                    state["playing"] = state["playing"] and loop
-                update_frame(nxt)
-                state["last_tick"] = now
-                if (
-                    record_cfg.close_when_done
-                    and record_cfg.path is not None
-                    and not loop
-                    and nxt == scene_data.num_frames - 1
-                ):
-                    break
-            vis.update_renderer()
-            time.sleep(0.001)
-        if video_writer is not None:
-            video_writer.close()
+            while vis.poll_events():
+                now = time.time()
+                dt_now = state["dt_seq"][min(state["idx"], len(state["dt_seq"]) - 1)]
+                if state["playing"] and (now - state["last_tick"] >= dt_now):
+                    nxt = state["idx"] + 1
+                    if nxt >= scene_data.num_frames:
+                        nxt = 0 if loop else scene_data.num_frames - 1
+                        state["playing"] = state["playing"] and loop
+                    update_frame(nxt)
+                    state["last_tick"] = now
+                    if (
+                        record_cfg.close_when_done
+                        and record_cfg.path is not None
+                        and not loop
+                        and nxt == scene_data.num_frames - 1
+                    ):
+                        break
+                vis.update_renderer()
+                time.sleep(0.001)
+        finally:
+            try:
+                if video_writer is not None:
+                    video_writer.close()
+            finally:
+                if not state["window_destroyed"]:
+                    vis.destroy_window()

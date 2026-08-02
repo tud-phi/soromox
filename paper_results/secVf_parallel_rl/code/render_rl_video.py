@@ -111,7 +111,8 @@ def build_rl_robot(arm_length: float = 0.25, arm_radius: float = 0.025) -> PCS:
     )
 
 
-def main():
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for offline rollout rendering."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--data",
@@ -127,11 +128,15 @@ def main():
     )
     parser.add_argument(
         "--show-trajectory",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
         default=True,
         help="Plot the target ball's trajectory as a trail of small red spheres",
     )
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def main():
+    args = parse_args()
 
     if not os.path.exists(args.data):
         raise FileNotFoundError(f"Could not find trajectory file: {args.data}")

@@ -14,7 +14,6 @@ Run commands from the repository root after installing paper dependencies:
 
 ```bash
 uv sync --extra paper_results
-git lfs pull
 ```
 
 Each generator refuses to overwrite data unless `--force` is passed. Plotters

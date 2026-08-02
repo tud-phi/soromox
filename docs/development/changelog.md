@@ -36,8 +36,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   configuration-space tracking and partial-feedback-linearization
   operational-space tracking, with explicit strain labels and prominent
   reference trajectories.
-- Store canonical binary paper data and media through Git LFS while leaving
-  generated example artifacts ignored.
+- Store trained model checkpoints through Git LFS while leaving generated
+  example artifacts and noncanonical paper diagnostics ignored.
 
 ### Fixed
 

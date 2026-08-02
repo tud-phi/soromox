@@ -1,0 +1,5 @@
+# Keep reproducible diagnostics local; explicitly version paper media.
+*
+!.gitignore
+!operational_space_impedance_control.pdf
+!control_pcs_with_impedance_trajectory-render.mp4

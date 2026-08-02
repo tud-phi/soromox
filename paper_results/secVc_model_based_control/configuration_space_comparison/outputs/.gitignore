@@ -1,0 +1,5 @@
+# Keep reproducible diagnostics local; explicitly version paper figures.
+*
+!.gitignore
+!configuration_space_comparison.pdf
+!regulation_tracking_rmse.pdf

@@ -16,8 +16,8 @@ or generated artifacts under `data/`, and publication figures/videos under
 | Vf, parallel reinforcement learning | [`secVf_parallel_rl/`](secVf_parallel_rl/README.md) | training, checkpoints, reward curve, rollout data, and media |
 
 `final_outputs/` contains composed figures assembled from one or more section
-outputs. Large binary data and canonical outputs are stored with Git LFS.
-Hydrate them before plotting with `git lfs pull`.
+outputs. Trained model checkpoints are stored with Git LFS; section data and
+paper figures remain regular Git objects unless their size requires otherwise.
 
 ## Shared conventions
 

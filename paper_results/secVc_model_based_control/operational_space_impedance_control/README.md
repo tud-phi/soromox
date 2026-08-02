@@ -70,5 +70,4 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/oper
 
 Standalone trajectory, configuration, and feedback-linearization plots are
 reproducible diagnostics and remain uncommitted. The checked-in NPZ files were
-regenerated from scratch with the current Section Vc generators. Canonical
-media are tracked with Git LFS.
+regenerated from scratch with the current Section Vc generators.
