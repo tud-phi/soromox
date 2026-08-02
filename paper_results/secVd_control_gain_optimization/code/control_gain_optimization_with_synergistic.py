@@ -12,9 +12,13 @@ from jax import Array, jit, value_and_grad, vmap
 from jax import numpy as jnp
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
-from soromox.control.actuation_space import PotentialCompensationRegulator
-from soromox.coordinate_transformations import ActuationSpaceDynamics
+from soromox.control import (
+    OperationalSpaceSynergisticController,
+    PIDControl,
+    PIDControllerState,
+    ReferenceTrajectory,
+)
+from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     PCS,
@@ -26,26 +30,26 @@ jax.config.update("jax_enable_x64", True)  # double precision
 
 CASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = CASE_DIR / "data"
-OUTPUTS_DIR = CASE_DIR / "outputs"
+DEFAULT_OUTPUTS_DIR = CASE_DIR / "outputs"
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Optimize collocated control gains for the Section Vd study."
+        description="Optimize synergistic control gains for the Section Vd study."
     )
     parser.add_argument(
         "--result-dir",
         type=Path,
-        default=DATA_DIR / "collocated",
+        default=DATA_DIR / "synergistic",
         help="Directory for generated MAT and pickle data.",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=OUTPUTS_DIR / "collocated_diagnostics",
+        default=DEFAULT_OUTPUTS_DIR / "synergistic_diagnostics",
         help="Directory for optional diagnostic figures.",
     )
-    parser.add_argument("--num-iters", type=int, default=3)
+    parser.add_argument("--num-iters", type=int, default=2)
     parser.add_argument("--save-figures", action="store_true")
     parser.add_argument("--no-show", action="store_true")
     parser.add_argument("--no-render", action="store_true")
@@ -64,7 +68,12 @@ for output_name in ("optimization_results.mat", "animation_data.pkl"):
         raise FileExistsError(f"Refusing to overwrite {output_path}; pass --force")
 
 
-def finish_figure() -> None:
+def finish_figure(filename: str) -> None:
+    if ARGS.save_figures:
+        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+        output_path = OUTPUTS_DIR / filename
+        plt.savefig(output_path, dpi=200, bbox_inches="tight")
+        print(f"Saved {output_path}")
     if ARGS.no_show:
         plt.close()
     else:
@@ -73,7 +82,7 @@ def finish_figure() -> None:
 
 def evaluate_closed_loop_system(
     opt_vars: dict[str, Array],
-    controller: PotentialCompensationRegulator,
+    controller: OperationalSpaceSynergisticController,
 ) -> tuple[Array, dict[str, Array]]:
     # Update optimization parameters
     ctr_params = opt_vars["opt_ctr_params"]
@@ -158,15 +167,37 @@ robot = PCS(
     actuators=ThreadlikeActuator.tendons(active_tendon_routing),
 )
 params = robot.params
-total_length = float(jnp.sum(segment_lengths))
+
 num_dofs = robot.num_active_strains
 num_actuators = robot.num_actuators
-
+total_length = float(jnp.sum(segment_lengths))
 print(f"Number of DOFs: {num_dofs}")
 print(f"Number of actuators: {num_actuators}")
+print(f"Total robot length: {total_length:.3f} m")
 
-# Create actuation space dynamics transformer
-asd = ActuationSpaceDynamics(robot)
+# =========================================================================
+# Operational Space Definition
+# =========================================================================
+# Define the operational space as the end-effector position (x, y, z)
+# We place the task point at the tip of the robot (s = L_total)
+s_ps = jnp.array([total_length])
+
+# For PCS robots, the Jacobian has shape (6, num_dofs) for each point:
+# [omega_x, omega_y, omega_z, v_x, v_y, v_z]
+# We select only the linear velocity components (position tracking)
+# task_selector selects [v_x, v_y, v_z] which are indices 3, 4, 5
+task_selector = jnp.array([False, False, False, True, True, True])
+
+# Create operational space dynamics
+osd = OperationalSpaceDynamics(
+    robot=robot,
+    s_ps=s_ps,
+    task_selector=task_selector,
+)
+
+print(f"Operational space dimension (velocity): {osd.n_operational_space}")
+print(f"Operational space dimension (pose): {osd.n_pose_operational_space}")
+print(f"Full pose dimension: {osd.n_points * osd.n_pose_dim}")
 
 # =========================================================================
 # Find Statically-Feasible Setpoint
@@ -175,7 +206,7 @@ print("\nFinding steady-state configuration under constant actuation...")
 
 # Apply positive tendon tensions.
 # Use asymmetric tensions to create an interesting configuration
-u_constant = jnp.array([1.2, 0.6, 0.05])
+u_constant = jnp.array([0.5, 0.2, 0.1])
 print(f"  Applied tendon tensions: {u_constant}")
 
 # Define simulation parameters
@@ -183,8 +214,8 @@ sim_duration = 10.0
 solver_dt = 1e-4
 
 # Start from rest configuration
-q0 = jnp.zeros((num_dofs,))
-qd0 = jnp.zeros((num_dofs,))
+q0 = jnp.zeros(num_dofs)
+qd0 = jnp.zeros(num_dofs)
 y0 = jnp.concatenate([q0, qd0])
 
 initial_state = SystemState(t=jnp.array(0.0), y=y0)
@@ -214,9 +245,16 @@ q_des = q_final
 
 print(f"  Steady-state configuration (q_des): {q_des}")
 
+# Get the initial FULL end-effector pose for reference
+# IMPORTANT: The reference trajectory must provide FULL poses (all components),
+# even though only some components (e.g., position) are part of the task.
+# The controller will ignore components not in the task.
+x0_full = osd.operational_space_poses(q0)  # shape: (n_points * n_pose_dim,)
+x_des_full = osd.operational_space_poses(q_des)  # shape: (n_points * n_pose_dim,)
+
 # Compute the corresponding tendon lengths at steady-state
-y_des = asd.actuated_unactuated_coordinates(q_des)
-print(f"  Actuation-space coordinates (y_des): {y_des}")
+print(f"  Initial end-effector pose (full): {x0_full}")
+print(f"  Desired end-effector pose (full): {x_des_full}")
 
 # Time parameters for closed-loop control
 t0, t1 = 0.0, 5.0
@@ -227,27 +265,28 @@ t0, t1 = 0.0, 5.0
 save_ts = robot._compute_save_times(t0, t1, solver_dt=solver_dt, save_dt=solver_dt)
 num_ts = save_ts.shape[0]
 
-reference_trajectory = ReferenceTrajectory(ts=save_ts, x_des_fn=lambda t: q_des)
+reference_trajectory = ReferenceTrajectory(
+    ts=save_ts,
+    x_des_fn=lambda t: x_des_full,
+    rotation_representation=osd.rotation_representation,
+    n_points=osd.n_points,
+    is_planar=osd.is_planar,
+)
 x_des_ts = reference_trajectory.x_des_ts
 
 # =========================================================================
 # Define the Controller
 # =========================================================================
-# Units: tendon lengths are in meters
-Kp = 5e1 * jnp.ones((num_actuators,))
-Ki = 5e0 * jnp.ones((num_actuators,))
-Kd = 1e0 * jnp.ones((num_actuators,))
+Kp = 10.0 * jnp.ones((osd.n_operational_space,))
+Ki = 2.0 * jnp.ones((osd.n_operational_space,))
+Kd = 0.25 * jnp.ones((osd.n_operational_space,))
 
-pid_control = PIDControl(
-    Kp=Kp,
-    Ki=Ki,
-    Kd=Kd,
-    saturation_fn="tanh",
-    gamma=10.0,
-)
+# Define PID controller
+pid_control = PIDControl(Kp, Ki, Kd)
 
-controller = PotentialCompensationRegulator(
-    actuation_space_dynamics=asd,
+# Create the synergistic controller
+controller = OperationalSpaceSynergisticController(
+    operational_space_dynamics=osd,
     reference_trajectory=reference_trajectory,
     pid_control=pid_control,
 )
@@ -256,13 +295,13 @@ controller = PotentialCompensationRegulator(
 # Run Simulation
 # =========================================================================
 # Initial control state (sized for actuated coordinates)
-control_state_0 = PIDControllerState.zero(num_actuators)
+control_state_0 = PIDControllerState.zero(osd.n_operational_space)
 
 # Create initial system state
 initial_state = SystemState(
     t=jnp.array(t0),
     y=y0,
-    u=jnp.zeros((num_actuators,)),
+    u=jnp.zeros(num_actuators),
     control_state=control_state_0,
 )
 
@@ -432,33 +471,36 @@ q_ts_best = q_ts_tot[best_idx_opt, :, :]
 qd_ts_best = qd_ts_tot[best_idx_opt, :, :]
 u_ts_best = u_ts_tot[best_idx_opt, :, :]
 
-# End-effector trajectory
-x_ts_init = vmap(robot.forward_kinematics, in_axes=(0, None))(q_ts_init, total_length)[
-    :, :3, 3
-]  # (p, 3)
-x_ts_best = vmap(robot.forward_kinematics, in_axes=(0, None))(q_ts_best, total_length)[
-    :, :3, 3
-]  # (p, 3)
+# Compute FULL operational space coordinates along the trajectory (for visualization)
+x_ts_init = vmap(osd.operational_space_poses)(q_ts_init)
+x_ts_best = vmap(osd.operational_space_poses)(q_ts_best)
+
+# Extract position components for plotting (indices 3, 4, 5 for 3D PCS)
+# For 3D robots with ROTATION_VECTOR: full pose = [rot_x, rot_y, rot_z, p_x, p_y, p_z]
+pos_indices = jnp.arange(6)  # All components
+
+pos_ts_init = x_ts_init[:, pos_indices]
+pos_ts_best = x_ts_best[:, pos_indices]
 
 
 # =====================================================
 # Compute metrics
 # =====================================================
-def compute_metrics(t: Array, q: Array, q_des: Array, strain_indices: list) -> dict:
+def compute_metrics(t: Array, x: Array, x_des: Array, pos_indices: list) -> dict:
     """Compute performance metrics for the simulation results."""
 
     # Compute tracking error
-    tracking_error = q_des[None, :] - q
+    tracking_error = x_des[None, :] - x
 
     # Root mean square error for each strain
-    rmse = jnp.sqrt(jnp.mean(tracking_error[:, strain_indices] ** 2, axis=0))
+    rmse = jnp.sqrt(jnp.mean(tracking_error[:, pos_indices] ** 2, axis=0))
 
     # Maximum absolute error
-    max_error = jnp.max(jnp.abs(tracking_error[:, strain_indices]), axis=0)
+    max_error = jnp.max(jnp.abs(tracking_error[:, pos_indices]), axis=0)
 
     # Steady-state error (last 10% of simulation)
     n_ss = max(1, len(t) // 10)
-    ss_error = jnp.mean(jnp.abs(tracking_error[-n_ss:, strain_indices]), axis=0)
+    ss_error = jnp.mean(jnp.abs(tracking_error[-n_ss:, pos_indices]), axis=0)
 
     return {
         "rmse": rmse,
@@ -468,52 +510,43 @@ def compute_metrics(t: Array, q: Array, q_des: Array, strain_indices: list) -> d
     }
 
 
-# Analyze all strains (for a 1-segment robot: 6 strains)
-strain_indices = list(range(num_dofs))
+# Analyze all operational-space variables (for one point: 6 degrees of freedom)
+pos_indices = list(pos_indices)
 
-metrics_init = compute_metrics(t_ts, q_ts_init, q_des, strain_indices)
-metrics_best = compute_metrics(t_ts, q_ts_best, q_des, strain_indices)
+metrics_init = compute_metrics(t_ts, x_ts_init, x_des_full, pos_indices)
+metrics_best = compute_metrics(t_ts, x_ts_best, x_des_full, pos_indices)
 
 # =====================================================
 # Plot
 # =====================================================
-savefigs = ARGS.save_figures
-
 # Create figure for loss
 plt.figure()
 plt.plot(loss_tot, linewidth=2)
-plt.grid(True, alpha=0.3)
+plt.grid(True)
 plt.xlabel("Iterations [-]")
 plt.ylabel("Loss")
 plt.xlim([0, len(loss_tot)])
 plt.tight_layout()
-if savefigs:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUTPUTS_DIR / "loss.pdf", dpi=200, bbox_inches="tight")
-    print("\nPlots saved to:")
-    print("  - loss.pdf")
-finish_figure()
+finish_figure("loss.pdf")
 
-# Select key strains to plot (curvatures and axial strain)
-plot_strain_indices = [1, 2, 3]  # kappa_y, kappa_z, sigma_x
-plot_strain_names = [
-    r"$\kappa_y$ [rad/m]",
-    r"$\kappa_z$ [rad/m]",
-    r"$\sigma_x$ [-]",
+# Select key operational variable to plot (tip positions)
+plot_task_indices = [3, 4, 5]  # p_x, p_y, p_z
+plot_task_names = [
+    r"$p_x$ [m]",
+    r"$p_y$ [m]",
+    r"$p_z$ [m]",
 ]
 
 # Create figure for strain tracking comparison
 fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
 color = "#0F0CBB"
 
-for idx, (strain_idx, strain_name) in enumerate(
-    zip(plot_strain_indices, plot_strain_names)
-):
+for idx, (task_idx, task_name) in enumerate(zip(plot_task_indices, plot_task_names)):
     ax = axes[idx]
 
     # Plot desired setpoint
     ax.axhline(
-        y=q_des[strain_idx],
+        y=x_des_full[task_idx],
         color=color,
         linestyle="--",
         linewidth=2,
@@ -524,7 +557,7 @@ for idx, (strain_idx, strain_name) in enumerate(
     # Plot trajectory of initial system
     ax.plot(
         t_ts,
-        q_ts_init[:, strain_idx],
+        x_ts_init[:, task_idx],
         color=color,
         linestyle="-.",
         linewidth=1.5,
@@ -534,14 +567,14 @@ for idx, (strain_idx, strain_name) in enumerate(
     # Plot trajectory of optimized system
     ax.plot(
         t_ts,
-        q_ts_best[:, strain_idx],
+        x_ts_best[:, task_idx],
         color=color,
         linestyle="-",
         linewidth=1.2,
         label="Optimized",
     )
 
-    ax.set_ylabel(f"{strain_name}")
+    ax.set_ylabel(f"{task_name}")
     ax.grid(True, alpha=0.3)
     ax.set_xlim([t0, t1])
 
@@ -549,31 +582,22 @@ for idx, (strain_idx, strain_name) in enumerate(
         ax.legend(loc="upper right", fontsize=9)
 
 axes[-1].set_xlabel("Time [s]")
-axes[0].set_title("Actuation-Space Setpoint Regulation: Strain Tracking Comparison")
+axes[0].set_title("Operational-Space Setpoint Regulation: Position Tracking")
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_tracking.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_tracking.pdf")
-finish_figure()
+finish_figure("operational_space_regulation_tracking.pdf")
 
 # Create figure for tracking errors
 fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
 color = "#DA0909"
 
-for idx, (strain_idx, strain_name) in enumerate(
-    zip(plot_strain_indices, plot_strain_names)
-):
+for idx, (task_idx, task_name) in enumerate(zip(plot_task_indices, plot_task_names)):
     ax = axes[idx]
 
     tracking_error_init = metrics_init["tracking_error"]
     ax.plot(
         t_ts,
-        tracking_error_init[:, strain_idx],
+        tracking_error_init[:, task_idx],
         linestyle="-.",
         color=color,
         linewidth=1.5,
@@ -583,14 +607,14 @@ for idx, (strain_idx, strain_name) in enumerate(
     tracking_error_best = metrics_best["tracking_error"]
     ax.plot(
         t_ts,
-        tracking_error_best[:, strain_idx],
+        tracking_error_best[:, task_idx],
         linestyle="-",
         color=color,
         linewidth=1.2,
         label="Optimized",
     )
 
-    ax.set_ylabel(f"Error {strain_name}")
+    ax.set_ylabel(f"Error {task_name}")
     ax.axhline(y=0, color="k", linestyle="-", alpha=0.3)
     ax.grid(True, alpha=0.3)
     ax.set_xlim([t0, t1])
@@ -599,17 +623,10 @@ for idx, (strain_idx, strain_name) in enumerate(
         ax.legend(loc="upper right", fontsize=9)
 
 axes[-1].set_xlabel("Time [s]")
-axes[0].set_title("Actuation-Space Setpoint Regulation: Tracking Error Comparison")
+axes[0].set_title("Operational-Space Setpoint Regulation: Tracking Error Comparison")
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_errors.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_errors.pdf")
-finish_figure()
+finish_figure("operational_space_regulation_errors.pdf")
 
 # Create figure for control inputs (tendon tensions)
 fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -656,18 +673,11 @@ for idx in range(num_actuators):
 
 axes[-1].set_xlabel("Time [s]")
 axes[0].set_title(
-    "Actuation-Space Setpoint Regulation: Control Inputs (Tendon Tensions)"
+    "Operational-Space Setpoint Regulation: Control Inputs (Tendon Tensions)"
 )
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_inputs.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_inputs.pdf")
-finish_figure()
+finish_figure("operational_space_regulation_inputs.pdf")
 
 # Create bar chart for RMSE comparison
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -676,32 +686,23 @@ names = ["Initial", "Best"]
 x = jnp.arange(len(names))
 width = 0.25
 
-for i, (strain_idx, strain_name) in enumerate(
-    zip(plot_strain_indices, plot_strain_names)
-):
-    rmse_values = [metrics_init["rmse"][strain_idx], metrics_best["rmse"][strain_idx]]
-    bars = ax.bar(x + i * width, rmse_values, width, label=strain_name)
+for i, (task_idx, task_name) in enumerate(zip(plot_task_indices, plot_task_names)):
+    rmse_values = [metrics_init["rmse"][task_idx], metrics_best["rmse"][task_idx]]
+    bars = ax.bar(x + i * width, rmse_values, width, label=task_name)
 
 ax.set_xlabel("Optimization stage")
 ax.set_ylabel("RMSE")
-ax.set_title("Actuation-Space Setpoint Regulation: RMSE Comparison")
+ax.set_title("Operational-Space Setpoint Regulation: RMSE Comparison")
 ax.set_xticks(x + width)
 ax.set_xticklabels(names, rotation=15, ha="right")
 ax.legend()
 ax.grid(True, alpha=0.3, axis="y")
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_rmse.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_rmse.pdf")
-finish_figure()
+finish_figure("operational_space_regulation_rmse.pdf")
 
 if ARGS.no_render:
-    pass
+    print("Skipping Open3D rendering (--no-render).")
 elif Open3DRenderer is None:
     print("Open3DRenderer unavailable. Install open3d to view the animation.")
 else:
@@ -711,16 +712,13 @@ else:
         ts=t_ts,
         q_ts=q_ts_best,
         playback_speed=1.0,
-        window_name=f"Actuation-Space Regulation ({render_name})",
+        window_name=f"Operational-Space Regulation ({render_name})",
     )
 
 # =====================================================
 # Save
 # =====================================================
-save_dir = RESULT_DIR
-save_dir.mkdir(parents=True, exist_ok=True)
-
-save_path = str(save_dir)
+RESULT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def to_np(x):
@@ -775,7 +773,7 @@ mat_data["x_des_ts"] = to_np(x_des_ts)
 mat_data["best_idx_opt"] = to_np(best_idx_opt)
 
 # Save main summary .mat file
-mat_filename = save_dir / "optimization_results.mat"
+mat_filename = RESULT_DIR / "optimization_results.mat"
 print(f"Saving data to {mat_filename}")
 sio.savemat(mat_filename, mat_data, do_compression=True)
 
@@ -795,7 +793,7 @@ animation_dict = {
     "x_des_ts": x_des_ts,
 }
 
-anim_filename = save_dir / "animation_data.pkl"
+anim_filename = RESULT_DIR / "animation_data.pkl"
 with open(anim_filename, "wb") as f:
     pickle.dump(animation_dict, f)
 

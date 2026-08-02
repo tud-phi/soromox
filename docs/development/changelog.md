@@ -19,12 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consistent typography, sizing, colors, labels, grids, and legends.
 - Focused Section Vc tests for case-relative paths, NPZ schemas, overwrite
   protection, plotting, controller setup, trajectory primitives, and rendering.
+- Complete Section IVa, IVb, Va, Vd, and Vf generation workflows alongside
+  their paper data and outputs, including released RL checkpoints.
 
 ### Changed
 
-- Separated lightweight demonstrations under `examples/`, reusable research
-  workflows and datasets under `application_case_studies/`, and
-  publication-specific reproduction artifacts under `paper_results/`.
+- Separated lightweight demonstrations under `examples/` from complete
+  publication reproduction workflows and datasets under `paper_results/`.
 - Made generated example figures and videos topic-local instead of writing them
   to the repository root, and organized paper sections into independent
   `code/`, `data/`, and `outputs/` ownership.
@@ -37,6 +38,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reference trajectories.
 - Store canonical binary paper data and media through Git LFS while leaving
   generated example artifacts ignored.
+- Consolidated the former `application_case_studies/` workflows into their
+  corresponding paper sections and removed duplicate or superseded copies.
 
 ### Fixed
 

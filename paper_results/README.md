@@ -7,16 +7,16 @@ or generated artifacts under `data/`, and publication figures/videos under
 
 | Paper section | Directory | Reproduced artifacts |
 | --- | --- | --- |
-| IVa, sequential CPU benchmarks | `secIVa_benchmarking_sequential_cpu/` | rollout comparison figures |
-| IVb, parallel GPU rollouts | `secIVb_parallel_rollouts_gpu/` | batch-scaling figures |
-| Va, system identification | `secVa_system_identification/` | shape, error, and RMSE figures |
+| IVa, sequential CPU benchmarks | [`secIVa_benchmarking_sequential_cpu/`](secIVa_benchmarking_sequential_cpu/README.md) | SoRoMoX, SoRoSim, and PyElastica rollout data and comparisons |
+| IVb, parallel GPU rollouts | [`secIVb_parallel_rollouts_gpu/`](secIVb_parallel_rollouts_gpu/README.md) | GPU timing tables and batch-scaling figures |
+| Va, system identification | [`secVa_system_identification/`](secVa_system_identification/README.md) | parameter/residual data and shape, error, and RMSE figures |
 | Vc, model-based control | [`secVc_model_based_control/`](secVc_model_based_control/README.md) | standardized configuration- and operational-space figures |
-| Vd, control-gain optimization | `secVd_control_gain_optimization/` | optimized-gain comparison |
+| Vd, control-gain optimization | [`secVd_control_gain_optimization/`](secVd_control_gain_optimization/README.md) | collocated/synergistic optimization data and comparison |
 | Ve, safety-constrained control | `secVe_safety_constrained_control/` | rollout data, plots, and videos |
-| Vf, parallel reinforcement learning | `secVf_parallel_rl/` | reward curve and rollout media |
+| Vf, parallel reinforcement learning | [`secVf_parallel_rl/`](secVf_parallel_rl/README.md) | training, checkpoints, reward curve, rollout data, and media |
 
 `final_outputs/` contains composed figures assembled from one or more section
-outputs. Section Vc binary data and canonical outputs are stored with Git LFS.
+outputs. Large binary data and canonical outputs are stored with Git LFS.
 Hydrate them before plotting with `git lfs pull`.
 
 ## Shared conventions

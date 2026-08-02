@@ -14,9 +14,15 @@ from soromox.systems import (
     GVS,
     PCS,
     ArticulatedSoftRobot,
+    ArticulatedSoftRobotParams,
     CrossSectionGeometry,
+    PCSParams,
+    PCSStructure,
     Pendulum,
+    PendulumParams,
     PlanarPCS,
+    PlanarPCSParams,
+    PlanarPCSStructure,
 )
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
@@ -44,16 +50,18 @@ def _pendulum_factory(num_links: int) -> Pendulum:
     masses = jnp.linspace(0.8, 1.2, num_links)
     inertias = (1.0 / 12.0) * masses * lengths**2
     lc = lengths * 0.5
-    params = {
-        "m": masses,
-        "I": inertias,
-        "L": lengths,
-        "Lc": lc,
-        "g": jnp.array([0.0, -9.81]),
-        "K": 5.0 * jnp.eye(num_links),
-        "D": 0.1 * jnp.eye(num_links),
-    }
-    return Pendulum(params)
+    params = PendulumParams(
+        mass=masses,
+        moment_inertia=inertias,
+        length=lengths,
+        center_of_mass_length=lc,
+        gravity=jnp.array([0.0, -9.81]),
+        joint_stiffness=5.0 * jnp.eye(num_links),
+        joint_damping=0.1 * jnp.eye(num_links),
+        joint_rest_configuration=jnp.zeros((num_links,)),
+        radius=0.05 * lengths,
+    )
+    return Pendulum(params=params)
 
 
 def _pendulum_context(system: Pendulum) -> MutableMapping[str, Array]:
@@ -102,17 +110,20 @@ def _articulated_soft_robot_factory(
     )
     I_com = jax.vmap(jnp.diag)(I_diag)
 
-    params = {
-        "joint_screws": joint_screws,
-        "p_tip": p_tip,
-        "p_com": p_com,
-        "m": masses,
-        "I_com": I_com,
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "K": 5.0 * jnp.eye(num_links),
-        "D": 0.1 * jnp.eye(num_links),
-    }
-    return ArticulatedSoftRobot(params)
+    params = ArticulatedSoftRobotParams(
+        joint_screw=joint_screws,
+        parent_to_joint_transform=jnp.broadcast_to(jnp.eye(4), (num_links, 4, 4)),
+        tip_position=p_tip,
+        center_of_mass_position=p_com,
+        mass=masses,
+        center_of_mass_inertia=I_com,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        joint_stiffness=5.0 * jnp.eye(num_links),
+        joint_damping=0.1 * jnp.eye(num_links),
+        joint_rest_configuration=jnp.zeros((num_links,)),
+        radius=0.05 * lengths,
+    )
+    return ArticulatedSoftRobot(params=params)
 
 
 def _articulated_soft_robot_context(
@@ -138,24 +149,24 @@ def _planar_pcs_factory(num_segments: int, gauss_points: int = 5) -> PlanarPCS:
     lengths = jnp.full((num_segments,), 0.12)
     radii = jnp.full((num_segments,), 0.015)
     rho = 1070.0 * jnp.ones((num_segments,))
-    params: dict[str, Array] = {
-        "th0": jnp.array(jnp.pi / 2),
-        "L": lengths,
-        "r": radii,
-        "rho": rho,
-        "g": jnp.array([0.0, 9.81]),
-        "E": 4.0e5 * jnp.ones((num_segments,)),
-        "G": 1.5e5 * jnp.ones((num_segments,)),
-    }
     diag_entries = (
         jnp.repeat(jnp.array([[1.0, 200.0, 200.0]]), num_segments, axis=0)
         * lengths[:, None]
     ).reshape(-1)
-    params["D"] = 5.0e-4 * jnp.diag(diag_entries)
+    params = PlanarPCSParams(
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+        length=lengths,
+        radius=radii,
+        density=rho,
+        gravity=jnp.array([0.0, 9.81]),
+        young_modulus=4.0e5 * jnp.ones((num_segments,)),
+        shear_modulus=1.5e5 * jnp.ones((num_segments,)),
+        damping_matrix=5.0e-4 * jnp.diag(diag_entries),
+        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
+    )
     return PlanarPCS(
-        num_segments=num_segments,
         params=params,
-        num_gauss_points=gauss_points,
+        structure=PlanarPCSStructure(num_gauss_points=gauss_points),
     )
 
 
@@ -186,26 +197,28 @@ def _pcs_factory(num_segments: int, gauss_points: int = 5) -> PCS:
     lengths = jnp.full((num_segments,), 0.1)
     radii = jnp.full((num_segments,), 0.02)
     rho = 1050.0 * jnp.ones((num_segments,))
-    params: dict[str, Array] = {
-        "p0": jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        "L": lengths,
-        "r": radii,
-        "rho": rho,
-        "g": jnp.array([0.0, 0.0, -9.81]),
-        "E": 6.0e5 * jnp.ones((num_segments,)),
-        "G": 2.5e5 * jnp.ones((num_segments,)),
-    }
     diag_entries = (
         jnp.repeat(
             jnp.array([[1.0, 1.0, 1.0, 300.0, 300.0, 300.0]]), num_segments, axis=0
         )
         * lengths[:, None]
     ).reshape(-1)
-    params["D"] = 5.0e-4 * jnp.diag(diag_entries)
+    params = PCSParams(
+        base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        length=lengths,
+        radius=radii,
+        density=rho,
+        gravity=jnp.array([0.0, 0.0, -9.81]),
+        young_modulus=6.0e5 * jnp.ones((num_segments,)),
+        shear_modulus=2.5e5 * jnp.ones((num_segments,)),
+        damping_matrix=5.0e-4 * jnp.diag(diag_entries),
+        reference_strain=jnp.tile(
+            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        ),
+    )
     return PCS(
-        num_segments=num_segments,
         params=params,
-        num_gauss_points=gauss_points,
+        structure=PCSStructure(num_gauss_points=gauss_points),
     )
 
 
@@ -264,21 +277,21 @@ def _gvs_factory(num_segments: int, gauss_points: int = 5) -> GVS:
     for _ in range(num_segments):
         segments.append(_gvs_segment(strain_basis_order=0, gauss_points=gauss_points))
 
-    return GVS(
+    return GVS.from_segments(
         segments=segments,
-        g=[0.0, 0.0, 9.81],
+        gravity=jnp.array([0.0, 0.0, 9.81]),
     )
 
 
 def _gvs_basis_order_factory(strain_basis_order: int, gauss_points: int = 5) -> GVS:
-    return GVS(
+    return GVS.from_segments(
         segments=[
             _gvs_segment(
                 strain_basis_order=strain_basis_order,
                 gauss_points=gauss_points,
             )
         ],
-        g=[0.0, 0.0, 9.81],
+        gravity=jnp.array([0.0, 0.0, 9.81]),
     )
 
 

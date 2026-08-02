@@ -296,10 +296,10 @@ def plot_angular_strains(
     add_panel_label(ax, "B")
 
 
-def build_figure() -> plt.Figure:
+def build_figure(data_dir: Path) -> plt.Figure:
     """Load result data and build the four-panel summary figure."""
-    data_c = load_results(SCRIPT_DIR / "data" / "collocated")
-    data_s = load_results(SCRIPT_DIR / "data" / "synergistic")
+    data_c = load_results(data_dir / "collocated")
+    data_s = load_results(data_dir / "synergistic")
 
     linecolors = [COLORS["x_t"], COLORS["y_t"], COLORS["z_t"]]
     fillcolors = [COLORS["x_t"], COLORS["y_t"], COLORS["z_t"]]
@@ -327,6 +327,18 @@ def parse_args() -> argparse.Namespace:
         description="Plot control gain optimization results from .mat files."
     )
     parser.add_argument(
+        "--data-dir",
+        type=Path,
+        default=SCRIPT_DIR / "data",
+        help="Directory containing collocated/ and synergistic/ results.",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=SCRIPT_DIR / "outputs" / "plot_control_gain_opt.pdf",
+        help="Output path for the combined figure.",
+    )
+    parser.add_argument(
         "--save",
         action="store_true",
         default=True,
@@ -346,13 +358,12 @@ def main() -> None:
     configure_matplotlib()
 
     args = parse_args()
-    fig = build_figure()
+    fig = build_figure(args.data_dir)
 
     if args.save:
-        output_dir = SCRIPT_DIR / "outputs"
-        output_dir.mkdir(exist_ok=True)
-        fig.savefig(output_dir / "plot_control_gain_opt.pdf", dpi=300)
-        print("Plot saved at:", output_dir / "plot_control_gain_opt.pdf")
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(args.output, dpi=300)
+        print("Plot saved at:", args.output)
 
     if args.no_show:
         plt.close(fig)

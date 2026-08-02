@@ -288,7 +288,6 @@ ignore = [
   "CITATION.cff",
   "Makefile",
   "VERSION_BUMP_README.md",
-  "application_case_studies/**",
   "assets/**",
   "benchmarks/**",
   "bump_version.py",
@@ -363,8 +362,8 @@ fixable = ["ALL"]
 unfixable = []
 
 [tool.ruff.lint.per-file-ignores]
-"application_case_studies/**/*.py" = ["E402"]
 "examples/**/*.py" = ["E402"]
+"paper_results/**/*.py" = ["E402"]
 "tools/benchmarks/**/*.py" = ["E402"]
 
 [tool.ruff.lint.isort]

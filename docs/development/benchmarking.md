@@ -1,17 +1,17 @@
 # Soromox Benchmarking Toolkit
 
-Soromox ships complementary benchmarking CLIs under `tools/benchmarks`:
+Soromox ships development benchmarking CLIs under `tools/benchmarks`:
 
 - `benchmark_system_methods.py` profiles individual model routines (forward kinematics,
   dynamics, etc.) to track JIT compile and steady-state execution costs.
 - `benchmark_derivative_paths.py` compares direct analytical derivative hooks,
   protected autograd fallbacks, and public APIs with custom JVPs enabled or disabled
   for PlanarPCS, PCS, and GVS systems.
-- `benchmark_simulation_batch_scaling.py` measures how simulation throughput scales as
-  you increase the number of batched environments (e.g., via `jax.vmap`) and reports
-  the simulated-time / wall-time ratio.
 
-Both scripts share the same system registry and integration defaults, so adding a new
+The publication's batched simulation benchmark lives with the Section IVb paper
+artifacts under `paper_results/secIVb_parallel_rollouts_gpu/`.
+
+All benchmark generators share the same system registry and integration defaults, so adding a new
 robot once makes it accessible throughout the benchmarking suite.
 
 ## Prerequisites
@@ -91,7 +91,7 @@ main speedup ratios by system and case.
 
 ## Benchmarking simulation batch scaling
 
-`benchmark_simulation_batch_scaling.py` runs full simulations in parallel batches
+`generate_benchmark_gpu.py` runs full simulations in parallel batches
 using `jax.vmap`. It records both the per-environment speed
 (`simulated_time / wall_time`) and the aggregate throughput
 (`num_envs * simulated_time / wall_time`), so you can see whether each environment is
@@ -99,14 +99,14 @@ running faster than real-time *and* how many simulated seconds are produced per 
 second. Each configuration can export tables and plots spanning multiple segment counts.
 
 ```bash
-python tools/benchmarks/benchmark_simulation_batch_scaling.py \
+python paper_results/secIVb_parallel_rollouts_gpu/code/generate_benchmark_gpu.py \
   --systems articulated_soft_robot pcs planar_pcs \
   --segment-counts 1 3 5 \
   --batch-sizes 1 2 4 8 16 32 64 \
   --duration 2.0 \
   --solver-dt 5e-4 \
-  --csv benchmarks/batch-scaling.csv \
-  --plot benchmarks/batch-scaling.png \
+  --csv /tmp/batch-scaling.csv \
+  --plot /tmp/batch-scaling.png \
   --log-x --log-y
 ```
 
@@ -131,7 +131,8 @@ For each combination of system, segment count, and number of environments the sc
   `number_of_environments * simulated_time / wall_time`, and per-environment wall time. Ratios > 1
   indicate faster-than-real-time performance.
 
-Plots now show two stacked panels per system: the top tracks per-environment
+The generator's optional diagnostic plots show two stacked panels per system:
+the top tracks per-environment
 speed-up, while the bottom tracks aggregate throughput (total simulated time per
 wall second). Each line corresponds to a segment count so scaling trends remain
 easy to compare, with the horizontal axis representing the number of environments.
@@ -141,7 +142,7 @@ easy to compare, with the horizontal axis representing the number of environment
 To revisit stored measurements (JSON or CSV) without re-running the benchmarks, use:
 
 ```bash
-python tools/benchmarks/visualize_benchmarks.py benchmarks/methods.json \
+python tools/benchmarks/visualize_system_methods_results.py benchmarks/methods.json \
   --systems planar_pcs pcs \
   --functions rollout_to forward_dynamics \
   --output benchmarks/methods-focus.png
@@ -149,6 +150,14 @@ python tools/benchmarks/visualize_benchmarks.py benchmarks/methods.json \
 
 The helper mirrors the plotting style of `benchmark_system_methods.py` and accepts
 optional filters for systems/functions. Pass `--show` to open a window interactively.
+
+For the polished Section IVb publication plots, use:
+
+```bash
+python paper_results/secIVb_parallel_rollouts_gpu/code/plot_benchmark_gpu.py \
+  --systems articulated_soft_robot planar_pcs pcs gvs \
+  --segment-counts 1 2 4 8 16 32
+```
 
 ## Extending the registry
 
