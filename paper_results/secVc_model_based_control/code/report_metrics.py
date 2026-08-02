@@ -178,9 +178,13 @@ def _load_configuration_artifact(path: str | Path) -> dict[str, Any]:
     )
     if coordinate_count != len(default_names):
         default_names = tuple(f"q_{index}" for index in range(coordinate_count))
+    stored_names = tuple(evaluation.get("strain_names", ()))
+    coordinate_names = (
+        stored_names if len(stored_names) == coordinate_count else default_names
+    )
     return {
         "results": results,
-        "coordinate_names": tuple(evaluation.get("strain_names", default_names)),
+        "coordinate_names": coordinate_names,
         "steady_state_intervals": tuple(
             tuple(float(value) for value in interval)
             for interval in evaluation.get(

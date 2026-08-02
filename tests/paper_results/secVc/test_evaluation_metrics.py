@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 SECTION_DIR = (
     Path(__file__).resolve().parents[3] / "paper_results" / "secVc_model_based_control"
@@ -13,8 +14,10 @@ if str(MODULE_DIR) not in sys.path:
 from evaluation_metrics import (  # noqa: E402
     REGULATION_SETPOINT_INTERVALS,
     componentwise_rmse,
+    euclidean_reference_span,
     operational_space_metrics,
     relative_reduction_percent,
+    so3_reference_span,
     steady_state_mae,
     terminal_window_masks,
 )
@@ -87,3 +90,20 @@ def test_operational_metrics_are_geometric_across_rotation_vector_boundary():
         np.deg2rad([2.0, 0.0]),
         atol=1e-12,
     )
+
+
+def test_reference_spans_match_full_pairwise_calculation():
+    rng = np.random.default_rng(42)
+    positions = rng.normal(size=(25, 3))
+    rotation_vectors = rng.normal(size=(25, 3))
+
+    expected_position_span = np.max(
+        np.linalg.norm(positions[:, None, :] - positions[None, :, :], axis=-1)
+    )
+    quaternions = Rotation.from_rotvec(rotation_vectors).as_quat()
+    expected_orientation_span = np.max(
+        2.0 * np.arccos(np.clip(np.abs(quaternions @ quaternions.T), -1.0, 1.0))
+    )
+
+    assert np.isclose(euclidean_reference_span(positions), expected_position_span)
+    assert np.isclose(so3_reference_span(rotation_vectors), expected_orientation_span)

@@ -108,11 +108,16 @@ def euclidean_reference_span(reference: np.ndarray) -> float:
     reference_array = _sample_matrix(reference, "reference")
     if reference_array.shape[0] < 2:
         return 0.0
-    pairwise_distances = np.linalg.norm(
-        reference_array[:, None, :] - reference_array[None, :, :],
-        axis=-1,
-    )
-    return float(np.max(pairwise_distances))
+
+    maximum_squared_distance = 0.0
+    for index, point in enumerate(reference_array[:-1]):
+        deltas = reference_array[index + 1 :] - point
+        squared_distances = np.einsum("ij,ij->i", deltas, deltas)
+        maximum_squared_distance = max(
+            maximum_squared_distance,
+            float(np.max(squared_distances)),
+        )
+    return float(np.sqrt(maximum_squared_distance))
 
 
 def so3_reference_span(rotation_vectors: np.ndarray) -> float:
@@ -121,9 +126,14 @@ def so3_reference_span(rotation_vectors: np.ndarray) -> float:
     if rotations.shape[0] < 2:
         return 0.0
     quaternions = Rotation.from_rotvec(rotations).as_quat()
-    quaternion_inner_products = np.abs(quaternions @ quaternions.T)
-    pairwise_angles = 2.0 * np.arccos(np.clip(quaternion_inner_products, -1.0, 1.0))
-    return float(np.max(pairwise_angles))
+    minimum_inner_product = 1.0
+    for index, quaternion in enumerate(quaternions[:-1]):
+        inner_products = np.abs(quaternions[index + 1 :] @ quaternion)
+        minimum_inner_product = min(
+            minimum_inner_product,
+            float(np.min(inner_products)),
+        )
+    return float(2.0 * np.arccos(np.clip(minimum_inner_product, -1.0, 1.0)))
 
 
 def normalized_rmse_percent(rmse: float, reference_span: float) -> float:

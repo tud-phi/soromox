@@ -93,6 +93,30 @@ def test_report_matches_canonical_configuration_space_regression_values():
     )
 
 
+def test_report_falls_back_when_stored_coordinate_names_have_wrong_length(tmp_path):
+    configuration_input = report_metrics.DEFAULT_CONFIGURATION_INPUT
+    stale_metadata_input = tmp_path / "stale-metadata.npz"
+    with np.load(configuration_input, allow_pickle=False) as data:
+        arrays = {key: np.asarray(data[key]) for key in data.files}
+    metadata = json.loads(str(arrays["metadata"].item()))
+    metadata["evaluation"]["strain_names"] = ["legacy_0", "legacy_1", "legacy_2"]
+    arrays["metadata"] = np.array(json.dumps(metadata))
+    np.savez_compressed(stale_metadata_input, **arrays)
+
+    report = report_metrics.build_metrics_report(
+        configuration_input=stale_metadata_input
+    )
+
+    assert report["configuration_space"]["coordinate_order"] == [
+        "kappa_x",
+        "kappa_y",
+        "kappa_z",
+        "sigma_x",
+        "sigma_y",
+        "sigma_z",
+    ]
+
+
 def test_report_cli_writes_machine_readable_json_from_unrelated_directory(tmp_path):
     output = tmp_path / "nested" / "metrics.json"
 
