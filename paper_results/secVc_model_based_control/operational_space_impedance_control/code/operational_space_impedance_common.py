@@ -65,21 +65,6 @@ def cm_to_inches(size_cm: tuple[float, float]) -> tuple[float, float]:
     return tuple(value * CM_TO_INCH for value in size_cm)
 
 
-def add_panel_label(ax: plt.Axes, label: str) -> None:
-    """Place a paper panel label inside the upper-left corner."""
-    ax.text(
-        0.015,
-        0.96,
-        label,
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=9,
-        fontweight="bold",
-        zorder=10,
-    )
-
-
 @dataclass(frozen=True)
 class PCSImpedanceProblem:
     """Fixed robot/control problem setup for this example."""
@@ -466,8 +451,6 @@ def plot_operational_tracking_axes(
     run: PCSImpedanceRun,
     problem: PCSImpedanceProblem,
     axes: np.ndarray,
-    *,
-    panel_labels: tuple[str, ...] = (),
 ) -> tuple[Array, Array | None]:
     """Plot position/orientation tracking and errors into caller-owned axes."""
     x_pos, x_des_pos, position_error, pose_error = operational_tracking_data(
@@ -490,8 +473,9 @@ def plot_operational_tracking_axes(
             x_des_pos[:, component],
             color=color,
             linestyle="--",
-            linewidth=1.1,
+            linewidth=2.0,
             label=rf"$p_{{{label},\mathrm{{des}}}}$",
+            zorder=5,
         )
         axes[1].plot(
             t,
@@ -522,8 +506,9 @@ def plot_operational_tracking_axes(
                 run.x_des_traj_full[:, component],
                 color=color,
                 linestyle="--",
-                linewidth=1.1,
+                linewidth=2.0,
                 label=rf"$r_{{{label},\mathrm{{des}}}}$",
+                zorder=5,
             )
             axes[3].plot(
                 t,
@@ -536,10 +521,8 @@ def plot_operational_tracking_axes(
         axes[3].set_ylabel(r"Orientation error $\mathrm{[deg]}$")
         axes[3].axhline(0.0, color="0.25", linewidth=0.7, alpha=0.7, zorder=0)
 
-    for index, ax in enumerate(axes):
+    for ax in axes:
         ax.set_xlim(float(t[0]), float(t[-1]))
-        if panel_labels:
-            add_panel_label(ax, panel_labels[index])
     return position_error, pose_error
 
 
@@ -553,7 +536,7 @@ def tracking_legend_handles() -> tuple[list[Line2D], list[str]]:
     handles.extend(
         [
             Line2D([], [], color="black", linestyle="-", linewidth=1.3),
-            Line2D([], [], color="black", linestyle="--", linewidth=1.1),
+            Line2D([], [], color="black", linestyle="--", linewidth=2.0),
         ]
     )
     labels.extend(["Actual", "Desired"])

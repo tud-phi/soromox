@@ -26,21 +26,28 @@ def test_operational_canonical_figure_layout(monkeypatch):
     monkeypatch.setattr(common.shutil, "which", lambda _: None)
     run = common.load_run_npz(paper_plot.DEFAULT_TRAJECTORY_INPUT)
     problem = common.build_problem(run.trajectory_config)
-    comparison = feedback.load_results(paper_plot.DEFAULT_COMPARISON_INPUT)
 
-    fig = paper_plot.build_operational_space_paper_figure(run, problem, comparison)
+    fig = paper_plot.build_operational_space_paper_figure(run, problem)
 
-    np.testing.assert_allclose(fig.get_size_inches(), common.cm_to_inches((16.5, 12.0)))
-    assert len(fig.axes) == 6
+    np.testing.assert_allclose(fig.get_size_inches(), common.cm_to_inches((16.5, 8.5)))
+    assert len(fig.axes) == 4
     assert fig.axes[0].get_ylabel() == r"Position $\mathrm{[m]}$"
-    assert fig.axes[4].get_yscale() == "log"
-    assert fig.axes[5].get_yscale() == "log"
+    assert fig.axes[2].get_ylabel() == r"Orientation $\mathrm{[rad]}$"
+    assert all(ax.get_yscale() == "linear" for ax in fig.axes)
+    assert all(
+        text.get_text() not in tuple("ABCDEF")
+        for ax in fig.axes
+        for text in ax.texts
+    )
+    desired_lines = [fig.axes[0].lines[index] for index in (1, 3, 5)]
+    assert all(line.get_linewidth() == 2.0 for line in desired_lines)
+    assert all(line.get_zorder() == 5 for line in desired_lines)
     plt.close(fig)
 
 
 def test_feedback_error_axis_uses_saved_error_norms(monkeypatch):
     monkeypatch.setattr(feedback.shutil, "which", lambda _: None)
-    results = feedback.load_results(paper_plot.DEFAULT_COMPARISON_INPUT)
+    results = feedback.load_results(feedback.DEFAULT_DATA_INPUT)
     fig, ax = plt.subplots()
     feedback.plot_feedback_error_axis(
         ax,

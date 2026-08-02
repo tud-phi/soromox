@@ -85,21 +85,6 @@ def ensure_writable(path: Path, *, force: bool) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def add_panel_label(ax: plt.Axes, label: str) -> None:
-    """Place a paper panel label inside the upper-left corner."""
-    ax.text(
-        0.015,
-        0.96,
-        label,
-        transform=ax.transAxes,
-        ha="left",
-        va="top",
-        fontsize=9,
-        fontweight="bold",
-        zorder=10,
-    )
-
-
 def add_timing_markers(ax: plt.Axes, group: PlotGroup, *, t0: float) -> None:
     """Mark setpoint changes and the regulation-to-tracking boundary."""
     for event_time in group.event_times:
@@ -137,7 +122,6 @@ def plot_tracking_axes(
     axes: np.ndarray,
     *,
     errors: bool,
-    panel_labels: tuple[str, ...] = (),
 ) -> None:
     """Plot tracking signals or errors into caller-owned strain axes."""
     all_results = _group_results(run, group)
@@ -145,8 +129,8 @@ def plot_tracking_axes(
     t = np.asarray(first["t"])
     q_des = np.asarray(first["metrics"]["q_des"])
 
-    for row, (ax, strain_idx, strain_name, unit) in enumerate(
-        zip(axes, run.strain_indices, run.strain_names, STRAIN_UNITS)
+    for ax, strain_idx, strain_name, unit in zip(
+        axes, run.strain_indices, run.strain_names, STRAIN_UNITS
     ):
         if not errors:
             ax.plot(
@@ -154,9 +138,9 @@ def plot_tracking_axes(
                 q_des[:, strain_idx],
                 color="black",
                 linestyle="--",
-                linewidth=1.4,
+                linewidth=2.0,
                 label="Desired",
-                zorder=4,
+                zorder=5,
             )
 
         for name in group.controller_names:
@@ -181,8 +165,6 @@ def plot_tracking_axes(
         symbol = rf"$e_{{{strain_name.strip('$')}}}$" if errors else strain_name
         ax.set_ylabel(rf"{symbol} $\mathrm{{[{unit}]}}$")
         ax.set_xlim(float(t[0]), float(t[-1]))
-        if panel_labels:
-            add_panel_label(ax, panel_labels[row])
 
 
 def _phase_labels(axes: np.ndarray, boundary_time: float, t1: float) -> None:
@@ -217,23 +199,17 @@ def build_configuration_space_paper_figure(run: ComparisonRun) -> plt.Figure:
     configure_matplotlib()
     fig, axes = plt.subplots(
         3,
-        2,
-        figsize=cm_to_inches((16.5, 12.0)),
+        1,
+        figsize=cm_to_inches((16.5, 9.5)),
         sharex=True,
         constrained_layout=True,
     )
-    plot_tracking_axes(
-        run, group, axes[:, 0], errors=False, panel_labels=("A", "C", "E")
-    )
-    plot_tracking_axes(
-        run, group, axes[:, 1], errors=True, panel_labels=("B", "D", "F")
-    )
-    axes[-1, 0].set_xlabel(r"Time $\mathrm{[s]}$")
-    axes[-1, 1].set_xlabel(r"Time $\mathrm{[s]}$")
+    plot_tracking_axes(run, group, axes, errors=False)
+    axes[-1].set_xlabel(r"Time $\mathrm{[s]}$")
 
     t1 = float(_group_results(run, group)[group.controller_names[0]]["t"][-1])
-    _phase_labels(axes[0, :], group.phase_boundary_time, t1)
-    handles, labels = axes[0, 0].get_legend_handles_labels()
+    _phase_labels(axes[:1], group.phase_boundary_time, t1)
+    handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(
         handles,
         labels,
@@ -340,7 +316,7 @@ def build_rmse_summary_figure(run: ComparisonRun, summary: RmseSummary) -> plt.F
     )
     colors = _controller_colors(run)
 
-    for row, (_strain_name, unit) in enumerate(zip(run.strain_names, STRAIN_UNITS)):
+    for row, (strain_name, unit) in enumerate(zip(run.strain_names, STRAIN_UNITS)):
         row_values = [rmse_values(run, panel, row) for panel in summary.panels]
         row_limit = max(float(values.max(initial=0.0)) for values in row_values)
         row_limit = max(row_limit * 1.22, 1e-12)
@@ -359,14 +335,12 @@ def build_rmse_summary_figure(run: ComparisonRun, summary: RmseSummary) -> plt.F
             ax.invert_yaxis()
             ax.grid(True, axis="x")
             ax.grid(False, axis="y")
-            ax.set_xlabel(rf"RMSE $\mathrm{{[{unit}]}}$")
+            ax.set_xlabel(rf"RMSE {strain_name} $\mathrm{{[{unit}]}}$")
             ax.set_yticks(y)
             ax.set_yticklabels(names if column == 0 else [])
             if row == 0:
                 title = panel.title.replace(": RMSE", "")
                 ax.set_title(title)
-            add_panel_label(ax, chr(ord("A") + row * n_columns + column))
-
             for bar, value in zip(bars, values):
                 ax.text(
                     min(float(value) + 0.015 * row_limit, 0.98 * row_limit),

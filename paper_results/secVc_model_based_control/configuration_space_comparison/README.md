@@ -32,7 +32,8 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/conf
 ```
 
 Generate the phase-separated RMSE diagnostic, with independent setpoint and
-trajectory-tracking columns and one row per strain:
+trajectory-tracking columns and one explicitly labeled row for each controlled
+strain ($\kappa_y$, $\kappa_z$, and $\sigma_x$):
 
 ```bash
 uv run --extra paper_results python paper_results/secVc_model_based_control/configuration_space_comparison/code/plot_configuration_space_comparison.py paper_results/secVc_model_based_control/configuration_space_comparison/data/regulation_tracking_comparison.npz --group phase-rmse --no-show --force
@@ -55,7 +56,7 @@ requires Viser and a working video encoder, but no robot hardware.
 `data/` contains one NPZ per workflow. Each archive records metadata, scenario
 and controller names, time vectors, states, inputs, references, and metrics.
 `outputs/configuration_space_comparison.pdf` is the canonical paper figure. It
-contains the complete regulation-to-tracking trajectory and tracking errors for
-all three controlled strains. Scenario-specific tracking, error, and RMSE plots
-are reproducible diagnostics and remain uncommitted. The checked-in NPZ files
-were regenerated from scratch with the current Section Vc generators.
+contains the complete regulation-to-tracking trajectory for all three controlled
+strains. Scenario-specific tracking, error, and RMSE plots are reproducible
+diagnostics and remain uncommitted. The checked-in NPZ files were regenerated
+from scratch with the current Section Vc generators.

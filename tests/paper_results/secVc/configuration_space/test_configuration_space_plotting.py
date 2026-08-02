@@ -102,12 +102,21 @@ def test_canonical_figure_has_expected_layout(monkeypatch):
     fig = plotter.build_configuration_space_paper_figure(comparison_run())
 
     np.testing.assert_allclose(
-        fig.get_size_inches(), plotter.cm_to_inches((16.5, 12.0))
+        fig.get_size_inches(), plotter.cm_to_inches((16.5, 9.5))
     )
-    assert len(fig.axes) == 6
-    assert fig.axes[4].get_xlabel() == r"Time $\mathrm{[s]}$"
+    assert len(fig.axes) == 3
+    assert fig.axes[2].get_xlabel() == r"Time $\mathrm{[s]}$"
     assert "Setpoint regulation" in [text.get_text() for text in fig.axes[0].texts]
     assert "Trajectory tracking" in [text.get_text() for text in fig.axes[0].texts]
+    assert all(
+        text.get_text() not in tuple("ABCDEF")
+        for ax in fig.axes
+        for text in ax.texts
+    )
+    desired_line = fig.axes[0].lines[0]
+    assert desired_line.get_label() == "Desired"
+    assert desired_line.get_linewidth() == 2.0
+    assert desired_line.get_zorder() == 5
     plt.close(fig)
 
 
@@ -133,6 +142,14 @@ def test_rmse_uses_separate_saved_phase_results(monkeypatch):
     )
     assert fig.axes[0].get_title() == "Setpoint Regulation"
     assert fig.axes[1].get_title() == "Trajectory Tracking"
+    assert all(r"\kappa_y" in fig.axes[index].get_xlabel() for index in (0, 1))
+    assert all(r"\kappa_z" in fig.axes[index].get_xlabel() for index in (2, 3))
+    assert all(r"\sigma_x" in fig.axes[index].get_xlabel() for index in (4, 5))
+    assert all(
+        text.get_text() not in tuple("ABCDEF")
+        for ax in fig.axes
+        for text in ax.texts
+    )
     plt.close(fig)
 
 

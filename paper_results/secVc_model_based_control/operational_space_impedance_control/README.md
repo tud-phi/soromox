@@ -47,8 +47,8 @@ robot hardware is required.
 
 ## Canonical Paper Figure
 
-Generate the six-panel trajectory and feedback-linearization figure from the
-two committed NPZ files:
+Generate the four-panel partial-feedback-linearization trajectory figure from
+the committed trajectory NPZ:
 
 ```bash
 uv run --extra paper_results python paper_results/secVc_model_based_control/operational_space_impedance_control/code/plot_operational_space_impedance_paper_figure.py --force
@@ -59,10 +59,11 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/oper
 - `data/control_pcs_with_impedance_trajectory.npz` stores the canonical trajectory
   study, controller metadata, states, references, and inputs.
 - `data/impedance_feedback_linearization_comparison.npz` stores both matched
-  feedback-linearization rollouts, geometric errors, settings, and runtimes.
+  feedback-linearization rollouts, geometric errors, settings, and runtimes for
+  the standalone comparison diagnostic.
 - `outputs/operational_space_impedance_control.pdf` is the canonical paper
-  figure combining trajectory tracking, geometric errors, and the matched
-  full-versus-partial feedback-linearization comparison.
+  figure showing position and orientation tracking and component errors for the
+  partial-feedback-linearization controller.
 - `outputs/control_pcs_with_impedance_trajectory-render.mp4` is the prior
   canonical rendering of the saved operational-space rollout. Additional MP4
   files can be rendered from any saved NPZ data.

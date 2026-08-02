@@ -86,7 +86,6 @@ def plot_feedback_error_axis(
     *,
     quantity: str,
     units: str,
-    panel_label: str | None = None,
     show_legend: bool = True,
 ) -> None:
     """Plot full/partial geometric error norms into one logarithmic axis."""
@@ -107,17 +106,6 @@ def plot_feedback_error_axis(
     ax.set_xlabel(r"Time $\mathrm{[s]}$")
     if show_legend:
         ax.legend(loc="upper right", ncol=2)
-    if panel_label:
-        ax.text(
-            0.015,
-            0.96,
-            panel_label,
-            transform=ax.transAxes,
-            ha="left",
-            va="top",
-            fontsize=9,
-            fontweight="bold",
-        )
 
 
 def build_tracking_figure(
@@ -146,9 +134,9 @@ def build_tracking_figure(
             results["full"][reference_key][:, component],
             color="black",
             linestyle=":",
-            linewidth=1.3,
+            linewidth=2.0,
             label="Reference",
-            zorder=3,
+            zorder=5,
         )
         for mode in CONTROLLER_MODES:
             axis.plot(

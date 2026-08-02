@@ -6,8 +6,9 @@ Section Vc is reproduced by two independent cases:
   compares setpoint regulation, trajectory tracking, and regulation followed by
   tracking.
 - [`operational_space_impedance_control/`](operational_space_impedance_control/README.md)
-  evaluates operational-space impedance tracking and full versus partial
-  feedback linearization.
+  evaluates operational-space impedance tracking with partial feedback
+  linearization. A full-versus-partial comparison remains available as a
+  standalone diagnostic.
 
 Run commands from the repository root after installing paper dependencies:
 
