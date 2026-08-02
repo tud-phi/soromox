@@ -3574,6 +3574,7 @@ rl = [
     { name = "stable-baselines3" },
 ]
 test = [
+    { name = "cbfpy" },
     { name = "codecov" },
     { name = "coverage", extra = ["toml"] },
     { name = "matplotlib" },
@@ -3593,6 +3594,7 @@ requires-dist = [
     { name = "bump2version", marker = "extra == 'dev'" },
     { name = "cbfpy", marker = "extra == 'all'" },
     { name = "cbfpy", marker = "extra == 'paper-results'" },
+    { name = "cbfpy", marker = "extra == 'test'" },
     { name = "check-manifest", marker = "extra == 'all'" },
     { name = "check-manifest", marker = "extra == 'dev'" },
     { name = "codecov", marker = "extra == 'all'" },

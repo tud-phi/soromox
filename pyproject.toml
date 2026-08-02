@@ -196,6 +196,7 @@ rl = [
     "stable-baselines3",
 ]
 test = [
+    "cbfpy",
     "codecov",
     "coverage[toml]",
     "matplotlib",
