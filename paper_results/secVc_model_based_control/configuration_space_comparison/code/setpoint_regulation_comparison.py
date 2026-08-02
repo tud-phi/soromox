@@ -12,6 +12,8 @@ from pathlib import Path
 
 import jax
 from configuration_space_comparison_simulation import (
+    DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+    DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
     DEFAULT_SAVE_DT,
     DEFAULT_SETPOINT_OUTPUT,
     DEFAULT_SOLVER_DT,
@@ -25,6 +27,18 @@ jax.config.update("jax_enable_x64", True)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--t1", type=float, default=15.0, help="Final time [s].")
+    parser.add_argument(
+        "--rotational-integral-error-scale",
+        type=float,
+        default=DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
+        help="Rotational integral-error saturation scale [1/m].",
+    )
+    parser.add_argument(
+        "--linear-integral-error-scale",
+        type=float,
+        default=DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+        help="Linear integral-error saturation scale.",
+    )
     parser.add_argument(
         "--solver-dt",
         type=float,
@@ -53,6 +67,8 @@ def main() -> None:
     args = parse_args()
     run = run_setpoint_comparison(
         t1=args.t1,
+        rotational_integral_error_scale=args.rotational_integral_error_scale,
+        linear_integral_error_scale=args.linear_integral_error_scale,
         solver_dt=args.solver_dt,
         save_dt=args.save_dt,
     )

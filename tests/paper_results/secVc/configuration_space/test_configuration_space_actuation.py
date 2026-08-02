@@ -124,6 +124,28 @@ def test_model_free_pd_uses_same_proportional_and_derivative_gains():
     assert_allclose(pd_control.Ki, jnp.zeros_like(pid_control.Ki))
 
 
+def test_pid_uses_unit_aware_rotational_and_linear_saturation_scales():
+    robot, num_dofs, _ = configuration_space_comparison_simulation.create_robot()
+    pid_control = configuration_space_comparison_simulation.create_pid_control(robot)
+    expected_error_scales = jnp.array(
+        [
+            configuration_space_comparison_simulation.DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
+            configuration_space_comparison_simulation.DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
+            configuration_space_comparison_simulation.DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
+            configuration_space_comparison_simulation.DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+            configuration_space_comparison_simulation.DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+            configuration_space_comparison_simulation.DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+        ]
+    )
+
+    assert num_dofs == 6
+    assert_allclose(1.0 / pid_control.gamma, expected_error_scales)
+
+    large_error = 100.0 * expected_error_scales
+    saturated_error = pid_control._apply_saturation(large_error)
+    assert_allclose(saturated_error, expected_error_scales, rtol=1e-10)
+
+
 def test_computed_torque_pid_gains_are_normalized_with_straight_inertia():
     robot, num_dofs, _ = configuration_space_comparison_simulation.create_robot()
     baseline = configuration_space_comparison_simulation.create_pid_control(
@@ -134,6 +156,9 @@ def test_computed_torque_pid_gains_are_normalized_with_straight_inertia():
         baseline,
     )
     inertia_straight = robot.inertia_matrix(jnp.zeros((num_dofs,)))
+
+    assert normalized._saturation_fn_name == baseline._saturation_fn_name
+    assert_allclose(normalized.gamma, baseline.gamma)
 
     expected_acceleration_gains = (
         configuration_space_comparison_simulation.DEFAULT_FEEDBACK_NATURAL_FREQUENCY**2,

@@ -53,6 +53,8 @@ DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE = 10.0
 DEFAULT_FEEDBACK_NATURAL_FREQUENCY = 30.0
 DEFAULT_FEEDBACK_DAMPING_RATIO = 0.9
 DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY = 0.75
+DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE = 10.0
+DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE = 0.1
 DEFAULT_BASE_POSE = (0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0)
 HORIZONTAL_BASE_POSE = (1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
@@ -217,6 +219,8 @@ def create_pid_control(
     natural_frequency: float = DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
     damping_ratio: float = DEFAULT_FEEDBACK_DAMPING_RATIO,
     integral_frequency: float = DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
+    rotational_integral_error_scale: float = (DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE),
+    linear_integral_error_scale: float = DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
     q_normalization: jnp.ndarray | None = None,
 ) -> PIDControl:
     """Create inertia-scaled generalized-force PID gains.
@@ -229,6 +233,15 @@ def create_pid_control(
     normalization configuration. This gives rotational and linear strains the
     same local acceleration correction per unit error despite their very
     different inertias and units.
+
+    Integral-error accumulation uses the unit-preserving saturation
+
+    ``sat(e) = e_scale * tanh(e / e_scale)``.
+
+    The rotational scale is a curvature error in ``1 / m`` and the linear
+    scale is a dimensionless shear/extension error. For the 0.1 m segment,
+    the defaults correspond to a 1 rad rotational error across the segment
+    and a 10% linear strain error.
     """
     if natural_frequency <= 0:
         raise ValueError("natural_frequency must be positive.")
@@ -236,6 +249,15 @@ def create_pid_control(
         raise ValueError("damping_ratio must be positive.")
     if integral_frequency < 0:
         raise ValueError("integral_frequency must be nonnegative.")
+    if rotational_integral_error_scale <= 0:
+        raise ValueError("rotational_integral_error_scale must be positive.")
+    if linear_integral_error_scale <= 0:
+        raise ValueError("linear_integral_error_scale must be positive.")
+    if robot.num_dofs % 6 != 0:
+        raise ValueError(
+            "Expected six PCS strain coordinates per segment, got "
+            f"{robot.num_dofs} DOFs."
+        )
     if q_normalization is None:
         q_normalization = jnp.zeros((robot.num_dofs,))
     if q_normalization.shape != (robot.num_dofs,):
@@ -248,6 +270,19 @@ def create_pid_control(
     kp_acc = natural_frequency**2
     kd_acc = 2.0 * damping_ratio * natural_frequency
     ki_acc = integral_frequency * kp_acc
+    integral_error_scales = jnp.tile(
+        jnp.array(
+            [
+                rotational_integral_error_scale,
+                rotational_integral_error_scale,
+                rotational_integral_error_scale,
+                linear_integral_error_scale,
+                linear_integral_error_scale,
+                linear_integral_error_scale,
+            ]
+        ),
+        robot.num_dofs // 6,
+    )
 
     print("Inertia-scaled generalized-force PID gains:")
     print(
@@ -255,13 +290,18 @@ def create_pid_control(
         f"Kp={kp_acc:.6g}, Ki={ki_acc:.6g}, Kd={kd_acc:.6g}"
     )
     print(f"  Normalization configuration: {q_normalization}")
+    print(
+        "  Integral-error saturation scales: "
+        f"rotational={rotational_integral_error_scale:.6g} 1/m, "
+        f"linear={linear_integral_error_scale:.6g}"
+    )
 
     return PIDControl(
         Kp=kp_acc * inertia,
         Ki=ki_acc * inertia,
         Kd=kd_acc * inertia,
         saturation_fn="tanh",
-        gamma=1.0,
+        gamma=1.0 / integral_error_scales,
     )
 
 
@@ -611,6 +651,8 @@ def run_setpoint_comparison(
     *,
     t0: float = 0.0,
     t1: float = 15.0,
+    rotational_integral_error_scale: float = (DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE),
+    linear_integral_error_scale: float = DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
     solver_dt: float = DEFAULT_SOLVER_DT,
     save_dt: float = DEFAULT_SAVE_DT,
     verbose: bool = True,
@@ -621,7 +663,11 @@ def run_setpoint_comparison(
         print(f"Number of DOFs: {num_dofs}")
         print(f"Number of actuators: {robot.num_actuators}")
 
-    pid_control = create_pid_control(robot)
+    pid_control = create_pid_control(
+        robot,
+        rotational_integral_error_scale=rotational_integral_error_scale,
+        linear_integral_error_scale=linear_integral_error_scale,
+    )
     reference_trajectory, step_times = create_setpoint_trajectory(num_dofs, t0, t1)
     controllers = {
         "PID (model-free)": PIDController,
@@ -701,6 +747,8 @@ def run_regulation_tracking_comparison(
     feedback_natural_frequency: float = DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
     feedback_damping_ratio: float = DEFAULT_FEEDBACK_DAMPING_RATIO,
     feedback_integral_frequency: float = DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
+    rotational_integral_error_scale: float = (DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE),
+    linear_integral_error_scale: float = DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
     solver_dt: float = DEFAULT_SOLVER_DT,
     save_dt: float = DEFAULT_SAVE_DT,
     verbose: bool = True,
@@ -716,6 +764,8 @@ def run_regulation_tracking_comparison(
         natural_frequency=feedback_natural_frequency,
         damping_ratio=feedback_damping_ratio,
         integral_frequency=feedback_integral_frequency,
+        rotational_integral_error_scale=rotational_integral_error_scale,
+        linear_integral_error_scale=linear_integral_error_scale,
     )
     pd_control = remove_integral_action(pid_control)
     computed_torque_pid_control = normalize_pid_control_for_computed_torque(
@@ -871,6 +921,8 @@ def run_trajectory_tracking_comparison(
     t1_fast: float = 15.0,
     slow_frequency_scale: float = 1.0,
     fast_frequency_scale: float = 3.0,
+    rotational_integral_error_scale: float = (DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE),
+    linear_integral_error_scale: float = DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
     solver_dt: float = DEFAULT_SOLVER_DT,
     save_dt: float = DEFAULT_SAVE_DT,
     verbose: bool = True,
@@ -881,7 +933,11 @@ def run_trajectory_tracking_comparison(
         print(f"Number of DOFs: {num_dofs}")
         print(f"Number of actuators: {robot.num_actuators}")
 
-    pid_control = create_pid_control(robot)
+    pid_control = create_pid_control(
+        robot,
+        rotational_integral_error_scale=rotational_integral_error_scale,
+        linear_integral_error_scale=linear_integral_error_scale,
+    )
     computed_torque_pid_control = normalize_pid_control_for_computed_torque(
         robot,
         pid_control,

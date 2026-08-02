@@ -198,7 +198,7 @@ class TestPIDControlIntegralError:
         assert jnp.allclose(integral_error_dot, expected, atol=1e-10)
 
     def test_tanh_saturation_with_gamma(self):
-        """Test tanh saturation with custom gamma scaling."""
+        """Test unit-preserving tanh saturation with a custom inverse scale."""
         gamma = 2.0
         pid = PIDControl(Kp=1.0, Ki=0.5, Kd=0.1, saturation_fn="tanh", gamma=gamma)
 
@@ -208,11 +208,11 @@ class TestPIDControlIntegralError:
 
         u, integral_error_dot = pid(e, ed, integral_error)
 
-        expected = jnp.tanh(gamma * e)
+        expected = jnp.tanh(gamma * e) / gamma
         assert jnp.allclose(integral_error_dot, expected, atol=1e-10)
 
     def test_tanh_saturation_with_vector_gamma(self):
-        """Test tanh saturation with vector gamma."""
+        """Test componentwise saturation scales with vector gamma."""
         gamma = jnp.array([1.0, 2.0])
         pid = PIDControl(Kp=1.0, Ki=0.5, Kd=0.1, saturation_fn="tanh", gamma=gamma)
 
@@ -222,8 +222,17 @@ class TestPIDControlIntegralError:
 
         u, integral_error_dot = pid(e, ed, integral_error)
 
-        expected = jnp.tanh(gamma * e)
+        expected = jnp.tanh(gamma * e) / gamma
         assert jnp.allclose(integral_error_dot, expected, atol=1e-10)
+
+    def test_tanh_saturation_preserves_small_error_slope(self):
+        """Different error scales retain the same local integral gain."""
+        gamma = jnp.array([0.1, 10.0])
+        pid = PIDControl(Kp=1.0, Ki=0.5, Kd=0.1, saturation_fn="tanh", gamma=gamma)
+
+        jacobian = jax.jacfwd(lambda e: pid._apply_saturation(e))(jnp.zeros(2))
+
+        assert jnp.allclose(jacobian, jnp.eye(2), atol=1e-10)
 
     def test_tanh_saturation_with_matrix_gamma(self):
         """Test tanh saturation with matrix gamma."""
@@ -236,7 +245,7 @@ class TestPIDControlIntegralError:
 
         u, integral_error_dot = pid(e, ed, integral_error)
 
-        expected = jnp.tanh(gamma @ e)
+        expected = jnp.linalg.solve(gamma, jnp.tanh(gamma @ e))
         assert jnp.allclose(integral_error_dot, expected, atol=1e-10)
 
     def test_custom_saturation_function(self):
@@ -264,6 +273,65 @@ class TestPIDControlValidation:
         """Test that unknown saturation function raises ValueError."""
         with pytest.raises(ValueError, match="Unknown saturation function"):
             PIDControl(Kp=1.0, Ki=0.5, Kd=0.1, saturation_fn="unknown")
+
+    @pytest.mark.parametrize("gamma", [0.0, -1.0, jnp.array([1.0, 0.0])])
+    def test_tanh_gamma_must_be_strictly_positive(self, gamma):
+        with pytest.raises(ValueError, match="strictly positive"):
+            PIDControl(
+                Kp=1.0,
+                Ki=0.5,
+                Kd=0.1,
+                saturation_fn="tanh",
+                gamma=gamma,
+            )
+
+    def test_matrix_gamma_must_be_symmetric_positive_definite(self):
+        for gamma in (
+            jnp.array([[1.0, 1.0], [0.0, 1.0]]),
+            jnp.array([[1.0, 2.0], [2.0, 1.0]]),
+        ):
+            with pytest.raises(ValueError, match="symmetric positive definite"):
+                PIDControl(
+                    Kp=1.0,
+                    Ki=0.5,
+                    Kd=0.1,
+                    saturation_fn="tanh",
+                    gamma=gamma,
+                )
+
+    def test_matrix_gamma_must_be_square(self):
+        with pytest.raises(ValueError, match="must be square"):
+            PIDControl(
+                Kp=1.0,
+                Ki=0.5,
+                Kd=0.1,
+                saturation_fn="tanh",
+                gamma=jnp.ones((2, 3)),
+            )
+
+    def test_vector_gamma_must_match_error_shape(self):
+        pid = PIDControl(
+            Kp=1.0,
+            Ki=0.5,
+            Kd=0.1,
+            saturation_fn="tanh",
+            gamma=jnp.ones(3),
+        )
+
+        with pytest.raises(ValueError, match="match the error shape"):
+            pid(jnp.ones(2), jnp.zeros(2), jnp.zeros(2))
+
+    def test_matrix_gamma_must_match_error_size(self):
+        pid = PIDControl(
+            Kp=1.0,
+            Ki=0.5,
+            Kd=0.1,
+            saturation_fn="tanh",
+            gamma=jnp.eye(3),
+        )
+
+        with pytest.raises(ValueError, match="match the error size"):
+            pid(jnp.ones(2), jnp.zeros(2), jnp.zeros(2))
 
 
 class TestPIDControlJAXCompatibility:
@@ -325,7 +393,7 @@ class TestPIDControlJAXCompatibility:
 
         u, integral_error_dot = compute_control(e, ed, integral_error)
 
-        expected_integral_error_dot = jnp.tanh(2.0 * e)
+        expected_integral_error_dot = jnp.tanh(2.0 * e) / 2.0
         assert jnp.allclose(integral_error_dot, expected_integral_error_dot, atol=1e-10)
 
     def test_jit_with_custom_saturation(self):

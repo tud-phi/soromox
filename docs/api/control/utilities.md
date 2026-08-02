@@ -26,6 +26,22 @@ $$
 \frac{d}{dt}\left(\int e \, dt\right) = \mathrm{sat}(e)
 $$
 
+For the built-in hyperbolic-tangent saturation, `gamma` is an inverse error
+scale. The componentwise scalar/vector form is
+
+$$
+\mathrm{sat}_{\gamma}(e)
+= \frac{\tanh(\gamma e)}{\gamma}
+= e_{\mathrm{sat}}\tanh\!\left(\frac{e}{e_{\mathrm{sat}}}\right),
+\qquad e_{\mathrm{sat}}=\frac{1}{\gamma}.
+$$
+
+This keeps the saturation argument dimensionless, preserves the units of the
+integrated error, and has unit slope at the origin. A vector `gamma` can assign
+different physical error scales to heterogeneous coordinates. Scalar and
+vector values of `gamma` must be strictly positive; a matrix `gamma` must be
+symmetric positive definite.
+
 ### PIDControl
 
 ::: soromox.control.PIDControl
@@ -62,7 +78,7 @@ pid = PIDControl(
     Ki=jnp.array([10.0, 10.0]),    # Integral gains
     Kd=jnp.array([20.0, 20.0]),    # Derivative gains
     saturation_fn="tanh",          # Anti-windup saturation
-    gamma=1.0,                     # Saturation scaling
+    gamma=1.0,                     # Inverse saturation-error scale
 )
 
 # Initialize controller state
@@ -160,4 +176,3 @@ x_des_ts = jnp.tile(q_setpoint, (len(ts), 1))
 ref_traj = ReferenceTrajectory(ts=ts, x_des_ts=x_des_ts)
 # xd_des and xdd_des will be (approximately) zero
 ```
-

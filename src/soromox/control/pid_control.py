@@ -77,7 +77,9 @@ class PIDControl(eqx.Module):
         Kp: Proportional gain (scalar, diagonal vector, or matrix).
         Ki: Integral gain (scalar, diagonal vector, or matrix).
         Kd: Derivative gain (scalar, diagonal vector, or matrix).
-        gamma: Scaling parameter for built-in saturation functions (e.g., "tanh").
+        gamma: Inverse error scale for built-in saturation functions (e.g.,
+            ``"tanh"``). Its reciprocal has the same units as the corresponding
+            error and sets the asymptotic magnitude of the saturated error.
 
     References:
         Pustina, P., Borja, P., Della Santina, C., & De Luca, A. (2022).
@@ -111,12 +113,15 @@ class PIDControl(eqx.Module):
             Kd: Derivative gain. Same format options as Kp.
             saturation_fn: Optional saturation function for anti-windup. Can be:
                 - None or "identity": No saturation (default).
-                - "tanh": Uses `tanh(gamma * e)` where gamma is specified separately.
+                - "tanh": Uses ``solve(gamma, tanh(gamma @ e))`` for a matrix
+                  ``gamma`` and ``tanh(gamma * e) / gamma`` otherwise. This
+                  preserves the units and small-error slope of ``e``.
                 - A callable `f(e) -> saturated_e`: Custom saturation function.
-            gamma: Scaling parameter for built-in saturation functions (e.g., "tanh").
-                Can be a scalar, diagonal vector, or matrix to stretch/compress
-                the error before saturation. Only used when saturation_fn is a string.
-                Defaults to 1.0.
+            gamma: Inverse error scale for built-in saturation functions. Can be
+                a positive scalar, positive diagonal vector, or symmetric
+                positive-definite matrix. For a scalar or vector, ``1 / gamma``
+                sets the componentwise saturation magnitude. Only used when
+                ``saturation_fn="tanh"``. Defaults to 1.0.
         """
         self.Kp = jnp.atleast_1d(jnp.asarray(Kp))
         self.Ki = jnp.atleast_1d(jnp.asarray(Ki))
@@ -127,6 +132,31 @@ class PIDControl(eqx.Module):
             self._saturation_fn_name = "identity"
             self._custom_saturation_fn = None
         elif saturation_fn == "tanh":
+            if self.gamma.ndim == 1:
+                if bool(jnp.any(self.gamma <= 0)):
+                    raise ValueError(
+                        "Gamma must be strictly positive for tanh saturation."
+                    )
+            elif self.gamma.ndim == 2:
+                if self.gamma.shape[0] != self.gamma.shape[1]:
+                    raise ValueError(
+                        "A matrix gamma must be square for tanh saturation."
+                    )
+                if not bool(jnp.allclose(self.gamma, self.gamma.T)):
+                    raise ValueError(
+                        "A matrix gamma must be symmetric positive definite for "
+                        "tanh saturation."
+                    )
+                if not bool(jnp.all(jnp.linalg.eigvalsh(self.gamma) > 0)):
+                    raise ValueError(
+                        "A matrix gamma must be symmetric positive definite for "
+                        "tanh saturation."
+                    )
+            else:
+                raise ValueError(
+                    "Gamma must be a scalar-like vector or matrix for tanh "
+                    f"saturation, got {self.gamma.ndim}-d."
+                )
             self._saturation_fn_name = "tanh"
             self._custom_saturation_fn = None
         elif callable(saturation_fn):
@@ -159,21 +189,42 @@ class PIDControl(eqx.Module):
     @staticmethod
     def _tanh_saturation(e: Array, gamma: Array) -> Array:
         """
-        Tanh saturation function: tanh(gamma * e).
+        Apply a unit-preserving hyperbolic-tangent saturation.
+
+        For scalar or diagonal ``gamma``, the saturation is
+
+        ``tanh(gamma * e) / gamma``.
+
+        Thus, ``gamma * e`` is dimensionless, the output has the same units as
+        ``e``, and the Jacobian at the origin is the identity. For a matrix
+        ``gamma``, the equivalent transformed-coordinate expression is
+        ``solve(gamma, tanh(gamma @ e))``.
 
         Args:
             e: Error vector.
-            gamma: Scaling parameter (scalar, vector, or matrix).
+            gamma: Inverse error scale (scalar, vector, or matrix).
 
         Returns:
             Saturated error.
         """
         if gamma.ndim == 1:
-            return jnp.tanh(gamma * e)
+            if gamma.shape not in ((1,), e.shape):
+                raise ValueError(
+                    "A vector gamma must be scalar-like or match the error shape; "
+                    f"got gamma shape {gamma.shape} and error shape {e.shape}."
+                )
+            return jnp.tanh(gamma * e) / gamma
         elif gamma.ndim == 2:
-            return jnp.tanh(gamma @ e)
+            if gamma.shape != (e.size, e.size):
+                raise ValueError(
+                    "A matrix gamma must be square and match the error size; "
+                    f"got gamma shape {gamma.shape} for error shape {e.shape}."
+                )
+            return jnp.linalg.solve(gamma, jnp.tanh(gamma @ e))
         else:
-            return jnp.tanh(gamma * e)
+            raise ValueError(
+                f"Gamma must be a scalar-like vector or matrix, got {gamma.ndim}-d."
+            )
 
     def _apply_gain(self, gain: Array, x: Array) -> Array:
         """

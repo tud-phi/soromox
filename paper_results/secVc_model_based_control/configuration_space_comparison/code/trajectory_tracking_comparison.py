@@ -12,6 +12,8 @@ from pathlib import Path
 
 import jax
 from configuration_space_comparison_simulation import (
+    DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+    DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
     DEFAULT_SAVE_DT,
     DEFAULT_SOLVER_DT,
     DEFAULT_TRAJECTORY_OUTPUT,
@@ -49,6 +51,18 @@ def parse_args() -> argparse.Namespace:
         help="Frequency scale for the fast trajectory.",
     )
     parser.add_argument(
+        "--rotational-integral-error-scale",
+        type=float,
+        default=DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
+        help="Rotational integral-error saturation scale [1/m].",
+    )
+    parser.add_argument(
+        "--linear-integral-error-scale",
+        type=float,
+        default=DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+        help="Linear integral-error saturation scale.",
+    )
+    parser.add_argument(
         "--solver-dt",
         type=float,
         default=DEFAULT_SOLVER_DT,
@@ -79,6 +93,8 @@ def main() -> None:
         t1_fast=args.t1_fast,
         slow_frequency_scale=args.slow_frequency_scale,
         fast_frequency_scale=args.fast_frequency_scale,
+        rotational_integral_error_scale=args.rotational_integral_error_scale,
+        linear_integral_error_scale=args.linear_integral_error_scale,
         solver_dt=args.solver_dt,
         save_dt=args.save_dt,
     )

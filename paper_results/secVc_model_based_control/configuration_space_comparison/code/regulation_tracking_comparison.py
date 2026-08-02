@@ -16,8 +16,10 @@ from configuration_space_comparison_simulation import (
     DEFAULT_FEEDBACK_DAMPING_RATIO,
     DEFAULT_FEEDBACK_INTEGRAL_FREQUENCY,
     DEFAULT_FEEDBACK_NATURAL_FREQUENCY,
+    DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
     DEFAULT_REGULATION_TRACKING_FREQUENCY_SCALE,
     DEFAULT_REGULATION_TRACKING_OUTPUT,
+    DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
     DEFAULT_SAVE_DT,
     DEFAULT_SOLVER_DT,
     run_regulation_tracking_comparison,
@@ -61,6 +63,18 @@ def parse_args() -> argparse.Namespace:
         help="Integral-to-proportional gain ratio [rad/s].",
     )
     parser.add_argument(
+        "--rotational-integral-error-scale",
+        type=float,
+        default=DEFAULT_ROTATIONAL_INTEGRAL_ERROR_SCALE,
+        help="Rotational integral-error saturation scale [1/m].",
+    )
+    parser.add_argument(
+        "--linear-integral-error-scale",
+        type=float,
+        default=DEFAULT_LINEAR_INTEGRAL_ERROR_SCALE,
+        help="Linear integral-error saturation scale.",
+    )
+    parser.add_argument(
         "--solver-dt",
         type=float,
         default=DEFAULT_SOLVER_DT,
@@ -93,6 +107,8 @@ def main() -> None:
         feedback_natural_frequency=args.feedback_natural_frequency,
         feedback_damping_ratio=args.feedback_damping_ratio,
         feedback_integral_frequency=args.feedback_integral_frequency,
+        rotational_integral_error_scale=args.rotational_integral_error_scale,
+        linear_integral_error_scale=args.linear_integral_error_scale,
         solver_dt=args.solver_dt,
         save_dt=args.save_dt,
     )

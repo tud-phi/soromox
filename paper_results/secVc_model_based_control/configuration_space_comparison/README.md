@@ -4,6 +4,26 @@ This case reproduces the Section Vc configuration-space controller comparisons.
 The three generators share the robot, controller, trajectory, serialization,
 plotting, and rendering implementation in `code/configuration_space_comparison_simulation.py`.
 
+## Integral-error saturation
+
+The PID integral state uses the unit-preserving smooth saturation
+
+$$
+\dot{\eta}_i = e_{\mathrm{sat},i}
+\tanh\!\left(e_i/e_{\mathrm{sat},i}\right).
+$$
+
+The PCS coordinates combine rotational strains in $\mathrm{m^{-1}}$ and
+dimensionless linear strains, so the benchmark uses separate physical scales:
+
+- $e_{\kappa,\mathrm{sat}}=10\,\mathrm{m^{-1}}$, corresponding to a 1 rad
+  angular error across the 0.1 m segment;
+- $e_{\sigma,\mathrm{sat}}=0.1$, corresponding to a 10% linear strain error.
+
+These scales keep the nominal PID integral gain unchanged for small errors.
+They can be varied with `--rotational-integral-error-scale` and
+`--linear-integral-error-scale` on each simulation command.
+
 ## Reproduce
 
 From the repository root, generate all three datasets without touching the
