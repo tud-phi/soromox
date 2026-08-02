@@ -81,7 +81,9 @@ setpoint-window MAEs and their equal-weight aggregate for regulation.
 `outputs/configuration_space_comparison.pdf` contains the complete
 regulation-to-tracking trajectory for all three controlled strains.
 `outputs/regulation_tracking_rmse.pdf` reports the corresponding RMSE values
-separately for the setpoint-regulation and trajectory-tracking phases.
+separately for the setpoint-regulation and trajectory-tracking phases, together
+with the steady-state regulation MAE computed over the final quarter of each
+setpoint interval and averaged equally across the four setpoints.
 Scenario-specific tracking and error plots are reproducible diagnostics and
 remain uncommitted. The checked-in NPZ files were regenerated from scratch with
 the current Section Vc generators.

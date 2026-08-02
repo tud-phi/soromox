@@ -37,6 +37,7 @@ def _result(rmse: tuple[float, float, float]) -> dict:
         "u": np.zeros_like(q),
         "metrics": {
             "rmse": np.asarray(rmse),
+            "steady_state_mae": 0.1 * np.asarray(rmse),
             "max_error": np.max(np.abs(error), axis=0),
             "ise": np.sum(error**2, axis=0),
             "tracking_error": error,
@@ -74,6 +75,13 @@ def comparison_run() -> simulation.ComparisonRun:
                 "Setpoint Regulation: RMSE", "regulation", CONTROLLERS
             ),
             simulation.RmsePanel("Trajectory Tracking: RMSE", "tracking", CONTROLLERS),
+            simulation.RmsePanel(
+                "Steady-State Regulation: MAE",
+                "regulation",
+                CONTROLLERS,
+                metric_name="steady_state_mae",
+                metric_label="MAE",
+            ),
         ),
     )
     return simulation.ComparisonRun(
@@ -126,25 +134,35 @@ def test_rmse_uses_separate_saved_phase_results(monkeypatch):
     summary = run.rmse_summaries[0]
 
     np.testing.assert_allclose(
-        plotter.rmse_values(run, summary.panels[0], 0), [1.0, 3.0]
+        plotter.metric_values(run, summary.panels[0], 0), [1.0, 3.0]
     )
     np.testing.assert_allclose(
-        plotter.rmse_values(run, summary.panels[1], 0), [5.0, 7.0]
+        plotter.metric_values(run, summary.panels[1], 0), [5.0, 7.0]
+    )
+    np.testing.assert_allclose(
+        plotter.metric_values(run, summary.panels[2], 0), [0.1, 0.3]
     )
 
     fig = plotter.build_rmse_summary_figure(run, summary)
-    assert len(fig.axes) == 6
+    assert len(fig.axes) == 9
     np.testing.assert_allclose(
         [patch.get_width() for patch in fig.axes[0].patches], [1.0, 3.0]
     )
     np.testing.assert_allclose(
         [patch.get_width() for patch in fig.axes[1].patches], [5.0, 7.0]
     )
+    np.testing.assert_allclose(
+        [patch.get_width() for patch in fig.axes[2].patches], [0.1, 0.3]
+    )
     assert fig.axes[0].get_title() == "Setpoint Regulation"
     assert fig.axes[1].get_title() == "Trajectory Tracking"
-    assert all(r"\kappa_y" in fig.axes[index].get_xlabel() for index in (0, 1))
-    assert all(r"\kappa_z" in fig.axes[index].get_xlabel() for index in (2, 3))
-    assert all(r"\sigma_x" in fig.axes[index].get_xlabel() for index in (4, 5))
+    assert fig.axes[2].get_title() == "Steady-State Regulation"
+    assert all(r"\kappa_y" in fig.axes[index].get_xlabel() for index in (0, 1, 2))
+    assert all(r"\kappa_z" in fig.axes[index].get_xlabel() for index in (3, 4, 5))
+    assert all(r"\sigma_x" in fig.axes[index].get_xlabel() for index in (6, 7, 8))
+    assert fig.axes[0].get_xlim() == fig.axes[1].get_xlim()
+    assert fig.axes[2].get_xlim()[1] < fig.axes[0].get_xlim()[1]
+    assert fig.axes[2].get_xlabel().startswith("MAE")
     assert all(
         text.get_text() not in tuple("ABCDEF")
         for ax in fig.axes

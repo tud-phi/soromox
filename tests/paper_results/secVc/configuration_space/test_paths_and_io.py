@@ -90,6 +90,20 @@ def test_default_paths_are_case_relative():
     assert case_dir / "outputs" == simulation.OUTPUTS_DIR
 
 
+def test_canonical_regulation_tracking_archive_gets_steady_state_panel():
+    run = simulation.load_comparison_npz(simulation.DEFAULT_REGULATION_TRACKING_OUTPUT)
+    summary = next(
+        summary for summary in run.rmse_summaries if summary.key == "phase-rmse"
+    )
+
+    assert [panel.metric_name for panel in summary.panels] == [
+        "rmse",
+        "rmse",
+        "steady_state_mae",
+    ]
+    assert summary.panels[-1].metric_label == "MAE"
+
+
 @pytest.mark.parametrize("entry_point", ENTRY_POINTS)
 def test_cli_starts_from_unrelated_working_directory(tmp_path, entry_point):
     subprocess.run(

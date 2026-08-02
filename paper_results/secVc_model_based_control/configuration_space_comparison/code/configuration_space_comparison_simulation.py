@@ -119,11 +119,13 @@ class PlotGroup:
 
 @dataclass(frozen=True)
 class RmsePanel:
-    """One panel in an RMSE bar-chart summary."""
+    """One panel in a phase-metric bar-chart summary."""
 
     title: str
     scenario_key: str
     controller_names: tuple[str, ...]
+    metric_name: str = "rmse"
+    metric_label: str = "RMSE"
 
 
 @dataclass(frozen=True)
@@ -879,6 +881,13 @@ def run_regulation_tracking_comparison(
                         scenario_key="tracking",
                         controller_names=tuple(controllers.keys()),
                     ),
+                    RmsePanel(
+                        title="Steady-State Regulation: MAE",
+                        scenario_key="regulation",
+                        controller_names=tuple(controllers.keys()),
+                        metric_name="steady_state_mae",
+                        metric_label="MAE",
+                    ),
                 ),
             ),
         ),
@@ -1284,6 +1293,32 @@ def load_comparison_npz(path: str | Path) -> ComparisonRun:
         if first_q.shape[1] == len(EVALUATION_STRAIN_NAMES)
         else tuple(f"q_{index}" for index in default_indices)
     )
+    rmse_summaries = tuple(
+        _rmse_summary_from_dict(summary) for summary in metadata["rmse_summaries"]
+    )
+    if metadata["example_key"] == "regulation_tracking":
+        rmse_summaries = tuple(
+            RmseSummary(
+                key=summary.key,
+                filename=summary.filename,
+                panels=(
+                    *summary.panels,
+                    RmsePanel(
+                        title="Steady-State Regulation: MAE",
+                        scenario_key="regulation",
+                        controller_names=summary.panels[0].controller_names,
+                        metric_name="steady_state_mae",
+                        metric_label="MAE",
+                    ),
+                ),
+            )
+            if summary.key == "phase-rmse"
+            and not any(
+                panel.metric_name == "steady_state_mae" for panel in summary.panels
+            )
+            else summary
+            for summary in rmse_summaries
+        )
     return ComparisonRun(
         example_key=metadata["example_key"],
         title=metadata["title"],
@@ -1294,9 +1329,7 @@ def load_comparison_npz(path: str | Path) -> ComparisonRun:
         plot_groups=tuple(
             _plot_group_from_dict(group) for group in metadata["plot_groups"]
         ),
-        rmse_summaries=tuple(
-            _rmse_summary_from_dict(summary) for summary in metadata["rmse_summaries"]
-        ),
+        rmse_summaries=rmse_summaries,
         render_targets=tuple(
             _render_target_from_dict(target) for target in metadata["render_targets"]
         ),
@@ -1354,6 +1387,8 @@ def _rmse_summary_to_dict(summary: RmseSummary) -> dict[str, Any]:
                 "title": panel.title,
                 "scenario_key": panel.scenario_key,
                 "controller_names": list(panel.controller_names),
+                "metric_name": panel.metric_name,
+                "metric_label": panel.metric_label,
             }
             for panel in summary.panels
         ],
@@ -1369,6 +1404,8 @@ def _rmse_summary_from_dict(data: dict[str, Any]) -> RmseSummary:
                 title=panel["title"],
                 scenario_key=panel["scenario_key"],
                 controller_names=tuple(panel["controller_names"]),
+                metric_name=panel.get("metric_name", "rmse"),
+                metric_label=panel.get("metric_label", "RMSE"),
             )
             for panel in data["panels"]
         ),

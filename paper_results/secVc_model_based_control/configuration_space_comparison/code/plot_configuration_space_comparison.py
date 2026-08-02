@@ -276,12 +276,16 @@ def plot_tracking_group(
     return outputs[0], outputs[1]
 
 
-def rmse_values(run: ComparisonRun, panel: RmsePanel, strain_offset: int) -> np.ndarray:
-    """Return controller RMSE values for one saved phase and strain."""
+def metric_values(
+    run: ComparisonRun, panel: RmsePanel, strain_offset: int
+) -> np.ndarray:
+    """Return controller metric values for one saved phase and strain."""
     strain_index = run.strain_indices[strain_offset]
     return np.asarray(
         [
-            run.results[panel.scenario_key][name]["metrics"]["rmse"][strain_index]
+            run.results[panel.scenario_key][name]["metrics"][panel.metric_name][
+                strain_index
+            ]
             for name in panel.controller_names
         ],
         dtype=float,
@@ -304,7 +308,7 @@ def _format_bar_value(value: float) -> str:
 
 
 def build_rmse_summary_figure(run: ComparisonRun, summary: RmseSummary) -> plt.Figure:
-    """Build a phase-by-strain RMSE matrix with unit-correct axes."""
+    """Build a phase-by-strain metric matrix with unit-correct axes."""
     configure_matplotlib()
     n_columns = len(summary.panels)
     width_cm = 8.2 if n_columns == 1 else 16.5
@@ -318,12 +322,21 @@ def build_rmse_summary_figure(run: ComparisonRun, summary: RmseSummary) -> plt.F
     colors = _controller_colors(run)
 
     for row, (strain_name, unit) in enumerate(zip(run.strain_names, STRAIN_UNITS)):
-        row_values = [rmse_values(run, panel, row) for panel in summary.panels]
-        row_limit = max(float(values.max(initial=0.0)) for values in row_values)
-        row_limit = max(row_limit * 1.22, 1e-12)
+        row_values = [metric_values(run, panel, row) for panel in summary.panels]
+        metric_limits: dict[str, float] = {}
+        for panel, values in zip(summary.panels, row_values):
+            metric_limits[panel.metric_name] = max(
+                metric_limits.get(panel.metric_name, 0.0),
+                float(values.max(initial=0.0)),
+            )
+        metric_limits = {
+            metric_name: max(limit * 1.22, 1e-12)
+            for metric_name, limit in metric_limits.items()
+        }
 
         for column, (panel, values) in enumerate(zip(summary.panels, row_values)):
             ax = axes[row, column]
+            row_limit = metric_limits[panel.metric_name]
             names = list(panel.controller_names)
             y = np.arange(len(names))
             bars = ax.barh(
@@ -336,11 +349,13 @@ def build_rmse_summary_figure(run: ComparisonRun, summary: RmseSummary) -> plt.F
             ax.invert_yaxis()
             ax.grid(True, axis="x")
             ax.grid(False, axis="y")
-            ax.set_xlabel(rf"RMSE {strain_name} $\mathrm{{[{unit}]}}$")
+            ax.set_xlabel(
+                rf"{panel.metric_label} {strain_name} $\mathrm{{[{unit}]}}$"
+            )
             ax.set_yticks(y)
             ax.set_yticklabels(names if column == 0 else [])
             if row == 0:
-                title = panel.title.replace(": RMSE", "")
+                title = panel.title.removesuffix(f": {panel.metric_label}")
                 ax.set_title(title)
             for bar, value in zip(bars, values):
                 ax.text(
@@ -363,7 +378,7 @@ def plot_rmse_summary(
     show: bool = True,
     force: bool = False,
 ) -> Path:
-    """Save a unit-correct phase-by-strain RMSE summary figure."""
+    """Save a unit-correct phase-by-strain metric summary figure."""
     output = output_path(output_dir, summary.filename, output_prefix)
     ensure_writable(output, force=force)
     fig = build_rmse_summary_figure(run, summary)
