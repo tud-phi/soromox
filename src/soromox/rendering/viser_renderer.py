@@ -14,6 +14,7 @@ from __future__ import annotations
 __all__ = ["ViserRenderer"]
 
 import atexit
+import operator
 import threading
 import time
 import webbrowser
@@ -1296,6 +1297,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         autoplay: bool = True,
         loop: bool = False,
         record_path: str | None = None,
+        snapshot_paths: Mapping[int, str | Path] | None = None,
         record_every_n: int = 1,
         stop_when_recording_done: bool = False,
         record_client_timeout: float = 10.0,
@@ -1313,7 +1315,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_positions: Array | None = None,
         dynamic_spheres_radii: Array | None = None,
         dynamic_spheres_colors: Array | None = None,
-        snapshot_paths: Mapping[int, str | Path] | None = None,
         blocking: bool = True,
         plot_configurations: bool = False,
         plot_actuator_positions: bool = False,
@@ -1329,6 +1330,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             autoplay: Start playing immediately
             loop: Loop animation
             record_path: Path to save video (mp4, mov)
+            snapshot_paths: Mapping from zero-based frame indices to PNG paths.
+                Requested snapshots use the same synchronized browser render as video.
             record_every_n: Record every N frames
             stop_when_recording_done: If True, return after recording one non-looping
                 pass through the sequence.
@@ -1349,8 +1352,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
             dynamic_spheres_positions: Time-varying sphere positions
             dynamic_spheres_radii: Time-varying sphere radii
             dynamic_spheres_colors: Time-varying sphere colors
-            snapshot_paths: Mapping from zero-based frame indices to PNG paths.
-                Requested snapshots use the same synchronized browser render as video.
             blocking: If True, block until viewer closes
             plot_configurations: If True, add configuration vs time plot to GUI
             plot_actuator_positions: If True, add actuator coordinate plot to GUI
@@ -1381,11 +1382,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
         normalized_snapshot_paths: dict[int, Path] = {}
         if snapshot_paths is not None:
             for raw_frame_idx, raw_path in snapshot_paths.items():
-                frame_idx = int(raw_frame_idx)
-                if frame_idx != raw_frame_idx:
+                try:
+                    if isinstance(raw_frame_idx, (bool, np.bool_)):
+                        raise TypeError
+                    frame_idx = operator.index(raw_frame_idx)
+                except TypeError as exc:
                     raise ValueError(
                         f"Snapshot frame index must be an integer, got {raw_frame_idx!r}."
-                    )
+                    ) from exc
                 if frame_idx < 0 or frame_idx >= num_frames:
                     raise ValueError(
                         "Snapshot frame index must be within the rendered sequence; "

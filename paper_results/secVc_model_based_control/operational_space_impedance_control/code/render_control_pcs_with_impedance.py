@@ -92,7 +92,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Replace only the expected video, PNG, and PDF outputs.",
+        help="Allow overwriting existing video, PNG, and PDF output paths.",
     )
     return parser.parse_args(argv)
 

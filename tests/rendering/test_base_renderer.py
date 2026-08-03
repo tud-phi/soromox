@@ -737,7 +737,7 @@ def test_viser_sequence_hooks_and_capture_reuse(monkeypatch, tmp_path):
         dynamic_spheres_positions=np.zeros((1, 3, 3)),
         dynamic_spheres_radii=np.array([0.02]),
         dynamic_spheres_colors=np.array([[0.4, 0.5, 0.6]]),
-        snapshot_paths={1: snapshot_one, 2: snapshot_two},
+        snapshot_paths={np.int64(1): snapshot_one, 2: snapshot_two},
     )
 
     assert captured_indices == [0, 1, 2]
@@ -766,7 +766,10 @@ def test_viser_sequence_hooks_and_capture_reuse(monkeypatch, tmp_path):
     [
         ({-1: "negative.png"}, "within the rendered sequence"),
         ({3: "past_end.png"}, "within the rendered sequence"),
+        ({1.0: "integral_float.png"}, "must be an integer"),
         ({1.5: "fractional.png"}, "must be an integer"),
+        ({True: "boolean.png"}, "must be an integer"),
+        ({np.bool_(False): "numpy_boolean.png"}, "must be an integer"),
         ({0: "not_png.jpg"}, "must be a PNG"),
         ({0: "same.png", 1: "same.png"}, "must be unique"),
     ],
