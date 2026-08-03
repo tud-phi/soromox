@@ -22,6 +22,7 @@ from PIL import Image
 
 SECTION_DIR = Path(__file__).resolve().parent.parent
 PAPER_RESULTS_DIR = SECTION_DIR.parent
+PAPER_STYLE = PAPER_RESULTS_DIR / "paper.mplstyle"
 CONFIGURATION_CODE_DIR = (
     SECTION_DIR
     / "configuration_space_comparison"
@@ -502,7 +503,7 @@ def build_composite_figure(
     operational_problem = build_problem(operational_run.trajectory_config)
     snapshots = load_snapshots(snapshot_dir)
 
-    with mpl.rc_context(COMPOSITE_RC_PARAMS):
+    with plt.style.context(PAPER_STYLE), mpl.rc_context(COMPOSITE_RC_PARAMS):
         fig = plt.figure(figsize=cm_to_inches(FIGURE_SIZE_CM), facecolor="white")
         outer = fig.add_gridspec(
             3,
@@ -608,7 +609,7 @@ def save_composite_figure(
             f"{formatted}"
         )
     pdf_output.parent.mkdir(parents=True, exist_ok=True)
-    with mpl.rc_context(COMPOSITE_RC_PARAMS):
+    with plt.style.context(PAPER_STYLE), mpl.rc_context(COMPOSITE_RC_PARAMS):
         fig.savefig(pdf_output, dpi=300, facecolor="white", bbox_inches=None)
         fig.savefig(svg_output, dpi=300, facecolor="white", bbox_inches=None)
     return pdf_output, svg_output

@@ -207,7 +207,10 @@ def test_ylabels_align_within_each_subplot_column(composite_figure):
         assert np.ptp(centers) <= 0.5
 
 
-def test_save_requires_force_and_writes_both_formats(tmp_path, composite_figure):
+def test_save_writes_both_formats_and_requires_force_to_overwrite(
+    tmp_path,
+    composite_figure,
+):
     figure, _ = composite_figure
     output_base = tmp_path / "composite"
 
