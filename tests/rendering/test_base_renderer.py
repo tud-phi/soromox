@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 from numpy.testing import assert_allclose
+from PIL import Image
 
 from soromox.rendering.actuators import (
     ActuatorVisualLayer,
@@ -314,6 +315,9 @@ class FakeViserServer:
         self.on_client_connect_callback = callback
         return callback
 
+    def get_port(self):
+        return 8080
+
 
 class FakeViserLineHandle:
     def __init__(self, *, name, points, colors, line_width):
@@ -619,18 +623,191 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
     assert_allclose(client.camera.position, np.array([3.0, 0.5, 0.0]), atol=1e-12)
 
 
-def test_viser_recording_rejects_missing_frame():
+def test_viser_capture_rejects_missing_frame():
     from soromox.rendering.viser_renderer import ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     client = FakeViserClient()
     renderer._server = FakeViserServer({"client": client})
-    video_writer = Mock()
 
-    with pytest.raises(RuntimeError, match="did not return a video frame"):
-        renderer._record_viser_frame(video_writer, client, timeout=0.1)
-    video_writer.write.assert_not_called()
+    with pytest.raises(RuntimeError, match="did not return a frame"):
+        renderer._capture_viser_frame(client, timeout=0.1)
+
+
+def test_viser_sequence_hooks_and_capture_reuse(monkeypatch, tmp_path):
+    import soromox.rendering.viser_renderer as viser_module
+
+    class HookedRenderer(viser_module.ViserRenderer):
+        def __init__(self, *args, **kwargs):
+            self.events = []
+            self.current_frame = None
+            super().__init__(*args, **kwargs)
+
+        def _after_sequence_scene_built(self):
+            self.events.append(("scene", None))
+
+        def _after_sequence_frame_updated(self, frame_idx):
+            self.current_frame = frame_idx
+            self.events.append(("overlay", frame_idx))
+
+    class FakeWriter:
+        instances = []
+
+        def __init__(self, *args, **kwargs):
+            del args, kwargs
+            self.frames = []
+            self.closed = False
+            self.__class__.instances.append(self)
+
+        def write(self, frame):
+            self.frames.append(np.asarray(frame).copy())
+
+        def close(self):
+            self.closed = True
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = HookedRenderer(
+        robot,
+        width=4,
+        height=3,
+        auto_start=False,
+        open_browser=False,
+    )
+    client = FakeViserClient()
+    renderer._server = FakeViserServer({"client": client})
+    renderer._running = True
+
+    curves = np.zeros((1, 2, 3), dtype=np.float64)
+    frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
+    renderer.compute_backbone_curves_and_frames_batched = lambda q, offsets: (
+        curves,
+        frames,
+    )
+    renderer.compute_backbone_curves_batched = lambda q, offsets: curves
+    renderer._clear_scene = lambda: None
+    renderer._build_robot_geometry = lambda *args, **kwargs: renderer.events.append(
+        ("robot", 0)
+    )
+    renderer._build_static_spheres = lambda positions, radii, colors: (
+        renderer.events.append(("static", None))
+    )
+    renderer._build_dynamic_spheres = lambda positions, radii, colors: (
+        renderer.events.append(("dynamic", None))
+    )
+    renderer._setup_camera = lambda *args, **kwargs: None
+    renderer._setup_lighting = lambda: None
+    renderer._setup_playback_gui = lambda **kwargs: None
+    renderer._update_playback_gui = lambda state: None
+
+    def update_frame(frame_idx, *args, **kwargs):
+        del args, kwargs
+        renderer.events.append(("robot", frame_idx))
+
+    renderer._update_frame = update_frame
+
+    captured_indices = []
+
+    def capture_frame(client_arg, *, timeout):
+        del timeout
+        captured_indices.append(renderer.current_frame)
+        renderer.events.append(("capture", renderer.current_frame))
+        frame = np.full(
+            (renderer.height, renderer.width, 3),
+            renderer.current_frame,
+            dtype=np.uint8,
+        )
+        return frame, client_arg
+
+    renderer._capture_viser_frame = capture_frame
+    monkeypatch.setattr(viser_module, "FFmpegVideoWriter", FakeWriter)
+
+    snapshot_one = tmp_path / "frame_1.png"
+    snapshot_two = tmp_path / "frame_2.png"
+    renderer.render_sequence(
+        ts=np.array([0.0, 0.001, 0.002]),
+        q_ts=np.zeros((3, 0)),
+        record_path=str(tmp_path / "video.mp4"),
+        record_every_n=2,
+        stop_when_recording_done=True,
+        render_actuators=False,
+        static_spheres_positions=np.zeros((1, 3)),
+        static_spheres_radii=np.array([0.01]),
+        static_spheres_colors=np.array([[0.1, 0.2, 0.3]]),
+        dynamic_spheres_positions=np.zeros((1, 3, 3)),
+        dynamic_spheres_radii=np.array([0.02]),
+        dynamic_spheres_colors=np.array([[0.4, 0.5, 0.6]]),
+        snapshot_paths={1: snapshot_one, 2: snapshot_two},
+    )
+
+    assert captured_indices == [0, 1, 2]
+    assert (
+        renderer.events.index(("robot", 0))
+        < renderer.events.index(("scene", None))
+        < renderer.events.index(("overlay", 0))
+        < renderer.events.index(("capture", 0))
+    )
+    for frame_idx in (1, 2):
+        assert (
+            renderer.events.index(("robot", frame_idx))
+            < renderer.events.index(("overlay", frame_idx))
+            < renderer.events.index(("capture", frame_idx))
+        )
+
+    writer = FakeWriter.instances[-1]
+    assert writer.closed
+    assert [int(frame[0, 0, 0]) for frame in writer.frames] == [0, 2]
+    assert int(np.asarray(Image.open(snapshot_one))[0, 0, 0]) == 1
+    assert int(np.asarray(Image.open(snapshot_two))[0, 0, 0]) == 2
+
+
+@pytest.mark.parametrize(
+    "snapshot_paths, message",
+    [
+        ({-1: "negative.png"}, "within the rendered sequence"),
+        ({3: "past_end.png"}, "within the rendered sequence"),
+        ({1.5: "fractional.png"}, "must be an integer"),
+        ({0: "not_png.jpg"}, "must be a PNG"),
+        ({0: "same.png", 1: "same.png"}, "must be unique"),
+    ],
+)
+def test_viser_snapshot_paths_are_validated_before_rendering(
+    snapshot_paths,
+    message,
+):
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+    renderer._server = FakeViserServer({})
+
+    with pytest.raises(ValueError, match=message):
+        renderer.render_sequence(
+            np.array([0.0, 0.1, 0.2]),
+            np.zeros((3, 0)),
+            snapshot_paths=snapshot_paths,
+            blocking=False,
+        )
+
+
+def test_viser_capture_timeout_is_explicit():
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+    client = FakeViserClient()
+    renderer._server = FakeViserServer({"client": client})
+
+    def block_render(*, height, width):
+        del height, width
+        import time
+
+        time.sleep(0.1)
+        return np.zeros((renderer.height, renderer.width, 3), dtype=np.uint8)
+
+    client.camera.get_render = block_render
+    with pytest.raises(RuntimeError, match="Timed out while capturing"):
+        renderer._capture_viser_frame(client, timeout=0.001)
 
 
 def test_viser_discrete_backbone_spheres_use_robot_radius():

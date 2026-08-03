@@ -1,5 +1,5 @@
 """
-Plot and render a saved PCS operational-space impedance control rollout.
+Plot a saved PCS operational-space impedance control rollout.
 
 The trajectory ``.npz`` is produced by ``control_pcs_with_impedance.py``.
 """
@@ -18,13 +18,12 @@ from operational_space_impedance_common import (
     plot_run,
     print_problem_summary,
     print_tracking_summary,
-    render_run,
 )
 
 jax.config.update("jax_enable_x64", True)
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "trajectory",
@@ -40,59 +39,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--no-show", action="store_true", help="Do not show plots.")
     parser.add_argument(
-        "--render",
-        action="store_true",
-        help="Launch the optional Viser renderer after plotting.",
+        "--force", action="store_true", help="Replace existing plot outputs."
     )
-    parser.add_argument(
-        "--force", action="store_true", help="Replace existing plots or video."
-    )
-    parser.add_argument("--viser-port", type=int, default=8080, help="Viser port.")
-    parser.add_argument(
-        "--no-open-browser",
-        action="store_true",
-        help="Start Viser without opening a browser tab.",
-    )
-    parser.add_argument(
-        "--robot-opacity",
-        type=float,
-        default=0.35,
-        help="Soft robot opacity for Viser rendering.",
-    )
-    parser.add_argument(
-        "--video-output",
-        nargs="?",
-        const="",
-        default=None,
-        help=(
-            "Save one Viser rendering pass as an MP4. If no path is provided, "
-            "defaults to '<output-prefix>-render.mp4'."
-        ),
-    )
-    parser.add_argument(
-        "--record-every-n",
-        type=int,
-        default=1,
-        help="Record every Nth frame when --video-output is used.",
-    )
-    parser.add_argument(
-        "--record-client-timeout",
-        type=float,
-        default=10.0,
-        help="Seconds to wait for a Viser browser client when recording video.",
-    )
-    parser.add_argument(
-        "--record-frame-timeout",
-        type=float,
-        default=10.0,
-        help="Seconds to wait for each browser-rendered video frame.",
-    )
-    parser.add_argument(
-        "--non-blocking",
-        action="store_true",
-        help="Return after initializing one Viser update loop iteration.",
-    )
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:
@@ -112,34 +61,6 @@ def main() -> None:
     print("\nPlots saved to:")
     print(f"  - {tracking_output}")
     print(f"  - {config_output}")
-
-    if not args.render and args.video_output is None:
-        return
-
-    video_output = None
-    if args.video_output is not None:
-        video_output = args.video_output or f"{output_prefix}-render.mp4"
-        video_output_path = Path(video_output)
-        if video_output_path.exists() and not args.force:
-            raise FileExistsError(
-                f"Output already exists: {video_output_path}. Pass --force to replace it."
-            )
-        video_output_path.parent.mkdir(parents=True, exist_ok=True)
-        video_output = str(video_output_path)
-        print(f"\nVideo will be saved to: {video_output}")
-
-    render_run(
-        run,
-        problem,
-        viser_port=args.viser_port,
-        open_browser=not args.no_open_browser,
-        robot_opacity=args.robot_opacity,
-        video_output=video_output,
-        record_every_n=args.record_every_n,
-        record_client_timeout=args.record_client_timeout,
-        record_frame_timeout=args.record_frame_timeout,
-        blocking=not args.non_blocking,
-    )
 
 
 if __name__ == "__main__":

@@ -3,3 +3,6 @@
 !.gitignore
 !operational_space_impedance_control.pdf
 !control_pcs_with_impedance_trajectory-render.mp4
+!operational_space_impedance_snapshots.pdf
+!operational_space_impedance_snapshots/
+!operational_space_impedance_snapshots/*.png

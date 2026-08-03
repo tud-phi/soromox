@@ -20,15 +20,21 @@ The generator accepts `--tracking`, `--position-primitive`,
 Give each variant a distinct `--trajectory-output` path to prevent data clashes.
 The default output is the canonical pose/figure-eight/surface-following dataset.
 
-To record the saved canonical rollout:
+Render the saved canonical rollout, the four lossless paper snapshots at
+4.5/5.5/6.5/7.5 s, and the publication-width PDF strip:
 
 ```bash
-uv run --extra paper_results python paper_results/secVc_model_based_control/operational_space_impedance_control/code/plot_control_pcs_with_impedance.py /tmp/soromox-secVc/operational/data/control_pcs_with_impedance_trajectory.npz --output-prefix /tmp/soromox-secVc/operational/outputs/control_pcs_with_impedance_trajectory --no-show --video-output /tmp/soromox-secVc/operational/outputs/control_pcs_with_impedance_trajectory-render.mp4
+uv run --extra paper_results python paper_results/secVc_model_based_control/operational_space_impedance_control/code/render_control_pcs_with_impedance.py --force
 ```
 
-Use `--render --no-open-browser` to launch a non-recording Viser session without
-opening a browser. Add `--non-blocking` for a headless renderer smoke test.
-Plotting alone does not start a rendering server.
+The dedicated renderer consumes the committed NPZ and never repeats the
+simulation. Viser recording requires a connected browser client; leave browser
+auto-opening enabled, or use `--no-open-browser` only when a client is already
+connected to `--viser-port`. The paper scene uses a 55-degree elevated view at
+270-degree azimuth so both figure-eight lobes remain symmetrically visible, and
+a restrained translucent mesh of the canonical spherical reference
+surface. The plotting command is intentionally plot-only and no longer accepts
+rendering or video arguments.
 
 ## Feedback-Linearization Comparison
 
@@ -65,9 +71,12 @@ uv run --extra paper_results python paper_results/secVc_model_based_control/oper
 - `outputs/operational_space_impedance_control.pdf` is the canonical paper
   figure showing position and orientation tracking and component errors for the
   partial-feedback-linearization controller.
-- `outputs/control_pcs_with_impedance_trajectory-render.mp4` is the prior
-  canonical rendering of the saved operational-space rollout. Additional MP4
-  files can be rendered from any saved NPZ data.
+- `outputs/control_pcs_with_impedance_trajectory-render.mp4` is the canonical
+  RL-inspired Viser rendering of the saved operational-space rollout.
+- `outputs/operational_space_impedance_snapshots/` contains the four identically
+  cropped, lossless PNG stills.
+- `outputs/operational_space_impedance_snapshots.pdf` is the compact 15.2 cm-wide
+  four-frame strip with per-frame timestamps and the paper-style time arrow.
 
 Standalone trajectory, configuration, and feedback-linearization plots are
 reproducible diagnostics and remain uncommitted. The checked-in NPZ files were

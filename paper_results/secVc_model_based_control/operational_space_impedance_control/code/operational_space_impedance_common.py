@@ -1,4 +1,4 @@
-"""Shared simulation, plotting, and rendering helpers for the impedance case."""
+"""Shared simulation and plotting helpers for the impedance-control case."""
 
 from __future__ import annotations
 
@@ -24,12 +24,9 @@ from trajectory_primitives import (
     make_end_effector_task_selector,
     make_operational_space_reference_trajectory,
 )
-from viser_operational_space_renderer import render_operational_space_tracking
 
 from soromox.control import OperationalSpaceImpedanceControlTracker
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.rendering import ViserRenderer
-from soromox.rendering.camera_config import CameraConfig
 from soromox.systems import PCS, PCSParams, SystemState
 
 jax.config.update("jax_enable_x64", True)
@@ -446,49 +443,6 @@ def print_tracking_summary(run: PCSImpedanceRun) -> None:
     print(f"  Orientation NRMSE: {metrics['orientation_nrmse_percent']:.6f} %")
 
 
-def render_run(
-    run: PCSImpedanceRun,
-    problem: PCSImpedanceProblem,
-    *,
-    viser_port: int,
-    open_browser: bool,
-    robot_opacity: float,
-    video_output: str | None = None,
-    record_every_n: int = 1,
-    record_client_timeout: float = 10.0,
-    record_frame_timeout: float = 10.0,
-    camera_config: CameraConfig | None = None,
-    blocking: bool = True,
-) -> None:
-    """Render a saved rollout with the example-local Viser science renderer."""
-    if ViserRenderer is None:
-        raise ImportError(
-            "Viser is required to render this example. Install the Viser extras "
-            "or omit --render."
-        )
-
-    render_operational_space_tracking(
-        robot=problem.robot,
-        osd=problem.osd,
-        q0=problem.q0,
-        trajectory_config=run.trajectory_config,
-        t_traj=run.t_traj,
-        q_traj=run.q_traj,
-        x_traj_full=run.x_traj_full,
-        x_des_traj_full=run.x_des_traj_full,
-        viser_renderer_cls=ViserRenderer,
-        port=viser_port,
-        open_browser=open_browser,
-        robot_opacity=robot_opacity,
-        video_output=video_output,
-        record_every_n=record_every_n,
-        record_client_timeout=record_client_timeout,
-        record_frame_timeout=record_frame_timeout,
-        camera_config=camera_config,
-        blocking=blocking,
-    )
-
-
 def operational_tracking_data(
     run: PCSImpedanceRun,
     problem: PCSImpedanceProblem,
@@ -743,7 +697,6 @@ __all__ = [
     "plot_run",
     "print_problem_summary",
     "print_tracking_summary",
-    "render_run",
     "run_impedance_simulation",
     "save_run_npz",
     "tracking_legend_handles",

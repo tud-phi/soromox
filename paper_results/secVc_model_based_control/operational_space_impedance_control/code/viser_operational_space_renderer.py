@@ -1,29 +1,26 @@
-"""Viser rendering helpers for operational-space control examples.
+"""Publication renderer for the operational-space impedance-control rollout.
 
-This module intentionally lives under ``examples/``. It is shared by example
-scripts in this folder, but it is not part of the public ``soromox`` API.
+The visual language intentionally mirrors the trained Section Vf RL rendering:
+a solid coral robot, a dark base, and a green target trajectory on white.
 """
 
 from __future__ import annotations
 
-import threading
-import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 import numpy as np
 from jax import Array
-from trajectory_primitives import (
-    SurfaceGeometry,
-    TaskSpaceTrajectoryConfig,
-    make_surface_geometry_metadata,
-    surface_normal_at,
-)
+from PIL import Image
+from trajectory_primitives import make_surface_geometry_metadata
 
-from soromox.rendering import ViserRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import BackboneColorConfig, RendererColorConfig
+from soromox.rendering.viser_renderer import ViserRenderer
 from soromox.utils.geometry.rotations import (
     RotationRepresentation,
     rotation_6d_to_rotation_matrix,
@@ -31,431 +28,680 @@ from soromox.utils.geometry.rotations import (
     rotation_vector_to_rotation_matrix,
 )
 
+CORAL_RGB = np.array([0xF1, 0x55, 0x2E], dtype=np.float64) / 255.0
+TARGET_GREEN_RGB = np.array([0x0E, 0xAD, 0x69], dtype=np.float64) / 255.0
+TARGET_DARK_GREEN_RGB = np.array([0x08, 0x7A, 0x4A], dtype=np.float64) / 255.0
+TARGET_TRAIL_RGB = 0.35 * np.ones(3) + 0.65 * TARGET_GREEN_RGB
+BASE_RGB = np.array([0.2, 0.2, 0.2], dtype=np.float64)
+SURFACE_FILL_RGB = np.array([0xB7, 0xC3, 0xCC], dtype=np.float64) / 255.0
+SURFACE_MESH_RGB = np.array([0x82, 0x92, 0x9E], dtype=np.float64) / 255.0
+
+DEFAULT_SNAPSHOT_TIMES = (4.5, 5.5, 6.5, 7.5)
+DEFAULT_VIDEO_SIZE = (1920, 1080)
+DEFAULT_FOV_DEGREES = 60.0
+DEFAULT_CAMERA_AZIMUTH_DEGREES = 270.0
+DEFAULT_CAMERA_ELEVATION_DEGREES = 55.0
+DEFAULT_BASE_PLATE_RADIUS_SCALE = 2.0
+DEFAULT_BASE_PLATE_THICKNESS = 0.06
+SURFACE_FILL_OPACITY = 0.10
+SURFACE_MESH_OPACITY = 0.16
+SURFACE_LONGITUDE_COUNT = 24
+SURFACE_LATITUDE_COUNT = 13
+SNAPSHOT_STRIP_SIZE_CM = (15.2, 4.8)
+SNAPSHOT_STRIP_WSPACE = -0.06
+TIME_TEXT_COLOR = "0.45"
+TIME_ARROW_COLOR = "0.60"
+
 
 @dataclass(frozen=True)
-class SurfaceMesh:
-    """Triangular mesh for rendering an operational-space reference surface."""
+class TargetDiskGeometry:
+    """Local target-disk mesh and line geometry in the y-z tangent plane."""
+
+    vertices: np.ndarray
+    faces: np.ndarray
+    rim_segments: np.ndarray
+    cross_segments: np.ndarray
+
+
+@dataclass(frozen=True)
+class SphereSurfaceMesh:
+    """World-space spherical surface mesh used by the paper renderer."""
 
     vertices: np.ndarray
     faces: np.ndarray
 
 
-def make_transparent_robot_color_config(
-    num_points: int,
-    opacity: float,
-) -> RendererColorConfig:
-    """Return a transparent backbone color configuration."""
-    opacity = float(np.clip(opacity, 0.0, 1.0))
+def make_paper_robot_color_config(num_points: int) -> RendererColorConfig:
+    """Return the opaque coral robot style used by the trained RL rendering."""
     num_points = max(2, int(num_points))
-    start = np.array([0.09, 0.22, 0.42, opacity], dtype=np.float64)
-    end = np.array([0.00, 0.55, 0.78, opacity], dtype=np.float64)
-    blend = np.linspace(0.0, 1.0, num_points)[:, None]
-    point_colors = (1.0 - blend) * start + blend * end
+    rgba = np.concatenate([CORAL_RGB, np.array([1.0])])
+    point_colors = np.tile(rgba, (num_points, 1))
     return RendererColorConfig(
         backbone=BackboneColorConfig(point_colors=point_colors),
-        base_plate_color=(0.12, 0.12, 0.12),
+        base_plate_color=tuple(BASE_RGB),
     )
 
 
-def make_polyline_segments(points: np.ndarray) -> np.ndarray:
-    """Convert polyline points into Viser line-segment geometry."""
-    points = _ensure_3d_positions(points).astype(np.float32)
-    if len(points) < 2:
-        if len(points) == 0:
-            points = np.zeros((2, 3), dtype=np.float32)
-        else:
-            points = np.repeat(points, 2, axis=0)
-    return np.stack([points[:-1], points[1:]], axis=1)
-
-
-def make_fading_trail_colors(
-    num_segments: int,
+def make_target_disk_geometry(
+    radius: float,
     *,
-    current_color: tuple[float, float, float] = (0.90, 0.25, 0.10),
-    faded_color: tuple[float, float, float] = (0.82, 0.84, 0.86),
+    num_points: int = 64,
+) -> TargetDiskGeometry:
+    """Return a double-sided disk mesh with a rim and tangent-frame crosshair."""
+    radius = float(radius)
+    if not np.isfinite(radius) or radius <= 0.0:
+        raise ValueError("Target disk radius must be finite and positive.")
+    num_points = max(12, int(num_points))
+    theta = np.linspace(0.0, 2.0 * np.pi, num_points, endpoint=False)
+    ring = np.column_stack(
+        [np.zeros_like(theta), radius * np.cos(theta), radius * np.sin(theta)]
+    )
+    vertices = np.concatenate([np.zeros((1, 3)), ring], axis=0).astype(np.float32)
+    faces = np.array(
+        [[0, 1 + index, 1 + ((index + 1) % num_points)] for index in range(num_points)],
+        dtype=np.uint32,
+    )
+    rim_segments = np.stack([ring, np.roll(ring, -1, axis=0)], axis=1).astype(
+        np.float32
+    )
+    cross_radius = 0.82 * radius
+    cross_segments = np.array(
+        [
+            [[0.0, -cross_radius, 0.0], [0.0, cross_radius, 0.0]],
+            [[0.0, 0.0, -cross_radius], [0.0, 0.0, cross_radius]],
+        ],
+        dtype=np.float32,
+    )
+    return TargetDiskGeometry(
+        vertices=vertices,
+        faces=faces,
+        rim_segments=rim_segments,
+        cross_segments=cross_segments,
+    )
+
+
+def make_sphere_surface_mesh(
+    center: np.ndarray,
+    radius: float,
+    *,
+    longitude_count: int = SURFACE_LONGITUDE_COUNT,
+    latitude_count: int = SURFACE_LATITUDE_COUNT,
+) -> SphereSurfaceMesh:
+    """Create a sparse, closed UV sphere with outward-facing triangles."""
+    center = np.asarray(center, dtype=np.float64)
+    radius = float(radius)
+    if center.shape != (3,) or not np.all(np.isfinite(center)):
+        raise ValueError("Sphere center must contain three finite coordinates.")
+    if not np.isfinite(radius) or radius <= 0.0:
+        raise ValueError("Sphere radius must be finite and positive.")
+    longitude_count = max(8, int(longitude_count))
+    latitude_count = max(5, int(latitude_count))
+
+    theta = np.linspace(0.0, 2.0 * np.pi, longitude_count, endpoint=False)
+    phi = np.linspace(0.0, np.pi, latitude_count)
+    vertices = [center + radius * np.array([0.0, 0.0, 1.0])]
+    for latitude in phi[1:-1]:
+        vertices.extend(
+            center
+            + radius
+            * np.column_stack(
+                [
+                    np.sin(latitude) * np.cos(theta),
+                    np.sin(latitude) * np.sin(theta),
+                    np.full_like(theta, np.cos(latitude)),
+                ]
+            )
+        )
+    vertices.append(center + radius * np.array([0.0, 0.0, -1.0]))
+
+    faces: list[list[int]] = []
+    first_ring = 1
+    for longitude in range(longitude_count):
+        next_longitude = (longitude + 1) % longitude_count
+        faces.append([0, first_ring + longitude, first_ring + next_longitude])
+
+    ring_count = latitude_count - 2
+    for ring in range(ring_count - 1):
+        current_start = 1 + ring * longitude_count
+        next_start = current_start + longitude_count
+        for longitude in range(longitude_count):
+            next_longitude = (longitude + 1) % longitude_count
+            a = current_start + longitude
+            b = current_start + next_longitude
+            c = next_start + longitude
+            d = next_start + next_longitude
+            faces.extend([[a, c, b], [b, c, d]])
+
+    bottom = len(vertices) - 1
+    last_ring = bottom - longitude_count
+    for longitude in range(longitude_count):
+        next_longitude = (longitude + 1) % longitude_count
+        faces.append([bottom, last_ring + next_longitude, last_ring + longitude])
+
+    return SphereSurfaceMesh(
+        vertices=np.asarray(vertices, dtype=np.float32),
+        faces=np.asarray(faces, dtype=np.uint32),
+    )
+
+
+def transform_segments(
+    segments: np.ndarray,
+    position: np.ndarray,
+    rotation: np.ndarray,
 ) -> np.ndarray:
-    """Return per-segment RGB colors from faded history to current state."""
-    num_segments = max(1, int(num_segments))
-    current = np.asarray(current_color, dtype=np.float64)
-    faded = np.asarray(faded_color, dtype=np.float64)
-    weights = np.linspace(0.0, 1.0, num_segments)[:, None] ** 1.4
-    colors = (1.0 - weights) * faded + weights * current
-    colors_u8 = _to_uint8(colors)
-    return np.repeat(colors_u8[:, None, :], 2, axis=1)
+    """Transform local line segments to world coordinates."""
+    segments = np.asarray(segments, dtype=np.float64)
+    position = np.asarray(position, dtype=np.float64)
+    rotation = np.asarray(rotation, dtype=np.float64)
+    if segments.ndim != 3 or segments.shape[1:] != (2, 3):
+        raise ValueError(f"segments must have shape (N, 2, 3), got {segments.shape}.")
+    if position.shape != (3,) or rotation.shape != (3, 3):
+        raise ValueError("position and rotation must have shapes (3,) and (3, 3).")
+    return (segments @ rotation.T + position).astype(np.float32)
+
+
+def resample_periodic_path_by_arclength(
+    t: np.ndarray,
+    positions: np.ndarray,
+    *,
+    period: float,
+    spacing: float,
+) -> np.ndarray:
+    """Resample one unique period of a trajectory at near-uniform arc length."""
+    t = np.asarray(t, dtype=np.float64)
+    positions = np.asarray(positions, dtype=np.float64)
+    period = float(period)
+    spacing = float(spacing)
+    if t.ndim != 1 or positions.shape != (len(t), 3):
+        raise ValueError("t and positions must have shapes (T,) and (T, 3).")
+    if len(t) < 2 or np.any(np.diff(t) <= 0.0):
+        raise ValueError("t must contain at least two strictly increasing samples.")
+    if not np.isfinite(period) or period <= 0.0:
+        raise ValueError("period must be finite and positive.")
+    if not np.isfinite(spacing) or spacing <= 0.0:
+        raise ValueError("spacing must be finite and positive.")
+
+    start_time = float(t[0])
+    end_time = start_time + period
+    if end_time > float(t[-1]) + 1e-9:
+        raise ValueError("The trajectory does not contain one complete period.")
+
+    mask = t < end_time
+    period_t = t[mask]
+    period_positions = positions[mask]
+    end_position = np.array(
+        [np.interp(end_time, t, positions[:, dim]) for dim in range(3)],
+        dtype=np.float64,
+    )
+    if len(period_t) == 0 or not np.isclose(period_t[-1], end_time):
+        period_t = np.concatenate([period_t, np.array([end_time])])
+        period_positions = np.concatenate(
+            [period_positions, end_position.reshape(1, 3)], axis=0
+        )
+
+    segment_lengths = np.linalg.norm(np.diff(period_positions, axis=0), axis=1)
+    cumulative = np.concatenate([np.array([0.0]), np.cumsum(segment_lengths)])
+    total_length = float(cumulative[-1])
+    if total_length <= 1e-12:
+        return period_positions[:1].copy()
+
+    target_distances = np.arange(0.0, total_length, spacing, dtype=np.float64)
+    if len(target_distances) < 2:
+        target_distances = np.array([0.0, 0.5 * total_length], dtype=np.float64)
+    beads = np.column_stack(
+        [
+            np.interp(target_distances, cumulative, period_positions[:, dim])
+            for dim in range(3)
+        ]
+    )
+    return beads.astype(np.float64)
 
 
 def make_operational_space_camera_config(
     reference_positions: np.ndarray,
-    actual_positions: np.ndarray | None = None,
+    actual_positions: np.ndarray,
+    *,
+    robot_radius: float,
+    sphere_surface: SphereSurfaceMesh | None = None,
 ) -> CameraConfig:
-    """Return a close y-z aligned camera for operational-space rollouts."""
-    points = [_ensure_3d_positions(reference_positions)]
-    if actual_positions is not None:
-        points.append(_ensure_3d_positions(actual_positions))
-    points.append(np.zeros((1, 3), dtype=np.float64))
-    all_points = np.concatenate(points, axis=0)
-
-    lower = np.min(all_points, axis=0)
-    upper = np.max(all_points, axis=0)
-    look_at = 0.5 * (lower + upper)
-    radius = max(
-        float(np.linalg.norm(upper - lower)),
-        float(np.max(np.linalg.norm(all_points - look_at, axis=1))),
-        0.12,
+    """Return the elevated frontal-oblique camera used by the paper render."""
+    reference_positions = _ensure_3d_positions(reference_positions)
+    actual_positions = _ensure_3d_positions(actual_positions)
+    robot_radius = float(robot_radius)
+    base_radius = DEFAULT_BASE_PLATE_RADIUS_SCALE * robot_radius
+    base_z = -DEFAULT_BASE_PLATE_THICKNESS
+    base_bounds = np.array(
+        [
+            [x, y, z]
+            for x in (-base_radius, base_radius)
+            for y in (-base_radius, base_radius)
+            for z in (base_z, 0.0)
+        ],
+        dtype=np.float64,
     )
-    look_at = look_at + np.array([0.0, 0.025 * radius, 0.045 * radius])
-    view_direction = _normalize(np.array([0.0, -0.58, 1.0], dtype=np.float64))
-    camera_position = look_at + 2.20 * radius * view_direction
+    point_groups = [reference_positions, actual_positions, base_bounds]
+    if sphere_surface is not None:
+        point_groups.append(np.asarray(sphere_surface.vertices, dtype=np.float64))
+    points = np.concatenate(point_groups, axis=0)
+    lower = np.min(points, axis=0)
+    upper = np.max(points, axis=0)
+    look_at = 0.5 * (lower + upper)
+    radius = max(float(np.max(np.linalg.norm(points - look_at, axis=1))), 0.1)
+
+    azimuth = np.deg2rad(DEFAULT_CAMERA_AZIMUTH_DEGREES)
+    elevation = np.deg2rad(DEFAULT_CAMERA_ELEVATION_DEGREES)
+    view_direction = np.array(
+        [
+            np.cos(elevation) * np.cos(azimuth),
+            np.cos(elevation) * np.sin(azimuth),
+            np.sin(elevation),
+        ],
+        dtype=np.float64,
+    )
+    distance = 1.15 * radius / np.sin(np.deg2rad(DEFAULT_FOV_DEGREES / 2.0))
+    camera_position = look_at + distance * view_direction
     return CameraConfig(
-        fov=36.0,
+        fov=DEFAULT_FOV_DEGREES,
         position=tuple(camera_position),
         look_at=tuple(look_at),
         up=(0.0, 0.0, 1.0),
     )
 
 
-def make_target_cross_segments(position: np.ndarray, radius: float) -> np.ndarray:
-    """Return a 3D cross marker centered at ``position``."""
-    position = np.asarray(position, dtype=np.float64)
-    if position.shape != (3,):
-        raise ValueError(f"position must have shape (3,), got {position.shape}.")
-    radius = float(radius)
-    axes = np.eye(3, dtype=np.float64)
-    return np.asarray(
-        [[position - radius * axis, position + radius * axis] for axis in axes],
-        dtype=np.float32,
-    )
+def snapshot_indices_for_times(
+    t: np.ndarray,
+    snapshot_times: tuple[float, ...] | list[float] | np.ndarray,
+) -> tuple[int, int, int, int]:
+    """Map exactly four valid, distinct times to distinct nearest frame indices."""
+    t = np.asarray(t, dtype=np.float64)
+    requested = np.asarray(snapshot_times, dtype=np.float64)
+    if t.ndim != 1 or len(t) == 0 or np.any(np.diff(t) <= 0.0):
+        raise ValueError("t must be a non-empty, strictly increasing vector.")
+    if requested.shape != (4,) or not np.all(np.isfinite(requested)):
+        raise ValueError("Exactly four finite snapshot times are required.")
+    if len(np.unique(requested)) != 4:
+        raise ValueError("Snapshot times must be distinct.")
+    if np.any(requested < t[0]) or np.any(requested > t[-1]):
+        raise ValueError(
+            f"Snapshot times must lie within [{float(t[0])}, {float(t[-1])}] s."
+        )
+    indices = tuple(int(np.argmin(np.abs(t - value))) for value in requested)
+    if len(set(indices)) != 4:
+        raise ValueError("Snapshot times must map to four distinct saved frames.")
+    return indices  # type: ignore[return-value]
 
 
-def make_target_ring_segments(
-    position: np.ndarray,
-    radius: float,
+def snapshot_filename(time_seconds: float) -> str:
+    """Return a stable filename containing a non-negative snapshot time."""
+    time_seconds = float(time_seconds)
+    if not np.isfinite(time_seconds) or time_seconds < 0.0:
+        raise ValueError("Snapshot time must be finite and non-negative.")
+    encoded_time = f"{time_seconds:05.2f}".replace(".", "p")
+    return f"snapshot_t{encoded_time}s.png"
+
+
+def crop_snapshots_to_common_square(
+    snapshot_paths: list[Path] | tuple[Path, ...],
     *,
-    num_points: int = 48,
-) -> np.ndarray:
-    """Return three orthogonal target rings centered at ``position``."""
-    position = np.asarray(position, dtype=np.float64)
-    if position.shape != (3,):
-        raise ValueError(f"position must have shape (3,), got {position.shape}.")
-    radius = float(radius)
-    num_points = max(8, int(num_points))
-    theta = np.linspace(0.0, 2.0 * np.pi, num_points, endpoint=False)
-    rings = [
-        position + radius * np.column_stack([np.cos(theta), np.sin(theta), 0 * theta]),
-        position + radius * np.column_stack([np.cos(theta), 0 * theta, np.sin(theta)]),
-        position + radius * np.column_stack([0 * theta, np.cos(theta), np.sin(theta)]),
-    ]
-    return np.concatenate(
-        [np.stack([ring, np.roll(ring, -1, axis=0)], axis=1) for ring in rings],
-        axis=0,
-    ).astype(np.float32)
+    padding_fraction: float = 0.06,
+    white_tolerance: int = 8,
+) -> tuple[int, int, int, int]:
+    """Apply one square crop containing the union of all non-white content."""
+    paths = [Path(path) for path in snapshot_paths]
+    if len(paths) != 4:
+        raise ValueError("Exactly four snapshots are required for common cropping.")
+    images = [Image.open(path).convert("RGB") for path in paths]
+    try:
+        sizes = {image.size for image in images}
+        if len(sizes) != 1:
+            raise ValueError("All snapshots must have identical source dimensions.")
+        width, height = images[0].size
+        union_mask = np.zeros((height, width), dtype=bool)
+        for image in images:
+            rgb = np.asarray(image, dtype=np.uint8)
+            union_mask |= np.max(255 - rgb.astype(np.int16), axis=2) >= white_tolerance
+        rows, cols = np.nonzero(union_mask)
+        if len(rows) == 0:
+            raise ValueError("Snapshots contain no non-white rendered content.")
+
+        x0, x1 = int(cols.min()), int(cols.max()) + 1
+        y0, y1 = int(rows.min()), int(rows.max()) + 1
+        content_side = max(x1 - x0, y1 - y0)
+        padding = int(np.ceil(padding_fraction * content_side))
+        side = content_side + 2 * padding
+        if side > min(width, height):
+            raise ValueError("Rendered content is too large for a common square crop.")
+        center_x = 0.5 * (x0 + x1)
+        center_y = 0.5 * (y0 + y1)
+        left = int(round(center_x - 0.5 * side))
+        top = int(round(center_y - 0.5 * side))
+        left = int(np.clip(left, 0, width - side))
+        top = int(np.clip(top, 0, height - side))
+        crop_box = (left, top, left + side, top + side)
+        for path, image in zip(paths, images, strict=True):
+            image.crop(crop_box).save(path, format="PNG")
+        return crop_box
+    finally:
+        for image in images:
+            image.close()
 
 
-def make_target_marker_segments(
-    position: np.ndarray,
-    normal: np.ndarray,
-    radius: float,
+def save_snapshot_strip(
+    snapshot_paths: list[Path] | tuple[Path, ...],
+    output: Path,
     *,
-    num_points: int = 40,
-) -> np.ndarray:
-    """Return a compact line-only target marker in the tangent plane."""
-    position = np.asarray(position, dtype=np.float64)
-    if position.shape != (3,):
-        raise ValueError(f"position must have shape (3,), got {position.shape}.")
-    normal = _normalize(normal)
-    radius = float(radius)
-    num_points = max(8, int(num_points))
-    y_axis, z_axis = _surface_tangent_axes(normal, np.array([0.0, 1.0, 0.0]))
+    snapshot_times: tuple[float, ...] | list[float] | np.ndarray = (
+        DEFAULT_SNAPSHOT_TIMES
+    ),
+) -> Path:
+    """Assemble four cropped PNGs into a compact, time-annotated PDF strip."""
+    paths = [Path(path) for path in snapshot_paths]
+    if len(paths) != 4:
+        raise ValueError("Exactly four snapshots are required for the PDF strip.")
+    times = np.asarray(snapshot_times, dtype=np.float64)
+    if times.shape != (4,) or not np.all(np.isfinite(times)):
+        raise ValueError("Exactly four finite snapshot times are required.")
+    style_path = Path(__file__).resolve().parents[3] / "paper.mplstyle"
+    output = Path(output)
+    output.parent.mkdir(parents=True, exist_ok=True)
 
-    theta = np.linspace(0.0, 2.0 * np.pi, num_points, endpoint=False)
-    ring = position + radius * (
-        np.cos(theta)[:, None] * y_axis + np.sin(theta)[:, None] * z_axis
-    )
-    ring_segments = np.stack([ring, np.roll(ring, -1, axis=0)], axis=1)
-    cross_radius = 0.62 * radius
-    cross_segments = np.asarray(
-        [
-            [position - cross_radius * y_axis, position + cross_radius * y_axis],
-            [position - cross_radius * z_axis, position + cross_radius * z_axis],
-        ],
-        dtype=np.float64,
-    )
-    return np.concatenate([ring_segments, cross_segments], axis=0).astype(np.float32)
+    with plt.style.context(style_path), mpl.rc_context({"savefig.bbox": None}):
+        # 254 dpi is exactly 100 pixels/cm, which prevents Matplotlib from
+        # quantizing the physical PDF page size to coarse 0.01-inch steps.
+        fig = plt.figure(
+            figsize=tuple(value / 2.54 for value in SNAPSHOT_STRIP_SIZE_CM),
+            dpi=254,
+            facecolor="white",
+        )
+        grid = fig.add_gridspec(
+            1,
+            4,
+            left=0.005,
+            right=0.995,
+            bottom=0.185,
+            top=0.995,
+            # The source panels remain square.  A small negative spacing only
+            # overlaps their unused white margins, preserving image scale while
+            # moving the rendered robots closer together.
+            wspace=SNAPSHOT_STRIP_WSPACE,
+        )
+        panel_centers = []
+        for column, path in enumerate(paths):
+            axis = fig.add_subplot(grid[0, column])
+            with Image.open(path) as image:
+                axis.imshow(np.asarray(image.convert("RGB")))
+            panel_box = axis.get_position()
+            panel_centers.append(0.5 * (panel_box.x0 + panel_box.x1))
+            axis.set_axis_off()
+
+        for panel_center, time_seconds in zip(panel_centers, times, strict=True):
+            fig.text(
+                panel_center,
+                0.12,
+                rf"$t = {time_seconds:.2f}\,\mathrm{{s}}$",
+                color=TIME_TEXT_COLOR,
+                fontsize=7,
+                ha="center",
+                va="bottom",
+            )
+
+        arrow_axis = fig.add_axes((0.01, 0.01, 0.98, 0.095), frameon=False)
+        arrow_axis.set_axis_off()
+        arrow_axis.annotate(
+            "",
+            xy=(0.92, 0.5),
+            xytext=(0.02, 0.5),
+            xycoords="axes fraction",
+            arrowprops={
+                "arrowstyle": "->",
+                "color": TIME_ARROW_COLOR,
+                "linewidth": 0.8,
+            },
+        )
+        arrow_axis.text(
+            0.93,
+            0.5,
+            "Time",
+            color=TIME_TEXT_COLOR,
+            fontsize=7,
+            ha="left",
+            va="center",
+        )
+        fig.savefig(output, facecolor="white", bbox_inches=None)
+        plt.close(fig)
+    return output
 
 
-def make_surface_mesh(
-    surface_geometry: SurfaceGeometry,
-    reference_positions: np.ndarray,
-    *,
-    resolution: int = 48,
-) -> SurfaceMesh:
-    """Create a translucent render mesh for a plane, cylinder, or sphere."""
-    reference_positions = _ensure_3d_positions(reference_positions)
-    resolution = max(8, int(resolution))
+class OperationalSpacePaperRenderer(ViserRenderer):
+    """Viser renderer with a deterministic moving target-pose disk overlay."""
 
-    if surface_geometry.surface == "plane":
-        return _make_plane_mesh(surface_geometry, reference_positions, resolution)
-    if surface_geometry.surface == "cylinder":
-        return _make_cylinder_mesh(surface_geometry, reference_positions, resolution)
-    if surface_geometry.surface == "sphere":
-        return _make_sphere_mesh(surface_geometry, resolution)
-    raise ValueError(f"Unsupported surface: {surface_geometry.surface}")
+    def __init__(
+        self,
+        *args: Any,
+        reference_positions: np.ndarray,
+        reference_wxyz: np.ndarray,
+        target_disk_radius: float,
+        sphere_surface: SphereSurfaceMesh | None = None,
+        **kwargs: Any,
+    ) -> None:
+        self._reference_positions = _ensure_3d_positions(reference_positions)
+        self._reference_wxyz = np.asarray(reference_wxyz, dtype=np.float64)
+        if self._reference_wxyz.shape != (len(self._reference_positions), 4):
+            raise ValueError("reference_wxyz must have shape (T, 4).")
+        self._target_disk_geometry = make_target_disk_geometry(target_disk_radius)
+        self._sphere_surface = sphere_surface
+        self._sphere_fill_handle: Any | None = None
+        self._sphere_mesh_handle: Any | None = None
+        self._target_disk_handle: Any | None = None
+        self._target_rim_handle: Any | None = None
+        self._target_cross_handle: Any | None = None
+        super().__init__(*args, **kwargs)
+
+    def _after_sequence_scene_built(self) -> None:
+        if self._server is None:
+            return
+        # Viser otherwise inherits its background from the browser theme.  A
+        # tiny viewport background image makes paper captures deterministically
+        # white without changing the generic renderer's interactive behavior.
+        self._server.scene.set_background_image(
+            np.full((2, 2, 3), 255, dtype=np.uint8),
+            format="png",
+        )
+        if self._sphere_surface is not None:
+            sphere = self._sphere_surface
+            self._sphere_fill_handle = self._server.scene.add_mesh_simple(
+                name="/tracking/reference_sphere_fill",
+                vertices=sphere.vertices,
+                faces=sphere.faces,
+                color=tuple(np.rint(255.0 * SURFACE_FILL_RGB).astype(int)),
+                wireframe=False,
+                opacity=SURFACE_FILL_OPACITY,
+                side="front",
+                material="standard",
+                flat_shading=False,
+                cast_shadow=False,
+                receive_shadow=False,
+            )
+            self._sphere_mesh_handle = self._server.scene.add_mesh_simple(
+                name="/tracking/reference_sphere_mesh",
+                vertices=sphere.vertices,
+                faces=sphere.faces,
+                color=tuple(np.rint(255.0 * SURFACE_MESH_RGB).astype(int)),
+                wireframe=True,
+                opacity=SURFACE_MESH_OPACITY,
+                side="front",
+                material="standard",
+                flat_shading=False,
+                cast_shadow=False,
+                receive_shadow=False,
+            )
+        position = self._reference_positions[0]
+        wxyz = self._reference_wxyz[0]
+        rotation = _quaternion_to_rotation_matrix(wxyz)
+        geometry = self._target_disk_geometry
+        self._target_disk_handle = self._server.scene.add_mesh_simple(
+            name="/tracking/current_target_disk",
+            vertices=geometry.vertices,
+            faces=geometry.faces,
+            color=tuple(np.rint(255.0 * TARGET_GREEN_RGB).astype(int)),
+            position=tuple(position),
+            wxyz=tuple(wxyz),
+            side="double",
+            material="standard",
+            flat_shading=False,
+            opacity=1.0,
+            cast_shadow=False,
+            receive_shadow=False,
+        )
+        line_color = _constant_segment_colors(1, TARGET_DARK_GREEN_RGB)[0, 0]
+        rim_colors = np.tile(
+            line_color.reshape(1, 1, 3),
+            (len(geometry.rim_segments), 2, 1),
+        )
+        cross_colors = np.tile(
+            line_color.reshape(1, 1, 3),
+            (len(geometry.cross_segments), 2, 1),
+        )
+        self._target_rim_handle = self._server.scene.add_line_segments(
+            name="/tracking/current_target_disk_rim",
+            points=transform_segments(geometry.rim_segments, position, rotation),
+            colors=rim_colors,
+            line_width=3.0,
+        )
+        self._target_cross_handle = self._server.scene.add_line_segments(
+            name="/tracking/current_target_disk_cross",
+            points=transform_segments(geometry.cross_segments, position, rotation),
+            colors=cross_colors,
+            line_width=3.2,
+        )
+
+    def _after_sequence_frame_updated(self, frame_idx: int) -> None:
+        if self._target_disk_handle is None:
+            return
+        frame_idx = int(np.clip(frame_idx, 0, len(self._reference_positions) - 1))
+        position = self._reference_positions[frame_idx]
+        wxyz = self._reference_wxyz[frame_idx]
+        rotation = _quaternion_to_rotation_matrix(wxyz)
+        self._target_disk_handle.position = tuple(position)
+        self._target_disk_handle.wxyz = tuple(wxyz)
+        if self._target_rim_handle is not None:
+            self._target_rim_handle.points = transform_segments(
+                self._target_disk_geometry.rim_segments,
+                position,
+                rotation,
+            )
+        if self._target_cross_handle is not None:
+            self._target_cross_handle.points = transform_segments(
+                self._target_disk_geometry.cross_segments,
+                position,
+                rotation,
+            )
 
 
 def render_operational_space_tracking(
     *,
     robot: Any,
     osd: Any,
-    q0: Array,
-    trajectory_config: TaskSpaceTrajectoryConfig,
+    trajectory_config: Any,
     t_traj: Array,
     q_traj: Array,
     x_traj_full: Array,
     x_des_traj_full: Array,
-    viser_renderer_cls: type[ViserRenderer] | None,
+    video_output: str | Path,
+    snapshot_paths: dict[int, Path],
     port: int = 8080,
     open_browser: bool = True,
-    robot_opacity: float = 0.35,
-    video_output: str | None = None,
     record_every_n: int = 1,
     record_client_timeout: float = 10.0,
     record_frame_timeout: float = 10.0,
-    camera_config: CameraConfig | None = None,
-    blocking: bool = True,
+    renderer_cls: type[OperationalSpacePaperRenderer] = OperationalSpacePaperRenderer,
 ) -> None:
-    """Render operational-space tracking with Viser overlays."""
-    if viser_renderer_cls is None:
-        raise ImportError(
-            "Viser is required to render this example. Install the Viser extras "
-            "or omit --render."
+    """Render the complete rollout and selected PNGs from one synchronized pass."""
+    t = np.asarray(t_traj, dtype=np.float64)
+    reference_positions = _extract_positions(osd, np.asarray(x_des_traj_full))
+    actual_positions = _extract_positions(osd, np.asarray(x_traj_full))
+    reference_wxyz = _poses_to_quaternions(osd, np.asarray(x_des_traj_full))
+    robot_radius = _mean_robot_radius(robot)
+    q_trajectory = jnp.asarray(q_traj)
+    sphere_surface = None
+    if (
+        trajectory_config.tracking == "pose"
+        and trajectory_config.orientation_primitive == "surface-following"
+        and trajectory_config.surface == "sphere"
+    ):
+        surface_geometry = make_surface_geometry_metadata(
+            osd,
+            q_trajectory[0],
+            trajectory_config,
         )
+        sphere_surface = make_sphere_surface_mesh(
+            np.asarray(surface_geometry.sphere_center, dtype=np.float64),
+            float(surface_geometry.radius),
+        )
+    bead_positions = resample_periodic_path_by_arclength(
+        t,
+        reference_positions,
+        period=float(trajectory_config.period),
+        spacing=0.22 * robot_radius,
+    )
+    bead_radii = np.full(len(bead_positions), 0.10 * robot_radius)
+    bead_colors = np.tile(TARGET_TRAIL_RGB, (len(bead_positions), 1))
+    color_config = make_paper_robot_color_config(num_points=80)
+    camera_config = make_operational_space_camera_config(
+        reference_positions,
+        actual_positions,
+        robot_radius=robot_radius,
+        sphere_surface=sphere_surface,
+    )
 
-    num_points = 80
-    color_config = make_transparent_robot_color_config(num_points, robot_opacity)
-    renderer = viser_renderer_cls(
+    renderer = renderer_cls(
         robot,
-        num_points=num_points,
+        reference_positions=reference_positions,
+        reference_wxyz=reference_wxyz,
+        target_disk_radius=1.25 * robot_radius,
+        sphere_surface=sphere_surface,
+        width=DEFAULT_VIDEO_SIZE[0],
+        height=DEFAULT_VIDEO_SIZE[1],
+        num_points=80,
         port=port,
         open_browser=open_browser,
         color_config=color_config,
         backbone_style="swept",
         cylinder_sections=64,
-        sphere_resolution=3,
+        background_color=(1.0, 1.0, 1.0),
+        material="standard",
+        flat_shading=False,
+        wireframe=False,
         cast_shadows=False,
         backbone_cast_shadow=False,
         sphere_cast_shadow=False,
+        base_plate_radius_scale=DEFAULT_BASE_PLATE_RADIUS_SCALE,
+        base_plate_thickness=DEFAULT_BASE_PLATE_THICKNESS,
     )
-
-    surface_geometry = None
-    if (
-        trajectory_config.tracking == "pose"
-        and trajectory_config.orientation_primitive == "surface-following"
-    ):
-        surface_geometry = make_surface_geometry_metadata(
-            osd=osd,
-            q0=q0,
-            config=trajectory_config,
-        )
-
-    x_traj_full_np = np.asarray(x_traj_full, dtype=np.float64)
-    x_des_traj_full_np = np.asarray(x_des_traj_full, dtype=np.float64)
-    actual_positions = _extract_positions(osd, x_traj_full_np)
-    reference_positions = _extract_positions(osd, x_des_traj_full_np)
-    if camera_config is None:
-        camera_config = make_operational_space_camera_config(
-            reference_positions,
-            actual_positions,
-        )
-
-    overlay = _OperationalSpaceTrackingOverlay(
-        osd=osd,
-        trajectory_config=trajectory_config,
-        t_traj=np.asarray(t_traj, dtype=np.float64),
-        x_traj_full=x_traj_full_np,
-        x_des_traj_full=x_des_traj_full_np,
-        surface_geometry=surface_geometry,
-        target_radius=0.50 * _mean_robot_radius(robot),
-    )
-    overlay.start(renderer)
     try:
         renderer.render_sequence(
-            ts=np.asarray(t_traj),
-            q_ts=jnp.asarray(q_traj),
+            ts=t,
+            q_ts=q_trajectory,
             playback_speed=1.0,
             autoplay=True,
-            loop=video_output is None,
-            record_path=video_output,
+            loop=False,
+            record_path=str(video_output),
             record_every_n=record_every_n,
+            stop_when_recording_done=True,
             record_client_timeout=record_client_timeout,
             record_frame_timeout=record_frame_timeout,
-            stop_when_recording_done=video_output is not None,
             camera_config=camera_config,
             color_config=color_config,
+            render_actuators=False,
+            static_spheres_positions=bead_positions,
+            static_spheres_radii=bead_radii,
+            static_spheres_colors=bead_colors,
+            snapshot_paths=snapshot_paths,
             robot_name="PCS Operational-Space Tracking",
-            blocking=blocking,
+            blocking=True,
         )
     finally:
-        overlay.stop()
-
-
-class _OperationalSpaceTrackingOverlay:
-    """Background overlay updater synchronized to ViserRenderer animation state."""
-
-    def __init__(
-        self,
-        *,
-        osd: Any,
-        trajectory_config: TaskSpaceTrajectoryConfig,
-        t_traj: np.ndarray,
-        x_traj_full: np.ndarray,
-        x_des_traj_full: np.ndarray,
-        surface_geometry: SurfaceGeometry | None,
-        target_radius: float,
-    ) -> None:
-        self._osd = osd
-        self._trajectory_config = trajectory_config
-        self._t_traj = t_traj
-        self._reference_positions = _extract_positions(osd, x_des_traj_full)
-        self._actual_positions = _extract_positions(osd, x_traj_full)
-        self._surface_geometry = surface_geometry
-        self._target_radius = max(float(target_radius), 1e-3)
-        self._reference_wxyz = (
-            _poses_to_quaternions(osd, x_des_traj_full)
-            if trajectory_config.tracking == "pose"
-            else None
-        )
-        self._target_normals = _target_marker_normals(
-            reference_positions=self._reference_positions,
-            surface_geometry=surface_geometry,
-            reference_wxyz=self._reference_wxyz,
-        )
-
-        dt = np.median(np.diff(t_traj)) if len(t_traj) > 1 else 0.01
-        self._trail_max_segments = max(
-            2,
-            int(np.ceil(trajectory_config.period / max(float(dt), 1e-6))),
-        )
-
-        self._renderer: ViserRenderer | None = None
-        self._thread: threading.Thread | None = None
-        self._stop = threading.Event()
-        self._goal_marker_handle: Any | None = None
-        self._trail_handle: Any | None = None
-
-    def start(self, renderer: ViserRenderer) -> None:
-        self._renderer = renderer
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-
-    def stop(self) -> None:
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=1.0)
-            self._thread = None
-
-    def _run(self) -> None:
-        assert self._renderer is not None
-        while (
-            not self._stop.is_set()
-            and getattr(self._renderer, "_animation_state", None) is None
-        ):
-            time.sleep(0.02)
-
-        if self._stop.is_set():
-            return
-
-        self._build_scene()
-        last_frame_idx = -1
-        while not self._stop.is_set():
-            state = getattr(self._renderer, "_animation_state", None)
-            if state is None:
-                break
-            frame_idx = int(np.clip(state.frame_idx, 0, len(self._t_traj) - 1))
-            if frame_idx != last_frame_idx:
-                self._update(frame_idx)
-                last_frame_idx = frame_idx
-            time.sleep(0.02)
-
-    def _build_scene(self) -> None:
-        assert self._renderer is not None
-        scene = self._renderer.server.scene
-
-        if self._surface_geometry is not None:
-            mesh = make_surface_mesh(
-                self._surface_geometry,
-                self._reference_positions,
-            )
-            scene.add_mesh_simple(
-                name="/tracking/surface_wire",
-                vertices=mesh.vertices,
-                faces=mesh.faces,
-                color=(150, 165, 181),
-                wireframe=True,
-                opacity=0.055,
-                side="double",
-                cast_shadow=False,
-                receive_shadow=False,
-            )
-
-        reference_segments = make_polyline_segments(self._reference_positions)
-        scene.add_line_segments(
-            name="/tracking/reference_trajectory",
-            points=reference_segments,
-            colors=_constant_segment_colors(
-                len(reference_segments),
-                (0.02, 0.38, 0.78),
-            ),
-            line_width=3.2,
-        )
-
-        initial_trail = self._trail_segments(0)
-        self._trail_handle = scene.add_line_segments(
-            name="/tracking/actual_trail",
-            points=initial_trail,
-            colors=make_fading_trail_colors(len(initial_trail)),
-            line_width=4.2,
-        )
-
-        target_marker = self._target_marker_segments(0)
-        self._goal_marker_handle = scene.add_line_segments(
-            name="/tracking/current_goal_marker",
-            points=target_marker,
-            colors=_target_marker_colors(len(target_marker)),
-            line_width=2.8,
-        )
-
-        if self._reference_wxyz is not None:
-            frame_stride = max(1, len(self._reference_positions) // 8)
-            for frame_idx in range(0, len(self._reference_positions), frame_stride):
-                scene.add_frame(
-                    name=f"/tracking/reference_frame_{frame_idx}",
-                    axes_length=0.32 * self._target_radius,
-                    axes_radius=0.010 * self._target_radius,
-                    origin_radius=0.025 * self._target_radius,
-                    position=tuple(self._reference_positions[frame_idx]),
-                    wxyz=tuple(self._reference_wxyz[frame_idx]),
-                )
-
-    def _update(self, frame_idx: int) -> None:
-        if self._goal_marker_handle is not None:
-            self._goal_marker_handle.points = self._target_marker_segments(frame_idx)
-
-        if self._trail_handle is not None:
-            trail_segments = self._trail_segments(frame_idx)
-            self._trail_handle.points = trail_segments
-            self._trail_handle.colors = make_fading_trail_colors(len(trail_segments))
-
-    def _trail_segments(self, frame_idx: int) -> np.ndarray:
-        end = min(frame_idx + 1, len(self._actual_positions))
-        start = max(0, end - self._trail_max_segments - 1)
-        return make_polyline_segments(self._actual_positions[start:end])
-
-    def _target_marker_segments(self, frame_idx: int) -> np.ndarray:
-        return make_target_marker_segments(
-            self._reference_positions[frame_idx],
-            self._target_normals[frame_idx],
-            1.8 * self._target_radius,
-        )
+        renderer.stop()
 
 
 def _extract_positions(osd: Any, x_full: np.ndarray) -> np.ndarray:
@@ -464,224 +710,48 @@ def _extract_positions(osd: Any, x_full: np.ndarray) -> np.ndarray:
     return _ensure_3d_positions(x_full[:, pos_start : pos_start + pos_dim])
 
 
-def _poses_to_quaternions(osd: Any, x_full: np.ndarray) -> np.ndarray | None:
+def _poses_to_quaternions(osd: Any, x_full: np.ndarray) -> np.ndarray:
     if osd.is_planar:
-        return None
-
-    orientations = x_full[:, : osd.n_orientation_dim]
-    if osd.rotation_representation == RotationRepresentation.QUATERNION:
-        quats = orientations
-    elif osd.rotation_representation == RotationRepresentation.ROTATION_VECTOR:
-        quats = np.array(
-            [
-                np.asarray(
-                    rotation_matrix_to_quaternion(
-                        rotation_vector_to_rotation_matrix(jnp.asarray(orientation))
-                    )
-                )
-                for orientation in orientations
-            ]
-        )
-    elif osd.rotation_representation == RotationRepresentation.ROTATION_MATRIX_6D:
-        quats = np.array(
-            [
-                np.asarray(
-                    rotation_matrix_to_quaternion(
-                        rotation_6d_to_rotation_matrix(jnp.asarray(orientation))
-                    )
-                )
-                for orientation in orientations
-            ]
-        )
-    else:
-        raise ValueError(
-            f"Unsupported rotation representation: {osd.rotation_representation}"
-        )
-
-    return np.array([_normalize(quat) for quat in quats], dtype=np.float64)
-
-
-def _target_marker_normals(
-    *,
-    reference_positions: np.ndarray,
-    surface_geometry: SurfaceGeometry | None,
-    reference_wxyz: np.ndarray | None,
-) -> np.ndarray:
-    if surface_geometry is not None:
-        return np.asarray(
-            [
-                surface_normal_at(jnp.asarray(position), surface_geometry)
-                for position in reference_positions
-            ],
-            dtype=np.float64,
-        )
-    if reference_wxyz is not None:
-        return _quaternion_x_axes(reference_wxyz)
-    return np.tile(np.array([0.0, 0.0, 1.0]), (len(reference_positions), 1))
-
-
-def _quaternion_x_axes(wxyz: np.ndarray) -> np.ndarray:
-    axes = []
-    for quat in wxyz:
-        w, x, y, z = _normalize(quat)
-        axes.append(
-            [
-                1.0 - 2.0 * (y * y + z * z),
-                2.0 * (x * y + z * w),
-                2.0 * (x * z - y * w),
-            ]
-        )
-    return np.asarray(axes, dtype=np.float64)
-
-
-def _make_plane_mesh(
-    surface_geometry: SurfaceGeometry,
-    reference_positions: np.ndarray,
-    resolution: int,
-) -> SurfaceMesh:
-    n_grid = max(8, resolution // 2)
-    normal = _normalize(surface_geometry.plane_normal)
-    y_axis, z_axis = _surface_tangent_axes(normal, surface_geometry.preferred_y)
-    plane_point = np.asarray(surface_geometry.plane_point, dtype=np.float64)
-
-    rel = reference_positions - plane_point
-    u_values = rel @ y_axis
-    v_values = rel @ z_axis
-    half_u = max(
-        0.5 * np.ptp(u_values) + 1.5 * surface_geometry.radius,
-        2.0 * surface_geometry.radius,
-    )
-    half_v = max(
-        0.5 * np.ptp(v_values) + 1.5 * surface_geometry.radius,
-        2.0 * surface_geometry.radius,
-    )
-    center = (
-        plane_point
-        + 0.5 * (np.max(u_values) + np.min(u_values)) * y_axis
-        + 0.5 * (np.max(v_values) + np.min(v_values)) * z_axis
-    )
-
-    us = np.linspace(-half_u, half_u, n_grid)
-    vs = np.linspace(-half_v, half_v, n_grid)
-    vertices = np.array(
-        [center + u * y_axis + v * z_axis for u in us for v in vs],
-        dtype=np.float32,
-    )
-    return SurfaceMesh(vertices=vertices, faces=_grid_faces(n_grid, n_grid))
-
-
-def _make_cylinder_mesh(
-    surface_geometry: SurfaceGeometry,
-    reference_positions: np.ndarray,
-    resolution: int,
-) -> SurfaceMesh:
-    axis_count = max(8, resolution // 4)
-    theta_count = max(32, resolution)
-    radius = float(surface_geometry.radius)
-    axis = _normalize(surface_geometry.cylinder_axis)
-    origin = np.asarray(surface_geometry.cylinder_origin, dtype=np.float64)
-    radial = np.asarray(surface_geometry.plane_normal, dtype=np.float64)
-    radial = radial - np.dot(radial, axis) * axis
-    if np.linalg.norm(radial) <= 1e-12:
-        radial = _fallback_axis(axis)
-    radial = _normalize(radial)
-    binormal = _normalize(np.cross(axis, radial))
-
-    axis_values = (reference_positions - origin) @ axis
-    half_axis = max(
-        0.5 * np.ptp(axis_values) + 1.5 * radius,
-        2.5 * radius,
-    )
-    axis_center = 0.5 * (np.max(axis_values) + np.min(axis_values))
-    heights = np.linspace(axis_center - half_axis, axis_center + half_axis, axis_count)
-    thetas = np.linspace(0.0, 2.0 * np.pi, theta_count, endpoint=False)
-
-    vertices = np.array(
-        [
-            origin
-            + height * axis
-            + radius * (np.cos(theta) * radial + np.sin(theta) * binormal)
-            for height in heights
-            for theta in thetas
-        ],
-        dtype=np.float32,
-    )
-    return SurfaceMesh(
-        vertices=vertices,
-        faces=_grid_faces(axis_count, theta_count, wrap_cols=True),
-    )
-
-
-def _make_sphere_mesh(
-    surface_geometry: SurfaceGeometry,
-    resolution: int,
-) -> SurfaceMesh:
-    lon_count = max(32, resolution)
-    lat_count = max(16, resolution // 2)
-    radius = float(surface_geometry.radius)
-    center = np.asarray(surface_geometry.sphere_center, dtype=np.float64)
-    x_axis = _normalize(surface_geometry.plane_normal)
-    y_axis, z_axis = _surface_tangent_axes(x_axis, surface_geometry.preferred_y)
-
-    phis = np.linspace(0.0, np.pi, lat_count)
-    thetas = np.linspace(0.0, 2.0 * np.pi, lon_count, endpoint=False)
-    vertices = np.array(
-        [
-            center
-            + radius
-            * (
-                np.cos(phi) * x_axis
-                + np.sin(phi) * (np.cos(theta) * y_axis + np.sin(theta) * z_axis)
+        raise ValueError("The paper target disk requires a spatial pose trajectory.")
+    orientations = np.asarray(x_full[:, : osd.n_orientation_dim], dtype=np.float64)
+    quaternions = []
+    for orientation in orientations:
+        if osd.rotation_representation == RotationRepresentation.QUATERNION:
+            quaternion = orientation
+        elif osd.rotation_representation == RotationRepresentation.ROTATION_VECTOR:
+            quaternion = rotation_matrix_to_quaternion(
+                rotation_vector_to_rotation_matrix(jnp.asarray(orientation))
             )
-            for phi in phis
-            for theta in thetas
+        elif osd.rotation_representation == RotationRepresentation.ROTATION_MATRIX_6D:
+            quaternion = rotation_matrix_to_quaternion(
+                rotation_6d_to_rotation_matrix(jnp.asarray(orientation))
+            )
+        else:
+            raise ValueError(
+                f"Unsupported rotation representation: {osd.rotation_representation}"
+            )
+        quaternions.append(_normalize(np.asarray(quaternion, dtype=np.float64)))
+    return np.asarray(quaternions, dtype=np.float64)
+
+
+def _quaternion_to_rotation_matrix(wxyz: np.ndarray) -> np.ndarray:
+    w, x, y, z = _normalize(np.asarray(wxyz, dtype=np.float64))
+    return np.array(
+        [
+            [1.0 - 2.0 * (y * y + z * z), 2.0 * (x * y - z * w), 2.0 * (x * z + y * w)],
+            [2.0 * (x * y + z * w), 1.0 - 2.0 * (x * x + z * z), 2.0 * (y * z - x * w)],
+            [2.0 * (x * z - y * w), 2.0 * (y * z + x * w), 1.0 - 2.0 * (x * x + y * y)],
         ],
-        dtype=np.float32,
-    )
-    return SurfaceMesh(
-        vertices=vertices,
-        faces=_grid_faces(lat_count, lon_count, wrap_cols=True),
+        dtype=np.float64,
     )
 
 
-def _grid_faces(rows: int, cols: int, *, wrap_cols: bool = False) -> np.ndarray:
-    faces: list[list[int]] = []
-    for row in range(rows - 1):
-        for col in range(cols):
-            next_col = (col + 1) % cols if wrap_cols else col + 1
-            if next_col >= cols:
-                continue
-            a = row * cols + col
-            b = row * cols + next_col
-            c = (row + 1) * cols + col
-            d = (row + 1) * cols + next_col
-            faces.append([a, c, b])
-            faces.append([b, c, d])
-    return np.asarray(faces, dtype=np.uint32)
-
-
-def _surface_tangent_axes(
-    normal: np.ndarray,
-    preferred_y: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    y_axis = np.asarray(preferred_y, dtype=np.float64)
-    y_axis = y_axis - np.dot(y_axis, normal) * normal
-    if np.linalg.norm(y_axis) <= 1e-12:
-        y_axis = _fallback_axis(normal)
-    y_axis = _normalize(y_axis)
-    z_axis = _normalize(np.cross(normal, y_axis))
-    return y_axis, z_axis
-
-
-def _ensure_3d_positions(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float64)
-    if points.ndim != 2 or points.shape[1] not in (2, 3):
-        raise ValueError(
-            f"points must have shape (N, 2) or (N, 3), got {points.shape}."
-        )
-    if points.shape[1] == 3:
-        return points
-    return np.concatenate([points, np.zeros((points.shape[0], 1))], axis=1)
+def _constant_segment_colors(
+    num_segments: int,
+    color: np.ndarray,
+) -> np.ndarray:
+    color_u8 = np.rint(255.0 * np.clip(color, 0.0, 1.0)).astype(np.uint8)
+    return np.tile(color_u8.reshape(1, 1, 3), (num_segments, 2, 1))
 
 
 def _mean_robot_radius(robot: Any) -> float:
@@ -693,48 +763,50 @@ def _mean_robot_radius(robot: Any) -> float:
     return float(np.mean(np.asarray(radius, dtype=np.float64)))
 
 
-def _constant_segment_colors(
-    num_segments: int,
-    color: tuple[float, float, float],
-) -> np.ndarray:
-    colors = _to_uint8(np.tile(np.asarray(color, dtype=np.float64), (num_segments, 1)))
-    return np.repeat(colors[:, None, :], 2, axis=1)
+def _ensure_3d_positions(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float64)
+    if points.ndim != 2 or points.shape[1] not in (2, 3):
+        raise ValueError(
+            f"points must have shape (N, 2) or (N, 3), got {points.shape}."
+        )
+    if points.shape[1] == 3:
+        return points
+    return np.concatenate([points, np.zeros((len(points), 1))], axis=1)
 
 
-def _target_marker_colors(num_segments: int) -> np.ndarray:
-    colors = np.tile(np.array([0.95, 0.30, 0.04]), (num_segments, 1))
-    if num_segments >= 2:
-        colors[-2:] = np.array([1.0, 0.08, 0.02])
-    return np.repeat(_to_uint8(colors)[:, None, :], 2, axis=1)
-
-
-def _fallback_axis(axis: np.ndarray) -> np.ndarray:
-    basis = np.eye(3)
-    candidate = basis[int(np.argmin(np.abs(basis @ axis)))]
-    return _normalize(candidate - np.dot(candidate, axis) * axis)
-
-
-def _normalize(value: Array | np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    arr = np.asarray(value, dtype=np.float64)
-    norm = np.linalg.norm(arr)
+def _normalize(value: np.ndarray, eps: float = 1e-12) -> np.ndarray:
+    value = np.asarray(value, dtype=np.float64)
+    norm = float(np.linalg.norm(value))
     if norm <= eps:
         raise ValueError("Cannot normalize a near-zero vector.")
-    return arr / norm
-
-
-def _to_uint8(colors: np.ndarray) -> np.ndarray:
-    return np.asarray(np.clip(colors, 0.0, 1.0) * 255.0, dtype=np.uint8)
+    return value / norm
 
 
 __all__ = [
-    "SurfaceMesh",
-    "make_fading_trail_colors",
+    "BASE_RGB",
+    "CORAL_RGB",
+    "DEFAULT_CAMERA_AZIMUTH_DEGREES",
+    "DEFAULT_CAMERA_ELEVATION_DEGREES",
+    "DEFAULT_SNAPSHOT_TIMES",
+    "OperationalSpacePaperRenderer",
+    "SURFACE_FILL_OPACITY",
+    "SURFACE_FILL_RGB",
+    "SURFACE_MESH_OPACITY",
+    "SURFACE_MESH_RGB",
+    "SphereSurfaceMesh",
+    "TARGET_DARK_GREEN_RGB",
+    "TARGET_GREEN_RGB",
+    "TARGET_TRAIL_RGB",
+    "TargetDiskGeometry",
+    "crop_snapshots_to_common_square",
     "make_operational_space_camera_config",
-    "make_polyline_segments",
-    "make_surface_mesh",
-    "make_target_cross_segments",
-    "make_target_marker_segments",
-    "make_target_ring_segments",
-    "make_transparent_robot_color_config",
+    "make_paper_robot_color_config",
+    "make_sphere_surface_mesh",
+    "make_target_disk_geometry",
     "render_operational_space_tracking",
+    "resample_periodic_path_by_arclength",
+    "save_snapshot_strip",
+    "snapshot_filename",
+    "snapshot_indices_for_times",
+    "transform_segments",
 ]

@@ -17,9 +17,10 @@ import atexit
 import threading
 import time
 import webbrowser
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -1136,11 +1137,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 np.asarray(static_spheres_positions),
                 np.asarray(
                     static_spheres_radii
-                    or np.ones(len(static_spheres_positions)) * 0.02
+                    if static_spheres_radii is not None
+                    else np.ones(len(static_spheres_positions)) * 0.02
                 ),
                 np.asarray(
                     static_spheres_colors
-                    or np.ones((len(static_spheres_positions), 3)) * 0.5
+                    if static_spheres_colors is not None
+                    else np.ones((len(static_spheres_positions), 3)) * 0.5
                 ),
             )
 
@@ -1251,11 +1254,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 np.asarray(static_spheres_positions),
                 np.asarray(
                     static_spheres_radii
-                    or np.ones(len(static_spheres_positions)) * 0.02
+                    if static_spheres_radii is not None
+                    else np.ones(len(static_spheres_positions)) * 0.02
                 ),
                 np.asarray(
                     static_spheres_colors
-                    or np.ones((len(static_spheres_positions), 3)) * 0.5
+                    if static_spheres_colors is not None
+                    else np.ones((len(static_spheres_positions), 3)) * 0.5
                 ),
             )
 
@@ -1275,6 +1280,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     time.sleep(0.1)
             except KeyboardInterrupt:
                 pass
+
+    def _after_sequence_scene_built(self) -> None:
+        """Hook for subclasses to add deterministic sequence-only geometry."""
+
+    def _after_sequence_frame_updated(self, frame_idx: int) -> None:
+        """Hook for subclasses to update sequence-only geometry before capture."""
 
     def render_sequence(
         self,
@@ -1302,6 +1313,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         dynamic_spheres_positions: Array | None = None,
         dynamic_spheres_radii: Array | None = None,
         dynamic_spheres_colors: Array | None = None,
+        snapshot_paths: Mapping[int, str | Path] | None = None,
         blocking: bool = True,
         plot_configurations: bool = False,
         plot_actuator_positions: bool = False,
@@ -1337,6 +1349,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             dynamic_spheres_positions: Time-varying sphere positions
             dynamic_spheres_radii: Time-varying sphere radii
             dynamic_spheres_colors: Time-varying sphere colors
+            snapshot_paths: Mapping from zero-based frame indices to PNG paths.
+                Requested snapshots use the same synchronized browser render as video.
             blocking: If True, block until viewer closes
             plot_configurations: If True, add configuration vs time plot to GUI
             plot_actuator_positions: If True, add actuator coordinate plot to GUI
@@ -1344,9 +1358,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
                          for custom plotly figures to add to the GUI
             robot_name: Name for plot titles
         """
-        if self._server is None:
-            self.start()
-
         ts = np.asarray(ts)
         q_ts = jnp.asarray(q_ts)
         record_every_n = max(1, int(record_every_n))
@@ -1365,6 +1376,37 @@ class ViserRenderer(BaseSoftRobotRenderer):
             q_ts = q_ts[None, :, :]  # (1, T, DOF)
 
         num_robots, num_frames, num_dofs = q_ts.shape
+        del num_dofs
+
+        normalized_snapshot_paths: dict[int, Path] = {}
+        if snapshot_paths is not None:
+            for raw_frame_idx, raw_path in snapshot_paths.items():
+                frame_idx = int(raw_frame_idx)
+                if frame_idx != raw_frame_idx:
+                    raise ValueError(
+                        f"Snapshot frame index must be an integer, got {raw_frame_idx!r}."
+                    )
+                if frame_idx < 0 or frame_idx >= num_frames:
+                    raise ValueError(
+                        "Snapshot frame index must be within the rendered sequence; "
+                        f"got {frame_idx} for {num_frames} frames."
+                    )
+                try:
+                    path = Path(raw_path)
+                except TypeError as exc:
+                    raise ValueError(
+                        f"Snapshot output must be a filesystem path, got {raw_path!r}."
+                    ) from exc
+                if path.suffix.lower() != ".png":
+                    raise ValueError(f"Snapshot output must be a PNG path, got {path}.")
+                normalized_snapshot_paths[frame_idx] = path
+            if len(set(normalized_snapshot_paths.values())) != len(
+                normalized_snapshot_paths
+            ):
+                raise ValueError("Snapshot output paths must be unique.")
+
+        if self._server is None:
+            self.start()
 
         if multi_robot_layout == "overlay":
             offset_source = jnp.zeros((num_robots, 3))
@@ -1438,11 +1480,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 np.asarray(static_spheres_positions),
                 np.asarray(
                     static_spheres_radii
-                    or np.ones(len(static_spheres_positions)) * 0.02
+                    if static_spheres_radii is not None
+                    else np.ones(len(static_spheres_positions)) * 0.02
                 ),
                 np.asarray(
                     static_spheres_colors
-                    or np.ones((len(static_spheres_positions), 3)) * 0.5
+                    if static_spheres_colors is not None
+                    else np.ones((len(static_spheres_positions), 3)) * 0.5
                 ),
             )
 
@@ -1452,13 +1496,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 np.asarray(dynamic_spheres_positions),
                 np.asarray(
                     dynamic_spheres_radii
-                    or np.ones(len(dynamic_spheres_positions)) * 0.02
+                    if dynamic_spheres_radii is not None
+                    else np.ones(len(dynamic_spheres_positions)) * 0.02
                 ),
                 np.asarray(
                     dynamic_spheres_colors
-                    or np.ones((len(dynamic_spheres_positions), 3)) * 0.2
+                    if dynamic_spheres_colors is not None
+                    else np.ones((len(dynamic_spheres_positions), 3)) * 0.2
                 ),
             )
+
+        self._after_sequence_scene_built()
+        self._after_sequence_frame_updated(0)
 
         self._setup_camera(camera_curves, camera_config)
         self._setup_lighting()
@@ -1489,6 +1538,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 ),
                 color_config=cfg,
             )
+            self._after_sequence_frame_updated(frame_idx)
 
         # Setup GUI controls
         self._setup_playback_gui(on_frame_seek=seek_frame)
@@ -1522,16 +1572,20 @@ class ViserRenderer(BaseSoftRobotRenderer):
         print(f"[ViserRenderer] Animation at {self.url}")
         print(f"[ViserRenderer] {num_frames} frames, {num_robots} robot(s)")
 
-        # Video recording setup
+        # Browser capture setup for video and lossless PNG snapshots.
         video_writer = None
         record_client = None
-        if record_path is not None:
+        captured_snapshot_indices: set[int] = set()
+        capture_requested = record_path is not None or bool(normalized_snapshot_paths)
+        if capture_requested:
             record_client = self._wait_for_recording_client(record_client_timeout)
             if record_client is None:
                 raise RuntimeError(
-                    "Viser video recording requires a connected browser client. "
+                    "Viser frame capture requires a connected browser client. "
                     "Open the Viser URL or enable browser auto-open."
                 )
+
+        if record_path is not None:
             fps = 1.0 / np.mean(np.diff(ts)) if len(ts) > 1 else 30.0
             video_writer = FFmpegVideoWriter(
                 record_path,
@@ -1542,14 +1596,35 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 video_config=video_config,
             )
             print(f"[ViserRenderer] Recording to {record_path}")
-            self._record_viser_frame(
-                video_writer,
+
+        def capture_frame(frame_idx: int, *, write_video: bool) -> None:
+            nonlocal record_client
+            snapshot_path = normalized_snapshot_paths.get(frame_idx)
+            write_snapshot = (
+                snapshot_path is not None and frame_idx not in captured_snapshot_indices
+            )
+            if not write_video and not write_snapshot:
+                return
+
+            frame, record_client = self._capture_viser_frame(
                 record_client,
                 timeout=record_frame_timeout,
             )
+            if write_video:
+                assert video_writer is not None
+                video_writer.write(frame)
+            if write_snapshot:
+                assert snapshot_path is not None
+                from PIL import Image
+
+                snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+                Image.fromarray(frame).save(snapshot_path, format="PNG")
+                captured_snapshot_indices.add(frame_idx)
+                print(f"[ViserRenderer] Snapshot saved: {snapshot_path}")
 
         # Animation loop
         try:
+            capture_frame(0, write_video=video_writer is not None)
             while self._running:
                 with self._lock:
                     state = self._animation_state
@@ -1579,23 +1654,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                 seek_frame(next_idx)
                                 recording_final_frame = (
                                     stop_when_recording_done
-                                    and video_writer is not None
+                                    and capture_requested
                                     and not state.loop
                                     and next_idx >= state.num_frames - 1
                                 )
 
-                                # Record frame
-                                if video_writer is not None and (
+                                write_video = video_writer is not None and (
                                     next_idx % record_every_n == 0
                                     or recording_final_frame
-                                ):
-                                    record_client = self._record_viser_frame(
-                                        video_writer,
-                                        record_client,
-                                        timeout=record_frame_timeout,
-                                    )
+                                )
+                                capture_frame(next_idx, write_video=write_video)
 
-                                if video_writer is not None and recording_final_frame:
+                                if recording_final_frame:
                                     break
 
                     # Update GUI
@@ -1685,22 +1755,21 @@ class ViserRenderer(BaseSoftRobotRenderer):
             time.sleep(0.05)
         return None
 
-    def _record_viser_frame(
+    def _capture_viser_frame(
         self,
-        video_writer: FFmpegVideoWriter,
         client: Any | None,
         *,
         timeout: float,
-    ) -> Any | None:
-        """Capture one Viser frame and return the client used."""
+    ) -> tuple[np.ndarray, Any]:
+        """Capture one synchronized RGB frame and return its active client."""
         if self._server is None:
-            return client
+            raise RuntimeError("Viser server is not running.")
 
         clients = list(self._server.get_clients().values())
         if clients and client not in clients:
             client = clients[0]
         if client is None:
-            return client
+            raise RuntimeError("No connected Viser client is available for capture.")
 
         result: dict[str, Any] = {}
         error: dict[str, BaseException] = {}
@@ -1719,19 +1788,24 @@ class ViserRenderer(BaseSoftRobotRenderer):
         thread.join(timeout=max(0.0, float(timeout)))
         if thread.is_alive():
             raise RuntimeError(
-                "Timed out while capturing a Viser video frame. Make sure the "
+                "Timed out while capturing a Viser frame. Make sure the "
                 "Viser browser tab is open, foregrounded, and connected."
             )
         if "exception" in error:
-            raise RuntimeError("Failed to capture a Viser video frame.") from error[
+            raise RuntimeError("Failed to capture a Viser frame.") from error[
                 "exception"
             ]
 
         frame = result.get("frame")
         if frame is None:
-            raise RuntimeError("Viser did not return a video frame.")
-        video_writer.write(np.asarray(frame, dtype=np.uint8))
-        return client
+            raise RuntimeError("Viser did not return a frame.")
+        rgb = np.asarray(frame, dtype=np.uint8)
+        expected_shape = (self.height, self.width, 3)
+        if rgb.shape != expected_shape:
+            raise RuntimeError(
+                f"Viser returned frame shape {rgb.shape}; expected {expected_shape}."
+            )
+        return rgb, client
 
     def _setup_playback_gui(
         self,
