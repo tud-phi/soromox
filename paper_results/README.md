@@ -19,6 +19,18 @@ or generated artifacts under `data/`, and publication figures/videos under
 outputs. Trained model checkpoints are stored with Git LFS; section data and
 paper figures remain regular Git objects unless their size requires otherwise.
 
+The model-based-control application composite is regenerated directly from the
+canonical Section Vc data and operational snapshots. Control-gain optimization
+remains a separate Section Vd figure:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/code/plot_model_based_control.py
+```
+
+The command writes `model_based_control.pdf` and a matching SVG under the
+Section Vc `outputs/` directory, and requires `--force` before replacing either
+existing output.
+
 ## Shared conventions
 
 The standardized Matplotlib plotters use the base publication settings in

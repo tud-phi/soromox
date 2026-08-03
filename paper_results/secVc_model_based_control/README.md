@@ -21,6 +21,16 @@ and renderers consume saved NPZ data and write only to their case `outputs/`
 directory by default. The case READMEs list complete reproduction commands and
 artifact inventories.
 
+Compose the full Section Vc application figure from the canonical comparison
+data and operational snapshots with:
+
+```bash
+uv run --extra paper_results python paper_results/secVc_model_based_control/code/plot_model_based_control.py
+```
+
+The command writes `outputs/model_based_control.pdf` and a matching SVG; pass
+`--force` to replace existing outputs.
+
 ## Evaluation metrics
 
 Generate the complete human-readable report and its machine-readable JSON from
@@ -42,9 +52,10 @@ path may be supplied after `--json-output`.
 
 The committed Section Vc paper figures are:
 
+- `outputs/model_based_control.pdf`
 - `configuration_space_comparison/outputs/configuration_space_comparison.pdf`
 - `configuration_space_comparison/outputs/regulation_tracking_rmse.pdf`
 - `operational_space_impedance_control/outputs/operational_space_impedance_control.pdf`
 
-Both use the shared `paper_results/paper.mplstyle` publication settings and the
+All use the shared `paper_results/paper.mplstyle` publication settings and the
 regenerated Section Vc trajectory data.
