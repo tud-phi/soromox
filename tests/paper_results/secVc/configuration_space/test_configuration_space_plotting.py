@@ -125,6 +125,28 @@ def test_canonical_figure_has_expected_layout(monkeypatch):
     assert desired_line.get_label() == "Desired"
     assert desired_line.get_linewidth() == 2.0
     assert desired_line.get_zorder() == 5
+    np.testing.assert_allclose(
+        fig.axes[2].lines[0].get_ydata(),
+        1.0 + np.array([0.0, 0.1, 0.2, 0.3]),
+    )
+    np.testing.assert_allclose(
+        fig.axes[2].lines[1].get_ydata(),
+        1.0 + 0.9 * np.array([0.0, 0.1, 0.2, 0.3]),
+    )
+    plt.close(fig)
+
+
+def test_tracking_errors_remain_configuration_displacements(monkeypatch):
+    monkeypatch.setattr(plotter.shutil, "which", lambda _: None)
+    run = comparison_run()
+    group = run.plot_groups[0]
+    fig, axes = plt.subplots(3, 1)
+
+    plotter.plot_tracking_axes(run, group, axes, errors=True)
+
+    expected_error = np.array([0.0, 0.01, 0.02, 0.03])
+    np.testing.assert_allclose(axes[2].lines[0].get_ydata(), expected_error)
+    assert axes[2].get_ylabel().startswith(r"$e_{\sigma_x}$")
     plt.close(fig)
 
 

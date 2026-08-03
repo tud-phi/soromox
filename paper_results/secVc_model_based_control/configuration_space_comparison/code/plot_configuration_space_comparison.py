@@ -40,6 +40,9 @@ CONTROLLER_LINESTYLES = {
     "Computed Torque": "-",
     "Mixed State Feedback": "-.",
 }
+PHYSICAL_STRAIN_OFFSETS = {
+    r"$\sigma_x$": 1.0,
+}
 
 
 def configure_matplotlib() -> None:
@@ -116,6 +119,11 @@ def _group_results(
     }
 
 
+def physical_strain_values(values: np.ndarray, strain_name: str) -> np.ndarray:
+    """Convert stored configuration displacements to plotted physical strains."""
+    return np.asarray(values) + PHYSICAL_STRAIN_OFFSETS.get(strain_name, 0.0)
+
+
 def plot_tracking_axes(
     run: ComparisonRun,
     group: PlotGroup,
@@ -135,7 +143,7 @@ def plot_tracking_axes(
         if not errors:
             ax.plot(
                 t,
-                q_des[:, strain_idx],
+                physical_strain_values(q_des[:, strain_idx], strain_name),
                 color="black",
                 linestyle="--",
                 linewidth=2.0,
@@ -148,7 +156,9 @@ def plot_tracking_axes(
             values = (
                 results["metrics"]["tracking_error"][:, strain_idx]
                 if errors
-                else results["q"][:, strain_idx]
+                else physical_strain_values(
+                    results["q"][:, strain_idx], strain_name
+                )
             )
             ax.plot(
                 results["t"],
