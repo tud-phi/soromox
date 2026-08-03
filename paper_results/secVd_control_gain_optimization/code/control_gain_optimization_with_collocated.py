@@ -1,4 +1,5 @@
 import argparse
+import math
 import pickle
 import time
 from pathlib import Path
@@ -46,6 +47,16 @@ def parse_args() -> argparse.Namespace:
         help="Directory for optional diagnostic figures.",
     )
     parser.add_argument("--num-iters", type=int, default=3)
+    parser.add_argument(
+        "--integral-error-saturation-scale",
+        type=float,
+        default=1e-2,
+        help=(
+            "Tendon-length error scale in meters for tanh integral-error "
+            "saturation. Gamma is its reciprocal (default: 0.01 m, i.e. "
+            "gamma = 100 1/m)."
+        ),
+    )
     parser.add_argument("--save-figures", action="store_true")
     parser.add_argument("--no-show", action="store_true")
     parser.add_argument("--no-render", action="store_true")
@@ -58,6 +69,13 @@ RESULT_DIR = ARGS.result_dir.resolve()
 OUTPUTS_DIR = ARGS.output_dir.resolve()
 if ARGS.num_iters < 1:
     raise ValueError("--num-iters must be at least 1")
+if (
+    not math.isfinite(ARGS.integral_error_saturation_scale)
+    or ARGS.integral_error_saturation_scale <= 0.0
+):
+    raise ValueError(
+        "--integral-error-saturation-scale must be finite and strictly positive"
+    )
 for output_name in ("optimization_results.mat", "animation_data.pkl"):
     output_path = RESULT_DIR / output_name
     if output_path.exists() and not ARGS.force:
@@ -238,12 +256,20 @@ Kp = 5e1 * jnp.ones((num_actuators,))
 Ki = 5e0 * jnp.ones((num_actuators,))
 Kd = 1e0 * jnp.ones((num_actuators,))
 
+# The committed legacy trajectories start from tendon lengths of -100 mm and
+# target [-85.49, -96.41, -100.05] mm. The largest initial error is 14.51 mm,
+# whereas all other observed initial/transient errors remain below 3.85 mm.
+# A 10 mm error scale therefore limits integral accumulation during the large
+# reference step while leaving the ordinary error regime nearly linear.
+tendon_error_saturation_scale = ARGS.integral_error_saturation_scale  # [m]
+tendon_error_gamma = 1.0 / tendon_error_saturation_scale  # [1/m]
+
 pid_control = PIDControl(
     Kp=Kp,
     Ki=Ki,
     Kd=Kd,
     saturation_fn="tanh",
-    gamma=10.0,
+    gamma=tendon_error_gamma,
 )
 
 controller = PotentialCompensationRegulator(
