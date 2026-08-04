@@ -80,7 +80,7 @@ def assign_gvs_runtime_arrays(
         )
     if max_num_gauss_points < 5:
         raise ValueError(
-            f"max_num_gauss_points must be greater than 5, got {max_num_gauss_points}."
+            f"max_num_gauss_points must be at least 5, got {max_num_gauss_points}."
         )
 
     _set_model_field(model, "max_num_gauss_points", max_num_gauss_points)

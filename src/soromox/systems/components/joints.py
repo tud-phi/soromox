@@ -69,7 +69,15 @@ class JointParams(BaseSystemParams):
     damping: Array
 
     def __check_init__(self) -> None:
+        object.__setattr__(self, "stiffness", jnp.asarray(self.stiffness))
+        object.__setattr__(self, "damping", jnp.asarray(self.damping))
         self.validate()
+
+    def _normalize_replacement(self, name: str, value: object) -> object:
+        """Normalize replacement joint-matrix values to JAX arrays."""
+        if name in ("stiffness", "damping"):
+            return jnp.asarray(value)
+        return value
 
     def validate(self) -> None:
         """Validate joint matrix shapes, finiteness, and symmetry.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 import jax.numpy as jnp
+from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 from soromox.systems.components import ContinuumLinkParams, JointParams
 from soromox.systems.params import BaseSoftRobotParams, validate_quaternion_base_pose
@@ -102,6 +103,18 @@ class GVSParams(BaseSoftRobotParams):
                 f"{expected_cross_section_shape}, got "
                 f"{self.link.cross_section.coefficients.shape}."
             )
+        for index, segment in enumerate(structure.segments):
+            count = sum(segment.link.cross_section_profile_parameter_counts)
+            active_coefficients = self.link.cross_section.coefficients[index, :count]
+            try:
+                valid_dimensions = bool(jnp.all(active_coefficients > 0.0))
+            except (ConcretizationTypeError, TracerBoolConversionError):
+                continue
+            if not valid_dimensions:
+                raise ValueError(
+                    "Active cross-section coefficients must be strictly positive "
+                    f"for GVS segment {index}."
+                )
 
         joint_dofs = [
             Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
@@ -122,7 +135,11 @@ class GVSParams(BaseSoftRobotParams):
                 )
             )
         required_max_dof = max(joint_dofs + link_dofs)
-        max_dof = required_max_dof if structure.max_dof is None else structure.max_dof
+        max_dof = (
+            int(self.link.stiffness.shape[-1])
+            if structure.max_dof is None
+            else structure.max_dof
+        )
         if max_dof < required_max_dof:
             raise ValueError(
                 f"max_dof={max_dof} is smaller than required DOF {required_max_dof}."

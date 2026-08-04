@@ -19,6 +19,7 @@ from soromox.systems.components import (
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData
 from soromox.systems.gvs.construction import (
+    _resolve_structure,
     material_operators_from_params,
     params_and_structure_from_segments,
 )
@@ -248,7 +249,7 @@ class GVS(SoftRobot):
             raise TypeError("params must be a GVSParams instance.")
         if not isinstance(structure, GVSStructure):
             raise TypeError("structure must be a GVSStructure instance.")
-        params.validate_against_structure(structure)
+        structure = _resolve_structure(params, structure)
         super().__init__(base_pose=params.base_pose, **kwargs)
         self.params = params
         self.structure = structure
@@ -400,7 +401,7 @@ class GVS(SoftRobot):
         Returns:
             A tuple ``(geometry, dimensions)``. ``geometry`` is the integer
             :class:`CrossSectionGeometry` tag. ``dimensions`` contains radius
-            for a circular section, width and height for a rectangle, or
+            for a circular section, height and width for a rectangle, or
             semi-major and semi-minor radii for an ellipse.
 
         Raises:
@@ -422,7 +423,7 @@ class GVS(SoftRobot):
             height = Link.interpolate_param(x, h_params[0], h_params[1])
             width = Link.interpolate_param(x, w_params[0], w_params[1])
             tag = jnp.asarray(CrossSectionGeometry.RECTANGULAR, dtype=jnp.int32)
-            return tag, jnp.array([width, height])
+            return tag, jnp.array([height, width])
         a_params = self.semi_major_params[segment_idx]
         b_params = self.semi_minor_params[segment_idx]
         a_val = Link.interpolate_param(x, a_params[0], a_params[1])

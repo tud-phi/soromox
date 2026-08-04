@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from jax import Array
+from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 from soromox.systems.params import BaseSystemParams
 
@@ -50,16 +51,34 @@ class IsotropicMaterialParams(BaseSystemParams):
     material_damping_coefficient: Array
 
     def __check_init__(self) -> None:
+        for name in (
+            "young_modulus",
+            "shear_modulus",
+            "material_damping_coefficient",
+        ):
+            object.__setattr__(self, name, jnp.asarray(getattr(self, name)))
         self.validate()
 
+    def _normalize_replacement(self, name: str, value: object) -> object:
+        """Normalize replacement material values to JAX arrays."""
+        if name in (
+            "young_modulus",
+            "shear_modulus",
+            "material_damping_coefficient",
+        ):
+            return jnp.asarray(value)
+        return value
+
     def validate(self) -> None:
-        """Validate material field dimensionality.
+        """Validate material field dimensionality and physical values.
 
         Returns:
             None.
 
         Raises:
-            ValueError: If any material field has more than one dimension.
+            ValueError: If any material field has more than one dimension;
+                either modulus is non-finite or not strictly positive; or the
+                material damping coefficient is non-finite or negative.
         """
         for name in (
             "young_modulus",
@@ -69,6 +88,26 @@ class IsotropicMaterialParams(BaseSystemParams):
             value = jnp.asarray(getattr(self, name))
             if value.ndim > 1:
                 raise ValueError(f"{name} must be scalar or one-dimensional.")
+            if value.ndim == 1 and value.shape[0] < 1:
+                raise ValueError(f"{name} must not be empty.")
+            try:
+                finite = bool(jnp.all(jnp.isfinite(value)))
+                valid_domain = bool(
+                    jnp.all(value >= 0.0)
+                    if name == "material_damping_coefficient"
+                    else jnp.all(value > 0.0)
+                )
+            except (ConcretizationTypeError, TracerBoolConversionError):
+                continue
+            if not finite:
+                raise ValueError(f"{name} must contain only finite values.")
+            if not valid_domain:
+                qualifier = (
+                    "nonnegative"
+                    if name == "material_damping_coefficient"
+                    else "strictly positive"
+                )
+                raise ValueError(f"{name} must be {qualifier}.")
 
     def broadcast(self, num_links: int) -> IsotropicMaterialParams:
         """Broadcast scalar material fields to one value per link.

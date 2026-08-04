@@ -367,8 +367,8 @@ def _cross_section_ring_offsets(
     params = np.asarray(params, dtype=np.float64).reshape(-1)
     eps = 1e-6
     if geom_tag == CrossSectionGeometry.RECTANGULAR:
-        width = max(float(params[0]) if params.size else 0.0, eps)
-        height = max(float(params[1]) if params.size > 1 else 0.0, eps)
+        height = max(float(params[0]) if params.size else 0.0, eps)
+        width = max(float(params[1]) if params.size > 1 else 0.0, eps)
         return np.array(
             [
                 [0.0, -0.5 * width, -0.5 * height],
@@ -937,8 +937,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 return "cylinder", np.array([radius, radius, 1.0]), True, True
             return "sphere", np.array([radius, radius, radius]), False, False
         if geom_tag == CrossSectionGeometry.RECTANGULAR:
-            width = max(float(params[0]) if params.size else 0.0, eps)
-            height = max(float(params[1]) if params.size > 1 else 0.0, eps)
+            height = max(float(params[0]) if params.size else 0.0, eps)
+            width = max(float(params[1]) if params.size > 1 else 0.0, eps)
             if mode == "swept":
                 return "box", np.array([width, height, 1.0]), True, True
             depth = max(width, height)
@@ -1153,8 +1153,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         elif geom_type == CrossSectionGeometry.RECTANGULAR:
                             if params.size < 2:
                                 continue
-                            width = max(float(params[0]), 1e-6)
-                            height = max(float(params[1]), 1e-6)
+                            height = max(float(params[0]), 1e-6)
+                            width = max(float(params[1]), 1e-6)
                             depth = max(width, height)
                             box = _make_box_centered(
                                 curve[p],

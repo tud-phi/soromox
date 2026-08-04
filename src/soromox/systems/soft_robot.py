@@ -262,6 +262,10 @@ class SoftRobot(DynamicalSystem):
             - CrossSectionGeometry.CIRCULAR
             - CrossSectionGeometry.RECTANGULAR
             - CrossSectionGeometry.ELLIPTICAL
+
+        Rectangular parameters use ``[height, width]`` order, matching
+        :func:`soromox.systems.components.section_properties`. Elliptical
+        parameters use ``[semi_major, semi_minor]`` order.
         """
         ...
 
