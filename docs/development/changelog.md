@@ -9,9 +9,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Shared continuum-component APIs under `soromox.systems.components` for link,
+  joint, cross-section, and isotropic-material parameters and specifications.
+- Common `from_links`, `params_from_links`, `update_link_params`,
+  `link_matrices_from_material`, and `with_isotropic_material` workflows for
+  PCS and PlanarPCS, with the same material/update APIs on GVS.
+- GVS joint stiffness and damping parameters that participate in global matrix
+  assembly, plus `update_joint_params` for immutable joint-local updates.
+- Differentiable unit-response mappings from Young's modulus, shear modulus,
+  and material damping to canonical generalized link matrices.
+- Continuum-component, parameter-update, material-optimization, and
+  [parameter-API migration](../user-guide/parameter-api-migration.md)
+  documentation with complete PCS and GVS examples.
+
 ### Changed
 
+- Harmonized PCS, PlanarPCS, and GVS around nested `params.link` ownership,
+  descriptive public construction names, shared link/joint specifications, and
+  canonical per-link generalized stiffness and damping matrices.
+- Moved shared `LinkSpec` and `JointSpec` functionality out of the GVS package;
+  GVS now retains only segment, strain-basis, quadrature, and runtime concepts
+  specific to variable-strain mechanics.
+- Simplified cross-section parameters to coefficient arrays populated by link
+  factories; constant values and `LinearProfile` cover constant and linearly
+  varying geometry without a profile-parameter class hierarchy.
+- Made isotropic material parameters caller-owned construction/optimization
+  PyTrees instead of duplicating material and generalized-matrix
+  representations inside system parameters.
+- Made geometry updates refresh material unit-response operators without
+  silently replacing explicitly supplied canonical matrices.
+
 ### Fixed
+
+- Included stored GVS joint stiffness and damping in global stiffness and
+  damping assembly.
+- Migrated examples, benchmarks, and paper case studies to the harmonized PCS
+  and GVS parameter APIs.
+
+### Breaking changes
+
+- Removed flat PCS and PlanarPCS link/material fields. Access link data through
+  `params.link`, and construct systems with `from_links` or
+  `params_from_links`.
+- Removed the global PCS damping matrix and cross-link damping coupling. Supply
+  one generalized damping block per link.
+- Removed `GVSLinkParams` and GVS-local exports of shared link, joint, and
+  cross-section specifications. Import shared types from `soromox.systems` or
+  `soromox.systems.components`.
+- Replaced abbreviated GVS construction fields such as `E`, `nu`, `rho`,
+  `eta`, `L`, `r_i`, and `r_f` with descriptive material, geometry, and profile
+  arguments.
+- Moved `reference_strain` from `StrainBasisSpec` to `LinkSpec`; basis specs now
+  describe only the selected strains and basis order.
+- No compatibility aliases are provided. See the compact
+  [PCS/GVS parameter migration guide](../user-guide/parameter-api-migration.md)
+  for direct replacements.
 
 ## [0.2.1] - 2026-08-03
 
