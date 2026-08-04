@@ -16,7 +16,13 @@ from soromox.rendering import ISupportViserRenderer, ISupportVisualConfig
 from soromox.rendering.color_config import validate_rgb
 from soromox.rendering.isupport.viser_renderer import ISupportLiveModeController
 from soromox.rendering.viser_renderer import SceneHandles
-from soromox.systems import ISupport, ISupportParams, ISupportStructure
+from soromox.systems import (
+    PCS,
+    ISupport,
+    ISupportParams,
+    ISupportStructure,
+    LinkSpec,
+)
 
 
 class _FakeHandle:
@@ -104,19 +110,22 @@ def _make_robot(*, connectors: bool = True) -> ISupport:
         radii = jnp.array([0.03, 0.03])
         densities = jnp.array([1000.0, 1000.0])
     num_physical_segments = len(rigid_segment_selector)
+    links = [
+        LinkSpec.circular(
+            length=float(lengths[index]),
+            radius=float(radii[index]),
+            density=float(densities[index]),
+            young_modulus=2.0e3,
+            shear_modulus=1.0e3,
+            damping=1.0e-3 * jnp.eye(6),
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for index in range(num_physical_segments)
+    ]
     params = ISupportParams(
+        link=PCS.params_from_links(links).link,
         base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        length=lengths,
-        radius=radii,
-        density=densities,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=2.0e3 * jnp.ones((num_physical_segments,)),
-        shear_modulus=1.0e3 * jnp.ones((num_physical_segments,)),
-        damping_matrix=1.0e-3 * jnp.eye(6 * num_physical_segments),
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            num_physical_segments,
-        ),
         chamber_inner_radius=jnp.array([0.005, 0.005]),
         chamber_outer_radius=jnp.array([0.00779, 0.00779]),
         chamber_distance=jnp.array([0.020, 0.020]),

@@ -6,9 +6,9 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.systems.components import ContinuumLinkParams, CrossSectionParams
 from soromox.systems.pcs.params import ISupportParams
 from soromox.systems.pcs.structures import ISupportStructure, PCSStructure
-from soromox.utils.array_math import blk_diag
 
 from .pcs import PCS
 
@@ -91,7 +91,7 @@ def _normalize_structure_for_params(
     params: ISupportParams,
     structure: ISupportStructure,
 ) -> ISupportStructure:
-    num_physical_segments = int(params.length.shape[0])
+    num_physical_segments = int(params.link.length.shape[0])
 
     rigid_segment_selector = structure.rigid_segment_selector
     if rigid_segment_selector is None:
@@ -140,7 +140,7 @@ def _resolve_pcs_segment_lengths(
     pcs_segment_counts: tuple[int, ...],
     rigid_segment_selector: tuple[bool, ...],
 ) -> tuple[Array, ...]:
-    physical_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+    physical_lengths = jnp.asarray(params.link.length, dtype=jnp.float64)
     pneumatic_physical_indices = [
         i for i, is_rigid in enumerate(rigid_segment_selector) if not is_rigid
     ]
@@ -202,18 +202,20 @@ def _expand_isupport_layout(
     params.validate()
     structure = _normalize_structure_for_params(params, structure)
 
-    num_physical_segments = int(params.length.shape[0])
-    physical_lengths = jnp.asarray(params.length, dtype=jnp.float64)
+    num_physical_segments = int(params.link.length.shape[0])
+    physical_lengths = jnp.asarray(params.link.length, dtype=jnp.float64)
     pcs_segment_lengths = _resolve_pcs_segment_lengths(
         params, structure.pcs_segment_counts, structure.rigid_segment_selector
     )
-    radius = jnp.asarray(params.radius, dtype=jnp.float64)
-    density = jnp.asarray(params.density, dtype=jnp.float64)
-    young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
-    shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
-    reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64).reshape(
-        num_physical_segments, 6
+    radius = jnp.asarray(
+        params.link.cross_section.coefficients[:, 0], dtype=jnp.float64
     )
+    density = jnp.asarray(params.link.density, dtype=jnp.float64)
+    stiffness = jnp.asarray(params.link.stiffness, dtype=jnp.float64)
+    damping = jnp.asarray(params.link.damping, dtype=jnp.float64)
+    reference_strain = jnp.asarray(
+        params.link.reference_strain, dtype=jnp.float64
+    ).reshape(num_physical_segments, 6)
     straight_reference_strain = _straight_reference_strain(reference_strain.dtype)
     for physical_index, is_rigid in enumerate(structure.rigid_segment_selector):
         if is_rigid and not bool(
@@ -224,33 +226,6 @@ def _expand_isupport_layout(
                 "[0, 0, 0, 1, 0, 0]; "
                 f"physical segment {physical_index} does not."
             )
-    has_damping_matrix = params.damping_matrix is not None
-    if has_damping_matrix:
-        damping_matrix = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
-        damping_blocks = jnp.stack(
-            [
-                damping_matrix[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)]
-                for i in range(num_physical_segments)
-            ]
-        )
-        if not bool(jnp.allclose(damping_matrix, blk_diag(damping_blocks))):
-            raise ValueError(
-                "ISupport damping_matrix must be block diagonal by physical segment "
-                "before expansion into PCS segments."
-            )
-    else:
-        damping_matrix = None
-        damping_blocks = None
-        material_damping_coefficient = jnp.asarray(
-            params.material_damping_coefficient, dtype=jnp.float64
-        )
-        if material_damping_coefficient.ndim == 0:
-            material_damping_coefficient = jnp.full(
-                (num_physical_segments,),
-                material_damping_coefficient,
-                dtype=jnp.float64,
-            )
-
     r_chamber_in = jnp.asarray(params.chamber_inner_radius, dtype=jnp.float64)
     r_chamber_out = jnp.asarray(params.chamber_outer_radius, dtype=jnp.float64)
     d_chamber = jnp.asarray(params.chamber_distance, dtype=jnp.float64)
@@ -261,11 +236,9 @@ def _expand_isupport_layout(
     expanded_lengths: list[float] = []
     expanded_radius: list[Array] = []
     expanded_density: list[Array] = []
-    expanded_young_modulus: list[Array] = []
-    expanded_shear_modulus: list[Array] = []
     expanded_reference_strain: list[Array] = []
+    expanded_stiffness: list[Array] = []
     expanded_damping_blocks: list[Array] = []
-    expanded_material_damping_coefficient: list[Array] = []
     expanded_chamber_inner_radius: list[Array] = []
     expanded_chamber_outer_radius: list[Array] = []
     expanded_chamber_distance: list[Array] = []
@@ -284,8 +257,6 @@ def _expand_isupport_layout(
         expanded_lengths.append(jnp.asarray(length, dtype=jnp.float64))
         expanded_radius.append(radius[source_index])
         expanded_density.append(density[source_index])
-        expanded_young_modulus.append(young_modulus[source_index])
-        expanded_shear_modulus.append(shear_modulus[source_index])
         chamber_index = 0 if pneumatic_index is None else pneumatic_index
         expanded_chamber_inner_radius.append(r_chamber_in[chamber_index])
         expanded_chamber_outer_radius.append(r_chamber_out[chamber_index])
@@ -294,25 +265,15 @@ def _expand_isupport_layout(
 
         if is_rigid:
             expanded_reference_strain.append(reference_strain[source_index])
-            if has_damping_matrix:
-                expanded_damping_blocks.append(damping_blocks[source_index])
-            else:
-                expanded_material_damping_coefficient.append(
-                    material_damping_coefficient[source_index]
-                )
+            expanded_stiffness.append(stiffness[source_index])
+            expanded_damping_blocks.append(damping[source_index])
             default_strain_selector.append(jnp.zeros((6,), dtype=bool))
             pcs_segment_to_pneumatic_segment.append(_RIGID_CONNECTOR_PARENT)
         else:
             length_scale = length / physical_lengths[source_index]
             expanded_reference_strain.append(reference_strain[source_index])
-            if has_damping_matrix:
-                expanded_damping_blocks.append(
-                    damping_blocks[source_index] * length_scale
-                )
-            else:
-                expanded_material_damping_coefficient.append(
-                    material_damping_coefficient[source_index]
-                )
+            expanded_stiffness.append(stiffness[source_index] * length_scale)
+            expanded_damping_blocks.append(damping[source_index] * length_scale)
             default_strain_selector.append(jnp.ones((6,), dtype=bool))
             pcs_segment_to_pneumatic_segment.append(pneumatic_index)
         pcs_segment_is_rigid.append(is_rigid)
@@ -352,28 +313,23 @@ def _expand_isupport_layout(
             strain_selector
         )
 
-    expanded_kwargs: dict[str, Array] = {}
-    if has_damping_matrix:
-        expanded_kwargs["damping_matrix"] = blk_diag(jnp.stack(expanded_damping_blocks))
-    else:
-        expanded_kwargs["material_damping_coefficient"] = jnp.stack(
-            expanded_material_damping_coefficient
-        )
-
     expanded_params = ISupportParams(
         base_pose=params.base_pose,
-        length=jnp.stack(expanded_lengths),
-        radius=jnp.stack(expanded_radius),
-        density=jnp.stack(expanded_density),
         gravity=params.gravity,
-        young_modulus=jnp.stack(expanded_young_modulus),
-        shear_modulus=jnp.stack(expanded_shear_modulus),
-        reference_strain=jnp.concatenate(expanded_reference_strain),
+        link=ContinuumLinkParams(
+            length=jnp.stack(expanded_lengths),
+            density=jnp.stack(expanded_density),
+            reference_strain=jnp.stack(expanded_reference_strain),
+            cross_section=CrossSectionParams(
+                coefficients=jnp.stack(expanded_radius)[:, None]
+            ),
+            stiffness=jnp.stack(expanded_stiffness),
+            damping=jnp.stack(expanded_damping_blocks),
+        ),
         chamber_inner_radius=jnp.stack(expanded_chamber_inner_radius),
         chamber_outer_radius=jnp.stack(expanded_chamber_outer_radius),
         chamber_distance=jnp.stack(expanded_chamber_distance),
         chamber_azimuth_angles=jnp.stack(expanded_chamber_azimuth_angles),
-        **expanded_kwargs,
     )
     pcs_structure = PCSStructure(
         num_gauss_points=structure.num_gauss_points,
@@ -466,15 +422,19 @@ class ISupport(PCS):
         structure: ISupportStructure | None = None,
         **kwargs: Any,
     ):
-        """
-        Initialize the ISupport class
+        """Initialize an I-SUPPORT model from typed parameters.
 
         Args:
             params: Dynamic I-SUPPORT parameters.
             structure: Static I-SUPPORT layout. If omitted, physical segments
                 alternate rigid and pneumatic from index zero, and each
                 pneumatic segment is represented by one PCS segment.
-            **kwargs: Additional keyword arguments.
+            **kwargs: Additional keyword arguments forwarded to :class:`PCS`.
+
+        Raises:
+            TypeError: If ``params`` or ``structure`` has the wrong type.
+            ValueError: If the physical layout, chamber geometry, expanded PCS
+                parameters, or an inherited constructor option is invalid.
         """
         if not isinstance(params, ISupportParams):
             raise TypeError("params must be an ISupportParams instance.")
@@ -611,7 +571,24 @@ class ISupport(PCS):
         return getattr(self, "pcs_params", self.params)
 
     def with_params(self, params: ISupportParams) -> "ISupport":
-        """Return an updated copy with a full pneumatic-segment parameter object."""
+        """Return a copy using complete physical-segment parameters.
+
+        The physical I-SUPPORT layout is expanded back into PCS segments, and
+        inherited geometry, dynamics, and actuation caches are refreshed.
+
+        Args:
+            params: Complete replacement :class:`ISupportParams` compatible
+                with the model's static physical layout and chamber count.
+
+        Returns:
+            A new I-SUPPORT model containing the replacements. The original
+            model is unchanged.
+
+        Raises:
+            TypeError: If ``params`` is not an :class:`ISupportParams`.
+            ValueError: If validation fails or the replacement changes a static
+                layout choice such as the number of chambers.
+        """
         if not isinstance(params, ISupportParams):
             raise TypeError("params must be an ISupportParams instance.")
         params = _with_default_chamber_azimuth_angles(params)
@@ -662,7 +639,22 @@ class ISupport(PCS):
         return updated_self._with_refreshed_precomputed_matrices()
 
     def update_params(self, **updates: Array) -> "ISupport":
-        """Return an updated copy with selected pneumatic parameter fields replaced."""
+        """Return a copy with selected physical parameter fields replaced.
+
+        Args:
+            **updates: Fields of :class:`ISupportParams` to replace, including
+                inherited PCS fields and pneumatic chamber fields.
+
+        Returns:
+            A new validated I-SUPPORT model with refreshed PCS and actuator
+            caches.
+
+        Raises:
+            KeyError: If an update names an unknown parameter field.
+            TypeError: If a replacement has an invalid type.
+            ValueError: If the resulting parameters are invalid or incompatible
+                with the static physical layout.
+        """
         return self.with_params(self.params.replace(**updates))
 
     @eqx.filter_jit
@@ -830,6 +822,21 @@ class ISupport(PCS):
         *,
         actuator_inputs: Array | None = None,
     ) -> tuple:
-        """Keep equivalent chamber-center paths out of generic renderers."""
+        """Return generic actuator layers for rendering.
+
+        I-SUPPORT's chamber-center paths represent equivalent pressure-volume
+        coordinates rather than physical tendons, so generic renderers should
+        not draw them.
+
+        Args:
+            q: Generalized coordinates accepted by the common rendering API.
+            s_points: Backbone sampling coordinates accepted by the common
+                rendering API.
+            actuator_inputs: Optional actuator inputs accepted by the common
+                rendering API.
+
+        Returns:
+            An empty tuple.
+        """
         del q, s_points, actuator_inputs
         return ()

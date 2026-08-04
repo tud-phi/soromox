@@ -9,8 +9,18 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
-from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSParams, PCSStructure
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.systems import (
+    GVS,
+    PCS,
+    CrossSectionGeometry,
+    GVSSegment,
+    IsotropicMaterialParams,
+    JointSpec,
+    LinearProfile,
+    LinkSpec,
+    PCSStructure,
+    StrainBasisSpec,
+)
 from soromox.utils.lie_algebra import se3
 from soromox.utils.tolerance import Tolerance
 
@@ -50,22 +60,20 @@ def build_matched_gvs_pcs(
     # GVS definition: constant strain along each link, all 6 strain components enabled
     segments = [
         GVSSegment(
-            link=LinkSpec(
-                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                E=float(E[i]),
-                nu=float(nu[i]),
-                rho=float(rhos[i]),
-                eta=material_damping_coefficient,
-                L=float(Ls[i]),
-                r_i=float(rs[i]),
-                r_f=float(rs[i]),
+            link=LinkSpec.circular(
+                young_modulus=float(E[i]),
+                shear_modulus=float(Gpcs[i]),
+                density=float(rhos[i]),
+                material_damping_coefficient=material_damping_coefficient,
+                length=float(Ls[i]),
+                radius=float(rs[i]),
+                reference_strain=[0, 0, 0, 1, 0, 0],
             ),
             joint=JointSpec(type="fixed"),
             basis=StrainBasisSpec(
                 type="monomial",
-                active=[1, 1, 1, 1, 1, 1],
-                orders=[0, 0, 0, 0, 0, 0],
-                xi_ref=[0, 0, 0, 1, 0, 0],
+                strain_selector=[1, 1, 1, 1, 1, 1],
+                basis_order=[0, 0, 0, 0, 0, 0],
             ),
             num_gauss_points=n_gauss,
         )
@@ -81,26 +89,14 @@ def build_matched_gvs_pcs(
     )
     robot_gvs = GVS(params=gvs_params, structure=gvs_structure)
 
-    # PCS definition with identical geometry and material params
-    params = PCSParams(
+    # PCS definition through the same shared link specifications. This exercises
+    # the common isotropic-material mapping rather than an explicit matrix path.
+    robot_pcs = PCS.from_links(
+        [segment.link for segment in segments],
         base_pose=spatial_base_pose(),
-        length=Ls,
-        radius=rs,
-        density=rhos,
         gravity=g,
-        young_modulus=E,
-        shear_modulus=Gpcs,
-        material_damping_coefficient=jnp.asarray(
-            material_damping_coefficient, dtype=jnp.float64
-        ),
-        reference_strain=jnp.tile(
-            jnp.array([0, 0, 0, 1, 0, 0]), (num_segments, 1)
-        ).reshape(6 * num_segments),
-    )
-    robot_pcs = PCS(
-        params=params,
         structure=PCSStructure(
-            num_gauss_points=5,
+            num_gauss_points=n_gauss,
             strain_selector=jnp.ones((6 * num_segments,), dtype=bool),
         ),
     )
@@ -110,22 +106,20 @@ def build_matched_gvs_pcs(
 
 def test_params_from_segments_stores_resolved_max_dof():
     segment = GVSSegment(
-        link=LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-            E=1e6,
-            nu=0.45,
-            rho=1000.0,
-            eta=0.0,
-            L=0.2,
-            r_i=0.02,
-            r_f=0.02,
+        link=LinkSpec.circular(
+            young_modulus=1e6,
+            shear_modulus=1e6 / 2.9,
+            density=1000.0,
+            material_damping_coefficient=0.0,
+            length=0.2,
+            radius=0.02,
+            reference_strain=[0, 0, 0, 1, 0, 0],
         ),
         joint=JointSpec(type="fixed"),
         basis=StrainBasisSpec(
             type="monomial",
-            active=[1, 1, 1, 1, 1, 1],
-            orders=[0, 0, 0, 0, 0, 0],
-            xi_ref=[0, 0, 0, 1, 0, 0],
+            strain_selector=[1, 1, 1, 1, 1, 1],
+            basis_order=[0, 0, 0, 0, 0, 0],
         ),
         num_gauss_points=5,
     )
@@ -134,33 +128,32 @@ def test_params_from_segments_stores_resolved_max_dof():
         [segment], gravity=jnp.array([0.0, 0.0, -9.81])
     )
 
-    assert structure.max_dof == params.joint_stiffness.shape[1] == 6
+    assert structure.max_dof == params.joint.stiffness.shape[1] == 6
 
-    oversized = params.replace(joint_stiffness=jnp.zeros((1, 7, 7)))
-    with pytest.raises(ValueError, match="joint_stiffness"):
-        oversized.validate_against_structure(structure)
-    with pytest.raises(ValueError, match="joint_stiffness"):
-        GVS(params=oversized, structure=structure)
+    with pytest.raises(ValueError, match="joint"):
+        params.replace(
+            joint=params.joint.replace(
+                stiffness=jnp.zeros((1, 7, 7)), damping=jnp.zeros((1, 7, 7))
+            )
+        )
 
 
 def test_params_from_segments_uses_spatial_environment_defaults():
     segment = GVSSegment(
-        link=LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-            E=1e6,
-            nu=0.45,
-            rho=1000.0,
-            eta=0.0,
-            L=0.2,
-            r_i=0.02,
-            r_f=0.02,
+        link=LinkSpec.circular(
+            young_modulus=1e6,
+            shear_modulus=1e6 / 2.9,
+            density=1000.0,
+            material_damping_coefficient=0.0,
+            length=0.2,
+            radius=0.02,
+            reference_strain=[0, 0, 0, 1, 0, 0],
         ),
         joint=JointSpec(type="fixed"),
         basis=StrainBasisSpec(
             type="monomial",
-            active=[1, 1, 1, 1, 1, 1],
-            orders=[0, 0, 0, 0, 0, 0],
-            xi_ref=[0, 0, 0, 1, 0, 0],
+            strain_selector=[1, 1, 1, 1, 1, 1],
+            basis_order=[0, 0, 0, 0, 0, 0],
         ),
         num_gauss_points=5,
     )
@@ -191,15 +184,14 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         scale = 1.0 + 0.04 * repeat
         r_i = 0.015 + 0.0008 * repeat
         r_f = r_i + 0.003 + 0.0004 * repeat
-        return LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-            E=1.2e6,
-            nu=0.45,
-            rho=950.0,
-            eta=5.0,
-            L=float(0.25 * scale),
-            r_i=float(r_i),
-            r_f=float(r_f),
+        return LinkSpec.circular(
+            young_modulus=1.2e6,
+            shear_modulus=1.2e6 / (2 * 1.45),
+            density=950.0,
+            material_damping_coefficient=5.0,
+            length=float(0.25 * scale),
+            radius=LinearProfile(float(r_i), float(r_f)),
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
         )
 
     def _rectangular_link(idx: int) -> LinkSpec:
@@ -209,17 +201,15 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         h_f = max(0.022, h_i * 0.9)
         w_i = 0.02 + 0.0008 * repeat
         w_f = max(0.016, w_i * 0.88)
-        return LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.RECTANGULAR,
-            E=9.5e5,
-            nu=0.38,
-            rho=1025.0,
-            eta=4.0,
-            L=float(0.18 * scale),
-            h_i=float(h_i),
-            h_f=float(h_f),
-            w_i=float(w_i),
-            w_f=float(w_f),
+        return LinkSpec.rectangular(
+            young_modulus=9.5e5,
+            shear_modulus=9.5e5 / (2 * 1.38),
+            density=1025.0,
+            material_damping_coefficient=4.0,
+            length=float(0.18 * scale),
+            height=LinearProfile(float(h_i), float(h_f)),
+            width=LinearProfile(float(w_i), float(w_f)),
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
         )
 
     def _elliptical_link(idx: int) -> LinkSpec:
@@ -229,17 +219,16 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         a_f = max(0.014, a_i * 0.92)
         b_i = 0.015 + 0.0007 * repeat
         b_f = b_i * 1.05
-        return LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,
-            E=8.0e5,
-            nu=0.4,
-            rho=980.0,
-            eta=3.5,
-            L=float(0.22 * scale),
-            a_i=float(a_i),
-            a_f=float(a_f),
-            b_i=float(b_i),
-            b_f=float(b_f),
+        xi_sigma = max(0.7, 0.9 - 0.05 * repeat)
+        return LinkSpec.elliptical(
+            young_modulus=8.0e5,
+            shear_modulus=8.0e5 / (2 * 1.4),
+            density=980.0,
+            material_damping_coefficient=3.5,
+            length=float(0.22 * scale),
+            semi_major=LinearProfile(float(a_i), float(a_f)),
+            semi_minor=LinearProfile(float(b_i), float(b_f)),
+            reference_strain=[0.2 + 0.02 * repeat, 0.0, 0.0, xi_sigma, 0.0, 0.0],
         )
 
     def _revolute_joint(idx: int) -> JointSpec:
@@ -262,27 +251,31 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
         extra = repeat % 2
         return StrainBasisSpec(
             type="monomial",
-            active=[1, 1, 0, 1, 0, 0],
-            orders=[2 + extra, 1 + (idx % 2), 0, 2 + ((idx + repeat) % 2), 0, 0],
-            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            strain_selector=[1, 1, 0, 1, 0, 0],
+            basis_order=[2 + extra, 1 + (idx % 2), 0, 2 + ((idx + repeat) % 2), 0, 0],
         )
 
     def _legendre_basis(idx: int) -> StrainBasisSpec:
         repeat = idx // pattern_count
         return StrainBasisSpec(
             type="legendre",
-            active=[0, 1, 1, 0, 1, 0],
-            orders=[0, 2 + (repeat % 2), 1 + ((idx + 1) % 2), 0, 1 + (repeat % 3), 0],
-            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            strain_selector=[0, 1, 1, 0, 1, 0],
+            basis_order=[
+                0,
+                2 + (repeat % 2),
+                1 + ((idx + 1) % 2),
+                0,
+                1 + (repeat % 3),
+                0,
+            ],
         )
 
     def _fourier_basis(idx: int) -> StrainBasisSpec:
         repeat = idx // pattern_count
-        xi_sigma = max(0.7, 0.9 - 0.05 * repeat)
         return StrainBasisSpec(
             type="fourier",
-            active=[1, 0, 1, 1, 0, 1],
-            orders=[
+            strain_selector=[1, 0, 1, 1, 0, 1],
+            basis_order=[
                 1 + (idx % 2),
                 0,
                 2 + (repeat % 2),
@@ -290,7 +283,6 @@ def build_varied_basis_gvs(num_segments: int = 3) -> GVS:
                 0,
                 1 + ((repeat + 1) % 2),
             ],
-            xi_ref=[0.2 + 0.02 * repeat, 0.0, 0.0, xi_sigma, 0.0, 0.0],
         )
 
     def _monomial_gauss(idx: int) -> int:
@@ -354,22 +346,20 @@ def build_constant_strain_gvs(
 
     segments = [
         GVSSegment(
-            link=LinkSpec(
-                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                E=1e6,
-                nu=0.5,
-                rho=1000.0,
-                eta=0.0,
-                L=segment_length,
-                r_i=0.02,
-                r_f=0.02,
+            link=LinkSpec.circular(
+                young_modulus=1e6,
+                shear_modulus=1e6 / 3.0,
+                density=1000.0,
+                material_damping_coefficient=0.0,
+                length=segment_length,
+                radius=0.02,
+                reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             ),
             joint=JointSpec(type="fixed"),
             basis=StrainBasisSpec(
                 type="monomial",
-                active=[int(active) for active in selector_per_segment],
-                orders=[0, 0, 0, 0, 0, 0],
-                xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+                strain_selector=[int(active) for active in selector_per_segment],
+                basis_order=[0, 0, 0, 0, 0, 0],
             ),
             num_gauss_points=5,
         )
@@ -390,36 +380,38 @@ def test_gvs_segment_factories_match_explicit_constructor() -> None:
     segments = [
         GVSSegment(
             link=LinkSpec.circular(
-                E=1.0e6,
-                nu=0.45,
-                rho=1000.0,
-                eta=1.0,
-                L=0.2,
-                r=0.02,
+                young_modulus=1.0e6,
+                shear_modulus=1.0e6 / 2.9,
+                density=1000.0,
+                material_damping_coefficient=1.0,
+                length=0.2,
+                radius=0.02,
+                reference_strain=[0, 0, 0, 1, 0, 0],
             ),
             joint=JointSpec(type="fixed"),
             basis=StrainBasisSpec(
                 type="monomial",
-                active=[1, 1, 1, 1, 0, 0],
-                orders=[0, 0, 0, 0, 0, 0],
+                strain_selector=[1, 1, 1, 1, 0, 0],
+                basis_order=[0, 0, 0, 0, 0, 0],
             ),
             num_gauss_points=5,
         ),
         GVSSegment(
             link=LinkSpec.rectangular(
-                E=9.0e5,
-                nu=0.4,
-                rho=950.0,
-                eta=2.0,
-                L=0.15,
-                h=0.03,
-                w=0.02,
+                young_modulus=9.0e5,
+                shear_modulus=9.0e5 / 2.8,
+                density=950.0,
+                material_damping_coefficient=2.0,
+                length=0.15,
+                height=0.03,
+                width=0.02,
+                reference_strain=[0, 0, 0, 1, 0, 0],
             ),
             joint=JointSpec(type="revolute", axis="z", stiffness=jnp.array([[0.3]])),
             basis=StrainBasisSpec(
                 type="legendre",
-                active=[0, 1, 1, 0, 0, 0],
-                orders=[0, 1, 1, 0, 0, 0],
+                strain_selector=[0, 1, 1, 0, 0, 0],
+                basis_order=[0, 1, 1, 0, 0, 0],
             ),
             num_gauss_points=6,
         ),
@@ -441,7 +433,7 @@ def test_gvs_segment_factories_match_explicit_constructor() -> None:
     )
 
     assert_allclose(factory.params.link.length, params.link.length)
-    assert_allclose(factory.joint_stiffness, explicit.joint_stiffness)
+    assert_allclose(factory.params.joint.stiffness, explicit.params.joint.stiffness)
     assert_allclose(
         factory.cross_section_geometry_index, explicit.cross_section_geometry_index
     )
@@ -454,19 +446,19 @@ def test_gvs_segment_factories_match_explicit_constructor() -> None:
 def test_gvs_structure_contains_only_static_segment_choices() -> None:
     segment = GVSSegment(
         link=LinkSpec.circular(
-            E=1.0e6,
-            nu=0.45,
-            rho=1000.0,
-            eta=1.0,
-            L=0.2,
-            r=0.02,
+            young_modulus=1.0e6,
+            shear_modulus=1.0e6 / 2.9,
+            density=1000.0,
+            material_damping_coefficient=1.0,
+            length=0.2,
+            radius=0.02,
+            reference_strain=[0, 0, 0, 1, 0, 0],
         ),
         joint=JointSpec(type="revolute", axis="z", stiffness=jnp.array([[0.3]])),
         basis=StrainBasisSpec(
             type="monomial",
-            active=[1, 1, 0, 0, 0, 0],
-            orders=[0, 1, 0, 0, 0, 0],
-            xi_ref=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            strain_selector=[1, 1, 0, 0, 0, 0],
+            basis_order=[0, 1, 0, 0, 0, 0],
         ),
         num_gauss_points=5,
     )
@@ -483,11 +475,10 @@ def test_gvs_structure_contains_only_static_segment_choices() -> None:
     assert stored_segment.joint.type == "revolute"
     assert stored_segment.joint.axis == "z"
     assert not hasattr(stored_segment.joint, "stiffness")
-    assert stored_segment.basis.active == (1, 1, 0, 0, 0, 0)
-    assert stored_segment.basis.orders == (0, 1, 0, 0, 0, 0)
+    assert stored_segment.basis.strain_selector == (1, 1, 0, 0, 0, 0)
+    assert stored_segment.basis.basis_order == (0, 1, 0, 0, 0, 0)
     assert not hasattr(stored_segment.basis, "xi_ref")
-    assert_allclose(params.link.young_modulus, jnp.array([1.0e6]))
-    assert_allclose(params.joint_stiffness[0, 0, 0], 0.3)
+    assert_allclose(params.joint.stiffness[0, 0, 0], 0.3)
 
 
 def sample_arc_lengths(robot: GVS) -> jnp.ndarray:
@@ -1621,14 +1612,18 @@ def test_cached_constant_matrices_refresh_after_update_params() -> None:
         max_dof=6,
     )
 
-    updated = robot.update_params(
-        link=robot.params.link.replace(
+    section = robot.params.link.cross_section.replace(
+        coefficients=0.022 * jnp.ones_like(robot.params.link.cross_section.coefficients)
+    )
+    geometry_updated = robot.update_link_params(
+        density=900.0 * jnp.ones_like(robot.segment_length),
+        cross_section=section,
+    )
+    updated = geometry_updated.with_isotropic_material(
+        IsotropicMaterialParams(
             young_modulus=1.25e6 * jnp.ones_like(robot.segment_length),
-            poisson_ratio=0.45 * jnp.ones_like(robot.segment_length),
-            density=900.0 * jnp.ones_like(robot.segment_length),
-            damping_coefficient=2.0 * jnp.ones_like(robot.segment_length),
-            radius_initial=0.022 * jnp.ones_like(robot.segment_length),
-            radius_final=0.022 * jnp.ones_like(robot.segment_length),
+            shear_modulus=(1.25e6 / 2.9) * jnp.ones_like(robot.segment_length),
+            material_damping_coefficient=2.0 * jnp.ones_like(robot.segment_length),
         )
     )
 

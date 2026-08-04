@@ -22,8 +22,16 @@ from soromox.actuation import (
     ThreadlikeImpedance,
     ThreadlikeRouting,
 )
-from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSStructure, PlanarPCS
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.systems import (
+    GVS,
+    PCS,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    PCSStructure,
+    PlanarPCS,
+    StrainBasisSpec,
+)
 from soromox.systems.pcs import PlanarPCSStructure
 
 
@@ -67,21 +75,20 @@ def _planar_pcs(*, actuators=None, passive_elements=()):
 
 def _gvs(*, actuators=None, passive_elements=()):
     segment = GVSSegment(
-        link=LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-            E=3e5,
-            nu=0.45,
-            rho=1300.0,
-            eta=1e4,
-            L=0.1,
-            r_i=0.015,
-            r_f=0.015,
+        link=LinkSpec.circular(
+            young_modulus=3e5,
+            shear_modulus=3e5 / 2.9,
+            density=1300.0,
+            material_damping_coefficient=1e4,
+            length=0.1,
+            radius=0.015,
+            reference_strain=[0, 0, 0, 1, 0, 0],
         ),
         joint=JointSpec(type="fixed"),
         basis=StrainBasisSpec(
             type="monomial",
-            active=[1, 1, 1, 1, 0, 0],
-            orders=[0, 0, 0, 0, 0, 0],
+            strain_selector=[1, 1, 1, 1, 0, 0],
+            basis_order=[0, 0, 0, 0, 0, 0],
         ),
         num_gauss_points=5,
     )
@@ -425,8 +432,10 @@ def test_actuator_nested_update_and_topology_rejection():
     with pytest.raises(ValueError, match="topology"):
         params.transmission.routing.replace(end_segment_index=(1,))
 
-    body_updated = robot.update_params(young_modulus=jnp.array([2e3]))
-    assert_allclose(body_updated.params.young_modulus, jnp.array([2e3]))
+    body_updated = robot.update_link_params(stiffness=2.0 * robot.params.link.stiffness)
+    assert_allclose(
+        body_updated.params.link.stiffness, 2.0 * robot.params.link.stiffness
+    )
     assert_allclose(
         body_updated.actuators[0].params.transmission.routing.intercept,
         robot.actuators[0].params.transmission.routing.intercept,

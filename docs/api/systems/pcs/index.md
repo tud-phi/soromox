@@ -2,6 +2,11 @@
 
 This section covers continuum soft robots modeled using the Piecewise Constant Strain (PCS) approach based on discrete Cosserat rod theory.
 
+PCS uses the shared link, cross-section, and material model described in
+[Continuum Robot Components](../continuum-components.md). See
+[Parameters, Updates, and Optimization](../../../user-guide/parameters-and-optimization.md)
+for construction, replacement, and identification workflows.
+
 ## Overview
 
 PCS systems model continuum soft robots by dividing them into segments, each with constant strain. This approach provides:

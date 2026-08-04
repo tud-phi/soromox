@@ -9,7 +9,7 @@ from diffrax import Tsit5
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
-from soromox.systems import PlanarPCS, PlanarPCSParams, SystemState
+from soromox.systems import LinkSpec, PlanarPCS, SystemState
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -32,16 +32,21 @@ if __name__ == "__main__":
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 318.0
-    params = PlanarPCSParams(
+    params = PlanarPCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_lengths[index]),
+                radius=2e-2,
+                density=float(rho[index]),
+                young_modulus=2e3,
+                shear_modulus=1e3,
+                material_damping_coefficient=material_damping_coefficient,
+                reference_strain=[0, 1, 0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
-        length=segment_lengths,
-        radius=2e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
-        young_modulus=2e3 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        shear_modulus=1e3 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        material_damping_coefficient=material_damping_coefficient,
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
     )
 
     # ======================================================
@@ -52,7 +57,7 @@ if __name__ == "__main__":
     J, Jd = robot.jacobian_and_time_derivative(
         q=jnp.zeros((3 * num_segments,)),
         qd=jnp.zeros((3 * num_segments,)),
-        s=params.length[0],
+        s=params.link.length[0],
     )
 
     # =====================================================

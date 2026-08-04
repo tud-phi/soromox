@@ -9,25 +9,51 @@ from system_param_builders import spatial_base_pose
 
 from soromox.actuation import ThreadlikeActuator
 from soromox.systems import (
+    PCS,
+    ContinuumLinkParams,
+    CrossSectionParams,
     ISupport,
     ISupportParams,
     ISupportStructure,
+    LinkSpec,
 )
 
 
 def make_isupport_params(num_segments=1):
     angles = 2.0 * jnp.pi * jnp.arange(3) / 3
+    length = jnp.full((num_segments,), 0.1)
+    radius = jnp.full((num_segments,), 0.02)
+    young = jnp.full((num_segments,), 2e3)
+    shear = jnp.full((num_segments,), 1e3)
+    area = jnp.pi * radius**2
+    transverse = jnp.pi * radius**4 / 4.0
+    polar = 2.0 * transverse
+    stiffness = length[:, None, None] * jax.vmap(jnp.diag)(
+        jnp.stack(
+            [
+                shear * polar,
+                young * transverse,
+                young * transverse,
+                young * area,
+                shear * area,
+                shear * area,
+            ],
+            axis=1,
+        )
+    )
     return ISupportParams(
         base_pose=spatial_base_pose(),
-        length=jnp.full((num_segments,), 0.1),
-        radius=jnp.full((num_segments,), 0.02),
-        density=jnp.full((num_segments,), 1000.0),
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=jnp.full((num_segments,), 2e3),
-        shear_modulus=jnp.full((num_segments,), 1e3),
-        damping_matrix=1e-3 * jnp.eye(6 * num_segments),
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
+        link=ContinuumLinkParams(
+            length=length,
+            density=jnp.full((num_segments,), 1000.0),
+            reference_strain=jnp.tile(
+                jnp.array([[0.0, 0.0, 0.0, 1.0, 0.0, 0.0]]),
+                (num_segments, 1),
+            ),
+            cross_section=CrossSectionParams(coefficients=radius[:, None]),
+            stiffness=stiffness,
+            damping=1e-3 * jnp.tile(jnp.eye(6)[None, :, :], (num_segments, 1, 1)),
         ),
         chamber_inner_radius=jnp.full((num_segments,), 0.002),
         chamber_outer_radius=jnp.full((num_segments,), 0.004),
@@ -54,7 +80,7 @@ def expected_isupport_segment_actuation(
     else:
         chamber_area = params.chamber_effective_pressure_area[pneumatic_segment_idx]
     if segment_length is None:
-        segment_length = params.length[pneumatic_segment_idx]
+        segment_length = params.link.length[pneumatic_segment_idx]
     chamber_distance = params.chamber_distance[pneumatic_segment_idx]
     chamber_angles = params.chamber_azimuth_angles[pneumatic_segment_idx]
     expected_columns = []
@@ -335,8 +361,8 @@ def test_isupport_body_update_preserves_actuator_owned_bounds():
         upper_bounds=upper_bounds,
     )
 
-    updated_body = updated_actuator.update_params(
-        density=updated_actuator.params.density * 1.01
+    updated_body = updated_actuator.update_link_params(
+        density=updated_actuator.params.link.density * 1.01
     )
 
     assert jnp.allclose(updated_body.actuators[0].params.lower_bounds, lower_bounds)
@@ -429,13 +455,29 @@ def test_isupport_actuation_matrix_projects_to_active_strains():
 
 def make_mixed_isupport_params():
     angles = 2.0 * jnp.pi * jnp.arange(3) / 3
+    lengths = [0.01, 0.10, 0.02, 0.20, 0.03]
+    radii = [0.011, 0.020, 0.012, 0.025, 0.013]
+    densities = [1200.0, 1000.0, 1300.0, 1050.0, 1400.0]
+    young = [2e9, 2e3, 2e9, 3e3, 2e9]
+    shear = [8e8, 1e3, 8e8, 1.5e3, 8e8]
+    link = PCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=length,
+                radius=radius,
+                density=density,
+                young_modulus=young_modulus,
+                shear_modulus=shear_modulus,
+                material_damping_coefficient=1e-3,
+                reference_strain=[0, 0, 0, 1, 0, 0],
+            )
+            for length, radius, density, young_modulus, shear_modulus in zip(
+                lengths, radii, densities, young, shear, strict=True
+            )
+        ]
+    ).link
     return make_isupport_params(num_segments=5).replace(
-        length=jnp.array([0.01, 0.10, 0.02, 0.20, 0.03]),
-        radius=jnp.array([0.011, 0.020, 0.012, 0.025, 0.013]),
-        density=jnp.array([1200.0, 1000.0, 1300.0, 1050.0, 1400.0]),
-        young_modulus=jnp.array([2e9, 2e3, 2e9, 3e3, 2e9]),
-        shear_modulus=jnp.array([8e8, 1e3, 8e8, 1.5e3, 8e8]),
-        damping_matrix=1e-3 * jnp.eye(30),
+        link=link,
         chamber_inner_radius=jnp.array([0.002, 0.003]),
         chamber_outer_radius=jnp.array([0.004, 0.005]),
         chamber_distance=jnp.array([0.01, 0.015]),
@@ -540,9 +582,20 @@ def test_isupport_rigid_geometry_uses_filled_cylinders():
 
 
 def test_isupport_preserves_rigid_material_damping_properties():
-    params = make_mixed_isupport_params().replace(
-        damping_matrix=None,
-        material_damping_coefficient=jnp.array([10.0, 20.0, 30.0, 40.0, 50.0]),
+    params = make_mixed_isupport_params()
+    damping_coefficients = jnp.array([10.0, 20.0, 30.0, 40.0, 50.0])
+    radius = params.link.cross_section.coefficients[:, 0]
+    area = jnp.pi * radius**2
+    transverse = jnp.pi * radius**4 / 4.0
+    polar = 2.0 * transverse
+    damping = params.link.length[:, None, None] * jax.vmap(jnp.diag)(
+        damping_coefficients[:, None]
+        * jnp.stack(
+            [polar, 3 * transverse, 3 * transverse, 3 * area, area, area], axis=1
+        )
+    )
+    params = params.replace(
+        link=params.link.replace(damping=damping),
     )
     robot = ISupport(
         params,
@@ -553,12 +606,8 @@ def test_isupport_preserves_rigid_material_damping_properties():
         ),
     )
 
-    assert jnp.allclose(
-        robot.pcs_params.material_damping_coefficient,
-        jnp.array([10.0, 20.0, 20.0, 30.0, 40.0, 50.0]),
-    )
-    rigid_area = jnp.pi * params.radius[0] ** 2
-    expected_axial_damping = params.length[0] * 10.0 * 3.0 * rigid_area
+    rigid_area = jnp.pi * params.link.cross_section.coefficients[0, 0] ** 2
+    expected_axial_damping = params.link.length[0] * 10.0 * 3.0 * rigid_area
     assert jnp.allclose(robot.D_full[3, 3], expected_axial_damping)
     assert jnp.allclose(robot.D_active, robot.B_xi.T @ robot.D_full @ robot.B_xi)
 
@@ -627,14 +676,22 @@ def test_isupport_layout_validation_and_updates():
             params.replace(pcs_segment_lengths=jnp.array([0.03, 0.06, 0.20])),
             structure=structure,
         )
-    bad_reference = params.reference_strain.at[0].set(0.1)
+    bad_reference = params.link.reference_strain.at[0, 0].set(0.1)
     with pytest.raises(ValueError, match="Rigid segment reference_strain"):
-        ISupport(params.replace(reference_strain=bad_reference), structure=structure)
+        ISupport(
+            params.replace(link=params.link.replace(reference_strain=bad_reference)),
+            structure=structure,
+        )
 
-    updated = robot.update_params(
+    updated_link = params.link.replace(
         length=jnp.array([0.015, 0.12, 0.025, 0.20, 0.035]),
+        cross_section=params.link.cross_section.replace(
+            coefficients=jnp.array([0.015, 0.020, 0.016, 0.025, 0.017])[:, None]
+        ),
+    )
+    updated = robot.update_params(
+        link=updated_link,
         pcs_segment_lengths=jnp.array([0.05, 0.07, 0.20]),
-        radius=jnp.array([0.015, 0.020, 0.016, 0.025, 0.017]),
     )
     assert updated.structure.rigid_segment_selector == structure.rigid_segment_selector
     assert jnp.allclose(updated.L, jnp.array([0.015, 0.05, 0.07, 0.025, 0.20, 0.035]))

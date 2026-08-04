@@ -17,19 +17,13 @@ from system_param_builders import (
 
 from soromox.actuation import (
     ArticulatedTendonImpedance,
-    ThreadlikeActuator,
-    ThreadlikeRouting,
 )
 from soromox.systems import (
     PCS,
     ArticulatedSoftRobotParams,
-    ISupport,
-    ISupportParams,
-    ISupportStructure,
     PCSParams,
     Pendulum,
     PendulumParams,
-    PlanarPCS,
     PlanarPCSParams,
 )
 from soromox.utils.array_math import blk_diag
@@ -266,9 +260,9 @@ def test_params_are_pytrees_and_replace_is_immutable():
 
     assert any(leaf.shape == (2,) for leaf in leaves)
 
-    updated = params.replace(length=2.0 * params.length)
-    assert_allclose(params.length, jnp.array([0.1, 0.1]))
-    assert_allclose(updated.length, jnp.array([0.2, 0.2]))
+    updated = params.replace(link=params.link.replace(length=2.0 * params.link.length))
+    assert_allclose(params.link.length, jnp.array([0.1, 0.1]))
+    assert_allclose(updated.link.length, jnp.array([0.2, 0.2]))
 
     with pytest.raises(KeyError, match="Unknown parameter field"):
         params.replace(not_a_field=jnp.array([1.0]))
@@ -279,206 +273,33 @@ def test_params_are_pytrees_and_replace_is_immutable():
 def test_system_update_rejects_static_shape_changes():
     robot = PCS(params=_pcs_params(num_segments=2))
 
-    updated = robot.update_params(length=jnp.array([0.12, 0.13]))
+    updated = robot.update_link_params(length=jnp.array([0.12, 0.13]))
     assert_allclose(updated.segment_length, jnp.array([0.12, 0.13]))
     assert_allclose(robot.segment_length, jnp.array([0.1, 0.1]))
 
-    with pytest.raises(ValueError, match="length"):
-        robot.update_params(length=jnp.array([0.1, 0.1, 0.1]))
-    with pytest.raises(ValueError, match="radius"):
-        robot.update_params(radius=jnp.array([0.03]))
+    with pytest.raises(ValueError, match="shape"):
+        robot.update_link_params(length=jnp.array([0.1, 0.1, 0.1]))
+    with pytest.raises(ValueError, match="cross-section|coefficients"):
+        robot.update_link_params(
+            cross_section=robot.params.link.cross_section.replace(
+                coefficients=jnp.array([[0.03]])
+            )
+        )
 
     with pytest.raises(KeyError, match="Unknown parameter field"):
         robot.update_params(unknown=jnp.array([0.0]))
 
 
-def test_pcs_material_damping_coefficient_builds_full_matrix():
-    length = jnp.array([0.1, 0.2], dtype=jnp.float64)
-    radius = jnp.array([0.02, 0.03], dtype=jnp.float64)
-    coefficient = jnp.array([2.0, 3.0], dtype=jnp.float64)
-    params = PCSParams(
-        base_pose=spatial_base_pose(),
-        length=length,
-        radius=radius,
-        density=1000.0 * jnp.ones((2,), dtype=jnp.float64),
-        young_modulus=1e6 * jnp.ones((2,), dtype=jnp.float64),
-        shear_modulus=1e5 * jnp.ones((2,), dtype=jnp.float64),
-        material_damping_coefficient=coefficient,
-        gravity=jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64), 2
-        ),
-    )
-    robot = PCS(params=params)
-    expected = _expected_spatial_material_damping(length, radius, coefficient)
-
-    assert_allclose(robot.D_full, expected)
-    assert_allclose(robot.damping_matrix(jnp.zeros((robot.num_dofs,))), expected)
-
-
-def test_planar_pcs_material_damping_coefficient_builds_full_matrix():
-    length = jnp.array([0.1, 0.2], dtype=jnp.float64)
-    radius = jnp.array([0.02, 0.03], dtype=jnp.float64)
-    coefficient = jnp.array(2.0, dtype=jnp.float64)
-    params = PlanarPCSParams(
-        base_pose=planar_base_pose(),
-        length=length,
-        radius=radius,
-        density=1000.0 * jnp.ones((2,), dtype=jnp.float64),
-        young_modulus=1e6 * jnp.ones((2,), dtype=jnp.float64),
-        shear_modulus=1e5 * jnp.ones((2,), dtype=jnp.float64),
-        material_damping_coefficient=coefficient,
-        gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0], dtype=jnp.float64), 2),
-    )
-    robot = PlanarPCS(params=params)
-    expected = _expected_planar_material_damping(length, radius, coefficient)
-
-    assert_allclose(robot.D_full, expected)
-    assert_allclose(robot.damping_matrix(jnp.zeros((robot.num_dofs,))), expected)
-
-
-def test_pcs_damping_input_validation():
-    kwargs = {
-        "base_pose": spatial_base_pose(),
-        "length": jnp.array([0.1], dtype=jnp.float64),
-        "radius": jnp.array([0.02], dtype=jnp.float64),
-        "density": jnp.array([1000.0], dtype=jnp.float64),
-        "young_modulus": jnp.array([1e6], dtype=jnp.float64),
-        "shear_modulus": jnp.array([1e5], dtype=jnp.float64),
-        "gravity": jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        "reference_strain": jnp.array(
-            [0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64
-        ),
-    }
-
-    with pytest.raises(ValueError, match="Exactly one"):
-        PCSParams(**kwargs).validate()
-    with pytest.raises(ValueError, match="Exactly one"):
-        PCSParams(
-            **kwargs,
-            damping_matrix=jnp.eye(6, dtype=jnp.float64),
-            material_damping_coefficient=jnp.array([1.0], dtype=jnp.float64),
-        ).validate()
-    with pytest.raises(ValueError, match="material_damping_coefficient"):
-        PCSParams(
-            **kwargs,
-            material_damping_coefficient=jnp.array([1.0, 2.0], dtype=jnp.float64),
-        ).validate()
-    with pytest.raises(ValueError, match="damping_matrix"):
-        PCSParams(
-            **kwargs,
-            damping_matrix=jnp.eye(5, dtype=jnp.float64),
-        ).validate()
-
-
-def test_material_damping_updates_and_matrix_switching():
-    params = _pcs_params(num_segments=1).replace(
-        damping_matrix=None,
-        material_damping_coefficient=jnp.array([1.0], dtype=jnp.float64),
-    )
-    robot = PCS(params=params)
-    expected = _expected_spatial_material_damping(
-        params.length, params.radius, params.material_damping_coefficient
-    )
-    assert_allclose(robot.D_full, expected)
-
-    updated = robot.update_params(
-        material_damping_coefficient=jnp.array([2.0], dtype=jnp.float64)
-    )
-    assert_allclose(updated.D_full, 2.0 * expected)
-
-    damping_matrix = 0.5 * jnp.eye(6, dtype=jnp.float64)
-    matrix_updated = updated.update_params(
-        material_damping_coefficient=None,
-        damping_matrix=damping_matrix,
-    )
-    assert_allclose(matrix_updated.D_full, damping_matrix)
-
-    coefficient_updated = matrix_updated.update_params(
-        damping_matrix=None,
-        material_damping_coefficient=jnp.array([3.0], dtype=jnp.float64),
-    )
-    assert_allclose(coefficient_updated.D_full, 3.0 * expected)
-
-
-def test_existing_damping_matrix_path_is_unchanged():
+def test_canonical_link_damping_updates_without_material_duplication():
     params = _pcs_params(num_segments=2)
     robot = PCS(params=params)
-
-    assert_allclose(robot.D_full, params.damping_matrix)
-
-
-def test_tendon_pcs_inherits_material_damping_path():
-    body = _pcs_params(num_segments=1).replace(
-        damping_matrix=None,
-        material_damping_coefficient=jnp.array([2.0], dtype=jnp.float64),
-    )
-    routing = ThreadlikeRouting.linear(
-        intercept=jnp.array([0.0, 0.005, 0.0], dtype=jnp.float64),
-        end_segment_index=(0,),
-    )
-    robot = PCS(params=body, actuators=ThreadlikeActuator.tendons(routing))
-
-    expected = _expected_spatial_material_damping(
-        body.length, body.radius, body.material_damping_coefficient
-    )
+    expected = blk_diag(params.link.damping)
     assert_allclose(robot.D_full, expected)
 
-
-def test_planar_tendon_pcs_inherits_material_damping_path():
-    body = _planar_pcs_params(num_segments=1).replace(
-        damping_matrix=None,
-        material_damping_coefficient=jnp.array([2.0], dtype=jnp.float64),
-    )
-    routing = ThreadlikeRouting.linear(
-        intercept=jnp.array([0.0, 0.005, 0.0], dtype=jnp.float64),
-        end_segment_index=(0,),
-    )
-    robot = PlanarPCS(params=body, actuators=ThreadlikeActuator.tendons(routing))
-
-    expected = _expected_planar_material_damping(
-        body.length, body.radius, body.material_damping_coefficient
-    )
-    assert_allclose(robot.D_full, expected)
-
-
-def test_isupport_inherits_material_damping_path():
-    params = ISupportParams(
-        base_pose=spatial_base_pose(),
-        length=jnp.array([0.1], dtype=jnp.float64),
-        radius=jnp.array([0.02], dtype=jnp.float64),
-        density=jnp.array([1000.0], dtype=jnp.float64),
-        gravity=jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        young_modulus=jnp.array([2e3], dtype=jnp.float64),
-        shear_modulus=jnp.array([1e3], dtype=jnp.float64),
-        material_damping_coefficient=jnp.array([2.0], dtype=jnp.float64),
-        reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0], dtype=jnp.float64),
-        chamber_inner_radius=jnp.array([0.002], dtype=jnp.float64),
-        chamber_outer_radius=jnp.array([0.004], dtype=jnp.float64),
-        chamber_distance=jnp.array([0.01], dtype=jnp.float64),
-        chamber_azimuth_angles=(2.0 * jnp.pi * jnp.arange(3, dtype=jnp.float64) / 3.0)[
-            None, :
-        ],
-    )
-    robot = ISupport(
-        params=params,
-        structure=ISupportStructure(
-            num_gauss_points=1, rigid_segment_selector=(False,)
-        ),
-    )
-
-    I_i = robot._local_second_moment_of_area(jnp.array(0))
-    A_i = robot._local_cross_sectional_area(jnp.array(0))
-    expected_diag = (
-        params.length[0]
-        * params.material_damping_coefficient[0]
-        * jnp.array(
-            [I_i[0], 3.0 * I_i[1], 3.0 * I_i[2], 3.0 * A_i, A_i, A_i],
-            dtype=jnp.float64,
-        )
-    )
-    assert_allclose(robot.D_full, jnp.diag(expected_diag))
+    updated = robot.update_link_params(damping=2.0 * params.link.damping)
+    assert_allclose(updated.D_full, 2.0 * expected)
+    assert not hasattr(updated.params, "material_damping_coefficient")
+    assert not hasattr(updated.params, "damping_matrix")
 
 
 def test_planar_pcs_params_validate_base_pose_shape():

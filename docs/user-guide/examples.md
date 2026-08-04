@@ -1,5 +1,8 @@
 # Examples
 
+See [Parameters, Updates, and Optimization](parameters-and-optimization.md)
+for complete construction, immutable update, JAX, and Optax examples.
+
 This page provides a comprehensive overview of the example scripts included with SoRoMoX. Examples are organized by application area to help you find the right starting point for your use case.
 
 !!! tip "Getting Started"
@@ -268,14 +271,21 @@ Most examples allow easy parameter modification. Understanding parameter structu
 **For PCS systems:**
 
 ```python
-# Modify physical parameters
-params = params.replace(
+# Modify canonical runtime link parameters
+section = robot.params.link.cross_section.replace(
+    coefficients=0.9 * robot.params.link.cross_section.coefficients
+)
+robot = robot.update_link_params(
     length=0.2 * jnp.ones((num_segments,)),
-    radius=0.01 * jnp.ones((num_segments,)),
+    cross_section=section,
+)
+
+# Material variables are caller-owned and applied explicitly.
+material = material.replace(
     young_modulus=1e6 * jnp.ones((num_segments,)),
     shear_modulus=5e5 * jnp.ones((num_segments,)),
 )
-robot = robot.with_params(params)
+robot = robot.with_isotropic_material(material)
 ```
 
 **For pendulum systems:**

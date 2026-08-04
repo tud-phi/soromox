@@ -18,7 +18,14 @@ from soromox.rendering import (
     ISupportVisualConfig,
     MatplotlibRenderer,
 )
-from soromox.systems import ISupport, ISupportParams, ISupportStructure, SystemState
+from soromox.systems import (
+    PCS,
+    ISupport,
+    ISupportParams,
+    ISupportStructure,
+    LinkSpec,
+    SystemState,
+)
 
 if __name__ == "__main__":
     num_pneumatic_segments = 2
@@ -47,27 +54,37 @@ if __name__ == "__main__":
     # Set this to None to divide each pneumatic segment equally according to
     # pcs_segment_counts.
     pcs_segment_lengths = jnp.array([95e-3, 95e-3, 60e-3, 60e-3, 60e-3])
-    # Previous explicit damping used gamma_t = 806e-3 and gamma_r = 1.0e-3:
-    # D_i = L_i * diag([gamma_r, gamma_r, gamma_r, gamma_t, gamma_t, gamma_t]).
-    # The material damping coefficient below is the least-squares scalar c for
-    # D_i(c) = L_i * c * diag([Ix, 3Iy, 3Iz, 3A, A, A]), evaluated with
-    # I-SUPPORT's actuator cross-section geometry. Equivalently,
-    # c = <D_old, D_material(1)>_F / <D_material(1), D_material(1)>_F.
-    material_damping_coefficient = 1.96e3
+    # Preserve the calibrated generalized damping used by the reference model.
+    gamma_rotational = 1.0e-3
+    gamma_translational = 806e-3
+    links = [
+        LinkSpec.circular(
+            length=float(physical_segment_lengths[index]),
+            radius=float(physical_segment_radii[index]),
+            density=float(physical_segment_densities[index]),
+            young_modulus=E,
+            shear_modulus=G,
+            damping=float(physical_segment_lengths[index])
+            * jnp.diag(
+                jnp.array(
+                    [
+                        gamma_rotational,
+                        gamma_rotational,
+                        gamma_rotational,
+                        gamma_translational,
+                        gamma_translational,
+                        gamma_translational,
+                    ]
+                )
+            ),
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for index in range(len(rigid_segment_selector))
+    ]
     params = ISupportParams(
         base_pose=jnp.array([0.5, 0.5, 0.5, -0.5, 0.0, 0.0, 0.0]),
-        length=physical_segment_lengths,
-        radius=physical_segment_radii,
-        density=physical_segment_densities,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=E * jnp.ones((len(rigid_segment_selector),)),
-        shear_modulus=G * jnp.ones((len(rigid_segment_selector),)),
-        material_damping_coefficient=material_damping_coefficient
-        * jnp.ones((len(rigid_segment_selector),)),
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            len(rigid_segment_selector),
-        ),
+        link=PCS.params_from_links(links).link,
         chamber_inner_radius=6.39 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_outer_radius=7.79 * 1e-3 * jnp.ones((num_pneumatic_segments,)),
         chamber_distance=20 * 1e-3 * jnp.ones((num_pneumatic_segments,)),

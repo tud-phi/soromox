@@ -9,11 +9,11 @@ from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import ClassVar
 
-import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.systems.components import ContinuumLinkParams
 from soromox.systems.params import (
     BaseContinuumSoftRobotParams,
     BaseSoftRobotParams,
@@ -27,71 +27,40 @@ def _require_shape(name: str, value: Array, expected_shape: tuple[int, ...]) -> 
         raise ValueError(f"{name} must have shape {expected_shape}, got {value.shape}.")
 
 
-def _validate_damping_input(
-    params: "PCSParams | PlanarPCSParams",
-    *,
-    strain_dim: int,
-    n_segments: int,
-) -> None:
-    has_damping_matrix = params.damping_matrix is not None
-    has_material_damping = params.material_damping_coefficient is not None
-    if has_damping_matrix == has_material_damping:
-        raise ValueError(
-            "Exactly one of damping_matrix or material_damping_coefficient "
-            "must be provided."
-        )
-
-    if has_damping_matrix:
-        damping_matrix = jnp.asarray(params.damping_matrix)
-        _require_shape(
-            "damping_matrix",
-            damping_matrix,
-            (strain_dim * n_segments, strain_dim * n_segments),
-        )
-        return
-
-    material_damping_coefficient = jnp.asarray(params.material_damping_coefficient)
-    if material_damping_coefficient.ndim == 0:
-        return
-    _require_shape(
-        "material_damping_coefficient",
-        material_damping_coefficient,
-        (n_segments,),
-    )
-
-
 def _validate_continuum_base(
     params: BaseContinuumSoftRobotParams,
     *,
     strain_dim: int,
     gravity_dim: int,
 ) -> int:
-    if len(params.length.shape) != 1:
-        raise ValueError("length must be one-dimensional with shape (num_segments,).")
-    n_segments = params.length.shape[0]
-    if n_segments < 1:
-        raise ValueError(f"num_segments must be at least 1, got {n_segments}.")
-    _require_shape("density", params.density, (n_segments,))
+    params.link.validate()
+    n_segments = params.link.length.shape[0]
     _require_shape("gravity", params.gravity, (gravity_dim,))
-    expected_reference_size = strain_dim * n_segments
-    if params.reference_strain.size != expected_reference_size:
+    expected_reference_shape = (n_segments, strain_dim)
+    if params.link.reference_strain.shape != expected_reference_shape:
         raise ValueError(
-            "reference_strain must contain "
-            f"{expected_reference_size} entries, got {params.reference_strain.size}."
+            f"reference_strain must have shape {expected_reference_shape}, "
+            f"got {params.link.reference_strain.shape}."
         )
+    expected_matrix_shape = (n_segments, strain_dim, strain_dim)
+    _require_shape("stiffness", params.link.stiffness, expected_matrix_shape)
+    _require_shape("damping", params.link.damping, expected_matrix_shape)
+    _require_shape(
+        "cross_section.coefficients",
+        params.link.cross_section.coefficients,
+        (n_segments, 1),
+    )
     return n_segments
 
 
 class PCSParams(BaseContinuumSoftRobotParams):
     """Dynamic parameters for the spatial PCS model.
 
-    ``length``, ``radius``, material parameters, and density use a leading
-    segment axis. Damping can be supplied either as the preferred
-    ``material_damping_coefficient`` or as a full flattened strain
-    ``damping_matrix``. ``material_damping_coefficient`` is a viscosity-like
-    modulus in Pa*s (N*s/m^2); it may be scalar or have one value per segment.
-    The assembled matrix includes geometry and length factors, so its entries
-    have generalized-coordinate-dependent units rather than a single Pa*s unit.
+    Per-link runtime values live in the shared ``link`` component. Its
+    ``stiffness`` and ``damping`` fields are canonical generalized matrices with
+    shape ``(num_links, 6, 6)``. Isotropic Young, shear, and material-damping
+    values are separate construction or optimization variables and can be mapped
+    into these matrices explicitly.
     ``base_pose`` is the scalar-first quaternion SE(3) base pose vector
     ``[qw, qx, qy, qz, x, y, z]`` used to initialize the base transform. The
     quaternion is normalized before use and must have nonzero finite norm.
@@ -101,57 +70,61 @@ class PCSParams(BaseContinuumSoftRobotParams):
 
     is_planar: ClassVar[bool] = False
 
-    radius: Array
-    young_modulus: Array
-    shear_modulus: Array
-    material_damping_coefficient: Array | None = eqx.field(default=None, kw_only=True)
-    damping_matrix: Array | None = eqx.field(default=None, kw_only=True)
+    link: ContinuumLinkParams
 
     def validate(self) -> None:
-        n_segments = _validate_continuum_base(self, strain_dim=6, gravity_dim=3)
-        _require_shape("radius", self.radius, (n_segments,))
-        _require_shape("young_modulus", self.young_modulus, (n_segments,))
-        _require_shape("shear_modulus", self.shear_modulus, (n_segments,))
-        _validate_damping_input(self, strain_dim=6, n_segments=n_segments)
+        """Validate spatial PCS parameter shapes and values.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            ValueError: If link fields are invalid; reference strain, canonical
+                matrices, cross-section coefficients, or gravity have the wrong
+                shape; or the spatial base pose is invalid.
+        """
+        _validate_continuum_base(self, strain_dim=6, gravity_dim=3)
         validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
 
 
 class PlanarPCSParams(BaseContinuumSoftRobotParams):
     """Dynamic parameters for the planar PCS model.
 
-    The leading axis of per-segment fields indexes planar constant-strain
-    segments. ``base_pose`` stores the planar pose ``[theta, x, y]`` with shape
+    The leading axis of fields in ``link`` indexes planar constant-strain
+    segments. Its canonical generalized stiffness and damping matrices have
+    shape ``(num_links, 3, 3)``. ``base_pose`` stores the planar pose
+    ``[theta, x, y]`` with shape
     ``(3,)``. ``theta`` is a right-handed angle in radians about the
     out-of-plane z-axis, and ``x``/``y`` are direct translations in the parent
-    frame. ``material_damping_coefficient`` is a viscosity-like modulus in Pa*s
-    (N*s/m^2); it may be scalar or have one value per segment. The assembled
-    matrix includes geometry and length factors and therefore has
-    generalized-coordinate-dependent entry units.
+    frame. Isotropic material parameters are mapped explicitly into canonical
+    link matrices rather than duplicated in this runtime parameter tree.
     Omitting ``base_pose`` and ``gravity`` selects upright planar
     mounting and negative-y Earth gravity.
     """
 
     is_planar: ClassVar[bool] = True
 
-    radius: Array
-    young_modulus: Array
-    shear_modulus: Array
-    material_damping_coefficient: Array | None = eqx.field(default=None, kw_only=True)
-    damping_matrix: Array | None = eqx.field(default=None, kw_only=True)
+    link: ContinuumLinkParams
 
     def validate(self) -> None:
-        n_segments = _validate_continuum_base(self, strain_dim=3, gravity_dim=2)
-        _require_shape("radius", self.radius, (n_segments,))
-        _require_shape("young_modulus", self.young_modulus, (n_segments,))
-        _require_shape("shear_modulus", self.shear_modulus, (n_segments,))
-        _validate_damping_input(self, strain_dim=3, n_segments=n_segments)
+        """Validate planar PCS parameter shapes and values.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            ValueError: If link fields are invalid; reference strain, canonical
+                matrices, cross-section coefficients, gravity, or the planar
+                base pose has the wrong shape or contains invalid values.
+        """
+        _validate_continuum_base(self, strain_dim=3, gravity_dim=2)
         validate_planar_base_pose("base_pose", self.base_pose)
 
 
 class ISupportParams(PCSParams):
     """Dynamic parameters for the I-SUPPORT spatial pneumatic PCS model.
 
-    The leading axis of the standard PCS body fields indexes every physical
+    The leading axis of the shared PCS ``link`` fields indexes every physical
     rigid or pneumatic segment in robot order. ``ISupport`` expands these fields
     into the internal PCS layout using ``ISupportStructure``. Chamber fields
     index only pneumatic segments, in their order of appearance. Chamber
@@ -162,11 +135,8 @@ class ISupportParams(PCSParams):
     length into its pressure-conjugate equivalent-volume coordinate. It contains
     one value per pneumatic segment and is shared by all chambers in that
     segment. When omitted, it is derived as
-    ``pi * (chamber_outer_radius**2 - chamber_inner_radius**2)``. Damping can be
-    supplied as ``material_damping_coefficient`` or as a full ``damping_matrix``.
-    A custom ``damping_matrix`` is expressed in flattened pneumatic-segment
-    strain coordinates and must be block diagonal by pneumatic segment when the
-    model is constructed.
+    ``pi * (chamber_outer_radius**2 - chamber_inner_radius**2)``. Stiffness and
+    damping are supplied as canonical per-link generalized matrices.
 
     ``pcs_segment_lengths`` optionally stores flattened PCS segment lengths in
     the order defined by ``ISupportStructure.pcs_segment_counts``. If omitted,
@@ -185,6 +155,17 @@ class ISupportParams(PCSParams):
     chamber_effective_pressure_area: Array | None = None
 
     def validate(self) -> None:
+        """Validate PCS and pneumatic chamber parameters.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            ValueError: If inherited PCS fields are invalid; chamber arrays
+                disagree in shape; radii, effective areas, or segment lengths
+                are invalid; or chamber azimuths are non-finite or not uniformly
+                distributed.
+        """
         super().validate()
         chamber_inner_radius = jnp.asarray(self.chamber_inner_radius)
         if chamber_inner_radius.ndim != 1:

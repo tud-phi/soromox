@@ -1,5 +1,9 @@
 # 🚀 Quick Start
 
+For construction, immutable parameter replacement, and differentiable
+identification workflows, see
+[Parameters, Updates, and Optimization](parameters-and-optimization.md).
+
 **Get up and running with SoRoMoX in minutes!** This hands-on guide walks you through your first soft robot simulation with step-by-step examples.
 
 ---
@@ -158,14 +162,14 @@ SoRoMoX uses an object-oriented design based on Equinox dataclasses. Systems are
 from soromox.systems import (
     ArticulatedSoftRobot,
     ArticulatedSoftRobotParams,
+    LinkSpec,
     PCS,
-    PCSParams,
 )
 # For spatial articulated soft robots
 robot = ArticulatedSoftRobot(params=ArticulatedSoftRobotParams(...))
 
-# For soft continuum robots (PCS, GVS)
-robot = PCS(params=PCSParams(...))
+# For soft continuum robots (PCS and GVS)
+robot = PCS.from_links([LinkSpec.circular(...)])
 ```
 
 **Key Benefits:**
@@ -194,17 +198,20 @@ poses, gravity directions, and zero-gravity models. See
 for exact vectors and quaternions.
 
 ```python title="Parameter Structure"
-params = PCSParams(
-    length=link_lengths,
-    radius=radii,
-    density=densities,
-    reference_strain=reference_strain,
-    young_modulus=young_modulus,
-    shear_modulus=shear_modulus,
-    material_damping_coefficient=material_damping_coefficient,
-)
-robot = PCS(params=params)
-robot = robot.update_params(length=new_lengths)
+links = [
+    LinkSpec.circular(
+        length=length,
+        radius=radius,
+        density=density,
+        reference_strain=reference,
+        young_modulus=young,
+        shear_modulus=shear,
+        material_damping_coefficient=material_damping,
+    )
+    for length, radius, density in zip(link_lengths, radii, densities)
+]
+robot = PCS.from_links(links)
+robot = robot.update_link_params(length=new_lengths)
 ```
 
 For routed tendons, pushing rods, muscles, and equivalent pressure chambers,
@@ -248,25 +255,26 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 === "🌊 Continuum Robot"
 
     ```python
-    from soromox.systems import PlanarPCS, PlanarPCSParams
+    from soromox.systems import LinkSpec, PlanarPCS
 
     # Create a 3-segment soft robot
     num_segments = 3
-    segment_lengths = 0.1 * jnp.ones((num_segments,))
-    material_damping_coefficient = 318.0
-    params = PlanarPCSParams(
-        length=segment_lengths,
-        radius=0.02 * jnp.ones((num_segments,)),
-        density=1070.0 * jnp.ones((num_segments,)),
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        material_damping_coefficient=material_damping_coefficient,
-    )
+    links = [
+        LinkSpec.circular(
+            length=0.1,
+            radius=0.02,
+            density=1070.0,
+            reference_strain=[0.0, 1.0, 0.0],
+            young_modulus=2e3,
+            shear_modulus=1e3,
+            material_damping_coefficient=318.0,
+        )
+        for _ in range(num_segments)
+    ]
     # Note: Damping helps stabilize simulations and represents material dissipation.
 
     # Initialize the PCS robot
-    robot = PlanarPCS(params=params)
+    robot = PlanarPCS.from_links(links)
 
     # Define configuration (strains)
     # Each segment has 3 strain components: [curvature, shear_x, shear_y]

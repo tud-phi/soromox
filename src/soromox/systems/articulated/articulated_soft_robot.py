@@ -9,7 +9,8 @@ from jax import numpy as jnp
 
 from soromox.actuation.core import Actuator, PassiveElement
 from soromox.systems.articulated.params import ArticulatedSoftRobotParams
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.lie_algebra import se3, so3
 from soromox.utils.numerics import safe_norm
 

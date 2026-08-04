@@ -22,7 +22,7 @@ from soromox.rendering.open3d_renderer import (  # noqa: E402
     _swept_segment_vertices,
     _update_polylines_lineset,
 )
-from soromox.systems.soft_robot import CrossSectionGeometry  # noqa: E402
+from soromox.systems.components import CrossSectionGeometry  # noqa: E402
 
 
 class _AnimatingSpatialRobot:

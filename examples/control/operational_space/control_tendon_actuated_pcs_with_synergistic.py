@@ -32,7 +32,7 @@ from soromox.coordinate_transformations import OperationalSpaceDynamics
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     PCS,
-    PCSParams,
+    LinkSpec,
     SystemState,
 )
 
@@ -56,18 +56,21 @@ def main(
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 362.0
-    body_params = PCSParams(
+    body_params = PCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_lengths[index]),
+                radius=2e-2,
+                density=float(rho[index]),
+                young_modulus=2e3,
+                shear_modulus=1e3,
+                material_damping_coefficient=material_damping_coefficient,
+                reference_strain=[0, 0, 0, 1, 0, 0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=p0,
-        length=segment_lengths,
-        radius=2e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([0.0, 0.0, 9.81]),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        material_damping_coefficient=material_damping_coefficient,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
     )
 
     # Tendons

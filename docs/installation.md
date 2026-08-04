@@ -175,19 +175,15 @@ Test your installation with this quick verification script:
 
     ```python
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS, PlanarPCSParams
+    from soromox.systems import LinkSpec, PlanarPCS
 
     # Create a simple 1-segment PCS robot
-    params = PlanarPCSParams(
-        length=jnp.array([0.1]),
-        radius=jnp.array([0.01]),
-        density=jnp.array([1000.0]),
-        young_modulus=jnp.array([1e6]),
-        shear_modulus=jnp.array([1e5]),
-        material_damping_coefficient=jnp.array([318.0]),
-        reference_strain=jnp.array([0.0, 1.0, 0.0]),
-    )
-    robot = PlanarPCS(params=params)
+    robot = PlanarPCS.from_links([LinkSpec.circular(
+        length=0.1, radius=0.01, density=1000.0,
+        young_modulus=1e6, shear_modulus=1e5,
+        material_damping_coefficient=318.0,
+        reference_strain=[0.0, 1.0, 0.0],
+    )])
     robot.forward_kinematics(jnp.zeros(robot.num_dofs), s=0.1)
 
     print("🎉 SoRoMoX installation successful!")
@@ -198,18 +194,17 @@ Test your installation with this quick verification script:
     ```python
     import jax
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS, PlanarPCSParams
+    from soromox.systems import LinkSpec, PlanarPCS
 
-    params = PlanarPCSParams(
-        length=jnp.array([0.1, 0.1]),
-        radius=jnp.array([0.01, 0.01]),
-        density=jnp.array([1000.0, 1000.0]),
-        young_modulus=jnp.array([1e6, 1e6]),
-        shear_modulus=jnp.array([1e5, 1e5]),
-        material_damping_coefficient=jnp.array([318.0, 318.0]),
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 2),
-    )
-    robot = PlanarPCS(params=params)
+    robot = PlanarPCS.from_links([
+        LinkSpec.circular(
+            length=0.1, radius=0.01, density=1000.0,
+            young_modulus=1e6, shear_modulus=1e5,
+            material_damping_coefficient=318.0,
+            reference_strain=[0.0, 1.0, 0.0],
+        )
+        for _ in range(2)
+    ])
 
     # Test JAX compilation and differentiation. Same-shape params updates keep
     # the PyTree layout fixed and avoid recompilation.

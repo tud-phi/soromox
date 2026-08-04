@@ -1,7 +1,7 @@
 __all__ = ["PlanarPCS"]
 
 
-from typing import Any
+from typing import Any, Self
 
 import equinox as eqx
 from jax import Array, lax, vmap
@@ -12,9 +12,16 @@ from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
 )
+from soromox.systems.components import (
+    ContinuumLinkParams,
+    CrossSectionGeometry,
+    CrossSectionParams,
+    IsotropicMaterialParams,
+    LinkSpec,
+)
 from soromox.systems.pcs.params import PlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.dof import build_active_dof_basis
 from soromox.utils.geometry import poses
@@ -89,8 +96,6 @@ class PlanarPCS(SoftRobot):
     L_cum: Array | None = eqx.field(default=None)  # Cumulative length of the segments
     r: Array | None = eqx.field(default=None)  # Radius of the segments
     rho: Array | None = eqx.field(default=None)
-    E: Array | None = eqx.field(default=None)  # Young's modulus of the segments
-    G: Array | None = eqx.field(default=None)  # Shear modulus of the segments
 
     num_segments: int = eqx.field(static=True, default=0)
     num_gauss_points: int = eqx.field(static=True, default=0)
@@ -110,6 +115,142 @@ class PlanarPCS(SoftRobot):
     K_active: Array | None = eqx.field(default=None)  # Cached active-coordinate stiffness matrix
     D_full: Array | None = eqx.field(default=None)  # Cached full damping matrix
     D_active: Array | None = eqx.field(default=None)  # Cached active-coordinate damping matrix
+    young_stiffness_operator: Array | None = eqx.field(default=None)
+    shear_stiffness_operator: Array | None = eqx.field(default=None)
+    material_damping_operator: Array | None = eqx.field(default=None)
+
+    @staticmethod
+    def params_from_links(
+        links: list[LinkSpec] | tuple[LinkSpec, ...],
+        *,
+        gravity: Array | None = None,
+        base_pose: Array | None = None,
+    ) -> PlanarPCSParams:
+        """Build planar PCS parameters from shared link specifications.
+
+        Args:
+            links: Non-empty sequence of constant, circular link
+                specifications. Each reference strain must have shape ``(3,)``.
+            gravity: Optional planar gravity vector with shape ``(2,)``.
+            base_pose: Optional planar base pose ``[theta, x, y]`` with shape
+                ``(3,)``.
+
+        Returns:
+            Validated :class:`PlanarPCSParams` with canonical per-link
+            stiffness and damping arrays of shape ``(num_links, 3, 3)``.
+
+        Raises:
+            ValueError: If no links are supplied; a link is not constant and
+                circular; a reference strain has the wrong shape; a material
+                source is incomplete; or an explicit matrix is not ``(3, 3)``.
+        """
+        if not links:
+            raise ValueError("PlanarPCS requires at least one link.")
+        specs = tuple(links)
+        for index, spec in enumerate(specs):
+            if spec.cross_section_geometry != CrossSectionGeometry.CIRCULAR:
+                raise ValueError(
+                    f"PlanarPCS link {index} must have a circular section."
+                )
+            if spec.cross_section_profile_types != ("constant",):
+                raise ValueError(f"PlanarPCS link {index} must have a constant radius.")
+            if jnp.asarray(spec.reference_strain).shape != (3,):
+                raise ValueError(
+                    f"PlanarPCS link {index} reference_strain must have shape (3,)."
+                )
+        length = jnp.asarray([spec.length for spec in specs])
+        density = jnp.asarray([spec.density for spec in specs])
+        radius = jnp.asarray([spec.cross_section_coefficients[0] for spec in specs])
+        reference_strain = jnp.asarray(
+            [spec.reference_strain for spec in specs], dtype=float
+        )
+        area = jnp.pi * radius**2
+        moment = jnp.pi * radius**4 / 4.0
+        zeros = jnp.zeros_like(length)
+        young_operator = length[:, None, None] * vmap(jnp.diag)(
+            jnp.stack([moment, area, zeros], axis=1)
+        )
+        shear_operator = length[:, None, None] * vmap(jnp.diag)(
+            jnp.stack([zeros, zeros, area], axis=1)
+        )
+        damping_operator = length[:, None, None] * vmap(jnp.diag)(
+            jnp.stack([3.0 * moment, 3.0 * area, area], axis=1)
+        )
+        stiffness_items = []
+        damping_items = []
+        for index, spec in enumerate(specs):
+            if spec.stiffness is not None:
+                stiffness = jnp.asarray(spec.stiffness)
+                if stiffness.shape != (3, 3):
+                    raise ValueError(
+                        f"PlanarPCS link {index} stiffness must have shape (3, 3)."
+                    )
+            else:
+                stiffness = (
+                    spec.young_modulus * young_operator[index]
+                    + spec.shear_modulus * shear_operator[index]
+                )
+            if spec.damping is not None:
+                damping = jnp.asarray(spec.damping)
+                if damping.shape != (3, 3):
+                    raise ValueError(
+                        f"PlanarPCS link {index} damping must have shape (3, 3)."
+                    )
+            else:
+                damping = spec.material_damping_coefficient * damping_operator[index]
+            stiffness_items.append(stiffness)
+            damping_items.append(damping)
+        return PlanarPCSParams(
+            base_pose=base_pose,
+            gravity=gravity,
+            link=ContinuumLinkParams(
+                length=length,
+                density=density,
+                reference_strain=reference_strain,
+                cross_section=CrossSectionParams(coefficients=radius[:, None]),
+                stiffness=jnp.stack(stiffness_items),
+                damping=jnp.stack(damping_items),
+            ),
+        )
+
+    @classmethod
+    def from_links(
+        cls,
+        links: list[LinkSpec] | tuple[LinkSpec, ...],
+        *,
+        structure: PlanarPCSStructure | None = None,
+        gravity: Array | None = None,
+        base_pose: Array | None = None,
+        **kwargs: Any,
+    ) -> "PlanarPCS":
+        """Construct a planar PCS model from shared link specifications.
+
+        Args:
+            links: Non-empty sequence of constant, circular link
+                specifications.
+            structure: Optional static planar PCS quadrature, strain-selection,
+                and rotational-scaling configuration. Defaults to
+                :class:`PlanarPCSStructure`.
+            gravity: Optional planar gravity vector with shape ``(2,)``.
+            base_pose: Optional planar base pose ``[theta, x, y]`` with shape
+                ``(3,)``.
+            **kwargs: Additional keyword arguments forwarded to the PlanarPCS
+                constructor, such as actuators or passive elements.
+
+        Returns:
+            A fully initialized planar PCS model.
+
+        Raises:
+            TypeError: If a structure or constructor argument has an invalid
+                type.
+            ValueError: If a link specification, static structure, parameter
+                array, or attached component is invalid.
+        """
+        return cls(
+            params=cls.params_from_links(links, gravity=gravity, base_pose=base_pose),
+            structure=structure,
+            **kwargs,
+        )
 
     def __init__(
         self,
@@ -119,7 +260,25 @@ class PlanarPCS(SoftRobot):
         passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
         **kwargs: Any,
     ):
-        """Initialize the PlanarPCS class from typed dynamic parameters."""
+        """Initialize a planar PCS model from typed parameters.
+
+        Args:
+            params: Canonical dynamic link, gravity, and base-pose parameters.
+            structure: Optional static quadrature, active-strain, and
+                rotational-scaling configuration.
+            actuators: Optional actuator or tuple of actuators attached to the
+                model.
+            passive_elements: Optional passive element or tuple of passive
+                elements. Pass ``None`` or an empty tuple to disable them.
+            **kwargs: Additional keyword arguments forwarded to
+                :class:`BaseContinuumSoftRobot`.
+
+        Raises:
+            TypeError: If ``params``, a structure field, or an attached
+                component has an invalid type.
+            ValueError: If parameter shapes or values, the structure, or an
+                attached component are invalid.
+        """
         if not isinstance(params, PlanarPCSParams):
             raise TypeError("params must be a PlanarPCSParams instance.")
         params.validate()
@@ -132,7 +291,7 @@ class PlanarPCS(SoftRobot):
         )
 
         # Number of segments
-        num_segments = int(params.length.shape[0])
+        num_segments = int(params.link.length.shape[0])
         if num_segments < 1:
             raise ValueError(f"num_segments must be at least 1, got {num_segments}")
         self.num_segments = num_segments
@@ -189,7 +348,7 @@ class PlanarPCS(SoftRobot):
         self.num_active_strains = jnp.sum(strain_selector)
         self.num_dofs = int(self.num_active_strains.item())
 
-        reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
+        reference_strain = jnp.asarray(params.link.reference_strain, dtype=jnp.float64)
         if reference_strain.size != self.num_strains:
             raise ValueError(
                 "reference_strain must have "
@@ -203,12 +362,20 @@ class PlanarPCS(SoftRobot):
 
     @property
     def is_planar(self) -> bool:
-        """Planar PCS is a 2D model."""
+        """Return whether the system is planar.
+
+        Returns:
+            Always ``True``.
+        """
         return True
 
     @property
     def segment_length(self) -> Array:
-        """Per-segment backbone lengths."""
+        """Return the per-segment backbone lengths.
+
+        Returns:
+            Array with shape ``(num_segments,)``.
+        """
         return jnp.asarray(self.L)
 
     def _strain_basis_scaling_vector(self) -> Array:
@@ -224,7 +391,21 @@ class PlanarPCS(SoftRobot):
         return B_xi
 
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Return the assumed solid circular cross-section and segment radius."""
+        """Evaluate the circular cross-section at a backbone coordinate.
+
+        Args:
+            q: Generalized coordinates. PCS cross-section geometry is
+                configuration-independent, but ``q`` is accepted for the common
+                continuum-robot interface.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple containing the circular :class:`CrossSectionGeometry` tag
+            and a one-element array holding the selected segment radius.
+
+        Raises:
+            ValueError: If ``s`` cannot be assigned to a segment.
+        """
         segment_idx, _ = self.classify_segment(s)
         radius = jnp.asarray(self.r)[segment_idx]
         tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
@@ -244,7 +425,7 @@ class PlanarPCS(SoftRobot):
         )  # Add a zero for the orientation angle
 
         # Lengths of the segments
-        L = params.length
+        L = params.link.length
         L = jnp.asarray(L, dtype=jnp.float64)
         if L.shape != (self.num_segments,):
             raise ValueError(
@@ -256,16 +437,11 @@ class PlanarPCS(SoftRobot):
         self.L_cum = L_cum
 
         # Radius of the segments
-        r = params.radius
-        r = jnp.asarray(r, dtype=jnp.float64)
-        if r.shape != (self.num_segments,):
-            raise ValueError(
-                f"radius must have shape ({self.num_segments},), got {r.shape}"
-            )
+        r = jnp.asarray(params.link.cross_section.coefficients[:, 0], dtype=jnp.float64)
         self.r = r
 
         # Densities of the segments
-        rho = params.density
+        rho = params.link.density
         rho = jnp.asarray(rho, dtype=jnp.float64)
         if rho.shape != (self.num_segments,):
             raise ValueError(
@@ -273,72 +449,9 @@ class PlanarPCS(SoftRobot):
             )
         self.rho = rho
 
-        # Elastic modulus of the segments
-        E = params.young_modulus
-        E = jnp.asarray(E, dtype=jnp.float64)
-        if E.shape != (self.num_segments,):
-            raise ValueError(
-                f"young_modulus must have shape ({self.num_segments},), got {E.shape}"
-            )
-        self.E = E
-
-        # Shear modulus of the segments
-        G = params.shear_modulus
-        G = jnp.asarray(G, dtype=jnp.float64)
-        if G.shape != (self.num_segments,):
-            raise ValueError(
-                f"shear_modulus must have shape ({self.num_segments},), got {G.shape}"
-            )
-        self.G = G
-
-    def _explicit_damping_full_matrix(self, params: PlanarPCSParams) -> Array:
-        """Return the custom full damping matrix supplied in params."""
-        if params.damping_matrix is None:
-            raise ValueError("damping_matrix is not set.")
-        expected_D_shape = (self.num_strains, self.num_strains)
-        D = jnp.asarray(params.damping_matrix, dtype=jnp.float64)
-        if D.shape != expected_D_shape:
-            raise ValueError(
-                f"damping_matrix must have shape {expected_D_shape}, got {D.shape}"
-            )
-        return D
-
-    def _material_damping_coefficients(self) -> Array:
-        """Return per-segment material damping coefficients in Pa*s (N*s/m^2)."""
-        params = self._current_body_params()
-        if params.material_damping_coefficient is None:
-            raise ValueError("material_damping_coefficient is not set.")
-        coefficient = jnp.asarray(
-            params.material_damping_coefficient, dtype=jnp.float64
-        )
-        if coefficient.ndim == 0:
-            return jnp.full((self.num_segments,), coefficient, dtype=jnp.float64)
-        if coefficient.shape != (self.num_segments,):
-            raise ValueError(
-                "material_damping_coefficient must be a scalar or have shape "
-                f"({self.num_segments},), got {coefficient.shape}."
-            )
-        return coefficient
-
-    def _compute_material_damping_full_matrix(self) -> Array:
-        """Compute damping using the solid-circle area and second moment."""
-        coefficients = self._material_damping_coefficients()
-
-        def damping_block(i: Array) -> Array:
-            I_i = self._local_second_moment_of_area(i)
-            A_i = self._local_cross_sectional_area(i)
-            damping_diag = jnp.stack([3.0 * I_i, 3.0 * A_i, A_i], axis=0)
-            return self.L[i] * coefficients[i] * jnp.diag(damping_diag)
-
-        damping_blocks = vmap(damping_block)(jnp.arange(self.num_segments))
-        return blk_diag(damping_blocks)
-
     def _compute_damping_full_matrix(self) -> Array:
-        """Compute the current full damping matrix."""
-        params = self._current_body_params()
-        if params.material_damping_coefficient is not None:
-            return self._compute_material_damping_full_matrix()
-        return self._explicit_damping_full_matrix(params)
+        """Assemble canonical per-link generalized damping blocks."""
+        return blk_diag(self._current_body_params().link.damping)
 
     def _current_body_params(self) -> PlanarPCSParams:
         """Return the planar PCS body params, including typed actuated wrappers."""
@@ -357,23 +470,26 @@ class PlanarPCS(SoftRobot):
         if not isinstance(params, PlanarPCSParams):
             raise TypeError("params must be a PlanarPCSParams instance.")
         params.validate()
-        if params.length.shape != current_params.length.shape:
+        if params.link.length.shape != current_params.link.length.shape:
             raise ValueError(
                 "length shape changes the model structure; construct a new PlanarPCS."
             )
-        if params.reference_strain.shape != current_params.reference_strain.shape:
+        if (
+            params.link.reference_strain.shape
+            != current_params.link.reference_strain.shape
+        ):
             raise ValueError(
                 "reference_strain shape changes the model structure; construct a new PlanarPCS."
             )
 
         base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
         gravity = jnp.asarray(params.gravity, dtype=jnp.float64)
-        segment_lengths = jnp.asarray(params.length, dtype=jnp.float64)
-        radius = jnp.asarray(params.radius, dtype=jnp.float64)
-        density = jnp.asarray(params.density, dtype=jnp.float64)
-        young_modulus = jnp.asarray(params.young_modulus, dtype=jnp.float64)
-        shear_modulus = jnp.asarray(params.shear_modulus, dtype=jnp.float64)
-        reference_strain = jnp.asarray(params.reference_strain, dtype=jnp.float64)
+        segment_lengths = jnp.asarray(params.link.length, dtype=jnp.float64)
+        radius = jnp.asarray(
+            params.link.cross_section.coefficients[:, 0], dtype=jnp.float64
+        )
+        density = jnp.asarray(params.link.density, dtype=jnp.float64)
+        reference_strain = jnp.asarray(params.link.reference_strain, dtype=jnp.float64)
 
         updated_self = eqx.tree_at(
             lambda m: (
@@ -384,8 +500,6 @@ class PlanarPCS(SoftRobot):
                 m.L_cum,
                 m.r,
                 m.rho,
-                m.E,
-                m.G,
                 m.xi_ref,
             ),
             self,
@@ -401,35 +515,132 @@ class PlanarPCS(SoftRobot):
                 ),
                 radius,
                 density,
-                young_modulus,
-                shear_modulus,
                 reference_strain.reshape(self.num_strains),
             ),
         )
         return updated_self._with_refreshed_precomputed_matrices()
 
     def with_params(self, params: PlanarPCSParams) -> "PlanarPCS":
-        """Return an updated copy with a full typed parameter object."""
+        """Return a model copy using a complete parameter PyTree.
+
+        Args:
+            params: Complete replacement parameters with the same number of
+                segments and reference-strain layout as this model.
+
+        Returns:
+            A new PlanarPCS model with refreshed geometry, mass,
+            material-response, stiffness, and damping caches. The original
+            model is unchanged.
+
+        Raises:
+            TypeError: If ``params`` is not a :class:`PlanarPCSParams`.
+            ValueError: If the replacement is invalid or changes the static
+                segment or strain layout.
+        """
         return self._with_planar_pcs_params(params)
 
-    def update_params(self, **updates: Array) -> "PlanarPCS":
-        """Return an updated copy with selected typed parameter fields replaced."""
+    def update_params(self, **updates: Any) -> "PlanarPCS":
+        """Return a copy with selected top-level parameter fields replaced.
+
+        Args:
+            **updates: Fields of :class:`PlanarPCSParams` to replace, typically
+                ``link``, ``gravity``, or ``base_pose``.
+
+        Returns:
+            A new validated PlanarPCS model containing the replacements.
+
+        Raises:
+            TypeError: If an unknown field is supplied or a replacement has an
+                invalid type.
+            ValueError: If the result is invalid or changes the static segment
+                or strain layout.
+        """
         if (
-            "length" in updates
-            and jnp.asarray(updates["length"]).shape != self.params.length.shape
+            "link" in updates
+            and jnp.asarray(updates["link"].length).shape
+            != self.params.link.length.shape
         ):
             raise ValueError(
                 "length shape changes the model structure; construct a new PlanarPCS."
             )
         if (
-            "reference_strain" in updates
-            and jnp.asarray(updates["reference_strain"]).shape
-            != self.params.reference_strain.shape
+            "link" in updates
+            and jnp.asarray(updates["link"].reference_strain).shape
+            != self.params.link.reference_strain.shape
         ):
             raise ValueError(
                 "reference_strain shape changes the model structure; construct a new PlanarPCS."
             )
         return self.with_params(self.params.replace(**updates))
+
+    def update_link_params(self, **updates: Any) -> "PlanarPCS":
+        """Return a copy with selected continuum-link fields replaced.
+
+        Args:
+            **updates: Fields of :class:`ContinuumLinkParams` to replace, such
+                as ``length``, ``density``, ``reference_strain``,
+                ``cross_section``, ``stiffness``, or ``damping``.
+
+        Returns:
+            A new validated PlanarPCS model with refreshed dependent caches.
+
+        Raises:
+            TypeError: If an unknown link field is supplied.
+            ValueError: If a replacement is invalid or changes the static
+                segment or strain layout.
+        """
+        return self.with_params(
+            self.params.replace(link=self.params.link.replace(**updates))
+        )
+
+    def link_matrices_from_material(
+        self, material: IsotropicMaterialParams
+    ) -> tuple[Array, Array]:
+        """Map isotropic material variables to canonical planar link matrices.
+
+        Args:
+            material: Scalar or per-segment Young's modulus, shear modulus, and
+                material damping coefficient. Scalars are broadcast over all
+                segments.
+
+        Returns:
+            A tuple ``(stiffness, damping)`` whose arrays both have shape
+            ``(num_segments, 3, 3)``.
+
+        Raises:
+            ValueError: If a material field is not scalar or does not have
+                shape ``(num_segments,)``.
+        """
+        material = material.broadcast(self.num_segments)
+        stiffness = (
+            material.young_modulus[:, None, None] * self.young_stiffness_operator
+            + material.shear_modulus[:, None, None] * self.shear_stiffness_operator
+        )
+        damping = (
+            material.material_damping_coefficient[:, None, None]
+            * self.material_damping_operator
+        )
+        return stiffness, damping
+
+    def with_isotropic_material(self, material: IsotropicMaterialParams) -> Self:
+        """Return a copy whose link matrices are built from isotropic material.
+
+        The supplied material PyTree remains caller-owned and is not stored on
+        the model.
+
+        Args:
+            material: Scalar or per-segment isotropic material variables.
+
+        Returns:
+            A new PlanarPCS model containing the generated canonical link
+            stiffness and damping matrices.
+
+        Raises:
+            ValueError: If a material field cannot be broadcast to one value
+                per segment.
+        """
+        stiffness, damping = self.link_matrices_from_material(material)
+        return self.update_link_params(stiffness=stiffness, damping=damping)
 
     def _precomputed_matrices(self) -> tuple[Array, Array, Array, Array, Array]:
         """Compute state-independent matrices cached by the model."""
@@ -443,8 +654,17 @@ class PlanarPCS(SoftRobot):
         return M_segments, K_full, K_active, D_full, D_active
 
     def precompute(self) -> None:
-        """Refresh state-independent matrices cached by the model."""
+        """Refresh state-independent matrices cached by the model.
+
+        Returns:
+            ``None``. Material unit-response operators and the segment, full,
+            and active-coordinate matrices are replaced in place.
+        """
         object.__setattr__(self, "B_xi", self._scaled_strain_basis(self.B_xi_unscaled))
+        young_operator, shear_operator, damping_operator = self._material_operators()
+        object.__setattr__(self, "young_stiffness_operator", young_operator)
+        object.__setattr__(self, "shear_stiffness_operator", shear_operator)
+        object.__setattr__(self, "material_damping_operator", damping_operator)
         (
             M_segments,
             K_full,
@@ -462,6 +682,18 @@ class PlanarPCS(SoftRobot):
         """Return a copy with cached state-independent matrices refreshed."""
         B_xi = self._scaled_strain_basis(self.B_xi_unscaled)
         updated_self = eqx.tree_at(lambda m: m.B_xi, self, B_xi)
+        young_operator, shear_operator, damping_operator = (
+            updated_self._material_operators()
+        )
+        updated_self = eqx.tree_at(
+            lambda m: (
+                m.young_stiffness_operator,
+                m.shear_stiffness_operator,
+                m.material_damping_operator,
+            ),
+            updated_self,
+            (young_operator, shear_operator, damping_operator),
+        )
         (
             M_segments,
             K_full,
@@ -1257,8 +1489,17 @@ class PlanarPCS(SoftRobot):
     def jacobian_and_arc_length_derivative_bodyframe(
         self, q: Array, s: Array
     ) -> tuple[Array, Array]:
-        """
-        Compute the body-frame Jacobian and its arc-length derivative at ``s``.
+        """Compute a body-frame Jacobian and its arc-length derivative.
+
+        Args:
+            q: Active generalized strains with shape
+                ``(num_active_strains,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple ``(J, J_s)`` containing the body-frame Jacobian and its
+            derivative with respect to global arc length. Both arrays have
+            shape ``(3, num_active_strains)``.
         """
         xi = self.strain(q).reshape(self.num_segments, 3)
         segment_idx, s_local = self.classify_segment(s)
@@ -1339,8 +1580,16 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
-        """
-        Compute the arc-length derivative of the body-frame Jacobian at ``s``.
+        """Compute the body-frame Jacobian derivative with respect to arc length.
+
+        Args:
+            q: Active generalized strains with shape
+                ``(num_active_strains,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            Arc-length derivative with shape
+            ``(3, num_active_strains)``.
         """
         _, Js = self.jacobian_and_arc_length_derivative_bodyframe(q, s)
         return Js
@@ -1392,8 +1641,17 @@ class PlanarPCS(SoftRobot):
     def jacobian_and_arc_length_derivative_inertialframe(
         self, q: Array, s: Array
     ) -> tuple[Array, Array]:
-        """
-        Compute the inertial-frame Jacobian and its arc-length derivative at ``s``.
+        """Compute an inertial-frame Jacobian and its arc-length derivative.
+
+        Args:
+            q: Active generalized strains with shape
+                ``(num_active_strains,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple ``(J, J_s)`` containing the inertial-frame Jacobian and its
+            derivative with respect to global arc length. Both arrays have
+            shape ``(3, num_active_strains)``.
         """
         chi, J_local, Js_local = (
             self._jacobian_and_arc_length_derivative_bodyframe_with_pose(q, s)
@@ -1412,8 +1670,16 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def jacobian_arc_length_derivative_inertialframe(self, q: Array, s: Array) -> Array:
-        """
-        Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
+        """Compute the inertial Jacobian derivative with respect to arc length.
+
+        Args:
+            q: Active generalized strains with shape
+                ``(num_active_strains,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            Arc-length derivative with shape
+            ``(3, num_active_strains)``.
         """
         chi, J_local, Js_local = (
             self._jacobian_and_arc_length_derivative_bodyframe_with_pose(q, s)
@@ -1823,7 +2089,17 @@ class PlanarPCS(SoftRobot):
 
     @eqx.filter_jit
     def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
-        """Compute inertial-frame Jacobians at multiple arc-length positions."""
+        """Compute inertial-frame Jacobians at multiple arc-length positions.
+
+        Args:
+            q: Active generalized strains with shape
+                ``(num_active_strains,)``.
+            s_ps: Backbone coordinates with shape ``(num_points,)``.
+
+        Returns:
+            Inertial-frame Jacobians with shape
+            ``(num_points, 3, num_active_strains)``.
+        """
         return self.jacobian_inertialframe_batched(q, s_ps)
 
     @eqx.filter_jit
@@ -1837,7 +2113,19 @@ class PlanarPCS(SoftRobot):
     def jacobian_and_time_derivative_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
-        """Compute inertial-frame Jacobians and time derivatives at multiple arc-length positions."""
+        """Compute batched inertial Jacobians and their time derivatives.
+
+        Args:
+            q: Active generalized strains with shape
+                ``(num_active_strains,)``.
+            qd: Active generalized strain rates with shape
+                ``(num_active_strains,)``.
+            s_ps: Backbone coordinates with shape ``(num_points,)``.
+
+        Returns:
+            A tuple ``(J, J_dot)`` whose arrays both have shape
+            ``(num_points, 3, num_active_strains)``.
+        """
         return self.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
 
     # ==========================================
@@ -2116,43 +2404,25 @@ class PlanarPCS(SoftRobot):
 
         return G
 
-    @eqx.filter_jit
-    def _local_stiffness_matrix(self, i: Array) -> Array:
-        """
-        Compute local stiffness for a planar rod longitudinally aligned with local x.
-
-        The diagonal constitutive terms use the solid circular cross-section's
-        area and transverse second moment.
-
-        Args:
-            i (Array): index of the segment
-
-        Returns:
-            S_i (Array): Local stiffness matrix of shape (3, 3) for the i-th segment.
-        """
-        I_i = self._local_second_moment_of_area(i)  # Second moment of area
-        A_i = self._local_cross_sectional_area(i)  # Cross-sectional area
-
-        S_i = self.L[i] * jnp.diag(
-            jnp.stack(
-                [
-                    I_i * self.E[i],  # bending Z
-                    A_i * self.E[i],  # axial X
-                    A_i * self.G[i],  # shear Y
-                ],
-                axis=0,
-            )
+    def _material_operators(self) -> tuple[Array, Array, Array]:
+        """Return unit Young, shear, and material-damping link matrices."""
+        area = jnp.pi * self.r**2
+        moment = jnp.pi * self.r**4 / 4.0
+        zeros = jnp.zeros_like(self.L)
+        young = self.L[:, None, None] * vmap(jnp.diag)(
+            jnp.stack([moment, area, zeros], axis=1)
         )
-
-        return S_i
+        shear = self.L[:, None, None] * vmap(jnp.diag)(
+            jnp.stack([zeros, zeros, area], axis=1)
+        )
+        damping = self.L[:, None, None] * vmap(jnp.diag)(
+            jnp.stack([3.0 * moment, 3.0 * area, area], axis=1)
+        )
+        return young, shear, damping
 
     def _compute_stiffness_full_matrix(self) -> Array:
-        """Compute the uncached full stiffness matrix from current parameters."""
-        # stiffness matrix of shape (num_segments, 3, 3)
-        S_sms = vmap(self._local_stiffness_matrix)(jnp.arange(self.num_segments))
-
-        # we define the elastic matrix of shape (num_strains, num_strains) as K(xi) = K @ xi where K is equal to
-        return blk_diag(S_sms)
+        """Assemble canonical per-link generalized stiffness blocks."""
+        return blk_diag(self._current_body_params().link.stiffness)
 
     @eqx.filter_jit
     def _stiffness(self, formulate_in_strain_space: bool = False) -> Array:

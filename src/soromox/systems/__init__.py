@@ -7,8 +7,19 @@ from soromox.systems.articulated.params import (
     ArticulatedSoftRobotParams,
     McKibbenActuatedUMArmParams,
 )
+from soromox.systems.components import (
+    ContinuumLinkParams,
+    CrossSectionGeometry,
+    CrossSectionParams,
+    IsotropicMaterialParams,
+    JointParams,
+    JointSpec,
+    LinearProfile,
+    LinkSpec,
+    shear_modulus_from_poisson_ratio,
+)
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.gvs.params import GVSLinkParams, GVSParams
+from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.structures import (
     GVSJointStructure,
     GVSLinkStructure,
@@ -36,18 +47,13 @@ from soromox.systems.pcs.structures import (
     PlanarPCSStructure,
 )
 from soromox.systems.pendulum.params import PendulumParams
-from soromox.systems.soft_robot import (
-    CrossSectionGeometry,
-    SoftRobot,
-)
+from soromox.systems.soft_robot import SoftRobot
 from soromox.systems.system_state import EnvironmentState, SystemState
 
 from .articulated import ArticulatedSoftRobot, McKibbenActuatedUMArm
 from .gvs import (
     GVS,
     GVSSegment,
-    JointSpec,
-    LinkSpec,
     StrainBasisSpec,
 )
 from .pcs import (
@@ -65,6 +71,14 @@ __all__ = [
     "EnvironmentState",
     "SoftRobot",
     "CrossSectionGeometry",
+    "CrossSectionParams",
+    "ContinuumLinkParams",
+    "JointParams",
+    "IsotropicMaterialParams",
+    "LinearProfile",
+    "LinkSpec",
+    "JointSpec",
+    "shear_modulus_from_poisson_ratio",
     "SystemState",
     "custom_jvp_enabled",
     "custom_jvp_mode",
@@ -81,15 +95,12 @@ __all__ = [
     # gvs systems
     "GVS",
     "GVSParams",
-    "GVSLinkParams",
     "GVSStructure",
     "GVSSegmentStructure",
     "GVSLinkStructure",
     "GVSJointStructure",
     "GVSStrainBasisStructure",
     "GVSSegment",
-    "LinkSpec",
-    "JointSpec",
     "StrainBasisSpec",
     # pendulum systems
     "Pendulum",

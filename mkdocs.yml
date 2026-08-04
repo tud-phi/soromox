@@ -61,11 +61,13 @@ nav:
   - Installation: installation.md
   - User Guide:
     - Quick Start: user-guide/quick-start.md
+    - Parameters and Optimization: user-guide/parameters-and-optimization.md
     - Examples: user-guide/examples.md
   - API Reference:
       - Overview: api/overview.md
       - Systems:
           - Overview: api/systems/index.md
+          - Continuum Robot Components: api/systems/continuum-components.md
           - Articulated Systems:
             - Overview: api/systems/articulated/index.md
             - Pendulum: api/systems/pendulum/pendulum.md

@@ -14,7 +14,7 @@ from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import ActuatorStyleConfig
 from soromox.rendering.opencv_planar_renderer import OpenCVPlanarRenderer
-from soromox.systems.soft_robot import CrossSectionGeometry
+from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 
 

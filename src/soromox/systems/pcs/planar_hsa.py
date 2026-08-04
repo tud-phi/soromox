@@ -7,10 +7,11 @@ import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
+from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.pcs.params import PlanarHSAParams
 from soromox.systems.pcs.planar_pcs import PlanarPCS
 from soromox.systems.pcs.structures import PlanarHSAStructure
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.array_math import blk_diag
 from soromox.utils.dof import build_active_dof_basis
 from soromox.utils.geometry import poses

@@ -82,19 +82,30 @@ state callback that returns `(q, pressures)`.
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import ISupport, ISupportParams, ISupportStructure
+from soromox.systems import ISupport, ISupportParams, ISupportStructure, LinkSpec, PCS
 
-params = ISupportParams(
+reference = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
+links = [
     # Physical order: rigid base, pneumatic section, rigid tip.
-    length=jnp.array([0.01, 0.18, 0.01]),
-    radius=jnp.array([0.03, 35.6e-3, 0.025]),
-    density=jnp.array([1210.0, 1104.0, 1210.0]),
-    young_modulus=jnp.array([2.0e9, 1.6464e6, 2.0e9]),
-    shear_modulus=jnp.array([0.8e9, 0.5488e6, 0.8e9]),
-    material_damping_coefficient=1.96e3,
-    reference_strain=jnp.tile(
-        jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 3
-    ),
+    LinkSpec.circular(
+        length=length,
+        radius=radius,
+        density=density,
+        young_modulus=young,
+        shear_modulus=shear,
+        material_damping_coefficient=1.96e3,
+        reference_strain=reference,
+    )
+    for length, radius, density, young, shear in zip(
+        [0.01, 0.18, 0.01],
+        [0.03, 35.6e-3, 0.025],
+        [1210.0, 1104.0, 1210.0],
+        [2.0e9, 1.6464e6, 2.0e9],
+        [0.8e9, 0.5488e6, 0.8e9],
+    )
+]
+params = ISupportParams(
+    link=PCS.params_from_links(links).link,
     chamber_inner_radius=jnp.array([6.39e-3]),
     chamber_outer_radius=jnp.array([7.79e-3]),
     chamber_distance=jnp.array([20e-3]),

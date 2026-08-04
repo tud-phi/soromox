@@ -23,7 +23,7 @@ from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.open3d_renderer import Open3DRenderer
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
-from soromox.systems import PCS, PCSParams
+from soromox.systems import PCS, LinkSpec
 
 if __package__:
     from .rl_render_style import (
@@ -246,16 +246,24 @@ def build_rl_robot(
         end_segment_index=(0, 0, 0, 0),
     )
 
-    body_params = PCSParams(
+    body_params = PCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_length[index]),
+                radius=float(backbone_radius[index]),
+                density=float(rho[index]),
+                young_modulus=20e3,
+                shear_modulus=20e3,
+                damping=damping_matrix[
+                    6 * index : 6 * (index + 1),
+                    6 * index : 6 * (index + 1),
+                ],
+                reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
-        length=segment_length,
-        radius=backbone_radius,
-        density=rho,
         gravity=jnp.array([0.0, 0.0, 9.81]),
-        young_modulus=20e3 * jnp.ones((num_segments,)),
-        shear_modulus=20e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
     )
     return PCS(
         params=body_params,

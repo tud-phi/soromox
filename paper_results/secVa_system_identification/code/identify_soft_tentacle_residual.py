@@ -15,9 +15,9 @@ from jax import Array
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     GVS,
-    CrossSectionGeometry,
     GVSSegment,
     JointSpec,
+    LinearProfile,
     LinkSpec,
     StrainBasisSpec,
 )
@@ -60,6 +60,7 @@ def finish_figure(*, show: bool) -> None:
         plt.show()
     else:
         plt.close()
+
 
 jax.config.update("jax_enable_x64", True)
 # print("JAX default backend:", jax.default_backend())
@@ -792,35 +793,37 @@ if __name__ == "__main__":
 
     ### BODY DEFINITION OF THE SOFT ROBOT ###
     # Link 1
-    link1 = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=3.15e5,
-        nu=0.45,
-        rho=1320.0,
-        eta=1e4,
-        L=0.0250 + 0.2550 + 0.0250,
-        r_i=0.01541,
-        r_f=0.00642,
+    link1 = LinkSpec.circular(
+        length=0.0250 + 0.2550 + 0.0250,
+        radius=LinearProfile(base=0.01541, tip=0.00642),
+        density=1320.0,
+        young_modulus=3.15e5,
+        shear_modulus=3.15e5 / (2.0 * (1.0 + 0.45)),
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
 
     # Link 2
-    link2 = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=3.15e5,
-        nu=0.45,
-        rho=1320.0,
-        eta=1e4,
-        L=0.0550,
-        r_i=0.00642,
-        r_f=0.00480,
+    link2 = LinkSpec.circular(
+        length=0.0550,
+        radius=LinearProfile(base=0.00642, tip=0.00480),
+        density=1320.0,
+        young_modulus=3.15e5,
+        shear_modulus=3.15e5 / (2.0 * (1.0 + 0.45)),
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
     joint1 = JointSpec(type="fixed")
     joint2 = JointSpec(type="fixed")
     basis1 = StrainBasisSpec(
-        type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[0, 1, 1, 1, 0, 0]
+        type="monomial",
+        strain_selector=[1, 1, 1, 1, 0, 0],
+        basis_order=[0, 1, 1, 1, 0, 0],
     )
     basis2 = StrainBasisSpec(
-        type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
+        type="monomial",
+        strain_selector=[0, 1, 1, 0, 0, 0],
+        basis_order=[0, 0, 0, 0, 0, 0],
     )
 
     num_gauss_points = [8, 8]

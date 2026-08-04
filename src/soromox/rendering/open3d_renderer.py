@@ -46,7 +46,8 @@ from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.soft_robot import SoftRobot
 
 # ======================================================================================
 # Geometry helper functions (module-level, stateless)

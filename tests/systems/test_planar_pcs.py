@@ -286,7 +286,7 @@ def test_planar_constant_strain_call():
     # Test the differential relation: delta_chi ≈ J * delta_q
     print("Testing differential relation: delta_chi ≈ J * delta_q")
     delta_q = jnp.array([EPS, -EPS, 2 * EPS])
-    chi_plus = robot.forward_kinematics(q=q + delta_q, s=params.length[0])
+    chi_plus = robot.forward_kinematics(q=q + delta_q, s=params.link.length[0])
     chi_pred = chi + J @ delta_q
     assert_allclose(chi_plus, chi_pred, rtol=RTOL, atol=ATOL)
     print("[Valid test]\n")
@@ -312,17 +312,22 @@ def test_public_planar_pcs_accessors_geometry() -> None:
     q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
 
     assert model.is_planar is True
-    assert_allclose(model.length, jnp.sum(params.length), rtol=RTOL, atol=ATOL)
-    assert_allclose(model.segment_length, params.length, rtol=RTOL, atol=ATOL)
+    assert_allclose(model.length, jnp.sum(params.link.length), rtol=RTOL, atol=ATOL)
+    assert_allclose(model.segment_length, params.link.length, rtol=RTOL, atol=ATOL)
 
-    s_second = params.length[0] + 0.25 * params.length[1]
+    s_second = params.link.length[0] + 0.25 * params.link.length[1]
     segment_idx, s_local = model.classify_segment(s_second)
     assert int(segment_idx) == 1
-    assert_allclose(s_local, 0.25 * params.length[1], rtol=RTOL, atol=ATOL)
+    assert_allclose(s_local, 0.25 * params.link.length[1], rtol=RTOL, atol=ATOL)
 
     tag, geom = model.cross_section_geometry(q, s_second)
     assert int(tag) == CrossSectionGeometry.CIRCULAR
-    assert_allclose(geom, jnp.array([params.radius[1]]), rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        geom,
+        jnp.array([params.link.cross_section.coefficients[1, 0]]),
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments):
@@ -1559,12 +1564,13 @@ def test_cached_constant_matrices_refresh_after_update_params_planar():
         structure=PlanarPCSStructure(strain_selector=jnp.tile(selector_per_segment, 2)),
     )
 
-    updated = model.update_params(
-        radius=1.1 * model.r,
+    updated = model.update_link_params(
+        cross_section=model.params.link.cross_section.replace(
+            coefficients=1.1 * model.params.link.cross_section.coefficients
+        ),
         density=0.9 * model.rho,
-        young_modulus=1.25 * model.E,
-        shear_modulus=0.75 * model.G,
-        damping_matrix=2.0 * model.D_full,
+        stiffness=1.25 * model.params.link.stiffness,
+        damping=2.0 * model.params.link.damping,
     )
     segment_ids = jnp.arange(updated.num_segments)
     expected_M = jax.vmap(updated._compute_local_mass_matrix)(segment_ids)
@@ -1820,7 +1826,7 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates_pla
         atol=ATOL,
     )
 
-    updated = scaled.update_params(length=jnp.array([0.2, 0.3]))
+    updated = scaled.update_link_params(length=jnp.array([0.2, 0.3]))
     updated_scale = jnp.array([5.0, 1.0, 1.0, 10 / 3, 1.0, 1.0])
     assert_allclose(
         updated.B_xi,

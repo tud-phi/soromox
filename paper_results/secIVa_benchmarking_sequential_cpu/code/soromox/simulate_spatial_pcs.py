@@ -8,7 +8,7 @@ import numpy as np
 from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer
-from soromox.systems import PCS, PCSParams, SystemState
+from soromox.systems import PCS, LinkSpec, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -34,20 +34,27 @@ if __name__ == "__main__":
             * segment_lengths[:, None]
         ).flatten()
     )
-    params = PCSParams(
+    links = [
+        LinkSpec.circular(
+            length=float(segment_lengths[index]),
+            radius=3e-2,
+            density=float(rho[index]),
+            young_modulus=1e6,
+            shear_modulus=3.333333e5,
+            damping=damping_matrix[
+                6 * index : 6 * (index + 1),
+                6 * index : 6 * (index + 1),
+            ],
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for index in range(num_segments)
+    ]
+    params = PCS.params_from_links(
+        links,
         base_pose=jnp.array(
             [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
-        length=segment_lengths,
-        radius=3e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([-9.81 * 1, -9.81 * 1, 9.81 * 0]),  # Gravity vector [m/s^2]
-        young_modulus=1e6 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        shear_modulus=3.333333e5 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
     )
 
     # ======================================================

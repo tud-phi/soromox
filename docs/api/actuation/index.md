@@ -99,10 +99,10 @@ the physics modules to rendering types or styles.
 
 ## Parameter updates
 
-Body parameters keep the existing API:
+Body parameters use top-level or component-specific immutable updates:
 
 ```python
-robot = robot.update_params(young_modulus=new_modulus)
+robot = robot.update_link_params(stiffness=new_stiffness)
 robot = robot.with_params(new_body_params)
 ```
 

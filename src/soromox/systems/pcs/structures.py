@@ -49,7 +49,15 @@ def _rigid_segment_selector(value: Any) -> tuple[bool, ...] | None:
 
 
 class PCSStructure(eqx.Module):
-    """Static PCS layout that determines JAX compilation structure."""
+    """Static spatial PCS layout that determines JAX compilation structure.
+
+    Attributes:
+        num_gauss_points: Number of Gauss points per constant-strain link.
+        strain_selector: Optional boolean selector with six entries per link.
+            ``None`` activates every strain coordinate.
+        scale_rotational_basis_by_length: Whether rotational strain coordinates
+            are normalized by their link length.
+    """
 
     num_gauss_points: int = eqx.field(static=True, default=5)
     strain_selector: Array | None = None
@@ -57,7 +65,15 @@ class PCSStructure(eqx.Module):
 
 
 class PlanarPCSStructure(eqx.Module):
-    """Static planar PCS layout."""
+    """Static planar PCS layout.
+
+    Attributes:
+        num_gauss_points: Number of Gauss points per constant-strain link.
+        strain_selector: Optional boolean selector with three entries per link.
+            ``None`` activates every strain coordinate.
+        scale_rotational_basis_by_length: Whether the rotational strain
+            coordinate is normalized by its link length.
+    """
 
     num_gauss_points: int = eqx.field(static=True, default=5)
     strain_selector: Array | None = None
@@ -87,6 +103,12 @@ class ISupportStructure(PCSStructure):
     segment. When omitted, segment types alternate from a rigid segment at index
     zero. If ``strain_selector`` is provided, it is interpreted on the expanded
     PCS layout; rigid-segment strains are always deactivated.
+
+    Attributes:
+        pcs_segment_counts: Optional number of PCS subdivisions for each
+            pneumatic segment. A one-element tuple is broadcast.
+        rigid_segment_selector: Optional physical-segment mask in which
+            ``True`` denotes a rigid connector.
     """
 
     pcs_segment_counts: tuple[int, ...] | None = eqx.field(

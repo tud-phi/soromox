@@ -23,18 +23,20 @@ from soromox.systems import (
     GVS,
     PCS,
     ArticulatedSoftRobot,
-    CrossSectionGeometry,
+    GVSSegment,
     ISupport,
     ISupportParams,
     ISupportStructure,
+    JointSpec,
+    LinkSpec,
     PCSStructure,
     Pendulum,
     PlanarHSA,
     PlanarHSAParams,
     PlanarHSAStructure,
     PlanarPCS,
+    StrainBasisSpec,
 )
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jax.config.update("jax_enable_x64", True)
 
@@ -104,22 +106,20 @@ def _segments():
     lengths = [0.11, 0.13, 0.17]
     return [
         GVSSegment(
-            link=LinkSpec(
-                cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-                E=1e6,
-                nu=0.45,
-                rho=1000.0,
-                eta=0.0,
-                L=length,
-                r_i=0.02,
-                r_f=0.02,
+            link=LinkSpec.circular(
+                young_modulus=1e6,
+                shear_modulus=1e6 / 2.9,
+                density=1000.0,
+                material_damping_coefficient=0.0,
+                length=length,
+                radius=0.02,
+                reference_strain=[0, 0, 0, 1, 0, 0],
             ),
             joint=JointSpec(type="fixed"),
             basis=StrainBasisSpec(
                 type="monomial",
-                active=[1, 1, 1, 1, 1, 1],
-                orders=[0, 0, 0, 0, 0, 0],
-                xi_ref=[0, 0, 0, 1, 0, 0],
+                strain_selector=[1, 1, 1, 1, 1, 1],
+                basis_order=[0, 0, 0, 0, 0, 0],
             ),
             num_gauss_points=5,
         )
