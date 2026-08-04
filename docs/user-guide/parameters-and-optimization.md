@@ -8,8 +8,6 @@ interfaces in gradient-based optimization.
 For the mechanical meaning of links, joints, cross-sections, stiffness,
 damping, and isotropic materials, see
 [Continuum Robot Components](../api/systems/continuum-components.md).
-If you are updating code written against the previous PCS or GVS API, use the
-compact [parameter migration guide](parameter-api-migration.md).
 
 ## Choosing the right parameter layer
 
