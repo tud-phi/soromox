@@ -62,6 +62,7 @@ nav:
   - User Guide:
     - Quick Start: user-guide/quick-start.md
     - Parameters and Optimization: user-guide/parameters-and-optimization.md
+    - PCS/GVS Parameter Migration: user-guide/parameter-api-migration.md
     - Examples: user-guide/examples.md
   - API Reference:
       - Overview: api/overview.md
