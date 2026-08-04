@@ -32,6 +32,22 @@ def _validate_symmetric(name: str, value: Array) -> None:
         raise ValueError(f"{name} must be symmetric in its trailing dimensions.")
 
 
+def _validate_finite_domain(
+    name: str, value: Array | float, *, strictly_positive: bool = False
+) -> None:
+    """Validate concrete numeric values while remaining safe under JAX tracing."""
+    array = jnp.asarray(value)
+    try:
+        finite = bool(jnp.all(jnp.isfinite(array)))
+        positive = bool(jnp.all(array > 0.0)) if strictly_positive else True
+    except (ConcretizationTypeError, TracerBoolConversionError):
+        return
+    if not finite:
+        raise ValueError(f"{name} must contain only finite values.")
+    if not positive:
+        raise ValueError(f"{name} must be strictly positive.")
+
+
 class ContinuumLinkParams(BaseSystemParams):
     """Canonical batched dynamic parameters for continuum links.
 
@@ -56,7 +72,15 @@ class ContinuumLinkParams(BaseSystemParams):
     damping: Array
 
     def __check_init__(self) -> None:
+        for name in ("length", "density", "reference_strain", "stiffness", "damping"):
+            object.__setattr__(self, name, jnp.asarray(getattr(self, name)))
         self.validate()
+
+    def _normalize_replacement(self, name: str, value: object) -> object:
+        """Normalize replacement link-array values to JAX arrays."""
+        if name in ("length", "density", "reference_strain", "stiffness", "damping"):
+            return jnp.asarray(value)
+        return value
 
     def validate(self) -> None:
         """Validate link-array shapes and canonical matrix properties.
@@ -68,7 +92,9 @@ class ContinuumLinkParams(BaseSystemParams):
             ValueError: If link fields disagree on ``num_links``, reference
                 strain or coefficient arrays are not two-dimensional, canonical
                 matrices are not equally shaped square batches, or a canonical
-                matrix contains non-finite values or is not symmetric.
+                matrix contains non-finite values or is not symmetric, length
+                or density is non-finite or not strictly positive, or reference
+                strain contains non-finite values.
         """
         length = jnp.asarray(self.length)
         if length.ndim != 1 or length.shape[0] < 1:
@@ -79,11 +105,18 @@ class ContinuumLinkParams(BaseSystemParams):
             raise ValueError(
                 f"density must have shape ({num_links},), got {density.shape}."
             )
+        _validate_finite_domain("length", length, strictly_positive=True)
+        _validate_finite_domain("density", density, strictly_positive=True)
         reference_strain = jnp.asarray(self.reference_strain)
-        if reference_strain.ndim != 2 or reference_strain.shape[0] != num_links:
+        if (
+            reference_strain.ndim != 2
+            or reference_strain.shape[0] != num_links
+            or reference_strain.shape[1] < 1
+        ):
             raise ValueError(
                 "reference_strain must have shape (num_links, strain_dimension)."
             )
+        _validate_finite_domain("reference_strain", reference_strain)
         self.cross_section.validate()
         if self.cross_section.coefficients.shape[0] != num_links:
             raise ValueError("cross-section coefficients must have one row per link.")
@@ -156,6 +189,19 @@ class LinkSpec:
     damping: Array | None = None
 
     def __post_init__(self) -> None:
+        _validate_finite_domain("length", self.length, strictly_positive=True)
+        _validate_finite_domain("density", self.density, strictly_positive=True)
+        _validate_finite_domain("reference_strain", self.reference_strain)
+        reference_strain = jnp.asarray(self.reference_strain)
+        if reference_strain.ndim != 1 or reference_strain.size < 1:
+            raise ValueError(
+                "reference_strain must be a nonempty one-dimensional array."
+            )
+        _validate_finite_domain(
+            "cross_section_coefficients",
+            jnp.asarray(self.cross_section_coefficients),
+            strictly_positive=True,
+        )
         material_stiffness = (
             self.young_modulus is not None or self.shear_modulus is not None
         )
@@ -182,6 +228,26 @@ class LinkSpec:
             raise ValueError(
                 "Provide material_damping_coefficient or an explicit damping matrix."
             )
+        if self.young_modulus is not None:
+            _validate_finite_domain(
+                "young_modulus", self.young_modulus, strictly_positive=True
+            )
+        if self.shear_modulus is not None:
+            _validate_finite_domain(
+                "shear_modulus", self.shear_modulus, strictly_positive=True
+            )
+        if self.material_damping_coefficient is not None:
+            _validate_finite_domain(
+                "material_damping_coefficient", self.material_damping_coefficient
+            )
+            try:
+                nonnegative_damping = bool(
+                    jnp.all(jnp.asarray(self.material_damping_coefficient) >= 0.0)
+                )
+            except (ConcretizationTypeError, TracerBoolConversionError):
+                nonnegative_damping = True
+            if not nonnegative_damping:
+                raise ValueError("material_damping_coefficient must be nonnegative.")
         for name in ("stiffness", "damping"):
             value = getattr(self, name)
             if value is None:
@@ -265,7 +331,9 @@ class LinkSpec:
         Raises:
             ValueError: If material and explicit sources are missing,
                 incomplete, or supplied together, or if an explicit matrix is
-                not finite, square, and symmetric.
+                not finite, square, and symmetric, or if a physical dimension,
+                density, length, or material scalar is outside its valid
+                domain.
         """
         return cls._make(
             geometry=CrossSectionGeometry.CIRCULAR,
@@ -317,7 +385,9 @@ class LinkSpec:
         Raises:
             ValueError: If material and explicit sources are missing,
                 incomplete, or supplied together, or if an explicit matrix is
-                not finite, square, and symmetric.
+                not finite, square, and symmetric, or if a physical dimension,
+                density, length, or material scalar is outside its valid
+                domain.
         """
         return cls._make(
             geometry=CrossSectionGeometry.RECTANGULAR,
@@ -369,7 +439,9 @@ class LinkSpec:
         Raises:
             ValueError: If material and explicit sources are missing,
                 incomplete, or supplied together, or if an explicit matrix is
-                not finite, square, and symmetric.
+                not finite, square, and symmetric, or if a physical dimension,
+                density, length, or material scalar is outside its valid
+                domain.
         """
         return cls._make(
             geometry=CrossSectionGeometry.ELLIPTICAL,

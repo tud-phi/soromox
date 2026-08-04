@@ -38,7 +38,10 @@ link. The static system structure determines how each row is interpreted:
 
 The supported solid cross-sections are circular, rectangular, and elliptical.
 `CrossSectionGeometry` identifies the family, while shared geometry utilities
-calculate area and second moments of area.
+calculate area and second moments of area. Geometry dimensions are finite and
+strictly positive. Shared evaluators and `robot.cross_section_geometry(...)`
+use `[height, width]` for rectangular sections and
+`[semi_major, semi_minor]` for elliptical sections.
 
 `LinkSpec` provides the ergonomic construction interface:
 
@@ -85,7 +88,8 @@ circular, rectangular, and elliptical cross-sections.
 
 Stiffness and damping are finite symmetric matrices. They are not required to
 be diagonal or positive definite, which permits anisotropic, coupled, fitted,
-and learned constitutive models.
+and learned constitutive models. Link lengths and densities must be finite and
+strictly positive; reference strains must be finite.
 
 The generalized dimension depends on the system:
 
@@ -118,7 +122,8 @@ material = IsotropicMaterialParams(
 ```
 
 Each field may be scalar or contain one value per link. Scalar values are
-broadcast when the material is applied.
+broadcast when the material is applied. Young's and shear moduli must be finite
+and strictly positive; material damping must be finite and nonnegative.
 
 Geometry, link length, strain basis, rotational scaling, and quadrature are
 projected into unit-response operators. Material matrices are then evaluated

@@ -820,7 +820,7 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
     )
     assert int(tag) == CrossSectionGeometry.RECTANGULAR
     assert_allclose(
-        geom, jnp.array([expected_width, expected_height]), rtol=RTOL, atol=ATOL
+        geom, jnp.array([expected_height, expected_width]), rtol=RTOL, atol=ATOL
     )
 
     s_third = (

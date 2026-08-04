@@ -146,21 +146,18 @@ def _articulated_soft_robot_context(
 
 
 def _planar_pcs_factory(num_segments: int, gauss_points: int = 5) -> PlanarPCS:
-    lengths = jnp.full((num_segments,), 0.12)
-    radii = jnp.full((num_segments,), 0.015)
-    rho = 1070.0 * jnp.ones((num_segments,))
     return PlanarPCS.from_links(
         [
             LinkSpec.circular(
-                length=float(lengths[index]),
-                radius=float(radii[index]),
-                density=float(rho[index]),
+                length=0.12,
+                radius=0.015,
+                density=1070.0,
                 young_modulus=4.0e5,
                 shear_modulus=1.5e5,
                 material_damping_coefficient=5.0e-4,
                 reference_strain=[0.0, 1.0, 0.0],
             )
-            for index in range(num_segments)
+            for _ in range(num_segments)
         ],
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         gravity=jnp.array([0.0, 9.81]),
@@ -192,21 +189,18 @@ def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
 
 
 def _pcs_factory(num_segments: int, gauss_points: int = 5) -> PCS:
-    lengths = jnp.full((num_segments,), 0.1)
-    radii = jnp.full((num_segments,), 0.02)
-    rho = 1050.0 * jnp.ones((num_segments,))
     return PCS.from_links(
         [
             LinkSpec.circular(
-                length=float(lengths[index]),
-                radius=float(radii[index]),
-                density=float(rho[index]),
+                length=0.1,
+                radius=0.02,
+                density=1050.0,
                 young_modulus=6.0e5,
                 shear_modulus=2.5e5,
                 material_damping_coefficient=5.0e-4,
                 reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
             )
-            for index in range(num_segments)
+            for _ in range(num_segments)
         ],
         base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, -9.81]),

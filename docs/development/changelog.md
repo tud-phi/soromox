@@ -115,6 +115,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Included stored GVS joint stiffness and damping in global stiffness and
   damping assembly.
+- Resolved omitted GVS padding values in the advanced `GVS(params, structure)`
+  constructor and aligned rectangular geometry output with the shared
+  `[height, width]` cross-section convention.
+- Normalized caller-provided isotropic material sequences to JAX arrays and
+  rejected non-finite or nonphysical link geometry, density, and material
+  values during concrete construction and replacement.
 - Migrated examples, benchmarks, and paper case studies to the harmonized PCS
   and GVS parameter APIs.
 - Kept values and reverse-mode gradients finite at degenerate normalization,

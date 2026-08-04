@@ -55,6 +55,27 @@ def _link_dof(segment: GVSSegmentStructure) -> int:
     )
 
 
+def _resolve_structure(params: GVSParams, structure: GVSStructure) -> GVSStructure:
+    """Return a fully resolved GVS structure compatible with ``params``."""
+    params.validate_against_structure(structure)
+    max_dof = (
+        int(params.link.stiffness.shape[-1])
+        if structure.max_dof is None
+        else int(structure.max_dof)
+    )
+    max_num_gauss_points = (
+        max(segment.num_gauss_points for segment in structure.segments)
+        if structure.max_num_gauss_points is None
+        else int(structure.max_num_gauss_points)
+    )
+    return GVSStructure(
+        segments=structure.segments,
+        max_dof=max_dof,
+        max_num_gauss_points=max_num_gauss_points,
+        scale_rotational_basis_by_length=(structure.scale_rotational_basis_by_length),
+    )
+
+
 def _basis_at_points(
     segment: GVSSegmentStructure, points: Array, max_dof: int
 ) -> Array:
@@ -109,7 +130,12 @@ def material_operators_from_params(
             coefficients, unsupported cross-section data, or invalid quadrature
             configuration.
     """
-    max_dof = int(structure.max_dof)
+    params.validate_against_structure(structure)
+    max_dof = (
+        int(params.link.stiffness.shape[-1])
+        if structure.max_dof is None
+        else int(structure.max_dof)
+    )
     young_operators = []
     shear_operators = []
     damping_operators = []
@@ -264,10 +290,24 @@ def params_and_structure_from_segments(
         raise ValueError(
             f"max_dof={layout_max_dof} is smaller than required DOF {required_max_dof}."
         )
+    required_max_num_gauss_points = max(
+        segment.num_gauss_points for segment in static_segments
+    )
+    if any(segment.num_gauss_points < 5 for segment in static_segments):
+        raise ValueError("Every GVS segment requires at least 5 Gauss points.")
+    layout_max_num_gauss_points = (
+        required_max_num_gauss_points
+        if max_num_gauss_points is None
+        else max_num_gauss_points
+    )
+    if layout_max_num_gauss_points < required_max_num_gauss_points:
+        raise ValueError(
+            "max_num_gauss_points must cover every segment quadrature rule."
+        )
     structure = GVSStructure(
         segments=static_segments,
         max_dof=layout_max_dof,
-        max_num_gauss_points=max_num_gauss_points,
+        max_num_gauss_points=layout_max_num_gauss_points,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )
 
