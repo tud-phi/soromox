@@ -14,24 +14,42 @@ system-identification workflows.
 
 ## Quick Start
 
+The shared link, cross-section, material, and joint model is described in
+[Continuum Robot Components](../continuum-components.md). For full immutable
+replacement and optimization workflows, see
+[Parameters, Updates, and Optimization](../../../user-guide/parameters-and-optimization.md).
+
 ```python
 import jax.numpy as jnp
 from soromox.systems import (
     GVS,
     GVSSegment,
     JointSpec,
+    LinearProfile,
     LinkSpec,
     StrainBasisSpec,
 )
 
 segment = GVSSegment(
-    link=LinkSpec.circular(E=1e6, nu=0.45, rho=1000.0, eta=1e4, L=0.3, r=0.03),
-    joint=JointSpec.fixed(),
+    link=LinkSpec.rectangular(
+        length=0.3,
+        height=LinearProfile(base=0.03, tip=0.02),
+        width=0.025,
+        density=1000.0,
+        young_modulus=1e6,
+        shear_modulus=3.45e5,
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
+    ),
+    joint=JointSpec.revolute(
+        axis="z",
+        stiffness=jnp.array([[0.3]]),
+        damping=jnp.array([[0.02]]),
+    ),
     basis=StrainBasisSpec(
-        type="monomial",
-        active=[1, 1, 1, 1, 0, 0],
-        orders=[1, 1, 1, 1, 0, 0],
-        xi_ref=[0, 0, 0, 1, 0, 0],
+        type="legendre",
+        strain_selector=("kappa_y", "sigma_x"),
+        basis_order=1,
     ),
     num_gauss_points=5,
 )
@@ -47,14 +65,14 @@ base_transform = robot.forward_kinematics(q, s=robot.segment_end_positions[-1])
 `GVS.from_segments(...)` creates typed `GVSParams` and `GVSStructure`
 internally, so `robot.params` can be optimized or partially replaced later.
 Static structure contains no copied material constants, lengths, joint
-stiffness, or reference strains. For workflows that need the split without
+matrices, or reference strains. For workflows that need the split without
 constructing a robot, use `GVS.params_from_segments(...)`.
 
 ## Segment Specs
 
-- `LinkSpec`: construction input for link geometry, material properties, and length. Its numeric values are copied into `GVSParams.link`; only the cross-section family remains static.
-- `JointSpec`: construction input for joint type and optional axis, plane, pitch, and stiffness. Stiffness is copied into `GVSParams.joint_stiffness`.
-- `StrainBasisSpec`: construction input for basis family, active strain components, basis orders, and reference strain. Reference strain is copied into `GVSParams.reference_strain`.
+- `LinkSpec`: shared construction input for link geometry, reference strain, material properties or explicit generalized matrices, and length.
+- `JointSpec`: shared construction input for joint type, kinematic choices, stiffness, and damping. Matrices are copied into `GVSParams.joint`.
+- `StrainBasisSpec`: GVS-specific basis family, active strain components, and basis orders.
 - `GVSSegment`: combines one link, one preceding joint, one strain basis, and `num_gauss_points`.
 
 ## Basis And Joint Names
@@ -75,7 +93,31 @@ After construction, GVS exposes canonical runtime arrays:
 - `dofs_per_segment`, `num_dofs`, `num_padded_dofs`, `active_dof_map`
 - `B_joint`, `B_Xs`, `B_Z1`, `B_Z2`
 - `xi_ref_joint`, `xi_ref_Xs`, `xi_ref_Z1`, `xi_ref_Z2`
-- `mass_matrices`, `stiffness_matrices`, `damping_matrices`, `joint_stiffness`
+- per-quadrature `mass_matrices`
+- canonical `params.link.stiffness`, `params.link.damping`
+- canonical `params.joint.stiffness`, `params.joint.damping`
+
+## Immutable updates
+
+```python
+robot = robot.update_link_params(
+    stiffness=1.1 * robot.params.link.stiffness,
+    damping=0.9 * robot.params.link.damping,
+)
+robot = robot.update_joint_params(
+    damping=1.2 * robot.params.joint.damping,
+)
+
+replacement = robot.params.replace(
+    link=robot.params.link.replace(
+        density=1.05 * robot.params.link.density,
+    ),
+    joint=robot.params.joint.replace(
+        stiffness=1.1 * robot.params.joint.stiffness,
+    ),
+)
+robot = robot.with_params(replacement)
+```
 
 ## When To Use GVS vs PCS
 
@@ -102,13 +144,13 @@ After construction, GVS exposes canonical runtime arrays:
       show_source: false
       heading_level: 3
 
-::: soromox.systems.gvs.specs.LinkSpec
+::: soromox.systems.components.links.LinkSpec
     options:
       show_root_heading: true
       show_source: false
       heading_level: 3
 
-::: soromox.systems.gvs.specs.JointSpec
+::: soromox.systems.components.joints.JointSpec
     options:
       show_root_heading: true
       show_source: false

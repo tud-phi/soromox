@@ -1,5 +1,5 @@
 import math
-from typing import Any
+from typing import Any, Self
 
 import equinox as eqx
 import jax
@@ -11,9 +11,17 @@ from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
 )
+from soromox.systems.components import (
+    ContinuumLinkParams,
+    CrossSectionGeometry,
+    IsotropicMaterialParams,
+)
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData
-from soromox.systems.gvs.construction import params_and_structure_from_segments
+from soromox.systems.gvs.construction import (
+    material_operators_from_params,
+    params_and_structure_from_segments,
+)
 from soromox.systems.gvs.joint_bases import (
     B_Cylindrical,
     B_Fixed,
@@ -25,7 +33,7 @@ from soromox.systems.gvs.joint_bases import (
     B_Spherical,
 )
 from soromox.systems.gvs.operands import GeometricOperand, JointOperand
-from soromox.systems.gvs.params import GVSLinkParams, GVSParams
+from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.primitives import Basis, Joint, Link
 from soromox.systems.gvs.specs import GVSSegment
 from soromox.systems.gvs.strain_bases import (
@@ -48,7 +56,7 @@ from soromox.systems.gvs.structures import (
     GVSStrainBasisStructure,
     GVSStructure,
 )
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
 from soromox.utils.lie_algebra import constant_strain, se3, so3
@@ -79,16 +87,19 @@ class GVS(SoftRobot):
         num_integration_points: Number of integration/evaluation points for each link.
         dofs_per_segment: Number of DOFs for each link/joint pair (shape: num_segments x 2).
         integration_points, integration_weights: Gauss quadrature nodes and weights for each link.
-        mass_matrices, stiffness_matrices, damping_matrices: Mass, stiffness, and damping matrices at integration points.
+        mass_matrices: Mass matrices at integration points. Generalized link
+            stiffness and damping are stored canonically in ``params.link``.
         B_joint, B_Xs, B_Z1, B_Z2: Basis matrices for joints and links at quadrature points and intermediate points.
         xi_ref_joint, xi_ref_Xs, xi_ref_Z1, xi_ref_Z2: Reference strain vectors for joints and links.
-        joint_stiffness: Joint stiffness matrices.
+        joint_stiffness: Cached padded joint stiffness matrices. Canonical joint
+            stiffness and damping are stored in ``params.joint``.
         K_full: Precomputed full stiffness matrix for the robot.
         D_full: Precomputed full damping matrix for the robot.
         g0: Initial pose of the robot base as an SE(3) transformation matrix.
         g: Gravitational acceleration vector in 6D wrench form.
         basis_type_index: Index of the strain basis type used for each segment.
-        basis_active_params, basis_order_params: Parameters controlling the strain basis DOFs and orders.
+        basis_active_params, basis_order_params: Parameters controlling the strain
+            basis DOFs and orders.
 
     Notes
     -----
@@ -165,8 +176,6 @@ class GVS(SoftRobot):
     inner_integration_weights: Array
     mass_matrices: Array
     inner_mass_matrices: Array
-    stiffness_matrices: Array
-    damping_matrices: Array
 
     B_joint: Array
     B_Xs: Array
@@ -184,6 +193,9 @@ class GVS(SoftRobot):
     K: Array  # Active-coordinate stiffness matrix (num_dofs, num_dofs)
     D_full: Array  # Full damping matrix (num_padded_dofs, num_padded_dofs)
     D_active: Array  # Active-coordinate damping matrix (num_dofs, num_dofs)
+    young_stiffness_operator: Array
+    shear_stiffness_operator: Array
+    material_damping_operator: Array
     gather_indices: Array  # Indices for active-to-padded coordinate gather
     gather_mask: Array  # Valid-entry mask for active-to-padded coordinate gather
 
@@ -213,7 +225,25 @@ class GVS(SoftRobot):
         passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
         **kwargs: Any,
     ) -> None:
-        """Initialize a GVS robot from typed params and static segment structure."""
+        """Initialize a GVS robot from typed parameters and static structure.
+
+        Args:
+            params: Canonical dynamic link, joint, gravity, and base-pose
+                parameters.
+            structure: Static segment, strain-basis, quadrature, and padding
+                configuration corresponding to ``params``.
+            actuators: Optional actuator or tuple of actuators attached to the
+                model.
+            passive_elements: Optional passive element or tuple of passive
+                elements. Pass ``None`` or an empty tuple to disable them.
+            **kwargs: Additional keyword arguments forwarded to
+                :class:`BaseContinuumSoftRobot`.
+
+        Raises:
+            TypeError: If ``params`` or ``structure`` has the wrong type.
+            ValueError: If the parameter arrays are inconsistent with the
+                static structure or an actuator configuration is invalid.
+        """
         if not isinstance(params, GVSParams):
             raise TypeError("params must be a GVSParams instance.")
         if not isinstance(structure, GVSStructure):
@@ -257,6 +287,29 @@ class GVS(SoftRobot):
         values are copied into ``GVSParams``.
         Omitted ``base_pose`` and ``gravity`` use the standard upright spatial
         mounting and negative-z Earth gravity.
+
+        Args:
+            segments: Non-empty sequence of joint-link-basis segment
+                specifications.
+            gravity: Optional world-frame gravity vector with shape ``(3,)``.
+            base_pose: Optional base translation and unit quaternion with shape
+                ``(7,)``.
+            max_dof: Optional common padded dimension for every link and joint
+                generalized matrix. The required maximum is inferred when
+                omitted.
+            max_num_gauss_points: Optional common quadrature padding size. The
+                largest segment rule is used when omitted.
+            scale_rotational_basis_by_length: Whether to divide rotational
+                strain-basis rows by their link length.
+
+        Returns:
+            A tuple containing canonical :class:`GVSParams` and its matching
+            static :class:`GVSStructure`.
+
+        Raises:
+            KeyError: If a segment uses an unsupported joint or basis type.
+            ValueError: If no segments are supplied, a specification is
+                invalid, or a requested padding size is too small.
         """
         return params_and_structure_from_segments(
             segments,
@@ -283,6 +336,29 @@ class GVS(SoftRobot):
 
         Omitted ``base_pose`` and ``gravity`` use the standard upright spatial
         mounting and negative-z Earth gravity.
+
+        Args:
+            segments: Non-empty sequence of joint-link-basis segment
+                specifications.
+            gravity: Optional world-frame gravity vector with shape ``(3,)``.
+            base_pose: Optional base translation and unit quaternion with shape
+                ``(7,)``.
+            max_dof: Optional common padded dimension for link and joint
+                generalized matrices.
+            max_num_gauss_points: Optional common quadrature padding size.
+            scale_rotational_basis_by_length: Whether to normalize rotational
+                strain-basis rows by link length.
+            **kwargs: Additional keyword arguments forwarded to the GVS
+                constructor, such as actuators or passive elements.
+
+        Returns:
+            A fully initialized GVS model.
+
+        Raises:
+            TypeError: If a constructor argument has an invalid type.
+            KeyError: If a segment uses an unsupported joint or basis type.
+            ValueError: If a segment specification, padding size, parameter
+                array, or attached component is invalid.
         """
         params, structure = cls.params_from_segments(
             segments,
@@ -296,16 +372,40 @@ class GVS(SoftRobot):
 
     @property
     def is_planar(self) -> bool:
-        """GVS is a spatial (3D) model."""
+        """Return whether the system is planar.
+
+        Returns:
+            Always ``False`` because GVS uses spatial rigid transformations.
+        """
         return False
 
     @property
     def segment_length(self) -> Array:
-        """Per-segment backbone lengths."""
+        """Return the per-segment backbone lengths.
+
+        Returns:
+            Array with shape ``(num_segments,)``.
+        """
         return jnp.asarray(self.segment_lengths)
 
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
-        """Evaluate the configured circular, rectangular, or elliptical section."""
+        """Evaluate cross-section geometry at a backbone coordinate.
+
+        Args:
+            q: Generalized coordinates. Cross-section geometry is currently
+                configuration-independent, but ``q`` is accepted to implement
+                the common continuum-robot interface.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple ``(geometry, dimensions)``. ``geometry`` is the integer
+            :class:`CrossSectionGeometry` tag. ``dimensions`` contains radius
+            for a circular section, width and height for a rectangle, or
+            semi-major and semi-minor radii for an ellipse.
+
+        Raises:
+            ValueError: If ``s`` cannot be assigned to a segment.
+        """
         segment_idx, s_local = self.classify_segment(s)
         length_i = self.segment_lengths[segment_idx]
         x = jnp.where(length_i > self.global_eps, s_local / length_i, 0.0)
@@ -340,10 +440,7 @@ class GVS(SoftRobot):
         max_num_integration_points: int,
         *,
         length: Array,
-        young_modulus: Array,
-        poisson_ratio: Array,
         density: Array,
-        damping_coefficient: Array,
         radius_initial: Array,
         radius_final: Array,
         height_initial: Array,
@@ -442,10 +539,7 @@ class GVS(SoftRobot):
         cross_section_geometry = link_structure.cross_section_geometry
         cross_section_geometry_idx = int(cross_section_geometry)
 
-        E = jnp.asarray(young_modulus)
-        nu = jnp.asarray(poisson_ratio)
         rho = jnp.asarray(density)
-        eta = jnp.asarray(damping_coefficient)
         L = jnp.asarray(length)
 
         r_i = jnp.asarray(radius_initial)
@@ -459,8 +553,6 @@ class GVS(SoftRobot):
         b_i = jnp.asarray(semi_minor_initial)
         b_f = jnp.asarray(semi_minor_final)
 
-        G = E / (2 * (1 + nu))  # Shear modulus
-
         r_params = (r_i, r_f)
         h_params = (h_i, h_f)
         w_params = (w_i, w_f)
@@ -470,8 +562,8 @@ class GVS(SoftRobot):
         # === Basis attributes
         basetype = basis_structure.type
         basistype_idx = Basis.BASISTYPE_MAP[basetype]
-        Bdof = jnp.asarray(basis_structure.active).flatten()
-        Bodr = jnp.asarray(basis_structure.orders).flatten()
+        Bdof = jnp.asarray(basis_structure.strain_selector).flatten()
+        Bodr = jnp.asarray(basis_structure.basis_order).flatten()
         xi_ref = jnp.asarray(reference_strain).reshape(6, 1)
 
         dof_link = lax.switch(
@@ -555,14 +647,7 @@ class GVS(SoftRobot):
 
         # Prepare the component vectors
         Ms_diag = jnp.stack([Ix_p, Iy_p, Iz_p, A_p, A_p, A_p], axis=1)  # Shape: (np, 6)
-        Es_diag = jnp.stack(
-            [G * Ix_p, E * Iy_p, E * Iz_p, E * A_p, G * A_p, G * A_p], axis=1
-        )
-        Gs_diag = jnp.stack([Ix_p, 3 * Iy_p, 3 * Iz_p, 3 * A_p, A_p, A_p], axis=1)
-
         Ms = rho * vmap(jnp.diag)(Ms_diag)  # Shape: (np, 6, 6)
-        Es = vmap(jnp.diag)(Es_diag)
-        Gs = eta * vmap(jnp.diag)(Gs_diag)
 
         # Pad the arrays to the maximum number of integration points and DOFs
         integration_points_full = jnp.pad(
@@ -585,25 +670,6 @@ class GVS(SoftRobot):
             ),
             mode="constant",
         )
-        Es_full = jnp.pad(
-            Es,
-            (
-                (0, max_num_integration_points - num_integration_points_i),
-                (0, 0),
-                (0, 0),
-            ),
-            mode="constant",
-        )
-        Gs_full = jnp.pad(
-            Gs,
-            (
-                (0, max_num_integration_points - num_integration_points_i),
-                (0, 0),
-                (0, 0),
-            ),
-            mode="constant",
-        )
-
         B_Xs_full = jnp.pad(
             B_Xs,
             (
@@ -662,8 +728,6 @@ class GVS(SoftRobot):
             integration_points=integration_points_full,
             integration_weights=integration_weights_full,
             mass_matrices=Ms_full,
-            stiffness_matrices=Es_full,
-            damping_matrices=Gs_full,
             B_joint=B_joint_full,
             B_Xs=B_Xs_full,
             B_Z1=B_Z1_full,
@@ -676,10 +740,15 @@ class GVS(SoftRobot):
         )
 
     def precompute(self) -> None:
-        """
-        Precompute any necessary matrices or values for the simulation.
+        """Precompute padded gathers and canonical system matrices.
 
-        This method can be expanded to include additional precomputations as needed.
+        This refreshes material unit-response operators and projects the stored
+        link and joint stiffness and damping matrices into active generalized
+        coordinates.
+
+        Returns:
+            ``None``. Cached arrays on the model are replaced in place during
+            initial construction.
         """
         dofs_flat = self.dofs_per_segment.reshape(-1)
         start_indices_flat = jnp.cumsum(jnp.pad(dofs_flat, (1, 0)))[:-1]
@@ -687,6 +756,9 @@ class GVS(SoftRobot):
         gather_indices = start_indices[..., None] + jnp.arange(self.max_dof)
         gather_mask = jnp.arange(self.max_dof) < self.dofs_per_segment[..., None]
 
+        young_operator, shear_operator, damping_operator = (
+            material_operators_from_params(self.params, self.structure)
+        )
         K_full = self._stiffness_full_matrix()
         D_full = self._damping_full_matrix()
         object.__setattr__(
@@ -709,6 +781,9 @@ class GVS(SoftRobot):
         )
         object.__setattr__(self, "gather_indices", gather_indices)
         object.__setattr__(self, "gather_mask", gather_mask)
+        object.__setattr__(self, "young_stiffness_operator", young_operator)
+        object.__setattr__(self, "shear_stiffness_operator", shear_operator)
+        object.__setattr__(self, "material_damping_operator", damping_operator)
         object.__setattr__(self, "K_full", K_full)
         object.__setattr__(
             self, "K", self.active_dof_map.T @ K_full @ self.active_dof_map
@@ -719,10 +794,8 @@ class GVS(SoftRobot):
         )
 
     def _link_parameter_arrays(
-        self, link: GVSLinkParams
+        self, link: ContinuumLinkParams
     ) -> tuple[
-        Array,
-        Array,
         Array,
         Array,
         Array,
@@ -737,11 +810,11 @@ class GVS(SoftRobot):
         Build link-derived GVS arrays from dynamic link params.
 
         This helper recomputes only quantities that depend on the physical link
-        parameters: length, cross-section geometry, local mass matrices, local
-        stiffness matrices, and local damping matrices. It deliberately leaves the
-        joint basis, link strain basis, reference strain, and active coordinate
-        layout unchanged. That makes it suitable for parameter updates that keep
-        the GVS discretization and generalized coordinates fixed.
+        parameters: length, cross-section geometry, and local mass matrices. It
+        deliberately leaves the joint basis, link strain basis, reference strain,
+        canonical generalized matrices, and active-coordinate layout unchanged.
+        That makes it suitable for geometry updates that keep the GVS
+        discretization and generalized coordinates fixed.
 
         Returns:
             A tuple containing:
@@ -750,10 +823,6 @@ class GVS(SoftRobot):
             - ``segment_end_positions``: cumulative segment endpoints including zero, shape
               ``(self.num_segments + 1,)``.
             - ``mass_matrices``: local mass matrices at stored quadrature nodes, shape
-              ``(self.num_segments, self.max_num_integration_points, 6, 6)``.
-            - ``stiffness_matrices``: local stiffness matrices at stored quadrature nodes,
-              shape ``(self.num_segments, self.max_num_integration_points, 6, 6)``.
-            - ``damping_matrices``: local damping matrices at stored quadrature nodes, shape
               ``(self.num_segments, self.max_num_integration_points, 6, 6)``.
             - ``cross_section_geometry_index``: cross-section enum indices, shape
               ``(self.num_segments,)``.
@@ -780,8 +849,6 @@ class GVS(SoftRobot):
 
         segment_length_items = []
         mass_matrix_items = []
-        stiffness_matrix_items = []
-        damping_matrix_items = []
         cross_section_geometry_items = []
         radius_param_items = []
         height_param_items = []
@@ -794,31 +861,30 @@ class GVS(SoftRobot):
                 segment_structure.link.cross_section_geometry
             )
 
-            E = jnp.asarray(link.young_modulus[i_segment], dtype=jnp.float64)
-            nu = jnp.asarray(link.poisson_ratio[i_segment], dtype=jnp.float64)
             rho = jnp.asarray(link.density[i_segment], dtype=jnp.float64)
-            eta = jnp.asarray(link.damping_coefficient[i_segment], dtype=jnp.float64)
             L = jnp.asarray(link.length[i_segment], dtype=jnp.float64)
-
-            r_params = (
-                jnp.asarray(link.radius_initial[i_segment], dtype=jnp.float64),
-                jnp.asarray(link.radius_final[i_segment], dtype=jnp.float64),
+            coefficients = link.cross_section.coefficients[i_segment]
+            pairs = []
+            start = 0
+            for profile_type, count in zip(
+                segment_structure.link.cross_section_profile_types,
+                segment_structure.link.cross_section_profile_parameter_counts,
+                strict=True,
+            ):
+                values = coefficients[start : start + count]
+                pairs.append(
+                    (values[0], values[0])
+                    if profile_type == "constant"
+                    else (values[0], values[1])
+                )
+                start += count
+            zero_pair = (jnp.array(0.0), jnp.array(0.0))
+            r_params = pairs[0] if cross_section_geometry_idx == 0 else zero_pair
+            h_params, w_params = (
+                pairs if cross_section_geometry_idx == 1 else (zero_pair, zero_pair)
             )
-            h_params = (
-                jnp.asarray(link.height_initial[i_segment], dtype=jnp.float64),
-                jnp.asarray(link.height_final[i_segment], dtype=jnp.float64),
-            )
-            w_params = (
-                jnp.asarray(link.width_initial[i_segment], dtype=jnp.float64),
-                jnp.asarray(link.width_final[i_segment], dtype=jnp.float64),
-            )
-            a_params = (
-                jnp.asarray(link.semi_major_initial[i_segment], dtype=jnp.float64),
-                jnp.asarray(link.semi_major_final[i_segment], dtype=jnp.float64),
-            )
-            b_params = (
-                jnp.asarray(link.semi_minor_initial[i_segment], dtype=jnp.float64),
-                jnp.asarray(link.semi_minor_final[i_segment], dtype=jnp.float64),
+            a_params, b_params = (
+                pairs if cross_section_geometry_idx == 2 else (zero_pair, zero_pair)
             )
 
             geometric_operand = GeometricOperand(
@@ -835,18 +901,10 @@ class GVS(SoftRobot):
                 operand=geometric_operand,
             )
 
-            G = E / (2 * (1 + nu))
             Ms_diag = jnp.stack([Ix_p, Iy_p, Iz_p, A_p, A_p, A_p], axis=1)
-            Es_diag = jnp.stack(
-                [G * Ix_p, E * Iy_p, E * Iz_p, E * A_p, G * A_p, G * A_p],
-                axis=1,
-            )
-            Gs_diag = jnp.stack([Ix_p, 3 * Iy_p, 3 * Iz_p, 3 * A_p, A_p, A_p], axis=1)
 
             segment_length_items.append(L)
             mass_matrix_items.append(rho * vmap(jnp.diag)(Ms_diag))
-            stiffness_matrix_items.append(vmap(jnp.diag)(Es_diag))
-            damping_matrix_items.append(eta * vmap(jnp.diag)(Gs_diag))
             cross_section_geometry_items.append(cross_section_geometry_idx)
             radius_param_items.append(jnp.stack(r_params))
             height_param_items.append(jnp.stack(h_params))
@@ -865,8 +923,6 @@ class GVS(SoftRobot):
             segment_lengths,
             segment_end_positions,
             jnp.stack(mass_matrix_items),
-            jnp.stack(stiffness_matrix_items),
-            jnp.stack(damping_matrix_items),
             jnp.asarray(cross_section_geometry_items, dtype=jnp.int32),
             jnp.stack(radius_param_items),
             jnp.stack(height_param_items),
@@ -899,7 +955,25 @@ class GVS(SoftRobot):
         return xi_ref_joint, xi_ref_Xs, xi_ref_Z1, xi_ref_Z2
 
     def with_params(self, params: GVSParams) -> "GVS":
-        """Return an updated copy with a full typed parameter object."""
+        """Return a model copy using a complete parameter PyTree.
+
+        Geometry-dependent mass data and material unit-response operators are
+        rebuilt. Canonical stiffness and damping are taken directly from
+        ``params`` and are not implicitly regenerated from material variables.
+
+        Args:
+            params: Complete replacement parameter object compatible with this
+                model's static :class:`GVSStructure`.
+
+        Returns:
+            A new GVS model with refreshed runtime arrays and projected system
+            matrices. The original model is unchanged.
+
+        Raises:
+            TypeError: If ``params`` is not a :class:`GVSParams`.
+            ValueError: If a parameter shape or value is invalid or changes the
+                model's static padded layout.
+        """
         if not isinstance(params, GVSParams):
             raise TypeError("params must be a GVSParams instance.")
         params.validate_against_structure(self.structure)
@@ -909,9 +983,9 @@ class GVS(SoftRobot):
             xi_ref_Xs,
             xi_ref_Z1,
             xi_ref_Z2,
-        ) = self._reference_strain_runtime_arrays(params.reference_strain)
+        ) = self._reference_strain_runtime_arrays(params.link.reference_strain)
 
-        joint_stiffness = jnp.asarray(params.joint_stiffness, dtype=jnp.float64)
+        joint_stiffness = jnp.asarray(params.joint.stiffness, dtype=jnp.float64)
         if joint_stiffness.shape != self.joint_stiffness.shape:
             raise ValueError(
                 "joint_stiffness shape changes the padded GVS layout; "
@@ -931,8 +1005,6 @@ class GVS(SoftRobot):
                 model.segment_lengths,
                 model.segment_end_positions,
                 model.mass_matrices,
-                model.stiffness_matrices,
-                model.damping_matrices,
                 model.cross_section_geometry_index,
                 model.radius_params,
                 model.height_params,
@@ -964,10 +1036,16 @@ class GVS(SoftRobot):
         )
         K_full = updated_self._stiffness_full_matrix()
         D_full = updated_self._damping_full_matrix()
+        young_operator, shear_operator, damping_operator = (
+            material_operators_from_params(params, self.structure)
+        )
         return eqx.tree_at(
             lambda model: (
                 model.inner_integration_weights,
                 model.inner_mass_matrices,
+                model.young_stiffness_operator,
+                model.shear_stiffness_operator,
+                model.material_damping_operator,
                 model.K_full,
                 model.K,
                 model.D_full,
@@ -982,6 +1060,9 @@ class GVS(SoftRobot):
                 updated_self.mass_matrices[
                     :, 1 : updated_self.max_num_integration_points - 1
                 ],
+                young_operator,
+                shear_operator,
+                damping_operator,
                 K_full,
                 updated_self.active_dof_map.T @ K_full @ updated_self.active_dof_map,
                 D_full,
@@ -990,8 +1071,113 @@ class GVS(SoftRobot):
         )
 
     def update_params(self, **updates: Array) -> "GVS":
-        """Return an updated copy with selected typed parameter fields replaced."""
+        """Return a copy with selected top-level parameter fields replaced.
+
+        Args:
+            **updates: Fields of :class:`GVSParams` to replace, typically
+                ``link``, ``joint``, ``gravity``, or ``base_pose``.
+
+        Returns:
+            A new validated GVS model containing the replacements.
+
+        Raises:
+            TypeError: If an unknown field is supplied or a replacement has an
+                invalid type.
+            ValueError: If the resulting parameters are incompatible with the
+                model's static structure.
+        """
         return self.with_params(self.params.replace(**updates))
+
+    def update_link_params(self, **updates: Any) -> "GVS":
+        """Return a copy with selected continuum-link fields replaced.
+
+        Args:
+            **updates: Fields of :class:`ContinuumLinkParams` to replace, such
+                as ``length``, ``density``, ``reference_strain``,
+                ``cross_section``, ``stiffness``, or ``damping``.
+
+        Returns:
+            A new validated GVS model with refreshed geometry-dependent caches.
+
+        Raises:
+            TypeError: If an unknown link field is supplied.
+            ValueError: If the replacement is invalid or changes the padded
+                model layout.
+        """
+        return self.with_params(
+            self.params.replace(link=self.params.link.replace(**updates))
+        )
+
+    def update_joint_params(self, **updates: Any) -> "GVS":
+        """Return a copy with selected joint fields replaced.
+
+        Args:
+            **updates: Fields of :class:`JointParams` to replace. Supported
+                public fields are ``stiffness`` and ``damping``.
+
+        Returns:
+            A new validated GVS model whose assembled matrices include the
+            replacement joint contributions.
+
+        Raises:
+            TypeError: If an unknown joint field is supplied.
+            ValueError: If a replacement matrix has an invalid value or padded
+                shape.
+        """
+        return self.with_params(
+            self.params.replace(joint=self.params.joint.replace(**updates))
+        )
+
+    def link_matrices_from_material(
+        self, material: IsotropicMaterialParams
+    ) -> tuple[Array, Array]:
+        """Map isotropic material variables to canonical GVS link matrices.
+
+        Args:
+            material: Scalar or per-segment Young's modulus, shear modulus, and
+                material damping coefficient. Scalars are broadcast over all
+                segments.
+
+        Returns:
+            A tuple ``(stiffness, damping)`` whose arrays both have shape
+            ``(num_segments, max_dof, max_dof)``. Inactive padded coordinates
+            remain zero.
+
+        Raises:
+            ValueError: If a material field is not scalar or does not have
+                shape ``(num_segments,)``.
+        """
+        material = material.broadcast(self.num_segments)
+        stiffness = (
+            material.young_modulus[:, None, None] * self.young_stiffness_operator
+            + material.shear_modulus[:, None, None] * self.shear_stiffness_operator
+        )
+        damping = (
+            material.material_damping_coefficient[:, None, None]
+            * self.material_damping_operator
+        )
+        return stiffness, damping
+
+    def with_isotropic_material(self, material: IsotropicMaterialParams) -> Self:
+        """Return a copy whose link matrices are built from isotropic material.
+
+        The supplied material PyTree remains caller-owned and is not stored on
+        the model. Reapplying this method is therefore explicit after geometry
+        or material updates.
+
+        Args:
+            material: Scalar or per-segment isotropic material variables.
+
+        Returns:
+            A new GVS model containing the generated canonical link stiffness
+            and damping matrices.
+
+        Raises:
+            ValueError: If a material field cannot be broadcast to one value
+                per segment.
+        """
+        stiffness, damping = self.link_matrices_from_material(material)
+        return self.update_link_params(stiffness=stiffness, damping=damping)
 
     # Gathering functions =========================================================
     @eqx.filter_jit
@@ -2700,8 +2886,15 @@ class GVS(SoftRobot):
 
     @eqx.filter_jit
     def jacobian_bodyframe(self, q: Array, s: Array) -> Array:
-        """
-        Compute the Jacobian of the forward kinematics at a point s along the robot in the body frame.
+        """Compute the body-frame geometric Jacobian at one point.
+
+        Args:
+            q: Active generalized coordinates with shape ``(num_dofs,)``.
+            s: Scalar global backbone coordinate in the interval from zero to
+                the total robot length.
+
+        Returns:
+            Body-frame Jacobian with shape ``(6, num_dofs)``.
         """
         _, J_local = self._jacobian_bodyframe_terms(q, s)
         return J_local
@@ -2885,8 +3078,16 @@ class GVS(SoftRobot):
     def jacobian_and_arc_length_derivative_bodyframe(
         self, q: Array, s: Array
     ) -> tuple[Array, Array]:
-        """
-        Compute the body-frame Jacobian and its arc-length derivative at ``s``.
+        """Compute a body-frame Jacobian and its arc-length derivative.
+
+        Args:
+            q: Active generalized coordinates with shape ``(num_dofs,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple ``(J, J_s)`` containing the body-frame Jacobian and its
+            derivative with respect to global arc length. Both arrays have
+            shape ``(6, num_dofs)``.
         """
         _, J_body, Js_body, _ = (
             self._jacobian_and_arc_length_derivative_bodyframe_terms(q, s)
@@ -2895,8 +3096,14 @@ class GVS(SoftRobot):
 
     @eqx.filter_jit
     def jacobian_arc_length_derivative_bodyframe(self, q: Array, s: Array) -> Array:
-        """
-        Compute the arc-length derivative of the body-frame Jacobian at ``s``.
+        """Compute the body-frame Jacobian derivative with respect to arc length.
+
+        Args:
+            q: Active generalized coordinates with shape ``(num_dofs,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            Arc-length derivative with shape ``(6, num_dofs)``.
         """
         _, Js = self.jacobian_and_arc_length_derivative_bodyframe(q, s)
         return Js
@@ -3127,8 +3334,16 @@ class GVS(SoftRobot):
     def jacobian_and_arc_length_derivative_inertialframe(
         self, q: Array, s: Array
     ) -> tuple[Array, Array]:
-        """
-        Compute the inertial-frame Jacobian and its arc-length derivative at ``s``.
+        """Compute an inertial-frame Jacobian and its arc-length derivative.
+
+        Args:
+            q: Active generalized coordinates with shape ``(num_dofs,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple ``(J, J_s)`` containing the inertial-frame Jacobian and its
+            derivative with respect to global arc length. Both arrays have
+            shape ``(6, num_dofs)``.
         """
         g_s, J_body, Js_body, gs = (
             self._jacobian_and_arc_length_derivative_bodyframe_terms(q, s)
@@ -3139,8 +3354,14 @@ class GVS(SoftRobot):
 
     @eqx.filter_jit
     def jacobian_arc_length_derivative_inertialframe(self, q: Array, s: Array) -> Array:
-        """
-        Compute the arc-length derivative of the inertial-frame Jacobian at ``s``.
+        """Compute the inertial Jacobian derivative with respect to arc length.
+
+        Args:
+            q: Active generalized coordinates with shape ``(num_dofs,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            Arc-length derivative with shape ``(6, num_dofs)``.
         """
         g_s, J_body, Js_body, gs = (
             self._jacobian_and_arc_length_derivative_bodyframe_terms(q, s)
@@ -3686,8 +3907,16 @@ class GVS(SoftRobot):
     def jacobian_and_time_derivative_bodyframe(
         self, q: Array, qd: Array, s: Array
     ) -> tuple[Array, Array]:
-        """
-        Compute the Jacobian time derivative of the forward kinematics at a point s along the robot in the body frame.
+        """Compute a body-frame Jacobian and its time derivative.
+
+        Args:
+            q: Active generalized coordinates with shape ``(num_dofs,)``.
+            qd: Active generalized velocities with shape ``(num_dofs,)``.
+            s: Scalar global backbone coordinate.
+
+        Returns:
+            A tuple ``(J, J_dot)`` containing the body-frame Jacobian and its
+            time derivative. Both arrays have shape ``(6, num_dofs)``.
         """
         _, J_local, Jd_local = self._jacobian_and_time_derivative_bodyframe_terms(
             q, qd, s
@@ -4413,81 +4642,13 @@ class GVS(SoftRobot):
 
     @eqx.filter_jit
     def _stiffness_full_matrix(self) -> Array:
-        """
-        Compute the full stiffness matrix of the robot.
-
-        Returns:
-            K_full (Array): Full stiffness matrix, shape (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-        """
-
-        def K_i(i: Array) -> Array:
-            """Assemble stiffness contributions for one segment by quadrature.
-
-            Args:
-                i (Array): Segment index (int).
-
-            Returns:
-                K_blocks_i (Array): Two blocks (joint/link) of shape (2, max_dof, max_dof).
-            """
-            # Joint ==============================
-            K_joint_i = jnp.zeros(
-                (self.max_dof, self.max_dof)
-            )  # self.joint_stiffness[i_segment]  # (max_dof, max_dof) TODO
-
-            # Link ===============================
-            length_i = self.segment_lengths[i]
-            Ws_i = self.integration_weights[i]  # (max_num_integration_points, 1, )
-            Es_i = self.stiffness_matrices[i]  # (max_num_integration_points, 6, 6)
-            B_Xs_i = self.B_Xs[i]  # (max_num_integration_points, 6, max_dof)
-
-            def K_ij(j: Array) -> Array:
-                """
-                Stiffness block at a single quadrature point.
-
-                Args:
-                    j (Array): Quadrature point index (int).
-
-                Returns:
-                    K_ij (Array): Block of shape (max_dof, max_dof).
-                """
-                Ws_ij = Ws_i[j]
-                Es_ij = Es_i[j]  # (6, 6)
-                B_Xs_ij = B_Xs_i[j]  # (6, max_dof)
-
-                if self.scale_rotational_basis_by_length:
-                    B_Xs_ij = B_Xs_ij.at[:3, :].divide(length_i)
-
-                return Ws_ij * (B_Xs_ij.T @ Es_ij @ B_Xs_ij)
-
-            # we can skip the first and last quadrature points since their weight is zero
-            K_link_i = (
-                jnp.sum(
-                    vmap(K_ij)(jnp.arange(1, self.max_num_integration_points - 1)),
-                    axis=0,
-                )
-                * length_i
-            )  # (max_num_integration_points - 2, max_dof, max_dof)
-
-            # Create a (2, max_dof, max_dof) array with K_joint_i and K_segment_i
-            K_blocks_i = jnp.stack([K_joint_i, K_link_i], axis=0)
-            return K_blocks_i
-
-        K_blocks_tot = vmap(K_i)(
-            jnp.arange(self.num_segments)
-        )  # (num_segments, 2, max_dof, max_dof)
-
-        # Assume that K_blocks is of the form (num_segments, 2, max_dof, max_dof)
-        K_blocks_flat = K_blocks_tot.reshape(
-            -1, self.max_dof, self.max_dof
-        )  # (num_segments * 2, max_dof, max_dof)
-
-        # Convert to list of matrices
-        K_blocks_list = [K_blocks_flat[i] for i in range(K_blocks_flat.shape[0])]
-
-        # Building the diagonal matrix in blocks
-        K_full = jax.scipy.linalg.block_diag(*K_blocks_list)
-
-        return K_full
+        """Assemble interleaved canonical joint/link stiffness blocks."""
+        blocks = jnp.stack(
+            [self.params.joint.stiffness, self.params.link.stiffness], axis=1
+        ).reshape(-1, self.max_dof, self.max_dof)
+        return jax.scipy.linalg.block_diag(
+            *[blocks[index] for index in range(blocks.shape[0])]
+        )
 
     @eqx.filter_jit
     def stiffness_matrix(self) -> Array:
@@ -4514,80 +4675,13 @@ class GVS(SoftRobot):
 
     @eqx.filter_jit
     def _damping_full_matrix(self) -> Array:
-        """
-        Compute the full damping matrix of the robot.
-
-        Returns:
-            D_full (Array): Full damping matrix, shape (num_segments * 2 * max_dof, num_segments * 2 * max_dof)
-        """
-
-        def D_i(i: Array) -> Array:
-            """Assemble damping contributions for one segment by quadrature.
-
-            Args:
-                i (Array): Segment index (int).
-
-            Returns:
-                D_blocks_i (Array): Two blocks (joint/link) of shape (2, max_dof, max_dof).
-            """
-            # Joint ==============================
-            D_joint_i = jnp.zeros(
-                (self.max_dof, self.max_dof)
-            )  # Initialize joint stiffness matrix
-
-            # Link ===============================
-            length_i = self.segment_lengths[i]
-            Ws_i = self.integration_weights[i]  # (max_num_integration_points, 1, )
-            Gs_i = self.damping_matrices[i]  # (max_num_integration_points, 6, 6)
-            B_Xs_i = self.B_Xs[i]  # (max_num_integration_points, 6, max_dof)
-
-            def D_ij(j: Array) -> Array:
-                """Damping block at a single quadrature point.
-
-                Args:
-                    j (Array): Quadrature point index (int).
-
-                Returns:
-                    D_ij (Array): Block of shape (max_dof, max_dof).
-                """
-                Ws_j = Ws_i[j]
-                Gs_j = Gs_i[j]  # (6, 6)
-                B_Xs_j = B_Xs_i[j]  # (6, max_dof)
-
-                if self.scale_rotational_basis_by_length:
-                    B_Xs_j = B_Xs_j.at[:3, :].divide(length_i)
-
-                return Ws_j * (B_Xs_j.T @ Gs_j @ B_Xs_j)
-
-            # we can skip the first and last quadrature points since their weight is zero
-            D_link_i = (
-                jnp.sum(
-                    vmap(D_ij)(jnp.arange(1, self.max_num_integration_points - 1)),
-                    axis=0,
-                )
-                * length_i
-            )  # (max_num_integration_points - 2, max_dof, max_dof)
-
-            # Create a (2, max_dof, max_dof) array with D_joint_i and D_segment_i
-            D_blocks_i = jnp.stack([D_joint_i, D_link_i], axis=0)
-            return D_blocks_i
-
-        D_blocks_tot = vmap(D_i)(
-            jnp.arange(self.num_segments)
-        )  # (num_segments, 2, max_dof, max_dof)
-
-        # Assume that D_blocks is of the form (num_segments, 2, max_dof, max_dof)
-        D_blocks_flat = D_blocks_tot.reshape(
-            -1, self.max_dof, self.max_dof
-        )  # (num_segments * 2, max_dof, max_dof)
-
-        # Convert to list of matrices
-        D_blocks_list = [D_blocks_flat[i] for i in range(D_blocks_flat.shape[0])]
-
-        # Building the diagonal matrix in blocks
-        D_full = jax.scipy.linalg.block_diag(*D_blocks_list)
-
-        return D_full
+        """Assemble interleaved canonical joint/link damping blocks."""
+        blocks = jnp.stack(
+            [self.params.joint.damping, self.params.link.damping], axis=1
+        ).reshape(-1, self.max_dof, self.max_dof)
+        return jax.scipy.linalg.block_diag(
+            *[blocks[index] for index in range(blocks.shape[0])]
+        )
 
     @eqx.filter_jit
     def damping_matrix(self, q: Array) -> Array:

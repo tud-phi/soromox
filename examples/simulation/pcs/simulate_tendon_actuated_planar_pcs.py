@@ -9,8 +9,8 @@ jax.config.update("jax_enable_x64", True)  # double precision
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import MatplotlibRenderer
 from soromox.systems import (
+    LinkSpec,
     PlanarPCS,
-    PlanarPCSParams,
     PlanarPCSStructure,
     SystemState,
 )
@@ -22,16 +22,21 @@ if __name__ == "__main__":
     )  # Volumetric density of Dragon Skin 20 [kg/m^3]
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 318.0
-    body = PlanarPCSParams(
+    body = PlanarPCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_lengths[index]),
+                radius=2e-2,
+                density=float(rho[index]),
+                young_modulus=5e3,
+                shear_modulus=1e3,
+                material_damping_coefficient=material_damping_coefficient,
+                reference_strain=[0, 1, 0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
-        length=segment_lengths,
-        radius=2e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=0 * jnp.array([0.0, 9.81]),
-        young_modulus=5e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        material_damping_coefficient=material_damping_coefficient,
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
     )
     tendon_offsets = 2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0)
     active_tendon_routing = ThreadlikeRouting.linear(

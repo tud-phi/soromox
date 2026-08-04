@@ -43,6 +43,13 @@ The `SoftRobot` class extends `DynamicalSystem` with interfaces specific to soft
 
 ## Common Components
 
+PCS and GVS share continuum-link, cross-section, isotropic-material, and joint
+components. Their physical meaning, ownership, matrix shapes, and construction
+specifications are described in
+[Continuum Robot Components](continuum-components.md). Practical immutable
+replacement and gradient-based identification examples are in
+[Parameters, Updates, and Optimization](../../user-guide/parameters-and-optimization.md).
+
 ### SystemState
 
 The `SystemState` class is a container for the robot state used throughout SoRoMoX for simulation, control, and analysis.

@@ -27,7 +27,7 @@ from trajectory_primitives import (
 
 from soromox.control import OperationalSpaceImpedanceControlTracker
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.systems import PCS, PCSParams, SystemState
+from soromox.systems import PCS, LinkSpec, PCSParams, SystemState
 
 jax.config.update("jax_enable_x64", True)
 
@@ -113,21 +113,26 @@ def build_problem(trajectory_config: TaskSpaceTrajectoryConfig) -> PCSImpedanceP
             * segment_lengths[:, None]
         ).flatten()
     )
-    params = PCSParams(
+    links = [
+        LinkSpec.circular(
+            length=float(segment_lengths[index]),
+            radius=2e-2,
+            density=float(rho[index]),
+            young_modulus=2e3,
+            shear_modulus=1e3,
+            damping=damping_matrix[
+                6 * index : 6 * (index + 1), 6 * index : 6 * (index + 1)
+            ],
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for index in range(num_segments)
+    ]
+    robot = PCS.from_links(
+        links,
         base_pose=p0,
-        length=segment_lengths,
-        radius=2e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
     )
-
-    robot = PCS(params=params)
+    params = robot.params
     num_dofs = robot.num_active_strains
     total_length = float(jnp.sum(segment_lengths))
     q0 = jnp.zeros((num_dofs,))

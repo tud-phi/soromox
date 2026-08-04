@@ -14,9 +14,12 @@ import pandas as pd
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     GVS,
-    CrossSectionGeometry,
+    GVSSegment,
+    JointSpec,
+    LinearProfile,
+    LinkSpec,
+    StrainBasisSpec,
 )
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jax.config.update("jax_enable_x64", True)
 
@@ -453,35 +456,37 @@ if __name__ == "__main__":
 
     # 2 link version
     # Link 1
-    link1 = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=5.05e5,
-        nu=0.45,
-        rho=1500.0,
-        eta=1e4,
-        L=0.0250 + 0.2550 + 0.0250,
-        r_i=0.01541,
-        r_f=0.00642,
+    link1 = LinkSpec.circular(
+        length=0.0250 + 0.2550 + 0.0250,
+        radius=LinearProfile(base=0.01541, tip=0.00642),
+        density=1500.0,
+        young_modulus=5.05e5,
+        shear_modulus=5.05e5 / (2.0 * (1.0 + 0.45)),
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
 
     # Link 2
-    link2 = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=5.05e5,
-        nu=0.45,
-        rho=1500.0,
-        eta=1e4,
-        L=0.0550,
-        r_i=0.00642,
-        r_f=0.00480,
+    link2 = LinkSpec.circular(
+        length=0.0550,
+        radius=LinearProfile(base=0.00642, tip=0.00480),
+        density=1500.0,
+        young_modulus=5.05e5,
+        shear_modulus=5.05e5 / (2.0 * (1.0 + 0.45)),
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
     joint1 = JointSpec(type="fixed")
     joint2 = JointSpec(type="fixed")
     basis1 = StrainBasisSpec(
-        type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[0, 1, 1, 1, 0, 0]
+        type="monomial",
+        strain_selector=[1, 1, 1, 1, 0, 0],
+        basis_order=[0, 1, 1, 1, 0, 0],
     )
     basis2 = StrainBasisSpec(
-        type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
+        type="monomial",
+        strain_selector=[0, 1, 1, 0, 0, 0],
+        basis_order=[0, 0, 0, 0, 0, 0],
     )
 
     num_gauss_points = [8, 8]
@@ -532,9 +537,9 @@ if __name__ == "__main__":
     n_links = int(robot.num_segments)
 
     # E and nu initial values (same for all links)
-    E0 = float(link1.E)
-    nu0 = float(link1.nu)
-    rho0 = float(link1.rho)
+    E0 = float(link1.young_modulus)
+    nu0 = 0.45
+    rho0 = float(link1.density)
     E_init = jnp.asarray(E0, dtype=jnp.float64)  # shape: ()
     nu_init = jnp.asarray(nu0, dtype=jnp.float64)  # shape: ()
     rho_init = jnp.asarray(rho0, dtype=jnp.float64)  # shape: ()
@@ -754,25 +759,23 @@ if __name__ == "__main__":
     finish_figure(show=not args.no_show)
 
     # Markers comparison visualization
-    link1_hat = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=float(E_hat),
-        nu=float(nu_hat),
-        rho=float(rho_hat),
-        eta=1e4,
-        L=0.0250 + 0.2550 + 0.0250,
-        r_i=0.01541,
-        r_f=0.00642,
+    link1_hat = LinkSpec.circular(
+        length=0.0250 + 0.2550 + 0.0250,
+        radius=LinearProfile(base=0.01541, tip=0.00642),
+        density=float(rho_hat),
+        young_modulus=float(E_hat),
+        shear_modulus=float(E_hat / (2.0 * (1.0 + nu_hat))),
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
-    link2_hat = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=float(E_hat),
-        nu=float(nu_hat),
-        rho=float(rho_hat),
-        eta=1e4,
-        L=0.0550,
-        r_i=0.00642,
-        r_f=0.00480,
+    link2_hat = LinkSpec.circular(
+        length=0.0550,
+        radius=LinearProfile(base=0.00642, tip=0.00480),
+        density=float(rho_hat),
+        young_modulus=float(E_hat),
+        shear_modulus=float(E_hat / (2.0 * (1.0 + nu_hat))),
+        material_damping_coefficient=1e4,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
     robot_hat = GVS.from_segments(
         [

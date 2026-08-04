@@ -9,7 +9,7 @@ import numpy as np
 from diffrax import Tsit5
 
 from soromox.rendering import MatplotlibRenderer, OpenCVPlanarRenderer
-from soromox.systems import PlanarPCS, PlanarPCSParams, SystemState
+from soromox.systems import LinkSpec, PlanarPCS, SystemState
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -41,16 +41,25 @@ if __name__ == "__main__":
             * segment_lengths[:, None]
         ).flatten()
     )
-    params = PlanarPCSParams(
+    links = [
+        LinkSpec.circular(
+            length=float(segment_lengths[index]),
+            radius=3e-2,
+            density=float(rho[index]),
+            young_modulus=1e6,
+            shear_modulus=3.333333e5,
+            damping=damping_matrix[
+                3 * index : 3 * (index + 1),
+                3 * index : 3 * (index + 1),
+            ],
+            reference_strain=[0.0, 1.0, 0.0],
+        )
+        for index in range(num_segments)
+    ]
+    params = PlanarPCS.params_from_links(
+        links,
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
-        length=segment_lengths,
-        radius=3e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([-9.81 * 1, 9.81 * 0]),  # gravity vector [m/s^2] UP!
-        young_modulus=1e6 * jnp.ones((num_segments,)),  # Elastic modulus [Pa]
-        shear_modulus=3.333333e5 * jnp.ones((num_segments,)),  # Shear modulus [Pa]
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
     )
 
     # ======================================================
@@ -61,7 +70,7 @@ if __name__ == "__main__":
     J, Jd = robot.jacobian_and_time_derivative(
         q=jnp.zeros((3 * num_segments,)),
         qd=jnp.zeros((3 * num_segments,)),
-        s=params.length[0],
+        s=params.link.length[0],
     )
 
     # =====================================================

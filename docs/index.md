@@ -111,20 +111,20 @@ Get up and running in minutes:
 
     ```python
     import jax.numpy as jnp
-    from soromox.systems import PlanarPCS, PlanarPCSParams, SystemState
+    from soromox.systems import LinkSpec, PlanarPCS, SystemState
 
     # Create a planar PCS soft robot
     num_segments = 3
-    params = PlanarPCSParams(
-        length=0.1 * jnp.ones((num_segments,)),
-        radius=0.02 * jnp.ones((num_segments,)),
-        density=1070.0 * jnp.ones((num_segments,)),
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        material_damping_coefficient=318.0,
-    )
-    robot = PlanarPCS(params=params)
+    links = [
+        LinkSpec.circular(
+            length=0.1, radius=0.02, density=1070.0,
+            reference_strain=[0.0, 1.0, 0.0],
+            young_modulus=2e3, shear_modulus=1e3,
+            material_damping_coefficient=318.0,
+        )
+        for _ in range(num_segments)
+    ]
+    robot = PlanarPCS.from_links(links)
 
     # Initialize state
     q0 = jnp.zeros(robot.n_q)

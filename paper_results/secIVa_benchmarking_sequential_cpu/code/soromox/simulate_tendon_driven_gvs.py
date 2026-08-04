@@ -11,10 +11,12 @@ import optimistix as optx
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     GVS,
-    CrossSectionGeometry,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    StrainBasisSpec,
     SystemState,
 )
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
@@ -51,36 +53,38 @@ DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 
 # 2 link version
 # Link 1
-link1 = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=1e6,
-    nu=0.5,
-    rho=1000.0,
-    eta=1e4,
-    L=0.3,
-    r_i=0.03,
-    r_f=0.03,
+link1 = LinkSpec.circular(
+    length=0.3,
+    radius=0.03,
+    density=1000.0,
+    young_modulus=1e6,
+    shear_modulus=1e6 / (2.0 * (1.0 + 0.5)),
+    material_damping_coefficient=1e4,
+    reference_strain=[0, 0, 0, 1, 0, 0],
 )
 
 # Link 2
-link2 = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=1e6,
-    nu=0.5,
-    rho=1000.0,
-    eta=1e4,
-    L=0.3,
-    r_i=0.03,
-    r_f=0.03,
+link2 = LinkSpec.circular(
+    length=0.3,
+    radius=0.03,
+    density=1000.0,
+    young_modulus=1e6,
+    shear_modulus=1e6 / (2.0 * (1.0 + 0.5)),
+    material_damping_coefficient=1e4,
+    reference_strain=[0, 0, 0, 1, 0, 0],
 )
 joint1 = JointSpec(type="Fixed")
 joint2 = JointSpec(type="Fixed")
 
 basis1 = StrainBasisSpec(
-    type="Legendre", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
+    type="legendre",
+    strain_selector=[1, 1, 1, 1, 0, 0],
+    basis_order=[1, 1, 1, 1, 0, 0],
 )
 basis2 = StrainBasisSpec(
-    type="Legendre", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
+    type="legendre",
+    strain_selector=[1, 1, 1, 1, 0, 0],
+    basis_order=[1, 1, 1, 1, 0, 0],
 )
 
 

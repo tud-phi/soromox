@@ -43,7 +43,7 @@ from soromox.coordinate_transformations.actuation_space import ActuationSpaceDyn
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     PCS,
-    PCSParams,
+    LinkSpec,
     SystemState,
 )
 
@@ -69,18 +69,21 @@ def create_robot() -> tuple[PCS, int]:
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 362.0
-    body_params = PCSParams(
+    body_params = PCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_lengths[index]),
+                radius=radius,
+                density=float(rho[index]),
+                young_modulus=2e3,
+                shear_modulus=1e3,
+                material_damping_coefficient=material_damping_coefficient,
+                reference_strain=[0, 0, 0, 1, 0, 0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
-        length=segment_lengths,
-        radius=radius * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([0.0, 0.0, 9.81]),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        material_damping_coefficient=material_damping_coefficient,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
     )
 
     # Tendon routing: 3 tendons at 120 degrees apart, parallel to backbone

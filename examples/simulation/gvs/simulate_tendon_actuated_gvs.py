@@ -9,10 +9,13 @@ from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     GVS,
-    CrossSectionGeometry,
+    GVSSegment,
+    JointSpec,
+    LinearProfile,
+    LinkSpec,
+    StrainBasisSpec,
     SystemState,
 )
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jax.config.update("jax_enable_x64", True)
 # jax.config.update("jax_platform_name", "gpu")  # or "cpu"
@@ -48,36 +51,38 @@ jnp.set_printoptions(
 
 # 2 link version
 # Link 1
-link1 = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=3.04e5,
-    nu=0.45,
-    rho=1310.0,
-    eta=1e4,
-    L=0.0250 + 0.2550 + 0.0250,
-    r_i=0.01541,
-    r_f=0.00642,
+link1 = LinkSpec.circular(
+    young_modulus=3.04e5,
+    shear_modulus=3.04e5 / 2.9,
+    density=1310.0,
+    material_damping_coefficient=1e4,
+    length=0.0250 + 0.2550 + 0.0250,
+    radius=LinearProfile(0.01541, 0.00642),
+    reference_strain=[0, 0, 0, 1, 0, 0],
 )
 
 # Link 2
-link2 = LinkSpec(
-    cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-    E=3.04e5,
-    nu=0.45,
-    rho=1310.0,
-    eta=1e4,
-    L=0.0550,
-    r_i=0.00642,
-    r_f=0.00480,
+link2 = LinkSpec.circular(
+    young_modulus=3.04e5,
+    shear_modulus=3.04e5 / 2.9,
+    density=1310.0,
+    material_damping_coefficient=1e4,
+    length=0.0550,
+    radius=LinearProfile(0.00642, 0.00480),
+    reference_strain=[0, 0, 0, 1, 0, 0],
 )
 joint1 = JointSpec(type="fixed")
 joint2 = JointSpec(type="fixed")
 
 basis1 = StrainBasisSpec(
-    type="monomial", active=[1, 1, 1, 1, 0, 0], orders=[1, 1, 1, 1, 0, 0]
+    type="monomial",
+    strain_selector=[1, 1, 1, 1, 0, 0],
+    basis_order=[1, 1, 1, 1, 0, 0],
 )
 basis2 = StrainBasisSpec(
-    type="monomial", active=[0, 1, 1, 0, 0, 0], orders=[0, 0, 0, 0, 0, 0]
+    type="monomial",
+    strain_selector=[0, 1, 1, 0, 0, 0],
+    basis_order=[0, 0, 0, 0, 0, 0],
 )
 
 
