@@ -144,7 +144,15 @@ RETAINED_VISUAL_PREFIXES = (
     "docs/assets/logo/favicon/",
     "paper_results/",
 )
-PNG_METADATA_CHUNKS = frozenset({b"eXIf", b"iTXt", b"tEXt", b"tIME", b"zTXt"})
+RETAINED_VISUAL_PATHS = frozenset(
+    {
+        "docs/assets/logo/soromox_logo.png",
+        "docs/assets/logo/soromox_logo_s.png",
+    }
+)
+PNG_METADATA_CHUNKS = frozenset(
+    {b"caBX", b"eXIf", b"iTXt", b"tEXt", b"tIME", b"zTXt"}
+)
 PDF_INFO_VALUE_RE = re.compile(
     rb"/(Author|Creator|Producer|CreationDate|ModDate|Title|Subject|Keywords)"
     rb"\s*(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>)",
@@ -453,7 +461,7 @@ def _is_risky(path: str) -> str | None:
         return (
             "internal anonymization utility containing detection rules or test fixtures"
         )
-    if path.startswith(RETAINED_VISUAL_PREFIXES):
+    if path in RETAINED_VISUAL_PATHS or path.startswith(RETAINED_VISUAL_PREFIXES):
         return None
     pure_path = PurePosixPath(path)
     suffix = pure_path.suffix.casefold()
@@ -702,7 +710,10 @@ def sanitize_text(path: str, text: str, rules: IdentityRules) -> str:
             for line in text.splitlines(keepends=True)
             if not (
                 SENSITIVE_ASSET_REFERENCE_RE.search(line)
-                and "favicon" not in line.casefold()
+                and not any(
+                    allowed in line.casefold()
+                    for allowed in ("favicon", "soromox_logo")
+                )
             )
         )
 
@@ -866,7 +877,7 @@ def _sanitize_pdf_metadata(data: bytes) -> bytes:
 
 
 def _sanitize_png_metadata(data: bytes) -> bytes:
-    """Drop textual/EXIF/time chunks while preserving pixel-bearing chunks."""
+    """Drop textual/EXIF/time/C2PA chunks while preserving pixel-bearing chunks."""
 
     signature = b"\x89PNG\r\n\x1a\n"
     if not data.startswith(signature):
@@ -994,7 +1005,10 @@ def _sanitize_binary_metadata(
         return _sanitize_pdf_metadata(data), "PDF document metadata replaced"
     if suffix == ".png":
         sanitized = _sanitize_png_metadata(data)
-        return sanitized, "PNG textual, EXIF, and timestamp chunks removed"
+        return (
+            sanitized,
+            "PNG textual, EXIF, timestamp, and content-credential chunks removed",
+        )
     if suffix == ".mat":
         return _sanitize_mat_metadata(data), "MATLAB platform and timestamp header replaced"
     if suffix == ".xlsx":
@@ -1037,8 +1051,8 @@ def _report(
         "and identifying links were removed. Bibliographic names may remain in references.",
         "Predecessor-package references and identifying citation requests were removed.",
         "",
-        "The SoRoMoX favicon and files under paper_results/ were retained by explicit",
-        "policy. Metadata-bearing retained formats were scrubbed where supported; all",
+        "The SoRoMoX package logo, favicon, and files under paper_results/ were retained",
+        "by explicit policy. Metadata-bearing retained formats were scrubbed; all",
         "retained visuals still require manual review for faces and identifying logos.",
         "",
         f"Sanitized text files: {len(sanitized)}",

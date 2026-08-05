@@ -43,6 +43,7 @@ def _png_with_text_metadata() -> bytes:
         (
             b"\x89PNG\r\n\x1a\n",
             chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)),
+            chunk(b"caBX", b"c2pa OpenAI API"),
             chunk(b"tEXt", b"Software\x00Matplotlib v3.10.9"),
             chunk(b"IDAT", scanline),
             chunk(b"IEND", b""),
@@ -191,6 +192,10 @@ Public controller documentation.
         repo / "docs" / "assets" / "logo" / "favicon" / "favicon-32x32.png",
         _png_with_text_metadata(),
     )
+    _write(
+        repo / "docs" / "assets" / "logo" / "soromox_logo.png",
+        _png_with_text_metadata(),
+    )
     _git(repo, "add", ".")
     subprocess.run(
         [
@@ -271,6 +276,9 @@ def test_archive_uses_committed_files_and_anonymizes(
             f"{root}/docs/assets/logo/favicon/favicon-32x32.png"
         )
         assert b"Matplotlib" not in retained_favicon
+        retained_logo = archive.read(f"{root}/docs/assets/logo/soromox_logo.png")
+        assert b"Matplotlib" not in retained_logo
+        assert b"c2pa" not in retained_logo
 
         report = archive.read(f"{root}/{archive_module.REPORT_PATH}").decode()
         assert "results/figure.png" in report
@@ -369,7 +377,13 @@ def test_internal_anonymizer_files_are_excluded(path: str) -> None:
         "paper_results/figure.pdf",
         "paper_results/video.mp4",
         "docs/assets/logo/favicon/favicon.ico",
+        "docs/assets/logo/soromox_logo.png",
+        "docs/assets/logo/soromox_logo_s.png",
     ),
 )
 def test_explicitly_retained_artifacts_are_not_excluded(path: str) -> None:
     assert archive_module._is_risky(path) is None
+
+
+def test_unrelated_logo_remains_excluded() -> None:
+    assert archive_module._is_risky("docs/assets/logo/lab_logo.png") is not None
