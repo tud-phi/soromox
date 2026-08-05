@@ -1,13 +1,18 @@
 # Parameters
 
+Shared link, joint, cross-section, and isotropic-material mechanics are
+described in [Continuum Robot Components](../systems/continuum-components.md).
+Construction, immutable replacement, and gradient-based workflows are covered
+in [Parameters, Updates, and Optimization](../../user-guide/parameters-and-optimization.md).
+
 Actuator and passive-element parameters follow the same immutable replacement
 style through indexed robot delegates. See
 [Actuation parameter updates](../actuation/index.md#parameter-updates).
 
-System parameters are represented as typed Equinox PyTrees. Shared base classes
-and cross-system tendon params live in `soromox.systems.params`; concrete params
-and structures live next to their system family, for example
-`soromox.systems.gvs.params` and `soromox.systems.gvs.structures`.
+System parameters are represented as typed Equinox PyTrees. Shared continuum
+link, joint, cross-section, material params, and construction specs live in
+`soromox.systems.components`. System params and static structures remain next
+to their system family.
 
 ## Overview
 
@@ -19,10 +24,10 @@ Each system separates dynamic numeric values from static model structure:
   strain masks, GVS joint/basis/cross-section choices, symbolic expression
   paths, and padding sizes. Changing structure means constructing a new system
   and may recompile jitted methods.
-- **Spec objects** are ergonomic construction inputs for model families that
-  need richer setup. For GVS, `GVSSegment`, `LinkSpec`, `JointSpec`, and
-  `StrainBasisSpec` may contain both static choices and numeric values; factory
-  methods split them into params and structure objects.
+- **Spec objects** are ergonomic construction inputs. Shared `LinkSpec` and
+  `JointSpec` objects live in `soromox.systems.components`; `GVSSegment` and
+  `StrainBasisSpec` remain GVS-specific. Factory methods split specs into
+  runtime params and static structures.
 
 The top-level `soromox.systems` package re-exports the public params,
 structures, and specs for convenient imports. Internally, concrete containers
@@ -30,8 +35,9 @@ are family-local:
 
 | System family | Dynamic params | Static structures | Construction specs |
 |---------------|----------------|-------------------|--------------------|
-| PCS | `soromox.systems.pcs.params` | `soromox.systems.pcs.structures` | - |
-| GVS | `soromox.systems.gvs.params` | `soromox.systems.gvs.structures` | `soromox.systems.gvs.specs` |
+| Shared components | `soromox.systems.components` | - | `LinkSpec`, `JointSpec` |
+| PCS | `soromox.systems.pcs.params` | `soromox.systems.pcs.structures` | shared `LinkSpec` |
+| GVS | `soromox.systems.gvs.params` | `soromox.systems.gvs.structures` | shared specs plus `soromox.systems.gvs.specs` |
 | HSA | `soromox.systems.hsa.params` | `soromox.systems.hsa.structures` | - |
 | Pendulum | `soromox.systems.pendulum.params` | - | - |
 | Articulated | `soromox.systems.articulated.params` | - | - |
@@ -39,8 +45,8 @@ are family-local:
 The public construction pattern is:
 
 ```python
-robot = PCS(params=PCSParams(...), structure=PCSStructure(...))
-robot = robot.update_params(length=new_length)
+robot = PCS.from_links(links, structure=PCSStructure(...))
+robot = robot.update_link_params(length=new_length)
 robot = robot.with_params(new_params)
 ```
 
@@ -49,9 +55,10 @@ Changing the number of segments, tendons, active strains, GVS basis layout, or
 quadrature layout is a structural change and requires reconstruction.
 
 For GVS specifically, `GVS.from_segments(...)` is the recommended constructor.
-It accepts user-facing segment specs, stores numeric values only in `GVSParams`,
-and stores stripped static choices in `GVSStructure`. This avoids stale
-duplicates when updating values such as Young's modulus or link length.
+It accepts user-facing segment specs, stores canonical link and joint matrices
+in `GVSParams`, and stores stripped static choices in `GVSStructure`.
+`IsotropicMaterialParams` remains a separate caller-owned optimization PyTree,
+so runtime and material representations are not duplicated.
 
 ## Naming
 
@@ -63,16 +70,19 @@ or `(num_links,)`.
 | Field | Meaning |
 |-------|---------|
 | `length` | Per-segment or per-link length |
-| `radius` | Per-segment circular cross-section radius |
+| `cross_section.coefficients` | Batched cross-section profile coefficients |
 | `density` | Per-segment material density |
-| `young_modulus` | Per-segment Young's modulus |
-| `shear_modulus` | Per-segment shear modulus |
-| `material_damping_coefficient` | PCS material damping coefficient |
-| `damping_matrix` | Custom generalized damping matrix |
+| `stiffness` | Canonical per-link or per-joint generalized stiffness matrices |
+| `damping` | Canonical per-link or per-joint generalized damping matrices |
 | `gravity` | Gravity vector |
 | `base_pose` | Base configuration as scalar-first quaternion pose |
 | `reference_strain` | Reference strain vector |
 | `joint_rest_configuration` | Joint coordinates where elastic joint force is zero |
+
+Young's modulus, shear modulus, and material damping use the separate
+`IsotropicMaterialParams` fields `young_modulus`, `shear_modulus`, and
+`material_damping_coefficient`. See the linked components page for their
+mapping to canonical matrices and the user guide for optimization examples.
 
 ## World Frame, Mounting, and Gravity Defaults
 
@@ -95,31 +105,24 @@ The exact default values are:
 - Planar poses use `[theta, x, y]`. Spatial poses use scalar-first Hamilton
   quaternions in `[qw, qx, qy, qz, x, y, z]` order.
 
-Omitting both fields selects the defaults:
+Omitting both fields selects the defaults. For example, the factory below
+constructs an upright PlanarPCS under Earth gravity:
 
 ```python
-params = PlanarPCSParams(
-    length=length,
-    radius=radius,
-    density=density,
-    young_modulus=young_modulus,
-    shear_modulus=shear_modulus,
-    damping_matrix=damping_matrix,
-    reference_strain=reference_strain,
-)
+robot = PlanarPCS.from_links(planar_links)
 ```
 
 Use the inherited mounting constructors to make another common mounting
-explicit. `base_position` translates the mounting without changing its
-orientation:
+explicit when constructing a param tree directly. `base_position` translates
+the mounting without changing its orientation:
 
 ```python
-horizontal = PlanarPCSParams.horizontal(**planar_params)
+horizontal = PlanarPCSParams.horizontal(link=planar_link_params)
 upright = PlanarPCSParams.upright(
-    **planar_params, base_position=jnp.array([0.2, 0.1])
+    link=planar_link_params, base_position=jnp.array([0.2, 0.1])
 )
 hanging = PCSParams.hanging(
-    **spatial_params, base_position=jnp.array([0.0, 0.0, 0.5])
+    link=spatial_link_params, base_position=jnp.array([0.0, 0.0, 0.5])
 )
 ```
 
@@ -127,9 +130,9 @@ Pass an explicit vector for custom or zero gravity. Pass an explicit
 `base_pose` through the ordinary constructor for arbitrary orientations:
 
 ```python
-zero_gravity = PCSParams(..., gravity=jnp.zeros(3))
+zero_gravity = PCSParams(link=spatial_link_params, gravity=jnp.zeros(3))
 custom = PlanarPCSParams(
-    ...,
+    link=planar_link_params,
     gravity=jnp.array([1.0, -9.7]),
     base_pose=jnp.array([0.3, 0.2, 0.1]),
 )
@@ -193,20 +196,23 @@ choices that affect compilation.
 
 ```python
 import jax.numpy as jnp
-from soromox.systems import PCS, PCSParams, PCSStructure
+from soromox.systems import LinkSpec, PCS, PCSStructure
 
-params = PCSParams.upright(
-    length=jnp.array([0.1, 0.1]),
-    radius=jnp.array([0.01, 0.01]),
-    density=jnp.array([1000.0, 1000.0]),
-    young_modulus=jnp.array([1e6, 1e6]),
-    shear_modulus=jnp.array([1e5, 1e5]),
-    damping_matrix=jnp.eye(12),
-    reference_strain=jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), 2),
-)
+links = [
+    LinkSpec.circular(
+        length=0.1,
+        radius=0.01,
+        density=1000.0,
+        young_modulus=1e6,
+        shear_modulus=1e5,
+        material_damping_coefficient=1e4,
+        reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+    )
+    for _ in range(2)
+]
 
-robot = PCS(params=params, structure=PCSStructure(num_gauss_points=5))
-updated_robot = robot.update_params(length=jnp.array([0.12, 0.1]))
+robot = PCS.from_links(links, structure=PCSStructure(num_gauss_points=5))
+updated_robot = robot.update_link_params(length=jnp.array([0.12, 0.1]))
 ```
 
 ## API Reference

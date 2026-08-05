@@ -9,7 +9,7 @@ from soromox.rendering.open3d_renderer import (  # noqa: E402
     _make_swept_cross_section_segment,
     _swept_segment_vertices,
 )
-from soromox.systems.soft_robot import CrossSectionGeometry  # noqa: E402
+from soromox.systems.components import CrossSectionGeometry  # noqa: E402
 
 
 def test_swept_cylinder_rings_follow_material_frame_not_curve_chord():

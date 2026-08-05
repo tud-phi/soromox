@@ -78,6 +78,9 @@ def validate_quaternion_base_pose(
     performed; transform helpers still avoid zero-norm division to keep traced
     code finite.
 
+    Returns:
+        ``None`` after successful validation.
+
     Raises:
         ValueError: If the shape is wrong, any entry is non-finite, or the
             quaternion component is zero or numerically too small to normalize
@@ -99,7 +102,21 @@ class BaseSystemParams(eqx.Module):
     """Base class for dynamic system parameters stored as JAX PyTrees."""
 
     def replace(self, **updates: Any) -> "BaseSystemParams":
-        """Return a copy with selected fields replaced."""
+        """Return an immutable copy with selected fields replaced.
+
+        Args:
+            **updates: Parameter field names and their replacement values.
+                Nested parameter components should first be replaced with their
+                own ``replace`` method, then supplied as a top-level field.
+
+        Returns:
+            A validated parameter PyTree of the same concrete class.
+
+        Raises:
+            KeyError: If any update names an unknown parameter field.
+            TypeError: If a replacement cannot be inserted into the PyTree.
+            ValueError: If validation of the resulting parameters fails.
+        """
         valid_names = {field.name for field in fields(self)}
         unknown_names = set(updates) - valid_names
         if unknown_names:
@@ -123,11 +140,27 @@ class BaseSystemParams(eqx.Module):
         return value
 
     def validate(self) -> None:
-        """Validate parameter consistency."""
+        """Validate intrinsic parameter consistency.
+
+        Returns:
+            ``None``. Subclasses override this method to raise on invalid
+            shapes, values, or component relationships.
+        """
         return None
 
     def validate_against_structure(self, structure: Any) -> None:
-        """Validate params against static construction choices."""
+        """Validate parameters against static construction choices.
+
+        Args:
+            structure: System-specific static structure to validate against.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            ValueError: If intrinsic or structure-dependent validation fails in
+                a subclass implementation.
+        """
         self.validate()
 
 
@@ -230,21 +263,70 @@ class BaseSoftRobotParams(BaseSystemParams):
     def horizontal(
         cls, *, base_position: Array | None = None, **kwargs: Any
     ) -> "BaseSoftRobotParams":
-        """Construct parameters with the backbone pointing along world +x."""
+        """Construct parameters with the backbone pointing along world +x.
+
+        Args:
+            base_position: Optional base translation with shape ``(2,)`` for a
+                planar model or ``(3,)`` for a spatial model.
+            **kwargs: Remaining arguments forwarded to the concrete parameter
+                class constructor. ``base_pose`` is not accepted.
+
+        Returns:
+            A concrete parameter object in the horizontal mounting.
+
+        Raises:
+            TypeError: If the concrete class has not declared its planarity or
+                ``base_pose`` is supplied.
+            ValueError: If ``base_position`` has an invalid shape or value.
+        """
         return cls._from_mounting("horizontal", base_position=base_position, **kwargs)
 
     @classmethod
     def upright(
         cls, *, base_position: Array | None = None, **kwargs: Any
     ) -> "BaseSoftRobotParams":
-        """Construct parameters pointing along world +y (planar) or +z (spatial)."""
+        """Construct parameters pointing along world +y or +z.
+
+        Planar models point along world +y; spatial models point along world +z.
+
+        Args:
+            base_position: Optional base translation with shape ``(2,)`` for a
+                planar model or ``(3,)`` for a spatial model.
+            **kwargs: Remaining arguments forwarded to the concrete parameter
+                class constructor. ``base_pose`` is not accepted.
+
+        Returns:
+            A concrete parameter object in the upright mounting.
+
+        Raises:
+            TypeError: If the concrete class has not declared its planarity or
+                ``base_pose`` is supplied.
+            ValueError: If ``base_position`` has an invalid shape or value.
+        """
         return cls._from_mounting("upright", base_position=base_position, **kwargs)
 
     @classmethod
     def hanging(
         cls, *, base_position: Array | None = None, **kwargs: Any
     ) -> "BaseSoftRobotParams":
-        """Construct parameters pointing along world -y (planar) or -z (spatial)."""
+        """Construct parameters pointing along world -y or -z.
+
+        Planar models point along world -y; spatial models point along world -z.
+
+        Args:
+            base_position: Optional base translation with shape ``(2,)`` for a
+                planar model or ``(3,)`` for a spatial model.
+            **kwargs: Remaining arguments forwarded to the concrete parameter
+                class constructor. ``base_pose`` is not accepted.
+
+        Returns:
+            A concrete parameter object in the hanging mounting.
+
+        Raises:
+            TypeError: If the concrete class has not declared its planarity or
+                ``base_pose`` is supplied.
+            ValueError: If ``base_position`` has an invalid shape or value.
+        """
         return cls._from_mounting("hanging", base_position=base_position, **kwargs)
 
     def _normalize_replacement(self, name: str, value: Any) -> Any:
@@ -258,14 +340,11 @@ class BaseSoftRobotParams(BaseSystemParams):
 class BaseContinuumSoftRobotParams(BaseSoftRobotParams):
     """Shared dynamic parameters for continuum soft robots.
 
-    Field names denote one segment's physical quantity; the leading axis stores
-    the segment batch. ``reference_strain`` contains the flattened per-segment
-    reference strain used by PCS-style continuum models.
+    Concrete continuum systems expose their batched physical values through a
+    shared ``ContinuumLinkParams`` field named ``link``. The field is declared
+    by concrete subclasses to keep this base module independent from the
+    reusable component package.
     """
-
-    length: Array
-    density: Array
-    reference_strain: Array
 
 
 class BaseArticulatedSoftRobotParams(BaseSoftRobotParams):

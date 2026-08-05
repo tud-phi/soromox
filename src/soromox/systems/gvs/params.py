@@ -1,191 +1,169 @@
-__all__ = ["GVSLinkParams", "GVSParams"]
+"""Typed dynamic parameters for the geometric variable-strain system."""
 
-from typing import ClassVar
+from __future__ import annotations
 
-from jax import Array
-from jax import numpy as jnp
+from typing import TYPE_CHECKING, ClassVar
 
-from soromox.systems.params import (
-    BaseSoftRobotParams,
-    BaseSystemParams,
-    validate_quaternion_base_pose,
-)
+import jax.numpy as jnp
+from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
+from soromox.systems.components import ContinuumLinkParams, JointParams
+from soromox.systems.params import BaseSoftRobotParams, validate_quaternion_base_pose
 
-class GVSLinkParams(BaseSystemParams):
-    """Dynamic per-link arrays for all GVS segments.
+if TYPE_CHECKING:
+    from soromox.systems.gvs.structures import GVSStructure
 
-    Every field has leading shape ``(num_segments,)``; this is not a single-link
-    object. It stores the numeric link values without duplicating the static
-    cross-section family stored in ``GVSStructure.segments``. ``length`` follows
-    the singular per-link naming convention used by the other fields. Reference
-    strain is intentionally stored on ``GVSParams`` because it belongs to the
-    strain basis state, not the link cross-section/material data.
-    ``damping_coefficient`` is a viscosity-like modulus in Pa*s (N*s/m^2).
-    """
-
-    length: Array
-    young_modulus: Array
-    poisson_ratio: Array
-    density: Array
-    damping_coefficient: Array
-    radius_initial: Array
-    radius_final: Array
-    height_initial: Array
-    height_final: Array
-    width_initial: Array
-    width_final: Array
-    semi_major_initial: Array
-    semi_major_final: Array
-    semi_minor_initial: Array
-    semi_minor_final: Array
-
-    def validate(self) -> None:
-        length = jnp.asarray(self.length)
-        if len(length.shape) != 1:
-            raise ValueError(
-                "length must be one-dimensional with shape (num_segments,)."
-            )
-        n_segments = length.shape[0]
-        expected_shape = (n_segments,)
-        for name in (
-            "young_modulus",
-            "poisson_ratio",
-            "density",
-            "damping_coefficient",
-            "radius_initial",
-            "radius_final",
-            "height_initial",
-            "height_final",
-            "width_initial",
-            "width_final",
-            "semi_major_initial",
-            "semi_major_final",
-            "semi_minor_initial",
-            "semi_minor_final",
-        ):
-            value = jnp.asarray(getattr(self, name))
-            if value.shape != expected_shape:
-                raise ValueError(
-                    f"{name} must have shape {expected_shape}, got {value.shape}."
-                )
+__all__ = ["GVSParams"]
 
 
 class GVSParams(BaseSoftRobotParams):
-    """Dynamic parameters for a GVS model.
+    """Canonical dynamic parameters for a GVS model.
 
-    ``link`` contains per-segment link arrays. ``reference_strain`` has shape
-    ``(num_segments, 6)`` and is kept here, rather than in ``GVSLinkParams``,
-    because it parameterizes the strain basis/reference configuration rather
-    than link geometry or material properties. ``joint_stiffness`` has shape
-    ``(num_segments, max_dof, max_dof)`` and is padded to the static GVS layout.
-    ``base_pose`` uses scalar-first quaternion SE(3) coordinates
-    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm. Omitting
-    ``base_pose`` and ``gravity`` selects upright spatial mounting and
-    negative-z Earth gravity.
+    Attributes:
+        link: Batched continuum-link parameters. Link stiffness and damping use
+            the padded generalized-coordinate dimension configured by the GVS
+            structure.
+        joint: Batched joint stiffness and damping matrices using the same
+            padded generalized-coordinate dimension as ``link``.
+        gravity: Gravity vector with shape ``(3,)`` in the world frame.
+        base_pose: Base translation and unit quaternion with shape ``(7,)``.
     """
 
     is_planar: ClassVar[bool] = False
 
-    link: GVSLinkParams
-    reference_strain: Array
-    joint_stiffness: Array
+    link: ContinuumLinkParams
+    joint: JointParams
 
     def validate(self) -> None:
+        """Validate intrinsic shapes and values of the GVS parameters.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            ValueError: If a component is invalid, link and joint batch shapes
+                disagree, reference strains do not have six components, or the
+                gravity and base-pose arrays have invalid shapes or values.
+        """
         self.link.validate()
-        n_segments = self.link.length.shape[0]
+        self.joint.validate()
+        num_segments = self.link.length.shape[0]
+        if self.link.reference_strain.shape != (num_segments, 6):
+            raise ValueError(
+                "link.reference_strain must have shape "
+                f"({num_segments}, 6), got {self.link.reference_strain.shape}."
+            )
+        if self.joint.stiffness.shape[0] != num_segments:
+            raise ValueError("joint params must contain one matrix per segment.")
+        if self.joint.stiffness.shape != self.link.stiffness.shape:
+            raise ValueError(
+                "GVS link and joint matrices must use the same padded shape."
+            )
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (3,):
             raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
         validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
-        reference_strain = jnp.asarray(self.reference_strain)
-        if reference_strain.shape != (n_segments, 6):
-            raise ValueError(
-                f"reference_strain must have shape ({n_segments}, 6), "
-                f"got {reference_strain.shape}."
-            )
-        joint_stiffness = jnp.asarray(self.joint_stiffness)
-        if (
-            joint_stiffness.ndim != 3
-            or joint_stiffness.shape[0] != n_segments
-            or joint_stiffness.shape[1] != joint_stiffness.shape[2]
-        ):
-            raise ValueError(
-                "joint_stiffness must have shape "
-                f"({n_segments}, max_dof, max_dof), got {joint_stiffness.shape}."
-            )
 
-    def validate_against_structure(self, structure) -> None:
-        """Validate dynamic GVS arrays against the static padded layout."""
-        from soromox.systems.gvs.primitives import Basis, Joint
+    def validate_against_structure(self, structure: GVSStructure) -> None:
+        """Validate dynamic arrays against a static padded GVS layout.
+
+        Args:
+            structure: Static :class:`GVSStructure` defining the number of
+                segments, basis DOFs, cross-section coefficient packing, and
+                quadrature padding.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            TypeError: If ``structure`` is not a :class:`GVSStructure`.
+            ValueError: If the structure is empty or any parameter batch,
+                padded matrix, cross-section coefficient array, basis DOF, or
+                quadrature setting is inconsistent with ``structure``.
+        """
+        from soromox.systems.gvs.primitives import Joint
         from soromox.systems.gvs.structures import GVSStructure
 
         if not isinstance(structure, GVSStructure):
             raise TypeError("structure must be a GVSStructure instance.")
         if not structure.segments:
             raise ValueError("GVS requires at least one segment.")
-
         self.validate()
-        n_segments = len(structure.segments)
-        if self.link.length.shape != (n_segments,):
+        num_segments = len(structure.segments)
+        if self.link.length.shape != (num_segments,):
+            raise ValueError(f"link params must contain {num_segments} links.")
+        expected_coefficients = max(
+            sum(segment.link.cross_section_profile_parameter_counts)
+            for segment in structure.segments
+        )
+        expected_cross_section_shape = (num_segments, expected_coefficients)
+        if self.link.cross_section.coefficients.shape != expected_cross_section_shape:
             raise ValueError(
-                f"link.length must have shape ({n_segments},), "
-                f"got {self.link.length.shape}."
+                "link.cross_section.coefficients must have shape "
+                f"{expected_cross_section_shape}, got "
+                f"{self.link.cross_section.coefficients.shape}."
             )
-        if self.reference_strain.shape != (n_segments, 6):
-            raise ValueError(
-                "reference_strain must have shape "
-                f"({n_segments}, 6), got {self.reference_strain.shape}."
-            )
+        for index, segment in enumerate(structure.segments):
+            count = sum(segment.link.cross_section_profile_parameter_counts)
+            active_coefficients = self.link.cross_section.coefficients[index, :count]
+            try:
+                valid_dimensions = bool(jnp.all(active_coefficients > 0.0))
+            except (ConcretizationTypeError, TracerBoolConversionError):
+                continue
+            if not valid_dimensions:
+                raise ValueError(
+                    "Active cross-section coefficients must be strictly positive "
+                    f"for GVS segment {index}."
+                )
 
-        max_num_gauss_points = structure.max_num_gauss_points
-        if max_num_gauss_points is not None and max_num_gauss_points < 5:
-            raise ValueError(
-                f"max_num_gauss_points must be at least 5, got {max_num_gauss_points}."
-            )
-
-        dofs_joint = [
+        joint_dofs = [
             Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
             for segment in structure.segments
         ]
-        dofs_link = [
-            int(
-                Basis.DOF_BRANCHES[Basis.BASISTYPE_MAP[segment.basis.type]](
-                    (
-                        jnp.asarray(segment.basis.active),
-                        jnp.asarray(segment.basis.orders),
+        link_dofs = []
+        for segment in structure.segments:
+            multiplier = 2 if segment.basis.type == "fourier" else 1
+            offset = 1
+            link_dofs.append(
+                sum(
+                    int(active) * (multiplier * int(order) + offset)
+                    for active, order in zip(
+                        segment.basis.strain_selector,
+                        segment.basis.basis_order,
+                        strict=True,
                     )
                 )
             )
-            for segment in structure.segments
-        ]
-        real_max_dof = max(dofs_joint + dofs_link)
-        max_dof = real_max_dof if structure.max_dof is None else structure.max_dof
-        if max_dof < real_max_dof:
+        required_max_dof = max(joint_dofs + link_dofs)
+        max_dof = (
+            int(self.link.stiffness.shape[-1])
+            if structure.max_dof is None
+            else structure.max_dof
+        )
+        if max_dof < required_max_dof:
             raise ValueError(
-                "max_dof must be greater than or equal to the maximum DOF in links "
-                f"and joints ({real_max_dof}), but got {max_dof}."
+                f"max_dof={max_dof} is smaller than required DOF {required_max_dof}."
             )
-
-        expected_joint_stiffness_shape = (n_segments, max_dof, max_dof)
-        if self.joint_stiffness.shape != expected_joint_stiffness_shape:
-            raise ValueError(
-                "joint_stiffness must have shape "
-                f"{expected_joint_stiffness_shape}, got {self.joint_stiffness.shape}."
-            )
-
-        for idx, segment in enumerate(structure.segments):
+        expected = (num_segments, max_dof, max_dof)
+        for owner, value in (
+            ("link.stiffness", self.link.stiffness),
+            ("link.damping", self.link.damping),
+            ("joint.stiffness", self.joint.stiffness),
+            ("joint.damping", self.joint.damping),
+        ):
+            if value.shape != expected:
+                raise ValueError(
+                    f"{owner} must have shape {expected}, got {value.shape}."
+                )
+        for index, segment in enumerate(structure.segments):
             if segment.num_gauss_points < 5:
                 raise ValueError(
-                    "Each GVS segment requires at least 5 Gauss points; "
-                    f"segment {idx} has {segment.num_gauss_points}."
+                    f"GVS segment {index} requires at least 5 Gauss points."
                 )
             if (
-                max_num_gauss_points is not None
-                and max_num_gauss_points < segment.num_gauss_points
+                structure.max_num_gauss_points is not None
+                and structure.max_num_gauss_points < segment.num_gauss_points
             ):
                 raise ValueError(
-                    "max_num_gauss_points must be greater than or equal to the "
-                    f"maximum segment num_gauss_points; segment {idx} has "
-                    f"{segment.num_gauss_points}, got {max_num_gauss_points}."
+                    "max_num_gauss_points must cover every segment quadrature rule."
                 )

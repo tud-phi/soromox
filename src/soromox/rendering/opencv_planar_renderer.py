@@ -11,7 +11,8 @@ import numpy as np
 from jax import Array
 
 from soromox.rendering.opencv_base import BaseOpenCVRenderer
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.soft_robot import SoftRobot
 
 
 class OpenCVPlanarRenderer(BaseOpenCVRenderer):

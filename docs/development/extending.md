@@ -1063,20 +1063,19 @@ def error_based_feedback_term(
 #### 4. Usage Example
 
 ```python
-from soromox.systems import PlanarPCS, PlanarPCSParams
+from soromox.systems import LinkSpec, PlanarPCS
 from soromox.control import ReferenceTrajectory
 
 # Create robot
-params = PlanarPCSParams(
-    length=jnp.array([0.1, 0.1, 0.1]),
-    radius=jnp.array([0.01, 0.01, 0.01]),
-    density=jnp.array([1000.0, 1000.0, 1000.0]),
-    young_modulus=jnp.array([1e6, 1e6, 1e6]),
-    shear_modulus=jnp.array([1e5, 1e5, 1e5]),
-    material_damping_coefficient=jnp.array([318.0, 318.0, 318.0]),
-    reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), 3),
-)
-robot = PlanarPCS(params=params)
+robot = PlanarPCS.from_links([
+    LinkSpec.circular(
+        length=0.1, radius=0.01, density=1000.0,
+        young_modulus=1e6, shear_modulus=1e5,
+        material_damping_coefficient=318.0,
+        reference_strain=[0.0, 1.0, 0.0],
+    )
+    for _ in range(3)
+])
 
 # Create reference trajectory (defines desired motion)
 ref_traj = ReferenceTrajectory(...)  # Your trajectory

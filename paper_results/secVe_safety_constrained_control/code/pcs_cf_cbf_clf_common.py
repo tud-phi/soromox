@@ -14,7 +14,7 @@ from jax import Array
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import (
     PCS,
-    PCSParams,
+    LinkSpec,
     SystemState,
 )
 
@@ -295,18 +295,24 @@ def build_simulation_setup() -> SimulationSetup:
         .flatten()
     )
 
-    body_params = PCSParams(
+    body_params = PCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_length[index]),
+                radius=float(backbone_radius[index]),
+                density=float(rho[index]),
+                young_modulus=20e3,
+                shear_modulus=20e3,
+                damping=damping_matrix[
+                    6 * index : 6 * (index + 1),
+                    6 * index : 6 * (index + 1),
+                ],
+                reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
-        length=segment_length,
-        radius=backbone_radius,
-        density=rho,
         gravity=jnp.array([0.0, 0.0, 9.81]),
-        young_modulus=20e3 * jnp.ones((num_segments,)),
-        shear_modulus=20e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
     )
 
     active_tendon_routing = ThreadlikeRouting.linear(
@@ -354,9 +360,9 @@ def build_simulation_setup() -> SimulationSetup:
         "strain_selector": strain_selector,
         "base_pose": body_params.base_pose,
         "gravity": body_params.gravity,
-        "young_modulus": body_params.young_modulus,
-        "shear_modulus": body_params.shear_modulus,
-        "reference_strain": body_params.reference_strain,
+        "young_modulus": 20e3 * jnp.ones((num_segments,)),
+        "shear_modulus": 20e3 * jnp.ones((num_segments,)),
+        "reference_strain": body_params.link.reference_strain,
         "obs_centers": jnp.array(
             [
                 [0.10, 0.08, 0.24],

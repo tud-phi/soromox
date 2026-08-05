@@ -16,6 +16,24 @@ def _set_model_field(model: Any, name: str, value: Any) -> None:
     object.__setattr__(model, name, value)
 
 
+def _profile_endpoint_pairs(segment, coefficients):
+    pairs = []
+    start = 0
+    for profile_type, count in zip(
+        segment.link.cross_section_profile_types,
+        segment.link.cross_section_profile_parameter_counts,
+        strict=True,
+    ):
+        values = coefficients[start : start + count]
+        pairs.append(
+            (values[0], values[0])
+            if profile_type == "constant"
+            else (values[0], values[1])
+        )
+        start += count
+    return pairs
+
+
 def _validate_segments(
     segments: list[GVSSegmentStructure] | tuple[GVSSegmentStructure, ...],
     params: GVSParams,
@@ -62,7 +80,7 @@ def assign_gvs_runtime_arrays(
         )
     if max_num_gauss_points < 5:
         raise ValueError(
-            f"max_num_gauss_points must be greater than 5, got {max_num_gauss_points}."
+            f"max_num_gauss_points must be at least 5, got {max_num_gauss_points}."
         )
 
     _set_model_field(model, "max_num_gauss_points", max_num_gauss_points)
@@ -72,7 +90,10 @@ def assign_gvs_runtime_arrays(
     dofs_link = [
         int(
             Basis.DOF_BRANCHES[Basis.BASISTYPE_MAP[s.basis.type]](
-                (jnp.asarray(s.basis.active), jnp.asarray(s.basis.orders))
+                (
+                    jnp.asarray(s.basis.strain_selector),
+                    jnp.asarray(s.basis.basis_order),
+                )
             )
         )
         for s in segments
@@ -104,13 +125,6 @@ def assign_gvs_runtime_arrays(
     mass_matrices = jnp.empty(
         (n_segments, max_num_integration_points, 6, 6), dtype=float
     )
-    stiffness_matrices = jnp.empty(
-        (n_segments, max_num_integration_points, 6, 6), dtype=float
-    )
-    damping_matrices = jnp.empty(
-        (n_segments, max_num_integration_points, 6, 6), dtype=float
-    )
-
     B_joint = jnp.empty((n_segments, 6, max_dof), dtype=float)
     B_Xs = jnp.empty((n_segments, max_num_integration_points, 6, max_dof), dtype=float)
     B_Z1 = jnp.empty(
@@ -139,13 +153,14 @@ def assign_gvs_runtime_arrays(
 
     for i_segment, segment in enumerate(segments):
         joint_dof = Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
-        if (
-            params.joint_stiffness.shape[1] < joint_dof
-            or params.joint_stiffness.shape[2] < joint_dof
-        ):
-            raise ValueError(
-                "joint_stiffness trailing dimensions must cover every joint DOF."
-            )
+        pairs = _profile_endpoint_pairs(
+            segment, params.link.cross_section.coefficients[i_segment]
+        )
+        zero_pair = (jnp.array(0.0), jnp.array(0.0))
+        geometry = int(segment.link.cross_section_geometry)
+        radius_pair = pairs[0] if geometry == 0 else zero_pair
+        rectangular_pairs = pairs if geometry == 1 else [zero_pair, zero_pair]
+        elliptical_pairs = pairs if geometry == 2 else [zero_pair, zero_pair]
         segment_data = model._build_segment_i(
             max_dof=max_dof,
             max_num_integration_points=max_num_integration_points,
@@ -154,22 +169,19 @@ def assign_gvs_runtime_arrays(
             basis_structure=segment.basis,
             num_gauss_points=segment.num_gauss_points,
             length=params.link.length[i_segment],
-            young_modulus=params.link.young_modulus[i_segment],
-            poisson_ratio=params.link.poisson_ratio[i_segment],
             density=params.link.density[i_segment],
-            damping_coefficient=params.link.damping_coefficient[i_segment],
-            radius_initial=params.link.radius_initial[i_segment],
-            radius_final=params.link.radius_final[i_segment],
-            height_initial=params.link.height_initial[i_segment],
-            height_final=params.link.height_final[i_segment],
-            width_initial=params.link.width_initial[i_segment],
-            width_final=params.link.width_final[i_segment],
-            semi_major_initial=params.link.semi_major_initial[i_segment],
-            semi_major_final=params.link.semi_major_final[i_segment],
-            semi_minor_initial=params.link.semi_minor_initial[i_segment],
-            semi_minor_final=params.link.semi_minor_final[i_segment],
-            reference_strain=params.reference_strain[i_segment],
-            joint_stiffness=params.joint_stiffness[i_segment, :joint_dof, :joint_dof],
+            radius_initial=radius_pair[0],
+            radius_final=radius_pair[1],
+            height_initial=rectangular_pairs[0][0],
+            height_final=rectangular_pairs[0][1],
+            width_initial=rectangular_pairs[1][0],
+            width_final=rectangular_pairs[1][1],
+            semi_major_initial=elliptical_pairs[0][0],
+            semi_major_final=elliptical_pairs[0][1],
+            semi_minor_initial=elliptical_pairs[1][0],
+            semi_minor_final=elliptical_pairs[1][1],
+            reference_strain=params.link.reference_strain[i_segment],
+            joint_stiffness=params.joint.stiffness[i_segment, :joint_dof, :joint_dof],
         )
 
         segment_lengths = segment_lengths.at[i_segment].set(segment_data.L)
@@ -186,12 +198,6 @@ def assign_gvs_runtime_arrays(
             segment_data.integration_weights
         )
         mass_matrices = mass_matrices.at[i_segment].set(segment_data.mass_matrices)
-        stiffness_matrices = stiffness_matrices.at[i_segment].set(
-            segment_data.stiffness_matrices
-        )
-        damping_matrices = damping_matrices.at[i_segment].set(
-            segment_data.damping_matrices
-        )
         B_joint = B_joint.at[i_segment].set(segment_data.B_joint)
         B_Xs = B_Xs.at[i_segment].set(segment_data.B_Xs)
         B_Z1 = B_Z1.at[i_segment].set(segment_data.B_Z1)
@@ -211,32 +217,18 @@ def assign_gvs_runtime_arrays(
         basis_type_index = basis_type_index.at[i_segment].set(
             Basis.BASISTYPE_MAP[basis.type]
         )
-        basis_active_params = basis_active_params.at[i_segment].set(basis.active)
-        basis_order_params = basis_order_params.at[i_segment].set(basis.orders)
+        basis_active_params = basis_active_params.at[i_segment].set(
+            basis.strain_selector
+        )
+        basis_order_params = basis_order_params.at[i_segment].set(basis.basis_order)
         cross_section_geometry = cross_section_geometry.at[i_segment].set(
             int(segment.link.cross_section_geometry)
         )
-        radius_params = radius_params.at[i_segment].set(
-            [params.link.radius_initial[i_segment], params.link.radius_final[i_segment]]
-        )
-        height_params = height_params.at[i_segment].set(
-            [params.link.height_initial[i_segment], params.link.height_final[i_segment]]
-        )
-        width_params = width_params.at[i_segment].set(
-            [params.link.width_initial[i_segment], params.link.width_final[i_segment]]
-        )
-        semi_major_params = semi_major_params.at[i_segment].set(
-            [
-                params.link.semi_major_initial[i_segment],
-                params.link.semi_major_final[i_segment],
-            ]
-        )
-        semi_minor_params = semi_minor_params.at[i_segment].set(
-            [
-                params.link.semi_minor_initial[i_segment],
-                params.link.semi_minor_final[i_segment],
-            ]
-        )
+        radius_params = radius_params.at[i_segment].set(radius_pair)
+        height_params = height_params.at[i_segment].set(rectangular_pairs[0])
+        width_params = width_params.at[i_segment].set(rectangular_pairs[1])
+        semi_major_params = semi_major_params.at[i_segment].set(elliptical_pairs[0])
+        semi_minor_params = semi_minor_params.at[i_segment].set(elliptical_pairs[1])
 
     _set_model_field(model, "segment_lengths", segment_lengths)
     _set_model_field(model, "num_integration_points", num_integration_points)
@@ -244,8 +236,6 @@ def assign_gvs_runtime_arrays(
     _set_model_field(model, "integration_points", integration_points)
     _set_model_field(model, "integration_weights", integration_weights)
     _set_model_field(model, "mass_matrices", mass_matrices)
-    _set_model_field(model, "stiffness_matrices", stiffness_matrices)
-    _set_model_field(model, "damping_matrices", damping_matrices)
     _set_model_field(model, "B_joint", B_joint)
     _set_model_field(model, "B_Xs", B_Xs)
     _set_model_field(model, "B_Z1", B_Z1)

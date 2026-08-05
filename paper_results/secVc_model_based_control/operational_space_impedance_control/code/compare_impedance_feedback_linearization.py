@@ -17,7 +17,7 @@ from soromox.control import (
     ReferenceTrajectory,
 )
 from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.systems import PCS, PCSParams, SystemState
+from soromox.systems import PCS, LinkSpec, SystemState
 from soromox.utils.geometry.rotations import (
     rotation_matrix_to_rotation_vector,
     rotation_vector_to_rotation_matrix,
@@ -33,21 +33,22 @@ CONTROLLER_MODES = ("full", "partial")
 def build_robot() -> PCS:
     """Construct the fully actuated two-segment PCS benchmark robot."""
     num_segments = 2
-    params = PCSParams(
+    return PCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.1,
+                radius=0.02,
+                density=1070.0,
+                young_modulus=2e3,
+                shear_modulus=1e3,
+                material_damping_coefficient=362.0,
+                reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            )
+            for _ in range(num_segments)
+        ],
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
-        length=0.1 * jnp.ones((num_segments,)),
-        radius=0.02 * jnp.ones((num_segments,)),
-        density=1070.0 * jnp.ones((num_segments,)),
         gravity=jnp.array([0.0, 0.0, 9.81]),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        material_damping_coefficient=362.0,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            num_segments,
-        ),
     )
-    return PCS(params=params)
 
 
 def minimum_jerk_ramp(t: jax.Array, duration: float = 0.25) -> jax.Array:

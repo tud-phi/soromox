@@ -20,10 +20,7 @@ from gymnasium import spaces
 from stable_baselines3.common.vec_env import VecEnv
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.systems.pcs import (
-    PCS,
-    PCSParams,
-)
+from soromox.systems import PCS, LinkSpec
 from soromox.systems.system_state import SystemState
 
 jax.config.update("jax_enable_x64", True)
@@ -113,18 +110,24 @@ def build_arm(
         ).flatten()
     )
 
-    body_params = PCSParams(
+    body_params = PCS.params_from_links(
+        [
+            LinkSpec.circular(
+                length=float(segment_lengths[index]),
+                radius=radius,
+                density=density,
+                young_modulus=youngs_modulus,
+                shear_modulus=shear_modulus,
+                damping=damping_matrix[
+                    6 * index : 6 * (index + 1),
+                    6 * index : 6 * (index + 1),
+                ],
+                reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            )
+            for index in range(num_segments)
+        ],
         base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
-        length=segment_lengths,
-        radius=jnp.ones((num_segments,)) * radius,
-        density=jnp.ones((num_segments,)) * density,
         gravity=jnp.array([0.0, 0.0, 0.0]),
-        young_modulus=jnp.ones((num_segments,)) * youngs_modulus,
-        shear_modulus=jnp.ones((num_segments,)) * shear_modulus,
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
     )
     active_tendon_routing = ThreadlikeRouting.linear(
         intercept=jnp.array(

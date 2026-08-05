@@ -15,16 +15,16 @@ from soromox.systems import (
     PCS,
     ArticulatedSoftRobot,
     ArticulatedSoftRobotParams,
-    CrossSectionGeometry,
-    PCSParams,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
     PCSStructure,
     Pendulum,
     PendulumParams,
     PlanarPCS,
-    PlanarPCSParams,
     PlanarPCSStructure,
+    StrainBasisSpec,
 )
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 Array = jax.Array
 
@@ -146,26 +146,21 @@ def _articulated_soft_robot_context(
 
 
 def _planar_pcs_factory(num_segments: int, gauss_points: int = 5) -> PlanarPCS:
-    lengths = jnp.full((num_segments,), 0.12)
-    radii = jnp.full((num_segments,), 0.015)
-    rho = 1070.0 * jnp.ones((num_segments,))
-    diag_entries = (
-        jnp.repeat(jnp.array([[1.0, 200.0, 200.0]]), num_segments, axis=0)
-        * lengths[:, None]
-    ).reshape(-1)
-    params = PlanarPCSParams(
+    return PlanarPCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.12,
+                radius=0.015,
+                density=1070.0,
+                young_modulus=4.0e5,
+                shear_modulus=1.5e5,
+                material_damping_coefficient=5.0e-4,
+                reference_strain=[0.0, 1.0, 0.0],
+            )
+            for _ in range(num_segments)
+        ],
         base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
-        length=lengths,
-        radius=radii,
-        density=rho,
         gravity=jnp.array([0.0, 9.81]),
-        young_modulus=4.0e5 * jnp.ones((num_segments,)),
-        shear_modulus=1.5e5 * jnp.ones((num_segments,)),
-        damping_matrix=5.0e-4 * jnp.diag(diag_entries),
-        reference_strain=jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments),
-    )
-    return PlanarPCS(
-        params=params,
         structure=PlanarPCSStructure(num_gauss_points=gauss_points),
     )
 
@@ -194,30 +189,21 @@ def _planar_pcs_context(system: PlanarPCS) -> MutableMapping[str, Array]:
 
 
 def _pcs_factory(num_segments: int, gauss_points: int = 5) -> PCS:
-    lengths = jnp.full((num_segments,), 0.1)
-    radii = jnp.full((num_segments,), 0.02)
-    rho = 1050.0 * jnp.ones((num_segments,))
-    diag_entries = (
-        jnp.repeat(
-            jnp.array([[1.0, 1.0, 1.0, 300.0, 300.0, 300.0]]), num_segments, axis=0
-        )
-        * lengths[:, None]
-    ).reshape(-1)
-    params = PCSParams(
+    return PCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.1,
+                radius=0.02,
+                density=1050.0,
+                young_modulus=6.0e5,
+                shear_modulus=2.5e5,
+                material_damping_coefficient=5.0e-4,
+                reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+            )
+            for _ in range(num_segments)
+        ],
         base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        length=lengths,
-        radius=radii,
-        density=rho,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=6.0e5 * jnp.ones((num_segments,)),
-        shear_modulus=2.5e5 * jnp.ones((num_segments,)),
-        damping_matrix=5.0e-4 * jnp.diag(diag_entries),
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
-    )
-    return PCS(
-        params=params,
         structure=PCSStructure(num_gauss_points=gauss_points),
     )
 
@@ -251,22 +237,20 @@ def _gvs_segment(strain_basis_order: int, gauss_points: int) -> GVSSegment:
         raise ValueError("GVS strain-basis order must be non-negative.")
 
     return GVSSegment(
-        link=LinkSpec(
-            cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-            E=1.0e6,
-            nu=0.45,
-            rho=980.0,
-            eta=2.5e3,
-            L=0.25,
-            r_i=0.02,
-            r_f=0.02,
+        link=LinkSpec.circular(
+            young_modulus=1.0e6,
+            shear_modulus=1.0e6 / 2.9,
+            density=980.0,
+            material_damping_coefficient=2.5e3,
+            length=0.25,
+            radius=0.02,
+            reference_strain=[0, 0, 0, 1, 0, 0],
         ),
         joint=JointSpec(type="fixed"),
         basis=StrainBasisSpec(
             type="legendre",
-            active=[1, 1, 1, 1, 1, 1],
-            orders=int(strain_basis_order),
-            xi_ref=[0, 0, 0, 1, 0, 0],
+            strain_selector=[1, 1, 1, 1, 1, 1],
+            basis_order=int(strain_basis_order),
         ),
         num_gauss_points=gauss_points,
     )

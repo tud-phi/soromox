@@ -8,7 +8,8 @@ from soromox.autodiff import (
     custom_jvp_mode,
     set_custom_jvp_enabled,
 )
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)

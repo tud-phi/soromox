@@ -8,8 +8,9 @@ from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.actuation.core import Actuator, PassiveElement
+from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.pendulum.params import PendulumParams
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.soft_robot import SoftRobot
 
 
 class Pendulum(SoftRobot):

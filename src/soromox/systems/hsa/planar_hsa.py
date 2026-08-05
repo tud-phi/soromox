@@ -8,9 +8,10 @@ import sympy as sp
 from jax import Array, jacfwd, lax
 from jax import numpy as jnp
 
+from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.hsa.params import PlanarHSAParams
 from soromox.systems.hsa.structures import PlanarHSAStructure
-from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
+from soromox.systems.soft_robot import SoftRobot
 from soromox.utils.basic import (
     compute_strain_basis,
     concatenate_params_syms,

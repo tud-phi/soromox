@@ -15,10 +15,12 @@ from soromox.rendering import (
 )
 from soromox.systems import (
     GVS,
-    CrossSectionGeometry,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    StrainBasisSpec,
     SystemState,
 )
-from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 
 jnp.set_printoptions(
     threshold=jnp.inf,
@@ -34,37 +36,34 @@ if __name__ == "__main__":
     bases: list[StrainBasisSpec] = []
     num_gauss_points: list[int] = []
 
-    link1 = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=1e6,
-        nu=0.5,
-        rho=1000,
-        eta=1e4,
-        L=0.3,
-        r_i=0.03,
-        r_f=0.03,
+    link1 = LinkSpec.circular(
+        young_modulus=1e6,
+        shear_modulus=1e6 / 3.0,
+        density=1000,
+        material_damping_coefficient=1e4,
+        length=0.3,
+        radius=0.03,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
     links.append(link1)
     joint1 = JointSpec(type="fixed")
     joints.append(joint1)
     basis1 = StrainBasisSpec(
         type="legendre",
-        active=[0, 1, 1, 0, 0, 0],
-        orders=[0, 0, 0, 0, 0, 0],
-        xi_ref=[0, 0, 0, 1, 0, 0],
+        strain_selector=[0, 1, 1, 0, 0, 0],
+        basis_order=[0, 0, 0, 0, 0, 0],
     )
     bases.append(basis1)
     num_gauss_points.append(5)  # Number of Gauss points for the first link
 
-    link2 = LinkSpec(
-        cross_section_geometry=CrossSectionGeometry.CIRCULAR,
-        E=1e6,
-        nu=0.5,
-        rho=1000,
-        eta=1e4,
-        L=0.3,
-        r_i=0.03,
-        r_f=0.03,
+    link2 = LinkSpec.circular(
+        young_modulus=1e6,
+        shear_modulus=1e6 / 3.0,
+        density=1000,
+        material_damping_coefficient=1e4,
+        length=0.3,
+        radius=0.03,
+        reference_strain=[0, 0, 0, 1, 0, 0],
     )
     links.append(link2)
     joint2 = JointSpec(type="fixed")
@@ -72,39 +71,11 @@ if __name__ == "__main__":
     joints.append(joint2)
     basis2 = StrainBasisSpec(
         type="monomial",
-        active=[1, 1, 0, 0, 0, 0],
-        orders=[0, 0, 0, 0, 0, 0],
-        xi_ref=[0, 0, 0, 1, 0, 0],
+        strain_selector=[1, 1, 0, 0, 0, 0],
+        basis_order=[0, 0, 0, 0, 0, 0],
     )
     bases.append(basis2)
     num_gauss_points.append(6)  # Number of Gauss points for the second link
-
-    # link3 = LinkSpec(
-    #     cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,  # Section type
-    #     E=1e7,                # Young's modulus in Pascals
-    #     nu=0.4,               # Poisson's ratio [-1, 0.5]
-    #     rho=1050,             # Density [kg/m^3]
-    #     eta=1e4,              # Damping coefficient
-    #     L=0.3,                # Length in meters
-    #     a_i=0.04,             # Initial semi-major axis in meters
-    #     a_f=0.04,             # Final semi-major axis in meters
-    #     b_i=0.02,             # Initial semi-minor axis in meters
-    #     b_f=0.02              # Final semi-minor axis in meters
-    # )
-    # links.append(link3)
-    # joint3 = JointSpec(
-    #     type='revolute',  # Prismatic joint
-    #     axis='z',               # Axis of translation
-    # )
-    # joints.append(joint3)
-    # basis3 = StrainBasisSpec(
-    #     type='chebyshev',       # Type of basis
-    #     active=[0, 1, 0, 1, 0, 0],    # Degrees of freedom for each deformation type
-    #     orders=[0, 0, 0, 0, 0, 0],    # Order of basis functions for each deformation type
-    #     xi_ref=[0, 0, 0, 1, 0, 0], # Reference strain values as vector
-    # )
-    # bases.append(basis3)
-    # num_gauss_points.append(5)  # Number of Gauss points for the third link
 
     # ======================================================
     # Robot initialization

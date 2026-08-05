@@ -1,10 +1,8 @@
 __all__ = [
-    "CrossSectionGeometry",
     "SoftRobot",
 ]
 
 from abc import abstractmethod
-from enum import IntEnum
 from typing import Any
 
 import equinox as eqx
@@ -24,12 +22,6 @@ from soromox.systems.params import (
     validate_quaternion_base_pose,
 )
 from soromox.utils.geometry import poses
-
-
-class CrossSectionGeometry(IntEnum):
-    CIRCULAR = 0
-    RECTANGULAR = 1
-    ELLIPTICAL = 2
 
 
 class SoftRobot(DynamicalSystem):
@@ -270,6 +262,10 @@ class SoftRobot(DynamicalSystem):
             - CrossSectionGeometry.CIRCULAR
             - CrossSectionGeometry.RECTANGULAR
             - CrossSectionGeometry.ELLIPTICAL
+
+        Rectangular parameters use ``[height, width]`` order, matching
+        :func:`soromox.systems.components.section_properties`. Elliptical
+        parameters use ``[semi_major, semi_minor]`` order.
         """
         ...
 

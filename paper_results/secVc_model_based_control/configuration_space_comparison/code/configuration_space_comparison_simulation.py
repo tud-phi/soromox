@@ -38,7 +38,7 @@ from soromox.control.configuration_space import (
     PotentialCancellationRegulator,
     PotentialCompensationRegulator,
 )
-from soromox.systems import PCS, PCSParams, SystemState
+from soromox.systems import PCS, LinkSpec, SystemState
 
 CASE_DIR = Path(__file__).parent.parent
 DATA_DIR = CASE_DIR / "data"
@@ -191,22 +191,25 @@ def create_robot(
             * segment_lengths[:, None]
         ).flatten()
     )
-    params = PCSParams(
+    links = [
+        LinkSpec.circular(
+            length=float(segment_lengths[index]),
+            radius=2e-2,
+            density=float(rho[index]),
+            young_modulus=2e3,
+            shear_modulus=1e3,
+            damping=damping_matrix[
+                6 * index : 6 * (index + 1), 6 * index : 6 * (index + 1)
+            ],
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for index in range(num_segments)
+    ]
+    robot = PCS.from_links(
+        links,
         base_pose=jnp.asarray(base_pose),
-        length=segment_lengths,
-        radius=2e-2 * jnp.ones((num_segments,)),
-        density=rho,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-            num_segments,
-        ),
     )
-
-    robot = PCS(params=params)
     return robot, int(robot.num_active_strains), num_segments
 
 

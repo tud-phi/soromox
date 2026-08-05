@@ -1,9 +1,12 @@
+import jax
 import jax.numpy as jnp
 from jax import Array
 
 from soromox.systems import (
     GVS,
     ArticulatedSoftRobotParams,
+    ContinuumLinkParams,
+    CrossSectionParams,
     GVSParams,
     GVSStructure,
     PCSParams,
@@ -45,16 +48,45 @@ def pcs_params(
         reference_strain = jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
         )
+    radius = jnp.asarray(radius)
+    young_modulus = jnp.asarray(young_modulus)
+    shear_modulus = jnp.asarray(shear_modulus)
+    area = jnp.pi * radius**2
+    transverse = jnp.pi * radius**4 / 4.0
+    polar = 2.0 * transverse
+    stiffness = length[:, None, None] * jax.vmap(jnp.diag)(
+        jnp.stack(
+            [
+                shear_modulus * polar,
+                young_modulus * transverse,
+                young_modulus * transverse,
+                young_modulus * area,
+                shear_modulus * area,
+                shear_modulus * area,
+            ],
+            axis=1,
+        )
+    )
+    damping_matrix = jnp.asarray(damping_matrix)
+    damping = jnp.stack(
+        [
+            damping_matrix[6 * i : 6 * (i + 1), 6 * i : 6 * (i + 1)]
+            for i in range(num_segments)
+        ]
+    )
+    if not bool(jnp.allclose(damping_matrix, jax.scipy.linalg.block_diag(*damping))):
+        raise ValueError("PCS cross-link damping coupling is no longer supported.")
     return PCSParams(
-        length=length,
-        radius=jnp.asarray(radius),
-        density=jnp.asarray(density),
-        young_modulus=jnp.asarray(young_modulus),
-        shear_modulus=jnp.asarray(shear_modulus),
-        damping_matrix=jnp.asarray(damping_matrix),
         gravity=jnp.asarray(gravity),
         base_pose=jnp.asarray(base_pose),
-        reference_strain=jnp.asarray(reference_strain),
+        link=ContinuumLinkParams(
+            length=length,
+            density=jnp.asarray(density),
+            reference_strain=jnp.asarray(reference_strain).reshape(num_segments, 6),
+            cross_section=CrossSectionParams(coefficients=radius[:, None]),
+            stiffness=stiffness,
+            damping=damping,
+        ),
     )
 
 
@@ -76,16 +108,37 @@ def planar_pcs_params(
         reference_strain = jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments)
     if base_pose is None:
         base_pose = planar_base_pose(jnp.pi / 2)
+    radius = jnp.asarray(radius)
+    young_modulus = jnp.asarray(young_modulus)
+    shear_modulus = jnp.asarray(shear_modulus)
+    area = jnp.pi * radius**2
+    moment = jnp.pi * radius**4 / 4.0
+    stiffness = length[:, None, None] * jax.vmap(jnp.diag)(
+        jnp.stack(
+            [young_modulus * moment, young_modulus * area, shear_modulus * area],
+            axis=1,
+        )
+    )
+    damping_matrix = jnp.asarray(damping_matrix)
+    damping = jnp.stack(
+        [
+            damping_matrix[3 * i : 3 * (i + 1), 3 * i : 3 * (i + 1)]
+            for i in range(num_segments)
+        ]
+    )
+    if not bool(jnp.allclose(damping_matrix, jax.scipy.linalg.block_diag(*damping))):
+        raise ValueError("PCS cross-link damping coupling is no longer supported.")
     return PlanarPCSParams(
-        length=length,
-        radius=jnp.asarray(radius),
-        density=jnp.asarray(density),
-        young_modulus=jnp.asarray(young_modulus),
-        shear_modulus=jnp.asarray(shear_modulus),
-        damping_matrix=jnp.asarray(damping_matrix),
         gravity=jnp.asarray(gravity),
         base_pose=jnp.asarray(base_pose),
-        reference_strain=jnp.asarray(reference_strain),
+        link=ContinuumLinkParams(
+            length=length,
+            density=jnp.asarray(density),
+            reference_strain=jnp.asarray(reference_strain).reshape(num_segments, 3),
+            cross_section=CrossSectionParams(coefficients=radius[:, None]),
+            stiffness=stiffness,
+            damping=damping,
+        ),
     )
 
 
