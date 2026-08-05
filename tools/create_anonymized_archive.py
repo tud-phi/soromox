@@ -82,6 +82,12 @@ RISKY_SUFFIXES = frozenset(
 RISKY_PATH_PARTS = frozenset(
     {"headshot", "headshots", "logo", "logos", "portrait", "portraits"}
 )
+INTERNAL_ANONYMIZER_PATHS = frozenset(
+    {
+        "tests/test_create_anonymized_archive.py",
+        "tools/create_anonymized_archive.py",
+    }
+)
 
 DISCOVERY_SUFFIXES = frozenset(
     {
@@ -152,6 +158,7 @@ class ArchiveResult:
     """Summary returned after successfully creating an archive."""
 
     output: Path
+    report: Path
     included_count: int
     sanitized_paths: tuple[str, ...]
     excluded_paths: tuple[str, ...]
@@ -423,6 +430,10 @@ def discover_identity_rules(texts: dict[str, str]) -> IdentityRules:
 
 
 def _is_risky(path: str) -> str | None:
+    if path in INTERNAL_ANONYMIZER_PATHS:
+        return (
+            "internal anonymization utility containing detection rules or test fixtures"
+        )
     pure_path = PurePosixPath(path)
     suffix = pure_path.suffix.casefold()
     if suffix in RISKY_SUFFIXES:
@@ -773,6 +784,7 @@ def create_archive(
     repo: Path,
     output: Path,
     *,
+    report_output: Path | None = None,
     ref: str = "HEAD",
     force: bool = False,
 ) -> ArchiveResult:
@@ -780,11 +792,19 @@ def create_archive(
 
     repo = repo.resolve()
     output = output.resolve()
-    if output.exists() and not force:
+    report_output = (
+        report_output.resolve() if report_output else output.parent / REPORT_PATH
+    )
+    if output == report_output:
+        raise AnonymizationError("The ZIP and report output paths must be different.")
+    existing_outputs = [path for path in (output, report_output) if path.exists()]
+    if existing_outputs and not force:
+        existing = ", ".join(str(path) for path in existing_outputs)
         raise AnonymizationError(
-            f"Output already exists: {output} (use --force to replace it)"
+            f"Output already exists: {existing} (use --force to replace it)"
         )
     output.parent.mkdir(parents=True, exist_ok=True)
+    report_output.parent.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(
         prefix="anonymous-archive-"
@@ -792,6 +812,7 @@ def create_archive(
         temporary = Path(temporary_directory)
         tar_path = temporary / "source.tar"
         zip_path = temporary / "archive.zip"
+        report_path = temporary / REPORT_PATH
         _write_git_tar(repo, ref, tar_path)
         rules = discover_identity_rules(_discovery_texts(tar_path))
 
@@ -862,10 +883,13 @@ def create_archive(
                 _zip_info(f"{ARCHIVE_ROOT}/{REPORT_PATH}"), report_text.encode("utf-8")
             )
 
+        report_path.write_text(report_text, encoding="utf-8")
         os.replace(zip_path, output)
+        os.replace(report_path, report_output)
 
     return ArchiveResult(
         output=output,
+        report=report_output,
         included_count=included_count,
         sanitized_paths=tuple(sorted(set(sanitized))),
         excluded_paths=tuple(path for path, _ in sorted(excluded)),
@@ -885,6 +909,11 @@ def _parser() -> argparse.ArgumentParser:
         help="output ZIP (default: <repo>/anonymous-supplementary-material.zip)",
     )
     parser.add_argument(
+        "--report",
+        type=Path,
+        help="standalone report (default: ANONYMIZATION_REPORT.txt beside the ZIP)",
+    )
+    parser.add_argument(
         "--ref",
         default="HEAD",
         help="committed Git tree to archive (default: HEAD)",
@@ -892,7 +921,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="replace an existing output ZIP",
+        help="replace existing ZIP and report outputs",
     )
     return parser
 
@@ -903,11 +932,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         repo = find_repository(Path.cwd())
         output = arguments.output or repo / "anonymous-supplementary-material.zip"
-        result = create_archive(repo, output, ref=arguments.ref, force=arguments.force)
+        result = create_archive(
+            repo,
+            output,
+            report_output=arguments.report,
+            ref=arguments.ref,
+            force=arguments.force,
+        )
     except AnonymizationError as exc:
         parser.exit(1, f"error: {exc}\n")
 
-    print(f"Created {result.output}")
+    print(f"Created archive: {result.output}")
+    print(f"Anonymization report: {result.report}")
     print(f"Included committed files: {result.included_count}")
     print(f"Sanitized text files: {len(result.sanitized_paths)}")
     print(f"Excluded risky files: {len(result.excluded_paths)}")

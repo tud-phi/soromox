@@ -145,6 +145,7 @@ def test_archive_uses_committed_files_and_anonymizes(
     result = archive_module.create_archive(source_repo, output)
 
     assert result.output == output
+    assert result.report == tmp_path / archive_module.REPORT_PATH
     with zipfile.ZipFile(output) as archive:
         names = set(archive.namelist())
         root = archive_module.ARCHIVE_ROOT
@@ -178,6 +179,7 @@ def test_archive_uses_committed_files_and_anonymizes(
         report = archive.read(f"{root}/{archive_module.REPORT_PATH}").decode()
         assert "results/figure.png" in report
         assert "Git history are absent" in report
+        assert result.report.read_text(encoding="utf-8") == report
 
         for info in archive.infolist():
             assert info.date_time == (1980, 1, 1, 0, 0, 0)
@@ -194,7 +196,35 @@ def test_refuses_to_overwrite_existing_archive(
     with pytest.raises(archive_module.AnonymizationError, match="already exists"):
         archive_module.create_archive(source_repo, output)
 
+    output.unlink()
+    report = tmp_path / archive_module.REPORT_PATH
+    report.write_text("existing report", encoding="utf-8")
+    with pytest.raises(archive_module.AnonymizationError, match="already exists"):
+        archive_module.create_archive(source_repo, output)
+
+
+def test_cli_prints_archive_and_report_paths(
+    source_repo: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output = tmp_path / "cli-output.zip"
+    report = tmp_path / "cli-report.txt"
+    monkeypatch.chdir(source_repo)
+
+    assert archive_module.main(["--output", str(output), "--report", str(report)]) == 0
+
+    stdout = capsys.readouterr().out
+    assert f"Created archive: {output}" in stdout
+    assert f"Anonymization report: {report}" in stdout
+
 
 def test_name_matching_does_not_confuse_ordinary_words() -> None:
     assert archive_module._normal_form("wrong shape") == "wrong shape"
     assert archive_module._normal_form(r"St{\"o}lzle") == "stolzle"
+
+
+@pytest.mark.parametrize("path", sorted(archive_module.INTERNAL_ANONYMIZER_PATHS))
+def test_internal_anonymizer_files_are_excluded(path: str) -> None:
+    assert "internal anonymization utility" in archive_module._is_risky(path)
