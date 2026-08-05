@@ -19,6 +19,13 @@ if str(MODULE_DIR) not in sys.path:
 import plot_benchmark_gpu  # noqa: E402
 
 
+def test_shared_style_uses_truetype_fonts_for_vector_outputs():
+    plot_benchmark_gpu.configure_matplotlib()
+
+    assert matplotlib.rcParams["pdf.fonttype"] == 42
+    assert matplotlib.rcParams["ps.fonttype"] == 42
+
+
 @pytest.mark.parametrize(
     ("num_systems", "expected"),
     [(1, (1, 1)), (2, (1, 2)), (3, (2, 2)), (4, (2, 2))],

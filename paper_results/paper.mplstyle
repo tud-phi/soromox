@@ -9,6 +9,8 @@ font.family: serif
 font.serif: cmr10, Computer Modern Serif, DejaVu Serif
 mathtext.fontset: cm
 axes.formatter.use_mathtext: True
+pdf.fonttype: 42
+ps.fonttype: 42
 
 legend.frameon: True
 legend.facecolor: white
