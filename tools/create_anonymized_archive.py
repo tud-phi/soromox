@@ -17,9 +17,11 @@ work" is not allowed.
 from __future__ import annotations
 
 import argparse
+import binascii
 import io
 import os
 import re
+import struct
 import subprocess
 import tarfile
 import tempfile
@@ -124,6 +126,7 @@ ACKNOWLEDGMENT_RE = re.compile(
 OWNERSHIP_RE = re.compile(
     r"\b(?:in\s+)?our\s+(?:previous|prior|earlier)\s+work\b", re.IGNORECASE
 )
+PREDECESSOR_PACKAGE_RE = re.compile(r"\bjsrm\b", re.IGNORECASE)
 LOCAL_PATH_RES = (
     re.compile(r"/Users/[^/\s]+"),
     re.compile(r"/home/[^/\s]+"),
@@ -131,6 +134,21 @@ LOCAL_PATH_RES = (
 )
 SENSITIVE_ASSET_REFERENCE_RE = re.compile(
     r"\b(?:headshots?|logos?|portraits?)\b", re.IGNORECASE
+)
+IDENTIFYING_CITATION_SECTION_RE = re.compile(
+    r"^(?:software citation|planar hsa model citation|"
+    r"model-based controllers citation|references and citation)$",
+    re.IGNORECASE,
+)
+RETAINED_VISUAL_PREFIXES = (
+    "docs/assets/logo/favicon/",
+    "paper_results/",
+)
+PNG_METADATA_CHUNKS = frozenset({b"eXIf", b"iTXt", b"tEXt", b"tIME", b"zTXt"})
+PDF_INFO_VALUE_RE = re.compile(
+    rb"/(Author|Creator|Producer|CreationDate|ModDate|Title|Subject|Keywords)"
+    rb"\s*(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>)",
+    re.DOTALL,
 )
 
 
@@ -161,6 +179,7 @@ class ArchiveResult:
     report: Path
     included_count: int
     sanitized_paths: tuple[str, ...]
+    metadata_sanitized_paths: tuple[str, ...]
     excluded_paths: tuple[str, ...]
 
 
@@ -434,6 +453,8 @@ def _is_risky(path: str) -> str | None:
         return (
             "internal anonymization utility containing detection rules or test fixtures"
         )
+    if path.startswith(RETAINED_VISUAL_PREFIXES):
+        return None
     pure_path = PurePosixPath(path)
     suffix = pure_path.suffix.casefold()
     if suffix in RISKY_SUFFIXES:
@@ -460,6 +481,33 @@ def _remove_markdown_sections(text: str, title_pattern: re.Pattern[str]) -> str:
             removed_level = len(heading.group(2))
             continue
         output.append(line)
+    return "".join(output)
+
+
+def _remove_markdown_admonitions_containing(
+    text: str, marker: re.Pattern[str]
+) -> str:
+    """Remove a MkDocs admonition whose title or body contains ``marker``."""
+
+    lines = text.splitlines(keepends=True)
+    output: list[str] = []
+    index = 0
+    while index < len(lines):
+        if not re.match(r"^\s*!!!\s+", lines[index]):
+            output.append(lines[index])
+            index += 1
+            continue
+        end = index + 1
+        while end < len(lines):
+            candidate = lines[end]
+            if candidate.strip() == "" or candidate.startswith(("    ", "\t")):
+                end += 1
+                continue
+            break
+        block = "".join(lines[index:end])
+        if not marker.search(block):
+            output.append(block)
+        index = end
     return "".join(output)
 
 
@@ -618,9 +666,24 @@ def sanitize_text(path: str, text: str, rules: IdentityRules) -> str:
         )
 
     if PurePosixPath(path).suffix.casefold() in {".md", ".markdown"}:
+        text = _remove_markdown_admonitions_containing(text, PREDECESSOR_PACKAGE_RE)
         text = _remove_markdown_sections(text, REMOVED_SECTION_RE)
-        text = _remove_markdown_sections(
-            text, re.compile(r"\bsoftware citation\b", re.IGNORECASE)
+        text = _remove_markdown_sections(text, IDENTIFYING_CITATION_SECTION_RE)
+        # Standalone prose and legacy changelog bullets can also disclose the
+        # predecessor relationship. The full line is removed to avoid retaining
+        # an identifying package name or URL fragment.
+        text = "".join(
+            line
+            for line in text.splitlines(keepends=True)
+            if not PREDECESSOR_PACKAGE_RE.search(line)
+        )
+
+    if PurePosixPath(path).suffix.casefold() == ".svg":
+        text = re.sub(
+            r"\s*<metadata\b[^>]*>.*?</metadata>\s*",
+            "\n",
+            text,
+            flags=re.IGNORECASE | re.DOTALL,
         )
 
     text = OWNERSHIP_RE.sub("previous work", text)
@@ -637,7 +700,10 @@ def sanitize_text(path: str, text: str, rules: IdentityRules) -> str:
         text = "".join(
             line
             for line in text.splitlines(keepends=True)
-            if not SENSITIVE_ASSET_REFERENCE_RE.search(line)
+            if not (
+                SENSITIVE_ASSET_REFERENCE_RE.search(line)
+                and "favicon" not in line.casefold()
+            )
         )
 
     text = EMAIL_RE.sub(NEUTRAL_EMAIL, text)
@@ -667,6 +733,8 @@ def _text_violations(path: str, text: str, rules: IdentityRules) -> list[str]:
     lines = text.splitlines()
     reference_flags = _reference_flags(lines, path)
     for number, line in enumerate(lines, start=1):
+        if PREDECESSOR_PACKAGE_RE.search(line):
+            violations.append(f"{path}:{number}: predecessor-package relationship")
         if OWNERSHIP_RE.search(line):
             violations.append(f"{path}:{number}: ownership language")
         if ACKNOWLEDGMENT_RE.search(line):
@@ -720,10 +788,9 @@ def _binary_violations(path: str, data: bytes, rules: IdentityRules) -> list[str
     ):
         violations.append(f"{path}: embedded local user path")
 
-    # NPZ is intentionally allowed because it is a common scientific-data
-    # container. Inspect its member names and payloads instead of trusting the
-    # outer compressed bytes alone.
-    if PurePosixPath(path).suffix.casefold() == ".npz":
+    # Inspect ZIP-based scientific and office containers instead of trusting
+    # their outer compressed bytes alone.
+    if PurePosixPath(path).suffix.casefold() in {".npz", ".xlsx", ".zip"}:
         try:
             with zipfile.ZipFile(io.BytesIO(data)) as nested:
                 for info in nested.infolist():
@@ -739,9 +806,208 @@ def _binary_violations(path: str, data: bytes, rules: IdentityRules) -> list[str
                         for marker in _binary_markers(rules)
                     ):
                         violations.append(f"{path}: identity marker in nested member")
+                    nested_text = payload.decode("latin-1", errors="ignore")
+                    if any(pattern.search(nested_text) for pattern in LOCAL_PATH_RES):
+                        violations.append(f"{path}: local path in nested member")
         except (OSError, zipfile.BadZipFile) as exc:
-            violations.append(f"{path}: unreadable NPZ container ({exc})")
+            violations.append(f"{path}: unreadable ZIP-based container ({exc})")
     return sorted(set(violations))
+
+
+def _sanitize_pdf_metadata(data: bytes) -> bytes:
+    """Replace active PDF document metadata without changing rendered pages."""
+
+    if not data.startswith(b"%PDF-"):
+        raise AnonymizationError("Retained .pdf file does not have a PDF signature.")
+    if re.search(rb"/Encrypt\b", data):
+        raise AnonymizationError("Encrypted PDFs cannot be safely anonymized.")
+    if re.search(rb"/Metadata\s+\d+\s+\d+\s+R", data):
+        raise AnonymizationError(
+            "PDF contains an XMP metadata stream that cannot be safely scrubbed."
+        )
+
+    root_matches = list(re.finditer(rb"/Root\s+(\d+)\s+(\d+)\s+R", data))
+    size_matches = list(re.finditer(rb"/Size\s+(\d+)", data))
+    startxref_matches = list(re.finditer(rb"startxref\s+(\d+)\s+%%EOF", data))
+    if not (root_matches and size_matches and startxref_matches):
+        raise AnonymizationError("Could not locate the PDF trailer safely.")
+
+    # Blank literal metadata values in-place so simple, superseded Info objects
+    # do not retain forensic copies. Keeping byte lengths unchanged preserves all
+    # existing cross-reference offsets.
+    def blank_value(match: re.Match[bytes]) -> bytes:
+        replacement = b"/" + match.group(1) + b"()"
+        return replacement.ljust(len(match.group(0)), b" ")
+
+    scrubbed = PDF_INFO_VALUE_RE.sub(blank_value, data)
+    root_object, root_generation = root_matches[-1].groups()
+    old_startxref = int(startxref_matches[-1].group(1))
+    new_object = int(size_matches[-1].group(1))
+
+    prefix = b"\n"
+    object_offset = len(scrubbed) + len(prefix)
+    info_object = (
+        f"{new_object} 0 obj\n<< /Producer (Anonymous) >>\nendobj\n".encode()
+    )
+    xref_offset = object_offset + len(info_object)
+    incremental_update = (
+        prefix
+        + info_object
+        + f"xref\n{new_object} 1\n{object_offset:010d} 00000 n \n".encode()
+        + b"trailer\n"
+        + (
+            f"<< /Size {new_object + 1} /Root {root_object.decode()} "
+            f"{root_generation.decode()} R /Info {new_object} 0 R "
+            f"/Prev {old_startxref} >>\n"
+        ).encode()
+        + f"startxref\n{xref_offset}\n%%EOF\n".encode()
+    )
+    return scrubbed + incremental_update
+
+
+def _sanitize_png_metadata(data: bytes) -> bytes:
+    """Drop textual/EXIF/time chunks while preserving pixel-bearing chunks."""
+
+    signature = b"\x89PNG\r\n\x1a\n"
+    if not data.startswith(signature):
+        raise AnonymizationError("Retained .png file does not have a PNG signature.")
+    output = bytearray(signature)
+    offset = len(signature)
+    saw_header = False
+    saw_end = False
+    while offset < len(data):
+        if offset + 12 > len(data):
+            raise AnonymizationError("Truncated PNG chunk.")
+        length = struct.unpack(">I", data[offset : offset + 4])[0]
+        end = offset + 12 + length
+        if end > len(data):
+            raise AnonymizationError("Truncated PNG chunk payload.")
+        chunk_type = data[offset + 4 : offset + 8]
+        payload = data[offset + 8 : offset + 8 + length]
+        expected_crc = struct.unpack(">I", data[offset + 8 + length : end])[0]
+        actual_crc = binascii.crc32(chunk_type + payload) & 0xFFFFFFFF
+        if actual_crc != expected_crc:
+            raise AnonymizationError("PNG chunk CRC verification failed.")
+        if not saw_header and chunk_type != b"IHDR":
+            raise AnonymizationError("PNG does not start with an IHDR chunk.")
+        saw_header = True
+        if chunk_type not in PNG_METADATA_CHUNKS:
+            output.extend(data[offset:end])
+        if chunk_type == b"IEND":
+            saw_end = True
+            if end != len(data):
+                raise AnonymizationError("PNG contains trailing data after IEND.")
+        offset = end
+    if not (saw_header and saw_end):
+        raise AnonymizationError("Incomplete PNG file.")
+    return bytes(output)
+
+
+def _sanitize_mat_metadata(data: bytes) -> bytes:
+    """Neutralize the descriptive MATLAB v5 header without touching array data."""
+
+    if len(data) < 128 or not data.startswith(b"MATLAB 5.0 MAT-file"):
+        raise AnonymizationError("Only MATLAB v5 files can be safely anonymized.")
+    header = b"MATLAB 5.0 MAT-file, Platform: anonymous, anonymized for peer review"
+    return header.ljust(116, b" ") + data[116:]
+
+
+def _safe_nested_name(name: str) -> None:
+    path = PurePosixPath(name)
+    if path.is_absolute() or ".." in path.parts or "\\" in name:
+        raise AnonymizationError(f"Unsafe nested ZIP member name: {name}")
+
+
+def _canonicalize_nested_zip(
+    data: bytes, *, xlsx: bool, rules: IdentityRules
+) -> bytes:
+    """Normalize nested ZIP metadata and scrub known identifying members."""
+
+    source_buffer = io.BytesIO(data)
+    output_buffer = io.BytesIO()
+    try:
+        source = zipfile.ZipFile(source_buffer)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise AnonymizationError(f"Unreadable retained ZIP container: {exc}") from exc
+
+    with source, zipfile.ZipFile(
+        output_buffer,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+        compresslevel=9,
+        strict_timestamps=True,
+    ) as destination:
+        destination.comment = b""
+        for original_info in source.infolist():
+            _safe_nested_name(original_info.filename)
+            if original_info.is_dir():
+                continue
+            payload = source.read(original_info)
+            if xlsx and original_info.filename == "docProps/core.xml":
+                payload = re.sub(
+                    rb"<dc:creator\b[^>]*>.*?</dc:creator>",
+                    b"<dc:creator>Anonymous</dc:creator>",
+                    payload,
+                    flags=re.DOTALL,
+                )
+                payload = re.sub(
+                    rb"<cp:lastModifiedBy\b[^>]*>.*?</cp:lastModifiedBy>",
+                    b"<cp:lastModifiedBy>Anonymous</cp:lastModifiedBy>",
+                    payload,
+                    flags=re.DOTALL,
+                )
+                for date_field in (b"created", b"modified"):
+                    payload = re.sub(
+                        rb"<dcterms:"
+                        + date_field
+                        + rb"\b[^>]*>.*?</dcterms:"
+                        + date_field
+                        + rb">",
+                        b'<dcterms:'
+                        + date_field
+                        + b' xsi:type="dcterms:W3CDTF">1980-01-01T00:00:00Z</dcterms:'
+                        + date_field
+                        + b'>',
+                        payload,
+                        flags=re.DOTALL,
+                    )
+            elif not xlsx and PurePosixPath(original_info.filename).name == "system_info.txt":
+                payload = b"System information removed for double-anonymous review.\n"
+            elif not xlsx:
+                nested_text = _safe_decode(payload)
+                if nested_text is not None:
+                    payload = sanitize_text(original_info.filename, nested_text, rules).encode(
+                        "utf-8"
+                    )
+            executable = bool((original_info.external_attr >> 16) & 0o111)
+            destination.writestr(
+                _zip_info(original_info.filename, executable=executable), payload
+            )
+    return output_buffer.getvalue()
+
+
+def _sanitize_binary_metadata(
+    path: str, data: bytes, rules: IdentityRules
+) -> tuple[bytes, str | None]:
+    suffix = PurePosixPath(path).suffix.casefold()
+    if suffix == ".pdf":
+        return _sanitize_pdf_metadata(data), "PDF document metadata replaced"
+    if suffix == ".png":
+        sanitized = _sanitize_png_metadata(data)
+        return sanitized, "PNG textual, EXIF, and timestamp chunks removed"
+    if suffix == ".mat":
+        return _sanitize_mat_metadata(data), "MATLAB platform and timestamp header replaced"
+    if suffix == ".xlsx":
+        return (
+            _canonicalize_nested_zip(data, xlsx=True, rules=rules),
+            "XLSX creator/timestamp and ZIP-entry metadata normalized",
+        )
+    if suffix == ".zip":
+        return (
+            _canonicalize_nested_zip(data, xlsx=False, rules=rules),
+            "nested ZIP metadata and system information normalized",
+        )
+    return data, None
 
 
 def _zip_info(path: str, executable: bool = False) -> zipfile.ZipInfo:
@@ -755,7 +1021,11 @@ def _zip_info(path: str, executable: bool = False) -> zipfile.ZipInfo:
     return info
 
 
-def _report(excluded: Sequence[tuple[str, str]], sanitized: Sequence[str]) -> str:
+def _report(
+    excluded: Sequence[tuple[str, str]],
+    sanitized: Sequence[str],
+    metadata_sanitized: Sequence[tuple[str, str]],
+) -> str:
     lines = [
         "DOUBLE-ANONYMOUS ARCHIVE REPORT",
         "=================================",
@@ -765,14 +1035,25 @@ def _report(excluded: Sequence[tuple[str, str]], sanitized: Sequence[str]) -> st
         "Archive entry timestamps and platform metadata were normalized.",
         "Author/maintainer metadata, affiliations, acknowledgments/funding, lab names,",
         "and identifying links were removed. Bibliographic names may remain in references.",
+        "Predecessor-package references and identifying citation requests were removed.",
         "",
-        "Rendered images, documents, videos, nested archives, and other formats that can",
-        "carry identifying metadata, logos, or faces were omitted by fail-safe policy.",
-        "Regenerate necessary figures from the included source only after manual review.",
+        "The SoRoMoX favicon and files under paper_results/ were retained by explicit",
+        "policy. Metadata-bearing retained formats were scrubbed where supported; all",
+        "retained visuals still require manual review for faces and identifying logos.",
         "",
         f"Sanitized text files: {len(sanitized)}",
+        f"Metadata-sanitized retained files: {len(metadata_sanitized)}",
         f"Excluded potentially identifying files: {len(excluded)}",
     ]
+    if metadata_sanitized:
+        lines.extend(("", "Sanitized retained-file metadata:"))
+        lines.extend(
+            f"- {path} ({description})"
+            for path, description in metadata_sanitized
+        )
+    if sanitized:
+        lines.extend(("", "Sanitized text files:"))
+        lines.extend(f"- {path}" for path in sanitized)
     if excluded:
         lines.extend(("", "Excluded files:"))
         lines.extend(f"- {path} ({reason})" for path, reason in excluded)
@@ -818,6 +1099,7 @@ def create_archive(
 
         excluded: list[tuple[str, str]] = []
         sanitized: list[str] = []
+        metadata_sanitized: list[tuple[str, str]] = []
         violations: list[str] = []
         included_count = 0
 
@@ -848,14 +1130,26 @@ def create_archive(
                 original = _read_member(source, member)
                 text = _safe_decode(original)
                 if text is None:
-                    violations.extend(_binary_violations(member.name, original, rules))
-                    result = original
+                    result, metadata_change = _sanitize_binary_metadata(
+                        member.name, original, rules
+                    )
+                    violations.extend(_binary_violations(member.name, result, rules))
+                    if metadata_change and result != original:
+                        metadata_sanitized.append((member.name, metadata_change))
                 else:
+                    had_svg_metadata = bool(
+                        PurePosixPath(member.name).suffix.casefold() == ".svg"
+                        and re.search(r"<metadata\b", text, re.IGNORECASE)
+                    )
                     anonymized = sanitize_text(member.name, text, rules)
                     violations.extend(_text_violations(member.name, anonymized, rules))
                     result = anonymized.encode("utf-8")
                     if result != original:
                         sanitized.append(member.name)
+                    if had_svg_metadata:
+                        metadata_sanitized.append(
+                            (member.name, "SVG metadata element removed")
+                        )
 
                 archive_path = f"{ARCHIVE_ROOT}/{member.name}"
                 destination.writestr(
@@ -878,7 +1172,11 @@ def create_archive(
                     f"{details}{extra}"
                 )
 
-            report_text = _report(excluded, sorted(set(sanitized)))
+            report_text = _report(
+                excluded,
+                sorted(set(sanitized)),
+                sorted(set(metadata_sanitized)),
+            )
             destination.writestr(
                 _zip_info(f"{ARCHIVE_ROOT}/{REPORT_PATH}"), report_text.encode("utf-8")
             )
@@ -892,6 +1190,9 @@ def create_archive(
         report=report_output,
         included_count=included_count,
         sanitized_paths=tuple(sorted(set(sanitized))),
+        metadata_sanitized_paths=tuple(
+            path for path, _ in sorted(set(metadata_sanitized))
+        ),
         excluded_paths=tuple(path for path, _ in sorted(excluded)),
     )
 
@@ -946,6 +1247,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Anonymization report: {result.report}")
     print(f"Included committed files: {result.included_count}")
     print(f"Sanitized text files: {len(result.sanitized_paths)}")
+    print(
+        "Metadata-sanitized retained files: "
+        f"{len(result.metadata_sanitized_paths)}"
+    )
     print(f"Excluded risky files: {len(result.excluded_paths)}")
     status = _run_git(repo, ["status", "--porcelain"]).stdout
     if status:
