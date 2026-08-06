@@ -285,6 +285,26 @@ class TestPIDControlValidation:
                 gamma=gamma,
             )
 
+    @pytest.mark.parametrize(
+        "gamma",
+        [
+            jnp.inf,
+            -jnp.inf,
+            jnp.nan,
+            jnp.array([1.0, jnp.inf]),
+            jnp.array([[1.0, 0.0], [0.0, jnp.nan]]),
+        ],
+    )
+    def test_tanh_gamma_must_be_finite(self, gamma):
+        with pytest.raises(ValueError, match="must be finite"):
+            PIDControl(
+                Kp=1.0,
+                Ki=0.5,
+                Kd=0.1,
+                saturation_fn="tanh",
+                gamma=gamma,
+            )
+
     def test_matrix_gamma_must_be_symmetric_positive_definite(self):
         for gamma in (
             jnp.array([[1.0, 1.0], [0.0, 1.0]]),

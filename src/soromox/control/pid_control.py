@@ -118,10 +118,10 @@ class PIDControl(eqx.Module):
                   preserves the units and small-error slope of ``e``.
                 - A callable `f(e) -> saturated_e`: Custom saturation function.
             gamma: Inverse error scale for built-in saturation functions. Can be
-                a positive scalar, positive diagonal vector, or symmetric
-                positive-definite matrix. For a scalar or vector, ``1 / gamma``
-                sets the componentwise saturation magnitude. Only used when
-                ``saturation_fn="tanh"``. Defaults to 1.0.
+                a finite positive scalar, finite positive diagonal vector, or
+                finite symmetric positive-definite matrix. For a scalar or vector,
+                ``1 / gamma`` sets the componentwise saturation magnitude. Only
+                used when ``saturation_fn="tanh"``. Defaults to 1.0.
         """
         self.Kp = jnp.atleast_1d(jnp.asarray(Kp))
         self.Ki = jnp.atleast_1d(jnp.asarray(Ki))
@@ -132,6 +132,8 @@ class PIDControl(eqx.Module):
             self._saturation_fn_name = "identity"
             self._custom_saturation_fn = None
         elif saturation_fn == "tanh":
+            if not bool(jnp.all(jnp.isfinite(self.gamma))):
+                raise ValueError("Gamma must be finite for tanh saturation.")
             if self.gamma.ndim == 1:
                 if bool(jnp.any(self.gamma <= 0)):
                     raise ValueError(
