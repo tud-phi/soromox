@@ -39,4 +39,10 @@ Planar HSA soft robots with symbolic computation.
 
 The planar HSA model is part of the publication:
 
-Stölzle, M., Rus, D., & Della Santina, C. (2023). An experimental study of model-based control for planar handed shearing auxetics robots. *International Symposium on Experimental Robotics*, 153-167.
+Stölzle, M., Rus, D., & Della Santina, C. (2024). An experimental study of
+model-based control for planar handed shearing auxetics robots. In
+*Experimental Robotics: The 18th International Symposium* (pp. 153–167).
+Springer. [doi:10.1007/978-3-031-63596-0_14](https://doi.org/10.1007/978-3-031-63596-0_14)
+
+See the [citation guide](../../../citation.md#planar-hsa-model) for BibTeX and
+guidance on when to include this additional reference.

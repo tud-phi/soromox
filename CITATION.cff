@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it as below."
+message: "For academic use, cite the preferred paper below. When reproducibility depends on a particular release, also report and, where appropriate, cite the exact software version."
 type: software
 title: "SoRoMoX: Soft Robot Models in JAX"
 abstract: "Kinematic and dynamic models of continuum and articulated soft robots implemented in JAX."
@@ -23,7 +23,8 @@ authors:
   - family-names: "Della Santina"
     given-names: "Cosimo"
 repository-code: "https://github.com/tud-phi/soromox"
-url: "https://github.com/tud-phi/soromox"
+repository-artifact: "https://pypi.org/project/soromox/0.2.1/"
+url: "https://tud-phi.github.io/soromox"
 license: MIT
 version: "0.2.1"
 date-released: "2026-08-03"
@@ -34,3 +35,35 @@ keywords:
   - "Dynamics"
   - "Continuum Soft Robots"
   - "Articulated Soft Robots"
+preferred-citation:
+  type: generic
+  title: "SoRoMoX: Fast, Differentiable, and Parallelizable Soft Robot Models"
+  authors:
+    - family-names: "Stölzle"
+      given-names: "Maximilian"
+    - family-names: "Gribonval"
+      given-names: "Solange"
+    - family-names: "Feliu-Talegon"
+      given-names: "Daniel"
+    - family-names: "Perfetta"
+      given-names: "Vito Daniele"
+    - family-names: "Martini"
+      given-names: "Michele"
+    - family-names: "Zhang"
+      given-names: "Chuhan"
+    - family-names: "Wong"
+      given-names: "Kiwan"
+    - family-names: "Tarnini"
+      given-names: "Mohammed"
+    - family-names: "Mathew"
+      given-names: "Anup Teejo"
+    - family-names: "Renda"
+      given-names: "Federico"
+    - family-names: "Rus"
+      given-names: "Daniela"
+    - family-names: "Della Santina"
+      given-names: "Cosimo"
+  doi: "10.48550/arXiv.2608.06650"
+  status: preprint
+  url: "https://arxiv.org/abs/2608.06650"
+  year: 2026

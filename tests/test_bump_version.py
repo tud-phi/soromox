@@ -66,23 +66,46 @@ def test_update_citations_synchronizes_version_date_and_year(tmp_path):
     cff.write_text(
         'version: "0.1.0"\n'
         'date-released: "2025-09-01"\n'
+        'repository-artifact: "https://pypi.org/project/soromox/0.1.0/"\n'
+        "preferred-citation:\n"
+        '  title: "Paper metadata must remain unchanged"\n'
+        "  year: 2025\n"
     )
-    markdown = tmp_path / "README.md"
+    markdown = tmp_path / "citation.md"
     markdown.write_text(
+        "@misc{paper2025,\n"
+        "  title = {Paper metadata must remain unchanged},\n"
+        "  year = {2025},\n"
+        "}\n\n"
         "```bibtex\n"
-        "@software{soromox2025,\n"
+        "@software{soromox_v0_1_0,\n"
         "  year = {2025},\n"
         "  version = {0.1.0},\n"
+        "  url = {https://github.com/tud-phi/soromox/releases/tag/v0.1.0},\n"
         "}\n"
         "```\n"
     )
 
     release_date = date(2026, 7, 29)
     bump_version.update_citation_cff(cff, "0.2.0", release_date)
-    bump_version.update_bibtex_citation(markdown, "0.2.0", release_date)
+    bump_version.update_software_bibtex_citation(markdown, "0.2.0", release_date)
 
-    assert 'version: "0.2.0"' in cff.read_text()
-    assert 'date-released: "2026-07-29"' in cff.read_text()
-    assert "@software{soromox2026," in markdown.read_text()
-    assert "year = {2026}," in markdown.read_text()
-    assert "version = {0.2.0}," in markdown.read_text()
+    cff_content = cff.read_text()
+    assert 'version: "0.2.0"' in cff_content
+    assert 'date-released: "2026-07-29"' in cff_content
+    assert (
+        'repository-artifact: "https://pypi.org/project/soromox/0.2.0/"' in cff_content
+    )
+    assert 'title: "Paper metadata must remain unchanged"' in cff_content
+    assert "  year: 2025" in cff_content
+
+    markdown_content = markdown.read_text()
+    assert "@software{soromox_v0_2_0," in markdown_content
+    assert "year = {2026}," in markdown_content
+    assert "version = {0.2.0}," in markdown_content
+    assert (
+        "url = {https://github.com/tud-phi/soromox/releases/tag/v0.2.0},"
+        in markdown_content
+    )
+    assert "@misc{paper2025," in markdown_content
+    assert "title = {Paper metadata must remain unchanged}," in markdown_content

@@ -1,9 +1,10 @@
 # Paper Results
 
-This directory maps paper sections to the code, data, and canonical outputs used
-to produce the reported results. Each section keeps scripts under `code/`, source
-or generated artifacts under `data/`, and publication figures/videos under
-`outputs/`.
+This directory maps sections of the
+[SoRoMoX preprint](https://arxiv.org/abs/2608.06650) to the code, data, and
+canonical outputs used to produce the reported results. Each section keeps
+scripts under `code/`, source or generated artifacts under `data/`, and
+publication figures/videos under `outputs/`.
 
 | Paper section | Directory | Reproduced artifacts |
 | --- | --- | --- |

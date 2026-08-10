@@ -5,8 +5,7 @@ The script updates the tracked sources of release metadata:
 
 - ``pyproject.toml``
 - ``CITATION.cff``
-- ``README.md``
-- ``docs/index.md``
+- ``docs/citation.md``
 - ``docs/development/changelog.md``
 - ``uv.lock``
 
@@ -24,8 +23,7 @@ from pathlib import Path
 RELEASE_FILES = (
     Path("pyproject.toml"),
     Path("CITATION.cff"),
-    Path("README.md"),
-    Path("docs/index.md"),
+    Path("docs/citation.md"),
     Path("docs/development/changelog.md"),
     Path("uv.lock"),
 )
@@ -88,7 +86,7 @@ def update_pyproject_toml(file_path: Path, new_version: str) -> None:
 
 
 def update_citation_cff(file_path: Path, new_version: str, release_date: date) -> None:
-    """Update the CFF version and release date."""
+    """Update the CFF software version, release date, and artifact URL."""
     content = file_path.read_text()
     content = replace_required(
         content,
@@ -102,24 +100,33 @@ def update_citation_cff(file_path: Path, new_version: str, release_date: date) -
         f'date-released: "{release_date.isoformat()}"',
         description=f"release date in {file_path}",
     )
+    content = replace_required(
+        content,
+        r'^repository-artifact: "[^"]+"',
+        f'repository-artifact: "https://pypi.org/project/soromox/{new_version}/"',
+        description=f"artifact URL in {file_path}",
+    )
     file_path.write_text(content)
 
 
-def update_bibtex_citation(
+def update_software_bibtex_citation(
     file_path: Path, new_version: str, release_date: date
 ) -> None:
     """Update the software BibTeX block embedded in Markdown."""
     content = file_path.read_text()
     block_match = re.search(
-        r"@software\{soromox\d{4},.*?\n\s*\}", content, flags=re.DOTALL
+        r"@software\{soromox_v\d+_\d+_\d+,.*?\n\s*\}",
+        content,
+        flags=re.DOTALL,
     )
     if not block_match:
         raise ValueError(f"Could not find software citation in {file_path}")
 
     block = block_match.group(0)
+    citation_version = new_version.replace(".", "_")
     block = re.sub(
-        r"@software\{soromox\d{4},",
-        f"@software{{soromox{release_date.year},",
+        r"@software\{soromox_v\d+_\d+_\d+,",
+        f"@software{{soromox_v{citation_version},",
         block,
         count=1,
     )
@@ -134,6 +141,12 @@ def update_bibtex_citation(
         r"^(\s*version = )\{[^}]+\},$",
         rf"\g<1>{{{new_version}}},",
         description=f"citation version in {file_path}",
+    )
+    block = replace_required(
+        block,
+        r"^(\s*url = )\{https://github\.com/tud-phi/soromox/releases/tag/v[^}]+\},$",
+        rf"\g<1>{{https://github.com/tud-phi/soromox/releases/tag/v{new_version}}},",
+        description=f"citation release URL in {file_path}",
     )
     file_path.write_text(
         content[: block_match.start()] + block + content[block_match.end() :]
@@ -280,8 +293,9 @@ def main() -> None:
     try:
         update_pyproject_toml(paths[Path("pyproject.toml")], new_version)
         update_citation_cff(paths[Path("CITATION.cff")], new_version, release_date)
-        update_bibtex_citation(paths[Path("README.md")], new_version, release_date)
-        update_bibtex_citation(paths[Path("docs/index.md")], new_version, release_date)
+        update_software_bibtex_citation(
+            paths[Path("docs/citation.md")], new_version, release_date
+        )
         update_changelog(
             paths[Path("docs/development/changelog.md")],
             new_version,

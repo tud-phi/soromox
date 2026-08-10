@@ -96,7 +96,17 @@ authors:
   - family-names: "Reviewer"
     given-names: "Bob"
 repository-code: "https://github.com/identifying-group/review-project"
+repository-artifact: "https://pypi.org/project/review-project/1.0.0/"
 url: "https://identifying.example/review-project"
+preferred-citation:
+  type: generic
+  title: Identifying Review Project Paper
+  authors:
+    - family-names: "Paper"
+      given-names: "Carol"
+  repository: "https://arxiv.org/abs/9999.99999"
+  status: preprint
+  year: 2026
 """,
     )
     _write(
@@ -140,7 +150,7 @@ Alice Example maintains this package at https://github.com/identifying-group/rev
 @software{package, author={Example, Alice}}
 ```
 
-### Related Reference
+## Related Reference
 
 Example, A. (2024). A legitimate scholarly reference.
 
@@ -155,6 +165,14 @@ Please cite the revealing PhD thesis.
 ## Acknowledgments
 
 Our previous work was funded by Grant 123.
+""",
+    )
+    _write(
+        repo / "docs" / "citation.md",
+        """\
+# Citing Review Project
+
+Please cite Carol Paper and the identifying review-project preprint.
 """,
     )
     _write(
@@ -253,6 +271,11 @@ def test_archive_uses_committed_files_and_anonymizes(
         assert "revealing PhD thesis" not in control_docs
         assert "Public controller documentation" in control_docs
 
+        citation_docs = archive.read(f"{root}/docs/citation.md").decode()
+        assert "withheld for double-anonymous review" in citation_docs
+        assert "Carol Paper" not in citation_docs
+        assert "review-project preprint" not in citation_docs
+
         project = tomllib.loads(archive.read(f"{root}/pyproject.toml").decode())
         assert project["project"]["authors"] == [{"name": "Anonymous"}]
         assert project["project"]["maintainers"] == [{"name": "Anonymous"}]
@@ -265,7 +288,10 @@ def test_archive_uses_committed_files_and_anonymizes(
         cff = archive.read(f"{root}/CITATION.cff").decode()
         assert 'name: "Anonymous"' in cff
         assert "repository-code" not in cff
+        assert "repository-artifact" not in cff
+        assert "preferred-citation" not in cff
         assert "Alice" not in cff
+        assert "Carol" not in cff
 
         assert "figure.png" not in readme
 

@@ -102,6 +102,10 @@ jobs:
             pip install soromox==${{ needs.build.outputs.version }}
             ```
 
+            ## Citation
+
+            If you use SoRoMoX in academic work, please cite the [SoRoMoX preprint](https://doi.org/10.48550/arXiv.2608.06650) and report the exact package version used. See the [complete citation guide](https://tud-phi.github.io/soromox/citation/) for BibTeX and conditional software citations.
+
             See the full [changelog](https://github.com/tud-phi/soromox/blob/v${{ needs.build.outputs.version }}/docs/development/changelog.md).
           files: |
             dist/*.whl

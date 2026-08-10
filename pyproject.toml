@@ -258,6 +258,8 @@ all = [
 "Documentation" = "https://tud-phi.github.io/soromox"
 "Changelog" = "https://tud-phi.github.io/soromox/development/changelog/"
 "Bug Reports" = "https://github.com/tud-phi/soromox/issues"
+"Paper" = "https://doi.org/10.48550/arXiv.2608.06650"
+"Citation" = "https://tud-phi.github.io/soromox/citation/"
 "Source" = "https://github.com/tud-phi/soromox"
 
 # The following would provide a command line executable called `sample`

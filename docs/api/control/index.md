@@ -214,23 +214,9 @@ This clean separation means the two terms can be designed, tuned, and analyzed i
     > [https://doi.org/10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da](https://doi.org/10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da)
 
 !!! tip "Citation Request"
-    If you find this implementation of model-based controllers useful for your research, please consider citing the following work:
-
-    ```bibtex
-    @phdthesis{stolzle2025phdthesis,
-      title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
-      keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
-      author = "Maximilian St{\"o}lzle",
-      year = "2025",
-      month = "9",
-      day = "15",
-      language = "English",
-      type = "Dissertation (TU Delft)",
-      school = "Mechanical Engineering, Delft University of Technology",
-      doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
-      isbn = "978-94-6384-836-7",
-    }
-    ```
+    If these controller formulations or implementation details are material to
+    your research, see the [citation guide](../../citation.md#model-based-controllers)
+    for the recommended BibTeX entry.
 
 ---
 

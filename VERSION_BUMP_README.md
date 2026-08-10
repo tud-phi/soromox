@@ -14,8 +14,8 @@ This directory contains scripts for automated version bumping and GitHub release
 The version bump script updates version information in:
 
 - `pyproject.toml` - Main project version
-- `CITATION.cff` - Citation version and release date
-- `README.md` and `docs/index.md` - BibTeX version, year, and citation key
+- `CITATION.cff` - Software version, release date, and PyPI artifact URL
+- `docs/citation.md` - Software BibTeX version, year, key, and release URL
 - `docs/development/changelog.md` - Dated release entry
 - `uv.lock` - Local package version
 

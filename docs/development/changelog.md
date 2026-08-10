@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Made the SoRoMoX arXiv preprint the primary academic citation, centralized
+  citation guidance, and retained an exact-release software citation for
+  reproducibility-sensitive work.
+
 ### Fixed
 
 ## [0.2.1] - 2026-08-03

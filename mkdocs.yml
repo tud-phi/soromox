@@ -58,6 +58,7 @@ theme:
 
 nav:
   - Home: index.md
+  - Citation: citation.md
   - Installation: installation.md
   - User Guide:
     - Quick Start: user-guide/quick-start.md
@@ -198,6 +199,9 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/tud-phi/soromox
       name: View on GitHub
+    - icon: fontawesome/solid/file-lines
+      link: https://arxiv.org/abs/2608.06650
+      name: Read the SoRoMoX paper
     - icon: fontawesome/brands/python
       link: https://pypi.org/project/soromox/
       name: View on PyPI

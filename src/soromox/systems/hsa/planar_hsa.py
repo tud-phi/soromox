@@ -87,9 +87,10 @@ class PlanarHSA(SoftRobot):
       when consider_hysteresis=True.
 
     References:
-        Stölzle, M., Rus, D., & Della Santina, C. (2023). An experimental study of
+        Stölzle, M., Rus, D., & Della Santina, C. (2024). An experimental study of
         model-based control for planar handed shearing auxetics robots. In
-        International Symposium on Experimental Robotics (pp. 153-167). Springer.
+        Experimental Robotics: The 18th International Symposium (pp. 153-167).
+        Springer. https://doi.org/10.1007/978-3-031-63596-0_14
     """
 
     # static settings

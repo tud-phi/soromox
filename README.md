@@ -9,6 +9,7 @@
 [![Test](https://github.com/tud-phi/soromox/actions/workflows/test.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/test.yml)
 [![Documentation](https://github.com/tud-phi/soromox/actions/workflows/docs.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/docs.yml)
 [![PyPI version](https://badge.fury.io/py/soromox.svg)](https://badge.fury.io/py/soromox)
+[![arXiv](https://img.shields.io/badge/arXiv-2608.06650-b31b1b.svg)](https://arxiv.org/abs/2608.06650)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
 [![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
@@ -37,55 +38,26 @@ We are happy to receive contributions for other soft robot models. See the [Cont
 
 ## Citation
 
-Please use the following citation if you use our software in your (scientific) work:
+If you use SoRoMoX in academic work, please cite the associated preprint:
 
-### Software Citation
+### Primary Paper
 
 ```bibtex
-@software{soromox2026,
-  title = {SoRoMoX: Soft Robot Models in JAX},
-  author = {Stölzle, Maximilian and Gribonval, Solange and {Feliu-Talegon}, Daniel and Perfetta, Vito Daniele and Martini, Michele and Zhang, Chuhan and Wong, Kiwan and Rus, Daniela and {Della Santina}, Cosimo},
+@misc{stolzle2026soromox,
+  title = {{SoRoMoX}: Fast, Differentiable, and Parallelizable Soft Robot Models},
+  author = {Maximilian St{\"o}lzle and Solange Gribonval and Daniel {Feliu-Talegon} and Vito Daniele Perfetta and Michele Martini and Chuhan Zhang and Kiwan Wong and Mohammed Tarnini and Anup Teejo Mathew and Federico Renda and Daniela Rus and Cosimo {Della Santina}},
   year = {2026},
-  url = {https://github.com/tud-phi/soromox},
-  version = {0.2.1},
-  abstract = {Kinematic and dynamic models of continuum and articulated soft robots implemented in JAX.}
+  eprint = {2608.06650},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.RO},
+  doi = {10.48550/arXiv.2608.06650},
+  url = {https://arxiv.org/abs/2608.06650},
 }
 ```
 
-### Planar HSA Model Citation
-
-The model of the kinematics and dynamics of the planar HSA robot are part of the publication **"An Experimental Study of Model-based Control for Planar Handed Shearing Auxetics Robots"** presented at the *18th International Symposium on Experimental Robotics*.
-
-```bibtex
-@inproceedings{stolzle2023experimental,
-  title={An experimental study of model-based control for planar handed shearing auxetics robots},
-  author={St{\"o}lzle, Maximilian and Rus, Daniela and Della Santina, Cosimo},
-  booktitle={International Symposium on Experimental Robotics},
-  pages={153--167},
-  year={2023},
-  organization={Springer}
-}
-```
-
-### Model-Based Controllers Citation
-
-If you found the implementation of the model-based controllers (e.g., PID, gravity cancellation, potential shaping regulators) useful, please consider also citing the following PhD thesis:
-
-```bibtex
-@phdthesis{stolzle2025phdthesis,
-  title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
-  keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
-  author = "Maximilian St{\"o}lzle",
-  year = "2025",
-  month = "9",
-  day = "15",
-  language = "English",
-  type = "Dissertation (TU Delft)",
-  school = "Mechanical Engineering, Delft University of Technology",
-  doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
-  isbn = "978-94-6384-836-7",
-}
-```
+For reproducible computational work, also report the exact version available as
+`soromox.__version__`. See the [complete citation guide](docs/citation.md) for a
+version-specific software citation and additional model or controller references.
 
 ## Installation
 
@@ -323,8 +295,8 @@ The dry run mode will show you:
 
 The version bump process automatically updates:
 - `pyproject.toml` - Main project version
-- `CITATION.cff` - Citation version and release date
-- `README.md` and `docs/index.md` - BibTeX version, year, and citation key
+- `CITATION.cff` - Software version, release date, and PyPI artifact URL
+- `docs/citation.md` - Software BibTeX version, year, key, and release URL
 - `docs/development/changelog.md` - Moves unreleased notes into a dated release
 - `uv.lock` - Local package version
 

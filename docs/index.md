@@ -253,55 +253,14 @@ All renderers support:
 
 ## Citation
 
-!!! quote "If you use our software in your research, please cite:"
+!!! quote "If you use SoRoMoX in academic work"
 
-    ### Software Citation
+    Please cite **“SoRoMoX: Fast, Differentiable, and Parallelizable Soft
+    Robot Models”**, available as
+    [arXiv:2608.06650](https://arxiv.org/abs/2608.06650).
 
-    ```bibtex
-    @software{soromox2026,
-      title = {SoRoMoX: Soft Robot Models in JAX},
-      author = {Stölzle, Maximilian and Gribonval, Solange and {Feliu-Talegon}, Daniel and Perfetta, Vito Daniele and Martini, Michele and Zhang, Chuhan and Wong, Kiwan and Rus, Daniela and {Della Santina}, Cosimo},
-      year = {2026},
-      url = {https://github.com/tud-phi/soromox},
-      version = {0.2.1},
-      abstract = {Kinematic and dynamic models of continuum and articulated soft robots implemented in JAX.}
-    }
-    ```
-
-    ### Planar HSA Model Citation
-
-    The model of the kinematics and dynamics of the planar HSA robot are part of the publication **"An Experimental Study of Model-based Control for Planar Handed Shearing Auxetics Robots"** presented at the *18th International Symposium on Experimental Robotics*.
-
-    ```bibtex
-    @inproceedings{stolzle2023experimental,
-      title={An experimental study of model-based control for planar handed shearing auxetics robots},
-      author={St{\"o}lzle, Maximilian and Rus, Daniela and Della Santina, Cosimo},
-      booktitle={International Symposium on Experimental Robotics},
-      pages={153--167},
-      year={2023},
-      organization={Springer}
-    }
-    ```
-
-    ### Model-Based Controllers Citation
-
-    If you found the implementation of the model-based controllers (e.g., PID, gravity cancellation, potential shaping regulators) useful, please consider also citing the following PhD thesis:
-
-    ```bibtex
-    @phdthesis{stolzle2025phdthesis,
-      title = "Safe yet Precise Soft Robots: Incorporating Physics into Learned Models for Control",
-      keywords = "Soft Robotics, Nonlinear Control, Machine Learning, Artificial Intelligence",
-      author = "Maximilian St{\"o}lzle",
-      year = "2025",
-      month = "9",
-      day = "15",
-      language = "English",
-      type = "Dissertation (TU Delft)",
-      school = "Mechanical Engineering, Delft University of Technology",
-      doi = "10.4233/uuid:24c1f667-8fd6-431a-bb78-11d22f8cb3da",
-      isbn = "978-94-6384-836-7",
-    }
-    ```
+    See the [complete citation guide](citation.md) for BibTeX, exact-version
+    software citations, and model- or controller-specific references.
 
 ---
 

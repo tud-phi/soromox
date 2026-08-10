@@ -136,7 +136,7 @@ SENSITIVE_ASSET_REFERENCE_RE = re.compile(
     r"\b(?:headshots?|logos?|portraits?)\b", re.IGNORECASE
 )
 IDENTIFYING_CITATION_SECTION_RE = re.compile(
-    r"^(?:software citation|planar hsa model citation|"
+    r"^(?:citation|software citation|planar hsa model citation|"
     r"model-based controllers citation|references and citation)$",
     re.IGNORECASE,
 )
@@ -150,9 +150,7 @@ RETAINED_VISUAL_PATHS = frozenset(
         "docs/assets/logo/soromox_logo_s.png",
     }
 )
-PNG_METADATA_CHUNKS = frozenset(
-    {b"caBX", b"eXIf", b"iTXt", b"tEXt", b"tIME", b"zTXt"}
-)
+PNG_METADATA_CHUNKS = frozenset({b"caBX", b"eXIf", b"iTXt", b"tEXt", b"tIME", b"zTXt"})
 PDF_INFO_VALUE_RE = re.compile(
     rb"/(Author|Creator|Producer|CreationDate|ModDate|Title|Subject|Keywords)"
     rb"\s*(\((?:\\.|[^\\)])*\)|<[0-9A-Fa-f\s]*>)",
@@ -492,9 +490,7 @@ def _remove_markdown_sections(text: str, title_pattern: re.Pattern[str]) -> str:
     return "".join(output)
 
 
-def _remove_markdown_admonitions_containing(
-    text: str, marker: re.Pattern[str]
-) -> str:
+def _remove_markdown_admonitions_containing(text: str, marker: re.Pattern[str]) -> str:
     """Remove a MkDocs admonition whose title or body contains ``marker``."""
 
     lines = text.splitlines(keepends=True)
@@ -538,8 +534,17 @@ def _sanitize_cff(text: str) -> str:
     lines = text.splitlines(keepends=True)
     output: list[str] = []
     skipping_authors = False
+    skipping_preferred_citation = False
     found_authors = False
     for line in lines:
+        if line.rstrip("\r\n") == "preferred-citation:":
+            skipping_preferred_citation = True
+            continue
+        if skipping_preferred_citation:
+            if line and not line[0].isspace():
+                skipping_preferred_citation = False
+            else:
+                continue
         if line.rstrip("\r\n") == "authors:":
             output.extend(("authors:\n", '  - name: "Anonymous"\n'))
             skipping_authors = True
@@ -550,7 +555,7 @@ def _sanitize_cff(text: str) -> str:
                 skipping_authors = False
             else:
                 continue
-        if re.match(r"^(?:repository-code|url):", line):
+        if re.match(r"^(?:repository-artifact|repository-code|url):", line):
             continue
         output.append(line)
     if not found_authors:
@@ -659,6 +664,10 @@ def _replace_affiliations(text: str, rules: IdentityRules) -> str:
 def sanitize_text(path: str, text: str, rules: IdentityRules) -> str:
     """Return anonymized UTF-8 text while preserving scholarly references."""
 
+    if path == "docs/citation.md":
+        return (
+            "# Citation\n\nCitation guidance is withheld for double-anonymous review.\n"
+        )
     if path == "docs/authors.md":
         return (
             "# Authors & Maintainers\n\n"
@@ -857,9 +866,7 @@ def _sanitize_pdf_metadata(data: bytes) -> bytes:
 
     prefix = b"\n"
     object_offset = len(scrubbed) + len(prefix)
-    info_object = (
-        f"{new_object} 0 obj\n<< /Producer (Anonymous) >>\nendobj\n".encode()
-    )
+    info_object = f"{new_object} 0 obj\n<< /Producer (Anonymous) >>\nendobj\n".encode()
     xref_offset = object_offset + len(info_object)
     incremental_update = (
         prefix
@@ -929,9 +936,7 @@ def _safe_nested_name(name: str) -> None:
         raise AnonymizationError(f"Unsafe nested ZIP member name: {name}")
 
 
-def _canonicalize_nested_zip(
-    data: bytes, *, xlsx: bool, rules: IdentityRules
-) -> bytes:
+def _canonicalize_nested_zip(data: bytes, *, xlsx: bool, rules: IdentityRules) -> bytes:
     """Normalize nested ZIP metadata and scrub known identifying members."""
 
     source_buffer = io.BytesIO(data)
@@ -941,13 +946,16 @@ def _canonicalize_nested_zip(
     except (OSError, zipfile.BadZipFile) as exc:
         raise AnonymizationError(f"Unreadable retained ZIP container: {exc}") from exc
 
-    with source, zipfile.ZipFile(
-        output_buffer,
-        "w",
-        compression=zipfile.ZIP_DEFLATED,
-        compresslevel=9,
-        strict_timestamps=True,
-    ) as destination:
+    with (
+        source,
+        zipfile.ZipFile(
+            output_buffer,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+            compresslevel=9,
+            strict_timestamps=True,
+        ) as destination,
+    ):
         destination.comment = b""
         for original_info in source.infolist():
             _safe_nested_name(original_info.filename)
@@ -974,22 +982,25 @@ def _canonicalize_nested_zip(
                         + rb"\b[^>]*>.*?</dcterms:"
                         + date_field
                         + rb">",
-                        b'<dcterms:'
+                        b"<dcterms:"
                         + date_field
                         + b' xsi:type="dcterms:W3CDTF">1980-01-01T00:00:00Z</dcterms:'
                         + date_field
-                        + b'>',
+                        + b">",
                         payload,
                         flags=re.DOTALL,
                     )
-            elif not xlsx and PurePosixPath(original_info.filename).name == "system_info.txt":
+            elif (
+                not xlsx
+                and PurePosixPath(original_info.filename).name == "system_info.txt"
+            ):
                 payload = b"System information removed for double-anonymous review.\n"
             elif not xlsx:
                 nested_text = _safe_decode(payload)
                 if nested_text is not None:
-                    payload = sanitize_text(original_info.filename, nested_text, rules).encode(
-                        "utf-8"
-                    )
+                    payload = sanitize_text(
+                        original_info.filename, nested_text, rules
+                    ).encode("utf-8")
             executable = bool((original_info.external_attr >> 16) & 0o111)
             destination.writestr(
                 _zip_info(original_info.filename, executable=executable), payload
@@ -1010,7 +1021,9 @@ def _sanitize_binary_metadata(
             "PNG textual, EXIF, timestamp, and content-credential chunks removed",
         )
     if suffix == ".mat":
-        return _sanitize_mat_metadata(data), "MATLAB platform and timestamp header replaced"
+        return _sanitize_mat_metadata(
+            data
+        ), "MATLAB platform and timestamp header replaced"
     if suffix == ".xlsx":
         return (
             _canonicalize_nested_zip(data, xlsx=True, rules=rules),
@@ -1062,8 +1075,7 @@ def _report(
     if metadata_sanitized:
         lines.extend(("", "Sanitized retained-file metadata:"))
         lines.extend(
-            f"- {path} ({description})"
-            for path, description in metadata_sanitized
+            f"- {path} ({description})" for path, description in metadata_sanitized
         )
     if sanitized:
         lines.extend(("", "Sanitized text files:"))
@@ -1261,10 +1273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Anonymization report: {result.report}")
     print(f"Included committed files: {result.included_count}")
     print(f"Sanitized text files: {len(result.sanitized_paths)}")
-    print(
-        "Metadata-sanitized retained files: "
-        f"{len(result.metadata_sanitized_paths)}"
-    )
+    print(f"Metadata-sanitized retained files: {len(result.metadata_sanitized_paths)}")
     print(f"Excluded risky files: {len(result.excluded_paths)}")
     status = _run_git(repo, ["status", "--porcelain"]).stdout
     if status:
