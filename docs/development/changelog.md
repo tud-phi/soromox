@@ -44,10 +44,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and render artifacts, and moved Section Vf MP4/GIF storage to Git LFS.
 - Improved Open3D and Viser efficiency for multi-robot animations with
   renderer-owned vectorized actuator geometry, batched actuator and sphere
-  scene objects, optional merged Open3D backbones, and instanced or merged
-  Viser geometry with atomic frame updates. This substantially reduces backend
-  registrations and browser scene handles without adding trajectory-rendering
-  concerns to soft-robot mechanics. In a 16-robot, 80-point, eight-frame
+  scene objects, automatically merged multi-robot Open3D backbones, and
+  instanced or merged Viser geometry with one atomic transaction per frame.
+  Viser ground planes now follow the complete batched layout. This substantially
+  reduces backend registrations and browser scene handles without adding
+  trajectory-rendering concerns to soft-robot mechanics. In a 16-robot,
+  80-point, eight-frame
   benchmark, merged Open3D improved initial/frame rendering by 21.0x/2.7x
   (6.51 s to 0.31 s and 41.2 ms to 15.1 ms), while batched Viser improved full
   swept-video/browser-capture time by 2.3x/3.6x (27.9 s to 12.0 s and 2.98 s

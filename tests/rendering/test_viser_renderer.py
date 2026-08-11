@@ -722,6 +722,23 @@ def test_viser_ground_plane_uses_native_grid():
     assert renderer._scene_handles.ground_planes == server.scene.grids
 
 
+def test_viser_automatic_ground_plane_covers_batched_base_layout():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(robot, auto_start=False)
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+
+    renderer._add_ground_plane(np.array([[0.0, -1.0, 0.0], [0.0, 1.0, 0.0]]))
+
+    ground = server.scene.grids[0]
+    assert ground.width == pytest.approx(3.35)
+    assert ground.height == pytest.approx(3.35)
+    assert_allclose(ground.position, [-0.06, 0.0, 0.0])
+
+
 def test_viser_swept_backbone_uses_material_frame_rings():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
@@ -778,6 +795,45 @@ def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
     assert_allclose(tip_mesh.vertices[-1], updated_curve[0, -1], atol=1e-7)
     assert np.all(cap_triangles[:, 0] == 16)
     assert server.scene.icospheres == []
+
+
+def test_viser_frame_update_uses_one_atomic_transaction():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot,
+        auto_start=False,
+        backbone_style="swept",
+        cylinder_sections=8,
+        show_ground_plane=False,
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    q_ts = jnp.zeros((1, 2, 0))
+    offsets = jnp.zeros((1, 3))
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        q_ts[:, 0], offsets
+    )
+    colors = renderer.resolve_backbone_colors(1).per_robot_point_rgba
+    renderer._build_robot_geometry(
+        np.asarray(curves),
+        colors,
+        material_frames=np.asarray(frames),
+        base_plate_color=renderer.color_config.base_plate_color,
+    )
+
+    renderer._update_frame(
+        1,
+        q_ts,
+        offsets,
+        colors,
+        base_plate_color=renderer.color_config.base_plate_color,
+        render_actuators=False,
+    )
+
+    assert server.atomic_calls == 1
 
 
 def test_viser_swept_batches_match_segment_geometry_across_animation_frames():

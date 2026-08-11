@@ -556,7 +556,6 @@ def render_rollout_to_mp4(
         grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
         ground_plane_size=(args.grid_spacing if rollout.num_envs > 1 else None),
-        merge_backbone_meshes=rollout.num_envs > 1,
         visible=args.visible,
     )
     print("Precomputing vectorized scene geometry...")

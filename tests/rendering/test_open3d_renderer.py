@@ -452,6 +452,19 @@ def test_merged_backbone_matches_unmerged_geometry_across_animation_frames():
     assert_scenes_match(1)
 
 
+def test_open3d_backbone_merging_defaults_to_multi_robot_scenes():
+    renderer = Open3DRenderer(_AnimatingSpatialRobot(), show_ground_plane=False)
+
+    assert renderer.merge_backbone_meshes is None
+    assert renderer._should_merge_backbone_meshes(1) is False
+    assert renderer._should_merge_backbone_meshes(2) is True
+
+    renderer.merge_backbone_meshes = False
+    assert renderer._should_merge_backbone_meshes(64) is False
+    renderer.merge_backbone_meshes = True
+    assert renderer._should_merge_backbone_meshes(1) is True
+
+
 def test_open3d_interactive_camera_front_points_from_eye_to_target():
     pytest.importorskip("open3d")
     from soromox.rendering.open3d_renderer import Open3DRenderer

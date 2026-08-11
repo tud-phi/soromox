@@ -32,6 +32,12 @@ class _FakeScene:
     def __init__(self):
         self.simple_meshes = []
         self.labels = []
+        self.grids = []
+
+    def add_grid(self, **kwargs):
+        handle = _FakeHandle(**kwargs)
+        self.grids.append(handle)
+        return handle
 
     def add_mesh_simple(self, **kwargs):
         handle = _FakeHandle(**kwargs)
@@ -339,6 +345,34 @@ def test_build_and_update_preserve_custom_handle_identity():
     assert renderer._robot_visual_handles[0].chamber_handles[0] is first_handle
     assert renderer._server.atomic_calls == 1
     assert not np.allclose(first_handle.vertices, first_vertices)
+
+
+def test_sequence_frame_uses_one_atomic_transaction_for_custom_geometry():
+    renderer = _renderer(_make_robot(connectors=True), show_ground_plane=False)
+    renderer._server = _FakeServer()
+    renderer._scene_handles = SceneHandles()
+    q_ts = jnp.zeros((1, 2, renderer.robot.num_dofs))
+    offsets = jnp.zeros((1, 3))
+    renderer._current_geometry_q = q_ts[:, 0]
+    curves, frames = _curves_and_frames(renderer, q_ts[:, 0], offsets)
+    colors = renderer.resolve_backbone_colors(1).per_robot_point_rgba
+    renderer._build_robot_geometry(
+        curves,
+        colors,
+        material_frames=frames,
+        base_plate_color=renderer.color_config.base_plate_color,
+    )
+
+    renderer._update_frame(
+        1,
+        q_ts,
+        offsets,
+        colors,
+        base_plate_color=renderer.color_config.base_plate_color,
+        render_actuators=False,
+    )
+
+    assert renderer._server.atomic_calls == 1
 
 
 def test_pressure_labels_and_colors_update_in_place():

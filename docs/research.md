@@ -140,6 +140,14 @@ parallelization.
   Your browser cannot play this video. View the <a href="assets/paper/parallel-rl.gif">animated GIF</a> instead.
 </video>
 
+The trained-policy rollout below shows 64 independently simulated environments
+in the renderer's automatically framed 8×8 grid.
+
+<video class="soromox-video" controls muted loop playsinline preload="metadata" poster="assets/paper/parallel-rl-trained-64-envs-poster.jpg" aria-label="Trained reinforcement-learning policy in 64 parallel soft-robot environments">
+  <source src="assets/paper/parallel-rl-trained-64-envs.mp4" type="video/mp4">
+  Your browser cannot play this video. View the <a href="assets/paper/parallel-rl-trained-64-envs.gif">animated GIF</a> instead.
+</video>
+
 ## Reproducing the results
 
 The [`paper_results/`](https://github.com/tud-phi/soromox/tree/main/paper_results)

@@ -237,6 +237,15 @@ automatically generated layouts. Viser additionally supports
 `multi_robot_layout="overlay"` to render robots at a common base pose. Per-robot
 colors and alpha values can distinguish overlaid configurations.
 
+Open3D automatically merges each robot's backbone primitives into one dynamic
+mesh when an animated scene contains multiple robots. This removes most backend
+geometry registrations; set `merge_backbone_meshes=True` to force merging for
+one robot or `False` to disable it for profiling or compatibility. Viser always
+uses its instanced or color-grouped backbone representation because browser
+scene-handle and message counts dominate that backend. Automatically sized
+Viser ground planes are centered on the rendered bases and expanded to cover
+the layout.
+
 ```python
 renderer.render_sequence(
     ts,

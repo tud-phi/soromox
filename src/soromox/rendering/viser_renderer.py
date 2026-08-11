@@ -469,7 +469,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Initialize empty scene handles
         self._scene_handles = SceneHandles()
-        self._add_ground_plane()
 
         self._running = True
 
@@ -478,17 +477,38 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         print(f"[ViserRenderer] Server started at {self.url}")
 
-    def _add_ground_plane(self) -> None:
-        """Add Viser's native base-aligned grid as a ground reference."""
+    def _add_ground_plane(self, base_positions: np.ndarray | None = None) -> None:
+        """Add a native grid centered on the rendered robot bases."""
         if (
             not self.show_ground_plane
             or self._server is None
             or self._scene_handles is None
         ):
             return
-        size = self._resolve_ground_plane_size()
         base_axis = self._base_tangent_axis(dim=3)
-        position = self._base_position(dim=3) - self._base_plate_thickness * base_axis
+        if base_positions is None:
+            bases = self._base_position(dim=3)[None, :]
+        else:
+            bases = np.asarray(base_positions, dtype=np.float64)
+            if bases.ndim != 2 or bases.shape[1] != 3 or bases.shape[0] == 0:
+                raise ValueError(
+                    "base_positions must have shape (N, 3) with at least one row"
+                )
+
+        center = np.mean(bases, axis=0)
+        if self.ground_plane_size is None:
+            deltas = bases - center
+            in_plane = deltas - np.outer(deltas @ base_axis, base_axis)
+            layout_radius = float(np.max(np.linalg.norm(in_plane, axis=1)))
+            size = self._resolve_ground_plane_size() + 2.0 * layout_radius
+        else:
+            size = self._resolve_ground_plane_size()
+        position = center - self._base_plate_thickness * base_axis
+
+        for old_handle in self._scene_handles.ground_planes:
+            if hasattr(old_handle, "remove"):
+                old_handle.remove()
+        self._scene_handles.ground_planes = []
         cfg = self.color_config
         handle = self._server.scene.add_grid(
             name="/ground",
@@ -563,6 +583,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = curves.shape[0]
         num_points = curves.shape[1]
+        self._add_ground_plane(curves[:, 0])
 
         # Clear existing robot geometry
         self._scene_handles.backbone_points = []
@@ -936,12 +957,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self,
         curves: np.ndarray,
         material_frames: np.ndarray,
+        *,
+        atomic: bool = True,
     ) -> None:
-        """Atomically update all robot geometry for one animation frame."""
+        """Update robot geometry, optionally within its own transaction."""
         if self._scene_handles is None or self._server is None:
             return
 
-        with self._server.atomic():
+        update_context = self._server.atomic() if atomic else nullcontext()
+        with update_context:
             num_robots = min(len(curves), len(self._scene_handles.backbone_points))
             num_points = curves.shape[1]
 
@@ -1870,7 +1894,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         with update_context:
             if can_update:
                 # Efficient update: only modify position/orientation properties
-                self._update_robot_geometry(curves, material_frames)
+                self._update_robot_geometry(curves, material_frames, atomic=False)
             else:
                 # Full rebuild needed (first frame or configuration changed)
                 self._build_robot_geometry(

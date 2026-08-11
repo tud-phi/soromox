@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Any
 
@@ -761,6 +762,7 @@ class ISupportViserRenderer(ViserRenderer):
             )
             return
 
+        self._add_ground_plane(curves[:, 0])
         self._remove_robot_geometry()
         q = self._as_batch(self._current_geometry_q)
         world_poses = self._sample_world_poses(q, curves)
@@ -842,11 +844,15 @@ class ISupportViserRenderer(ViserRenderer):
         self._scene_handles.num_backbone_points = curves.shape[1]
 
     def _update_robot_geometry(
-        self, curves: np.ndarray, material_frames: np.ndarray
+        self,
+        curves: np.ndarray,
+        material_frames: np.ndarray,
+        *,
+        atomic: bool = True,
     ) -> None:
         """Update all custom geometry without replacing Viser handles."""
         if self._current_geometry_q is None:
-            super()._update_robot_geometry(curves, material_frames)
+            super()._update_robot_geometry(curves, material_frames, atomic=atomic)
             return
         if (
             self._server is None
@@ -858,7 +864,8 @@ class ISupportViserRenderer(ViserRenderer):
         q = self._as_batch(self._current_geometry_q)
         world_poses = self._sample_world_poses(q, curves)
         self._current_world_poses = world_poses
-        with self._server.atomic():
+        update_context = self._server.atomic() if atomic else nullcontext()
+        with update_context:
             for robot_idx, robot_handles in enumerate(self._robot_visual_handles):
                 poses = world_poses[robot_idx]
                 chamber_handle_idx = 0

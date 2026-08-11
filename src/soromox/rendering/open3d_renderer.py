@@ -826,7 +826,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
-        merge_backbone_meshes: bool = False,
+        merge_backbone_meshes: bool | None = None,
     ):
         """Initialize Open3D renderer.
 
@@ -849,8 +849,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             actuator_line_width: Width of actuator lines
             camera_margin_ratio: Margin ratio for camera bounding box
-            merge_backbone_meshes: Merge each robot's backbone primitives into
-                one dynamic mesh to reduce Open3D geometry registrations
+            merge_backbone_meshes: Whether to merge each robot's backbone
+                primitives into one dynamic mesh. ``None`` selects merging
+                automatically for multi-robot scenes while retaining the
+                lower per-frame update cost of unmerged single-robot scenes.
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -878,7 +880,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self._base_offsets = base_offsets
         self.actuator_line_width = actuator_line_width
         self.camera_margin_ratio = camera_margin_ratio
-        self.merge_backbone_meshes = bool(merge_backbone_meshes)
+        self.merge_backbone_meshes = (
+            None if merge_backbone_meshes is None else bool(merge_backbone_meshes)
+        )
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
         self._warned_dynamic_geometry = False
@@ -901,6 +905,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         if style_norm not in style_map:
             raise ValueError("backbone_style must be one of: discrete, swept")
         return style_map[style_norm]
+
+    def _should_merge_backbone_meshes(self, num_robots: int) -> bool:
+        """Resolve the explicit or scene-size-aware backbone batching mode."""
+        if self.merge_backbone_meshes is None:
+            return int(num_robots) > 1
+        return self.merge_backbone_meshes
 
     @property
     def is_3d(self) -> bool:
@@ -2064,6 +2074,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_meshes: list = []
         backbone_meshes: list[list[list[CachedMesh]]] = []
         merged_backbone_meshes: list[o3d.geometry.TriangleMesh | None] = []
+        merge_backbone_meshes = self._should_merge_backbone_meshes(
+            scene_data.num_robots
+        )
 
         if not self._warned_dynamic_geometry:
             warnings.warn(
@@ -2102,11 +2115,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 layout,
                 segment_colors=scene_data.segment_colors_rgba[robot_idx],
                 base_plate_color=cfg.base_plate_color,
-                add_backbone_geometry=not self.merge_backbone_meshes,
+                add_backbone_geometry=not merge_backbone_meshes,
             )
             base_meshes.append(base_mesh)
             backbone_meshes.append(groups)
-            if self.merge_backbone_meshes:
+            if merge_backbone_meshes:
                 merged = _merge_triangle_meshes(
                     [cached.mesh for group in groups for cached in group]
                 )

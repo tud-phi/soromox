@@ -79,6 +79,9 @@ not yet available.
 
 Set `backbone_style="discrete"` for per-point spheres or `"swept"` for
 cylinders, boxes, or ellipses generated from the robot cross section.
+Multi-robot sequence scenes automatically merge each robot's backbone
+primitives to reduce Open3D registrations; `merge_backbone_meshes` can force or
+disable this behavior when measuring a particular workload.
 
 ### Keyboard Controls
 

@@ -88,6 +88,14 @@ class FakeMatplotlib3DAxis:
         self.view = (float(elev), float(azim))
 
 
+class LegacyFakeMatplotlib3DAxis(FakeMatplotlib3DAxis):
+    def set_proj_type(self, projection):
+        self.projection = projection
+
+    def set_box_aspect(self, aspect):
+        self.box_aspect = tuple(aspect)
+
+
 def test_ground_plane_arguments_follow_color_configuration():
     parameters = list(signature(MatplotlibRenderer).parameters)
     color_config_index = parameters.index("color_config")
@@ -125,6 +133,23 @@ def test_3d_default_camera_uses_base_pose_orientation():
         1.0 / np.tan(np.deg2rad(CameraConfig().fov) / 2.0)
     )
     assert axis.box_aspect == ((1.0, 1.0, 1.0), 1.0)
+
+
+def test_3d_camera_supports_matplotlib_without_focal_length_or_zoom_keywords():
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = MatplotlibRenderer(robot)
+    axis = LegacyFakeMatplotlib3DAxis()
+
+    renderer._setup_axes(
+        axis,
+        width_m=3.0,
+        scene_center=np.zeros(3),
+        scene_extent=1.0,
+        camera_config=CameraConfig(fov=45.0),
+    )
+
+    assert axis.projection == "persp"
+    assert axis.box_aspect == (1.0, 1.0, 1.0)
 
 
 def test_3d_camera_uses_shared_field_of_view():

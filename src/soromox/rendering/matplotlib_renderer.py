@@ -1052,7 +1052,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             fov = float(np.clip(config.fov, 1.0, 179.0))
             focal_length = 1.0 / np.tan(np.deg2rad(fov) / 2.0)
             if hasattr(ax, "set_proj_type"):
-                ax.set_proj_type("persp", focal_length=focal_length)
+                try:
+                    ax.set_proj_type("persp", focal_length=focal_length)
+                except TypeError:
+                    ax.set_proj_type("persp")
             if hasattr(ax, "set_box_aspect"):
                 default_half_fov = np.deg2rad(CameraConfig().fov) / 2.0
                 zoom = np.clip(
@@ -1060,7 +1063,10 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                     0.85,
                     1.2,
                 )
-                ax.set_box_aspect((1.0, 1.0, 1.0), zoom=float(zoom))
+                try:
+                    ax.set_box_aspect((1.0, 1.0, 1.0), zoom=float(zoom))
+                except TypeError:
+                    ax.set_box_aspect((1.0, 1.0, 1.0))
             camera_pos, look_at = config.compute_auto_position(
                 center,
                 content_extent,

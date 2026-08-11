@@ -250,6 +250,7 @@ class UMArmViserRenderer(ViserRenderer):
             )
             return
 
+        self._add_ground_plane(curves[:, 0])
         for robot_handles in self._scene_handles.backbone_points:
             for handle in robot_handles:
                 if hasattr(handle, "remove"):
@@ -453,9 +454,17 @@ class UMArmViserRenderer(ViserRenderer):
         self._scene_handles.num_backbone_points = curves.shape[1]
 
     def _update_robot_geometry(
-        self, curves: np.ndarray, material_frames: np.ndarray
+        self,
+        curves: np.ndarray,
+        material_frames: np.ndarray,
+        *,
+        atomic: bool = True,
     ) -> None:
         """Update the UMArm rigid visual model without rebuilding scene objects."""
+        if atomic and self._server is not None:
+            with self._server.atomic():
+                self._update_robot_geometry(curves, material_frames, atomic=False)
+            return
         del material_frames
         if (
             self._scene_handles is None
