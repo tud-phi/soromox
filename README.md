@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/logo/soromox_logo.png" alt="SoRoMoX logo" width="400"/>
+  <img src="docs/assets/logo/soromox_logo.png" alt="SoRoMoX logo" width="400"/>
 
   # Soft Robot Models in jaX (SoRoMoX)
 </div>
@@ -25,7 +25,7 @@ automatically differentiated with respect to states, inputs, and physical
 parameters, batched, and executed on CPUs, GPUs, and TPUs.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/2a18337a3ad616b082e68eb528fdd53db5bc7de4/docs/assets/paper/soromox-overview.png" alt="Overview of SoRoMoX model families, JAX-native numerical infrastructure, and application case studies" width="900"/>
+  <img src="docs/assets/paper/soromox-overview.png" alt="Overview of SoRoMoX model families, JAX-native numerical infrastructure, and application case studies" width="900"/>
 </p>
 
 Model-based controllers and rendering backends complement the core model
@@ -128,7 +128,7 @@ SoRoSim in matched PCS and GVS cases:
 | FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/2a18337a3ad616b082e68eb528fdd53db5bc7de4/docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling for articulated, PCS, and GVS models" width="760"/>
+  <img src="docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling for articulated, PCS, and GVS models" width="760"/>
 </p>
 
 On the paper's RTX 5090 benchmark, increasing the leading batch size from 1 to
@@ -144,25 +144,25 @@ controller gain optimization, safety-constrained control, and parallel
 reinforcement learning.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/2a18337a3ad616b082e68eb528fdd53db5bc7de4/docs/assets/paper/application-workflows.png" alt="Six application case studies from the SoRoMoX paper" width="900"/>
+  <img src="docs/assets/paper/application-workflows.png" alt="Six application case studies from the SoRoMoX paper" width="900"/>
 </p>
 
 ### Operational-space model-based control
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/2a18337a3ad616b082e68eb528fdd53db5bc7de4/docs/assets/paper/model-based-control.gif" alt="Operational-space impedance control using a two-segment PCS model" width="760"/>
+  <img src="docs/assets/paper/model-based-control.gif" alt="Operational-space impedance control using a two-segment PCS model" width="760"/>
 </p>
 
 ### Safety-constrained control
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/2a18337a3ad616b082e68eb528fdd53db5bc7de4/docs/assets/paper/safety-constrained-control.gif" alt="Comparison of safety-unaware and HOCBF-constrained continuum-robot control" width="760"/>
+  <img src="docs/assets/paper/safety-constrained-control.gif" alt="Comparison of safety-unaware and HOCBF-constrained continuum-robot control" width="760"/>
 </p>
 
 ### Parallel reinforcement learning
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tud-phi/soromox/2a18337a3ad616b082e68eb528fdd53db5bc7de4/docs/assets/paper/parallel-rl.gif" alt="Comparison of initialized and trained reinforcement-learning policies for a tendon-driven PCS robot" width="760"/>
+  <img src="docs/assets/paper/parallel-rl.gif" alt="Comparison of initialized and trained reinforcement-learning policies for a tendon-driven PCS robot" width="760"/>
 </p>
 
 See all six studies on the
