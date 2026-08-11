@@ -62,10 +62,6 @@ override.
 | `show_ground_plane` | Shows or hides the base-aligned reference plane | Matplotlib, Open3D, and Viser |
 | `ground_plane_size` | Sets the reference-plane side length in meters; `None` uses a robot-scaled default | Matplotlib, Open3D, and Viser |
 
-Visibility and sizing are intentionally independent: set `show_ground_plane`
-to `False` to hide the plane, or leave `ground_plane_size=None` to show it with
-an automatically chosen size.
-
 ```python
 from soromox.rendering import ViserRenderer
 
