@@ -9,13 +9,14 @@ MODULE_DIR = (
 )
 sys.path.insert(0, str(MODULE_DIR))
 
+import render_rl_video  # noqa: E402
 import rl_render_style  # noqa: E402
 import run_rl_policy  # noqa: E402
 from paper_style import PAPER_COLORS  # noqa: E402
 
 
 def test_run_policy_defaults_to_shared_paper_render_style():
-    args = run_rl_policy.parse_args([])
+    args = render_rl_video.parse_args([])
 
     assert args.width == rl_render_style.RENDER_WIDTH
     assert args.height == rl_render_style.RENDER_HEIGHT
@@ -23,6 +24,12 @@ def test_run_policy_defaults_to_shared_paper_render_style():
     assert args.camera_fov == 60.0
     assert args.camera_distance_factor is None
     assert args.camera_position_offset is None
+
+
+def test_run_policy_defaults_to_all_64_parallel_environments():
+    args = run_rl_policy.parse_args([])
+
+    assert args.num_envs == 64
 
 
 def test_shared_camera_matches_section_vf_viewpoint():

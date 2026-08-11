@@ -2,5 +2,5 @@
 *
 !.gitignore
 !reward_curve.pdf
-!rl_rollout.mp4
-!rl_rollout_random.mp4
+!rl_rollout_initialized_1_env.mp4
+!rl_rollout_trained_1_env.mp4

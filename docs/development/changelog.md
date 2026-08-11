@@ -35,9 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Viser while retaining metric axes.
 - Placed Actuation before Control in the API navigation and removed the
   outdated symbolic-derivation documentation page.
-- Unified the direct and offline Section Vf reinforcement-learning renderers
-  around the paper's camera, shared semantic color palette, dotted target
-  trail, target geometry, and 16:9 output style.
+- Separated Section Vf reinforcement-learning rollout generation from rendering:
+  trained and uniform-random baseline trajectories now retain the full parallel
+  batch under `data/traj`, while the shared offline renderer derives single-arm
+  or automatically framed grid MP4/GIF names from its input data under
+  `outputs` and uses the paper's visual style. Renamed the canonical artifacts
+  around policy state and environment count.
 - Moved detailed contributor and documentation tooling into the development
   guide and made `VERSION_BUMP_README.md` the authoritative maintainer release
   workflow, including the branch, pull-request, tag, and recovery procedures.
