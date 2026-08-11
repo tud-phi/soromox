@@ -68,7 +68,8 @@ The [Actuation](actuation/index.md) module provides utilities for modeling and w
 The [Utilities](utilities/index.md) module includes:
 
 - **[Parameters](utilities/parameters.md)**: Parameter handling, validation, and default configurations for soft robot systems
-- **[Symbolic Derivation](utilities/symbolic-derivation.md)**: Symbolic mathematics and derivation utilities using SymPy for soft robot modeling
+- **[Geometry](utilities/geometry.md)**: Pose encodings, rotations, and geometric errors
+- **[Lie Algebra](utilities/lie-algebra.md)**: Rigid-body and constant-strain operators
 
 ---
 

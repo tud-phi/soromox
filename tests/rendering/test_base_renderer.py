@@ -227,6 +227,8 @@ class DummyRenderer(BaseSoftRobotRenderer):
 class FakeMatplotlib3DAxis:
     def __init__(self):
         self.view = None
+        self.projection = None
+        self.box_aspect = None
 
     def set_xlim(self, *args):
         return None
@@ -245,6 +247,12 @@ class FakeMatplotlib3DAxis:
 
     def set_zlabel(self, *args):
         return None
+
+    def set_proj_type(self, projection, *, focal_length):
+        self.projection = (projection, float(focal_length))
+
+    def set_box_aspect(self, aspect, *, zoom):
+        self.box_aspect = (tuple(aspect), float(zoom))
 
     def view_init(self, *, elev, azim):
         self.view = (float(elev), float(azim))
@@ -592,6 +600,32 @@ def test_matplotlib_3d_default_camera_uses_base_pose_orientation():
         ]
     )
     assert_allclose(np.array(axis.view), expected_view, atol=1e-12)
+    assert axis.projection is not None
+    assert axis.projection[0] == "persp"
+    assert axis.projection[1] == pytest.approx(
+        1.0 / np.tan(np.deg2rad(CameraConfig().fov) / 2.0)
+    )
+    assert axis.box_aspect == ((1.0, 1.0, 1.0), 1.0)
+
+
+def test_matplotlib_3d_camera_uses_shared_field_of_view():
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = MatplotlibRenderer(robot)
+    axis = FakeMatplotlib3DAxis()
+
+    renderer._setup_axes(
+        axis,
+        width_m=3.0,
+        scene_center=np.zeros(3),
+        scene_extent=1.0,
+        camera_config=CameraConfig(fov=45.0),
+    )
+
+    assert axis.projection == (
+        "persp",
+        pytest.approx(1.0 / np.tan(np.deg2rad(45.0) / 2.0)),
+    )
+    assert axis.box_aspect == ((1.0, 1.0, 1.0), 1.2)
 
 
 def test_open3d_interactive_camera_front_points_from_eye_to_target():

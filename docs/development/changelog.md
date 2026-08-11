@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   control-oriented interface, installation, performance, and first use.
 - Kept Citation at the top level of the documentation navigation immediately
   after Paper & Results, and grouped the supported systems following the paper.
+- Reorganized the rendering documentation into an overview and gallery,
+  backend API guide, and shared configuration reference; normalized Python
+  examples throughout the generated package documentation as fenced code.
+- Applied the shared camera field of view and tighter scene framing to
+  Matplotlib's 3D renderer, bringing its gallery view closer to Open3D and
+  Viser while retaining metric axes.
+- Placed Actuation before Control in the API navigation and removed the
+  outdated symbolic-derivation documentation page.
 - Moved detailed contributor and documentation tooling into the development
   guide and made `VERSION_BUMP_README.md` the authoritative maintainer release
   workflow, including the branch, pull-request, tag, and recovery procedures.

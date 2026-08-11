@@ -110,8 +110,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
                 batched layouts. When provided for a single robot, accepts (dim,) or
                 (1, dim).
             color_config: Shared renderer color configuration.
-            camera_config: Camera configuration. Note: For Matplotlib, only position
-                and look_at are used to set view angle for 3D plots.
+            camera_config: Camera configuration. Matplotlib uses its field of view
+                and the direction from position to look-at for 3D plots.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
@@ -255,8 +255,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             base_offsets: Optional explicit base offsets for batched layouts
                 (N, 2/3) or (1, dim) for single robot.
             color_config: Shared renderer color configuration.
-            camera_config: Camera configuration. Note: For Matplotlib, only position
-                and look_at are used to set view angle for 3D plots.
+            camera_config: Camera configuration. Matplotlib uses its field of view
+                and the direction from position to look-at for 3D plots.
             render_actuators: Whether to render actuator visual layers if available.
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
@@ -304,8 +304,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             record_path: Optional path to save animation (mp4/gif depending on writer)
             base_offsets: Optional explicit base offsets for batched layouts
             color_config: Shared renderer color configuration.
-            camera_config: Camera configuration. Note: For Matplotlib, only position
-                and look_at are used to set view angle for 3D plots.
+            camera_config: Camera configuration. Matplotlib uses its field of view
+                and the direction from position to look-at for 3D plots.
             render_actuators: Whether to render actuator visual layers if available
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
 
@@ -763,8 +763,8 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             interval: Frame interval in ms
             record_path: Optional path to save animation
             playback_speed: Multiplier for playback speed
-            camera_config: Camera configuration. Note: For Matplotlib, only position
-                and look_at are used to set view angle for 3D plots.
+            camera_config: Camera configuration. Matplotlib uses its field of view
+                and the direction from position to look-at for 3D plots.
             color_config: Shared renderer color configuration.
             render_actuators: Whether to render actuator visual layers if available
             actuator_inputs: Optional actuator inputs for scalar-colored layers.
@@ -1038,7 +1038,9 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             content_extent = (
                 float(scene_extent) if scene_extent is not None else width_m
             )
-            plot_extent = max(1.45 * self.L_max, 1.2 * content_extent)
+            plot_extent = max(1.15 * self.L_max, 1.1 * content_extent)
+            if self.show_ground_plane:
+                plot_extent = max(plot_extent, self._resolve_ground_plane_size())
             half_extent = 0.5 * plot_extent
             ax.set_xlim(center[0] - half_extent, center[0] + half_extent)
             ax.set_ylim(center[1] - half_extent, center[1] + half_extent)
@@ -1047,6 +1049,18 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ax.set_ylabel("Y [m]")
             ax.set_zlabel("Z [m]")
             config = camera_config or CameraConfig()
+            fov = float(np.clip(config.fov, 1.0, 179.0))
+            focal_length = 1.0 / np.tan(np.deg2rad(fov) / 2.0)
+            if hasattr(ax, "set_proj_type"):
+                ax.set_proj_type("persp", focal_length=focal_length)
+            if hasattr(ax, "set_box_aspect"):
+                default_half_fov = np.deg2rad(CameraConfig().fov) / 2.0
+                zoom = np.clip(
+                    np.tan(default_half_fov) / np.tan(np.deg2rad(fov) / 2.0),
+                    0.85,
+                    1.2,
+                )
+                ax.set_box_aspect((1.0, 1.0, 1.0), zoom=float(zoom))
             camera_pos, look_at = config.compute_auto_position(
                 center,
                 content_extent,

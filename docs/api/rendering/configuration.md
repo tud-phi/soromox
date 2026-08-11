@@ -27,12 +27,16 @@ renderer.show(q, camera_config=camera)
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `fov` | float | 60.0 | Field of view in degrees |
+| `fov` | float | 75.0 | Field of view in degrees |
 | `position` | tuple | None | Explicit camera position (x, y, z), None for auto |
 | `look_at` | tuple | None | Point camera looks at, None for scene center |
 | `up` | tuple | (0, 0, 1) | Camera up vector |
-| `distance_factor` | float | 2.0 | Multiplier for auto-positioning distance |
-| `position_offset` | tuple | None | Direction vector for camera placement |
+| `distance_factor` | float | 10.0 | Multiplier for auto-positioning distance |
+| `position_offset` | tuple | (0.8, -0.8, 0.5) | Direction vector for camera placement |
+
+Matplotlib applies `fov` and the viewing direction from `position` to
+`look_at`; its axes limits determine the remaining framing. Open3D and Viser
+also use the explicit camera distance.
 
 ::: soromox.rendering.camera_config.CameraConfig
     options:
@@ -57,6 +61,10 @@ override.
 | `base_plate_thickness` | Sets the base-plate thickness in meters | Open3D and Viser |
 | `show_ground_plane` | Shows or hides the base-aligned reference plane | Matplotlib, Open3D, and Viser |
 | `ground_plane_size` | Sets the reference-plane side length in meters; `None` uses a robot-scaled default | Matplotlib, Open3D, and Viser |
+
+Visibility and sizing are intentionally independent: set `show_ground_plane`
+to `False` to hide the plane, or leave `ground_plane_size=None` to show it with
+an automatically chosen size.
 
 ```python
 from soromox.rendering import ViserRenderer
