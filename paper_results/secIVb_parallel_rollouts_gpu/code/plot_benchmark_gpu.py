@@ -18,23 +18,14 @@ from matplotlib.lines import Line2D
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
-PAPER_STYLE = SCRIPT_DIR.parent / "paper.mplstyle"
+PAPER_RESULTS_DIR = SCRIPT_DIR.parent
+if str(PAPER_RESULTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PAPER_RESULTS_DIR))
+
+from paper_style import PAPER_COLORS as COLORS
+from paper_style import PAPER_STYLE_PATH as PAPER_STYLE
 
 # --- Configuration Constants ---
-COLORS = {
-    "pre_opt_1": "#006BA6",
-    "pre_opt_2": "#0496FF",
-    "post_opt_1": "#f1552e",
-    "post_opt_2": "#D81159",
-    "post_opt_3": "#8F2D56",
-    "obstacle": "#7B2CBF",
-    "target": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#D81159",
-}
-
 MODEL_ORDER = ["articulated_soft_robot", "planar_pcs", "pcs", "gvs"]
 MODEL_LABELS = {
     "articulated_soft_robot": "Articulated Soft Robot",

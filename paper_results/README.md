@@ -35,10 +35,12 @@ existing output.
 ## Shared conventions
 
 The standardized Matplotlib plotters use the base publication settings in
-[`paper.mplstyle`](paper.mplstyle). Plotters apply that file first, then keep
-figure-specific font sizes, DPI, padding, and layout settings next to the figure
-code. This centralizes typography, grids, legends, spines, and line defaults
-without forcing differently sized paper panels to use one font scale.
+[`paper.mplstyle`](paper.mplstyle) and the semantic color palette in
+[`paper_style.py`](paper_style.py). Plotters apply the style file first, then
+keep figure-specific font sizes, DPI, padding, and layout settings next to the
+figure code. This centralizes typography, colors, grids, legends, spines, and
+line defaults without forcing differently sized paper panels to use one font
+scale.
 
 Artifact paths remain case-local. Entry points derive their case directory from
 the script location and default to that case's `data/` and `outputs/`

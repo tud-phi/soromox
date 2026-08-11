@@ -8,6 +8,7 @@ import csv
 import os
 import re
 import shutil
+import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,27 +17,21 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
+PAPER_RESULTS_DIR = SCRIPT_DIR.parent
+if str(PAPER_RESULTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PAPER_RESULTS_DIR))
+
+from paper_style import PAPER_COLORS as COLORS
+from paper_style import PAPER_STYLE_PATH
+
 os.environ.setdefault("MPLCONFIGDIR", str(SCRIPT_DIR / ".matplotlib_cache"))
-PAPER_STYLE = SCRIPT_DIR.parent / "paper.mplstyle"
+PAPER_STYLE = PAPER_STYLE_PATH
 
 # --- Configuration Constants ---
 REWARD_KEY = "episode_reward_mean"
 TIME_KEY = "wall_time"
 FIGURE_SIZE_CM = (12.0, 12.0)  # Matches original 3.8 x 3.8 inches
 
-COLORS = {
-    "pre_opt_1": "#006BA6",
-    "pre_opt_2": "#0496FF",
-    "post_opt_1": "#f1552e",
-    "post_opt_2": "#D81159",
-    "post_opt_3": "#8F2D56",
-    "obstacle": "#7B2CBF",
-    "target": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#D81159",
-}
 COLORS_RL = {
     "PyElastica": COLORS["pre_opt_1"],
     "SoRoMoX 64 envs": COLORS["pre_opt_2"],

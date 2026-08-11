@@ -2,25 +2,20 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 from matplotlib import colors
 
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import BackboneColorConfig, RendererColorConfig
 
-COLORS = {
-    "pre_opt_1": "#006BA6",
-    "pre_opt_2": "#0496FF",
-    "post_opt_1": "#f1552e",
-    "post_opt_2": "#D81159",
-    "post_opt_3": "#8F2D56",
-    "obstacle": "#7B2CBF",
-    "target": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#D81159",
-}
+PAPER_RESULTS_DIR = Path(__file__).resolve().parents[2]
+if str(PAPER_RESULTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PAPER_RESULTS_DIR))
+
+from paper_style import PAPER_COLORS
 
 RENDER_WIDTH = 1920
 RENDER_HEIGHT = 1080
@@ -30,9 +25,9 @@ TARGET_SPHERE_RADIUS = 0.015
 TARGET_TRAIL_RADIUS = 0.003
 TARGET_TRAIL_STRIDE = 2
 
-TARGET_COLOR = tuple(colors.to_rgb(COLORS["target"]))
+TARGET_COLOR = tuple(colors.to_rgb(PAPER_COLORS["target"]))
 _target_cmap = colors.LinearSegmentedColormap.from_list(
-    "secVf_target_gradient", ["#FFFFFF", COLORS["target"]]
+    "secVf_target_gradient", ["#FFFFFF", PAPER_COLORS["target"]]
 )
 TARGET_TRAIL_COLOR = tuple(_target_cmap(np.array([0.65]))[0, :3])
 
@@ -58,12 +53,12 @@ def make_rl_camera_config(
 
 def make_rl_color_config(color_label: str = "post_opt_1") -> RendererColorConfig:
     """Return the shared arm, actuator, base, and ground-plane colors."""
-    if color_label not in COLORS:
+    if color_label not in PAPER_COLORS:
         raise KeyError(f"Unknown Section Vf color label: {color_label!r}")
     return RendererColorConfig(
         backbone=BackboneColorConfig(
             segment_colors=np.array(
-                [colors.to_rgb(COLORS[color_label])], dtype=np.float64
+                [colors.to_rgb(PAPER_COLORS[color_label])], dtype=np.float64
             )
         ),
         base_plate_color=(0.2, 0.2, 0.2),

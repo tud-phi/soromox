@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,7 +15,12 @@ from matplotlib.lines import Line2D
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 RESULTS_FILENAME = "optimization_results.mat"
-PAPER_STYLE = SCRIPT_DIR.parent / "paper.mplstyle"
+PAPER_RESULTS_DIR = SCRIPT_DIR.parent
+if str(PAPER_RESULTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PAPER_RESULTS_DIR))
+
+from paper_style import PAPER_COLORS as COLORS
+from paper_style import PAPER_STYLE_PATH as PAPER_STYLE
 
 FIGURE_SIZE_CM = (28.0, 16.0)
 CM_TO_INCH = 1.0 / 2.54
@@ -22,19 +28,6 @@ CM_TO_POINT = 72.0 / 2.54
 FONT_SIZE_CM = 0.35
 FONT_SIZE_PT = FONT_SIZE_CM * CM_TO_POINT
 
-COLORS = {
-    "pre_opt_1": "#006BA6",
-    "pre_opt_2": "#0496FF",
-    "post_opt_1": "#f1552e",
-    "post_opt_2": "#D81159",
-    "post_opt_3": "#8F2D56",
-    "obstacle": "#7B2CBF",
-    "target": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#D81159",
-}
 AXIS = {
     "x_axis_label": r"$x$ $\mathrm{[m]}$",
     "y_axis_label": r"$y$ $\mathrm{[m]}$",

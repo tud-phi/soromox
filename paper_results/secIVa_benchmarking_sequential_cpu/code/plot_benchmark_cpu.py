@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -22,21 +23,13 @@ SCRIPT_DIR = Path(__file__).resolve()
 BENCHMARK_DIR = SCRIPT_DIR.parents[1]
 DEFAULT_DATA_DIR = BENCHMARK_DIR / "data"
 DEFAULT_OUTPUT_DIR = BENCHMARK_DIR / "outputs"
-PAPER_STYLE = SCRIPT_DIR.parents[2] / "paper.mplstyle"
+PAPER_RESULTS_DIR = SCRIPT_DIR.parents[2]
+if str(PAPER_RESULTS_DIR) not in sys.path:
+    sys.path.insert(0, str(PAPER_RESULTS_DIR))
 
-COLORS = {
-    "pre_opt_1": "#006BA6",
-    "pre_opt_2": "#0496FF",
-    "post_opt_1": "#f1552e",
-    "post_opt_2": "#D81159",
-    "post_opt_3": "#8F2D56",
-    "obstacle": "#7B2CBF",
-    "target": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#D81159",
-}
+from paper_style import PAPER_COLORS as COLORS
+from paper_style import PAPER_STYLE_PATH as PAPER_STYLE
+
 COORDINATES: tuple[Coordinate, ...] = ("x", "y", "z")
 COORDINATE_COLORS: dict[Coordinate, str] = {
     "x": COLORS["x_t"],

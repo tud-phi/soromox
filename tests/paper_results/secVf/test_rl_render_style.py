@@ -11,6 +11,7 @@ sys.path.insert(0, str(MODULE_DIR))
 
 import rl_render_style  # noqa: E402
 import run_rl_policy  # noqa: E402
+from paper_style import PAPER_COLORS  # noqa: E402
 
 
 def test_run_policy_defaults_to_shared_paper_render_style():
@@ -35,6 +36,7 @@ def test_shared_camera_matches_section_vf_viewpoint():
 def test_shared_trained_policy_and_target_colors_match_paper_palette():
     color_config = rl_render_style.make_rl_color_config("post_opt_1")
 
+    assert rl_render_style.PAPER_COLORS is PAPER_COLORS
     assert_allclose(
         color_config.backbone.segment_colors,
         np.array([[241.0, 85.0, 46.0]]) / 255.0,
