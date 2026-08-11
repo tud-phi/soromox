@@ -182,11 +182,13 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
             ``[qw, qx, qy, qz]`` order.
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import rotation_matrix_to_quaternion
-        >>> R = jnp.eye(3)  # Identity rotation
-        >>> q = rotation_matrix_to_quaternion(R)
-        >>> # q ≈ [1, 0, 0, 0] (identity quaternion)
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import rotation_matrix_to_quaternion
+
+        R = jnp.eye(3)
+        q = rotation_matrix_to_quaternion(R)  # approximately [1, 0, 0, 0]
+        ```
 
     References:
         Shepperd, S. W. (1978). Quaternion from rotation matrix.
@@ -279,11 +281,13 @@ def quaternion_to_rotation_matrix(quat: Array) -> Array:
         R: Rotation matrix of shape (3, 3).
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import quaternion_to_rotation_matrix
-        >>> q = jnp.array([1.0, 0.0, 0.0, 0.0])  # Identity quaternion
-        >>> R = quaternion_to_rotation_matrix(q)
-        >>> # R ≈ eye(3) (identity rotation matrix)
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import quaternion_to_rotation_matrix
+
+        q = jnp.array([1.0, 0.0, 0.0, 0.0])
+        R = quaternion_to_rotation_matrix(q)  # approximately eye(3)
+        ```
 
     Note:
         If the quaternion norm is numerically zero, identity rotation is used
@@ -336,12 +340,14 @@ def quaternion_to_rotation_vector(
         omega: Rotation vector of shape (3,).
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import quaternion_to_rotation_vector
-        >>> # 90-degree rotation around z-axis
-        >>> q = jnp.array([jnp.cos(jnp.pi/4), 0, 0, jnp.sin(jnp.pi/4)])
-        >>> omega = quaternion_to_rotation_vector(q)
-        >>> # omega ≈ [0, 0, π/2]
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import quaternion_to_rotation_vector
+
+        # 90-degree rotation around the z-axis
+        q = jnp.array([jnp.cos(jnp.pi / 4), 0, 0, jnp.sin(jnp.pi / 4)])
+        omega = quaternion_to_rotation_vector(q)  # approximately [0, 0, pi/2]
+        ```
     """
     quat = normalize_quaternion(quat, eps=eps)
     q_w = quat[0]
@@ -379,12 +385,15 @@ def rotation_vector_to_quaternion(
             ``[qw, qx, qy, qz]`` order.
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import rotation_vector_to_quaternion
-        >>> # 90-degree rotation around z-axis
-        >>> omega = jnp.array([0.0, 0.0, jnp.pi / 2])
-        >>> q = rotation_vector_to_quaternion(omega)
-        >>> # q ≈ [cos(π/4), 0, 0, sin(π/4)]
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import rotation_vector_to_quaternion
+
+        # 90-degree rotation around the z-axis
+        omega = jnp.array([0.0, 0.0, jnp.pi / 2])
+        q = rotation_vector_to_quaternion(omega)
+        # q is approximately [cos(pi/4), 0, 0, sin(pi/4)]
+        ```
     """
     omega = jnp.asarray(omega).reshape(-1)
     eps_arr = eps_for_dtype(eps, omega.dtype)
@@ -429,12 +438,14 @@ def rotation_matrix_to_rotation_vector(
         omega: Rotation vector of shape (3,).
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
-        >>> # 180-degree rotation around z-axis
-        >>> R = jnp.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1.0]])
-        >>> omega = rotation_matrix_to_rotation_vector(R)
-        >>> # omega ≈ [0, 0, π]
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
+
+        # 180-degree rotation around the z-axis
+        R = jnp.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1.0]])
+        omega = rotation_matrix_to_rotation_vector(R)  # approximately [0, 0, pi]
+        ```
 
     Note:
         This delegates to ``soromox.utils.lie_algebra.so3.log`` so that the
@@ -465,12 +476,14 @@ def rotation_vector_to_rotation_matrix(
         R: Rotation matrix of shape (3, 3).
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import rotation_vector_to_rotation_matrix
-        >>> # 90-degree rotation around z-axis
-        >>> omega = jnp.array([0.0, 0.0, jnp.pi / 2])
-        >>> R = rotation_vector_to_rotation_matrix(omega)
-        >>> # R is the rotation matrix for 90° around z
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import rotation_vector_to_rotation_matrix
+
+        # 90-degree rotation around the z-axis
+        omega = jnp.array([0.0, 0.0, jnp.pi / 2])
+        R = rotation_vector_to_rotation_matrix(omega)
+        ```
 
     Note:
         This delegates to ``soromox.utils.lie_algebra.so3.exp`` so that
@@ -499,11 +512,13 @@ def rotation_matrix_to_6d(R: Array) -> Array:
         r6d: 6D representation of shape (6,), containing [R[:, 0], R[:, 1]].
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import rotation_matrix_to_6d
-        >>> R = jnp.eye(3)  # Identity rotation
-        >>> r6d = rotation_matrix_to_6d(R)
-        >>> # r6d = [1, 0, 0, 0, 1, 0]
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import rotation_matrix_to_6d
+
+        R = jnp.eye(3)
+        r6d = rotation_matrix_to_6d(R)  # [1, 0, 0, 0, 1, 0]
+        ```
 
     References:
         Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H. (2019).
@@ -529,11 +544,13 @@ def rotation_6d_to_rotation_matrix(r6d: Array) -> Array:
         R: Rotation matrix of shape (3, 3).
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import rotation_6d_to_rotation_matrix
-        >>> r6d = jnp.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
-        >>> R = rotation_6d_to_rotation_matrix(r6d)
-        >>> # R ≈ eye(3)
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import rotation_6d_to_rotation_matrix
+
+        r6d = jnp.array([1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+        R = rotation_6d_to_rotation_matrix(r6d)  # approximately eye(3)
+        ```
 
     References:
         Zhou, Y., Barnes, C., Lu, J., Yang, J., & Li, H. (2019).
@@ -580,12 +597,14 @@ def quaternion_multiply(q1: Array, q2: Array) -> Array:
             order.
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import quaternion_multiply
-        >>> q1 = jnp.array([1, 0, 0, 0])  # Identity
-        >>> q2 = jnp.array([jnp.cos(jnp.pi/4), 0, 0, jnp.sin(jnp.pi/4)])  # 90° around z
-        >>> q = quaternion_multiply(q1, q2)
-        >>> # q ≈ q2
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import quaternion_multiply
+
+        q1 = jnp.array([1, 0, 0, 0])
+        q2 = jnp.array([jnp.cos(jnp.pi / 4), 0, 0, jnp.sin(jnp.pi / 4)])
+        q = quaternion_multiply(q1, q2)  # approximately q2
+        ```
     """
     w1, x1, y1, z1 = q1[0], q1[1], q1[2], q1[3]
     w2, x2, y2, z2 = q2[0], q2[1], q2[2], q2[3]
@@ -616,10 +635,12 @@ def quaternion_conjugate(q: Array) -> Array:
             ``[qw, -qx, -qy, -qz]``.
 
     Example:
-        >>> import jax.numpy as jnp
-        >>> from soromox.utils.geometry.rotations import quaternion_conjugate
-        >>> q = jnp.array([jnp.cos(jnp.pi/4), 0, 0, jnp.sin(jnp.pi/4)])  # 90° around z
-        >>> q_conj = quaternion_conjugate(q)
-        >>> # q_conj represents -90° around z
+        ```python
+        import jax.numpy as jnp
+        from soromox.utils.geometry.rotations import quaternion_conjugate
+
+        q = jnp.array([jnp.cos(jnp.pi / 4), 0, 0, jnp.sin(jnp.pi / 4)])
+        q_conj = quaternion_conjugate(q)  # represents -90 degrees around z
+        ```
     """
     return jnp.array([q[0], -q[1], -q[2], -q[3]])

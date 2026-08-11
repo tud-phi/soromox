@@ -75,14 +75,20 @@ def twist_callable_from_pose_callable_factory(
 
     Examples
     --------
-    >>> def x_des_fn(t):
-    ...     # Returns full pose [rot, pos] as function of time for 1 point
-    ...     return jnp.array([0., 0., t * 0.1, 0., 0., 0.2 + 0.01 * t])
-    >>> twist_fn = twist_callable_from_pose_callable_factory(
-    ...     x_des_fn, n_points=1, n_pose_dim=6, n_orientation_dim=3,
-    ...     rotation_representation=RotationRepresentation.ROTATION_VECTOR
-    ... )
-    >>> twist = twist_fn(1.0)  # Full velocity at t=1.0
+    ```python
+    def x_des_fn(t):
+        # Return the full pose [rotation, position] for one point.
+        return jnp.array([0.0, 0.0, t * 0.1, 0.0, 0.0, 0.2 + 0.01 * t])
+
+    twist_fn = twist_callable_from_pose_callable_factory(
+        x_des_fn,
+        n_points=1,
+        n_pose_dim=6,
+        n_orientation_dim=3,
+        rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+    )
+    twist = twist_fn(1.0)
+    ```
     """
 
     def twist_fn(t: Array) -> Array:

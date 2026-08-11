@@ -40,18 +40,20 @@ class CameraConfig:
             (only used when position is None)
 
     Example:
-        >>> # Default camera with Z-up, auto-positioned
-        >>> cam = CameraConfig()
+        ```python
+        # Default camera with Z-up, auto-positioned
+        camera = CameraConfig()
 
-        >>> # Custom FOV with explicit position
-        >>> cam = CameraConfig(
-        ...     fov=60.0,
-        ...     position=(0.5, -0.5, 0.3),
-        ...     look_at=(0.0, 0.0, 0.1),
-        ... )
+        # Custom field of view with an explicit position
+        camera = CameraConfig(
+            fov=60.0,
+            position=(0.5, -0.5, 0.3),
+            look_at=(0.0, 0.0, 0.1),
+        )
 
-        >>> # Auto-positioned but closer to scene
-        >>> cam = CameraConfig(distance_factor=5.0)
+        # Auto-positioned but closer to the scene
+        camera = CameraConfig(distance_factor=5.0)
+        ```
     """
 
     fov: float = 75.0

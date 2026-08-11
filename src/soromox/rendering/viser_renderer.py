@@ -2074,15 +2074,22 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         Two usage patterns:
 
-        1. Callback mode (renderer pulls):
-            >>> def get_state(t):
-            ...     return compute_robot_state(t)
-            >>> ctrl = renderer.start_live_mode(callback=get_state)
+        Callback mode (renderer pulls):
 
-        2. Stream mode (user pushes):
-            >>> ctrl = renderer.start_live_mode()
-            >>> for q in simulation_loop():
-            ...     ctrl.push_state(q)
+        ```python
+        def get_state(t):
+            return compute_robot_state(t)
+
+        controller = renderer.start_live_mode(callback=get_state)
+        ```
+
+        Stream mode (user pushes):
+
+        ```python
+        controller = renderer.start_live_mode()
+        for q in simulation_loop():
+            controller.push_state(q)
+        ```
 
         Args:
             callback: Optional state provider function (time) -> q

@@ -663,12 +663,14 @@ class OperationalSpaceDynamics(eqx.Module):
             ValueError: If input poses have incorrect shape.
 
         Example:
-            >>> # Get FULL current pose
-            >>> x = osd.operational_space_poses(q)  # shape (6,) for 1 point
-            >>> # Define FULL desired pose
-            >>> x_des = jnp.array([0., 0., 0., 0.0, 0.0, 0.2])  # [rot, pos]
-            >>> # Compute FULL error (all 6 components)
-            >>> error = osd.compute_pose_error(x, x_des)  # shape (6,)
+            ```python
+            # Get the full current pose for one point.
+            x = osd.operational_space_poses(q)  # shape (6,)
+
+            # Define the full desired pose and compute all six error components.
+            x_des = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.2])
+            error = osd.compute_pose_error(x, x_des)  # shape (6,)
+            ```
 
         See Also:
             compute_task_pose_error: Returns task-selected pose error.
@@ -727,15 +729,22 @@ class OperationalSpaceDynamics(eqx.Module):
                    Shape: (n_operational_space,).
 
         Example:
-            >>> # Create operational space dynamics with position-only task
-            >>> osd = OperationalSpaceDynamics(robot, s_ps,
-            ...     task_selector=jnp.array([False, False, False, True, True, True]))
-            >>> # Get FULL current pose (includes rotation even though not in task)
-            >>> x = osd.operational_space_poses(q)  # shape (6,)
-            >>> # Define FULL desired pose
-            >>> x_des = jnp.array([0., 0., 0., 0.0, 0.0, 0.2])  # [rot, pos]
-            >>> # Compute task-selected error (only position error)
-            >>> error = osd.compute_task_pose_error(x, x_des)  # shape (3,)
+            ```python
+            osd = OperationalSpaceDynamics(
+                robot,
+                s_ps,
+                task_selector=jnp.array(
+                    [False, False, False, True, True, True]
+                ),
+            )
+
+            # The current and desired values remain full poses.
+            x = osd.operational_space_poses(q)  # shape (6,)
+            x_des = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.2])
+
+            # Only the selected position error is returned.
+            error = osd.compute_task_pose_error(x, x_des)  # shape (3,)
+            ```
 
         See Also:
             compute_pose_error: Returns full pose error without task selection.

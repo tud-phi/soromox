@@ -134,20 +134,28 @@ class ReferenceTrajectory:
 
     Examples
     --------
-    # From discrete time series (position-only)
-    >>> ts = jnp.linspace(0, 1, 100)
-    >>> x_des_ts = jnp.sin(ts)[:, None]  # shape (100, 1)
-    >>> ref = ReferenceTrajectory(ts=ts, x_des_ts=x_des_ts)
-    >>> ref.x_des_fn(0.5)  # Interpolated value at t=0.5
+    From discrete time series (position-only):
 
-    # From continuous function with proper twist derivation
-    >>> def x_fn(t):
-    ...     return jnp.array([0., 0., t * 0.1, 0., 0., 0.2 + 0.01 * t])
-    >>> ref = ReferenceTrajectory(
-    ...     ts=ts, x_des_fn=x_fn,
-    ...     rotation_representation=RotationRepresentation.ROTATION_VECTOR
-    ... )
-    >>> ref.xd_des_fn(0.5)  # Properly derived twist at t=0.5
+    ```python
+    ts = jnp.linspace(0, 1, 100)
+    x_des_ts = jnp.sin(ts)[:, None]  # shape (100, 1)
+    reference = ReferenceTrajectory(ts=ts, x_des_ts=x_des_ts)
+    reference.x_des_fn(0.5)
+    ```
+
+    From a continuous function with proper twist derivation:
+
+    ```python
+    def x_fn(t):
+        return jnp.array([0.0, 0.0, t * 0.1, 0.0, 0.0, 0.2 + 0.01 * t])
+
+    reference = ReferenceTrajectory(
+        ts=ts,
+        x_des_fn=x_fn,
+        rotation_representation=RotationRepresentation.ROTATION_VECTOR,
+    )
+    reference.xd_des_fn(0.5)
+    ```
     """
 
     ts: Array

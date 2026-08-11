@@ -199,8 +199,13 @@ def _prepare_bounds(bounds, x0):
 
     Examples
     --------
-    >>> _prepare_bounds([(0, 1, 2), (1, 2, jnp.inf)], [0.5, 1.5, 2.5])
-    (array([0., 1., 2.]), array([ 1.,  2., inf]))
+    ```python
+    lower, upper = _prepare_bounds(
+        [(0, 1, 2), (1, 2, jnp.inf)],
+        [0.5, 1.5, 2.5],
+    )
+    # lower = [0, 1, 2] and upper = [1, 2, inf]
+    ```
     """
     lb, ub = (jnp.asarray(b, dtype=float) for b in bounds)
     if lb.ndim == 0:
@@ -317,29 +322,36 @@ def approx_derivative(
 
     Examples
     --------
-    >>> import numpy as jnp
-    >>> from scipy.optimize._numdiff import approx_derivative
-    >>>
-    >>> def f(x, c1, c2):
-    ...     return jnp.array([x[0] * jnp.sin(c1 * x[1]),
-    ...                      x[0] * jnp.cos(c2 * x[1])])
-    ...
-    >>> x0 = jnp.array([1.0, 0.5 * jnp.pi])
-    >>> approx_derivative(f, x0, args=(1, 2))
-    array([[ 1.,  0.],
-           [-1.,  0.]])
+    ```python
+    import jax.numpy as jnp
+
+    from soromox.utils.numerical_jacobian import approx_derivative
+
+    def f(x, c1, c2):
+        return jnp.array(
+            [
+                x[0] * jnp.sin(c1 * x[1]),
+                x[0] * jnp.cos(c2 * x[1]),
+            ]
+        )
+
+    x0 = jnp.array([1.0, 0.5 * jnp.pi])
+    jacobian = approx_derivative(f, x0, args=(1, 2))
+    # jacobian is approximately [[1, 0], [-1, 0]]
+    ```
 
     Bounds can be used to limit the region of function evaluation.
     In the example below we compute left and right derivative at point 1.0.
 
-    >>> def g(x):
-    ...     return x**2 if x >= 1 else x
-    ...
-    >>> x0 = 1.0
-    >>> approx_derivative(g, x0, bounds=(-jnp.inf, 1.0))
-    array([ 1.])
-    >>> approx_derivative(g, x0, bounds=(1.0, jnp.inf))
-    array([ 2.])
+    ```python
+    def g(x):
+        return x**2 if x >= 1 else x
+
+    x0 = 1.0
+    left_derivative = approx_derivative(g, x0, bounds=(-jnp.inf, 1.0))
+    right_derivative = approx_derivative(g, x0, bounds=(1.0, jnp.inf))
+    # left_derivative is [1] and right_derivative is [2]
+    ```
     """
     if kwargs is None:
         kwargs = {}
