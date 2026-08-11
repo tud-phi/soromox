@@ -57,17 +57,6 @@ System-specific renderer designs are documented alongside their robots: the
 [I-SUPPORT Viser renderer](../systems/pcs/isupport.md), and
 [UMArm Viser renderer](../systems/articulated/mckibben-umarm.md).
 
-### Architecture
-
-```text
-BaseSoftRobotRenderer (abstract base)
-├── MatplotlibRenderer         # Generic, works with any robot (2D/3D)
-├── Open3DRenderer             # Interactive 3D visualization
-├── ViserRenderer              # Web-based interactive 3D visualization
-├── OpenCVPlanarRenderer       # Fast 2D rendering
-└── OpenCVPlanarHSARenderer    # Specialized for PlanarHSA
-```
-
 ## Choosing a Renderer
 
 | Renderer | Best For | Strengths | Limitations |
@@ -97,48 +86,24 @@ Settings shared by multiple renderer backends:
 
 - `CameraConfig` - Camera positioning and field of view
 - Robot base, base-plate, and ground-plane behavior
+- Multi-robot layouts and spacing
+- Recording and video encoding
 - `RendererColorConfig` - Color configuration hierarchy
 - `BackboneColorConfig` - Backbone-specific colors
 - Built-in color palettes and themes
 
 ## Quick Start
 
-=== "Matplotlib (any robot)"
+All renderers accept a robot model at construction and expose a single-frame
+entry point. For example:
 
-    ```python
-    from soromox.rendering import MatplotlibRenderer
+```python
+from soromox.rendering import MatplotlibRenderer
 
-    renderer = MatplotlibRenderer(robot, num_points=50)
-    renderer.show(q)  # Single frame
-    renderer.animate(ts, q_ts, mode="slider")  # Interactive
-    ```
+renderer = MatplotlibRenderer(robot, num_points=50)
+renderer.show(q)
+```
 
-=== "Open3D (3D robots)"
-
-    ```python
-    from soromox.rendering import Open3DRenderer
-
-    renderer = Open3DRenderer(robot, num_points=80)
-    renderer.show(q)  # Interactive viewer
-    renderer.render_sequence(ts, q_ts, record_path="video.mp4")
-    ```
-
-=== "Viser (web-based)"
-
-    ```python
-    from soromox.rendering import ViserRenderer
-
-    renderer = ViserRenderer(robot, port=8080)
-    renderer.show(q)  # Opens browser
-    renderer.render_sequence(ts, q_ts, loop=True)
-    ```
-
-=== "OpenCV (planar)"
-
-    ```python
-    from soromox.rendering import OpenCVPlanarRenderer
-
-    renderer = OpenCVPlanarRenderer(robot, width=800, height=600)
-    img = renderer.render_frame(q)
-    renderer.render_sequence(ts, q_ts, record_path="video.mp4")
-    ```
+Choose another backend from the table above, then follow its
+[API reference](renderers.md) for interactive playback, live mode, or video
+capture.

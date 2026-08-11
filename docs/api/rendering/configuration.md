@@ -218,3 +218,63 @@ legend = renderer.get_color_legend(num_robots=3, color_config=color_config)
       heading_level: 3
       docstring_section_style: table
       members_order: source
+
+---
+
+## Multi-Robot Layouts
+
+Matplotlib, Open3D, and Viser accept batched robot configurations:
+
+- `q` with shape `(N, DOF)` for `show()` and `render_frame()`;
+- `q_ts` with shape `(N, T, DOF)` for sequence rendering or animation.
+
+Use `base_offsets` to place each robot explicitly or `grid_spacing` to control
+automatically generated layouts. Viser additionally supports
+`multi_robot_layout="overlay"` to render robots at a common base pose. Per-robot
+colors and alpha values can distinguish overlaid configurations.
+
+```python
+renderer.render_sequence(
+    ts,
+    q_ts_batched,
+    multi_robot_layout="overlay",
+    color_config=color_config,
+)
+```
+
+---
+
+## Recording and Video Encoding
+
+All renderer families accept `record_path` for sequence output, while their
+capture mechanisms differ:
+
+- Matplotlib uses its animation writers and requires FFmpeg for MP4 output.
+- Open3D and Viser use FFmpeg with `VideoEncodingConfig`.
+- Open3D writes PNG frames when `record_path` names a directory.
+- Viser can capture synchronized browser snapshots with `snapshot_paths`.
+- OpenCV uses FFmpeg when available and otherwise falls back to
+  `cv2.VideoWriter`.
+
+```python
+from soromox.rendering import VideoEncodingConfig
+
+renderer.render_sequence(
+    ts,
+    q_ts,
+    record_path="trajectory.mp4",
+    video_config=VideoEncodingConfig(crf=18, pix_fmt="yuv420p"),
+)
+```
+
+Use `record_every_n` to subsample captured frames where supported. Recording
+depends on the backend, so consult the relevant [renderer API](renderers.md)
+for capture-only options.
+
+::: soromox.rendering.video_encoding.VideoEncodingConfig
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 3
+      docstring_section_style: table
+      members_order: source
