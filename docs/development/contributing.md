@@ -112,6 +112,9 @@ For more details, see the `[tool.ruff]` section in `pyproject.toml`.
 
 ### 5. Build Documentation
 
+The documentation site uses Zensical. Use its CLI for both local preview and
+production builds:
+
 ```bash
 # Serve documentation locally
 uv run --extra docs zensical serve
