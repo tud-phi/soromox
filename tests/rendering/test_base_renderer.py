@@ -5,7 +5,7 @@ from unittest.mock import Mock
 import jax.numpy as jnp
 import numpy as np
 import pytest
-from numpy.testing import assert_allclose
+from numpy.testing import assert_allclose, assert_array_equal
 from PIL import Image
 
 from soromox.rendering.actuators import (
@@ -974,18 +974,39 @@ def test_open3d_ground_plane_has_surface_and_grid():
     pytest.importorskip("open3d")
     from soromox.rendering.open3d_renderer import _make_ground_plane
 
+    center = np.array([0.2, -0.1, 0.3])
+    normal = np.array([1.0, 2.0, 3.0])
+    size = 0.4
+    grid_divisions = 4
     plane, grid = _make_ground_plane(
-        center_xyz=np.array([0.0, 0.0, 0.0]),
-        normal_xyz=np.array([0.0, 0.0, 1.0]),
-        size=0.4,
+        center_xyz=center,
+        normal_xyz=normal,
+        size=size,
         plane_color=(0.9, 0.9, 0.9),
         grid_color=(0.7, 0.7, 0.7),
-        grid_divisions=4,
+        grid_divisions=grid_divisions,
     )
 
-    assert np.asarray(plane.vertices).shape == (4, 3)
+    plane_vertices = np.asarray(plane.vertices)
+    grid_points = np.asarray(grid.points)
+    grid_lines = np.asarray(grid.lines)
+    unit_normal = normal / np.linalg.norm(normal)
+    grid_offset = 2e-4 * max(size, 1.0)
+
+    assert plane_vertices.shape == (4, 3)
     assert np.asarray(plane.triangles).shape == (2, 3)
-    assert np.asarray(grid.lines).shape == (10, 2)
+    assert grid_points.shape == (4 * (grid_divisions + 1), 3)
+    assert grid_lines.shape == (2 * (grid_divisions + 1), 2)
+    assert_array_equal(
+        grid_lines,
+        np.arange(grid_points.shape[0], dtype=np.int32).reshape(-1, 2),
+    )
+    assert_allclose((plane_vertices - center) @ unit_normal, 0.0, atol=1e-12)
+    assert_allclose(
+        (grid_points - center) @ unit_normal,
+        grid_offset,
+        atol=1e-12,
+    )
 
 
 def test_open3d_closes_window_when_recording_finishes(monkeypatch):

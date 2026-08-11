@@ -141,31 +141,33 @@ def _make_ground_plane(
     plane.compute_vertex_normals()
     plane.paint_uniform_color(np.asarray(plane_color, dtype=np.float64))
 
-    grid_points: list[np.ndarray] = []
-    grid_lines: list[tuple[int, int]] = []
     grid_center = center + 2e-4 * max(float(size), 1.0) * normal
-    for coord in np.linspace(-half, half, int(grid_divisions) + 1):
-        for start, end in (
-            (
-                grid_center - half * axis_u + coord * axis_v,
-                grid_center + half * axis_u + coord * axis_v,
-            ),
-            (
-                grid_center + coord * axis_u - half * axis_v,
-                grid_center + coord * axis_u + half * axis_v,
-            ),
-        ):
-            first_idx = len(grid_points)
-            grid_points.extend([start, end])
-            grid_lines.append((first_idx, first_idx + 1))
+    coordinates = np.linspace(-half, half, int(grid_divisions) + 1)[:, None]
+    lines_along_u = np.stack(
+        (
+            grid_center - half * axis_u + coordinates * axis_v,
+            grid_center + half * axis_u + coordinates * axis_v,
+        ),
+        axis=1,
+    )
+    lines_along_v = np.stack(
+        (
+            grid_center + coordinates * axis_u - half * axis_v,
+            grid_center + coordinates * axis_u + half * axis_v,
+        ),
+        axis=1,
+    )
+    grid_segments = np.concatenate((lines_along_u, lines_along_v), axis=0)
+    grid_points = grid_segments.reshape(-1, 3)
+    grid_lines = np.arange(grid_points.shape[0], dtype=np.int32).reshape(-1, 2)
     grid = o3d.geometry.LineSet(
-        points=o3d.utility.Vector3dVector(np.asarray(grid_points)),
-        lines=o3d.utility.Vector2iVector(np.asarray(grid_lines, dtype=np.int32)),
+        points=o3d.utility.Vector3dVector(grid_points),
+        lines=o3d.utility.Vector2iVector(grid_lines),
     )
     grid.colors = o3d.utility.Vector3dVector(
         np.tile(
             np.asarray(grid_color, dtype=np.float64)[None, :],
-            (len(grid_lines), 1),
+            (grid_lines.shape[0], 1),
         )
     )
     return plane, grid
