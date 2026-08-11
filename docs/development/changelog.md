@@ -46,7 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   scene objects, optional merged Open3D backbones, and instanced or merged
   Viser geometry with atomic frame updates. This substantially reduces backend
   registrations and browser scene handles without adding trajectory-rendering
-  concerns to soft-robot mechanics.
+  concerns to soft-robot mechanics. In a 16-robot, 80-point, eight-frame
+  benchmark, merged Open3D improved initial/frame rendering by 21.0x/2.7x
+  (6.51 s to 0.31 s and 41.2 ms to 15.1 ms), while batched Viser improved full
+  swept-video/browser-capture time by 2.3x/3.6x (27.9 s to 12.0 s and 2.98 s
+  to 0.83 s) with 38.5x fewer live handles.
 - Separated backend-specific renderer coverage into dedicated Matplotlib,
   Open3D, and Viser test modules, leaving the shared base-renderer tests focused
   on backend-independent behavior.

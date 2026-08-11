@@ -146,9 +146,18 @@ def test_camera_uses_fixed_paper_view_for_one_arm_and_auto_fit_for_grid():
     assert single.look_at is not None
     assert grid.position is None
     assert grid.look_at is None
-    camera_pos, look_at = grid.compute_auto_position(np.array([1.0, 2.0, 3.0]), 0.5)
+    assert grid.distance_factor == render_rl_video.GRID_CAMERA_DISTANCE_FACTOR
+    assert grid.position_offset == render_rl_video.GRID_CAMERA_POSITION_OFFSET
+    robot = render_rl_video.build_rl_robot()
+    camera_pos, look_at = grid.compute_auto_position(
+        np.array([1.0, 2.0, 3.0]),
+        0.5,
+        reference_transform=np.asarray(robot.base_transform),
+    )
     assert_allclose(look_at, (1.0, 2.0, 3.0))
-    assert_allclose(camera_pos, (5.0, -2.0, 5.5))
+    assert_allclose(camera_pos, (3.2, -0.2, 5.475))
+    world_offset = camera_pos - look_at
+    assert world_offset[0] == pytest.approx(-world_offset[1])
 
 
 def test_manual_auto_camera_override_applies_to_single_arm():

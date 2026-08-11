@@ -57,6 +57,10 @@ OUTPUT_DIR = CASE_DIR / "outputs"
 DEFAULT_ARM_LENGTH = 0.25
 DEFAULT_ARM_RADIUS = 0.025
 DEFAULT_GRID_SPACING = 0.16
+GRID_CAMERA_DISTANCE_FACTOR = 5.5
+# Camera offsets are expressed in the arm's base frame. This transforms to the
+# symmetric world-grid direction (0.8, -0.8, 0.9), retaining an elevated view.
+GRID_CAMERA_POSITION_OFFSET = (0.9, -0.8, 0.8)
 
 jax.config.update("jax_enable_x64", True)
 
@@ -421,7 +425,14 @@ def make_render_camera_config(
     if num_envs == 1 and not manual_auto_camera:
         return make_rl_camera_config(arm_length, fov=fov, up=up)
 
-    defaults = CameraConfig()
+    defaults = (
+        CameraConfig()
+        if num_envs == 1
+        else CameraConfig(
+            distance_factor=GRID_CAMERA_DISTANCE_FACTOR,
+            position_offset=GRID_CAMERA_POSITION_OFFSET,
+        )
+    )
     return CameraConfig(
         fov=fov,
         distance_factor=(
@@ -544,6 +555,7 @@ def render_rollout_to_mp4(
         actuator_line_width=args.tendon_line_width,
         grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
+        ground_plane_size=(args.grid_spacing if rollout.num_envs > 1 else None),
         merge_backbone_meshes=rollout.num_envs > 1,
         visible=args.visible,
     )
