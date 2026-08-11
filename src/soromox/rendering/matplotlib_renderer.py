@@ -52,12 +52,12 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         num_points: int = 50,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         color_config: RendererColorConfig | None = None,
+        show_ground_plane: bool = True,
+        ground_plane_size: float | None = None,
         line_width: float = 4.0,
         grid_spacing: tuple[float, float] = (0.3, 0.3),
         base_offsets: Array | None = None,
         actuator_line_width: float = 2.0,
-        show_ground_plane: bool = True,
-        ground_plane_size: float | None = None,
     ):
         """Initialize Matplotlib renderer.
 
@@ -68,12 +68,12 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             num_points: Number of points for backbone discretization
             background_color: RGB background color (0-1 range)
             color_config: Shared renderer color configuration
+            show_ground_plane: Whether to draw a reference plane through the base
+            ground_plane_size: Optional side length of the reference plane in meters
             line_width: Width of backbone line
             grid_spacing: (x, y) spacing for batched layouts
             base_offsets: Optional explicit base offsets for batched layouts
             actuator_line_width: Line width for actuator polylines
-            show_ground_plane: Whether to draw a reference plane through the base
-            ground_plane_size: Optional side length of the reference plane in meters
         """
         super().__init__(
             robot,
@@ -82,17 +82,13 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             num_points,
             background_color,
             color_config=color_config,
+            show_ground_plane=show_ground_plane,
+            ground_plane_size=ground_plane_size,
         )
         self.line_width = line_width
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
         self.actuator_line_width = actuator_line_width
-        self.show_ground_plane = bool(show_ground_plane)
-        self.ground_plane_size = (
-            None if ground_plane_size is None else float(ground_plane_size)
-        )
-        if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
-            raise ValueError("ground_plane_size must be positive when provided")
 
     def render_frame(
         self,
@@ -915,7 +911,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
         bases = np.asarray(curves[:, 0], dtype=np.float64)
         center = np.mean(bases, axis=0)
         normal = self._base_tangent_axis(dim=dim)
-        size = self.ground_plane_size or max(1.35 * self.L_max, 0.1)
+        size = self._resolve_ground_plane_size()
         center = center - 0.0125 * max(self.L_max, 1e-3) * normal
 
         if dim == 2:

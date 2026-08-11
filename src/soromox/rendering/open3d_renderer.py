@@ -649,12 +649,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         sphere_resolution: int = 32,
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 0.06,
+        show_ground_plane: bool = True,
+        ground_plane_size: float | None = None,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
         actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
-        show_ground_plane: bool = True,
-        ground_plane_size: float | None = None,
     ):
         """Initialize Open3D renderer.
 
@@ -671,12 +671,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             sphere_resolution: Resolution for backbone spheres
             base_plate_radius_scale: Multiplier applied to the maximum cross-section radius to size the base plate
             base_plate_thickness: Absolute thickness of the base plate geometry
+            show_ground_plane: Whether to render a base-aligned ground plane
+            ground_plane_size: Optional side length of the ground plane in meters
             grid_spacing: (x, y) spacing between robot bases for batched rendering
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             actuator_line_width: Width of actuator lines
             camera_margin_ratio: Margin ratio for camera bounding box
-            show_ground_plane: Whether to render a base-aligned ground plane
-            ground_plane_size: Optional side length of the ground plane in meters
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -690,6 +690,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             num_points,
             background_color,
             color_config=color_config,
+            show_ground_plane=show_ground_plane,
+            ground_plane_size=ground_plane_size,
         )
 
         self.backbone_style = backbone_style
@@ -704,12 +706,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.camera_margin_ratio = camera_margin_ratio
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
-        self.show_ground_plane = bool(show_ground_plane)
-        self.ground_plane_size = (
-            None if ground_plane_size is None else float(ground_plane_size)
-        )
-        if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
-            raise ValueError("ground_plane_size must be positive when provided")
         self._warned_dynamic_geometry = False
 
         self._unit_meshes = {
@@ -1177,11 +1173,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
             base_axis = material_frames[0, :, 0]
             if self.show_ground_plane:
-                ground_size = self.ground_plane_size or max(
-                    1.35 * self.L_max,
-                    12.0 * max_radius,
-                    0.1,
-                )
+                ground_size = self._resolve_ground_plane_size(12.0 * max_radius)
                 ground_plane, ground_grid = _make_ground_plane(
                     curve[0] - self.base_plate_thickness * base_axis,
                     base_axis,
@@ -1907,11 +1899,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             sections, max_radius = self._cross_sections_for_points(q0, s_ps)
             if self.show_ground_plane:
                 base_axis = material_frames0[0, :, 0]
-                ground_size = self.ground_plane_size or max(
-                    1.35 * self.L_max,
-                    12.0 * max_radius,
-                    0.1,
-                )
+                ground_size = self._resolve_ground_plane_size(12.0 * max_radius)
                 ground_plane, ground_grid = _make_ground_plane(
                     curve0[0] - self.base_plate_thickness * base_axis,
                     base_axis,

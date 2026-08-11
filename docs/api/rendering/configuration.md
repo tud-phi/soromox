@@ -86,6 +86,8 @@ Matplotlib, Open3D, and Viser show a base-aligned ground reference by default.
 Pass `show_ground_plane=False` to the renderer constructor to hide it, or set
 `ground_plane_size` to control its side length in meters. Viser uses its native
 grid primitive; the I-SUPPORT and UMArm renderers inherit the same behavior.
+`BaseSoftRobotRenderer` stores and validates these shared settings, while each
+backend remains responsible for drawing its native ground-plane representation.
 
 ::: soromox.rendering.color_config.RendererColorConfig
     options:

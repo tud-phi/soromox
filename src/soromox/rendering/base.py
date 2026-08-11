@@ -58,6 +58,8 @@ class BaseSoftRobotRenderer(ABC):
             ``[qw, qx, qy, qz, x, y, z]``.
         base_transform: Homogeneous base transform. Shape ``(3, 3)`` for
             planar robots and ``(4, 4)`` for spatial robots.
+        show_ground_plane: Whether supported backends render a ground reference
+        ground_plane_size: Optional ground-plane side length in meters
     """
 
     def __init__(
@@ -68,6 +70,8 @@ class BaseSoftRobotRenderer(ABC):
         num_points: int = 50,
         background_color: tuple[float, float, float] = (1.0, 1.0, 1.0),
         color_config: RendererColorConfig | None = None,
+        show_ground_plane: bool = False,
+        ground_plane_size: float | None = None,
     ):
         """Initialize the renderer with a robot and visualization parameters.
 
@@ -78,6 +82,8 @@ class BaseSoftRobotRenderer(ABC):
             num_points: Number of points for backbone curve discretization
             background_color: RGB background color tuple (values 0-1)
             color_config: Shared renderer color configuration
+            show_ground_plane: Whether supported backends render a ground reference
+            ground_plane_size: Optional ground-plane side length in meters
         """
         self.robot: SoftRobot = robot
         self.width = width
@@ -85,6 +91,12 @@ class BaseSoftRobotRenderer(ABC):
         self.num_points = num_points
         self.background_color = background_color
         self.color_config = color_config or RendererColorConfig()
+        self.show_ground_plane = bool(show_ground_plane)
+        self.ground_plane_size = (
+            None if ground_plane_size is None else float(ground_plane_size)
+        )
+        if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
+            raise ValueError("ground_plane_size must be positive when provided")
         self._is_planar = bool(robot.is_planar)
         self.base_pose = jnp.asarray(robot.base_pose)
         self.base_transform = jnp.asarray(robot.base_transform)
@@ -112,6 +124,12 @@ class BaseSoftRobotRenderer(ABC):
             or self._has_batched_actuator_visual_layers
             or self._has_trajectory_actuator_visual_layers
         )
+
+    def _resolve_ground_plane_size(self, *minimum_sizes: float) -> float:
+        """Return the configured size or a robot-scaled backend default."""
+        if self.ground_plane_size is not None:
+            return self.ground_plane_size
+        return max(1.35 * self.L_max, 0.1, *minimum_sizes)
 
     def _base_position(self, dim: int | None = None) -> np.ndarray:
         """Return the configured base translation in renderer coordinates.

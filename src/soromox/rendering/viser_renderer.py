@@ -251,6 +251,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 0.06,
+        show_ground_plane: bool = True,
+        ground_plane_size: float | None = None,
         actuator_line_width: float = 3.0,
         camera_fov: float = 75.0,
         # Lighting parameters
@@ -270,8 +272,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Shadow configuration (per-geometry type)
         backbone_cast_shadow: bool = True,
         sphere_cast_shadow: bool = True,
-        show_ground_plane: bool = True,
-        ground_plane_size: float | None = None,
         auto_start: bool = True,
         open_browser: bool = True,
     ):
@@ -293,6 +293,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             base_offsets: Explicit base position offsets (N, 3)
             base_plate_radius_scale: Base plate radius relative to robot radius
             base_plate_thickness: Base plate thickness in meters
+            show_ground_plane: Whether to add Viser's native ground grid
+            ground_plane_size: Optional side length of the ground grid in meters
             actuator_line_width: Line width for actuator visualization
             camera_fov: Camera field of view in degrees
             enable_default_lights: Enable Viser's default lighting
@@ -309,8 +311,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
             wireframe: Render geometry as wireframe
             backbone_cast_shadow: Enable shadow casting for backbone geometry
             sphere_cast_shadow: Enable shadow casting for sphere geometry
-            show_ground_plane: Whether to add Viser's native ground grid
-            ground_plane_size: Optional side length of the ground grid in meters
             auto_start: Start server immediately
             open_browser: Open browser automatically when show() is called
         """
@@ -327,6 +327,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             num_points,
             background_color,
             color_config=color_config,
+            show_ground_plane=show_ground_plane,
+            ground_plane_size=ground_plane_size,
         )
 
         self._host = host
@@ -361,12 +363,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Shadow configuration
         self._backbone_cast_shadow = backbone_cast_shadow
         self._sphere_cast_shadow = sphere_cast_shadow
-        self._show_ground_plane = bool(show_ground_plane)
-        self._ground_plane_size = (
-            None if ground_plane_size is None else float(ground_plane_size)
-        )
-        if self._ground_plane_size is not None and self._ground_plane_size <= 0.0:
-            raise ValueError("ground_plane_size must be positive when provided")
 
         # Get robot radius for sizing
         self._robot_radius = self._get_robot_radius()
@@ -460,12 +456,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
     def _add_ground_plane(self) -> None:
         """Add Viser's native base-aligned grid as a ground reference."""
         if (
-            not self._show_ground_plane
+            not self.show_ground_plane
             or self._server is None
             or self._scene_handles is None
         ):
             return
-        size = self._ground_plane_size or max(1.35 * self.L_max, 0.1)
+        size = self._resolve_ground_plane_size()
         base_axis = self._base_tangent_axis(dim=3)
         position = self._base_position(dim=3) - self._base_plate_thickness * base_axis
         cfg = self.color_config

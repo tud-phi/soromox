@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from inspect import signature
 from unittest.mock import Mock
 
 import jax.numpy as jnp
@@ -465,6 +466,55 @@ def test_renderer_exposes_base_pose_transform_and_axis():
     assert_allclose(
         renderer._base_tangent_axis(dim=3), np.array([0.0, 1.0, 0.0]), atol=1e-7
     )
+
+
+def test_renderer_centralizes_ground_plane_configuration():
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = DummyRenderer(
+        robot,
+        show_ground_plane=True,
+        ground_plane_size=0.4,
+    )
+
+    assert renderer.show_ground_plane is True
+    assert renderer.ground_plane_size == pytest.approx(0.4)
+    assert renderer._resolve_ground_plane_size() == pytest.approx(0.4)
+
+
+def test_renderer_resolves_robot_scaled_ground_plane_size():
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = DummyRenderer(robot)
+
+    assert renderer._resolve_ground_plane_size() == pytest.approx(1.35)
+    assert renderer._resolve_ground_plane_size(2.0) == pytest.approx(2.0)
+
+
+@pytest.mark.parametrize("ground_plane_size", [0.0, -0.1])
+def test_renderer_rejects_nonpositive_ground_plane_size(ground_plane_size):
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+
+    with pytest.raises(ValueError, match="ground_plane_size must be positive"):
+        DummyRenderer(robot, ground_plane_size=ground_plane_size)
+
+
+def test_ground_plane_arguments_follow_base_plate_arguments():
+    from soromox.rendering.open3d_renderer import Open3DRenderer
+    from soromox.rendering.viser_renderer import ViserRenderer
+
+    for renderer_type in (Open3DRenderer, ViserRenderer):
+        parameter_names = list(signature(renderer_type).parameters)
+        base_plate_index = parameter_names.index("base_plate_thickness")
+        assert parameter_names[base_plate_index + 1 : base_plate_index + 3] == [
+            "show_ground_plane",
+            "ground_plane_size",
+        ]
+
+    matplotlib_parameters = list(signature(MatplotlibRenderer).parameters)
+    color_config_index = matplotlib_parameters.index("color_config")
+    assert matplotlib_parameters[color_config_index + 1 : color_config_index + 3] == [
+        "show_ground_plane",
+        "ground_plane_size",
+    ]
 
 
 def test_backbone_geometry_sampling_preserves_fk_material_frames():
