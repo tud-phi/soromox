@@ -432,7 +432,7 @@ class ISupport(PCS):
 
         Alessi, C., Falotico, E., & Lucantonio, A. (2023). Ablation study of a
         dynamic model for a 3D-printed pneumatic soft robotic arm. IEEE Access, 11,
-        37840-37853. https://doi.org/10.1109/ACCESS.2023.3265261
+        37840-37853. https://doi.org/10.1109/ACCESS.2023.3266282
 
         Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
         Pushing with soft robotic arms via deep reinforcement learning. Advanced

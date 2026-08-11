@@ -2,6 +2,10 @@
 
 Thank you for your interest in contributing to Soft Robot Models in jaX (SoRoMoX)! This guide will help you get started.
 
+This page is the canonical contributor workflow. The top-level
+[`CONTRIBUTING.md`](https://github.com/tud-phi/soromox/blob/main/CONTRIBUTING.md)
+is a compact entry point for repository visitors.
+
 ## Development Setup
 
 ### 1. Fork and Clone
@@ -16,6 +20,16 @@ cd soromox
 ```bash
 pip install -e ".[dev,docs,examples]"
 ```
+
+With uv, create the project environment from the lock file:
+
+```bash
+uv sync --extra dev --extra docs --extra examples
+```
+
+Add task-specific extras when needed: `rendering` for all visualization
+backends, `rl` for reinforcement-learning workflows, and `paper_results` for
+the complete paper reproduction environment.
 
 ### 3. Set Up Pre-commit Hooks
 
@@ -50,6 +64,14 @@ pytest tests/test_planar_pcs_num.py
 
 # Run with coverage
 pytest --cov=soromox
+```
+
+To use the repository's Coverage.py configuration and produce the same report
+formats as the project tooling:
+
+```bash
+uv run --extra test make coverage
+uv run --extra test make coverage_xml
 ```
 
 ### 4. Format and Lint Code
@@ -266,5 +288,12 @@ git push origin feature/your-feature-name
 - Join discussions in pull requests
 - Check existing documentation and examples
 - Ask questions in the community
+
+## Maintainer releases
+
+Version management and publication are maintainer-only workflows. The
+[version and release guide](https://github.com/tud-phi/soromox/blob/main/VERSION_BUMP_README.md)
+documents the canonical branch and pull request process, tag automation, and
+recovery procedure.
 
 Thank you for contributing to SoRoMoX!

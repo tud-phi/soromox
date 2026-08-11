@@ -1,0 +1,51 @@
+.soromox-figure,
+.soromox-video {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 1rem auto;
+  border-radius: 0.4rem;
+  box-shadow: 0 0.2rem 0.8rem rgb(0 0 0 / 10%);
+}
+
+.soromox-figure--overview {
+  max-width: 56rem;
+}
+
+.soromox-figure--transparent {
+  border-radius: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 0.2rem 0.5rem rgb(0 0 0 / 8%));
+}
+
+.soromox-figure--plot {
+  max-width: 46rem;
+}
+
+.soromox-figure--compact {
+  max-width: 34rem;
+}
+
+.soromox-figure--wide {
+  max-width: 64rem;
+}
+
+.soromox-video {
+  max-width: 56rem;
+  background: #f7f7f7;
+}
+
+.soromox-gallery img {
+  width: 100%;
+  aspect-ratio: 3 / 2;
+  object-fit: contain;
+  background: #f5f6f8;
+  border-radius: 0.35rem;
+}
+
+@media screen and (max-width: 44.9375em) {
+  .soromox-figure,
+  .soromox-video {
+    margin-block: 0.75rem;
+  }
+}

@@ -58,7 +58,6 @@ theme:
 
 nav:
   - Home: index.md
-  - Citation: citation.md
   - Installation: installation.md
   - User Guide:
     - Quick Start: user-guide/quick-start.md
@@ -104,6 +103,8 @@ nav:
           - Geometry: api/utilities/geometry.md
           - Lie Algebra: api/utilities/lie-algebra.md
           - Symbolic Derivation: api/utilities/symbolic-derivation.md
+  - Paper & Results: research.md
+  - Citation: citation.md
   - Development:
     - Contributing: development/contributing.md
     - Extending SoRoMoX: development/extending.md
@@ -191,6 +192,7 @@ extra_javascript:
 
 extra_css:
   - stylesheets/sidebar.css
+  - stylesheets/media.css
 
 extra:
   version:

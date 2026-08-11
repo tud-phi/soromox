@@ -65,6 +65,8 @@ class RendererColorConfig:
 
     backbone: BackboneColorConfig = field(default_factory=BackboneColorConfig)
     base_plate_color: tuple[float, float, float] = (0.2, 0.2, 0.2)
+    ground_plane_color: tuple[float, float, float] = (0.94, 0.95, 0.96)
+    ground_plane_grid_color: tuple[float, float, float] = (0.72, 0.75, 0.78)
     actuators: ActuatorStyleConfig = field(default_factory=ActuatorStyleConfig)
 
 

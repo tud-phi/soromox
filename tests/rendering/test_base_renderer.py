@@ -346,6 +346,12 @@ class FakeViserScene:
         self.icospheres = []
         self.trimeshes = []
         self.simple_meshes = []
+        self.grids = []
+
+    def add_grid(self, **kwargs):
+        handle = FakeViserGeometryHandle(**kwargs)
+        self.grids.append(handle)
+        return handle
 
     def add_line_segments(self, *, name, points, colors, line_width):
         handle = FakeViserLineHandle(
@@ -848,6 +854,28 @@ def test_viser_defaults_to_swept_backbone():
     assert renderer._backbone_style == "swept"
 
 
+def test_viser_ground_plane_uses_native_grid():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot,
+        auto_start=False,
+        ground_plane_size=0.4,
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+
+    renderer._add_ground_plane()
+
+    assert len(server.scene.grids) == 1
+    assert server.scene.grids[0].name == "/ground"
+    assert server.scene.grids[0].width == pytest.approx(0.4)
+    assert server.scene.grids[0].height == pytest.approx(0.4)
+    assert renderer._scene_handles.ground_planes == server.scene.grids
+
+
 def test_open3d_defaults_to_swept_backbone():
     pytest.importorskip("open3d")
     from soromox.rendering.open3d_renderer import Open3DRenderer
@@ -856,6 +884,24 @@ def test_open3d_defaults_to_swept_backbone():
     renderer = Open3DRenderer(robot)
 
     assert renderer._backbone_mode == "swept"
+
+
+def test_open3d_ground_plane_has_surface_and_grid():
+    pytest.importorskip("open3d")
+    from soromox.rendering.open3d_renderer import _make_ground_plane
+
+    plane, grid = _make_ground_plane(
+        center_xyz=np.array([0.0, 0.0, 0.0]),
+        normal_xyz=np.array([0.0, 0.0, 1.0]),
+        size=0.4,
+        plane_color=(0.9, 0.9, 0.9),
+        grid_color=(0.7, 0.7, 0.7),
+        grid_divisions=4,
+    )
+
+    assert np.asarray(plane.vertices).shape == (4, 3)
+    assert np.asarray(plane.triangles).shape == (2, 3)
+    assert np.asarray(grid.lines).shape == (10, 2)
 
 
 def test_open3d_closes_window_when_recording_finishes(monkeypatch):
@@ -1183,6 +1229,27 @@ def test_matplotlib_actuator_overlay_changes_rendered_frame():
 
     assert without_actuators.shape == with_actuators.shape
     assert np.any(without_actuators != with_actuators)
+
+
+def test_matplotlib_ground_plane_changes_spatial_rendered_frame():
+    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    with_ground = MatplotlibRenderer(
+        robot,
+        width=240,
+        height=180,
+        num_points=8,
+        show_ground_plane=True,
+    ).render_frame(jnp.array([]))
+    without_ground = MatplotlibRenderer(
+        robot,
+        width=240,
+        height=180,
+        num_points=8,
+        show_ground_plane=False,
+    ).render_frame(jnp.array([]))
+
+    assert with_ground.shape == without_ground.shape
+    assert np.any(with_ground != without_ground)
 
 
 def test_opencv_planar_actuator_overlay_draws_configured_color():

@@ -1,46 +1,186 @@
 <div align="center">
-  <img src="docs/assets/logo/soromox_logo.png" alt="SoRoMoX Logo" width="400"/>
-  
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/logo/soromox_logo.png" alt="SoRoMoX logo" width="400"/>
+
   # Soft Robot Models in jaX (SoRoMoX)
 </div>
 
 <div align="center">
 
 [![Test](https://github.com/tud-phi/soromox/actions/workflows/test.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/test.yml)
-[![Documentation](https://github.com/tud-phi/soromox/actions/workflows/docs.yml/badge.svg)](https://github.com/tud-phi/soromox/actions/workflows/docs.yml)
-[![PyPI version](https://badge.fury.io/py/soromox.svg)](https://badge.fury.io/py/soromox)
+[![PyPI version](https://badge.fury.io/py/soromox.svg)](https://pypi.org/project/soromox/)
 [![arXiv](https://img.shields.io/badge/arXiv-2608.06650-b31b1b.svg)](https://arxiv.org/abs/2608.06650)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/github/license/tud-phi/soromox.svg)](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt)
-[![Docs](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox)
-[![Coverage](https://img.shields.io/badge/coverage-local%20report-blue.svg)](#running-tests-with-coverage)
+[![Documentation](https://img.shields.io/badge/docs-live-brightgreen.svg)](https://tud-phi.github.io/soromox/)
 
 </div>
 
-> **📢 Note**: SoRoMoX is the successor to the [JSRM package](https://github.com/tud-phi/jax-soft-robot-modeling). It introduces significant improvements including support for an extended set of systems (Spatial PCS, GVS, and articulated soft robots), replacement of symbolic derivations with numerical implementations for better scalability and faster JIT compilation, and migration from a functional to an object-oriented architecture using Equinox dataclasses for enhanced extendability.
+SoRoMoX is a fully numerical, JIT-compilable Python/JAX implementation of
+control-oriented models for articulated and continuum soft robots. It provides
+articulated soft-robot, piecewise-constant strain (PCS), and geometric variable
+strain (GVS) models through a common interface for kinematics, dynamics,
+energies, Jacobians and derivatives, and forward dynamics. Because the
+numerical core is JAX-native, these model computations can be JIT-compiled,
+automatically differentiated with respect to states, inputs, and physical
+parameters, batched, and executed on CPUs, GPUs, and TPUs.
 
-SoRoMoX provides three core capabilities for soft robotics research:
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/paper/soromox-overview.png" alt="Overview of SoRoMoX model families, JAX-native numerical infrastructure, and application case studies" width="900"/>
+</p>
 
-- **Soft Robot Models**: Kinematic and dynamic models of continuum and articulated soft robots with JAX implementation
-- **Model-Based Control**: Comprehensive suite of controllers including PID, gravity cancellation, potential shaping, impedance control, and computed torque
-- **Visualization**: Multiple rendering backends (Matplotlib, Open3D, Viser, OpenCV) for 2D and 3D visualization
+Model-based controllers and rendering backends complement the core model
+implementations. The accompanying paper benchmarks the numerical stack and
+uses six application case studies to demonstrate differentiability,
+parallelization, and the control-oriented model interface.
 
-SoRoMoX includes strain-based continuum models for slender structures (Cosserat rods), planar benchmarks, and spatial articulated soft robot systems. The following systems are implemented:
+> **Note:** SoRoMoX succeeds
+> [JSRM](https://github.com/tud-phi/jax-soft-robot-modeling), replacing symbolic
+> derivations with scalable numerical implementations and extending the model
+> families and common interfaces.
 
-| System Type | Variants |
-|-------------|----------|
-| Articulated Systems | [Pendulum](examples/simulation/pendulum/simulate_pendulum.py), [Tendon-Actuated Pendulum](examples/simulation/pendulum/simulate_tendon_actuated_pendulum.py), [Articulated Soft Robot](examples/simulation/articulated/simulate_articulated_soft_robot.py) |
-| PCS (Piecewise Constant Strain) | [Planar](examples/simulation/pcs/simulate_planar_pcs.py), [Spatial](examples/simulation/pcs/simulate_pcs.py), [Threadlike-Actuated](examples/simulation/pcs/simulate_tendon_actuated_pcs.py), [I-SUPPORT](examples/simulation/pcs/simulate_isupport.py) |
-| GVS (Geometric Variable Strain) | [Spatial](examples/simulation/gvs/simulate_gvs.py), [Tendon-Actuated](examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
-| HSA (Handed Shearing Auxetics) | [Planar](examples/simulation/hsa/simulate_planar_hsa.py) |
+## Models and numerical interface
 
-We are happy to receive contributions for other soft robot models. See the [Contributing Guide](docs/development/contributing.md) for more details.
+- **Soft robot model implementations:** articulated soft-robot, PCS, and GVS
+  formulations implemented numerically in Python/JAX.
+- **JAX-native execution:** JIT compilation, automatic differentiation with
+  respect to states, inputs, and parameters, vectorization with `vmap`, and
+  CPU/GPU/TPU execution.
+- **Control-oriented quantities:** backbone kinematics, Jacobians and their
+  derivatives, inertia matrices, Coriolis, gravitational, elastic, and damping
+  terms, energies, actuation maps, and forward dynamics.
+- **Composable actuation and systems:** generalized-coordinate/strain,
+  threadlike, McKibben, and functional-metamaterial actuation across planar and
+  spatial examples.
+- **Model-based control implementations:** configuration-, operational-, and
+  actuation-space controllers, including potential compensation,
+  computed-torque, and impedance controllers.
+- **Rendering:** Matplotlib, Open3D, Viser, and OpenCV backends for static,
+  interactive, real-time, and recorded visualizations.
+
+Following the model organization in Table II of the paper:
+
+| Model family | Planar implementation | Actuation modalities | Example instantiations |
+| --- | --- | --- | --- |
+| Articulated soft robot | [Soft pendulum](https://github.com/tud-phi/soromox/tree/main/examples/simulation/pendulum) | Generalized-coordinate (joint-torque), articulated-tendon, and McKibben actuation | [UMArm](https://tud-phi.github.io/soromox/api/systems/articulated/mckibben-umarm/) |
+| Piecewise constant strain (PCS) | [Planar PCS](https://github.com/tud-phi/soromox/blob/main/examples/simulation/pcs/simulate_planar_pcs.py) | Generalized-strain, threadlike, and functional-metamaterial (HSA) actuation | [I-SUPPORT](https://tud-phi.github.io/soromox/api/systems/pcs/isupport/) and [planar HSA](https://tud-phi.github.io/soromox/api/systems/hsa/planar-hsa/) |
+| Geometric variable strain (GVS) | — | Generalized-coordinate and threadlike actuation | [Tapered cable-driven soft tentacle](https://github.com/tud-phi/soromox/blob/main/examples/simulation/gvs/simulate_tendon_actuated_gvs.py) |
+
+## Installation
+
+Install the core package from PyPI:
+
+```bash
+python -m pip install soromox
+```
+
+With [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv pip install soromox
+```
+
+Optional extras add the dependencies needed for a workflow:
+
+```bash
+python -m pip install "soromox[rendering]"     # all rendering backends
+python -m pip install "soromox[examples]"      # runnable examples
+python -m pip install "soromox[rl]"            # reinforcement learning examples
+python -m pip install "soromox[paper_results]" # paper reproduction workflows
+```
+
+For an editable source installation:
+
+```bash
+git clone https://github.com/tud-phi/soromox.git
+cd soromox
+python -m pip install -e .
+```
+
+Contributors can add development extras with
+`python -m pip install -e ".[dev,docs,examples]"`; see
+[CONTRIBUTING.md](https://github.com/tud-phi/soromox/blob/main/CONTRIBUTING.md)
+for tests and tooling.
+
+## Quick start
+
+Run a simulation from the example catalogue:
+
+```bash
+python examples/simulation/pendulum/simulate_pendulum.py
+python examples/simulation/pcs/simulate_planar_pcs.py
+```
+
+The [Quick Start](https://tud-phi.github.io/soromox/user-guide/quick-start/)
+introduces model construction, simulation, control, and rendering. The
+[examples catalogue](https://tud-phi.github.io/soromox/user-guide/examples/)
+maps complete scripts to the supported models and workflows.
+
+## Performance
+
+For the paper's sequential CPU rollouts, SoRoMoX is up to 18.1× faster than
+SoRoSim in matched PCS and GVS cases:
+
+| Formulation | Case | SoRoSim (s) | SoRoMoX (s) | Speedup |
+| --- | --- | ---: | ---: | ---: |
+| FEM/PCS | Planar | 75.73 | 4.18 | 18.1× |
+| FEM/PCS | Spatial | 78.65 | 13.26 | 5.9× |
+| FEM/GVS | Spatial | 55.54 | 36.33 | 1.5× |
+| FEM/GVS | Tendons | 75.80 | 36.47 | 2.1× |
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/paper/gpu-batch-scaling.png" alt="GPU batch simulation throughput scaling for articulated, PCS, and GVS models" width="760"/>
+</p>
+
+On the paper's RTX 5090 benchmark, increasing the leading batch size from 1 to
+256 yields up to 234.6× higher simulation throughput. See
+[Paper & Results](https://tud-phi.github.io/soromox/research/) for the full
+benchmark context and reproduction pointers.
+
+## Application case studies
+
+The paper's six application case studies demonstrate how the model layer can
+support parameter identification, residual learning, model-based control,
+controller gain optimization, safety-constrained control, and parallel
+reinforcement learning.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/paper/application-workflows.png" alt="Six application case studies from the SoRoMoX paper" width="900"/>
+</p>
+
+### Operational-space model-based control
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/paper/model-based-control.gif" alt="Operational-space impedance control using a two-segment PCS model" width="760"/>
+</p>
+
+### Safety-constrained control
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/paper/safety-constrained-control.gif" alt="Comparison of safety-unaware and HOCBF-constrained continuum-robot control" width="760"/>
+</p>
+
+### Parallel reinforcement learning
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/tud-phi/soromox/main/docs/assets/paper/parallel-rl.gif" alt="Comparison of initialized and trained reinforcement-learning policies for a tendon-driven PCS robot" width="760"/>
+</p>
+
+See all six studies on the
+[Paper & Results](https://tud-phi.github.io/soromox/research/) page.
+
+## Documentation
+
+- [Documentation home](https://tud-phi.github.io/soromox/)
+- [Installation guide](https://tud-phi.github.io/soromox/installation/)
+- [Quick Start](https://tud-phi.github.io/soromox/user-guide/quick-start/)
+- [API reference](https://tud-phi.github.io/soromox/api/overview/)
+- [Rendering guide and gallery](https://tud-phi.github.io/soromox/api/rendering/)
+- [Paper & Results](https://tud-phi.github.io/soromox/research/)
+- [Citation guidance](https://tud-phi.github.io/soromox/citation/)
 
 ## Citation
 
 If you use SoRoMoX in academic work, please cite the associated preprint:
-
-### Primary Paper
 
 ```bibtex
 @misc{stolzle2026soromox,
@@ -55,266 +195,14 @@ If you use SoRoMoX in academic work, please cite the associated preprint:
 }
 ```
 
-For reproducible computational work, also report the exact version available as
-`soromox.__version__`. See the [complete citation guide](docs/citation.md) for a
-version-specific software citation and additional model or controller references.
-
-## Installation
-
-The package can be installed from PyPI using pip:
-
-```bash
-pip install soromox
-```
-
-or using [uv](https://docs.astral.sh/uv/) (recommended for faster installation):
-
-```bash
-uv pip install soromox
-```
-
-### Development Installation
-
-For local development from the source code:
-
-```bash
-# Using pip
-pip install -e .
-
-# Using uv
-uv pip install -e .
-```
-
-### Optional Dependencies (extras)
-
-The default install keeps the runtime dependency set small. Install one or more
-extras when you need development tools, examples, rendering backends, RL
-workflows, or the dependencies used to reproduce the paper results.
-
-| Extra | Use this for | Main packages included |
-|-------|--------------|------------------------|
-| `dev` | Local development, linting, formatting, tests, coverage, release checks, and pre-commit hooks. | `ruff`, `pytest`, `coverage`, `tox`, `pre-commit`, `bump2version`, `check-manifest`, `seaborn` |
-| `docs` | Building and serving the documentation site locally. | `zensical`, `mkdocstrings`, `mkdocstrings-python` |
-| `examples` | Running the example scripts under `examples/`. | `matplotlib`, `seaborn`, `ipython`, `optax`, `optimistix`, `open3d`, `opencv-python`, `plotly`, `trimesh`, `viser`, `ffmpeg-python` |
-| `rendering` | Using optional rendering backends and exporting plots, videos, or interactive visualizations. | `matplotlib`, `open3d`, `opencv-python`, `plotly`, `trimesh`, `viser`, `ffmpeg-python` |
-| `rl` | Training and evaluating reinforcement-learning controllers with SoRoMoX, including parallel RL workflows. | `gymnasium`, `stable-baselines3`, `matplotlib` |
-| `paper_results` | Reproducing the research workflows, data, figures, and videos under `paper_results/`, including benchmarks, RL experiments, visualization, and comparison baselines. | `cbfpy`, `elastica`, `gymnasium`, `stable-baselines3`, plus the example and rendering stack |
-| `test` | Running the test suite without the full development stack. | `pytest`, `pytest-cov`, `pytest-html`, `coverage`, `tox`, `codecov` |
-| `all` | Broad convenience install for users who want one environment with most optional tooling. For reproducible workflows, prefer the task-specific extras above. | See the `all` extra in `pyproject.toml` |
-
-Quote extras in shell commands so shells such as zsh do not interpret the square
-brackets as glob patterns. Install from PyPI with:
-
-```bash
-pip install "soromox[rendering]"
-pip install "soromox[rl]"
-```
-
-For a local editable source install, use pip or uv:
-
-```bash
-pip install -e ".[dev,docs,examples]"
-uv pip install -e ".[rendering]"
-```
-
-To reproduce the paper results or run RL experiments from the source checkout:
-
-```bash
-uv pip install -e ".[paper_results]"
-uv pip install -e ".[rl]"
-```
-
-Complete publication workflows, their input and generated data, and committed
-canonical outputs live under `paper_results/`. Use the `paper_results` extra for
-these workflows; the narrower `rl` extra remains available for
-reinforcement-learning-only work.
-
-### Using uv for Project Management
-
-You can also use `uv` to manage the project with a virtual environment:
-
-```bash
-# Create a virtual environment and install the package
-uv venv
-uv pip install -e ".[dev,examples]"
-
-# Or use uv sync for reproducible installs (creates uv.lock)
-uv sync --extra dev --extra examples
-uv sync --extra paper_results
-uv sync --extra rl
-```
-
-### Running Tests with Coverage
-
-Coverage.py is included in the `dev`, `test`, and `all` extras. To run the test suite with the project coverage settings:
-
-```bash
-uv run --extra test make coverage
-```
-
-or call Coverage.py directly:
-
-```bash
-uv run --extra test python -m coverage run -m pytest
-uv run --extra test python -m coverage report
-```
-
-For CI uploads, generate an XML report with:
-
-```bash
-uv run --extra test make coverage_xml
-```
-
-## Usage
-
-Simply call one of the example scripts to simulate a system. For example, to simulate the N-link pendulum:
-
-```bash
-python examples/simulation/pendulum/simulate_pendulum.py
-```
-
-or to simulate the planar PCS robot:
-
-```bash
-python examples/simulation/pcs/simulate_planar_pcs.py
-```
-
-The lightweight example catalogue and output conventions are documented in
-[`examples/README.md`](examples/README.md). Reproducible paper workflows,
-including the Section Vc model-based control studies, are under
-[`paper_results/`](paper_results/README.md):
-
-```bash
-python paper_results/secVc_model_based_control/configuration_space_comparison/code/setpoint_regulation_comparison.py
-python paper_results/secVc_model_based_control/operational_space_impedance_control/code/control_pcs_with_impedance.py
-```
-
-## Documentation
-
-The full documentation is available at: <https://tud-phi.github.io/soromox>
-
-### Building Documentation Locally
-
-To build and serve the documentation locally:
-
-```bash
-# Install documentation dependencies
-uv sync --extra docs
-
-# Serve documentation with live reload
-uv run --extra docs zensical serve
-```
-
-The documentation will be available at `http://127.0.0.1:8000`.
-
-### Building Documentation for Production
-
-```bash
-# Build static documentation
-uv run --extra docs zensical build --clean
-
-# Zensical does not currently support MkDocs-style strict mode.
-# The CI workflow runs the same build command.
-```
-
-You can also use the Makefile targets:
-
-```bash
-# Serve locally
-make docs-serve
-
-# Build documentation
-make docs-build
-
-# Build with strict mode checking
-make docs-build-strict
-```
-
-## Version Management and Releases
-
-This project includes automated version management and release creation tools. The version bump system updates version information across all relevant files and can automatically create GitHub releases.
-
-### Version Bumping
-
-You can bump the version using the following Makefile targets:
-
-```bash
-# Increment patch version (0.1.0 -> 0.1.1) - for bug fixes
-make bump-patch
-
-# Increment minor version (0.1.0 -> 0.2.0) - for new features
-make bump-minor
-
-# Increment major version (0.1.0 -> 1.0.0) - for breaking changes
-make bump-major
-
-# Set a specific version
-make bump-version VERSION=0.2.0
-```
-
-### Automated Releases
-
-To create a complete release with automatic GitHub release creation:
-
-```bash
-# Create a patch release with GitHub release
-make release-patch
-
-# Create a minor release with GitHub release
-make release-minor
-
-# Create a major release with GitHub release
-make release-major
-
-# Create a specific version release
-make release VERSION=1.0.0
-```
-
-### Preview Changes (Dry Run)
-
-Before making any changes, you can preview what would be updated using the dry run mode:
-
-```bash
-# Preview a patch version bump without making changes
-python bump_version.py --patch --dry-run
-
-# Preview a minor version bump
-python bump_version.py --minor --dry-run
-
-# Preview a specific version
-python bump_version.py 0.2.0 --dry-run
-```
-
-The dry run mode will show you:
-- Current version
-- New version that would be set
-- List of files that would be modified
-- No actual changes are made to any files
-
-### What Gets Updated
-
-The version bump process automatically updates:
-- `pyproject.toml` - Main project version
-- `CITATION.cff` - Software version, release date, and PyPI artifact URL
-- `docs/citation.md` - Software BibTeX version, year, key, and release URL
-- `docs/development/changelog.md` - Moves unreleased notes into a dated release
-- `uv.lock` - Local package version
-
-Generated `*.egg-info` metadata is not tracked or edited; package builds
-regenerate it from `pyproject.toml`.
-
-### Automated Release Process
-
-When you use the `release-*` commands, the following happens automatically:
-1. Version numbers are updated in all relevant files
-2. Changes are committed to git
-3. A version tag (e.g., `v0.1.1`) is created
-4. Changes and tags are pushed to GitHub
-5. GitHub Actions verifies the tag, builds and validates the distributions once
-6. The validated artifacts are attached to a GitHub release
-7. The same artifacts are published to PyPI through trusted publishing
-
-Only the release metadata files listed above are staged automatically. Other
-tracked or untracked worktree files are left untouched.
-
-For more detailed information, see `VERSION_BUMP_README.md`.
+For reproducible computational work, also report `soromox.__version__`.
+The [full citation guide](https://tud-phi.github.io/soromox/citation/)
+contains exact-version software citations and model- or controller-specific
+references.
+
+## Contributing and license
+
+Contributions are welcome; start with
+[CONTRIBUTING.md](https://github.com/tud-phi/soromox/blob/main/CONTRIBUTING.md).
+SoRoMoX is distributed under the
+[MIT License](https://github.com/tud-phi/soromox/blob/main/LICENSE.txt).

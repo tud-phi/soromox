@@ -82,6 +82,7 @@ class SceneHandles:
 
     # Robot geometry handles - indexed [robot_idx][point_idx]
     base_plates: list = field(default_factory=list)
+    ground_planes: list = field(default_factory=list)
     backbone_points: list[list] = field(default_factory=list)
     actuator_lines: list = field(default_factory=list)
     actuator_line_keys: list[str] = field(default_factory=list)
@@ -269,6 +270,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Shadow configuration (per-geometry type)
         backbone_cast_shadow: bool = True,
         sphere_cast_shadow: bool = True,
+        show_ground_plane: bool = True,
+        ground_plane_size: float | None = None,
         auto_start: bool = True,
         open_browser: bool = True,
     ):
@@ -306,6 +309,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
             wireframe: Render geometry as wireframe
             backbone_cast_shadow: Enable shadow casting for backbone geometry
             sphere_cast_shadow: Enable shadow casting for sphere geometry
+            show_ground_plane: Whether to add Viser's native ground grid
+            ground_plane_size: Optional side length of the ground grid in meters
             auto_start: Start server immediately
             open_browser: Open browser automatically when show() is called
         """
@@ -356,6 +361,12 @@ class ViserRenderer(BaseSoftRobotRenderer):
         # Shadow configuration
         self._backbone_cast_shadow = backbone_cast_shadow
         self._sphere_cast_shadow = sphere_cast_shadow
+        self._show_ground_plane = bool(show_ground_plane)
+        self._ground_plane_size = (
+            None if ground_plane_size is None else float(ground_plane_size)
+        )
+        if self._ground_plane_size is not None and self._ground_plane_size <= 0.0:
+            raise ValueError("ground_plane_size must be positive when provided")
 
         # Get robot radius for sizing
         self._robot_radius = self._get_robot_radius()
@@ -437,6 +448,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Initialize empty scene handles
         self._scene_handles = SceneHandles()
+        self._add_ground_plane()
 
         self._running = True
 
@@ -444,6 +456,43 @@ class ViserRenderer(BaseSoftRobotRenderer):
         atexit.register(self.stop)
 
         print(f"[ViserRenderer] Server started at {self.url}")
+
+    def _add_ground_plane(self) -> None:
+        """Add Viser's native base-aligned grid as a ground reference."""
+        if (
+            not self._show_ground_plane
+            or self._server is None
+            or self._scene_handles is None
+        ):
+            return
+        size = self._ground_plane_size or max(1.35 * self.L_max, 0.1)
+        base_axis = self._base_tangent_axis(dim=3)
+        position = self._base_position(dim=3) - self._base_plate_thickness * base_axis
+        cfg = self.color_config
+        handle = self._server.scene.add_grid(
+            name="/ground",
+            width=float(size),
+            height=float(size),
+            plane="xy",
+            cell_color=_rgb_to_viser_color(
+                np.asarray(cfg.ground_plane_grid_color, dtype=np.float64)
+            ),
+            cell_thickness=0.8,
+            cell_size=float(size / 10.0),
+            section_color=_rgb_to_viser_color(
+                np.asarray(cfg.ground_plane_grid_color, dtype=np.float64) * 0.8
+            ),
+            section_thickness=1.2,
+            section_size=float(size / 2.0),
+            shadow_opacity=0.22,
+            plane_color=_rgb_to_viser_color(
+                np.asarray(cfg.ground_plane_color, dtype=np.float64)
+            ),
+            plane_opacity=0.72,
+            wxyz=_direction_to_quaternion(base_axis),
+            position=tuple(position),
+        )
+        self._scene_handles.ground_planes.append(handle)
 
     def stop(self) -> None:
         """Stop the Viser server."""

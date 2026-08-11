@@ -144,6 +144,10 @@ dmypy.json
 *.mp4
 *.gif
 
+# Curated, web-optimized documentation media is intentionally versioned.
+!docs/assets/**/*.mp4
+!docs/assets/**/*.gif
+
 # Generated example artifacts stay next to the script that creates them.
 examples/**/figures/*
 examples/**/videos/*

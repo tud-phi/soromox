@@ -64,6 +64,11 @@ channel ordering.
 
 For actuator-aware visualization, use `UMArmViserRenderer`:
 
+<figure markdown>
+  ![UMArm articulated robot and McKibben actuators rendered in Viser](../../../assets/systems/umarm-viser-closeup.png){ .soromox-figure }
+  <figcaption>The UMArm renderer displays the articulated mechanism together with actuator-aware McKibben geometry.</figcaption>
+</figure>
+
 ```python
 from soromox.rendering import UMArmViserRenderer
 
@@ -90,3 +95,12 @@ renderer.show(q, actuator_inputs=p)
       group_by_category: true
       docstring_section_style: table
       members_order: source
+
+## References
+
+The UMArm platform was introduced in:
+
+- Zuo, R., Han, D. H., Li, R., Jamal, S., & Bruder, D. (2025). UMArm:
+  Untethered, modular, portable, soft pneumatic arm. *arXiv preprint
+  arXiv:2505.11476*.
+  [https://doi.org/10.48550/arXiv.2505.11476](https://doi.org/10.48550/arXiv.2505.11476)

@@ -70,6 +70,8 @@ color_config = RendererColorConfig(
         segment_palette="soromox:ember",
     ),
     base_plate_color=(0.5, 0.5, 0.5),
+    ground_plane_color=(0.94, 0.95, 0.96),
+    ground_plane_grid_color=(0.72, 0.75, 0.78),
     actuators=ActuatorStyleConfig(
         default_color=(0.8, 0.2, 0.2),
         kind_colors={"tendon": (0.85, 0.2, 0.15)},
@@ -79,6 +81,11 @@ color_config = RendererColorConfig(
 
 renderer.show(q, color_config=color_config)
 ```
+
+Matplotlib, Open3D, and Viser show a base-aligned ground reference by default.
+Pass `show_ground_plane=False` to the renderer constructor to hide it, or set
+`ground_plane_size` to control its side length in meters. Viser uses its native
+grid primitive; the I-SUPPORT and UMArm renderers inherit the same behavior.
 
 ::: soromox.rendering.color_config.RendererColorConfig
     options:

@@ -101,6 +101,76 @@ def _make_base_plate(
     return mesh
 
 
+def _make_ground_plane(
+    center_xyz: np.ndarray,
+    normal_xyz: np.ndarray,
+    size: float,
+    plane_color: tuple[float, float, float],
+    grid_color: tuple[float, float, float],
+    grid_divisions: int = 10,
+) -> tuple[o3d.geometry.TriangleMesh, o3d.geometry.LineSet]:
+    """Create a finite, base-aligned ground plane and grid."""
+    normal = np.asarray(normal_xyz, dtype=np.float64)
+    normal_norm = float(np.linalg.norm(normal))
+    normal = (
+        normal / normal_norm
+        if normal_norm > 1e-9
+        else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    )
+    reference = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    if abs(float(np.dot(normal, reference))) > 0.95:
+        reference = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    axis_u = np.cross(normal, reference)
+    axis_u = axis_u / np.linalg.norm(axis_u)
+    axis_v = np.cross(normal, axis_u)
+    center = np.asarray(center_xyz, dtype=np.float64)
+    half = 0.5 * float(size)
+
+    corners = np.stack(
+        [
+            center - half * axis_u - half * axis_v,
+            center + half * axis_u - half * axis_v,
+            center + half * axis_u + half * axis_v,
+            center - half * axis_u + half * axis_v,
+        ]
+    )
+    plane = o3d.geometry.TriangleMesh(
+        vertices=o3d.utility.Vector3dVector(corners),
+        triangles=o3d.utility.Vector3iVector(np.array([[0, 1, 2], [0, 2, 3]])),
+    )
+    plane.compute_vertex_normals()
+    plane.paint_uniform_color(np.asarray(plane_color, dtype=np.float64))
+
+    grid_points: list[np.ndarray] = []
+    grid_lines: list[tuple[int, int]] = []
+    grid_center = center + 2e-4 * max(float(size), 1.0) * normal
+    for coord in np.linspace(-half, half, int(grid_divisions) + 1):
+        for start, end in (
+            (
+                grid_center - half * axis_u + coord * axis_v,
+                grid_center + half * axis_u + coord * axis_v,
+            ),
+            (
+                grid_center + coord * axis_u - half * axis_v,
+                grid_center + coord * axis_u + half * axis_v,
+            ),
+        ):
+            first_idx = len(grid_points)
+            grid_points.extend([start, end])
+            grid_lines.append((first_idx, first_idx + 1))
+    grid = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(np.asarray(grid_points)),
+        lines=o3d.utility.Vector2iVector(np.asarray(grid_lines, dtype=np.int32)),
+    )
+    grid.colors = o3d.utility.Vector3dVector(
+        np.tile(
+            np.asarray(grid_color, dtype=np.float64)[None, :],
+            (len(grid_lines), 1),
+        )
+    )
+    return plane, grid
+
+
 def _make_sphere(
     center_xyz: np.ndarray,
     radius: float,
@@ -537,6 +607,8 @@ class RecordingConfig:
 
 @dataclass
 class SceneHandles:
+    ground_meshes: list
+    ground_lines: list
     base_meshes: list
     backbone_meshes: list[list[list[CachedMesh]]]
     actuator_lines: list[list[list]]
@@ -581,6 +653,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
+        show_ground_plane: bool = True,
+        ground_plane_size: float | None = None,
     ):
         """Initialize Open3D renderer.
 
@@ -601,6 +675,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             actuator_line_width: Width of actuator lines
             camera_margin_ratio: Margin ratio for camera bounding box
+            show_ground_plane: Whether to render a base-aligned ground plane
+            ground_plane_size: Optional side length of the ground plane in meters
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -628,6 +704,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.camera_margin_ratio = camera_margin_ratio
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
+        self.show_ground_plane = bool(show_ground_plane)
+        self.ground_plane_size = (
+            None if ground_plane_size is None else float(ground_plane_size)
+        )
+        if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
+            raise ValueError("ground_plane_size must be positive when provided")
         self._warned_dynamic_geometry = False
 
         self._unit_meshes = {
@@ -1094,6 +1176,30 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             sections, max_radius = self._cross_sections_for_points(q_frame, s_ps)
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
             base_axis = material_frames[0, :, 0]
+            if self.show_ground_plane:
+                ground_size = self.ground_plane_size or max(
+                    1.35 * self.L_max,
+                    12.0 * max_radius,
+                    0.1,
+                )
+                ground_plane, ground_grid = _make_ground_plane(
+                    curve[0] - self.base_plate_thickness * base_axis,
+                    base_axis,
+                    ground_size,
+                    cfg.ground_plane_color,
+                    cfg.ground_plane_grid_color,
+                )
+                scene.add_geometry(
+                    f"ground_plane_{robot_idx}",
+                    ground_plane,
+                    mat_for((*cfg.ground_plane_color, 0.78)),
+                )
+                grid_material = o3d.visualization.rendering.MaterialRecord()
+                grid_material.shader = "unlitLine"
+                grid_material.line_width = 1.0
+                scene.add_geometry(
+                    f"ground_grid_{robot_idx}", ground_grid, grid_material
+                )
             base_mesh = _make_base_plate(
                 curve[0] - 0.5 * self.base_plate_thickness * base_axis,
                 radius=float(self.base_plate_radius_scale * max_radius),
@@ -1780,6 +1886,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         cfg = color_config or self.color_config
         layout = scene_data.layout
         s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
+        ground_meshes: list = []
+        ground_lines: list = []
         base_meshes: list = []
         backbone_meshes: list[list[list[CachedMesh]]] = []
 
@@ -1797,6 +1905,24 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             material_frames0 = scene_data.material_frames[robot_idx, frame_idx]
             q0 = scene_data.q_ts[robot_idx, frame_idx]
             sections, max_radius = self._cross_sections_for_points(q0, s_ps)
+            if self.show_ground_plane:
+                base_axis = material_frames0[0, :, 0]
+                ground_size = self.ground_plane_size or max(
+                    1.35 * self.L_max,
+                    12.0 * max_radius,
+                    0.1,
+                )
+                ground_plane, ground_grid = _make_ground_plane(
+                    curve0[0] - self.base_plate_thickness * base_axis,
+                    base_axis,
+                    ground_size,
+                    cfg.ground_plane_color,
+                    cfg.ground_plane_grid_color,
+                )
+                vis.add_geometry(ground_plane)
+                vis.add_geometry(ground_grid)
+                ground_meshes.append(ground_plane)
+                ground_lines.append(ground_grid)
             base_mesh, groups = self._build_robot_geometry(
                 vis,
                 curve0,
@@ -1865,6 +1991,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 vis.add_geometry(mesh0)
 
         return SceneHandles(
+            ground_meshes=ground_meshes,
+            ground_lines=ground_lines,
             base_meshes=base_meshes,
             backbone_meshes=backbone_meshes,
             actuator_lines=actuator_lines,

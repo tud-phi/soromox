@@ -13,6 +13,11 @@ deformable pneumatic section.
 - **Pressure-based control**: Direct pressure input for actuation
 - **I-Support platform**: Specific configuration for the I-Support robot
 
+<figure markdown>
+  ![I-SUPPORT pneumatic soft robot rendered with its specialized Viser geometry](../../../assets/systems/isupport-viser-closeup.png){ .soromox-figure }
+  <figcaption>I-SUPPORT Viser rendering with corrugated pneumatic chambers, spacers, and rigid interfaces.</figcaption>
+</figure>
+
 ## Specialized Viser Rendering
 
 Use `ISupportViserRenderer` to display the physical chamber layout instead of
@@ -196,3 +201,20 @@ The internal equivalent paths are not drawn as generic pneumatic tubes.
       group_by_category: true
       docstring_section_style: table
       members_order: source
+
+## References
+
+Key literature on the I-SUPPORT platform and its dynamic modeling:
+
+- Arleo, L., Stano, G., Percoco, G., & Cianchetti, M. (2021). I-support soft
+  arm for assistance tasks: a new manufacturing approach based on 3D printing
+  and characterization. *Progress in Additive Manufacturing*, 6(2), 243–256.
+  [https://doi.org/10.1007/s40964-020-00158-y](https://doi.org/10.1007/s40964-020-00158-y)
+- Alessi, C., Falotico, E., & Lucantonio, A. (2023). Ablation study of a
+  dynamic model for a 3D-printed pneumatic soft robotic arm. *IEEE Access*,
+  11, 37840–37853.
+  [https://doi.org/10.1109/ACCESS.2023.3266282](https://doi.org/10.1109/ACCESS.2023.3266282)
+- Alessi, C., Bianchi, D., Stano, G., Cianchetti, M., & Falotico, E. (2024).
+  Pushing with soft robotic arms via deep reinforcement learning. *Advanced
+  Intelligent Systems*, 6(8), 2300899.
+  [https://doi.org/10.1002/aisy.202300899](https://doi.org/10.1002/aisy.202300899)

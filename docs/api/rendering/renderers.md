@@ -248,8 +248,14 @@ Set `segment_palette=None` to fall back to solid per-robot colors.
 
 `RendererColorConfig` also provides renderer-specific colors:
 
-- `base_plate_color` (Open3D, Viser)
+- `base_plate_color` (Matplotlib, Open3D, Viser)
+- `ground_plane_color` and `ground_plane_grid_color` (Matplotlib, Open3D, Viser)
 - `actuators.default_color` and `actuators.scalar_colormap`
+
+Matplotlib, Open3D, and Viser render a base-aligned ground reference by
+default. Use `show_ground_plane=False` to hide it or `ground_plane_size=...` to
+set its side length in meters. Viser uses its integrated grid primitive, and
+specialized Viser renderers such as I-SUPPORT and UMArm inherit the same plane.
 
 ### Camera configuration
 
