@@ -22,9 +22,11 @@ class OpenCVPlanarHSARenderer(BaseOpenCVRenderer):
     This is a specialized renderer that uses HSA-specific forward kinematics.
 
     Example:
-        >>> renderer = OpenCVPlanarHSARenderer(robot)
-        >>> img = renderer.render_frame(q)
-        >>> renderer.show(q)
+        ```python
+        renderer = OpenCVPlanarHSARenderer(robot)
+        image = renderer.render_frame(q)
+        renderer.show(q)
+        ```
     """
 
     def __init__(

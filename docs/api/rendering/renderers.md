@@ -1,10 +1,10 @@
-# Rendering
+# Renderer API
 
 Visualization and rendering utilities for robot systems.
 
-Composable actuators expose semantic geometry through
-`robot.actuator_visual_layers(...)`; see
-[Threadlike actuation](../actuation/threadlike.md#rendering).
+Start with the [Rendering overview](index.md) to compare visual output and
+choose a backend. This page documents the shared renderer contract and each
+backend's API.
 
 ## Overview
 
@@ -20,6 +20,19 @@ BaseSoftRobotRenderer (abstract base)
 ├── OpenCVPlanarHSARenderer    # Specialized for PlanarHSA
 └── OpenCVPlanarRenderer       # Generic for planar robots
 ```
+
+### Shared renderer API
+
+| API | Shared behavior | Availability |
+| --- | --- | --- |
+| `BaseSoftRobotRenderer` | Backbone sampling, cached forward kinematics, batched layouts, color resolution, and the common rendering interface | All renderers |
+| Robot base | The robot's `base_pose` and `base_transform` place and orient the rendered robot in the world frame | All renderers |
+| Base plate | `base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
+| Ground plane | `show_ground_plane` and `ground_plane_size` configure a base-aligned reference plane; its colors come from `RendererColorConfig` | Matplotlib, Open3D, and Viser |
+
+See [Shared Configuration](configuration.md) for the camera, color, base, and
+ground-plane settings. Backend-specific parameters and methods are listed in
+the API reference below.
 
 ### Choosing a renderer
 

@@ -224,14 +224,11 @@ class ViserRenderer(BaseSoftRobotRenderer):
     - Video export via FFmpeg
 
     Example:
-        >>> renderer = ViserRenderer(robot, port=8080)
-        >>> renderer.show(q)  # Opens browser at localhost:8080
-
-        >>> # Animation replay
-        >>> renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True)
-
-        >>> # Live mode
-        >>> ctrl = renderer.start_live_mode(callback=lambda t: compute_q(t))
+        ```python
+        renderer = ViserRenderer(robot, port=8080)
+        renderer.show(q)
+        renderer.render_sequence(ts, q_ts, playback_speed=1.0, loop=True)
+        ```
     """
 
     def __init__(

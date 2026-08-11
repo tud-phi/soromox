@@ -80,7 +80,7 @@ BaseSoftRobotRenderer (abstract base)
 
 ## Documentation
 
-### [Renderers](renderers.md)
+### [Renderer API](renderers.md)
 
 Complete API reference for all renderer classes:
 
@@ -91,11 +91,12 @@ Complete API reference for all renderer classes:
 - `OpenCVPlanarRenderer` - OpenCV-based 2D visualization
 - `OpenCVPlanarHSARenderer` - HSA-specific visualization
 
-### [Camera & Colors](configuration.md)
+### [Shared Configuration](configuration.md)
 
-Configuration options for camera positioning and color schemes:
+Settings shared by multiple renderer backends:
 
 - `CameraConfig` - Camera positioning and field of view
+- Robot base, base-plate, and ground-plane behavior
 - `RendererColorConfig` - Color configuration hierarchy
 - `BackboneColorConfig` - Backbone-specific colors
 - Built-in color palettes and themes

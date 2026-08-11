@@ -84,8 +84,8 @@ nav:
             - Planar HSA: api/systems/hsa/planar-hsa.md
       - Rendering:
           - Overview: api/rendering/index.md
-          - Renderers: api/rendering/renderers.md
-          - Camera & Colors: api/rendering/configuration.md
+          - Renderer API: api/rendering/renderers.md
+          - Shared Configuration: api/rendering/configuration.md
       - Control:
           - Overview: api/control/index.md
           - Configuration-Space Controllers: api/control/configuration-space.md

@@ -21,9 +21,11 @@ class OpenCVPlanarRenderer(BaseOpenCVRenderer):
     per-segment radii are available.
 
     Example:
-        >>> renderer = OpenCVPlanarRenderer(robot)
-        >>> img = renderer.render_frame(q)
-        >>> renderer.show(q)
+        ```python
+        renderer = OpenCVPlanarRenderer(robot)
+        image = renderer.render_frame(q)
+        renderer.show(q)
+        ```
     """
 
     def __init__(

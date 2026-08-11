@@ -1,6 +1,7 @@
-# Camera & Colors Configuration
+# Shared Renderer Configuration
 
-This page documents the camera and color configuration options for SoRoMoX renderers.
+This page documents camera, base, ground-plane, and color settings shared by
+multiple SoRoMoX renderers.
 
 ## Camera Configuration
 
@@ -43,6 +44,39 @@ renderer.show(q, camera_config=camera)
 
 ---
 
+## Robot Base and Ground Plane
+
+All renderers obtain the robot origin and orientation from the model's
+`base_pose` and `base_transform`. This keeps the rendered backbone, base, and
+reference geometry in the same world frame without a renderer-specific pose
+override.
+
+| Setting | Purpose | Availability |
+| --- | --- | --- |
+| `base_plate_radius_scale` | Scales the rendered base-plate radius relative to the robot cross section | Open3D and Viser |
+| `base_plate_thickness` | Sets the base-plate thickness in meters | Open3D and Viser |
+| `show_ground_plane` | Shows or hides the base-aligned reference plane | Matplotlib, Open3D, and Viser |
+| `ground_plane_size` | Sets the reference-plane side length in meters; `None` uses a robot-scaled default | Matplotlib, Open3D, and Viser |
+
+```python
+from soromox.rendering import ViserRenderer
+
+renderer = ViserRenderer(
+    robot,
+    base_plate_radius_scale=2.0,
+    base_plate_thickness=0.06,
+    show_ground_plane=True,
+    ground_plane_size=0.6,
+)
+```
+
+Matplotlib draws a lightweight base marker. Open3D and Viser render base-plate
+geometry and place the ground plane immediately behind it along the model's
+base axis. Viser uses its native grid primitive. Specialized Viser renderers,
+including I-SUPPORT and UMArm, inherit these settings.
+
+---
+
 ## Color Configuration
 
 ### Color Hierarchy
@@ -81,13 +115,6 @@ color_config = RendererColorConfig(
 
 renderer.show(q, color_config=color_config)
 ```
-
-Matplotlib, Open3D, and Viser show a base-aligned ground reference by default.
-Pass `show_ground_plane=False` to the renderer constructor to hide it, or set
-`ground_plane_size` to control its side length in meters. Viser uses its native
-grid primitive; the I-SUPPORT and UMArm renderers inherit the same behavior.
-`BaseSoftRobotRenderer` stores and validates these shared settings, while each
-backend remains responsible for drawing its native ground-plane representation.
 
 ::: soromox.rendering.color_config.RendererColorConfig
     options:

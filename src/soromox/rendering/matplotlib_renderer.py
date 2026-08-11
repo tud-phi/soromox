@@ -38,10 +38,11 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
     The dimensionality is auto-detected from the robot's forward kinematics output.
 
     Example:
-        >>> renderer = MatplotlibRenderer(robot)
-        >>> renderer.show(q)  # Single frame
-        >>> renderer.animate(ts, q_ts, mode="slider")  # Interactive slider
-        >>> renderer.animate(ts, q_ts, mode="animation")  # Auto-play
+        ```python
+        renderer = MatplotlibRenderer(robot)
+        renderer.show(q)
+        renderer.animate(ts, q_ts, mode="slider")
+        ```
     """
 
     def __init__(

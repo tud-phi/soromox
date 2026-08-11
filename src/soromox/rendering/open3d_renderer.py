@@ -629,10 +629,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     optional actuator rendering, and keyboard controls.
 
     Example:
-        >>> renderer = Open3DRenderer(robot)
-        >>> renderer.show(q)  # Single interactive frame
-        >>> renderer.render_sequence(ts, q_ts, playback_speed=1.0)  # Animated playback
-        >>> img = renderer.render_frame(q)  # Headless capture
+        ```python
+        renderer = Open3DRenderer(robot)
+        renderer.show(q)
+        renderer.render_sequence(ts, q_ts, playback_speed=1.0)
+        ```
     """
 
     def __init__(
