@@ -8,6 +8,7 @@ import math
 import os
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -172,13 +173,23 @@ class HeadlessRLVideoRenderer(Open3DRenderer):
 
         vis, ctrl = self._create_visualizer(window_name)
         try:
+            print(
+                f"[Open3D] Building initial scene for {scene_data.num_robots} arm(s)..."
+            )
+            build_started = time.perf_counter()
             handles = self._build_scene(
                 vis,
                 scene_data,
                 frame_idx=0,
                 color_config=color_config,
             )
+            print(
+                f"[Open3D] Initial scene ready in "
+                f"{time.perf_counter() - build_started:.2f}s"
+            )
             self._setup_interactive_camera(vis, ctrl, scene_data, camera_config)
+            if self.progress is None:
+                self.progress = Progress(len(frame_indices), "Render frames")
 
             for frame_idx in frame_indices:
                 self._update_scene(
@@ -520,10 +531,6 @@ def render_rollout_to_mp4(
             shifted_ball_ts
         )
 
-    frame_indices = list(range(0, rollout.ts.size, args.record_every_n))
-    if not frame_indices or frame_indices[-1] != rollout.ts.size - 1:
-        frame_indices.append(rollout.ts.size - 1)
-    progress = Progress(len(frame_indices), "Render/encode")
     renderer = HeadlessRLVideoRenderer(
         robot,
         width=args.width,
@@ -531,14 +538,16 @@ def render_rollout_to_mp4(
         num_points=args.num_points,
         color_config=make_rl_color_config(color_label),
         backbone_style="discrete",
+        recompute_normals=False,
         background_color=BACKGROUND_COLOR,
         sphere_resolution=args.sphere_resolution,
         actuator_line_width=args.tendon_line_width,
         grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
+        merge_backbone_meshes=rollout.num_envs > 1,
         visible=args.visible,
-        progress=progress,
     )
+    print("Precomputing vectorized scene geometry...")
     try:
         renderer.render_sequence(
             ts=rollout.ts,
@@ -573,7 +582,8 @@ def render_rollout_to_mp4(
             window_name="SoRoMoX PPO Rollout",
         )
     finally:
-        progress.close()
+        if renderer.progress is not None:
+            renderer.progress.close()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

@@ -167,6 +167,44 @@ def test_manual_auto_camera_override_applies_to_single_arm():
     assert camera.position_offset == (1.0, 0.0, 0.5)
 
 
+def test_shared_renderer_vectorizes_tendon_geometry_over_envs_and_time():
+    robot = render_rl_video.build_rl_robot()
+    renderer = render_rl_video.HeadlessRLVideoRenderer(
+        robot,
+        width=64,
+        height=64,
+        num_points=5,
+        sphere_resolution=3,
+    )
+    q_ts = np.zeros((2, 3, 6), dtype=np.float64)
+    q_ts[1, 2, :3] = (0.1, -0.2, 0.05)
+    offsets = np.array([[0.0, 0.0, 0.0], [0.3, -0.2, 0.0]])
+    actuator_inputs = np.arange(24, dtype=np.float64).reshape(2, 3, 4)
+
+    (trajectory_layer,) = renderer.compute_actuator_visual_layers_trajectory(
+        q_ts,
+        offsets,
+        actuator_inputs=actuator_inputs,
+    )
+    (reference_layer,) = renderer.compute_actuator_visual_layers(
+        q_ts[1, 2], actuator_inputs=actuator_inputs[1, 2]
+    )
+
+    assert trajectory_layer.points.shape == (2, 3, 4, 5, 3)
+    assert_allclose(
+        trajectory_layer.points[1, 2],
+        reference_layer.points + offsets[1, None, None, :],
+    )
+    assert_allclose(trajectory_layer.scalar_fields["input"], actuator_inputs)
+
+    (single_layer,) = renderer.compute_actuator_visual_layers_trajectory(
+        q_ts[:1],
+        offsets[:1],
+        actuator_inputs=actuator_inputs[0],
+    )
+    assert_allclose(single_layer.scalar_fields["input"], actuator_inputs[:1])
+
+
 def test_output_paths_and_preflight_cover_mp4_and_gif(tmp_path):
     output, gif_output = render_rl_video.resolve_output_paths(
         tmp_path / "nested" / "rollout.mp4",
