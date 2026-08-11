@@ -74,6 +74,74 @@ def _make_polyline_lineset(
     return ls
 
 
+def _make_polylines_lineset(
+    polylines: np.ndarray,
+    colors: np.ndarray,
+) -> o3d.geometry.LineSet:
+    """Create multiple independently colored polylines as one LineSet."""
+    polylines = np.array(polylines, dtype=np.float64, order="C", copy=True)
+    colors = np.array(colors, dtype=np.float64, order="C", copy=True)
+    if polylines.ndim != 3 or polylines.shape[-1] not in (2, 3):
+        raise ValueError(
+            f"polylines must have shape (N, P, 2|3), got {polylines.shape}"
+        )
+    if polylines.shape[-1] == 2:
+        polylines = np.pad(polylines, ((0, 0), (0, 0), (0, 1)))
+    if polylines.shape[1] < 2:
+        raise ValueError("polylines must contain at least two points")
+    if colors.shape != (polylines.shape[0], 3):
+        raise ValueError(
+            f"colors must have shape ({polylines.shape[0]}, 3), got {colors.shape}"
+        )
+
+    num_polylines, num_points, _ = polylines.shape
+    point_indices = np.arange(num_polylines * num_points, dtype=np.int32).reshape(
+        num_polylines, num_points
+    )
+    lines = np.stack((point_indices[:, :-1], point_indices[:, 1:]), axis=-1).reshape(
+        -1, 2
+    )
+    line_colors = np.repeat(colors, num_points - 1, axis=0)
+    line_set = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(polylines.reshape(-1, 3)),
+        lines=o3d.utility.Vector2iVector(lines),
+    )
+    line_set.colors = o3d.utility.Vector3dVector(line_colors)
+    return line_set
+
+
+def _update_polylines_lineset(
+    line_set: o3d.geometry.LineSet,
+    polylines: np.ndarray,
+    colors: np.ndarray,
+) -> None:
+    """Update a batched LineSet without changing its fixed line topology."""
+    polylines = np.array(polylines, dtype=np.float64, order="C", copy=True)
+    colors = np.array(colors, dtype=np.float64, order="C", copy=True)
+    if polylines.ndim != 3 or polylines.shape[-1] not in (2, 3):
+        raise ValueError(
+            f"polylines must have shape (N, P, 2|3), got {polylines.shape}"
+        )
+    if polylines.shape[-1] == 2:
+        polylines = np.pad(polylines, ((0, 0), (0, 0), (0, 1)))
+    if polylines.shape[1] < 2:
+        raise ValueError("polylines must contain at least two points")
+    if colors.shape != (polylines.shape[0], 3):
+        raise ValueError(
+            f"colors must have shape ({polylines.shape[0]}, 3), got {colors.shape}"
+        )
+    expected_lines = polylines.shape[0] * (polylines.shape[1] - 1)
+    if len(line_set.lines) != expected_lines:
+        raise ValueError(
+            "updated polylines must retain the original number of line segments; "
+            f"expected {len(line_set.lines)}, got {expected_lines}"
+        )
+    line_set.points = o3d.utility.Vector3dVector(polylines.reshape(-1, 3))
+    line_set.colors = o3d.utility.Vector3dVector(
+        np.repeat(colors, polylines.shape[1] - 1, axis=0)
+    )
+
+
 def _make_base_plate(
     center_xyz: np.ndarray,
     radius: float,
@@ -193,6 +261,52 @@ def _make_sphere(
     return mesh
 
 
+def _make_spheres_mesh(
+    centers: np.ndarray,
+    radii: np.ndarray,
+    colors: np.ndarray,
+    resolution: int = 16,
+) -> o3d.geometry.TriangleMesh:
+    """Create many independently colored spheres as one triangle mesh."""
+    centers = np.asarray(centers, dtype=np.float64)
+    radii = np.asarray(radii, dtype=np.float64).reshape(-1)
+    colors = np.asarray(colors, dtype=np.float64)
+    if centers.ndim != 2 or centers.shape[1] != 3:
+        raise ValueError(f"centers must have shape (N, 3), got {centers.shape}")
+    if radii.shape != (centers.shape[0],):
+        raise ValueError(
+            f"radii must have shape ({centers.shape[0]},), got {radii.shape}"
+        )
+    if colors.shape != (centers.shape[0], 3):
+        raise ValueError(
+            f"colors must have shape ({centers.shape[0]}, 3), got {colors.shape}"
+        )
+    if centers.shape[0] == 0:
+        return o3d.geometry.TriangleMesh()
+
+    unit = _make_unit_sphere_mesh(resolution)
+    num_spheres = centers.shape[0]
+    num_vertices = unit.vertices.shape[0]
+    vertices = (
+        unit.vertices[None, :, :] * radii[:, None, None] + centers[:, None, :]
+    ).reshape(-1, 3)
+    triangles = (
+        unit.triangles[None, :, :]
+        + (np.arange(num_spheres) * num_vertices)[:, None, None]
+    ).reshape(-1, 3)
+
+    mesh = o3d.geometry.TriangleMesh()
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(triangles)
+    mesh.vertex_normals = o3d.utility.Vector3dVector(
+        np.tile(unit.normals, (num_spheres, 1))
+    )
+    mesh.vertex_colors = o3d.utility.Vector3dVector(
+        np.repeat(colors, num_vertices, axis=0)
+    )
+    return mesh
+
+
 @dataclass(frozen=True)
 class UnitMesh:
     vertices: np.ndarray
@@ -210,6 +324,53 @@ class CachedMesh:
     rotate_to_axis: bool
     swept_ring_offsets: np.ndarray | None = None
     cap_end: bool = False
+
+
+def _merge_triangle_meshes(
+    meshes: list[o3d.geometry.TriangleMesh],
+) -> o3d.geometry.TriangleMesh:
+    """Merge meshes while preserving triangles, normals, and vertex colors."""
+    merged = o3d.geometry.TriangleMesh()
+    if not meshes:
+        return merged
+
+    vertex_counts = np.asarray([len(mesh.vertices) for mesh in meshes], dtype=np.int64)
+    offsets = np.concatenate((np.zeros(1, dtype=np.int64), np.cumsum(vertex_counts)))
+    merged.vertices = o3d.utility.Vector3dVector(
+        np.concatenate([np.asarray(mesh.vertices) for mesh in meshes], axis=0)
+    )
+    merged.triangles = o3d.utility.Vector3iVector(
+        np.concatenate(
+            [
+                np.asarray(mesh.triangles, dtype=np.int64) + offsets[index]
+                for index, mesh in enumerate(meshes)
+            ],
+            axis=0,
+        )
+    )
+    if all(mesh.has_vertex_normals() for mesh in meshes):
+        merged.vertex_normals = o3d.utility.Vector3dVector(
+            np.concatenate([np.asarray(mesh.vertex_normals) for mesh in meshes], axis=0)
+        )
+    if all(mesh.has_vertex_colors() for mesh in meshes):
+        merged.vertex_colors = o3d.utility.Vector3dVector(
+            np.concatenate([np.asarray(mesh.vertex_colors) for mesh in meshes], axis=0)
+        )
+    return merged
+
+
+def _refresh_merged_triangle_mesh(
+    merged: o3d.geometry.TriangleMesh,
+    meshes: list[o3d.geometry.TriangleMesh],
+) -> None:
+    """Refresh dynamic vertices and normals of a previously merged mesh."""
+    merged.vertices = o3d.utility.Vector3dVector(
+        np.concatenate([np.asarray(mesh.vertices) for mesh in meshes], axis=0)
+    )
+    if all(mesh.has_vertex_normals() for mesh in meshes):
+        merged.vertex_normals = o3d.utility.Vector3dVector(
+            np.concatenate([np.asarray(mesh.vertex_normals) for mesh in meshes], axis=0)
+        )
 
 
 def _unit_mesh_from_o3d(mesh: o3d.geometry.TriangleMesh) -> UnitMesh:
@@ -578,6 +739,13 @@ class DynamicSpheres:
 
 
 @dataclass
+class DynamicSphereBatchHandle:
+    mesh: o3d.geometry.TriangleMesh
+    trajectories: np.ndarray  # (N, T, 3)
+    local_vertices: np.ndarray  # (N, V, 3)
+
+
+@dataclass
 class SceneData:
     curves: np.ndarray  # (N, T, P, 3)
     material_frames: np.ndarray  # (N, T, P, 3, 3)
@@ -613,10 +781,10 @@ class SceneHandles:
     ground_lines: list
     base_meshes: list
     backbone_meshes: list[list[list[CachedMesh]]]
-    actuator_lines: list[list[list]]
+    merged_backbone_meshes: list[o3d.geometry.TriangleMesh | None]
+    actuator_lines: list[o3d.geometry.LineSet]
     static_meshes: list
-    dynamic_meshes: list
-    dynamic_trajs: list[np.ndarray]
+    dynamic_sphere_batch: DynamicSphereBatchHandle | None
 
 
 # ======================================================================================
@@ -658,6 +826,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_offsets: Array | None = None,
         actuator_line_width: float = 2.0,
         camera_margin_ratio: float = 0.05,
+        merge_backbone_meshes: bool = False,
     ):
         """Initialize Open3D renderer.
 
@@ -680,6 +849,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             base_offsets: Explicit base offsets of shape (N, 2) or (N, 3) for batched rendering
             actuator_line_width: Width of actuator lines
             camera_margin_ratio: Margin ratio for camera bounding box
+            merge_backbone_meshes: Merge each robot's backbone primitives into
+                one dynamic mesh to reduce Open3D geometry registrations
         """
         if not OPEN3D_AVAILABLE:
             raise ImportError(
@@ -707,6 +878,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self._base_offsets = base_offsets
         self.actuator_line_width = actuator_line_width
         self.camera_margin_ratio = camera_margin_ratio
+        self.merge_backbone_meshes = bool(merge_backbone_meshes)
         self.base_plate_radius_scale = float(base_plate_radius_scale)
         self.base_plate_thickness = float(base_plate_thickness)
         self._warned_dynamic_geometry = False
@@ -1749,6 +1921,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         layout: SegmentLayout,
         segment_colors: np.ndarray,
         base_plate_color: tuple[float, float, float],
+        add_backbone_geometry: bool = True,
     ) -> tuple[object, list[list[CachedMesh]]]:
         """Add base and backbone meshes for one robot; return handles."""
         base_color = self._blend_with_background(base_plate_color)
@@ -1801,7 +1974,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         cap_end=cap_end,
                     )
                     seg_meshes.append(cached)
-                    vis.add_geometry(mesh)
+                    if add_backbone_geometry:
+                        vis.add_geometry(mesh)
             else:
                 for p in range(c0, c1):
                     geom_tag, params = sections[p]
@@ -1823,7 +1997,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                     )
                     self._apply_cached_mesh(cached, curve0[p], rotation, None)
                     seg_meshes.append(cached)
-                    vis.add_geometry(mesh)
+                    if add_backbone_geometry:
+                        vis.add_geometry(mesh)
             meshes_groups.append(seg_meshes)
         return base_mesh, meshes_groups
 
@@ -1835,6 +2010,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_mesh,
         meshes_groups: list[list[CachedMesh]],
         layout: SegmentLayout,
+        update_backbone_geometry: bool = True,
     ) -> None:
         """Translate base and backbone geometry to a new curve position."""
         base_axis = material_frames[0, :, 0]
@@ -1859,7 +2035,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         material_frames[p],
                         material_frames[p + 1],
                     )
-                    vis.update_geometry(cached.mesh)
+                    if update_backbone_geometry:
+                        vis.update_geometry(cached.mesh)
             else:
                 for i_local, p in enumerate(range(c0, min(c1, c0 + len(seg_meshes)))):
                     cached = seg_meshes[i_local]
@@ -1867,7 +2044,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         material_frames[p]
                     )
                     self._apply_cached_mesh(cached, curve[p], rotation, None)
-                    vis.update_geometry(cached.mesh)
+                    if update_backbone_geometry:
+                        vis.update_geometry(cached.mesh)
 
     def _build_scene(
         self,
@@ -1885,6 +2063,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         ground_lines: list = []
         base_meshes: list = []
         backbone_meshes: list[list[list[CachedMesh]]] = []
+        merged_backbone_meshes: list[o3d.geometry.TriangleMesh | None] = []
 
         if not self._warned_dynamic_geometry:
             warnings.warn(
@@ -1923,73 +2102,81 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 layout,
                 segment_colors=scene_data.segment_colors_rgba[robot_idx],
                 base_plate_color=cfg.base_plate_color,
+                add_backbone_geometry=not self.merge_backbone_meshes,
             )
             base_meshes.append(base_mesh)
             backbone_meshes.append(groups)
+            if self.merge_backbone_meshes:
+                merged = _merge_triangle_meshes(
+                    [cached.mesh for group in groups for cached in group]
+                )
+                vis.add_geometry(merged)
+                merged_backbone_meshes.append(merged)
+            else:
+                merged_backbone_meshes.append(None)
 
-        actuator_lines: list[list[list]] = []
+        actuator_lines: list[o3d.geometry.LineSet] = []
         for layer in scene_data.actuator_layers:
-            layer_lines: list[list] = []
             colors = resolve_actuator_rgba(
                 layer,
                 default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
-            for robot_idx in range(scene_data.num_robots):
-                robot_lines: list = []
-                robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
-                for actuator_idx in range(robot_actuators.shape[0]):
-                    color = tuple(colors[robot_idx, frame_idx, actuator_idx, :3])
-                    ls = _make_polyline_lineset(
-                        robot_actuators[actuator_idx], color=color
-                    )
-                    robot_lines.append(ls)
-                    vis.add_geometry(ls)
-                layer_lines.append(robot_lines)
-            actuator_lines.append(layer_lines)
+            frame_points = np.asarray(layer.points)[:, frame_idx]
+            num_points = frame_points.shape[-2]
+            line_set = _make_polylines_lineset(
+                frame_points.reshape(-1, num_points, frame_points.shape[-1]),
+                colors[:, frame_idx, :, :3].reshape(-1, 3),
+            )
+            actuator_lines.append(line_set)
+            vis.add_geometry(line_set)
 
         static_meshes: list = []
         if scene_data.static_spheres is not None:
             static_set = scene_data.static_spheres
-            for ctr, rad, col in zip(
-                static_set.centers, static_set.radii, static_set.colors
-            ):
-                mesh = _make_sphere(
-                    ctr,
-                    float(rad),
-                    tuple(col),
+            if static_set.centers.shape[0] > 0:
+                mesh = _make_spheres_mesh(
+                    static_set.centers,
+                    static_set.radii,
+                    static_set.colors,
                     self.sphere_resolution,
                 )
                 static_meshes.append(mesh)
                 vis.add_geometry(mesh)
 
-        dynamic_meshes: list = []
-        dynamic_trajs: list[np.ndarray] = []
+        dynamic_sphere_batch: DynamicSphereBatchHandle | None = None
         if scene_data.dynamic_spheres is not None:
             dyn_set = scene_data.dynamic_spheres
-            for centers_T3, rad, col in zip(
-                dyn_set.trajectories, dyn_set.radii, dyn_set.colors
-            ):
-                centers_np = np.asarray(centers_T3, dtype=np.float64)
-                mesh0 = _make_sphere(
-                    centers_np[0],
-                    float(rad),
-                    tuple(col),
-                    max(12, self.sphere_resolution // 2),
+            trajectories = np.asarray(dyn_set.trajectories, dtype=np.float64)
+            if trajectories.shape[0] > 0:
+                resolution = max(12, self.sphere_resolution // 2)
+                mesh = _make_spheres_mesh(
+                    trajectories[:, 0],
+                    dyn_set.radii,
+                    dyn_set.colors,
+                    resolution,
                 )
-                dynamic_meshes.append(mesh0)
-                dynamic_trajs.append(centers_np)
-                vis.add_geometry(mesh0)
+                unit_vertices = _make_unit_sphere_mesh(resolution).vertices
+                local_vertices = (
+                    unit_vertices[None, :, :]
+                    * np.asarray(dyn_set.radii, dtype=np.float64)[:, None, None]
+                )
+                dynamic_sphere_batch = DynamicSphereBatchHandle(
+                    mesh=mesh,
+                    trajectories=trajectories,
+                    local_vertices=local_vertices,
+                )
+                vis.add_geometry(mesh)
 
         return SceneHandles(
             ground_meshes=ground_meshes,
             ground_lines=ground_lines,
             base_meshes=base_meshes,
             backbone_meshes=backbone_meshes,
+            merged_backbone_meshes=merged_backbone_meshes,
             actuator_lines=actuator_lines,
             static_meshes=static_meshes,
-            dynamic_meshes=dynamic_meshes,
-            dynamic_trajs=dynamic_trajs,
+            dynamic_sphere_batch=dynamic_sphere_batch,
         )
 
     def _update_scene(
@@ -2008,6 +2195,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
             material_frames = scene_data.material_frames[robot_idx, frame_idx]
+            merged_backbone = handles.merged_backbone_meshes[robot_idx]
             self._update_robot_geometry(
                 vis,
                 curve,
@@ -2015,7 +2203,18 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 handles.base_meshes[robot_idx],
                 handles.backbone_meshes[robot_idx],
                 layout,
+                update_backbone_geometry=merged_backbone is None,
             )
+            if merged_backbone is not None:
+                _refresh_merged_triangle_mesh(
+                    merged_backbone,
+                    [
+                        cached.mesh
+                        for group in handles.backbone_meshes[robot_idx]
+                        for cached in group
+                    ],
+                )
+                vis.update_geometry(merged_backbone)
 
         for layer_idx, layer in enumerate(scene_data.actuator_layers):
             colors = resolve_actuator_rgba(
@@ -2023,25 +2222,25 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 default_color=cfg.actuators.color_for_kind(layer.kind),
                 scalar_colormap=cfg.actuators.scalar_colormap,
             )
-            for robot_idx, robot_lines in enumerate(handles.actuator_lines[layer_idx]):
-                robot_actuators = np.asarray(layer.points)[robot_idx, frame_idx]
-                for actuator_idx, ls in enumerate(robot_lines):
-                    t_pts = np.array(
-                        robot_actuators[actuator_idx], dtype=np.float64, copy=True
-                    )
-                    ls.points = o3d.utility.Vector3dVector(t_pts)
-                    color = colors[robot_idx, frame_idx, actuator_idx, :3]
-                    line_count = np.asarray(ls.lines).shape[0]
-                    ls.colors = o3d.utility.Vector3dVector(
-                        np.tile(color[None, :], (line_count, 1))
-                    )
-                    vis.update_geometry(ls)
+            frame_points = np.asarray(layer.points)[:, frame_idx]
+            line_set = handles.actuator_lines[layer_idx]
+            _update_polylines_lineset(
+                line_set,
+                frame_points.reshape(
+                    -1, frame_points.shape[-2], frame_points.shape[-1]
+                ),
+                colors[:, frame_idx, :, :3].reshape(-1, 3),
+            )
+            vis.update_geometry(line_set)
 
-        for mesh, traj in zip(handles.dynamic_meshes, handles.dynamic_trajs):
-            j_idx = min(frame_idx, traj.shape[0] - 1)
-            delta = traj[j_idx] - _mesh_center(mesh)
-            mesh.translate(delta, relative=True)
-            vis.update_geometry(mesh)
+        dynamic_batch = handles.dynamic_sphere_batch
+        if dynamic_batch is not None:
+            j_idx = min(frame_idx, dynamic_batch.trajectories.shape[1] - 1)
+            centers = dynamic_batch.trajectories[:, j_idx]
+            dynamic_batch.mesh.vertices = o3d.utility.Vector3dVector(
+                (dynamic_batch.local_vertices + centers[:, None, :]).reshape(-1, 3)
+            )
+            vis.update_geometry(dynamic_batch.mesh)
 
     def _init_recorder(
         self,

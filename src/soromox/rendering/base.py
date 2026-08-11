@@ -10,6 +10,9 @@ import jax.numpy as jnp
 import numpy as np
 from jax import Array
 
+from soromox.rendering.actuation import (
+    vectorized_actuator_visual_layers_trajectory,
+)
 from soromox.rendering.actuators import (
     ActuatorVisualLayer,
     BatchedActuatorVisualLayer,
@@ -107,9 +110,8 @@ class BaseSoftRobotRenderer(ABC):
         # Total robot length
         self.L_max = float(jnp.asarray(robot.length))
 
-        # SoftRobot defines the formal single-configuration actuator visual
-        # contract. The callable check keeps lightweight renderer test doubles
-        # and third-party robot adapters usable without class-name checks.
+        # Explicit hooks let specialized and third-party robots override the
+        # native SoftRobot visualization contract.
         self._has_actuator_visual_layers = callable(
             getattr(robot, "actuator_visual_layers", None)
         )
@@ -118,6 +120,11 @@ class BaseSoftRobotRenderer(ABC):
         )
         self._has_trajectory_actuator_visual_layers = hasattr(
             robot, "actuator_visual_layers_trajectory"
+        )
+        self._uses_native_actuator_visual_adapter = (
+            isinstance(robot, SoftRobot)
+            and getattr(type(robot), "actuator_visual_layers", None)
+            is SoftRobot.actuator_visual_layers
         )
         self._has_actuator_visuals = (
             self._has_actuator_visual_layers
@@ -549,6 +556,23 @@ class BaseSoftRobotRenderer(ABC):
         if self._has_trajectory_actuator_visual_layers:
             s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
             raw_layers = self.robot.actuator_visual_layers_trajectory(  # type: ignore[attr-defined]
+                q_ts,
+                s_ps,
+                actuator_inputs=actuator_inputs,
+            )
+            layers = normalize_trajectory_actuator_layers(
+                raw_layers,
+                num_robots=int(num_robots),
+                num_steps=int(num_steps),
+            )
+            return self._offset_trajectory_actuator_layers(layers, base_offsets)
+
+        # Native SoftRobot geometry is renderer-owned and JAX-vectorizable.
+        # Specialized robot hooks take precedence in the branch above.
+        if self._uses_native_actuator_visual_adapter:
+            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            raw_layers = vectorized_actuator_visual_layers_trajectory(
+                self.robot,
                 q_ts,
                 s_ps,
                 actuator_inputs=actuator_inputs,

@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or automatically framed grid MP4/GIF names from its input data under
   `outputs` and uses the paper's visual style. Renamed the canonical artifacts
   around policy state and environment count.
+- Improved Open3D and Viser efficiency for multi-robot animations with
+  renderer-owned vectorized actuator geometry, batched actuator and sphere
+  scene objects, optional merged Open3D backbones, and instanced or merged
+  Viser geometry with atomic frame updates. This substantially reduces backend
+  registrations and browser scene handles without adding trajectory-rendering
+  concerns to soft-robot mechanics.
+- Separated backend-specific renderer coverage into dedicated Matplotlib,
+  Open3D, and Viser test modules, leaving the shared base-renderer tests focused
+  on backend-independent behavior.
 - Moved detailed contributor and documentation tooling into the development
   guide and made `VERSION_BUMP_README.md` the authoritative maintainer release
   workflow, including the branch, pull-request, tag, and recovery procedures.

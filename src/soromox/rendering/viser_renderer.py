@@ -19,7 +19,7 @@ import threading
 import time
 import webbrowser
 from collections.abc import Callable, Generator, Mapping
-from contextlib import suppress
+from contextlib import nullcontext, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -84,6 +84,7 @@ class SceneHandles:
     base_plates: list = field(default_factory=list)
     ground_planes: list = field(default_factory=list)
     backbone_points: list[list] = field(default_factory=list)
+    swept_backbone_batches: list[list[SweptBackboneBatch]] = field(default_factory=list)
     actuator_lines: list = field(default_factory=list)
     actuator_line_keys: list[str] = field(default_factory=list)
     actuator_meshes: list = field(default_factory=list)
@@ -106,6 +107,14 @@ class SceneHandles:
     custom_primitives: dict = field(default_factory=dict)
 
 
+@dataclass
+class SweptBackboneBatch:
+    """One Viser mesh handle containing multiple deforming tube segments."""
+
+    handle: Any
+    segment_indices: tuple[int, ...]
+
+
 # =============================================================================
 # Color utilities
 # =============================================================================
@@ -124,6 +133,25 @@ def _rgba_to_viser_color_and_opacity(
     if opacity >= opaque_threshold:
         opacity = None
     return _rgb_to_viser_color(rgba), opacity
+
+
+def _viser_batched_colors_and_opacities(
+    colors: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray | None]:
+    """Convert float RGBA colors to Viser's batched instance representation."""
+    rgba = ensure_rgba(colors)
+    # Viser's batched-mesh instance colors are consumed as linear vertex colors,
+    # unlike the sRGB color property used by its regular geometry handles.
+    # Linearize here so batching does not visibly wash out existing renderer colors.
+    srgb = np.clip(rgba[:, :3], 0.0, 1.0)
+    linear_rgb = np.where(
+        srgb <= 0.04045,
+        srgb / 12.92,
+        ((srgb + 0.055) / 1.055) ** 2.4,
+    )
+    rgb = np.clip(np.rint(linear_rgb * 255.0), 0.0, 255.0).astype(np.uint8)
+    opacities = np.clip(rgba[:, 3], 0.0, 1.0).astype(np.float32)
+    return rgb, None if np.all(opacities >= 0.999) else opacities
 
 
 def _direction_to_quaternion(
@@ -538,7 +566,15 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Clear existing robot geometry
         self._scene_handles.backbone_points = []
+        self._scene_handles.swept_backbone_batches = []
         self._scene_handles.base_plates = []
+
+        unit_sphere = None
+        if self._backbone_style == "discrete":
+            unit_sphere = trimesh.creation.icosphere(
+                subdivisions=self._sphere_resolution,
+                radius=1.0,
+            )
 
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
@@ -548,46 +584,72 @@ class ViserRenderer(BaseSoftRobotRenderer):
             robot_points = []
 
             if self._backbone_style == "discrete":
-                # Render as spheres at each backbone point
-                for pt_idx in range(num_points):
-                    pos = curve[pt_idx]
-                    color_rgba = point_colors[robot_idx, pt_idx]
-                    color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
-
-                    handle = self._server.scene.add_icosphere(
-                        name=f"/robots/robot_{robot_idx}/backbone/pt_{pt_idx}",
-                        radius=self._robot_radius,
-                        color=color,
-                        opacity=opacity,
-                        subdivisions=self._sphere_resolution,
-                        position=tuple(pos),
-                        material=self._material,
-                        flat_shading=self._flat_shading,
-                        wireframe=self._wireframe,
-                        cast_shadow=self._backbone_cast_shadow,
-                    )
-                    robot_points.append(handle)
+                # One instanced mesh per robot replaces one scene node per point.
+                assert unit_sphere is not None
+                colors, opacities = _viser_batched_colors_and_opacities(
+                    point_colors[robot_idx]
+                )
+                handle = self._server.scene.add_batched_meshes_simple(
+                    name=f"/robots/robot_{robot_idx}/backbone",
+                    vertices=np.asarray(unit_sphere.vertices, dtype=np.float32),
+                    faces=np.asarray(unit_sphere.faces, dtype=np.uint32),
+                    batched_wxyzs=np.broadcast_to(
+                        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                        (num_points, 4),
+                    ).copy(),
+                    batched_positions=np.asarray(curve, dtype=np.float32),
+                    batched_scales=np.full(
+                        num_points, self._robot_radius, dtype=np.float32
+                    ),
+                    batched_colors=colors,
+                    batched_opacities=opacities,
+                    wireframe=self._wireframe,
+                    material=self._material,
+                    flat_shading=self._flat_shading,
+                    cast_shadow=self._backbone_cast_shadow,
+                )
+                robot_points.append(handle)
+                self._scene_handles.swept_backbone_batches.append([])
 
             else:  # "swept" style - cylinders between points
-                for pt_idx in range(num_points - 1):
-                    p0 = curve[pt_idx]
-                    p1 = curve[pt_idx + 1]
-                    color_rgba = point_colors[robot_idx, pt_idx]
-                    color, opacity = _rgba_to_viser_color_and_opacity(color_rgba)
+                color_groups: dict[tuple[float, ...], list[int]] = {}
+                for pt_idx, color_rgba in enumerate(
+                    point_colors[robot_idx, : num_points - 1]
+                ):
+                    color_groups.setdefault(tuple(color_rgba.tolist()), []).append(
+                        pt_idx
+                    )
 
-                    vertices, faces = _oriented_tube_segment_mesh(
-                        p0,
-                        p1,
-                        robot_frames[pt_idx],
-                        robot_frames[pt_idx + 1],
-                        self._robot_radius,
-                        self._cylinder_sections,
-                        cap_end=pt_idx == num_points - 2,
+                robot_batches: list[SweptBackboneBatch] = []
+                for group_idx, (color_key, segment_indices) in enumerate(
+                    color_groups.items()
+                ):
+                    vertex_parts = []
+                    face_parts = []
+                    vertex_offset = 0
+                    for pt_idx in segment_indices:
+                        vertices, faces = _oriented_tube_segment_mesh(
+                            curve[pt_idx],
+                            curve[pt_idx + 1],
+                            robot_frames[pt_idx],
+                            robot_frames[pt_idx + 1],
+                            self._robot_radius,
+                            self._cylinder_sections,
+                            cap_end=pt_idx == num_points - 2,
+                        )
+                        vertex_parts.append(vertices)
+                        face_parts.append(faces + vertex_offset)
+                        vertex_offset += len(vertices)
+                    color, opacity = _rgba_to_viser_color_and_opacity(
+                        np.asarray(color_key)
                     )
                     handle = self._server.scene.add_mesh_simple(
-                        name=f"/robots/robot_{robot_idx}/backbone/seg_{pt_idx}",
-                        vertices=vertices,
-                        faces=faces,
+                        name=(
+                            f"/robots/robot_{robot_idx}/backbone/"
+                            f"color_group_{group_idx}"
+                        ),
+                        vertices=np.concatenate(vertex_parts, axis=0),
+                        faces=np.concatenate(face_parts, axis=0),
                         color=color,
                         opacity=opacity,
                         wireframe=self._wireframe,
@@ -596,6 +658,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
                         cast_shadow=self._backbone_cast_shadow,
                     )
                     robot_points.append(handle)
+                    robot_batches.append(
+                        SweptBackboneBatch(
+                            handle=handle,
+                            segment_indices=tuple(segment_indices),
+                        )
+                    )
+                self._scene_handles.swept_backbone_batches.append(robot_batches)
 
             self._scene_handles.backbone_points.append(robot_points)
 
@@ -696,6 +765,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 )
             else:
                 layer_radii = np.asarray(layer.radius)
+            layer_line_points = []
+            layer_line_colors = []
+            layer_meshes = []
             for robot_idx in range(num_robots):
                 for actuator_idx in range(layer_points.shape[1]):
                     curve = layer_points[robot_idx, actuator_idx]
@@ -712,12 +784,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                             radius = float(layer_radii[actuator_idx])
                         else:
                             radius = float(layer_radii[robot_idx, actuator_idx])
-                    name = (
-                        f"/robots/robot_{robot_idx}/actuators/"
-                        f"{layer_idx}_{layer.name}_{actuator_idx}"
-                    )
                     if radius is not None and radius > 0.0:
-                        segment_meshes = []
                         for p0, p1 in zip(curve[:-1], curve[1:]):
                             direction = p1 - p0
                             length = float(np.linalg.norm(direction))
@@ -730,24 +797,31 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                 direction=direction,
                             )
                             mesh.apply_translation(0.5 * (p0 + p1))
-                            segment_meshes.append(mesh)
-                        if segment_meshes:
-                            mesh_specs.append(
-                                (name, trimesh.util.concatenate(segment_meshes))
-                            )
+                            layer_meshes.append(mesh)
                         continue
                     points = np.stack([curve[:-1], curve[1:]], axis=1)
                     color = _rgb_to_viser_color(
                         layer_colors[robot_idx, actuator_idx, :3]
                     )
-                    line_specs.append(
-                        (
-                            name,
-                            points.astype(np.float32),
-                            np.tile(color, (num_segments, 2, 1)).astype(np.uint8),
-                            line_width,
-                        )
+                    layer_line_points.append(points.astype(np.float32))
+                    layer_line_colors.append(
+                        np.tile(color, (num_segments, 2, 1)).astype(np.uint8)
                     )
+
+            layer_name = f"/actuators/layer_{layer_idx}_{layer.name}"
+            if layer_line_points:
+                line_specs.append(
+                    (
+                        layer_name,
+                        np.concatenate(layer_line_points, axis=0),
+                        np.concatenate(layer_line_colors, axis=0),
+                        line_width,
+                    )
+                )
+            if layer_meshes:
+                mesh_specs.append(
+                    (f"{layer_name}_mesh", trimesh.util.concatenate(layer_meshes))
+                )
 
         for handle in self._scene_handles.actuator_meshes:
             if hasattr(handle, "remove"):
@@ -883,26 +957,61 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 robot_points = self._scene_handles.backbone_points[robot_idx]
 
                 if self._backbone_style == "discrete":
-                    for pt_idx, handle in enumerate(robot_points):
-                        if pt_idx < len(curve):
-                            handle.position = tuple(curve[pt_idx])
-                else:
-                    num_segments = num_points - 1
-                    for seg_idx in range(min(len(robot_points), num_segments)):
-                        handle = robot_points[seg_idx]
-                        p0 = curve[seg_idx]
-                        p1 = curve[seg_idx + 1]
-
-                        vertices, _ = _oriented_tube_segment_mesh(
-                            p0,
-                            p1,
-                            robot_frames[seg_idx],
-                            robot_frames[seg_idx + 1],
-                            self._robot_radius,
-                            self._cylinder_sections,
-                            cap_end=seg_idx == num_segments - 1,
+                    if robot_points:
+                        robot_points[0].batched_positions = np.asarray(
+                            curve, dtype=np.float32
                         )
-                        handle.vertices = vertices
+                else:
+                    robot_batches = self._scene_handles.swept_backbone_batches[
+                        robot_idx
+                    ]
+                    for batch in robot_batches:
+                        vertex_parts = []
+                        for seg_idx in batch.segment_indices:
+                            vertices, _ = _oriented_tube_segment_mesh(
+                                curve[seg_idx],
+                                curve[seg_idx + 1],
+                                robot_frames[seg_idx],
+                                robot_frames[seg_idx + 1],
+                                self._robot_radius,
+                                self._cylinder_sections,
+                                cap_end=seg_idx == num_points - 2,
+                            )
+                            vertex_parts.append(vertices)
+                        batch.handle.vertices = np.concatenate(vertex_parts, axis=0)
+
+    def _add_batched_spheres(
+        self,
+        name: str,
+        positions: np.ndarray,
+        radii: np.ndarray,
+        colors: np.ndarray,
+    ):
+        """Add equal-topology spheres through one instanced Viser mesh handle."""
+        if self._server is None or len(positions) == 0:
+            return None
+        unit_sphere = trimesh.creation.icosphere(
+            subdivisions=self._sphere_resolution,
+            radius=1.0,
+        )
+        batched_colors, batched_opacities = _viser_batched_colors_and_opacities(colors)
+        return self._server.scene.add_batched_meshes_simple(
+            name=name,
+            vertices=np.asarray(unit_sphere.vertices, dtype=np.float32),
+            faces=np.asarray(unit_sphere.faces, dtype=np.uint32),
+            batched_wxyzs=np.broadcast_to(
+                np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+                (len(positions), 4),
+            ).copy(),
+            batched_positions=np.asarray(positions, dtype=np.float32),
+            batched_scales=np.asarray(radii, dtype=np.float32),
+            batched_colors=batched_colors,
+            batched_opacities=batched_opacities,
+            wireframe=self._wireframe,
+            material=self._material,
+            flat_shading=self._flat_shading,
+            cast_shadow=self._sphere_cast_shadow,
+        )
 
     def _build_static_spheres(
         self,
@@ -920,22 +1029,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if self._server is None or self._scene_handles is None:
             return
 
-        colors = ensure_rgba(colors)
-
-        for i, (pos, radius, color) in enumerate(zip(positions, radii, colors)):
-            viser_color, opacity = _rgba_to_viser_color_and_opacity(color)
-            handle = self._server.scene.add_icosphere(
-                name=f"/spheres/static/sphere_{i}",
-                radius=float(radius),
-                color=viser_color,
-                opacity=opacity,
-                subdivisions=self._sphere_resolution,
-                position=tuple(pos),
-                material=self._material,
-                flat_shading=self._flat_shading,
-                wireframe=self._wireframe,
-                cast_shadow=self._sphere_cast_shadow,
-            )
+        handle = self._add_batched_spheres(
+            "/spheres/static",
+            np.asarray(positions),
+            np.asarray(radii),
+            ensure_rgba(colors),
+        )
+        if handle is not None:
             self._scene_handles.static_spheres.append(handle)
 
     def _build_dynamic_spheres(
@@ -958,22 +1058,16 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         colors = ensure_rgba(colors)
         self._scene_handles.dynamic_trajectories = list(trajectories)
-
-        for i, (traj, radius, color) in enumerate(zip(trajectories, radii, colors)):
-            pos = traj[min(frame_idx, len(traj) - 1)]
-            viser_color, opacity = _rgba_to_viser_color_and_opacity(color)
-            handle = self._server.scene.add_icosphere(
-                name=f"/spheres/dynamic/sphere_{i}",
-                radius=float(radius),
-                color=viser_color,
-                opacity=opacity,
-                subdivisions=self._sphere_resolution,
-                position=tuple(pos),
-                material=self._material,
-                flat_shading=self._flat_shading,
-                wireframe=self._wireframe,
-                cast_shadow=self._sphere_cast_shadow,
-            )
+        initial_positions = np.asarray(
+            [traj[min(frame_idx, len(traj) - 1)] for traj in trajectories]
+        )
+        handle = self._add_batched_spheres(
+            "/spheres/dynamic",
+            initial_positions,
+            np.asarray(radii),
+            colors,
+        )
+        if handle is not None:
             self._scene_handles.dynamic_spheres.append(handle)
 
     def _update_dynamic_spheres(self, frame_idx: int) -> None:
@@ -981,12 +1075,16 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if self._scene_handles is None:
             return
 
-        for handle, traj in zip(
-            self._scene_handles.dynamic_spheres,
-            self._scene_handles.dynamic_trajectories,
-        ):
-            idx = min(frame_idx, len(traj) - 1)
-            handle.position = tuple(traj[idx])
+        if not self._scene_handles.dynamic_spheres:
+            return
+        positions = np.asarray(
+            [
+                traj[min(frame_idx, len(traj) - 1)]
+                for traj in self._scene_handles.dynamic_trajectories
+            ],
+            dtype=np.float32,
+        )
+        self._scene_handles.dynamic_spheres[0].batched_positions = positions
 
     def _setup_camera(
         self,
@@ -1764,29 +1862,35 @@ class ViserRenderer(BaseSoftRobotRenderer):
             and self._scene_handles.num_backbone_points == curves.shape[1]
         )
 
-        if can_update:
-            # Efficient update: only modify position/orientation properties
-            self._update_robot_geometry(curves, material_frames)
-        else:
-            # Full rebuild needed (first frame or configuration changed)
-            self._build_robot_geometry(
-                curves,
-                point_colors,
-                material_frames=material_frames,
-                base_plate_color=base_plate_color,
-            )
+        # Queue every moving layer as one client-side transaction so browser capture
+        # cannot observe a new backbone with stale actuators or target spheres.
+        update_context = (
+            self._server.atomic() if self._server is not None else nullcontext()
+        )
+        with update_context:
+            if can_update:
+                # Efficient update: only modify position/orientation properties
+                self._update_robot_geometry(curves, material_frames)
+            else:
+                # Full rebuild needed (first frame or configuration changed)
+                self._build_robot_geometry(
+                    curves,
+                    point_colors,
+                    material_frames=material_frames,
+                    base_plate_color=base_plate_color,
+                )
 
-        if render_actuators and self._has_actuator_visuals:
-            self._build_actuator_geometry(
-                q_frame,
-                np.asarray(base_offsets),
-                num_robots,
-                color_config=color_config,
-                actuator_inputs=actuator_inputs,
-            )
+            if render_actuators and self._has_actuator_visuals:
+                self._build_actuator_geometry(
+                    q_frame,
+                    np.asarray(base_offsets),
+                    num_robots,
+                    color_config=color_config,
+                    actuator_inputs=actuator_inputs,
+                )
 
-        # Update dynamic spheres
-        self._update_dynamic_spheres(frame_idx)
+            # Update dynamic spheres in the same atomic frame transaction.
+            self._update_dynamic_spheres(frame_idx)
 
     def _wait_for_recording_client(self, timeout: float) -> Any | None:
         """Wait briefly for a Viser browser client used for video capture."""
