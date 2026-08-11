@@ -9,13 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A top-level Paper & Results documentation page with CPU and GPU benchmarks,
+  all six application case studies, reproduction pointers, and curated
+  web-optimized figures, animations, and videos from the SoRoMoX paper.
+- Configurable, base-aligned ground planes for the Matplotlib, Open3D, and Viser
+  renderers, including inherited support in the I-SUPPORT and UMArm renderers.
+- A responsive core-renderer gallery, system-specific rendering samples, and a
+  concise top-level contributor guide.
+
 ### Changed
 
 - Made the SoRoMoX arXiv preprint the primary academic citation, centralized
   citation guidance, and retained an exact-release software citation for
   reproducibility-sensitive work.
+- Refocused the README and documentation home on the JAX-native model
+  implementations for articulated and continuum soft robots, their
+  control-oriented interface, installation, performance, and first use.
+- Kept Citation at the top level of the documentation navigation immediately
+  after Paper & Results, and grouped the supported systems following the paper.
+- Moved detailed contributor and documentation tooling into the development
+  guide and made `VERSION_BUMP_README.md` the authoritative maintainer release
+  workflow, including the branch, pull-request, tag, and recovery procedures.
+- Standardized the renderer gallery around consistent robot geometry, colors,
+  ground planes, and framing, with tighter I-SUPPORT and UMArm close-ups.
+- Removed the obsolete duplicate actuation overview page in favor of the
+  structured actuation documentation section.
 
 ### Fixed
+
+- Corrected the I-SUPPORT dynamic-model DOI and added platform references to
+  the I-SUPPORT and McKibben UMArm system pages.
 
 ## [0.2.1] - 2026-08-03
 
