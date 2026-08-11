@@ -81,13 +81,22 @@ study `outputs/` directory using the input NPZ stem. For example,
 `--output` or `--gif-output` to override either path. A single selected
 environment uses the fixed camera and visual style of the paper result.
 
-To generate and render a parallel rollout, save all environments in one NPZ and
-pass that file to the same renderer:
+To generate and render parallel rollouts for both policy states, save all
+environments in one NPZ per policy and pass each file to the same renderer:
 
 ```bash
 uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
+  --policy random --num-envs 64 \
+  --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
+  --force
+
+uv run python paper_results/secVf_parallel_rl/code/run_rl_policy.py \
   --policy trained --num-envs 64 \
   --trajectory-output paper_results/secVf_parallel_rl/data/traj/rl_rollout_trained_64_envs.npz \
+  --force
+
+uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
+  --data paper_results/secVf_parallel_rl/data/traj/rl_rollout_initialized_64_envs.npz \
   --force
 
 uv run python paper_results/secVf_parallel_rl/code/render_rl_video.py \
@@ -107,9 +116,11 @@ Generated trajectories use time-major arrays and retain every environment:
 unbatched single-arm files remain supported. Trajectory NPZs belong under
 `data/traj/`; generated plots, MP4s, and GIFs belong under `outputs/`. The names
 follow `rl_rollout_<policy-state>_<environment-count>` so corresponding data and
-media share a stem. Both CLIs protect existing outputs; pass `--force` when
-replacement is intentional. Rendering requires Open3D, a working display or
-headless graphics setup, and ffmpeg. Pass `--visible` on desktop graphics stacks
-that cannot create a hidden Open3D window. Training and rollout results are
-stochastic and accelerator dependent; the committed checkpoint, normalization
-state, reward CSVs, and rollout NPZ provide the paper provenance.
+media share a stem. Current case-study plots and rendered media in `outputs/`
+are versioned; MP4 and GIF files use Git LFS. Both CLIs protect existing outputs;
+pass `--force` when replacement is intentional. Rendering requires Open3D, a
+working display or headless graphics setup, and ffmpeg. Pass `--visible` on
+desktop graphics stacks that cannot create a hidden Open3D window. Training and
+rollout results are stochastic and accelerator dependent; the committed
+checkpoint, normalization state, reward CSVs, and rollout NPZ provide the paper
+provenance.

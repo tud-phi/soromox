@@ -1,6 +1,11 @@
-# Keep reproducible diagnostics local; explicitly version canonical paper media.
+# Version current case-study plots and rendered media. The root ignore rules keep
+# MP4/GIF files local elsewhere, so these exceptions are intentionally scoped.
 *
 !.gitignore
-!reward_curve.pdf
-!rl_rollout_initialized_1_env.mp4
-!rl_rollout_trained_1_env.mp4
+!*.pdf
+!*.png
+!*.mp4
+!*.gif
+
+# Pre-separated workflow artifacts use an obsolete, ambiguous stem and schema.
+rl_rollout-64.*

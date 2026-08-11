@@ -1,2 +1,5 @@
 # Keep trained model checkpoints out of normal Git object history.
 paper_results/secVf_parallel_rl/data/checkpoints/* filter=lfs diff=lfs merge=lfs -text
+# Keep rendered Section Vf media out of normal Git object history.
+paper_results/secVf_parallel_rl/outputs/*.mp4 filter=lfs diff=lfs merge=lfs -text
+paper_results/secVf_parallel_rl/outputs/*.gif filter=lfs diff=lfs merge=lfs -text

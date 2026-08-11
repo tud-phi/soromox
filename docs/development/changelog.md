@@ -40,7 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch under `data/traj`, while the shared offline renderer derives single-arm
   or automatically framed grid MP4/GIF names from its input data under
   `outputs` and uses the paper's visual style. Renamed the canonical artifacts
-  around policy state and environment count.
+  around policy state and environment count, versioned the current trajectory
+  and render artifacts, and moved Section Vf MP4/GIF storage to Git LFS.
 - Improved Open3D and Viser efficiency for multi-robot animations with
   renderer-owned vectorized actuator geometry, batched actuator and sphere
   scene objects, optional merged Open3D backbones, and instanced or merged
