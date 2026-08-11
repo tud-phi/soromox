@@ -29,6 +29,17 @@ from stable_baselines3.common.vec_env import VecNormalize
 
 if __package__:
     from .parallel_soromox_env import ParallelSoromoxEnv
+    from .rl_render_style import (
+        BACKBONE_NUM_POINTS,
+        BACKGROUND_COLOR,
+        RENDER_HEIGHT,
+        RENDER_WIDTH,
+        TARGET_COLOR,
+        TARGET_SPHERE_RADIUS,
+        make_rl_camera_config,
+        make_rl_color_config,
+        make_target_trail_spheres,
+    )
 else:
     env_path = CODE_DIR / "parallel_soromox_env.py"
     spec = importlib.util.spec_from_file_location("parallel_soromox_env", env_path)
@@ -37,24 +48,27 @@ else:
     env_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(env_module)
     ParallelSoromoxEnv = env_module.ParallelSoromoxEnv
+    from rl_render_style import (
+        BACKBONE_NUM_POINTS,
+        BACKGROUND_COLOR,
+        RENDER_HEIGHT,
+        RENDER_WIDTH,
+        TARGET_COLOR,
+        TARGET_SPHERE_RADIUS,
+        make_rl_camera_config,
+        make_rl_color_config,
+        make_target_trail_spheres,
+    )
 
 try:
     import open3d as o3d
 
     from soromox.rendering.camera_config import CameraConfig
-    from soromox.rendering.color_config import (
-        ActuatorStyleConfig,
-        BackboneColorConfig,
-        RendererColorConfig,
-    )
     from soromox.rendering.open3d_renderer import Open3DRenderer
     from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
 except ImportError as exc:
     o3d = None
     CameraConfig = None
-    ActuatorStyleConfig = None
-    BackboneColorConfig = None
-    RendererColorConfig = None
     FFmpegVideoWriter = None
     VideoEncodingConfig = None
     Open3DRenderer = object
@@ -151,38 +165,15 @@ def auto_grid(num_envs: int) -> tuple[int, int]:
     return rows, cols
 
 
-def make_lineset(points: np.ndarray, color: tuple[float, float, float]):
-    pts = np.asarray(points, dtype=np.float64)
-    if pts.shape[0] < 2:
-        return None
-
-    lines = np.stack(
-        [np.arange(0, pts.shape[0] - 1), np.arange(1, pts.shape[0])],
-        axis=1,
-    ).astype(np.int32)
-    line_set = o3d.geometry.LineSet(
-        points=o3d.utility.Vector3dVector(pts),
-        lines=o3d.utility.Vector2iVector(lines),
-    )
-    line_set.colors = o3d.utility.Vector3dVector(
-        np.tile(np.asarray(color, dtype=np.float64)[None, :], (lines.shape[0], 1))
-    )
-    return line_set
-
-
 class HeadlessMultiArmVideoRenderer(Open3DRenderer):
     def __init__(
         self,
         *args,
-        ball_trajectories: np.ndarray | None = None,
-        trajectory_color: tuple[float, float, float] = (224 / 255, 56 / 255, 62 / 255),
         visible: bool = False,
         progress: Progress | None = None,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self.ball_trajectories = ball_trajectories
-        self.trajectory_color = trajectory_color
         self.visible = visible
         self.progress = progress
 
@@ -198,20 +189,6 @@ class HeadlessMultiArmVideoRenderer(Open3DRenderer):
         opt.background_color = np.array(self.background_color, dtype=np.float64)
         opt.line_width = self.actuator_line_width
         return vis, vis.get_view_control()
-
-    def _build_scene(self, vis, scene_data, frame_idx=0, *, color_config=None):
-        handles = super()._build_scene(
-            vis,
-            scene_data,
-            frame_idx=frame_idx,
-            color_config=color_config,
-        )
-        if self.ball_trajectories is not None:
-            for traj in np.asarray(self.ball_trajectories, dtype=np.float64):
-                line_set = make_lineset(traj, self.trajectory_color)
-                if line_set is not None:
-                    vis.add_geometry(line_set)
-        return handles
 
     def _run_viewer(
         self,
@@ -379,19 +356,39 @@ def render_rollout_to_mp4(
     q_ts_batched = np.transpose(q_ts_time_first, (1, 0, 2))
     ball_ts_batched = np.transpose(ball_ts_time_first, (1, 0, 2)) + offsets[:, None, :]
 
-    color_config = RendererColorConfig(
-        backbone=BackboneColorConfig(
-            segment_colors=np.array([[0.0039, 0.6510, 0.8392, 1.0]], dtype=np.float64)
-        ),
-        base_plate_color=(0.2, 0.2, 0.2),
-        actuators=ActuatorStyleConfig(default_color=(0.9, 0.15, 0.15)),
-    )
-    camera_config = CameraConfig(
-        fov=args.camera_fov,
-        distance_factor=args.camera_distance_factor,
-        position_offset=args.camera_position_offset,
-        up=args.camera_up,
-    )
+    color_config = make_rl_color_config("post_opt_1")
+    if args.camera_distance_factor is None and args.camera_position_offset is None:
+        camera_config = make_rl_camera_config(
+            float(np.sum(raw_env.arm.L)),
+            fov=args.camera_fov,
+            up=args.camera_up,
+        )
+    else:
+        defaults = CameraConfig()
+        camera_config = CameraConfig(
+            fov=args.camera_fov,
+            distance_factor=(
+                defaults.distance_factor
+                if args.camera_distance_factor is None
+                else args.camera_distance_factor
+            ),
+            position_offset=(
+                defaults.position_offset
+                if args.camera_position_offset is None
+                else args.camera_position_offset
+            ),
+            up=args.camera_up,
+        )
+
+    static_spheres_positions = None
+    static_spheres_radii = None
+    static_spheres_colors = None
+    if not args.no_trajectories:
+        (
+            static_spheres_positions,
+            static_spheres_radii,
+            static_spheres_colors,
+        ) = make_target_trail_spheres(ball_ts_batched)
 
     frame_count = len(list(range(0, len(ts), args.record_every_n)))
     if (len(ts) - 1) % args.record_every_n != 0:
@@ -403,12 +400,11 @@ def render_rollout_to_mp4(
         height=args.height,
         num_points=args.num_points,
         backbone_style="discrete",
-        background_color=(1.0, 1.0, 1.0),
+        background_color=BACKGROUND_COLOR,
         sphere_resolution=args.sphere_resolution,
         actuator_line_width=args.tendon_line_width,
         grid_spacing=(args.grid_spacing, args.grid_spacing),
         base_offsets=offsets,
-        ball_trajectories=None if args.no_trajectories else ball_ts_batched,
         visible=args.visible,
         progress=progress,
     )
@@ -434,10 +430,15 @@ def render_rollout_to_mp4(
             color_config=color_config,
             camera_config=camera_config,
             render_actuators=True,
+            static_spheres_positions=static_spheres_positions,
+            static_spheres_radii=static_spheres_radii,
+            static_spheres_colors=static_spheres_colors,
             dynamic_spheres_positions=ball_ts_batched,
-            dynamic_spheres_radii=np.full((num_envs,), 0.02, dtype=np.float64),
+            dynamic_spheres_radii=np.full(
+                (num_envs,), TARGET_SPHERE_RADIUS, dtype=np.float64
+            ),
             dynamics_spheres_colors=np.tile(
-                np.array([[1.0, 170 / 255, 0.0]], dtype=np.float64),
+                np.asarray(TARGET_COLOR, dtype=np.float64)[None, :],
                 (num_envs, 1),
             ),
             window_name="SoRoMoX PPO Rollout Multi-Arm",
@@ -484,7 +485,7 @@ def existing_paths(paths: Iterable[Path]) -> None:
         raise FileNotFoundError("Missing required file(s): " + ", ".join(missing))
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-path", type=Path, default=DEFAULT_MODEL_PATH)
     parser.add_argument(
@@ -519,19 +520,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--success-threshold", type=float, default=0.01)
     parser.add_argument("--stochastic", action="store_true")
 
-    parser.add_argument("--width", type=int, default=1920)
-    parser.add_argument("--height", type=int, default=1920)
-    parser.add_argument("--num-points", type=int, default=40)
+    parser.add_argument("--width", type=int, default=RENDER_WIDTH)
+    parser.add_argument("--height", type=int, default=RENDER_HEIGHT)
+    parser.add_argument("--num-points", type=int, default=BACKBONE_NUM_POINTS)
     parser.add_argument("--rows", type=int, default=None)
     parser.add_argument("--cols", type=int, default=None)
     parser.add_argument("--grid-spacing", type=float, default=0.16)
     parser.add_argument("--sphere-resolution", type=int, default=12)
     parser.add_argument("--tendon-line-width", type=float, default=1.0)
     parser.add_argument("--record-every-n", type=int, default=1)
-    parser.add_argument("--camera-fov", type=float, default=75.0)
-    parser.add_argument("--camera-distance-factor", type=float, default=10.0)
+    parser.add_argument("--camera-fov", type=float, default=60.0)
     parser.add_argument(
-        "--camera-position-offset", type=parse_vec3, default=(0.8, -0.8, 0.5)
+        "--camera-distance-factor",
+        type=float,
+        default=None,
+        help="Use automatic camera placement with this distance factor.",
+    )
+    parser.add_argument(
+        "--camera-position-offset",
+        type=parse_vec3,
+        default=None,
+        help="Use automatic camera placement with this direction vector.",
     )
     parser.add_argument("--camera-up", type=parse_vec3, default=(0.0, 0.0, 1.0))
     parser.add_argument("--no-trajectories", action="store_true")
@@ -549,7 +558,7 @@ def parse_args() -> argparse.Namespace:
         help="GIF width in pixels. Use 0 to keep the MP4 width.",
     )
     parser.add_argument("--force", action="store_true")
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:

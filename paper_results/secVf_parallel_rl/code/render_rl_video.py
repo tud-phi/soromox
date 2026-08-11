@@ -8,37 +8,42 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
-from matplotlib import colors
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.rendering import CameraConfig, Open3DRenderer, RendererColorConfig
-from soromox.rendering.color_config import BackboneColorConfig
+from soromox.rendering import Open3DRenderer
 from soromox.systems import (
     PCS,
     PCSParams,
 )
 
+if __package__:
+    from .rl_render_style import (
+        BACKBONE_NUM_POINTS,
+        BACKGROUND_COLOR,
+        RENDER_HEIGHT,
+        RENDER_WIDTH,
+        TARGET_COLOR,
+        TARGET_SPHERE_RADIUS,
+        make_rl_camera_config,
+        make_rl_color_config,
+        make_target_trail_spheres,
+    )
+else:
+    from rl_render_style import (
+        BACKBONE_NUM_POINTS,
+        BACKGROUND_COLOR,
+        RENDER_HEIGHT,
+        RENDER_WIDTH,
+        TARGET_COLOR,
+        TARGET_SPHERE_RADIUS,
+        make_rl_camera_config,
+        make_rl_color_config,
+        make_target_trail_spheres,
+    )
+
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = SCRIPT_DIR / "data"
 OUTPUT_DIR = SCRIPT_DIR / "outputs"
-
-COLORS = {
-    "pre_opt_1": "#006BA6",
-    "pre_opt_2": "#0496FF",
-    "post_opt_1": "#f1552e",
-    "post_opt_2": "#D81159",
-    "post_opt_3": "#8F2D56",
-    "obstacle": "#7B2CBF",
-    "target": "#0ead69",
-    "ground_truth": "#FFBC42",
-    "x_t": "#2a9d8f",
-    "y_t": "#e9c46a",
-    "z_t": "#D81159",
-}
-cmap_target = colors.LinearSegmentedColormap.from_list(
-    "grad_target", ["#FFFFFF", COLORS["target"]]
-)
-gradient = cmap_target(np.array([0.65, 1.0]))[:, :3]
 
 jax.config.update("jax_enable_x64", True)
 
@@ -130,7 +135,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--show-trajectory",
         action=argparse.BooleanOptionalAction,
         default=True,
-        help="Plot the target ball's trajectory as a trail of small red spheres",
+        help="Plot the target ball's trajectory as a dotted gradient trail",
     )
     return parser.parse_args(argv)
 
@@ -153,63 +158,40 @@ def main():
     # 2. Format the Dynamic Sphere (Target Ball)
     # Open3DRenderer expects dynamic sphere trajectories to be of shape (K_balls, T, 3)
     dynamic_spheres_positions = ball_ts.reshape(1, -1, 3)
-    dynamic_spheres_radii = np.array([0.015], dtype=np.float64)
-    dynamics_spheres_colors = np.array(
-        [colors.to_rgb(COLORS["target"])], dtype=np.float64
-    )
+    dynamic_spheres_radii = np.array([TARGET_SPHERE_RADIUS], dtype=np.float64)
+    dynamics_spheres_colors = np.array([TARGET_COLOR], dtype=np.float64)
 
-    # --- ADD THIS NEW BLOCK: 2.5 Format the Trajectory Trail (Static Spheres) ---
     static_spheres_positions = None
     static_spheres_radii = None
     static_spheres_colors = None
 
     if args.show_trajectory:
-        trail_radius = 0.003
-        trail_pts = ball_ts[::2]
-        num_pts = trail_pts.shape[0]
-
-        static_spheres_positions = trail_pts
-        static_spheres_radii = np.full((num_pts,), trail_radius, dtype=np.float64)
-        static_spheres_colors = np.tile(
-            np.array([gradient[0]], dtype=np.float64), (num_pts, 1)
-        )
+        (
+            static_spheres_positions,
+            static_spheres_radii,
+            static_spheres_colors,
+        ) = make_target_trail_spheres(ball_ts)
 
     # 3. Build Robot Geometry
     print("Building robot geometry...")
     robot = build_rl_robot()
 
-    # Manual camera settings
-    radius = 1.7
-    angle = np.pi * 1.15
-    x, y = float(radius * np.cos(angle)), float(radius * np.sin(angle))
-    camera_config = CameraConfig(
-        position=(x, y, float(2 * np.sum(robot.L))),
-        look_at=(0.0, 0.0, float(0.7 * np.sum(robot.L) / 2)),
-        fov=60.0,
-    )
+    camera_config = make_rl_camera_config(float(np.sum(robot.L)))
 
     if "random" in str(args.data):
         color_label = "pre_opt_1"
     else:
         color_label = "post_opt_1"
-    # 4. Configure Color Styling
-    color_config = RendererColorConfig(
-        backbone=BackboneColorConfig(
-            segment_colors=np.array(
-                [colors.to_rgb(COLORS[color_label])], dtype=np.float64
-            )
-        ),
-        base_plate_color=(0.2, 0.2, 0.2),
-    )
+    color_config = make_rl_color_config(color_label)
 
     renderer = Open3DRenderer(
         robot,
-        num_points=80,
+        num_points=BACKBONE_NUM_POINTS,
         color_config=color_config,
-        width=1920,
-        height=1080,
+        width=RENDER_WIDTH,
+        height=RENDER_HEIGHT,
         backbone_style="discrete",
-        background_color=(1.0, 1.0, 1.0),
+        background_color=BACKGROUND_COLOR,
         # base_plate_radius_scale=1.5,
         # base_plate_thickness=0.04,
     )
