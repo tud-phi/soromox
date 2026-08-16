@@ -98,8 +98,10 @@ nav:
       - Utilities:
           - Overview: api/utilities/index.md
           - Parameters: api/utilities/parameters.md
+          - Numerics: api/utilities/numerics.md
           - Geometry: api/utilities/geometry.md
           - Lie Algebra: api/utilities/lie-algebra.md
+          - Constant Strain: api/utilities/constant-strain.md
   - Paper & Results: research.md
   - Citation: citation.md
   - Development:

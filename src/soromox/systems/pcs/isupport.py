@@ -797,8 +797,7 @@ class ISupport(PCS):
 
         # apply the parallel axis theorem
         I_one_actuator_i = I0 + A * (
-            jnp.linalg.norm(centroid_actuator) ** 2 * jnp.ones((3,))
-            - centroid_actuator**2
+            jnp.sum(centroid_actuator**2) * jnp.ones((3,)) - centroid_actuator**2
         )
 
         return I_one_actuator_i

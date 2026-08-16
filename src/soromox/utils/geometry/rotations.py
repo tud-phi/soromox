@@ -53,8 +53,8 @@ from typing import Literal
 import jax.numpy as jnp
 from jax import Array, lax
 
-from soromox.utils._numerics import eps_for_dtype
 from soromox.utils.lie_algebra import so3
+from soromox.utils.numerics import eps_for_dtype, safe_sqrt
 
 
 class RotationRepresentation(Enum):
@@ -199,7 +199,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
     eps_arr = eps_for_dtype(eps, R.dtype)
 
     def _trace_branch(_: None) -> Array:
-        s = jnp.sqrt(jnp.maximum(trace + 1.0, 0.0)) * 2.0
+        s = safe_sqrt(trace + 1.0) * 2.0
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
@@ -212,7 +212,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         )
 
     def _x_branch(_: None) -> Array:
-        s = jnp.sqrt(jnp.maximum(1.0 + R[0, 0] - R[1, 1] - R[2, 2], 0.0)) * 2.0
+        s = safe_sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2]) * 2.0
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
@@ -225,7 +225,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         )
 
     def _y_branch(_: None) -> Array:
-        s = jnp.sqrt(jnp.maximum(1.0 + R[1, 1] - R[0, 0] - R[2, 2], 0.0)) * 2.0
+        s = safe_sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2]) * 2.0
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
@@ -238,7 +238,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         )
 
     def _z_branch(_: None) -> Array:
-        s = jnp.sqrt(jnp.maximum(1.0 + R[2, 2] - R[0, 0] - R[1, 1], 0.0)) * 2.0
+        s = safe_sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1]) * 2.0
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [

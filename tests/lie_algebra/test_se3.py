@@ -1,11 +1,16 @@
 import jax
 import pytest
+from jax import Array
 from jax import numpy as jnp
 from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
 
+from soromox.autodiff import strict_singularities_mode
 from soromox.utils.geometry import poses
-from soromox.utils.lie_algebra import constant_strain, se2, se3, so3
+from soromox.utils.lie_algebra import se2, se3, so3
+from soromox.utils.lie_algebra.jacobian_coefficients import (
+    inverse_left_jacobian_series_threshold,
+)
 from soromox.utils.tolerance import Tolerance
 
 jax.config.update("jax_enable_x64", True)
@@ -157,6 +162,144 @@ def test_log_se3_forward_and_reverse_mode_autodiff_is_finite(xi):
     )
 
 
+@pytest.mark.parametrize(
+    ("dtype", "theta", "rtol", "atol"),
+    [
+        (jnp.float64, 3e-8, 1e-9, 1e-10),
+        (jnp.float32, 1e-4, 1e-5, 2e-7),
+    ],
+)
+def test_log_se3_matches_analytic_reverse_mode_derivative_near_identity(
+    dtype, theta, rtol, atol
+):
+    """Compare autodiff with the planar closed-form SE(3) log derivative."""
+    translation = jnp.array([0.7, -0.4, 0.2], dtype=dtype)
+    theta = jnp.asarray(theta, dtype=dtype)
+    eps = jnp.asarray(EPS, dtype=dtype)
+    skew_basis = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=dtype)
+
+    def transform_from_angle(angle):
+        rotation = jnp.array(
+            [
+                [jnp.cos(angle), -jnp.sin(angle), 0.0],
+                [jnp.sin(angle), jnp.cos(angle), 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=dtype,
+        )
+        transform = jnp.eye(4, dtype=dtype).at[:3, :3].set(rotation)
+        return transform.at[:3, 3].set(translation)
+
+    actual = jax.jacrev(lambda angle: se3.log(transform_from_angle(angle), eps=eps))(
+        theta
+    )
+
+    coefficient_derivative = -theta / 6.0 - theta**3 / 180.0 - theta**5 / 5040.0
+    translation_wrt_theta = (
+        coefficient_derivative * jnp.eye(2, dtype=dtype) - 0.5 * skew_basis
+    ) @ translation[:2]
+    expected = jnp.concatenate(
+        [
+            jnp.array([0.0, 0.0, 1.0], dtype=dtype),
+            translation_wrt_theta,
+            jnp.zeros((1,), dtype=dtype),
+        ]
+    )
+
+    assert_allclose(actual, expected, rtol=rtol, atol=atol)
+
+
+@pytest.mark.parametrize("branch_scale", [1.0, 1.25])
+@pytest.mark.parametrize(
+    ("dtype", "rtol", "atol"),
+    [
+        (jnp.float64, 2e-8, 2e-10),
+        (jnp.float32, 3e-4, 3e-6),
+    ],
+)
+def test_log_se3_arbitrary_axis_hessian_at_series_boundary(
+    dtype, rtol, atol, branch_scale
+):
+    """Check analytic first and second derivatives for an arbitrary axis."""
+    axis = jnp.array([1.0, -2.0, 0.5], dtype=dtype)
+    axis = axis / jnp.sqrt(jnp.dot(axis, axis))
+    axis_hat = so3.skew(axis)
+    axis_hat_sq = axis_hat @ axis_hat
+    translation = jnp.array([0.7, -0.4, 0.2], dtype=dtype)
+    theta = branch_scale * inverse_left_jacobian_series_threshold(dtype)
+    eps = jnp.asarray(EPS, dtype=dtype)
+
+    def log_from_angle(angle):
+        rotation = (
+            jnp.eye(3, dtype=dtype)
+            + jnp.sin(angle) * axis_hat
+            + (1.0 - jnp.cos(angle)) * axis_hat_sq
+        )
+        transform = jnp.eye(4, dtype=dtype).at[:3, :3].set(rotation)
+        transform = transform.at[:3, 3].set(translation)
+        return se3.log(transform, eps=eps)
+
+    first_actual = jax.jacrev(log_from_angle)(theta)
+    second_actual = jax.jacrev(jax.jacrev(log_from_angle))(theta)
+
+    coefficient_first = (
+        -theta / 6.0 - theta**3 / 180.0 - theta**5 / 5040.0 - theta**7 / 151200.0
+    )
+    coefficient_second = (
+        -1.0 / 6.0 - theta**2 / 60.0 - theta**4 / 1008.0 - theta**6 / 21600.0
+    )
+    first_expected = jnp.concatenate(
+        [
+            axis,
+            (-0.5 * axis_hat - coefficient_first * axis_hat_sq) @ translation,
+        ]
+    )
+    second_expected = jnp.concatenate(
+        [
+            jnp.zeros((3,), dtype=dtype),
+            -coefficient_second * axis_hat_sq @ translation,
+        ]
+    )
+
+    assert_allclose(first_actual, first_expected, rtol=rtol, atol=atol)
+    assert_allclose(second_actual, second_expected, rtol=rtol, atol=atol)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "rtol", "atol"),
+    [
+        (jnp.float64, 1e-8, 1e-10),
+        (jnp.float32, 3e-4, 3e-6),
+    ],
+)
+def test_log_se3_arbitrary_axis_round_trip_jacobian(dtype, rtol, atol):
+    """The full log-after-exp Jacobian is identity for an arbitrary twist."""
+    axis = jnp.array([1.0, -2.0, 0.5], dtype=dtype)
+    axis = axis / jnp.sqrt(jnp.dot(axis, axis))
+    theta = 0.5 * inverse_left_jacobian_series_threshold(dtype)
+    xi = jnp.concatenate(
+        [
+            theta * axis,
+            jnp.array([0.7, -0.4, 0.2], dtype=dtype),
+        ]
+    )
+    eps = jnp.asarray(EPS, dtype=dtype)
+
+    actual = jax.jacrev(lambda twist: se3.log(expm(se3.hat(twist)), eps=eps))(xi)
+
+    assert_allclose(actual, jnp.eye(6, dtype=dtype), rtol=rtol, atol=atol)
+
+
+def test_se2_and_se3_log_share_strict_singularity_policy():
+    """Both logarithms expose their removable identity quotient in strict mode."""
+    with strict_singularities_mode():
+        planar = se2.log(jnp.eye(3), eps=EPS)
+        spatial = se3.log(jnp.eye(4), eps=EPS)
+
+    assert not jnp.isfinite(planar).all()
+    assert not jnp.isfinite(spatial).all()
+
+
 def test_log_se3_exact_pi_rotation_is_finite_value_only():
     """Check exact pi, where the logarithm value is finite but not unique."""
     xi = jnp.array([jnp.pi, 0.0, 0.0, 0.0, 0.0, 0.0])
@@ -262,68 +405,8 @@ def test_planar_adjoint_blocks_match_se2():
     assert_allclose(lhs, rhs, rtol=RTOL, atol=ATOL)
 
 
-def test_adjoint_gi_se3_inverse_matches_identity():
-    xi = jnp.array([0.2, -0.1, 0.4, 0.3, -0.5, 0.1])
-    s = jnp.array(0.45)
-
-    adj = constant_strain.adjoint_se3(xi, s, eps=EPS)
-    adj_inv = constant_strain.adjoint_inverse_se3(xi, s, eps=EPS)
-
-    assert_allclose(adj @ adj_inv, jnp.eye(6), rtol=RTOL, atol=ATOL)
-    assert_allclose(adj_inv @ adj, jnp.eye(6), rtol=RTOL, atol=ATOL)
-
-
-def test_tangent_gi_se3_zero_theta_matches_truncated_series():
-    xi = jnp.array([0.0, 0.0, 0.0, 0.4, -0.3, 0.2])
-    s = jnp.array(0.35)
-
-    expected = s * jnp.eye(6) + 0.5 * s**2 * se3.small_adjoint(xi)
-
-    result = constant_strain.tangent_se3(xi, s, eps=EPS)
-
-    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
-
-
-def test_tangent_derivative_gi_se3_zero_without_motion():
-    xi = jnp.array([0.3, -0.2, 0.4, 0.5, -0.1, 0.2])
-    xid = jnp.zeros((6,))
-    s = jnp.array(0.6)
-
-    result = constant_strain.tangent_derivative_se3(xi, xid, s, eps=EPS)
-    expected = jnp.zeros((6, 6))
-
-    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
-
-
-def test_tangent_derivative_matches_autodiff_random(N: int = 10):
-    key = jax.random.PRNGKey(2)
-    samples = 0
-
-    while samples < N:
-        key, subkey1, subkey2, subkey3 = jax.random.split(key, num=4)
-
-        xi = jax.random.uniform(subkey1, shape=(6,), minval=-1.0, maxval=1.0)
-        xid = jax.random.uniform(subkey2, shape=(6,), minval=-1.0, maxval=1.0)
-        s = jax.random.uniform(subkey3, shape=(), minval=0.1, maxval=1.0)
-
-        # Skip near-singular angular velocities to avoid the eps fallback dominating.
-        if jnp.linalg.norm(xi[:3]) < 1e-3:
-            continue
-
-        def tangent_map(xi_, s_current=s):
-            return constant_strain.tangent_se3(xi_, s_current, eps=EPS)
-
-        _, autodiff = jax.jvp(tangent_map, (xi,), (xid,))
-        closed_form = constant_strain.tangent_derivative_se3(xi, xid, s, eps=EPS)
-
-        assert_allclose(autodiff, closed_form, rtol=RTOL, atol=ATOL)
-        samples += 1
-
-
 def test_se3_helpers_are_autodiff_finite_at_zero():
     xi_zero = jnp.zeros((6,))
-    xid_zero = jnp.zeros((6,))
-    s = jnp.array(0.35)
 
     def assert_autodiff_finite(fn, arg, fn_name=None):
         jac_rev = jax.jacrev(fn)(arg)
@@ -334,24 +417,6 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
         assert jnp.isfinite(jac_fwd).all(), (
             f"Jacobian (forward) is not finite of fn {fn_name}"
         )
-
-    def tangent_fn(xi):
-        return constant_strain.tangent_se3(xi, s, eps=EPS).reshape(-1)
-
-    assert_autodiff_finite(tangent_fn, xi_zero, fn_name="constant_strain.tangent_se3")
-
-    def tangent_dot_wrt_xi(xi):
-        return constant_strain.tangent_derivative_se3(xi, xid_zero, s, eps=EPS).reshape(
-            -1
-        )
-
-    def tangent_dot_wrt_xid(xid):
-        return constant_strain.tangent_derivative_se3(xi_zero, xid, s, eps=EPS).reshape(
-            -1
-        )
-
-    for fn, arg in ((tangent_dot_wrt_xi, xi_zero), (tangent_dot_wrt_xid, xid_zero)):
-        assert_autodiff_finite(fn, arg, fn_name=fn.__name__)
 
     def exp_gn_fn(xi):
         return se3.exp(xi, eps=EPS).reshape(-1)
@@ -366,6 +431,36 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
     log_at_identity = log_fn(g_identity)
     assert not jnp.isnan(log_at_identity).any()
     assert_allclose(log_at_identity, jnp.zeros((6,)), rtol=RTOL, atol=ATOL)
+
+
+BRANCH_EPS = 1e1 * float(jnp.finfo(jnp.float64).eps)
+TANGENT_BRANCH_EPS = float(jnp.sqrt(jnp.asarray(BRANCH_EPS)))
+XI_STRAIGHT = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
+ARC_LENGTH = jnp.array(0.1)
+
+
+def _batched_grad(fn, x: Array, batch: int = 3) -> Array:
+    """Differentiate ``sum(vmap(fn)(x))`` to exercise batched branch lowering."""
+    stacked = jnp.broadcast_to(x, (batch,) + x.shape)
+    return jax.grad(lambda v: jnp.sum(jax.vmap(fn)(v)))(stacked)
+
+
+BRANCH_SAFETY_CASES = {
+    "se3.exp": (lambda xi: se3.exp(xi, BRANCH_EPS), XI_STRAIGHT),
+    "so3.exp": (lambda xi: so3.exp(xi[:3], BRANCH_EPS), XI_STRAIGHT),
+    "se3.log": (lambda g: se3.log(g, BRANCH_EPS), jnp.eye(4)),
+    "so3.log": (lambda R: so3.log(R, BRANCH_EPS), jnp.eye(3)),
+}
+
+
+@pytest.mark.parametrize("name", sorted(BRANCH_SAFETY_CASES))
+def test_grad_of_vmap_is_finite_at_zero_rotation(name: str):
+    """The batched lowering of every small-angle branch stays finite."""
+    fn, arg = BRANCH_SAFETY_CASES[name]
+
+    grad = _batched_grad(lambda x: jnp.sum(fn(x)), arg)
+
+    assert jnp.isfinite(grad).all(), f"{name} produced a non-finite batched gradient"
 
 
 if __name__ == "__main__":

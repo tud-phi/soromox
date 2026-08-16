@@ -92,6 +92,16 @@ class TestReferenceTrajectoryFromDiscrete:
         assert ref.xdd_des_ts is not None
         assert ref.xdd_des_ts.shape == (10, 2)
 
+    def test_duplicate_timestamps_have_finite_values_and_derivatives(self):
+        """A zero interpolation interval must not leak ``0 / 0`` into autodiff."""
+        ts = jnp.array([0.0, 0.0, 1.0])
+        x_des_ts = jnp.array([[1.0, 2.0], [1.0, 2.0], [3.0, 4.0]])
+
+        ref = ReferenceTrajectory(ts=ts, x_des_ts=x_des_ts)
+
+        for fn in (ref.x_des_fn, ref.xd_des_fn, ref.xdd_des_fn):
+            assert jnp.isfinite(fn(jnp.array(0.0))).all()
+
 
 class TestReferenceTrajectoryFromContinuous:
     """Tests for ReferenceTrajectory initialized with continuous function."""

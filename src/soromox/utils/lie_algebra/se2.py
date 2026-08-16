@@ -9,9 +9,14 @@ __all__ = [
 ]
 
 import jax.numpy as jnp
-from jax import Array, lax
+from jax import Array
 
 from . import so2
+from .jacobian_coefficients import (
+    half_angle_cotangent,
+    one_minus_cosine_over_angle_squared,
+    sine_over_angle,
+)
 
 
 def hat(xi: Array) -> Array:
@@ -56,39 +61,37 @@ def exp(xi: Array, eps: float | Array) -> Array:
     Args:
         xi: Planar twist with shape ``(3,)`` or ``(3, 1)`` in
             ``[theta, v_x, v_y]`` order.
-        eps: Small positive scalar threshold. For ``abs(theta) <= eps`` the
-            function uses a truncated Taylor series to avoid singular
-            divisions and keep autodiff finite near zero rotation.
+        eps: Minimum small-angle series threshold. A dtype-aware threshold may
+            select the series over a larger interval to preserve Hessian
+            accuracy near zero rotation.
 
     Returns:
         Homogeneous ``SE(2)`` transform with shape ``(3, 3)``.
     """
+    R, p = _exp_rotation_and_translation(xi, eps)
+
+    return jnp.block(
+        [
+            [R, p.reshape((2, 1))],
+            [jnp.zeros((1, 2), dtype=R.dtype), jnp.ones((1, 1), dtype=R.dtype)],
+        ]
+    )
+
+
+def _exp_rotation_and_translation(xi: Array, eps: float | Array) -> tuple[Array, Array]:
+    """Return the stable rotation and translation blocks of ``exp(xi)``."""
     xi = jnp.asarray(xi).reshape(-1)
-    theta = jnp.abs(xi[0])
-    xi_hat = hat(xi)
+    return so2.exp(xi[0]), _exp_translation(xi, eps)
 
-    costheta = jnp.cos(theta)
-    sintheta = jnp.sin(theta)
 
-    def _series(_: None) -> Array:
-        return (
-            jnp.eye(3, dtype=xi.dtype)
-            + xi_hat
-            + 0.5 * jnp.linalg.matrix_power(xi_hat, 2)
-            + (1.0 / 6.0) * jnp.linalg.matrix_power(xi_hat, 3)
-        )
-
-    def _closed(_: None) -> Array:
-        theta_sq = theta**2
-        theta_cu = theta**3
-        return (
-            jnp.eye(3, dtype=xi.dtype)
-            + xi_hat
-            + ((1 - costheta) / theta_sq) * jnp.linalg.matrix_power(xi_hat, 2)
-            + ((theta - sintheta) / theta_cu) * jnp.linalg.matrix_power(xi_hat, 3)
-        )
-
-    return lax.cond(theta <= eps, _series, _closed, operand=None)
+def _exp_translation(xi: Array, eps: float | Array) -> Array:
+    """Return the stable translation block of ``exp(xi)``."""
+    xi = jnp.asarray(xi).reshape(-1)
+    theta = xi[0]
+    v = xi[1:]
+    sinc = sine_over_angle(theta, eps)
+    theta_cosc = theta * one_minus_cosine_over_angle_squared(theta, eps)
+    return jnp.stack([sinc * v[0] - theta_cosc * v[1], theta_cosc * v[0] + sinc * v[1]])
 
 
 def log(g: Array, eps: float | Array) -> Array:
@@ -104,8 +107,9 @@ def log(g: Array, eps: float | Array) -> Array:
     Args:
         g: Homogeneous ``SE(2)`` transform with shape ``(3, 3)``. The rotation
             is read from ``g[:2, :2]`` and the translation from ``g[:2, 2]``.
-        eps: Small positive scalar threshold. Angles with magnitude below this
-            threshold use the small-angle inverse-Jacobian series.
+        eps: Small positive scalar threshold forwarded to :func:`so2.log`.
+            Recovered angles with magnitude below this threshold are rounded
+            to zero.
 
     Returns:
         Array with shape ``(3,)`` containing twist coordinates
@@ -116,18 +120,9 @@ def log(g: Array, eps: float | Array) -> Array:
 
     theta = so2.log(R, eps=eps)
     J = so2.skew(jnp.ones((), dtype=R.dtype))
-    omega = so2.skew(theta)
-
-    def _small(_: None) -> Array:
-        omega_sq = omega @ omega
-        return jnp.eye(2, dtype=R.dtype) - 0.5 * omega + (1.0 / 12.0) * omega_sq
-
-    def _general(_: None) -> Array:
-        a = jnp.sin(theta) / theta
-        b = (1.0 - jnp.cos(theta)) / theta
-        return (a * jnp.eye(2, dtype=R.dtype) - b * J) / (a**2 + b**2)
-
-    V_inv = lax.cond(jnp.abs(theta) <= eps, _small, _general, operand=None)
+    half_theta = 0.5 * theta
+    half_theta_cotangent = half_angle_cotangent(theta)
+    V_inv = half_theta_cotangent * jnp.eye(2, dtype=R.dtype) - half_theta * J
     v = V_inv @ p
 
     return jnp.concatenate([jnp.array([theta], dtype=R.dtype), v.reshape(-1)])

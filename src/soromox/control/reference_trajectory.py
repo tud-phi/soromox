@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jax import Array
 
 from soromox.utils.geometry.rotations import RotationRepresentation
+from soromox.utils.numerics import safe_divide
 from soromox.utils.twist import twist_callable_from_pose_callable_factory
 
 
@@ -43,10 +44,9 @@ def _make_interp_fn(ts: Array, vals: Array) -> Callable[[Array], Array]:
         t0 = ts[idx - 1]
         t1 = ts[idx]
 
-        # Compute interpolation weight
-        # Handle case where t0 == t1 (avoid division by zero)
+        # Compute interpolation weight, guarding against duplicated samples
         dt = t1 - t0
-        alpha = jnp.where(dt > 0, (t - t0) / dt, 0.0)
+        alpha = safe_divide(t - t0, dt, 0.0)
         alpha = jnp.clip(alpha, 0.0, 1.0)
 
         # Linear interpolation

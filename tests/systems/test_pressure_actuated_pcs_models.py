@@ -106,6 +106,27 @@ def test_isupport_geometry_helpers_and_actuation_matrix_shape():
     assert not jnp.isnan(actuation_matrix).any()
 
 
+def test_isupport_second_moment_gradient_is_finite_at_centered_chamber():
+    """The parallel-axis squared norm must remain differentiable at zero."""
+
+    def second_moment(distance):
+        params = make_isupport_params().replace(
+            chamber_distance=jnp.asarray([distance])
+        )
+        robot = ISupport(
+            params=params,
+            structure=make_pneumatic_isupport_structure(num_gauss_points=1),
+        )
+        return jnp.sum(
+            robot._local_actuator_second_moment_of_area(jnp.array(0), jnp.array(0.0))
+        )
+
+    gradient = jax.grad(second_moment)(jnp.array(0.0))
+
+    assert jnp.isfinite(gradient)
+    assert gradient == 0.0
+
+
 def test_isupport_chamber_azimuth_cardinals_and_symmetry_validation():
     cardinal_angles = jnp.array([[0.0, jnp.pi / 2, jnp.pi, 3 * jnp.pi / 2]])
     params = make_isupport_params().replace(

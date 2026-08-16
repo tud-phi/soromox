@@ -200,6 +200,23 @@ def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
     assert_allclose(jacobian, robot.actuation_matrix(q).T, rtol=2e-7, atol=2e-9)
 
 
+@pytest.mark.parametrize(
+    ("factory", "axial_index"),
+    [(_spatial_pcs, 3), (_planar_pcs, 1), (_gvs, 3)],
+)
+def test_collapsed_threadlike_tangent_has_finite_reverse_mode(factory, axial_index):
+    """Cover normalization and path density at an exactly zero routing tangent."""
+    actuator = ThreadlikeActuator.tendons(_routing(count=1))
+    robot = factory(actuators=actuator)
+    q = jnp.zeros(robot.num_dofs).at[axial_index].set(-1.0)
+
+    coordinate_jacobian = jax.jacrev(robot.actuator_coordinates)(q)
+    matrix_jacobian = jax.jacrev(robot.actuation_matrix)(q)
+
+    assert jnp.isfinite(coordinate_jacobian).all()
+    assert jnp.isfinite(matrix_jacobian).all()
+
+
 def test_custom_nonlinear_routing_uses_the_common_host_contract():
     params = SinusoidalRoutingParams(
         amplitude=jnp.array([0.01]),

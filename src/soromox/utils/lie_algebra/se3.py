@@ -11,9 +11,12 @@ __all__ = [
 import jax.numpy as jnp
 from jax import Array, lax
 
-from soromox.utils._numerics import eps_for_dtype
-
 from . import so3
+from .jacobian_coefficients import (
+    angle_minus_sine_over_angle_cubed,
+    inverse_left_jacobian_quadratic_coefficient,
+    one_minus_cosine_over_angle_squared,
+)
 
 
 def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
@@ -86,8 +89,8 @@ def log(g: Array, eps: float | Array) -> Array:
         g: Homogeneous ``SE(3)`` transform with shape ``(4, 4)``. The rotation
             is read from ``g[:3, :3]`` and the translation from ``g[:3, 3]``.
         eps: Small positive scalar threshold passed to ``so3.log`` for
-            rotation extraction. The inverse Jacobian uses a conservatively
-            scaled threshold to avoid cancellation in ``1 - cos(theta)``.
+            rotation extraction. The inverse Jacobian uses a dtype-aware
+            Taylor series near zero rotation.
 
     Returns:
         Array with shape ``(6,)`` in
@@ -105,31 +108,9 @@ def log(g: Array, eps: float | Array) -> Array:
         lambda _: jnp.sqrt(theta_sq),
         operand=None,
     )
-    jacobian_eps = 1e8 * eps_for_dtype(eps, R.dtype)
-    is_small_angle = theta <= jacobian_eps
-
-    def _compute_V_inv_small(args):
-        omega_local, _ = args
-        omega_sq = omega_local @ omega_local
-        return jnp.eye(3, dtype=R.dtype) - 0.5 * omega_local + (1.0 / 12.0) * omega_sq
-
-    def _compute_V_inv_general(args):
-        omega_local, angle = args
-        sin_theta = jnp.sin(angle)
-        cos_theta_local = jnp.cos(angle)
-        omega_sq = omega_local @ omega_local
-        A = jnp.eye(3, dtype=R.dtype) - 0.5 * omega_local
-        B = (1.0 / (angle**2)) * (
-            1.0 - (angle * sin_theta) / (2.0 * (1.0 - cos_theta_local))
-        )
-        return A + B * omega_sq
-
-    V_inv = lax.cond(
-        is_small_angle,
-        _compute_V_inv_small,
-        _compute_V_inv_general,
-        (omega_hat, theta),
-    )
+    B = inverse_left_jacobian_quadratic_coefficient(theta)
+    omega_sq = omega_hat @ omega_hat
+    V_inv = jnp.eye(3, dtype=R.dtype) - 0.5 * omega_hat + B * omega_sq
 
     v = V_inv @ p
 
@@ -148,39 +129,28 @@ def exp(xi: Array, eps: float | Array) -> Array:
     Args:
         xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
             ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
-        eps: Small positive scalar threshold. If ``norm(omega) <= eps``, a
-            truncated Taylor series is used to avoid singular divisions and
-            keep derivatives finite near zero rotation.
+        eps: Minimum small-angle series threshold. A dtype-aware threshold may
+            select the series over a larger interval to preserve Hessian
+            accuracy near zero rotation.
 
     Returns:
         Homogeneous ``SE(3)`` transform with shape ``(4, 4)``.
     """
     xi = jnp.asarray(xi).reshape(-1)
     theta = _rotational_strain_magnitude(xi, eps)
-    xi_hat = hat(xi)
+    omega_hat = so3.skew(xi[:3])
+    omega_hat_sq = omega_hat @ omega_hat
+    cosc = one_minus_cosine_over_angle_squared(theta, eps)
+    tanc = angle_minus_sine_over_angle_cubed(theta, eps)
+    V = jnp.eye(3, dtype=xi.dtype) + cosc * omega_hat + tanc * omega_hat_sq
+    p = V @ xi[3:]
+    R = so3._exp_from_skew(omega_hat, theta, eps)
 
-    costheta = jnp.cos(theta)
-    sintheta = jnp.sin(theta)
-
-    return lax.cond(
-        theta <= eps,
-        lambda _: (
-            jnp.eye(4, dtype=xi.dtype)
-            + xi_hat
-            + 0.5 * jnp.linalg.matrix_power(xi_hat, 2)
-            + (1.0 / 6.0) * jnp.linalg.matrix_power(xi_hat, 3)
-        ),
-        lambda _: (
-            jnp.eye(4, dtype=xi.dtype)
-            + xi_hat
-            + (1.0 - costheta)
-            / jnp.power(theta, 2)
-            * jnp.linalg.matrix_power(xi_hat, 2)
-            + (theta - sintheta)
-            / jnp.power(theta, 3)
-            * jnp.linalg.matrix_power(xi_hat, 3)
-        ),
-        operand=None,
+    return jnp.block(
+        [
+            [R, p.reshape((3, 1))],
+            [jnp.zeros((1, 3), dtype=xi.dtype), jnp.ones((1, 1), dtype=xi.dtype)],
+        ]
     )
 
 

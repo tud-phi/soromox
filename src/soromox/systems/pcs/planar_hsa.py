@@ -1142,10 +1142,9 @@ class PlanarHSA(PlanarPCS):
         """
         if self.num_segments != 1:
             raise AssertionError("Inverse kinematics only works for one segment!")
-        # Keep the historical one-segment target inversion, including its
-        # small-angle regularization.  The forward and differential paths use
-        # the protected Lie-group operators directly; this closed form is only
-        # used to preserve the documented inverse-kinematics result.
+        # Compute the constant strain via the stable SE(2) logarithm. Its
+        # half-angle inverse Jacobian avoids cancellation in ``1 - cos(theta)``
+        # for both exactly straight and tiny-but-nonzero configurations.
         hp = self.platform_dimension[0, 1]
         proximal_cap_length = self.proximal_cap_length[0]
         distal_cap_length = self.distal_cap_length[0]
@@ -1158,17 +1157,7 @@ class PlanarHSA(PlanarPCS):
             jnp.array([offset[0], offset[1], distal_cap_length + hp + offset[2]])
         )
         T_pe_to_de = jnp.linalg.inv(T_b_to_pe) @ T_b_to_ee @ jnp.linalg.inv(T_de_to_ee)
-        th = jnp.arctan2(T_pe_to_de[1, 0], T_pe_to_de[0, 0])
-        px, py = T_pe_to_de[0, 2], T_pe_to_de[1, 2]
-        sign = jnp.where(jnp.sign(th) == 0, 1.0, jnp.sign(th))
-        th_eps = th + sign * self.global_eps
-        xi = th_eps / (2.0 * self.length) * jnp.array(
-            [
-                2.0,
-                py - px * jnp.sin(th_eps) / (jnp.cos(th_eps) - 1.0),
-                -px - py * jnp.sin(th_eps) / (jnp.cos(th_eps) - 1.0),
-            ]
-        )
+        xi = se2.log(T_pe_to_de, eps=self.global_eps) / self.length
         return jnp.linalg.pinv(self.B_xi) @ (xi - self.xi_ref)
 
     def _quadrature(self) -> tuple[Array, Array]:

@@ -10,7 +10,7 @@ SoRoMoX is a comprehensive library for modeling, simulating, and controlling sof
 - **[Control](control/index.md)**: Model-based controllers for trajectory tracking and regulation
 - **[Rendering](rendering/index.md)**: Visualization and animation utilities
 - **[Actuation](actuation/index.md)**: Actuation modeling and utilities
-- **[Utilities](utilities/index.md)**: Parameter management and numerical utilities
+- **[Utilities](utilities/index.md)**: Parameter management, numerical, geometry, and Lie algebra tools
 
 ---
 
@@ -67,8 +67,10 @@ The [Actuation](actuation/index.md) module provides utilities for modeling and w
 The [Utilities](utilities/index.md) module includes:
 
 - **[Parameters](utilities/parameters.md)**: Parameter handling, validation, and default configurations for soft robot systems
+- **[Numerics](utilities/numerics.md)**: Finite singular-point conventions for common JAX operations
 - **[Geometry](utilities/geometry.md)**: Pose encodings, rotations, and geometric errors
-- **[Lie Algebra](utilities/lie-algebra.md)**: Rigid-body and constant-strain operators
+- **[Lie Algebra](utilities/lie-algebra.md)**: Rigid-body maps and stable Jacobian coefficients
+- **[Constant Strain](utilities/constant-strain.md)**: Planar and spatial rod-segment operators
 
 ---
 

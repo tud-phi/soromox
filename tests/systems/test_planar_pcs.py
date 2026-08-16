@@ -111,6 +111,32 @@ def segment_tip_poses(model: PlanarPCS, q: Array) -> Array:
     return jax.vmap(fk_at_s)(s_vals)
 
 
+def _stable_planar_pose_step_reference(chi: Array, xi: Array, arc_len: Array) -> Array:
+    """Independent analytic constant-strain pose integral used as a test oracle."""
+    delta = arc_len * xi[0]
+    delta_sq = delta**2
+    sinc = 1.0 + delta_sq * (
+        -1.0 / 6.0
+        + delta_sq * (1.0 / 120.0 + delta_sq * (-1.0 / 5040.0 + delta_sq / 362880.0))
+    )
+    cosc = 0.5 + delta_sq * (
+        -1.0 / 24.0
+        + delta_sq * (1.0 / 720.0 + delta_sq * (-1.0 / 40320.0 + delta_sq / 3628800.0))
+    )
+    J = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=xi.dtype)
+    local_translation = (
+        arc_len * (sinc * jnp.eye(2, dtype=xi.dtype) + delta * cosc * J) @ xi[1:]
+    )
+    theta = chi[0]
+    rotation = jnp.array(
+        [[jnp.cos(theta), -jnp.sin(theta)], [jnp.sin(theta), jnp.cos(theta)]],
+        dtype=xi.dtype,
+    )
+    return jnp.concatenate(
+        [(theta + delta)[None], chi[1:] + rotation @ local_translation]
+    )
+
+
 def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     th, px, py = chi
@@ -337,6 +363,65 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(num_segments):
         assert_allclose(chi_batched, chi_expected, rtol=RTOL, atol=ATOL)
 
 
+def test_planar_pose_step_tiny_curvature_gradient_and_hessian():
+    model, _ = make_planar_pcs(num_segments=1, th0=0.7)
+    chi = jnp.array([0.7, 0.2, -0.1])
+    arc_len = model.L[0]
+
+    def actual(curvature):
+        xi = jnp.array([curvature, 0.7, -0.4])
+        return model._integrate_planar_pose(chi, xi, arc_len)
+
+    def reference(curvature):
+        xi = jnp.array([curvature, 0.7, -0.4])
+        return _stable_planar_pose_step_reference(chi, xi, arc_len)
+
+    curvature = jnp.array(1e-8)
+    assert_allclose(actual(curvature), reference(curvature), rtol=1e-11, atol=1e-13)
+    assert_allclose(
+        jacrev(actual)(curvature), jacrev(reference)(curvature), rtol=1e-10, atol=1e-12
+    )
+    assert_allclose(
+        jacrev(jacrev(actual))(curvature),
+        jacrev(jacrev(reference))(curvature),
+        rtol=1e-9,
+        atol=1e-11,
+    )
+
+
+def test_planar_pose_step_preserves_unwrapped_orientation_beyond_pi():
+    model, _ = make_planar_pcs(num_segments=1, th0=0.7)
+    chi = jnp.array([0.7, 0.2, -0.1])
+    arc_len = model.L[0]
+    xi = jnp.array([3.5 * jnp.pi / arc_len, 0.7, -0.4])
+
+    result = model._integrate_planar_pose(chi, xi, arc_len)
+
+    assert_allclose(result[0], chi[0] + 3.5 * jnp.pi, rtol=RTOL, atol=ATOL)
+
+
+def test_planar_tiny_curvature_point_tip_and_batched_paths_agree():
+    reference_strain = jnp.array([[0.0, 1.0, 0.0]])
+    model, _ = make_planar_pcs(num_segments=1, th0=0.7, xi_ref=reference_strain)
+    q = jnp.array([1e-8, 0.0, 0.0])
+    tip_s = model.L_cum[-1]
+
+    pointwise = model.forward_kinematics(q, tip_s)
+    tips = model.forward_kinematics_tips(q)[0]
+    batched = model.forward_kinematics_batched(q, tip_s[None])[0]
+
+    assert_allclose(tips, pointwise, rtol=RTOL, atol=ATOL)
+    assert_allclose(batched, pointwise, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        jacrev(lambda value: model.forward_kinematics_tips(value)[0])(q),
+        jacrev(lambda value: model.forward_kinematics_batched(value, tip_s[None])[0])(
+            q
+        ),
+        rtol=1e-9,
+        atol=1e-11,
+    )
+
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_inverse_kinematics_consistency(num_segments):
     """
@@ -460,6 +545,20 @@ def test_inverse_kinematics_straight_configuration(num_segments):
         atol=1e-3,  # Allow small numerical errors
         err_msg=f"Shear strain should be zero for straight configuration with {num_segments} segments",
     )
+
+
+@pytest.mark.parametrize("theta", [1e-10, 1e-8])
+def test_inverse_kinematics_tiny_nonzero_rotation(theta):
+    """Tiny bends must retain the translational inverse-Jacobian terms."""
+    model, _ = make_planar_pcs(num_segments=1, th0=0.0)
+    expected_strain = jnp.array([theta / model.L[0], 1.1, 0.2], dtype=jnp.float64)
+    relative_transform = jax.scipy.linalg.expm(se2.hat(expected_strain * model.L[0]))
+    chi_tips = poses.planar_pose_from_transform(relative_transform, eps=EPS)[None, :]
+
+    recovered_q = model.inverse_kinematics(chi_tips)
+    recovered_strain = model.strain(recovered_q)
+
+    assert_allclose(recovered_strain, expected_strain, rtol=1e-11, atol=1e-12)
 
 
 def test_inverse_kinematics_relative_pose_computation():
@@ -1392,6 +1491,18 @@ def test_integration_kinematics_matches_existing_batched_path_planar(
     assert_allclose(J_quads, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_quads, Jd_expected, rtol=RTOL, atol=ATOL)
 
+    _, g_convective, J_convective, Jd_qd = model._integration_kinematics(
+        q, qd, convective_only_jd=True
+    )
+    assert_allclose(g_convective, g_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_convective, J_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        Jd_qd,
+        jnp.einsum("...ij,j->...i", Jd_quads, qd),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
 
 @pytest.mark.parametrize("num_segments", [1, 3])
 @pytest.mark.parametrize(
@@ -2009,6 +2120,85 @@ def test_strain_basis_consistency_dynamics_and_forces_planar(num_segments: int):
         - D_full_full @ qd_full,
     )
     assert_allclose(qdd_full_out, qdd_full_expected, rtol=RTOL, atol=ATOL)
+
+
+def test_reverse_mode_inverse_kinematics_at_zero_configuration() -> None:
+    """Inverse kinematics must stay differentiable at the straight configuration.
+
+    The closed-form branch divides by ``cos(theta) - 1``, which is exactly zero
+    when the segment is straight. The pre-existing straight-configuration test
+    only checks values, so it cannot catch a gradient that has gone NaN.
+    """
+    for num_segments in (1, 2, 3):
+        model, _ = make_planar_pcs(
+            num_segments=num_segments, total_length=PLANAR_TOTAL_LENGTH
+        )
+        dof = int(model.num_active_strains.item())
+        q = jnp.zeros((dof,), dtype=jnp.float64)
+        chi_tips = model.forward_kinematics_tips(q)
+
+        dq_dchi = jacrev(model.inverse_kinematics)(chi_tips)
+
+        assert not jnp.isnan(dq_dchi).any(), (
+            f"dq/dchi_tips contains NaN at the straight configuration "
+            f"for {num_segments} segments!"
+        )
+        assert jnp.isfinite(dq_dchi).all(), (
+            f"dq/dchi_tips is not finite at the straight configuration "
+            f"for {num_segments} segments!"
+        )
+
+
+def test_reverse_mode_of_vmap_at_zero_configuration() -> None:
+    """Differentiate a batch that contains the exactly-straight configuration.
+
+    ``vmap`` rewrites the small-angle ``lax.cond`` guards into ``select_n``, a
+    lowering that bare ``jacrev`` never exercises, so this covers a path the
+    other zero-configuration tests cannot reach.
+    """
+    model, _ = make_planar_pcs(num_segments=1, total_length=PLANAR_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    s_ps = jnp.array([0.5, 1.0]) * PLANAR_TOTAL_LENGTH
+    q_batch = jnp.stack([jnp.zeros((dof,)), jnp.full((dof,), 0.3)])
+    qd_batch = jnp.zeros_like(q_batch)
+
+    for name, fn in (
+        (
+            "forward_kinematics_batched",
+            lambda q: jnp.sum(model.forward_kinematics_batched(q, s_ps)),
+        ),
+        ("inertia_matrix", lambda q: jnp.sum(model.inertia_matrix(q))),
+        ("gravitational_force", lambda q: jnp.sum(model.gravitational_force(q))),
+        ("elastic_force", lambda q: jnp.sum(model.elastic_force(q))),
+        ("actuation_matrix", lambda q: jnp.sum(model.actuation_matrix(q))),
+    ):
+        grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(q_batch)
+        assert not jnp.isnan(grad).any(), f"d(vmap({name}))/dq contains NaN!"
+
+    coriolis = jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(lambda q, qd: jnp.sum(model.coriolis_matrix(q, qd)))(
+                batch, qd_batch
+            )
+        )
+    )(q_batch)
+    assert not jnp.isnan(coriolis).any(), "d(vmap(coriolis_matrix))/dq contains NaN!"
+
+
+def test_reverse_mode_of_vmap_over_forward_kinematics_at_zero_configuration() -> None:
+    """The public custom-JVP wrapper stays finite with stable pose integration."""
+    model, _ = make_planar_pcs(num_segments=1, total_length=PLANAR_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    s = model.L_cum[-1]
+    q_batch = jnp.stack([jnp.zeros((dof,)), jnp.full((dof,), 0.3)])
+
+    grad = jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(lambda q: jnp.sum(model.forward_kinematics(q, s)))(batch)
+        )
+    )(q_batch)
+
+    assert not jnp.isnan(grad).any(), "d(vmap(forward_kinematics))/dq contains NaN!"
 
 
 if __name__ == "__main__":

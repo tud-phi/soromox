@@ -1308,6 +1308,18 @@ def test_integration_kinematics_matches_existing_batched_path(
     assert_allclose(J_quads, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_quads, Jd_expected, rtol=RTOL, atol=ATOL)
 
+    _, g_convective, J_convective, Jd_qd = model._integration_kinematics(
+        q, qd, convective_only_jd=True
+    )
+    assert_allclose(g_convective, g_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_convective, J_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        Jd_qd,
+        jnp.einsum("...ij,j->...i", Jd_quads, qd),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
 
 @pytest.mark.parametrize("num_segments", [1, 3])
 @pytest.mark.parametrize(
@@ -1955,6 +1967,68 @@ def test_reverse_mode_automatic_differentiability_at_zero_configuration(
     assert not jnp.isnan(dU_dq).any(), "dU/dq contains NaN!"
     assert not jnp.isnan(dE_dq).any(), "dE/dq contains NaN!"
     assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
+
+
+def test_reverse_mode_of_vmap_at_zero_configuration() -> None:
+    """Differentiate a batch that contains the exactly-straight configuration.
+
+    ``vmap`` rewrites the small-angle ``lax.cond`` guards into ``select_n``, a
+    lowering that bare ``jacrev`` never exercises, so this covers a path the
+    other zero-configuration tests cannot reach.
+    """
+    model, _ = make_pcs(num_segments=1, total_length=PCS_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    s_ps = jnp.array([0.5, 1.0]) * PCS_TOTAL_LENGTH
+    q_batch = jnp.stack([jnp.zeros((dof,)), jnp.zeros((dof,)).at[0].set(0.3)])
+    qd_batch = jnp.zeros_like(q_batch)
+
+    for name, fn in (
+        (
+            "forward_kinematics_batched",
+            lambda q: jnp.sum(model.forward_kinematics_batched(q, s_ps)),
+        ),
+        ("inertia_matrix", lambda q: jnp.sum(model.inertia_matrix(q))),
+        ("gravitational_force", lambda q: jnp.sum(model.gravitational_force(q))),
+        ("elastic_force", lambda q: jnp.sum(model.elastic_force(q))),
+        ("actuation_matrix", lambda q: jnp.sum(model.actuation_matrix(q))),
+    ):
+        grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(q_batch)
+        assert not jnp.isnan(grad).any(), f"d(vmap({name}))/dq contains NaN!"
+
+    coriolis = jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(lambda q, qd: jnp.sum(model.coriolis_matrix(q, qd)))(
+                batch, qd_batch
+            )
+        )
+    )(q_batch)
+    assert not jnp.isnan(coriolis).any(), "d(vmap(coriolis_matrix))/dq contains NaN!"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Pre-existing: the SoftRobot forward_kinematics custom-JVP wrapper "
+        "produces NaN under grad-of-vmap at the straight configuration. The "
+        "underlying _forward_kinematics and forward_kinematics_batched are both "
+        "clean, and disabling custom JVPs via soromox.autodiff.custom_jvp_mode "
+        "also makes it clean, so the defect is in the wrapper rather than in the "
+        "kinematics. Tracked separately; remove this marker once fixed."
+    ),
+)
+def test_reverse_mode_of_vmap_over_forward_kinematics_at_zero_configuration() -> None:
+    model, _ = make_pcs(num_segments=1, total_length=PCS_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    s = model.L_cum[-1]
+    q_batch = jnp.stack([jnp.zeros((dof,)), jnp.zeros((dof,)).at[0].set(0.3)])
+
+    grad = jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(lambda q: jnp.sum(model.forward_kinematics(q, s)))(batch)
+        )
+    )(q_batch)
+
+    assert not jnp.isnan(grad).any(), "d(vmap(forward_kinematics))/dq contains NaN!"
 
 
 if __name__ == "__main__":

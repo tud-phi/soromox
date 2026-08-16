@@ -9,7 +9,7 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
-from soromox.systems import CrossSectionGeometry, GVS, PCS, PCSParams, PCSStructure
+from soromox.systems import GVS, PCS, CrossSectionGeometry, PCSParams, PCSStructure
 from soromox.systems.gvs import GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
 from soromox.utils.lie_algebra import se3
 from soromox.utils.tolerance import Tolerance
@@ -1577,6 +1577,18 @@ def test_integration_kinematics_matches_existing_batched_path(
     assert g_quads.shape[:2] == weights.shape
     assert J_quads.shape[:2] == weights.shape
     assert Jd_quads.shape == J_quads.shape
+
+    _, g_convective, J_convective, Jd_qd = robot._integration_kinematics(
+        q, qd, convective_only_jd=True
+    )
+    assert_allclose(g_convective, g_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_convective, J_quads, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        Jd_qd,
+        jnp.einsum("...ij,j->...i", Jd_quads, qd),
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
 
 @pytest.mark.parametrize("num_segments", [1, 3])

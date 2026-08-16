@@ -24,6 +24,7 @@ from soromox.utils.geometry.rotations import (
     principal_axis_rotation_matrix,
     principal_axis_rotation_matrix_derivative,
 )
+from soromox.utils.numerics import safe_norm, safe_normalize
 
 from .core import Actuator, ActuatorMetadata, DirectEffort, Transmission
 
@@ -231,9 +232,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
         if self.num_channels == 0:
             return jnp.zeros((0,), dtype=q.dtype)
         segments = self.local_segments(q)
-        current_length = jnp.linalg.norm(
-            segments[:, :, 1, :] - segments[:, :, 0, :], axis=-1
-        )
+        current_length = safe_norm(segments[:, :, 1, :] - segments[:, :, 0, :], axis=-1)
         length = (
             current_length - self.params.reference_length + self.params.length_offset
         )
@@ -286,8 +285,8 @@ class ArticulatedMcKibbenTransmission(Transmission):
         moving_points = self.params.moving_points[group_index]
         moving = moving_points @ rotation.T + transform[:3, 3]
         displacement = moving - self.params.fixed_points[group_index]
-        current_length = jnp.linalg.norm(displacement, axis=-1)
-        direction = displacement / current_length[:, None]
+        current_length = safe_norm(displacement, axis=-1)
+        direction = safe_normalize(displacement, axis=-1)
         dlength_dqx = jnp.sum(direction * (moving_points @ rotation_dqx.T), axis=-1)
         dlength_dqy = jnp.sum(direction * (moving_points @ rotation_dqy.T), axis=-1)
         effective_length = (

@@ -51,7 +51,9 @@ from soromox.systems.gvs.structures import (
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
-from soromox.utils.lie_algebra import constant_strain, se3, so3
+from soromox.utils.lie_algebra import se3, so3
+from soromox.utils.lie_algebra.constant_strain import se3 as constant_strain_se3
+from soromox.utils.numerics import safe_divide, safe_norm, safe_normalize
 
 __all__ = ["GVS"]
 
@@ -309,7 +311,7 @@ class GVS(SoftRobot):
         """Evaluate the configured circular, rectangular, or elliptical section."""
         segment_idx, s_local = self.classify_segment(s)
         length_i = self.segment_lengths[segment_idx]
-        x = jnp.where(length_i > self.global_eps, s_local / length_i, 0.0)
+        x = safe_divide(s_local, length_i, self.global_eps)
         cross_section_geometry_idx = self.cross_section_geometry_index[segment_idx]
         cross_section_geometry_int = int(cross_section_geometry_idx)
         if cross_section_geometry_int == CrossSectionGeometry.CIRCULAR:
@@ -1268,7 +1270,7 @@ class GVS(SoftRobot):
             length, H, xi_Z1, xi_Z2, B_Z1, B_Z2
         )
         g_step = se3.exp(Magnus, self.global_eps)
-        T_step = constant_strain.tangent_se3(
+        T_step = constant_strain_se3.tangent(
             Magnus, jnp.array(1.0), eps=self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
@@ -1348,11 +1350,8 @@ class GVS(SoftRobot):
         Magnusd = B_Magnus @ qd_i
 
         g_step = se3.exp(Magnus, self.global_eps)
-        T_step = constant_strain.tangent_se3(
-            Magnus, jnp.array(1.0), eps=self.tangent_eps
-        )
-        Td_step = constant_strain.tangent_derivative_se3(
-            Magnus, Magnusd, jnp.array(1.0), eps=self.tangent_eps
+        T_step, Td_step = constant_strain_se3._tangent_and_derivative(
+            Magnus, Magnusd, jnp.array(1.0), self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
         return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
@@ -1417,11 +1416,8 @@ class GVS(SoftRobot):
         )
 
         g_step = se3.exp(Magnus, self.global_eps)
-        T_step = constant_strain.tangent_se3(
-            Magnus, jnp.array(1.0), eps=self.tangent_eps
-        )
-        T_step_H = constant_strain.tangent_derivative_se3(
-            Magnus, Magnus_H, jnp.array(1.0), eps=self.tangent_eps
+        T_step, T_step_H = constant_strain_se3._tangent_and_derivative(
+            Magnus, Magnus_H, jnp.array(1.0), self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
         eta_step_H = Ad_step_inv @ (T_step @ Magnus_H)
@@ -1463,7 +1459,7 @@ class GVS(SoftRobot):
         """
         xi_joint = B_joint @ q_joint + xi_ref_joint
         g_joint = se3.exp(xi_joint, self.global_eps)
-        T_joint = constant_strain.tangent_se3(
+        T_joint = constant_strain_se3.tangent(
             xi_joint, jnp.array(1.0), eps=self.tangent_eps
         )
         return g_joint, se3.adjoint_inverse(g_joint), T_joint @ B_joint
@@ -1502,11 +1498,8 @@ class GVS(SoftRobot):
         xi_joint = B_joint @ q_joint + xi_ref_joint
         xid_joint = B_joint @ qd_joint
         g_joint = se3.exp(xi_joint, self.global_eps)
-        T_joint = constant_strain.tangent_se3(
-            xi_joint, jnp.array(1.0), eps=self.tangent_eps
-        )
-        Td_joint = constant_strain.tangent_derivative_se3(
-            xi_joint, xid_joint, jnp.array(1.0), eps=self.tangent_eps
+        T_joint, Td_joint = constant_strain_se3._tangent_and_derivative(
+            xi_joint, xid_joint, jnp.array(1.0), self.tangent_eps
         )
         T_joint_B = T_joint @ B_joint
         joint_velocity = T_joint_B @ qd_joint
@@ -1685,7 +1678,7 @@ class GVS(SoftRobot):
         return weight * (J.T @ (M @ Jd + se3.coadjoint(eta) @ M @ J))
 
     def _coriolis_force_integrand(
-        self, weight: Array, J: Array, Jd: Array, M: Array, qd: Array
+        self, weight: Array, J: Array, Jd_qd: Array, M: Array, qd: Array
     ) -> Array:
         """
         Compute one quadrature contribution to the convective force vector.
@@ -1698,8 +1691,8 @@ class GVS(SoftRobot):
             weight: Length-scaled quadrature weight, shape ``()``.
             J: Body-frame Jacobian at the quadrature node, shape
                 ``(6, self.num_dofs)``.
-            Jd: Body-frame Jacobian time derivative at the quadrature node, shape
-                ``(6, self.num_dofs)``.
+            Jd_qd: Contracted body-frame Jacobian time derivative at the
+                quadrature node, shape ``(6,)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
             qd: Active generalized velocities, shape
@@ -1710,7 +1703,7 @@ class GVS(SoftRobot):
             ``(self.num_dofs,)``.
         """
         eta = J @ qd
-        return weight * (J.T @ (M @ (Jd @ qd) + se3.coadjoint(eta) @ M @ eta))
+        return weight * (J.T @ (M @ Jd_qd + se3.coadjoint(eta) @ M @ eta))
 
     def _gravity_integrand(self, weight: Array, g: Array, J: Array, M: Array) -> Array:
         """
@@ -3959,25 +3952,27 @@ class GVS(SoftRobot):
         kinematics path. It keeps the segment and quadrature axes explicit,
         projects local joint/link contributions into active coordinates as they
         are assembled, and drops zero-weight endpoint outputs. When
-        ``convective_only_jd`` is true, the returned derivative is only
-        guaranteed to be equivalent after multiplication by ``qd``. This is
-        sufficient for the forward-dynamics ``C(q, qd) @ qd`` path and avoids
-        assembling terms that vanish in that product.
+        ``convective_only_jd`` is true, it propagates the exact contraction
+        ``Jd @ qd`` directly instead of materializing the full Jacobian time
+        derivative required by public kinematic methods.
 
         Args:
             q: Active generalized coordinates, shape
                 ``(self.num_dofs,)``.
             qd: Active generalized velocities, shape
                 ``(self.num_dofs,)``.
-            convective_only_jd: If true, compute a Jacobian time derivative that is
-                only guaranteed to be equivalent after multiplication by ``qd``.
+            convective_only_jd: If true, return ``Jd @ qd`` directly instead
+                of the complete Jacobian time derivative.
 
         Returns:
             Tuple ``(weights, g_quads, J_quads, Jd_quads)``. ``weights`` has
             shape ``(self.num_segments, self.max_num_integration_points - 2)``; ``g_quads`` has
             shape ``(self.num_segments, self.max_num_integration_points - 2, 4, 4)``;
-            ``J_quads`` and ``Jd_quads`` both have shape
-            ``(self.num_segments, self.max_num_integration_points - 2, 6, self.num_dofs)``.
+            ``J_quads`` has shape
+            ``(self.num_segments, self.max_num_integration_points - 2, 6,
+            self.num_dofs)``. ``Jd_quads`` has the same shape in the full path;
+            in the convective path it instead has shape
+            ``(self.num_segments, self.max_num_integration_points - 2, 6)``.
         """
         q_gathered = self._min_size_gathered(q)
         qd_gathered = self._min_size_gathered(qd)
@@ -3987,7 +3982,7 @@ class GVS(SoftRobot):
         def body_segment_i(
             carry: tuple[Array, Array, Array, Array], i_segment: Array
         ) -> tuple[tuple[Array, Array, Array, Array], tuple[Array, Array, Array]]:
-            g_tip, J_tip, Jd_tip, eta_tip = carry
+            g_tip, J_tip, Jd_or_Jd_qd_tip, eta_tip = carry
 
             B_joint_i = self.B_joint[i_segment]
             xi_ref_joint_i = self.xi_ref_joint[i_segment]
@@ -4008,19 +4003,25 @@ class GVS(SoftRobot):
             eta_j = Ad_g_joint_inv @ (eta_tip + joint_velocity)
 
             T_joint_active = T_joint_B_i @ selector_joint_i
-            Td_joint_active = Td_joint_B_i @ selector_joint_i
 
             g_j = g_tip @ g_joint_i
             J_j = Ad_g_joint_inv @ (J_tip + T_joint_active)
             if convective_only_jd:
-                Jd_j = (
-                    Ad_g_joint_inv @ (Jd_tip + Td_joint_active)
-                    + Ad_g_joint_inv_dot @ J_tip
-                )
+                # Contract before propagation. The omitted local term is
+                # Ad_g_joint_inv_dot @ (T_joint_active @ qd), which vanishes:
+                # T_joint_active @ qd = joint_velocity and the helper builds
+                # Ad_dot from eta_joint = Ad_inv @ joint_velocity, so the term
+                # reduces to -ad_eta_joint @ eta_joint = 0.
+                Jd_qd_j = Ad_g_joint_inv @ (
+                    Jd_or_Jd_qd_tip + Td_joint_B_i @ qd_joint_i
+                ) + Ad_g_joint_inv_dot @ (J_tip @ qd)
+                Jd_or_Jd_qd_j = Jd_qd_j
             else:
+                Td_joint_active = Td_joint_B_i @ selector_joint_i
                 Jd_j = Ad_g_joint_inv @ (
-                    Jd_tip + Td_joint_active
+                    Jd_or_Jd_qd_tip + Td_joint_active
                 ) + Ad_g_joint_inv_dot @ (J_tip + T_joint_active)
+                Jd_or_Jd_qd_j = Jd_j
 
             Xs_i = self.integration_points[i_segment]
             xi_ref_Z1_i = self.xi_ref_Z1[i_segment]
@@ -4035,7 +4036,7 @@ class GVS(SoftRobot):
             def body_eval_point(
                 carry_link: tuple[Array, Array, Array, Array], j_eval: Array
             ) -> tuple[tuple[Array, Array, Array, Array], tuple[Array, Array, Array]]:
-                g_prev, J_prev, Jd_prev, eta_prev = carry_link
+                g_prev, J_prev, Jd_or_Jd_qd_prev, eta_prev = carry_link
                 H = Xs_i[j_eval + 1] - Xs_i[j_eval]
 
                 (
@@ -4062,57 +4063,69 @@ class GVS(SoftRobot):
                 Ad_step_inv_dot = -se3.small_adjoint(eta_step) @ Ad_step_inv
 
                 T_active = T_step @ B_Magnus_j @ selector_link_i
-                Td_active = (
-                    Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j
-                ) @ selector_link_i
-
                 g_next = g_prev @ g_step
                 J_next = Ad_step_inv @ (J_prev + T_active)
                 if convective_only_jd:
-                    Jd_next = (
-                        Ad_step_inv @ (Jd_prev + Td_active) + Ad_step_inv_dot @ J_prev
-                    )
+                    tangent_velocity_dot = (
+                        Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j
+                    ) @ qd_i
+                    # As at the joint, the omitted
+                    # Ad_step_inv_dot @ (T_active @ qd) term is
+                    # -ad_eta_step @ eta_step and therefore exactly zero.
+                    Jd_qd_next = Ad_step_inv @ (
+                        Jd_or_Jd_qd_prev + tangent_velocity_dot
+                    ) + Ad_step_inv_dot @ (J_prev @ qd)
+                    Jd_or_Jd_qd_next = Jd_qd_next
                 else:
-                    Jd_next = Ad_step_inv @ (Jd_prev + Td_active) + Ad_step_inv_dot @ (
-                        J_prev + T_active
-                    )
+                    Td_active = (
+                        Td_step @ B_Magnus_j + T_step @ B_Magnus_dot_j
+                    ) @ selector_link_i
+                    Jd_next = Ad_step_inv @ (
+                        Jd_or_Jd_qd_prev + Td_active
+                    ) + Ad_step_inv_dot @ (J_prev + T_active)
+                    Jd_or_Jd_qd_next = Jd_next
 
-                return (g_next, J_next, Jd_next, eta_next), (
+                return (g_next, J_next, Jd_or_Jd_qd_next, eta_next), (
                     g_next,
                     J_next,
-                    Jd_next,
+                    Jd_or_Jd_qd_next,
                 )
 
             (
                 (
                     g_tip_link,
                     J_tip_link,
-                    Jd_tip_link,
+                    Jd_or_Jd_qd_tip_link,
                     eta_tip_link,
                 ),
-                (g_link_nodes, J_link_nodes, Jd_link_nodes),
+                (g_link_nodes, J_link_nodes, Jd_or_Jd_qd_link_nodes),
             ) = lax.scan(
                 body_eval_point,
-                (g_j, J_j, Jd_j, eta_j),
+                (g_j, J_j, Jd_or_Jd_qd_j, eta_j),
                 jnp.arange(self.max_num_integration_points - 1),
             )
 
-            return (g_tip_link, J_tip_link, Jd_tip_link, eta_tip_link), (
+            return (g_tip_link, J_tip_link, Jd_or_Jd_qd_tip_link, eta_tip_link), (
                 g_link_nodes[: self.max_num_integration_points - 2],
                 J_link_nodes[: self.max_num_integration_points - 2],
-                Jd_link_nodes[: self.max_num_integration_points - 2],
+                Jd_or_Jd_qd_link_nodes[: self.max_num_integration_points - 2],
             )
 
         J_init = jnp.zeros((6, self.num_dofs), dtype=self.active_dof_map.dtype)
-        Jd_init = jnp.zeros((6, self.num_dofs), dtype=self.active_dof_map.dtype)
+        if convective_only_jd:
+            Jd_or_Jd_qd_init = jnp.zeros((6,), dtype=self.active_dof_map.dtype)
+        else:
+            Jd_or_Jd_qd_init = jnp.zeros(
+                (6, self.num_dofs), dtype=self.active_dof_map.dtype
+            )
         eta_init = jnp.zeros((6,), dtype=self.active_dof_map.dtype)
-        (_, _, _, _), (g_quads, J_quads, Jd_quads) = lax.scan(
+        (_, _, _, _), (g_quads, J_quads, Jd_or_Jd_qd_quads) = lax.scan(
             body_segment_i,
-            (self.g0, J_init, Jd_init, eta_init),
+            (self.g0, J_init, Jd_or_Jd_qd_init, eta_init),
             jnp.arange(self.num_segments),
         )
 
-        return weights, g_quads, J_quads, Jd_quads
+        return weights, g_quads, J_quads, Jd_or_Jd_qd_quads
 
     @eqx.filter_jit
     def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
@@ -4139,7 +4152,7 @@ class GVS(SoftRobot):
             ``G`` is the active generalized gravity vector with shape
             ``(self.num_dofs,)``.
         """
-        weights, g_quads, J_quads, Jd_quads = self._integration_kinematics(
+        weights, g_quads, J_quads, Jd_qd_quads = self._integration_kinematics(
             q, qd, convective_only_jd=True
         )
         Ms_inner = self._inner_mass_matrices()
@@ -4148,19 +4161,19 @@ class GVS(SoftRobot):
             weights_i = weights[i]
             g_i = g_quads[i]
             J_i = J_quads[i]
-            Jd_i = Jd_quads[i]
+            Jd_qd_i = Jd_qd_quads[i]
             Ms_i = Ms_inner[i]
 
             def point_terms(j: Array) -> tuple[Array, Array, Array]:
                 weight_ij = weights_i[j]
                 g_ij = g_i[j]
                 J_ij = J_i[j]
-                Jd_ij = Jd_i[j]
+                Jd_qd_ij = Jd_qd_i[j]
                 M_ij = Ms_i[j]
 
                 B_ij = self._inertia_integrand(weight_ij, J_ij, M_ij)
                 Cqd_ij = self._coriolis_force_integrand(
-                    weight_ij, J_ij, Jd_ij, M_ij, qd
+                    weight_ij, J_ij, Jd_qd_ij, M_ij, qd
                 )
                 G_ij = self._gravity_integrand(weight_ij, g_ij, J_ij, M_ij)
                 return B_ij, Cqd_ij, G_ij
@@ -4675,7 +4688,7 @@ class GVS(SoftRobot):
         offset = jnp.append(routing.offset(path_params, s), 1.0)
         derivative = jnp.append(routing.derivative(path_params, s), 1.0)
         tangent_unnormalized = (derivative + se3.hat(strain) @ offset)[:-1]
-        tangent = tangent_unnormalized / jnp.linalg.norm(tangent_unnormalized)
+        tangent = safe_normalize(tangent_unnormalized, eps=self.global_eps)
         local = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
         return active * local
 
@@ -4761,7 +4774,7 @@ class GVS(SoftRobot):
                     offset = jnp.append(routing.offset(path_params, s), 1.0)
                     derivative = jnp.append(routing.derivative(path_params, s), 1.0)
                     tangent = (derivative + se3.hat(strain) @ offset)[:-1]
-                    return active * jnp.linalg.norm(tangent)
+                    return active * safe_norm(tangent)
 
                 density = vmap(path_density)(
                     params,

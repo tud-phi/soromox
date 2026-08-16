@@ -114,6 +114,21 @@ def test_constructor_shape_validation():
         )
 
 
+def test_segment_length_gradient_is_finite_for_zero_tip_vector():
+    """A zero-length link must use the defined zero derivative of ``safe_norm``."""
+    robot = make_articulated_robot()
+    p_tip = jnp.zeros_like(robot.p_tip)
+
+    gradient = jax.grad(
+        lambda tips: jnp.sum(
+            ArticulatedSoftRobot(robot.params.replace(tip_position=tips)).segment_length
+        )
+    )(p_tip)
+
+    assert jnp.isfinite(gradient).all()
+    assert_allclose(gradient, jnp.zeros_like(p_tip))
+
+
 @pytest.mark.parametrize("num_links", [2, 3])
 def test_tip_linear_jacobian_match_autodiff(num_links):
     robot = make_articulated_robot(num_links)

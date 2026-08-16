@@ -146,7 +146,14 @@ def _measure_jitted_call(
     # methods directly. Bound Equinox methods carry ``self`` as part of the
     # callable object, and JAX may try to hash the module if the bound method is
     # passed straight to ``jax.jit``.
-    jitted_fn = jax.jit(lambda *call_args: fn(*call_args))
+    static_argnums = tuple(
+        index
+        for index, arg in enumerate(args)
+        if arg is None or isinstance(arg, (bool, int, float, str))
+    )
+    jitted_fn = jax.jit(
+        lambda *call_args: fn(*call_args), static_argnums=static_argnums
+    )
 
     start = time.perf_counter()
     first = jitted_fn(*args)
@@ -213,9 +220,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     ctx["qd"],
                     ctx["u"],
                     ctx["tau_ext"],
-                    jnp.array(0.0),
-                    jnp.array(runtime.duration),
-                    jnp.array(runtime.solver_dt),
+                    0.0,
+                    runtime.duration,
+                    runtime.solver_dt,
                     runtime.save_dt,
                 ),
             ),
@@ -277,9 +284,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     ctx["qd"],
                     ctx["u"],
                     ctx["tau_ext"],
-                    jnp.array(0.0),
-                    jnp.array(runtime.duration),
-                    jnp.array(runtime.solver_dt),
+                    0.0,
+                    runtime.duration,
+                    runtime.solver_dt,
                     runtime.save_dt,
                 ),
             ),
@@ -337,9 +344,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     ctx["qd"],
                     ctx["u"],
                     ctx["tau_ext"],
-                    jnp.array(0.0),
-                    jnp.array(runtime.duration),
-                    jnp.array(runtime.solver_dt),
+                    0.0,
+                    runtime.duration,
+                    runtime.solver_dt,
                     runtime.save_dt,
                 ),
             ),
@@ -404,9 +411,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     ctx["qd"],
                     ctx["u"],
                     ctx["tau_ext"],
-                    jnp.array(0.0),
-                    jnp.array(runtime.duration),
-                    jnp.array(runtime.solver_dt),
+                    0.0,
+                    runtime.duration,
+                    runtime.solver_dt,
                     runtime.save_dt,
                 ),
             ),
@@ -488,9 +495,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                     ctx["qd"],
                     ctx["u"],
                     ctx["tau_ext"],
-                    jnp.array(0.0),
-                    jnp.array(runtime.duration),
-                    jnp.array(runtime.solver_dt),
+                    0.0,
+                    runtime.duration,
+                    runtime.solver_dt,
                     runtime.save_dt,
                 ),
             ),

@@ -11,6 +11,7 @@ from soromox.actuation.core import Actuator, PassiveElement
 from soromox.systems.articulated.params import ArticulatedSoftRobotParams
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.lie_algebra import se3, so3
+from soromox.utils.numerics import safe_norm
 
 
 class ArticulatedSoftRobot(SoftRobot):
@@ -188,7 +189,7 @@ class ArticulatedSoftRobot(SoftRobot):
     @property
     def segment_length(self) -> Array:
         """Per-link centerline lengths."""
-        return jnp.linalg.norm(self.p_tip, axis=1)
+        return safe_norm(self.p_tip, axis=1)
 
     @property
     def L_cum(self) -> Array:
