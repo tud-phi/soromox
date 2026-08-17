@@ -14,13 +14,189 @@ __all__ = [
 import jax.numpy as jnp
 from jax import Array, lax
 
-from . import _se3_left_jacobian, so3
+from soromox.autodiff import strict_singularities_enabled
+
+from .. import _matrix_polynomials
+from . import so3
 from .jacobian_coefficients import (
     angle_minus_sine_over_angle_cubed,
     inverse_left_jacobian_quadratic_coefficient,
     one_minus_cosine_over_angle_squared,
     sine_over_angle,
 )
+
+_REDUCED_POLYNOMIAL_DEGREE = 4
+
+
+def _left_jacobian_series_threshold(dtype: jnp.dtype) -> Array:
+    """Return the dtype-aware dimensionless SE(3) Jacobian cutoff."""
+    return jnp.asarray(jnp.finfo(dtype).eps ** (1.0 / 14.0), dtype=dtype)
+
+
+def _left_jacobian_series_arguments(
+    angle_sq: Array, eps: float | Array
+) -> tuple[Array, Array, Array]:
+    """Prepare stable scalar arguments for SE(3) Jacobian coefficients."""
+    requested = jnp.abs(jnp.asarray(eps, dtype=angle_sq.dtype))
+    threshold = jnp.maximum(requested, _left_jacobian_series_threshold(angle_sq.dtype))
+    use_series = angle_sq <= threshold**2
+    angle_sq_safe = jnp.where(use_series, jnp.ones_like(angle_sq), angle_sq)
+    return angle_sq, use_series, jnp.sqrt(angle_sq_safe)
+
+
+def _left_jacobian_coefficients_and_x_derivatives(
+    angle_sq: Array, eps: float | Array
+) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
+    r"""Return reduced left-Jacobian coefficients and their derivatives in ``x``.
+
+    For ``A = ad_xi`` and ``x = dot(omega, omega)``, the Jacobian is
+    ``I + c1 A + c2 A**2 + c3 A**3 + c4 A**4``. The second tuple contains
+    ``dc_k / dx``.
+    """
+    x, use_series, theta_safe = _left_jacobian_series_arguments(angle_sq, eps)
+    series = (
+        0.5 + x**2 * (-1.0 / 720.0 + x * (1.0 / 20160.0 - x / 1209600.0)),
+        1.0 / 6.0 + x**2 * (-1.0 / 5040.0 + x * (1.0 / 181440.0 - x / 13305600.0)),
+        1.0 / 24.0
+        + x
+        * (-1.0 / 360.0 + x * (1.0 / 13440.0 + x * (-1.0 / 907200.0 + x / 95800320.0))),
+        1.0 / 120.0
+        + x
+        * (
+            -1.0 / 2520.0
+            + x * (1.0 / 120960.0 + x * (-1.0 / 9979200.0 + x / 1245404160.0))
+        ),
+    )
+    derivative_series = (
+        x * (-1.0 / 360.0 + x * (1.0 / 6720.0 - x / 302400.0)),
+        x * (-1.0 / 2520.0 + x * (1.0 / 60480.0 - x / 3326400.0)),
+        -1.0 / 360.0 + x * (1.0 / 6720.0 + x * (-1.0 / 302400.0 + x / 23950080.0)),
+        -1.0 / 2520.0 + x * (1.0 / 60480.0 + x * (-1.0 / 3326400.0 + x / 311351040.0)),
+    )
+    if strict_singularities_enabled():
+        theta_safe = jnp.sqrt(x)
+        use_series = jnp.zeros_like(x, dtype=jnp.bool_)
+    sin_theta = jnp.sin(theta_safe)
+    cos_theta = jnp.cos(theta_safe)
+    common = -8.0 + (8.0 - theta_safe**2) * cos_theta + 5.0 * theta_safe * sin_theta
+    alternate = (
+        -8.0 * theta_safe
+        + (15.0 - theta_safe**2) * sin_theta
+        - 7.0 * theta_safe * cos_theta
+    )
+    closed = (
+        (4.0 - 4.0 * cos_theta - theta_safe * sin_theta) / (2.0 * theta_safe**2),
+        (4.0 * theta_safe - 5.0 * sin_theta + theta_safe * cos_theta)
+        / (2.0 * theta_safe**3),
+        (2.0 - 2.0 * cos_theta - theta_safe * sin_theta) / (2.0 * theta_safe**4),
+        (2.0 * theta_safe - 3.0 * sin_theta + theta_safe * cos_theta)
+        / (2.0 * theta_safe**5),
+    )
+    derivative_closed = (
+        common / (4.0 * theta_safe**4),
+        alternate / (4.0 * theta_safe**5),
+        common / (4.0 * theta_safe**6),
+        alternate / (4.0 * theta_safe**7),
+    )
+    coefficients = tuple(
+        jnp.where(use_series, series_value, closed_value)
+        for series_value, closed_value in zip(series, closed, strict=True)
+    )
+    derivatives = tuple(
+        jnp.where(use_series, series_value, closed_value)
+        for series_value, closed_value in zip(
+            derivative_series, derivative_closed, strict=True
+        )
+    )
+    return coefficients, derivatives
+
+
+def _adjoint_exponential_coefficients(
+    angle_sq: Array, eps: float | Array
+) -> tuple[Array, Array, Array, Array]:
+    """Return reduced coefficients for ``exp(ad_xi)`` in accumulated units."""
+    x, use_series, theta_safe = _left_jacobian_series_arguments(angle_sq, eps)
+    series = (
+        1.0 + x**2 * (-1.0 / 120.0 + x * (1.0 / 2520.0 - x / 120960.0)),
+        0.5 + x**2 * (-1.0 / 720.0 + x * (1.0 / 20160.0 - x / 1209600.0)),
+        1.0 / 6.0
+        + x * (-1.0 / 60.0 + x * (1.0 / 1680.0 + x * (-1.0 / 90720.0 + x / 7983360.0))),
+        1.0 / 24.0
+        + x
+        * (-1.0 / 360.0 + x * (1.0 / 13440.0 + x * (-1.0 / 907200.0 + x / 95800320.0))),
+    )
+    if strict_singularities_enabled():
+        theta_safe = jnp.sqrt(x)
+        use_series = jnp.zeros_like(x, dtype=jnp.bool_)
+    sin_theta = jnp.sin(theta_safe)
+    cos_theta = jnp.cos(theta_safe)
+    closed = (
+        (3.0 * sin_theta - theta_safe * cos_theta) / (2.0 * theta_safe),
+        (4.0 - 4.0 * cos_theta - theta_safe * sin_theta) / (2.0 * theta_safe**2),
+        (sin_theta - theta_safe * cos_theta) / (2.0 * theta_safe**3),
+        (2.0 - 2.0 * cos_theta - theta_safe * sin_theta) / (2.0 * theta_safe**4),
+    )
+    return tuple(
+        jnp.where(use_series, series_value, closed_value)
+        for series_value, closed_value in zip(series, closed, strict=True)
+    )
+
+
+def _adjoint_from_powers(powers: list[Array], coefficients: tuple[Array, ...]) -> Array:
+    """Assemble an adjoint exponential from powers of ``ad_xi``."""
+    return _matrix_polynomials.evaluate(powers, coefficients)
+
+
+def _adjoint_inverse_from_adjoint(adjoint: Array) -> Array:
+    """Construct an inverse SE(3) adjoint from its structured blocks."""
+    rotation = adjoint[:3, :3]
+    translation_hat_rotation = adjoint[3:, :3]
+    rotation_inverse = jnp.transpose(rotation)
+    translation_hat = translation_hat_rotation @ rotation_inverse
+    zero = jnp.zeros((3, 3), dtype=adjoint.dtype)
+    return jnp.block(
+        [
+            [rotation_inverse, zero],
+            [-rotation_inverse @ translation_hat, rotation_inverse],
+        ]
+    )
+
+
+def _left_jacobian_from_powers(
+    powers: list[Array], coefficients: tuple[Array, ...]
+) -> Array:
+    """Assemble a left Jacobian from powers of ``ad_xi``."""
+    return _matrix_polynomials.evaluate(powers, coefficients)
+
+
+def _left_jacobian_directional_derivative_from_powers(
+    powers: list[Array],
+    power_directions: list[Array],
+    coefficients: tuple[Array, ...],
+    coefficient_x_derivatives: tuple[Array, ...],
+    angle_sq_direction: Array,
+) -> Array:
+    """Assemble a left-Jacobian directional derivative from shared data."""
+    coefficient_directions = tuple(
+        derivative * angle_sq_direction for derivative in coefficient_x_derivatives
+    )
+    return _matrix_polynomials.evaluate_directional_derivative(
+        powers,
+        power_directions,
+        coefficients,
+        coefficient_directions,
+    )
+
+
+def _transported_left_jacobian_from_powers(
+    powers: list[Array], coefficients: tuple[Array, ...]
+) -> Array:
+    """Assemble ``exp(-ad_xi) @ J_l(xi)`` without a dense product."""
+    transported_coefficients = tuple(
+        (-1.0 if order % 2 else 1.0) * coefficient
+        for order, coefficient in enumerate(coefficients, start=1)
+    )
+    return _matrix_polynomials.evaluate(powers, transported_coefficients)
 
 
 def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
@@ -207,7 +383,9 @@ def left_jacobian(xi: Array, eps: float | Array) -> Array:
     """
     xi = jnp.asarray(xi).reshape(-1)
     angle_sq = jnp.dot(xi[:3], xi[:3])
-    return _se3_left_jacobian._left_jacobian(small_adjoint(xi), angle_sq, eps)
+    powers = _matrix_polynomials.powers(small_adjoint(xi), _REDUCED_POLYNOMIAL_DEGREE)
+    coefficients, _ = _left_jacobian_coefficients_and_x_derivatives(angle_sq, eps)
+    return _left_jacobian_from_powers(powers, coefficients)
 
 
 def left_jacobian_directional_derivative(
@@ -230,12 +408,20 @@ def left_jacobian_directional_derivative(
     xid = jnp.asarray(xid).reshape(-1)
     angle_sq = jnp.dot(xi[:3], xi[:3])
     angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
-    return _se3_left_jacobian._left_jacobian_directional_derivative(
+    powers, power_directions = _matrix_polynomials.powers_and_directional_derivatives(
         small_adjoint(xi),
         small_adjoint(xid),
-        angle_sq,
+        _REDUCED_POLYNOMIAL_DEGREE,
+    )
+    coefficients, derivatives = _left_jacobian_coefficients_and_x_derivatives(
+        angle_sq, eps
+    )
+    return _left_jacobian_directional_derivative_from_powers(
+        powers,
+        power_directions,
+        coefficients,
+        derivatives,
         angle_sq_dot,
-        eps,
     )
 
 
@@ -256,16 +442,26 @@ def left_jacobian_and_directional_derivative(
     xid = jnp.asarray(xid).reshape(-1)
     angle_sq = jnp.dot(xi[:3], xi[:3])
     angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
-    return _se3_left_jacobian._left_jacobian_and_directional_derivative(
+    powers, power_directions = _matrix_polynomials.powers_and_directional_derivatives(
         small_adjoint(xi),
         small_adjoint(xid),
-        angle_sq,
-        angle_sq_dot,
-        eps,
+        _REDUCED_POLYNOMIAL_DEGREE,
     )
+    coefficients, derivatives = _left_jacobian_coefficients_and_x_derivatives(
+        angle_sq, eps
+    )
+    jacobian = _left_jacobian_from_powers(powers, coefficients)
+    jacobian_direction = _left_jacobian_directional_derivative_from_powers(
+        powers,
+        power_directions,
+        coefficients,
+        derivatives,
+        angle_sq_dot,
+    )
+    return jacobian, jacobian_direction
 
 
-def _exp_left_jacobian_and_directional_derivative(
+def _exp_with_left_jacobian_and_directional_derivative(
     xi: Array,
     xid: Array,
     exp_eps: float | Array,
@@ -293,7 +489,7 @@ def _exp_left_jacobian_and_directional_derivative(
     zero = jnp.zeros((3, 3), dtype=xi.dtype)
     angle_sq = jnp.dot(xi[:3], xi[:3])
     angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
-    coefficients, derivatives = _se3_left_jacobian._coefficients_and_x_derivatives(
+    coefficients, derivatives = _left_jacobian_coefficients_and_x_derivatives(
         angle_sq, jacobian_eps
     )
     c1, c2, c3, c4 = coefficients

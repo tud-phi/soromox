@@ -18,26 +18,15 @@ from jax import Array
 
 from .. import se2 as lie_se2
 from ..jacobian_coefficients import (
-    _forward_coefficients_and_x_derivatives,
     one_minus_cosine_over_angle_squared,
     sine_over_angle,
 )
-from ._shared import (
-    ConstantStrainOperators,
-    _constant_strain_series_threshold,
-)
+from ._types import ConstantStrainOperators
 
 
-def _forward_cutoff(s: Array, eps: float | Array, dtype: jnp.dtype) -> Array:
-    """Return the accumulated-angle cutoff for forward SE(2) coefficients.
-
-    ``eps`` is expressed in rotational-strain units, whereas the scalar
-    coefficients depend on ``z = s * theta``. Multiplication by ``abs(s)``
-    converts the requested threshold to accumulated-angle units before it is
-    combined with the dtype-aware ``u**(1/14)`` lower bound.
-    """
-    requested = jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=dtype))
-    return jnp.maximum(requested, _constant_strain_series_threshold(dtype))
+def _accumulated_eps(s: Array, eps: float | Array, dtype: jnp.dtype) -> Array:
+    """Convert a rotational-strain threshold to accumulated-angle units."""
+    return jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=dtype))
 
 
 def _forward_coefficients(
@@ -51,8 +40,9 @@ def _forward_coefficients(
     assembler.
     """
     z = s * theta
-    cutoff = _forward_cutoff(s, eps, z.dtype)
-    coefficients, _ = _forward_coefficients_and_x_derivatives(z, cutoff)
+    coefficients, _ = lie_se2._left_jacobian_coefficients_and_x_derivatives(
+        z, _accumulated_eps(s, eps, z.dtype)
+    )
     return z, coefficients
 
 
@@ -66,7 +56,7 @@ def _adjoint_coefficients(
     tangent path while retaining the same cutoff policy.
     """
     z = s * theta
-    cutoff = _forward_cutoff(s, eps, z.dtype)
+    cutoff = lie_se2._left_jacobian_cutoff(_accumulated_eps(s, eps, z.dtype), z.dtype)
     return (
         z,
         sine_over_angle(z, cutoff),
@@ -89,8 +79,9 @@ def _forward_coefficients_and_derivatives(
     using ``d(z**2)/dt = 2 z s xid[0]``.
     """
     z = s * theta
-    cutoff = _forward_cutoff(s, eps, z.dtype)
-    coefficients, derivatives = _forward_coefficients_and_x_derivatives(z, cutoff)
+    coefficients, derivatives = lie_se2._left_jacobian_coefficients_and_x_derivatives(
+        z, _accumulated_eps(s, eps, z.dtype)
+    )
     return z, coefficients, derivatives
 
 

@@ -4,6 +4,7 @@ from jax import numpy as jnp
 from jax.scipy.linalg import expm
 from numpy.testing import assert_allclose
 
+from soromox.autodiff import strict_singularities_mode
 from soromox.utils.geometry import poses
 from soromox.utils.lie_algebra import se2
 from soromox.utils.lie_algebra.jacobian_coefficients import (
@@ -18,6 +19,13 @@ RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
 EPS = float(jnp.finfo(jnp.float64).eps)
 J = jnp.array([[0.0, -1.0], [1.0, 0.0]])
+
+
+def test_strict_mode_exposes_exp_quotients_at_zero_rotation():
+    with strict_singularities_mode():
+        result = se2.exp(jnp.array([0.0, 0.7, -0.4]), 0.0)
+
+    assert not jnp.isfinite(result).all()
 
 
 def test_log_se2_pure_translation():

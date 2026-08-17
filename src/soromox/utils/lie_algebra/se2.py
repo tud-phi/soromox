@@ -169,6 +169,14 @@ def _left_jacobian_cutoff(eps: float | Array, dtype: jnp.dtype) -> Array:
     return jnp.maximum(requested, derivative_threshold)
 
 
+def _left_jacobian_coefficients_and_x_derivatives(
+    theta: Array, eps: float | Array
+) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
+    """Return stable SE(2) left-Jacobian coefficients and derivatives."""
+    cutoff = _left_jacobian_cutoff(eps, theta.dtype)
+    return _forward_coefficients_and_x_derivatives(theta, cutoff)
+
+
 def _left_jacobian_from_coefficients(
     xi: Array,
     theta: Array,
@@ -249,8 +257,7 @@ def left_jacobian(xi: Array, eps: float | Array) -> Array:
     """
     xi = jnp.asarray(xi).reshape(-1)
     theta = xi[0]
-    cutoff = _left_jacobian_cutoff(eps, xi.dtype)
-    coefficients, _ = _forward_coefficients_and_x_derivatives(theta, cutoff)
+    coefficients, _ = _left_jacobian_coefficients_and_x_derivatives(theta, eps)
     return _left_jacobian_from_coefficients(xi, theta, coefficients)
 
 
@@ -273,8 +280,9 @@ def left_jacobian_directional_derivative(
     xi = jnp.asarray(xi).reshape(-1)
     xid = jnp.asarray(xid).reshape(-1)
     theta = xi[0]
-    cutoff = _left_jacobian_cutoff(eps, xi.dtype)
-    coefficients, derivatives = _forward_coefficients_and_x_derivatives(theta, cutoff)
+    coefficients, derivatives = _left_jacobian_coefficients_and_x_derivatives(
+        theta, eps
+    )
     return _left_jacobian_derivative_from_coefficients(
         xi, xid, theta, coefficients, derivatives
     )
@@ -296,8 +304,9 @@ def left_jacobian_and_directional_derivative(
     xi = jnp.asarray(xi).reshape(-1)
     xid = jnp.asarray(xid).reshape(-1)
     theta = xi[0]
-    cutoff = _left_jacobian_cutoff(eps, xi.dtype)
-    coefficients, derivatives = _forward_coefficients_and_x_derivatives(theta, cutoff)
+    coefficients, derivatives = _left_jacobian_coefficients_and_x_derivatives(
+        theta, eps
+    )
     jacobian = _left_jacobian_from_coefficients(xi, theta, coefficients)
     jacobian_derivative = _left_jacobian_derivative_from_coefficients(
         xi, xid, theta, coefficients, derivatives

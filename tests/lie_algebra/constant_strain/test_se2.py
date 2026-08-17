@@ -1,6 +1,7 @@
 """Tests for planar constant-strain operators."""
 
 import jax
+import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
@@ -111,3 +112,151 @@ def test_constant_strain_helpers_are_autodiff_finite_at_zero():
     for function, argument in functions_and_arguments:
         assert jnp.isfinite(jax.jacrev(function)(argument)).all()
         assert jnp.isfinite(jax.jacfwd(function)(argument)).all()
+
+
+def _matrix_exp_series(matrix, terms=20):
+    result = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
+    power = result
+    factorial = 1.0
+    for order in range(1, terms):
+        power = power @ matrix
+        factorial *= order
+        result = result + power / factorial
+    return result
+
+
+def _integrated_exp_series(matrix, s, terms=20):
+    result = jnp.zeros_like(matrix)
+    power = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
+    factorial = 1.0
+    for order in range(terms):
+        factorial *= order + 1
+        result = result + s ** (order + 1) * power / factorial
+        power = power @ matrix
+    return result
+
+
+def _integrated_exp_series_directional(matrix, matrix_direction, s, terms=20):
+    result_direction = jnp.zeros_like(matrix)
+    power = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
+    power_direction = jnp.zeros_like(matrix)
+    factorial = 1.0
+    for order in range(terms):
+        factorial *= order + 1
+        result_direction = (
+            result_direction + s ** (order + 1) * power_direction / factorial
+        )
+        power_direction = power_direction @ matrix + power @ matrix_direction
+        power = power @ matrix
+    return result_direction
+
+
+@pytest.mark.parametrize("scale", [-1.25, 0.0, 1.0, 1.25])
+@pytest.mark.parametrize(
+    ("dtype", "rtol", "atol"),
+    [(jnp.float64, 2e-9, 2e-10), (jnp.float32, 1e-3, 1e-4)],
+)
+def test_operators_match_independent_series(scale, dtype, rtol, atol):
+    s = jnp.asarray(0.73, dtype=dtype)
+    threshold = se2._left_jacobian_cutoff(0.0, dtype)
+    theta = scale * threshold / s
+    xi = jnp.array([theta, 0.7, -0.4], dtype=dtype)
+    xid = jnp.array([0.1, -0.2, 0.3], dtype=dtype)
+    eps = jnp.zeros((), dtype=dtype)
+
+    ad_xi = se2.small_adjoint(xi)
+    actual_adjoint = constant_strain_se2.adjoint(xi, s, eps)
+    actual_tangent = constant_strain_se2.tangent(xi, s, eps)
+    expected_adjoint = _matrix_exp_series(s * ad_xi)
+    expected_tangent = _integrated_exp_series(ad_xi, s)
+
+    assert_allclose(actual_adjoint, expected_adjoint, rtol=rtol, atol=atol)
+    assert_allclose(actual_tangent, expected_tangent, rtol=rtol, atol=atol)
+    assert_allclose(
+        jax.jacrev(lambda value: constant_strain_se2.tangent(value, s, eps))(xi),
+        jax.jacrev(lambda value: _integrated_exp_series(se2.small_adjoint(value), s))(
+            xi
+        ),
+        rtol=rtol,
+        atol=atol,
+    )
+    weights = (
+        jnp.arange(actual_tangent.size, dtype=dtype).reshape(actual_tangent.shape) + 1.0
+    )
+    assert_allclose(
+        jax.jacrev(
+            jax.jacrev(
+                lambda value: jnp.sum(
+                    weights * constant_strain_se2.tangent(value, s, eps)
+                )
+            )
+        )(xi),
+        jax.jacrev(
+            jax.jacrev(
+                lambda value: jnp.sum(
+                    weights * _integrated_exp_series(se2.small_adjoint(value), s)
+                )
+            )
+        )(xi),
+        rtol=rtol,
+        atol=atol,
+    )
+    expected_direction = _integrated_exp_series_directional(
+        ad_xi, se2.small_adjoint(xid), s
+    )
+    assert_allclose(
+        constant_strain_se2.tangent_derivative(xi, xid, s, eps),
+        expected_direction,
+        rtol=rtol,
+        atol=atol,
+    )
+
+
+def test_zero_arc_length_limits():
+    xi = jnp.array([0.3, 0.7, -0.4])
+    xid = jnp.array([0.1, -0.2, 0.3])
+
+    assert_allclose(constant_strain_se2.adjoint(xi, 0.0, 0.0), jnp.eye(3))
+    assert_allclose(constant_strain_se2.tangent(xi, 0.0, 0.0), jnp.zeros((3, 3)))
+    assert_allclose(
+        constant_strain_se2.tangent_derivative(xi, xid, 0.0, 0.0),
+        jnp.zeros((3, 3)),
+    )
+
+
+@pytest.mark.parametrize("scale", [0.0, 1.0, 1.25])
+@pytest.mark.parametrize(
+    ("dtype", "rtol", "atol"),
+    [(jnp.float64, 2e-9, 2e-10), (jnp.float32, 1e-3, 1e-4)],
+)
+def test_fused_operators_match_public_operators(scale, dtype, rtol, atol):
+    s = jnp.asarray(0.73, dtype=dtype)
+    threshold = se2._left_jacobian_cutoff(0.0, dtype)
+    theta = scale * threshold / s
+    xi = jnp.array([theta, 0.7, -0.4], dtype=dtype)
+    xid = jnp.array([0.1, -0.2, 0.3], dtype=dtype)
+    adjoint_eps = jnp.zeros((), dtype=dtype)
+    tangent_eps = 2.0 * threshold / jnp.abs(s)
+
+    pair = constant_strain_se2._operators(xi, s, adjoint_eps, tangent_eps)
+    triple = constant_strain_se2._operators(xi, s, adjoint_eps, tangent_eps, xid)
+    public = constant_strain_se2.operators(xi, s, tangent_eps, xid)
+    expected = (
+        constant_strain_se2.adjoint_inverse(xi, s, adjoint_eps),
+        constant_strain_se2.tangent(xi, s, tangent_eps),
+        constant_strain_se2.tangent_derivative(xi, xid, s, tangent_eps),
+    )
+
+    for actual, reference in zip(pair, expected[:2], strict=True):
+        assert_allclose(actual, reference, rtol=rtol, atol=atol)
+    for actual, reference in zip(triple, expected, strict=True):
+        assert_allclose(actual, reference, rtol=rtol, atol=atol)
+    public_expected = (
+        constant_strain_se2.adjoint(xi, s, tangent_eps),
+        expected[0],
+        expected[1],
+        expected[2],
+    )
+    for actual, reference in zip(public, public_expected, strict=True):
+        assert_allclose(actual, reference, rtol=rtol, atol=atol)
+    assert constant_strain_se2.operators(xi, s, tangent_eps).tangent_derivative is None

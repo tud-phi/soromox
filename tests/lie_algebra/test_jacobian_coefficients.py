@@ -5,6 +5,7 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
+from soromox.autodiff import strict_singularities_mode
 from soromox.utils.lie_algebra import jacobian_coefficients
 
 jax.config.update("jax_enable_x64", True)
@@ -112,3 +113,14 @@ def test_fused_forward_coefficients_and_explicit_x_derivatives(
     assert_allclose(
         jnp.stack(derivatives), jax.jacrev(reference)(x), rtol=rtol, atol=atol
     )
+
+
+def test_strict_mode_exposes_forward_coefficient_quotients():
+    with strict_singularities_mode():
+        results = (
+            jacobian_coefficients.sine_over_angle(jnp.array(0.0)),
+            jacobian_coefficients.one_minus_cosine_over_angle_squared(jnp.array(0.0)),
+            jacobian_coefficients.angle_minus_sine_over_angle_cubed(jnp.array(0.0)),
+        )
+
+    assert all(not jnp.isfinite(result).all() for result in results)

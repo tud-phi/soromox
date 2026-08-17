@@ -385,7 +385,7 @@ def test_fused_exp_left_jacobian_kernel_matches_public_operators(xi):
     xid = jnp.array([-0.1, 0.5, 0.2, 0.4, -0.2, 0.6])
 
     transform, jacobian, jacobian_derivative = (
-        se3._exp_left_jacobian_and_directional_derivative(xi, xid, EPS, EPS)
+        se3._exp_with_left_jacobian_and_directional_derivative(xi, xid, EPS, EPS)
     )
     expected_jacobian, expected_derivative = (
         se3.left_jacobian_and_directional_derivative(xi, xid, EPS)
@@ -394,6 +394,116 @@ def test_fused_exp_left_jacobian_kernel_matches_public_operators(xi):
     assert_allclose(transform, se3.exp(xi, EPS), rtol=RTOL, atol=ATOL)
     assert_allclose(jacobian, expected_jacobian, rtol=RTOL, atol=ATOL)
     assert_allclose(jacobian_derivative, expected_derivative, rtol=RTOL, atol=ATOL)
+
+
+def _reduced_coefficient_references(angle_sq):
+    adjoint_linear = 1.0 + angle_sq**2 * (
+        -1.0 / 120.0
+        + angle_sq
+        * (1.0 / 2520.0 + angle_sq * (-1.0 / 120960.0 + angle_sq / 9979200.0))
+    )
+    adjoint_quadratic = 0.5 + angle_sq**2 * (
+        -1.0 / 720.0
+        + angle_sq
+        * (1.0 / 20160.0 + angle_sq * (-1.0 / 1209600.0 + angle_sq / 119750400.0))
+    )
+    adjoint_cubic = 1.0 / 6.0 + angle_sq * (
+        -1.0 / 60.0
+        + angle_sq
+        * (
+            1.0 / 1680.0
+            + angle_sq
+            * (-1.0 / 90720.0 + angle_sq * (1.0 / 7983360.0 - angle_sq / 1037836800.0))
+        )
+    )
+    adjoint_quartic = 1.0 / 24.0 + angle_sq * (
+        -1.0 / 360.0
+        + angle_sq
+        * (
+            1.0 / 13440.0
+            + angle_sq
+            * (
+                -1.0 / 907200.0
+                + angle_sq * (1.0 / 95800320.0 - angle_sq / 14529715200.0)
+            )
+        )
+    )
+    jacobian_quadratic = 1.0 / 6.0 + angle_sq**2 * (
+        -1.0 / 5040.0
+        + angle_sq
+        * (1.0 / 181440.0 + angle_sq * (-1.0 / 13305600.0 + angle_sq / 1556755200.0))
+    )
+    jacobian_quartic = 1.0 / 120.0 + angle_sq * (
+        -1.0 / 2520.0
+        + angle_sq
+        * (
+            1.0 / 120960.0
+            + angle_sq
+            * (
+                -1.0 / 9979200.0
+                + angle_sq * (1.0 / 1245404160.0 - angle_sq / 217945728000.0)
+            )
+        )
+    )
+    return jnp.stack(
+        [
+            adjoint_linear,
+            adjoint_quadratic,
+            adjoint_cubic,
+            adjoint_quartic,
+            jacobian_quadratic,
+            jacobian_quartic,
+        ]
+    )
+
+
+@pytest.mark.parametrize("scale", [0.0, 1.0, 1.25])
+@pytest.mark.parametrize(
+    ("dtype", "rtol", "atol", "derivative_atol"),
+    [
+        (jnp.float64, 3e-9, 3e-11, 5e-10),
+        (jnp.float32, 8e-4, 8e-5, 8e-5),
+    ],
+)
+def test_reduced_coefficients_and_derivatives(
+    scale, dtype, rtol, atol, derivative_atol
+):
+    angle = scale * se3._left_jacobian_series_threshold(dtype)
+    angle_sq = angle**2
+    adjoint_actual = jnp.stack(se3._adjoint_exponential_coefficients(angle_sq, 0.0))
+    jacobian_actual, derivative_actual = (
+        se3._left_jacobian_coefficients_and_x_derivatives(angle_sq, 0.0)
+    )
+    reference = _reduced_coefficient_references(angle_sq)
+    jacobian_reference = reference[jnp.array([1, 4, 3, 5])]
+    derivative_reference = jax.jacrev(
+        lambda value: _reduced_coefficient_references(value)[jnp.array([1, 4, 3, 5])]
+    )(angle_sq)
+
+    assert_allclose(adjoint_actual, reference[:4], rtol=rtol, atol=atol)
+    assert_allclose(
+        jnp.stack(jacobian_actual), jacobian_reference, rtol=rtol, atol=atol
+    )
+    assert_allclose(
+        jnp.stack(derivative_actual),
+        derivative_reference,
+        rtol=rtol,
+        atol=derivative_atol,
+    )
+
+
+def test_strict_mode_exposes_exp_and_reduced_coefficient_quotients():
+    with strict_singularities_mode():
+        transform = se3.exp(jnp.array([0.0, 0.0, 0.0, 0.7, -0.4, 0.2]), 0.0)
+        adjoint_coefficients = se3._adjoint_exponential_coefficients(
+            jnp.array(0.0), 0.0
+        )
+        jacobian_coefficients, _ = se3._left_jacobian_coefficients_and_x_derivatives(
+            jnp.array(0.0), 0.0
+        )
+
+    results = (transform, *adjoint_coefficients, *jacobian_coefficients)
+    assert all(not jnp.isfinite(result).all() for result in results)
 
 
 def test_coadjoint_se3_matches_block_structure():

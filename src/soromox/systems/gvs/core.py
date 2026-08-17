@@ -1346,7 +1346,7 @@ class GVS(SoftRobot):
         )
         Magnusd = B_Magnus @ qd_i
 
-        g_step, T_step, Td_step = se3._exp_left_jacobian_and_directional_derivative(
+        g_step, T_step, Td_step = se3._exp_with_left_jacobian_and_directional_derivative(
             Magnus, Magnusd, self.global_eps, self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
@@ -1411,7 +1411,7 @@ class GVS(SoftRobot):
             )
         )
 
-        g_step, T_step, T_step_H = se3._exp_left_jacobian_and_directional_derivative(
+        g_step, T_step, T_step_H = se3._exp_with_left_jacobian_and_directional_derivative(
             Magnus, Magnus_H, self.global_eps, self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
@@ -1490,7 +1490,7 @@ class GVS(SoftRobot):
         """
         xi_joint = B_joint @ q_joint + xi_ref_joint
         xid_joint = B_joint @ qd_joint
-        g_joint, T_joint, Td_joint = se3._exp_left_jacobian_and_directional_derivative(
+        g_joint, T_joint, Td_joint = se3._exp_with_left_jacobian_and_directional_derivative(
             xi_joint, xid_joint, self.global_eps, self.tangent_eps
         )
         T_joint_B = T_joint @ B_joint

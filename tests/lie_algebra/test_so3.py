@@ -3,6 +3,7 @@ import pytest
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
 
+from soromox.autodiff import strict_singularities_mode
 from soromox.utils.lie_algebra import so2, so3
 from soromox.utils.tolerance import Tolerance
 
@@ -12,6 +13,13 @@ jax.config.update("jax_enable_x64", True)
 RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
 EPS = float(jnp.finfo(jnp.float64).eps)
+
+
+def test_strict_mode_exposes_exp_quotient_at_zero():
+    with strict_singularities_mode():
+        result = so3.exp(jnp.zeros(3), 0.0)
+
+    assert not jnp.isfinite(result).all()
 
 
 def test_skew_so3_matches_z_axis_planar_generator():

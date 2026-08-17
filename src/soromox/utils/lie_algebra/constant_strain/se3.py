@@ -18,17 +18,38 @@ from typing import NamedTuple
 import jax.numpy as jnp
 from jax import Array
 
+from ... import _matrix_polynomials
 from .. import se3 as lie_se3
-from .._se3_left_jacobian import _matrix_powers, _matrix_powers_with_derivatives
-from ._shared import (
-    ConstantStrainOperators,
-    _constant_strain_adjoint,
-    _reduced_adjoint_from_powers,
-    _reduced_tangent_derivative_from_powers,
-    _reduced_tangent_from_powers,
-    _reduced_transported_tangent_from_powers,
-    _tangent_coefficients_and_x_derivatives,
-)
+from ._types import ConstantStrainOperators
+
+_REDUCED_POLYNOMIAL_DEGREE = 4
+
+
+def _accumulated_eps(s: Array, eps: float | Array, dtype: jnp.dtype) -> Array:
+    """Convert a rotational-strain threshold to accumulated-angle units."""
+    return jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=dtype))
+
+
+def _adjoint_coefficients(
+    angle_sq: Array, s: Array, eps: float | Array
+) -> tuple[Array, ...]:
+    """Return adjoint coefficients for the accumulated coordinate ``s * xi``."""
+    accumulated_angle_sq = s**2 * angle_sq
+    return lie_se3._adjoint_exponential_coefficients(
+        accumulated_angle_sq,
+        _accumulated_eps(s, eps, accumulated_angle_sq.dtype),
+    )
+
+
+def _tangent_coefficients_and_x_derivatives(
+    angle_sq: Array, s: Array, eps: float | Array
+) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
+    """Return Jacobian coefficients for the accumulated coordinate ``s * xi``."""
+    accumulated_angle_sq = s**2 * angle_sq
+    return lie_se3._left_jacobian_coefficients_and_x_derivatives(
+        accumulated_angle_sq,
+        _accumulated_eps(s, eps, accumulated_angle_sq.dtype),
+    )
 
 
 class _PreparedAdjointPowers(NamedTuple):
@@ -44,27 +65,6 @@ class _PreparedAdjointPowers(NamedTuple):
     angle_sq_dot: Array
     powers: Array
     dot_powers: Array
-
-
-def _adjoint_inverse_from_forward(adjoint: Array) -> Array:
-    r"""Construct an inverse SE(3) adjoint from stabilized forward blocks.
-
-    For ``Ad = [[R, 0], [hat(t) R, R]]``, this assembles
-    ``Ad^-1 = [[R.T, 0], [-R.T hat(t), R.T]]``. It avoids a dense inverse and
-    guarantees that forward and inverse operators use identical stabilized
-    coefficients.
-    """
-    rotation = adjoint[:3, :3]
-    translation_hat_rotation = adjoint[3:, :3]
-    rotation_inverse = jnp.transpose(rotation)
-    translation_hat = translation_hat_rotation @ rotation_inverse
-    zero = jnp.zeros((3, 3), dtype=adjoint.dtype)
-    return jnp.block(
-        [
-            [rotation_inverse, zero],
-            [-rotation_inverse @ translation_hat, rotation_inverse],
-        ]
-    )
 
 
 def _prepare_adjoint_powers(xi: Array, xid: Array) -> _PreparedAdjointPowers:
@@ -92,8 +92,10 @@ def _prepare_adjoint_powers(xi: Array, xid: Array) -> _PreparedAdjointPowers:
     """
     xi = jnp.asarray(xi).reshape(-1)
     xid = jnp.asarray(xid).reshape(-1)
-    powers, dot_powers = _matrix_powers_with_derivatives(
-        lie_se3.small_adjoint(xi), lie_se3.small_adjoint(xid)
+    powers, dot_powers = _matrix_polynomials.powers_and_directional_derivatives(
+        lie_se3.small_adjoint(xi),
+        lie_se3.small_adjoint(xid),
+        _REDUCED_POLYNOMIAL_DEGREE,
     )
     return _PreparedAdjointPowers(
         angle_sq=jnp.dot(xi[:3], xi[:3]),
@@ -131,23 +133,27 @@ def _operators_from_powers(
     tuple[Array, Array] | tuple[Array, Array, Array] | tuple[Array, Array, Array, Array]
 ):
     """Assemble selected SE(3) operators from already scaled powers."""
-    adjoint = _reduced_adjoint_from_powers(powers, angle_sq, s, adjoint_eps)
-    adjoint_inverse = _adjoint_inverse_from_forward(adjoint)
+    adjoint = lie_se3._adjoint_from_powers(
+        powers, _adjoint_coefficients(angle_sq, s, adjoint_eps)
+    )
+    adjoint_inverse = lie_se3._adjoint_inverse_from_adjoint(adjoint)
     coefficients, derivatives = _tangent_coefficients_and_x_derivatives(
         angle_sq, s, tangent_eps
     )
-    tangent = _reduced_tangent_from_powers(powers, coefficients, s)
+    tangent = s * lie_se3._left_jacobian_from_powers(powers, coefficients)
 
     outputs = (adjoint_inverse, tangent)
     if dot_powers is not None:
         assert angle_sq_dot is not None
-        tangent_derivative = _reduced_tangent_derivative_from_powers(
-            powers,
-            dot_powers,
-            coefficients,
-            derivatives,
-            angle_sq_dot,
-            s,
+        tangent_derivative = (
+            s
+            * lie_se3._left_jacobian_directional_derivative_from_powers(
+                powers,
+                dot_powers,
+                coefficients,
+                derivatives,
+                s**2 * angle_sq_dot,
+            )
         )
         outputs += (tangent_derivative,)
     if return_adjoint:
@@ -198,25 +204,26 @@ def _kinematic_operators_from_prepared(
     """
     s = jnp.asarray(s, dtype=prepared.powers.dtype)
     powers, dot_powers = _scaled_powers_from_prepared(prepared, s)
-    adjoint = _reduced_adjoint_from_powers(powers, prepared.angle_sq, s, adjoint_eps)
-    adjoint_inverse = _adjoint_inverse_from_forward(adjoint)
+    adjoint = lie_se3._adjoint_from_powers(
+        powers, _adjoint_coefficients(prepared.angle_sq, s, adjoint_eps)
+    )
+    adjoint_inverse = lie_se3._adjoint_inverse_from_adjoint(adjoint)
     coefficients, derivatives = _tangent_coefficients_and_x_derivatives(
         prepared.angle_sq, s, tangent_eps
     )
-    transported_tangent = _reduced_transported_tangent_from_powers(
-        powers, coefficients, s
+    transported_tangent = s * lie_se3._transported_left_jacobian_from_powers(
+        powers, coefficients
     )
-    tangent_derivative = _reduced_tangent_derivative_from_powers(
+    tangent_derivative = s * lie_se3._left_jacobian_directional_derivative_from_powers(
         powers,
         dot_powers,
         coefficients,
         derivatives,
-        prepared.angle_sq_dot,
-        s,
+        s**2 * prepared.angle_sq_dot,
     )
     if convective_only:
         return adjoint_inverse, transported_tangent, tangent_derivative
-    tangent = _reduced_tangent_from_powers(powers, coefficients, s)
+    tangent = s * lie_se3._left_jacobian_from_powers(powers, coefficients)
     return adjoint_inverse, transported_tangent, tangent, tangent_derivative
 
 
@@ -262,12 +269,14 @@ def _operators(
     angle_sq = jnp.dot(xi[:3], xi[:3])
 
     if xid is None:
-        powers = _matrix_powers(s * ad_xi)
+        powers = _matrix_polynomials.powers(s * ad_xi, _REDUCED_POLYNOMIAL_DEGREE)
         dot_powers = None
     else:
         xid = jnp.asarray(xid).reshape(-1)
-        powers, dot_powers = _matrix_powers_with_derivatives(
-            s * ad_xi, s * lie_se3.small_adjoint(xid)
+        powers, dot_powers = _matrix_polynomials.powers_and_directional_derivatives(
+            s * ad_xi,
+            s * lie_se3.small_adjoint(xid),
+            _REDUCED_POLYNOMIAL_DEGREE,
         )
 
     angle_sq_dot = None if xid is None else 2.0 * jnp.dot(xi[:3], xid[:3])
@@ -310,8 +319,12 @@ def adjoint(xi: Array, s: Array, eps: float | Array) -> Array:
         polynomial is exact for an ``se(3)`` adjoint.
     """
     xi = jnp.asarray(xi).reshape(-1)
+    s = jnp.asarray(s, dtype=xi.dtype)
     angle_sq = jnp.dot(xi[:3], xi[:3])
-    return _constant_strain_adjoint(lie_se3.small_adjoint(xi), angle_sq, s, eps)
+    powers = _matrix_polynomials.powers(
+        s * lie_se3.small_adjoint(xi), _REDUCED_POLYNOMIAL_DEGREE
+    )
+    return lie_se3._adjoint_from_powers(powers, _adjoint_coefficients(angle_sq, s, eps))
 
 
 def adjoint_inverse(xi: Array, s: Array, eps: float | Array) -> Array:
@@ -339,7 +352,7 @@ def adjoint_inverse(xi: Array, s: Array, eps: float | Array) -> Array:
         the cost and conditioning of a dense solve.
     """
     forward_adjoint = adjoint(xi, s, eps=eps)
-    return _adjoint_inverse_from_forward(forward_adjoint)
+    return lie_se3._adjoint_inverse_from_adjoint(forward_adjoint)
 
 
 def tangent(xi: Array, s: Array, eps: float | Array) -> Array:
