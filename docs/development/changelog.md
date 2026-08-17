@@ -62,6 +62,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   division, square-root, inverse-kinematics, and thread-routing sites across
   PCS, GVS, Planar HSA, articulated, McKibben, rotation, and reference-trajectory
   code paths.
+- Sanitized inactive square-root and quotient inputs in SO(3)/SE(3) magnitude
+  and quaternion-conversion branches, preventing batched selection from
+  exposing NaNs under nested JVP/reverse-mode transforms; the SoftRobot
+  forward-kinematics and spatial-Jacobian regressions from PR #148 now pass.
 - Kept Lie exponential/logarithmic values, first derivatives, and Hessians
   finite and accurate at zero and small rotations, including batched SE(2) and
   arbitrary-axis SE(3) inputs, without adding autodiff to production paths.
