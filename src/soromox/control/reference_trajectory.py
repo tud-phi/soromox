@@ -46,7 +46,7 @@ def _make_interp_fn(ts: Array, vals: Array) -> Callable[[Array], Array]:
 
         # Compute interpolation weight, guarding against duplicated samples
         dt = t1 - t0
-        alpha = safe_divide(t - t0, dt, 0.0)
+        alpha = jnp.where(dt > 0, safe_divide(t - t0, dt, 0.0), 0.0)
         alpha = jnp.clip(alpha, 0.0, 1.0)
 
         # Linear interpolation

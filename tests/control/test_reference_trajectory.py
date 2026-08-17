@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from soromox.control import ReferenceTrajectory
+from soromox.control.reference_trajectory import _make_interp_fn
 from soromox.utils.geometry.rotations import RotationRepresentation
 
 
@@ -101,6 +102,15 @@ class TestReferenceTrajectoryFromDiscrete:
 
         for fn in (ref.x_des_fn, ref.xd_des_fn, ref.xdd_des_fn):
             assert jnp.isfinite(fn(jnp.array(0.0))).all()
+
+    def test_nonpositive_interpolation_intervals_do_not_interpolate(self):
+        """Non-increasing samples retain the existing left-value convention."""
+        ts = jnp.array([1.0, 0.0])
+        vals = jnp.array([[1.0], [0.0]])
+
+        interp_fn = _make_interp_fn(ts, vals)
+
+        assert jnp.allclose(interp_fn(0.5), vals[0])
 
 
 class TestReferenceTrajectoryFromContinuous:

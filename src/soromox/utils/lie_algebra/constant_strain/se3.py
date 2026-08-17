@@ -112,7 +112,7 @@ def _scaled_powers_from_prepared(
     scale = jnp.ones((), dtype=prepared.powers.dtype)
     powers: list[Array] = []
     dot_powers: list[Array] = []
-    for order in range(5):
+    for order in range(_REDUCED_POLYNOMIAL_DEGREE + 1):
         powers.append(scale * prepared.powers[order])
         dot_powers.append(scale * prepared.dot_powers[order])
         scale = scale * s
