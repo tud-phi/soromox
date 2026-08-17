@@ -517,40 +517,6 @@ class PlanarPCS(SoftRobot):
         return xi
 
     @eqx.filter_jit
-    def chi(self, xi: Array, s: Array) -> Array:
-        """
-        Compute the forward kinematics of the robot.
-
-        Linear strains are expressed in the material frame: axial stretch is
-        along local x and transverse shear is along local y.
-
-        Args:
-            xi (Array): strain vector of shape (3*num_segments,) where each row corresponds to a segment
-            s (Array): point coordinate along the robot in the interval [0, L].
-
-        Returns:
-            chi_s (Array): forward kinematics of the robot at point s, shape (3,) : [theta, x, y]
-        """
-        xi = xi.reshape(self.num_segments, 3)
-
-        segment_idx, s_local = self.classify_segment(s)
-
-        chi_0 = self._base_planar_pose(xi.dtype)
-
-        # Iteration function
-        def chi_i(chi_prev: Array, i: Array) -> tuple[Array, Array]:
-            l_i = jnp.where(i == segment_idx, s_local, self.L[i])
-            chi = self._integrate_planar_pose(chi_prev, xi[i], l_i)
-
-            return chi, chi
-
-        _, chi_list = lax.scan(f=chi_i, init=chi_0, xs=jnp.arange(self.num_segments))
-
-        chi_s = chi_list[segment_idx]
-
-        return chi_s
-
-    @eqx.filter_jit
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a point s along the robot.
@@ -562,11 +528,21 @@ class PlanarPCS(SoftRobot):
         Returns:
             chi (Array): forward kinematics of the robot at point s, shape (3,) : [theta, x, y]
         """
-        xi = self.strain(q)
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        segment_idx, s_local = self.classify_segment(s)
+        chi_0 = self._base_planar_pose(xi.dtype)
 
-        chi = self.chi(xi, s)
+        def integrate_segment(chi_prev: Array, i: Array) -> tuple[Array, Array]:
+            arc_len = jnp.where(i == segment_idx, s_local, self.L[i])
+            chi_next = self._integrate_planar_pose(chi_prev, xi[i], arc_len)
+            return chi_next, chi_next
 
-        return chi
+        _, chi_list = lax.scan(
+            f=integrate_segment,
+            init=chi_0,
+            xs=jnp.arange(self.num_segments),
+        )
+        return chi_list[segment_idx]
 
     @eqx.filter_jit
     def _forward_kinematics_arc_length_derivative(self, q: Array, s: Array) -> Array:

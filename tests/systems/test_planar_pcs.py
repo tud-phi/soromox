@@ -307,7 +307,7 @@ def test_planar_constant_strain_call():
     print("[Valid test]\n")
 
 
-def test_public_planar_pcs_accessors_geometry_and_chi() -> None:
+def test_public_planar_pcs_accessors_geometry() -> None:
     model, params = make_planar_pcs(num_segments=2)
     q = jnp.zeros((int(model.num_active_strains.item()),), dtype=jnp.float64)
 
@@ -323,10 +323,6 @@ def test_public_planar_pcs_accessors_geometry_and_chi() -> None:
     tag, geom = model.cross_section_geometry(q, s_second)
     assert int(tag) == CrossSectionGeometry.CIRCULAR
     assert_allclose(geom, jnp.array([params.radius[1]]), rtol=RTOL, atol=ATOL)
-
-    xi = model.strain(q)
-    assert_allclose(model.chi(xi, s_second), model.forward_kinematics(q, s_second))
-
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments):
