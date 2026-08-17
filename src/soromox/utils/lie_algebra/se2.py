@@ -161,7 +161,20 @@ def small_adjoint(xi: Array) -> Array:
 
 
 def _left_jacobian_cutoff(eps: float | Array, dtype: jnp.dtype) -> Array:
-    """Return the stable cutoff for full SE(2) Jacobian derivatives."""
+    """Return the stable cutoff for full SE(2) Jacobian derivatives.
+
+    The requested threshold is combined with a dtype-aware derivative
+    threshold. This keeps the scalar coefficient and derivative formulas on
+    their stable series branch when the requested cutoff is too small for the
+    available floating-point precision.
+
+    Args:
+        eps: Requested non-negative dimensionless small-angle threshold.
+        dtype: JAX floating-point dtype used for the returned cutoff.
+
+    Returns:
+        Scalar array with ``dtype`` containing the effective cutoff.
+    """
     requested = jnp.abs(jnp.asarray(eps, dtype=dtype))
     derivative_threshold = jnp.asarray(
         jnp.finfo(dtype).eps ** (1.0 / 14.0), dtype=dtype
@@ -172,7 +185,23 @@ def _left_jacobian_cutoff(eps: float | Array, dtype: jnp.dtype) -> Array:
 def _left_jacobian_coefficients_and_x_derivatives(
     theta: Array, eps: float | Array
 ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array]]:
-    """Return stable SE(2) left-Jacobian coefficients and derivatives."""
+    r"""Return stable SE(2) left-Jacobian coefficients and derivatives.
+
+    The coefficients are the scalar functions used to assemble
+    ``J_l([theta, v])``. The derivative tuple contains their derivatives with
+    respect to ``x = theta**2`` rather than with respect to ``theta``; the
+    assembly helper applies the remaining chain rule.
+
+    Args:
+        theta: Scalar planar rotation coordinate in accumulated twist units.
+        eps: Requested non-negative dimensionless small-angle threshold.
+
+    Returns:
+        Tuple ``(coefficients, x_derivatives)``. ``coefficients`` is the
+        triple ``(sinc(theta), cosc(theta), tanc(theta))`` and
+        ``x_derivatives`` contains the corresponding derivatives with respect
+        to ``theta**2``.
+    """
     cutoff = _left_jacobian_cutoff(eps, theta.dtype)
     return _forward_coefficients_and_x_derivatives(theta, cutoff)
 
@@ -182,7 +211,18 @@ def _left_jacobian_from_coefficients(
     theta: Array,
     coefficients: tuple[Array, Array, Array],
 ) -> Array:
-    """Assemble an SE(2) left Jacobian from stable scalar coefficients."""
+    """Assemble an SE(2) left Jacobian from stable scalar coefficients.
+
+    Args:
+        xi: Planar accumulated twist with shape ``(3,)`` in
+            ``[theta, v_x, v_y]`` order.
+        theta: Rotational coordinate ``xi[0]``.
+        coefficients: Triple ``(sinc, cosc, tanc)`` evaluated at ``theta``.
+
+    Returns:
+        Array with shape ``(3, 3)`` containing the left Jacobian in the
+        angular-first planar twist basis.
+    """
     sinc, cosc, tanc = coefficients
     v = xi[1:]
     minus_j_v = jnp.stack([v[1], -v[0]])
@@ -207,7 +247,21 @@ def _left_jacobian_derivative_from_coefficients(
     coefficients: tuple[Array, Array, Array],
     derivatives: tuple[Array, Array, Array],
 ) -> Array:
-    """Assemble ``D J_l(xi)[xid]`` from analytic scalar derivatives."""
+    """Assemble ``D J_l(xi)[xid]`` from analytic scalar derivatives.
+
+    Args:
+        xi: Planar accumulated twist with shape ``(3,)`` in
+            ``[theta, v_x, v_y]`` order.
+        xid: Direction with the same shape and coordinate order as ``xi``.
+        theta: Rotational coordinate ``xi[0]``.
+        coefficients: Triple ``(sinc, cosc, tanc)`` evaluated at ``theta``.
+        derivatives: Derivatives of those coefficients with respect to
+            ``theta**2``.
+
+    Returns:
+        Array with shape ``(3, 3)`` containing the directional derivative of
+        the left Jacobian along ``xid``.
+    """
     sinc, cosc, tanc = coefficients
     sinc_x, cosc_x, tanc_x = derivatives
     v = xi[1:]

@@ -29,14 +29,34 @@ _REDUCED_POLYNOMIAL_DEGREE = 4
 
 
 def _left_jacobian_series_threshold(dtype: jnp.dtype) -> Array:
-    """Return the dtype-aware dimensionless SE(3) Jacobian cutoff."""
+    """Return the dtype-aware dimensionless SE(3) Jacobian cutoff.
+
+    Args:
+        dtype: JAX floating-point dtype whose machine precision determines the
+            cutoff.
+
+    Returns:
+        Scalar array with ``dtype`` containing the smallest recommended
+        near-zero series threshold.
+    """
     return jnp.asarray(jnp.finfo(dtype).eps ** (1.0 / 14.0), dtype=dtype)
 
 
 def _left_jacobian_series_arguments(
     angle_sq: Array, eps: float | Array
 ) -> tuple[Array, Array, Array]:
-    """Prepare stable scalar arguments for SE(3) Jacobian coefficients."""
+    """Prepare stable scalar arguments for SE(3) Jacobian coefficients.
+
+    Args:
+        angle_sq: Scalar squared rotational magnitude
+            ``dot(omega, omega)`` for an angular-first spatial twist.
+        eps: Requested non-negative dimensionless small-angle threshold.
+
+    Returns:
+        Tuple ``(angle_sq, use_series, theta_safe)``. ``use_series`` selects
+        the near-zero coefficient series, while ``theta_safe`` is a safe
+        square-root argument for closed-form trigonometric expressions.
+    """
     requested = jnp.abs(jnp.asarray(eps, dtype=angle_sq.dtype))
     threshold = jnp.maximum(requested, _left_jacobian_series_threshold(angle_sq.dtype))
     use_series = angle_sq <= threshold**2
@@ -52,6 +72,15 @@ def _left_jacobian_coefficients_and_x_derivatives(
     For ``A = ad_xi`` and ``x = dot(omega, omega)``, the Jacobian is
     ``I + c1 A + c2 A**2 + c3 A**3 + c4 A**4``. The second tuple contains
     ``dc_k / dx``.
+
+    Args:
+        angle_sq: Scalar squared rotational magnitude ``x``.
+        eps: Requested non-negative dimensionless small-angle threshold.
+
+    Returns:
+        Tuple ``(coefficients, x_derivatives)``. Each element is a four-item
+        tuple for ``c1`` through ``c4`` and their derivatives with respect to
+        ``x``.
     """
     x, use_series, theta_safe = _left_jacobian_series_arguments(angle_sq, eps)
     series = (
@@ -165,7 +194,16 @@ def _adjoint_inverse_from_adjoint(adjoint: Array) -> Array:
 def _left_jacobian_from_powers(
     powers: list[Array], coefficients: tuple[Array, ...]
 ) -> Array:
-    """Assemble a left Jacobian from powers of ``ad_xi``."""
+    """Assemble a left Jacobian from powers of ``ad_xi``.
+
+    Args:
+        powers: Matrix powers from order zero through four for ``ad_xi``.
+        coefficients: Four scalar polynomial coefficients multiplying powers
+            one through four.
+
+    Returns:
+        Array with shape ``(6, 6)`` containing the spatial left Jacobian.
+    """
     return _matrix_polynomials.evaluate(powers, coefficients)
 
 
@@ -176,7 +214,21 @@ def _left_jacobian_directional_derivative_from_powers(
     coefficient_x_derivatives: tuple[Array, ...],
     angle_sq_direction: Array,
 ) -> Array:
-    """Assemble a left-Jacobian directional derivative from shared data."""
+    """Assemble a left-Jacobian directional derivative from shared data.
+
+    Args:
+        powers: Matrix powers from order zero through four for ``ad_xi``.
+        power_directions: Directional derivatives of ``powers`` along
+            ``ad_xid`` in the same order.
+        coefficients: Four scalar left-Jacobian coefficients.
+        coefficient_x_derivatives: Derivatives of those coefficients with
+            respect to the squared rotational magnitude.
+        angle_sq_direction: Directional derivative of the squared rotational
+            magnitude.
+
+    Returns:
+        Array with shape ``(6, 6)`` containing ``D J_l(xi)[xid]``.
+    """
     coefficient_directions = tuple(
         derivative * angle_sq_direction for derivative in coefficient_x_derivatives
     )
@@ -191,7 +243,15 @@ def _left_jacobian_directional_derivative_from_powers(
 def _transported_left_jacobian_from_powers(
     powers: list[Array], coefficients: tuple[Array, ...]
 ) -> Array:
-    """Assemble ``exp(-ad_xi) @ J_l(xi)`` without a dense product."""
+    """Assemble ``exp(-ad_xi) @ J_l(xi)`` without a dense product.
+
+    Args:
+        powers: Matrix powers from order zero through four for ``ad_xi``.
+        coefficients: Four scalar left-Jacobian coefficients.
+
+    Returns:
+        Array with shape ``(6, 6)`` containing the transported left Jacobian.
+    """
     transported_coefficients = tuple(
         (-1.0 if order % 2 else 1.0) * coefficient
         for order, coefficient in enumerate(coefficients, start=1)
@@ -502,6 +562,18 @@ def _exp_with_left_jacobian_and_directional_derivative(
 
     Separate thresholds preserve the caller's numerical policies for the
     group exponential and left Jacobian.
+
+    Args:
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in angular-first
+            ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
+        xid: Direction with the same shape and coordinate order as ``xi``.
+        exp_eps: Small-angle threshold used for the group exponential.
+        jacobian_eps: Small-angle threshold used for the left-Jacobian
+            coefficients and their directional derivatives.
+
+    Returns:
+        Tuple ``(transform, jacobian, jacobian_direction)`` with shapes
+        ``(4, 4)``, ``(6, 6)``, and ``(6, 6)`` respectively.
     """
     xi = jnp.asarray(xi).reshape(-1)
     xid = jnp.asarray(xid).reshape(-1)
