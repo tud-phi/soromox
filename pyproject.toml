@@ -315,6 +315,12 @@ ignore = [
 requires = ["pip>=23.1", "setuptools>=83.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# ==================== Pytest Configuration ====================
+[tool.pytest.ini_options]
+markers = [
+    "memory_intensive: tests isolated in CI because they require substantial JAX/XLA memory",
+]
+
 # ==================== Coverage Configuration ====================
 [tool.coverage.run]
 source = ["src/soromox"]

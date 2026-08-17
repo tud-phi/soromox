@@ -1954,6 +1954,7 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(
     assert not jnp.isnan(dE_dqd).any(), "dE/dqd contains NaN!"
 
 
+@pytest.mark.memory_intensive
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_reverse_mode_automatic_differentiability_at_zero_configuration(
     num_segments: int,
