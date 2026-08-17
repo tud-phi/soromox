@@ -63,15 +63,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Simplified rendering, example, paper-result, and complete installations by
   removing an unused video-encoding package; video output continues to use the
   system `ffmpeg` executable.
-- Made the Section V.d collocated optimizer derive ``gamma`` from a configurable
-  tendon-length error scale (default 10 mm), validate finite saturation
-  parameters, and document stale committed artifacts.
 - Consolidated the Section Vd control-gain optimization scripts around a shared,
   testable optimization loop and independently configured collocated and
   synergistic cases, with shared CLI/output helpers, explicit output locations,
-  overwrite protection, paper-result iteration defaults, and consistent NumPy
-  archive, pickle, and diagnostic-figure handling. Diagnostic figures are always
-  saved,
+  overwrite protection, paper-result iteration defaults, ``gamma`` derived from
+  a configurable tendon-length error scale for collocated integral saturation
+  (default 10 mm), finite saturation-parameter validation, stale-artifact
+  documentation, and consistent NumPy archive, pickle, and diagnostic-figure
+  handling. Diagnostic figures are always saved,
   the obsolete ``--save-figures`` switch is no longer needed, and the primary
   optimization data is persisted before plotting or interactive rendering
   begins; saved trajectory diagnostics can be rendered without rerunning
