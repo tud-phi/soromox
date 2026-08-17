@@ -10,7 +10,6 @@ __all__ = [
     "adjoint_inverse",
     "operators",
     "tangent",
-    "tangent_and_derivative",
     "tangent_derivative",
 ]
 
@@ -20,13 +19,10 @@ import jax.numpy as jnp
 from jax import Array
 
 from .. import se3 as lie_se3
+from .._se3_left_jacobian import _matrix_powers, _matrix_powers_with_derivatives
 from ._shared import (
     ConstantStrainOperators,
     _constant_strain_adjoint,
-    _constant_strain_tangent,
-    _constant_strain_tangent_derivative,
-    _matrix_powers,
-    _matrix_powers_with_derivatives,
     _reduced_adjoint_from_powers,
     _reduced_tangent_derivative_from_powers,
     _reduced_tangent_from_powers,
@@ -287,53 +283,6 @@ def _operators(
     )
 
 
-def tangent_and_derivative(
-    xi: Array,
-    xid: Array,
-    s: Array,
-    eps: float | Array,
-) -> tuple[Array, Array]:
-    r"""Evaluate spatial ``T`` and ``Td`` while sharing powers and coefficients.
-
-    This is the selective counterpart to :func:`_operators`: it does not
-    construct an unused adjoint, which is useful when the caller already has
-    the relative pose required by its kinematic recurrence. Unlike the
-    private execution helper, this function is part of the public SE(3)
-    constant-strain API.
-
-    Args:
-        xi: Spatial strain in angular-first order.
-        xid: Strain direction/rate.
-        s: Scalar arclength held fixed during differentiation.
-        eps: Tangent coefficient threshold.
-
-    Returns:
-        Tuple ``(T, Td)`` with both arrays having shape ``(6, 6)``.
-    """
-    xi = jnp.asarray(xi).reshape(-1)
-    xid = jnp.asarray(xid).reshape(-1)
-    s = jnp.asarray(s, dtype=xi.dtype)
-    ad_xi = lie_se3.small_adjoint(xi)
-    powers, dot_powers = _matrix_powers_with_derivatives(
-        s * ad_xi, s * lie_se3.small_adjoint(xid)
-    )
-    angle_sq = jnp.dot(xi[:3], xi[:3])
-    angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
-    coefficients, derivatives = _tangent_coefficients_and_x_derivatives(
-        angle_sq, s, eps
-    )
-    tangent = _reduced_tangent_from_powers(powers, coefficients, s)
-    tangent_derivative = _reduced_tangent_derivative_from_powers(
-        powers,
-        dot_powers,
-        coefficients,
-        derivatives,
-        angle_sq_dot,
-        s,
-    )
-    return tangent, tangent_derivative
-
-
 def adjoint(xi: Array, s: Array, eps: float | Array) -> Array:
     r"""Return the adjoint accumulated along a constant spatial strain segment.
 
@@ -425,8 +374,9 @@ def tangent(xi: Array, s: Array, eps: float | Array) -> Array:
         strain it is ``s * I``.
     """
     xi = jnp.asarray(xi).reshape(-1)
-    angle_sq = jnp.dot(xi[:3], xi[:3])
-    return _constant_strain_tangent(lie_se3.small_adjoint(xi), angle_sq, s, eps)
+    s = jnp.asarray(s, dtype=xi.dtype)
+    accumulated_eps = jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=xi.dtype))
+    return s * lie_se3.left_jacobian(s * xi, accumulated_eps)
 
 
 def tangent_derivative(xi: Array, xid: Array, s: Array, eps: float | Array) -> Array:
@@ -458,15 +408,10 @@ def tangent_derivative(xi: Array, xid: Array, s: Array, eps: float | Array) -> A
     """
     xi = jnp.asarray(xi).reshape(-1)
     xid = jnp.asarray(xid).reshape(-1)
-    angle_sq = jnp.dot(xi[:3], xi[:3])
-    angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
-    return _constant_strain_tangent_derivative(
-        lie_se3.small_adjoint(xi),
-        lie_se3.small_adjoint(xid),
-        angle_sq,
-        angle_sq_dot,
-        s,
-        eps,
+    s = jnp.asarray(s, dtype=xi.dtype)
+    accumulated_eps = jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=xi.dtype))
+    return s * lie_se3.left_jacobian_directional_derivative(
+        s * xi, s * xid, accumulated_eps
     )
 
 

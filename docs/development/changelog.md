@@ -20,8 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``constant_strain.se3.operators`` bundles with a fixed named result for
   callers that need adjoints, tangents, and an optional analytic tangent
   derivative at the same strain and arclength.
-- Public ``constant_strain.se3.tangent_and_derivative`` for callers that need
-  the selective tangent pair without constructing unused adjoint operators.
+- Public ``se2`` and ``se3`` left Jacobians and analytic directional
+  derivatives for accumulated Lie-algebra coordinates, independent of any
+  constant-strain rod interpretation.
 
 ### Changed
 
@@ -31,9 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tangent derivatives remain explicit analytic production paths; runtime
   autodiff is used only as a test oracle.
 - Organized constant-strain operators into dedicated ``se2`` and ``se3``
-  modules with unsuffixed names, keeping their reduced-polynomial machinery in
-  a private shared implementation module. The package root now exports only
-  these algebra namespaces and the shared ``ConstantStrainOperators`` result.
+  modules with unsuffixed names. General left-Jacobian machinery now belongs
+  to the rigid-body Lie-algebra modules; the constant-strain package retains
+  arclength scaling, prepared powers, rod-specific adjoints, and the shared
+  ``ConstantStrainOperators`` result.
 - Fused repeated constant-strain operator evaluation in PlanarPCS, PCS, and
   GVS. The planar path uses direct SE(2) blocks; the spatial operators share
   exact fourth-order matrix powers and tangent coefficients. PCS additionally

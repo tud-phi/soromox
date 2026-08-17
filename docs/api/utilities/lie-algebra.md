@@ -3,7 +3,9 @@
 The Lie algebra utilities are organized by semantic responsibility:
 
 - `so2` and `so3` contain pure rotational Lie group and Lie algebra operators.
-- `se2` and `se3` contain rigid-body Lie group and Lie algebra operators.
+- `se2` and `se3` contain rigid-body Lie group and Lie algebra operators,
+  including left Jacobians and their analytic directional derivatives for
+  accumulated algebra coordinates.
 - `jacobian_coefficients` contains reusable stable scalar coefficients.
 - [`constant_strain.se2` and `constant_strain.se3`](constant-strain.md) contain
   arclength operators for planar and spatial rod segment kinematics.

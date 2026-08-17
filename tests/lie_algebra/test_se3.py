@@ -340,6 +340,62 @@ def test_small_adjoint_se3_matches_block_structure():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
+def test_left_jacobian_se3_matches_exponential_series():
+    xi = jnp.array([0.2, -0.3, 0.4, -0.7, 0.1, 0.3])
+    ad_xi = se3.small_adjoint(xi)
+    expected = jnp.eye(6)
+    power = expected
+    factorial = 1.0
+    for order in range(1, 30):
+        power = power @ ad_xi
+        factorial *= order + 1
+        expected = expected + power / factorial
+
+    actual = se3.left_jacobian(xi, EPS)
+
+    assert_allclose(actual, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_left_jacobian_se3_directional_derivative_matches_autodiff():
+    xi = jnp.array([0.2, -0.3, 0.4, -0.7, 0.1, 0.3])
+    xid = jnp.array([-0.1, 0.5, 0.2, 0.4, -0.2, 0.6])
+    expected = jax.jvp(lambda value: se3.left_jacobian(value, EPS), (xi,), (xid,))[1]
+
+    jacobian, actual = se3.left_jacobian_and_directional_derivative(xi, xid, EPS)
+
+    assert_allclose(jacobian, se3.left_jacobian(xi, EPS), rtol=RTOL, atol=ATOL)
+    assert_allclose(actual, expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        actual,
+        se3.left_jacobian_directional_derivative(xi, xid, EPS),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
+@pytest.mark.parametrize(
+    "xi",
+    [
+        jnp.zeros(6),
+        jnp.array([1e-8, -2e-8, 3e-8, -0.7, 0.1, 0.3]),
+        jnp.array([0.2, -0.3, 0.4, -0.7, 0.1, 0.3]),
+    ],
+)
+def test_fused_exp_left_jacobian_kernel_matches_public_operators(xi):
+    xid = jnp.array([-0.1, 0.5, 0.2, 0.4, -0.2, 0.6])
+
+    transform, jacobian, jacobian_derivative = (
+        se3._exp_left_jacobian_and_directional_derivative(xi, xid, EPS, EPS)
+    )
+    expected_jacobian, expected_derivative = (
+        se3.left_jacobian_and_directional_derivative(xi, xid, EPS)
+    )
+
+    assert_allclose(transform, se3.exp(xi, EPS), rtol=RTOL, atol=ATOL)
+    assert_allclose(jacobian, expected_jacobian, rtol=RTOL, atol=ATOL)
+    assert_allclose(jacobian_derivative, expected_derivative, rtol=RTOL, atol=ATOL)
+
+
 def test_coadjoint_se3_matches_block_structure():
     vec2 = jnp.array([0.3, -0.4, 0.1])
     vec6 = _embed_se2_twist(vec2)
@@ -422,6 +478,11 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
         return se3.exp(xi, eps=EPS).reshape(-1)
 
     assert_autodiff_finite(exp_gn_fn, xi_zero, fn_name="se3.exp")
+    assert_autodiff_finite(
+        lambda xi: se3.left_jacobian(xi, EPS),
+        xi_zero,
+        fn_name="se3.left_jacobian",
+    )
 
     def log_fn(g_flat):
         g = g_flat.reshape((4, 4))

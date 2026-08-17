@@ -13,6 +13,8 @@ from jax import Array
 
 from soromox.autodiff import strict_singularities_enabled
 
+from .. import _se3_left_jacobian
+
 
 class ConstantStrainOperators(NamedTuple):
     """Related constant-strain Lie operators evaluated as one shared bundle.
@@ -62,7 +64,7 @@ def _constant_strain_series_threshold(dtype: jnp.dtype) -> Array:
         meaningful for negative ``s`` and becomes independent of the units
         used to parameterize arclength.
     """
-    return jnp.asarray(jnp.finfo(dtype).eps ** (1.0 / 14.0), dtype=dtype)
+    return _se3_left_jacobian._series_threshold(dtype)
 
 
 def _series_arguments(
@@ -88,12 +90,11 @@ def _series_arguments(
         rotation, the scalar series predicate, and a sanitized nonnegative
         magnitude ``sqrt(x_safe)`` for closed-form evaluation.
     """
-    x = s**2 * angle_sq
-    requested = jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=x.dtype))
-    threshold = jnp.maximum(requested, _constant_strain_series_threshold(x.dtype))
-    use_series = x <= threshold**2
-    x_safe = jnp.where(use_series, jnp.ones_like(x), x)
-    return x, use_series, jnp.sqrt(x_safe)
+    accumulated_angle_sq = s**2 * angle_sq
+    accumulated_eps = jnp.abs(s) * jnp.abs(
+        jnp.asarray(eps, dtype=accumulated_angle_sq.dtype)
+    )
+    return _se3_left_jacobian._series_arguments(accumulated_angle_sq, accumulated_eps)
 
 
 def _adjoint_coefficients(
@@ -195,109 +196,13 @@ def _tangent_coefficients_and_x_derivatives(
         ``dot(omega, omega_dot) / norm(omega)`` at zero spatial rotation. The
         caller supplies ``x_dot = s**2 * d(angle_sq)/dt`` instead.
     """
-    x, use_series, z_safe = _series_arguments(angle_sq, s, eps)
-    series = (
-        0.5 + x**2 * (-1.0 / 720.0 + x * (1.0 / 20160.0 - x / 1209600.0)),
-        1.0 / 6.0 + x**2 * (-1.0 / 5040.0 + x * (1.0 / 181440.0 - x / 13305600.0)),
-        1.0 / 24.0
-        + x
-        * (-1.0 / 360.0 + x * (1.0 / 13440.0 + x * (-1.0 / 907200.0 + x / 95800320.0))),
-        1.0 / 120.0
-        + x
-        * (
-            -1.0 / 2520.0
-            + x * (1.0 / 120960.0 + x * (-1.0 / 9979200.0 + x / 1245404160.0))
-        ),
+    accumulated_angle_sq = s**2 * angle_sq
+    accumulated_eps = jnp.abs(s) * jnp.abs(
+        jnp.asarray(eps, dtype=accumulated_angle_sq.dtype)
     )
-    derivative_series = (
-        x * (-1.0 / 360.0 + x * (1.0 / 6720.0 - x / 302400.0)),
-        x * (-1.0 / 2520.0 + x * (1.0 / 60480.0 - x / 3326400.0)),
-        -1.0 / 360.0 + x * (1.0 / 6720.0 + x * (-1.0 / 302400.0 + x / 23950080.0)),
-        -1.0 / 2520.0 + x * (1.0 / 60480.0 + x * (-1.0 / 3326400.0 + x / 311351040.0)),
+    return _se3_left_jacobian._coefficients_and_x_derivatives(
+        accumulated_angle_sq, accumulated_eps
     )
-    if strict_singularities_enabled():
-        z_safe = jnp.sqrt(x)
-        use_series = jnp.zeros_like(x, dtype=jnp.bool_)
-    sin_z = jnp.sin(z_safe)
-    cos_z = jnp.cos(z_safe)
-    common = -8.0 + (8.0 - z_safe**2) * cos_z + 5.0 * z_safe * sin_z
-    alternate = -8.0 * z_safe + (15.0 - z_safe**2) * sin_z - 7.0 * z_safe * cos_z
-    closed = (
-        (4.0 - 4.0 * cos_z - z_safe * sin_z) / (2.0 * z_safe**2),
-        (4.0 * z_safe - 5.0 * sin_z + z_safe * cos_z) / (2.0 * z_safe**3),
-        (2.0 - 2.0 * cos_z - z_safe * sin_z) / (2.0 * z_safe**4),
-        (2.0 * z_safe - 3.0 * sin_z + z_safe * cos_z) / (2.0 * z_safe**5),
-    )
-    derivative_closed = (
-        common / (4.0 * z_safe**4),
-        alternate / (4.0 * z_safe**5),
-        common / (4.0 * z_safe**6),
-        alternate / (4.0 * z_safe**7),
-    )
-    coefficients = tuple(
-        jnp.where(use_series, a, b) for a, b in zip(series, closed, strict=True)
-    )
-    derivatives = tuple(
-        jnp.where(use_series, a, b)
-        for a, b in zip(derivative_series, derivative_closed, strict=True)
-    )
-    return coefficients, derivatives
-
-
-def _matrix_powers(matrix: Array) -> list[Array]:
-    """Build matrix powers through fourth order with shared products.
-
-    Args:
-        matrix: Square matrix ``B`` with shape ``(dim, dim)``.
-
-    Returns:
-        List ``[I, B, B**2, B**3, B**4]``. Every entry has the same shape and
-        dtype as ``matrix``.
-
-    Notes:
-        Fourth order is exact for the reduced ``se(2)`` and ``se(3)`` adjoint
-        polynomials; this is not a fourth-order approximation to a generic
-        matrix exponential.
-    """
-    powers = [jnp.eye(matrix.shape[0], dtype=matrix.dtype)]
-    for _ in range(4):
-        powers.append(powers[-1] @ matrix)
-    return powers
-
-
-def _matrix_powers_with_derivatives(
-    matrix: Array, matrix_dot: Array
-) -> tuple[list[Array], list[Array]]:
-    r"""Build fourth-order matrix powers and their directional derivatives.
-
-    Starting with ``P_0 = I`` and ``Pdot_0 = 0``, the recurrence
-
-    .. math::
-
-        P_{k+1} &= P_k B, \\
-        \dot P_{k+1} &= \dot P_k B + P_k \dot B
-
-    applies the product rule without independently expanding every derivative.
-
-    Args:
-        matrix: Square matrix ``B`` with shape ``(dim, dim)``.
-        matrix_dot: Directional derivative ``B_dot`` with the same shape.
-
-    Returns:
-        Pair ``(powers, dot_powers)``. The lists contain entries for orders zero
-        through four, with ``dot_powers[k] = D(B**k)[B_dot]``.
-    """
-    current = jnp.eye(matrix.shape[0], dtype=matrix.dtype)
-    dot_current = jnp.zeros_like(matrix)
-    powers = [current]
-    dot_powers = [dot_current]
-    for _ in range(4):
-        dot_next = dot_current @ matrix + current @ matrix_dot
-        current = current @ matrix
-        powers.append(current)
-        dot_powers.append(dot_next)
-        dot_current = dot_next
-    return powers, dot_powers
 
 
 def _constant_strain_adjoint(
@@ -320,79 +225,8 @@ def _constant_strain_adjoint(
         supported Lie algebras. Only its scalar coefficients switch between
         Taylor and trigonometric representations.
     """
-    powers = _matrix_powers(s * ad_xi)
+    powers = _se3_left_jacobian._matrix_powers(s * ad_xi)
     return _reduced_adjoint_from_powers(powers, angle_sq, s, eps)
-
-
-def _constant_strain_tangent(
-    ad_xi: Array, angle_sq: Array, s: Array, eps: float | Array
-) -> Array:
-    r"""Evaluate the dimension-independent constant-strain tangent operator.
-
-    This computes
-
-    .. math::
-
-        T(s,\xi) = \int_0^s \exp(\sigma\,\operatorname{ad}_\xi)\,d\sigma
-
-    using the exact reduced fourth-order polynomial.
-
-    Args:
-        ad_xi: ``se(2)`` or ``se(3)`` algebra-adjoint matrix.
-        angle_sq: Squared magnitude of the rotational strain.
-        s: Scalar integration limit and segment arclength.
-        eps: Minimum rotational-strain series threshold.
-
-    Returns:
-        Tangent matrix with the same shape and dtype as ``ad_xi``. At ``s == 0``
-        the result is exactly the zero matrix in default mode.
-    """
-    powers = _matrix_powers(s * ad_xi)
-    coefficients, _ = _tangent_coefficients_and_x_derivatives(angle_sq, s, eps)
-    return _reduced_tangent_from_powers(powers, coefficients, s)
-
-
-def _constant_strain_tangent_derivative(
-    ad_xi: Array,
-    ad_xid: Array,
-    angle_sq: Array,
-    angle_sq_dot: Array,
-    s: Array,
-    eps: float | Array,
-) -> Array:
-    r"""Evaluate the tangent's explicit directional derivative in ``xi``.
-
-    The result is ``D_xi T(s, xi)[xid]`` with ``s`` held fixed. It combines the
-    coefficient contribution
-    ``(dc_k/dx) * x_dot * B**k`` and the power contribution
-    ``c_k * D(B**k)[B_dot]``, where ``B_dot = s * ad_xid`` and
-    ``x_dot = s**2 * angle_sq_dot``.
-
-    Args:
-        ad_xi: Algebra-adjoint matrix of the current strain.
-        ad_xid: Algebra-adjoint matrix of the strain direction/rate.
-        angle_sq: Squared rotational-strain magnitude.
-        angle_sq_dot: Directional derivative of ``angle_sq``. It is
-            ``2 * xi[0] * xid[0]`` for ``se(2)`` and
-            ``2 * dot(omega, omega_dot)`` for ``se(3)``.
-        s: Scalar arclength held fixed during differentiation.
-        eps: Minimum rotational-strain series threshold.
-
-    Returns:
-        Directional derivative matrix with the same shape and dtype as
-        ``ad_xi``.
-
-    Notes:
-        This is an analytic production path. JAX autodiff is used only by the
-        test suite as an independent oracle.
-    """
-    powers, dot_powers = _matrix_powers_with_derivatives(s * ad_xi, s * ad_xid)
-    coefficients, derivatives = _tangent_coefficients_and_x_derivatives(
-        angle_sq, s, eps
-    )
-    return _reduced_tangent_derivative_from_powers(
-        powers, dot_powers, coefficients, derivatives, angle_sq_dot, s
-    )
 
 
 def _reduced_adjoint_from_powers(
@@ -424,10 +258,7 @@ def _reduced_tangent_from_powers(
     responsible for providing coefficients computed from the same ``xi`` and
     ``s`` as the powers, which allows ``T`` and ``Td`` to share both objects.
     """
-    result = powers[0]
-    for coefficient, power in zip(coefficients, powers[1:], strict=True):
-        result = result + coefficient * power
-    return s * result
+    return s * _se3_left_jacobian._from_powers(powers, coefficients)
 
 
 def _reduced_transported_tangent_from_powers(
@@ -471,10 +302,11 @@ def _reduced_tangent_derivative_from_powers(
     ``dot_powers[k]`` is ``D(B**k)[B_dot]``. Consequently no rotational norm
     or runtime autodiff transform is required at zero rotation.
     """
-    x_dot = s**2 * angle_sq_dot
-    result = jnp.zeros_like(powers[0])
-    for coefficient, derivative, power, dot_power in zip(
-        coefficients, derivatives, powers[1:], dot_powers[1:], strict=True
-    ):
-        result = result + derivative * x_dot * power + coefficient * dot_power
-    return s * result
+    accumulated_angle_sq_dot = s**2 * angle_sq_dot
+    return s * _se3_left_jacobian._directional_derivative_from_powers(
+        powers,
+        dot_powers,
+        coefficients,
+        derivatives,
+        accumulated_angle_sq_dot,
+    )

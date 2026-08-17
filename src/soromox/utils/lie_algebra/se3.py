@@ -6,16 +6,20 @@ __all__ = [
     "coadjoint",
     "adjoint",
     "adjoint_inverse",
+    "left_jacobian",
+    "left_jacobian_and_directional_derivative",
+    "left_jacobian_directional_derivative",
 ]
 
 import jax.numpy as jnp
 from jax import Array, lax
 
-from . import so3
+from . import _se3_left_jacobian, so3
 from .jacobian_coefficients import (
     angle_minus_sine_over_angle_cubed,
     inverse_left_jacobian_quadratic_coefficient,
     one_minus_cosine_over_angle_squared,
+    sine_over_angle,
 )
 
 
@@ -179,6 +183,212 @@ def small_adjoint(xi: Array) -> Array:
     return jnp.block(
         [[omega_hat, jnp.zeros((3, 3), dtype=xi.dtype)], [v_hat, omega_hat]]
     )
+
+
+def left_jacobian(xi: Array, eps: float | Array) -> Array:
+    r"""Return the left Jacobian of the :math:`SE(3)` exponential.
+
+    For an accumulated spatial twist ``xi``, this evaluates
+
+    .. math::
+
+        J_l(\xi) = \int_0^1 \exp(\sigma\,\operatorname{ad}_\xi)\,d\sigma.
+
+    The operation is intrinsic to ``SE(3)`` and does not assume that ``xi``
+    came from a constant-strain rod segment.
+
+    Args:
+        xi: Accumulated spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega_x, omega_y, omega_z, v_x, v_y, v_z]`` order.
+        eps: Minimum small-angle threshold for the stable coefficient series.
+
+    Returns:
+        Left Jacobian with shape ``(6, 6)``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    angle_sq = jnp.dot(xi[:3], xi[:3])
+    return _se3_left_jacobian._left_jacobian(small_adjoint(xi), angle_sq, eps)
+
+
+def left_jacobian_directional_derivative(
+    xi: Array, xid: Array, eps: float | Array
+) -> Array:
+    r"""Return ``D J_l(xi)[xid]`` for the :math:`SE(3)` left Jacobian.
+
+    ``xid`` is an arbitrary direction in the Lie algebra; it need not be a
+    physical time derivative or a constant-strain rate.
+
+    Args:
+        xi: Accumulated spatial twist in angular-first order.
+        xid: Direction with the same shape and coordinate order as ``xi``.
+        eps: Minimum small-angle threshold for the stable coefficient series.
+
+    Returns:
+        Directional derivative with shape ``(6, 6)``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    xid = jnp.asarray(xid).reshape(-1)
+    angle_sq = jnp.dot(xi[:3], xi[:3])
+    angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
+    return _se3_left_jacobian._left_jacobian_directional_derivative(
+        small_adjoint(xi),
+        small_adjoint(xid),
+        angle_sq,
+        angle_sq_dot,
+        eps,
+    )
+
+
+def left_jacobian_and_directional_derivative(
+    xi: Array, xid: Array, eps: float | Array
+) -> tuple[Array, Array]:
+    r"""Evaluate ``J_l(xi)`` and ``D J_l(xi)[xid]`` with shared work.
+
+    Args:
+        xi: Accumulated spatial twist in angular-first order.
+        xid: Direction with the same shape and coordinate order as ``xi``.
+        eps: Minimum small-angle threshold for the stable coefficient series.
+
+    Returns:
+        Tuple ``(J, Jd)`` whose arrays both have shape ``(6, 6)``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    xid = jnp.asarray(xid).reshape(-1)
+    angle_sq = jnp.dot(xi[:3], xi[:3])
+    angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
+    return _se3_left_jacobian._left_jacobian_and_directional_derivative(
+        small_adjoint(xi),
+        small_adjoint(xid),
+        angle_sq,
+        angle_sq_dot,
+        eps,
+    )
+
+
+def _exp_left_jacobian_and_directional_derivative(
+    xi: Array,
+    xid: Array,
+    exp_eps: float | Array,
+    jacobian_eps: float | Array,
+) -> tuple[Array, Array, Array]:
+    r"""Evaluate ``exp(xi)``, ``J_l(xi)``, and ``D J_l(xi)[xid]`` together.
+
+    This private execution kernel exploits the block structure of
+    ``ad_xi`` and the ``so(3)`` minimal polynomial. It is kept private because
+    bundling the group exponential with two differential operators is a GVS
+    performance concern rather than a separate mathematical API.
+
+    Separate thresholds preserve the caller's numerical policies for the
+    group exponential and left Jacobian.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    xid = jnp.asarray(xid).reshape(-1)
+
+    omega_hat = so3.skew(xi[:3])
+    linear_hat = so3.skew(xi[3:])
+    omega_hat_dot = so3.skew(xid[:3])
+    linear_hat_dot = so3.skew(xid[3:])
+
+    identity = jnp.eye(3, dtype=xi.dtype)
+    zero = jnp.zeros((3, 3), dtype=xi.dtype)
+    angle_sq = jnp.dot(xi[:3], xi[:3])
+    angle_sq_dot = 2.0 * jnp.dot(xi[:3], xid[:3])
+    coefficients, derivatives = _se3_left_jacobian._coefficients_and_x_derivatives(
+        angle_sq, jacobian_eps
+    )
+    c1, c2, c3, c4 = coefficients
+    d1, d2, d3, d4 = derivatives
+
+    omega_hat_sq = omega_hat @ omega_hat
+    omega_hat_sq_dot = omega_hat_dot @ omega_hat + omega_hat @ omega_hat_dot
+    linear_omega = linear_hat @ omega_hat
+    linear_omega_dot = linear_hat_dot @ omega_hat + linear_hat @ omega_hat_dot
+    omega_linear = omega_hat @ linear_hat
+    omega_linear_dot = omega_hat_dot @ linear_hat + omega_hat @ linear_hat_dot
+
+    second_lower = linear_omega + omega_linear
+    second_lower_dot = linear_omega_dot + omega_linear_dot
+
+    linear_omega_sq = linear_hat @ omega_hat_sq
+    linear_omega_sq_dot = linear_hat_dot @ omega_hat_sq + linear_hat @ omega_hat_sq_dot
+    omega_sq_linear = omega_hat_sq @ linear_hat
+    omega_sq_linear_dot = omega_hat_sq_dot @ linear_hat + omega_hat_sq @ linear_hat_dot
+    omega_linear_omega = omega_linear @ omega_hat
+    omega_linear_omega_dot = omega_linear_dot @ omega_hat + omega_linear @ omega_hat_dot
+    third_lower = linear_omega_sq + omega_linear_omega + omega_sq_linear
+    third_lower_dot = linear_omega_sq_dot + omega_linear_omega_dot + omega_sq_linear_dot
+
+    omega_linear_omega_sq = omega_linear @ omega_hat_sq
+    omega_linear_omega_sq_dot = (
+        omega_linear_dot @ omega_hat_sq + omega_linear @ omega_hat_sq_dot
+    )
+    omega_sq_linear_omega = omega_sq_linear @ omega_hat
+    omega_sq_linear_omega_dot = (
+        omega_sq_linear_dot @ omega_hat + omega_sq_linear @ omega_hat_dot
+    )
+    fourth_lower_remainder = omega_linear_omega_sq + omega_sq_linear_omega
+    fourth_lower_remainder_dot = omega_linear_omega_sq_dot + omega_sq_linear_omega_dot
+
+    diagonal_linear = c1 - angle_sq * c3
+    diagonal_quadratic = c2 - angle_sq * c4
+    diagonal_linear_dot = (d1 - c3 - angle_sq * d3) * angle_sq_dot
+    diagonal_quadratic_dot = (d2 - c4 - angle_sq * d4) * angle_sq_dot
+    jacobian_diagonal = (
+        identity + diagonal_linear * omega_hat + diagonal_quadratic * omega_hat_sq
+    )
+    jacobian_diagonal_dot = (
+        diagonal_linear_dot * omega_hat
+        + diagonal_linear * omega_hat_dot
+        + diagonal_quadratic_dot * omega_hat_sq
+        + diagonal_quadratic * omega_hat_sq_dot
+    )
+
+    c1_dot = d1 * angle_sq_dot
+    c3_dot = d3 * angle_sq_dot
+    c4_dot = d4 * angle_sq_dot
+    jacobian_lower = (
+        c1 * linear_hat
+        + diagonal_quadratic * second_lower
+        + c3 * third_lower
+        + c4 * fourth_lower_remainder
+    )
+    jacobian_lower_dot = (
+        c1_dot * linear_hat
+        + c1 * linear_hat_dot
+        + diagonal_quadratic_dot * second_lower
+        + diagonal_quadratic * second_lower_dot
+        + c3_dot * third_lower
+        + c3 * third_lower_dot
+        + c4_dot * fourth_lower_remainder
+        + c4 * fourth_lower_remainder_dot
+    )
+
+    jacobian = jnp.block(
+        [[jacobian_diagonal, zero], [jacobian_lower, jacobian_diagonal]]
+    )
+    jacobian_dot = jnp.block(
+        [
+            [jacobian_diagonal_dot, zero],
+            [jacobian_lower_dot, jacobian_diagonal_dot],
+        ]
+    )
+
+    theta = _rotational_strain_magnitude(xi, exp_eps)
+    sinc = sine_over_angle(theta, exp_eps)
+    cosc = one_minus_cosine_over_angle_squared(theta, exp_eps)
+    tanc = angle_minus_sine_over_angle_cubed(theta, exp_eps)
+    rotation = identity + sinc * omega_hat + cosc * omega_hat_sq
+    translation = (identity + cosc * omega_hat + tanc * omega_hat_sq) @ xi[3:]
+    transform = jnp.block(
+        [
+            [rotation, translation.reshape((3, 1))],
+            [
+                jnp.zeros((1, 3), dtype=xi.dtype),
+                jnp.ones((1, 1), dtype=xi.dtype),
+            ],
+        ]
+    )
+    return transform, jacobian, jacobian_dot
 
 
 def coadjoint(xi: Array) -> Array:

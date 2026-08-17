@@ -367,7 +367,11 @@ def test_fused_se3_operators_match_the_public_operators(scale, dtype, rtol, atol
     quadruple = constant_strain_se3._operators(
         xi, s, adjoint_eps, tangent_eps, xid, return_adjoint=True
     )
-    tangent_pair = constant_strain_se3.tangent_and_derivative(xi, xid, s, tangent_eps)
+    accumulated_eps = jnp.abs(s) * tangent_eps
+    jacobian_pair = se3.left_jacobian_and_directional_derivative(
+        s * xi, s * xid, accumulated_eps
+    )
+    tangent_pair = tuple(s * value for value in jacobian_pair)
     public = constant_strain_se3.operators(xi, s, tangent_eps, xid)
     expected = (
         constant_strain_se3.adjoint_inverse(xi, s, adjoint_eps),

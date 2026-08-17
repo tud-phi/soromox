@@ -16,6 +16,7 @@ __all__ = [
 import jax.numpy as jnp
 from jax import Array
 
+from .. import se2 as lie_se2
 from ..jacobian_coefficients import (
     _forward_coefficients_and_x_derivatives,
     one_minus_cosine_over_angle_squared,
@@ -181,20 +182,8 @@ def _tangent_from_coefficients(
     ``s**2 * (cosc(z) (-J v) + z tanc(z) v)``. This block formula is exactly
     equal to the reduced matrix polynomial, including pure translation.
     """
-    sinc, cosc, tanc = coefficients
-    v = xi[1:]
-    minus_j_v = jnp.stack([v[1], -v[0]])
-    z_cosc = z * cosc
-    z_tanc = z * tanc
-    lower_left = s**2 * (cosc * minus_j_v + z_tanc * v)
-    zero = jnp.zeros((), dtype=xi.dtype)
-    return jnp.stack(
-        [
-            jnp.stack([s, zero, zero]),
-            jnp.stack([lower_left[0], s * sinc, -s * z_cosc]),
-            jnp.stack([lower_left[1], s * z_cosc, s * sinc]),
-        ]
-    )
+    accumulated = s * xi
+    return s * lie_se2._left_jacobian_from_coefficients(accumulated, z, coefficients)
 
 
 def _tangent_derivative_from_coefficients(
@@ -212,29 +201,14 @@ def _tangent_derivative_from_coefficients(
     retained explicitly, so the result remains linear in ``xid`` and finite at
     zero curvature without invoking a JAX differentiation transform.
     """
-    sinc, cosc, tanc = coefficients
-    sinc_x, cosc_x, tanc_x = derivatives
-    v = xi[1:]
-    vd = xid[1:]
-    minus_j_v = jnp.stack([v[1], -v[0]])
-    minus_j_vd = jnp.stack([vd[1], -vd[0]])
-    z_dot = s * xid[0]
-    x = z**2
-    sinc_dot = 2.0 * z * sinc_x * z_dot
-    cosc_dot = 2.0 * z * cosc_x * z_dot
-    z_cosc_dot = z_dot * (cosc + 2.0 * x * cosc_x)
-    z_tanc = z * tanc
-    z_tanc_dot = z_dot * (tanc + 2.0 * x * tanc_x)
-    lower_left_dot = s**2 * (
-        cosc_dot * minus_j_v + cosc * minus_j_vd + z_tanc_dot * v + z_tanc * vd
-    )
-    zero = jnp.zeros((), dtype=xi.dtype)
-    return jnp.stack(
-        [
-            jnp.stack([zero, zero, zero]),
-            jnp.stack([lower_left_dot[0], s * sinc_dot, -s * z_cosc_dot]),
-            jnp.stack([lower_left_dot[1], s * z_cosc_dot, s * sinc_dot]),
-        ]
+    accumulated = s * xi
+    accumulated_dot = s * xid
+    return s * lie_se2._left_jacobian_derivative_from_coefficients(
+        accumulated,
+        accumulated_dot,
+        z,
+        coefficients,
+        derivatives,
     )
 
 
@@ -379,8 +353,8 @@ def tangent(xi: Array, s: Array, eps: float | Array) -> Array:
     """
     xi = jnp.asarray(xi).reshape(-1)
     s = jnp.asarray(s, dtype=xi.dtype)
-    z, coefficients = _forward_coefficients(xi[0], s, eps)
-    return _tangent_from_coefficients(xi, s, z, coefficients)
+    accumulated_eps = jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=xi.dtype))
+    return s * lie_se2.left_jacobian(s * xi, accumulated_eps)
 
 
 def tangent_derivative(xi: Array, xid: Array, s: Array, eps: float | Array) -> Array:
@@ -412,9 +386,9 @@ def tangent_derivative(xi: Array, xid: Array, s: Array, eps: float | Array) -> A
     xi = jnp.asarray(xi).reshape(-1)
     xid = jnp.asarray(xid).reshape(-1)
     s = jnp.asarray(s, dtype=xi.dtype)
-    z, coefficients, derivatives = _forward_coefficients_and_derivatives(xi[0], s, eps)
-    return _tangent_derivative_from_coefficients(
-        xi, xid, s, z, coefficients, derivatives
+    accumulated_eps = jnp.abs(s) * jnp.abs(jnp.asarray(eps, dtype=xi.dtype))
+    return s * lie_se2.left_jacobian_directional_derivative(
+        s * xi, s * xid, accumulated_eps
     )
 
 

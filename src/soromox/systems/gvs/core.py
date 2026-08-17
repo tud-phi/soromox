@@ -52,7 +52,6 @@ from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.geometry import poses
 from soromox.utils.integration import gauss_quadrature
 from soromox.utils.lie_algebra import se3, so3
-from soromox.utils.lie_algebra.constant_strain import se3 as constant_strain_se3
 from soromox.utils.numerics import safe_divide, safe_norm, safe_normalize
 
 __all__ = ["GVS"]
@@ -1270,9 +1269,7 @@ class GVS(SoftRobot):
             length, H, xi_Z1, xi_Z2, B_Z1, B_Z2
         )
         g_step = se3.exp(Magnus, self.global_eps)
-        T_step = constant_strain_se3.tangent(
-            Magnus, jnp.array(1.0), eps=self.tangent_eps
-        )
+        T_step = se3.left_jacobian(Magnus, eps=self.tangent_eps)
         Ad_step_inv = se3.adjoint_inverse(g_step)
         return g_step, T_step, Ad_step_inv, B_Magnus
 
@@ -1349,9 +1346,8 @@ class GVS(SoftRobot):
         )
         Magnusd = B_Magnus @ qd_i
 
-        g_step = se3.exp(Magnus, self.global_eps)
-        T_step, Td_step = constant_strain_se3.tangent_and_derivative(
-            Magnus, Magnusd, jnp.array(1.0), self.tangent_eps
+        g_step, T_step, Td_step = se3._exp_left_jacobian_and_directional_derivative(
+            Magnus, Magnusd, self.global_eps, self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
         return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
@@ -1415,9 +1411,8 @@ class GVS(SoftRobot):
             )
         )
 
-        g_step = se3.exp(Magnus, self.global_eps)
-        T_step, T_step_H = constant_strain_se3.tangent_and_derivative(
-            Magnus, Magnus_H, jnp.array(1.0), self.tangent_eps
+        g_step, T_step, T_step_H = se3._exp_left_jacobian_and_directional_derivative(
+            Magnus, Magnus_H, self.global_eps, self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
         eta_step_H = Ad_step_inv @ (T_step @ Magnus_H)
@@ -1459,9 +1454,7 @@ class GVS(SoftRobot):
         """
         xi_joint = B_joint @ q_joint + xi_ref_joint
         g_joint = se3.exp(xi_joint, self.global_eps)
-        T_joint = constant_strain_se3.tangent(
-            xi_joint, jnp.array(1.0), eps=self.tangent_eps
-        )
+        T_joint = se3.left_jacobian(xi_joint, eps=self.tangent_eps)
         return g_joint, se3.adjoint_inverse(g_joint), T_joint @ B_joint
 
     def _joint_jacobian_time_derivative_step_terms(
@@ -1497,9 +1490,8 @@ class GVS(SoftRobot):
         """
         xi_joint = B_joint @ q_joint + xi_ref_joint
         xid_joint = B_joint @ qd_joint
-        g_joint = se3.exp(xi_joint, self.global_eps)
-        T_joint, Td_joint = constant_strain_se3.tangent_and_derivative(
-            xi_joint, xid_joint, jnp.array(1.0), self.tangent_eps
+        g_joint, T_joint, Td_joint = se3._exp_left_jacobian_and_directional_derivative(
+            xi_joint, xid_joint, self.global_eps, self.tangent_eps
         )
         T_joint_B = T_joint @ B_joint
         joint_velocity = T_joint_B @ qd_joint
