@@ -277,13 +277,7 @@ def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
     Returns:
         Scalar array containing the regularized rotational magnitude.
     """
-    k = xi[:3]
-    theta_sq = jnp.dot(k, k)
-    eps_arr = jnp.asarray(eps, dtype=xi.dtype)
-    small = theta_sq <= eps_arr**2
-    theta_sq_safe = jnp.where(small, jnp.ones_like(theta_sq), theta_sq)
-    theta_regular = jnp.sqrt(theta_sq_safe)
-    return jnp.where(small, jnp.zeros_like(theta_sq), theta_regular)
+    return so3._rotation_magnitude(xi[:3], eps)
 
 
 def hat(xi: Array) -> Array:
