@@ -324,30 +324,39 @@ def summarize(data: MethodData) -> dict[str, object]:
     }
 
 
-def main() -> None:
-    args = parse_args()
-    if args.fps < 1:
+def render_saved_results(
+    *,
+    data_dir: Path,
+    output_dir: Path,
+    fps: int = 24,
+    make_gif: bool = True,
+    force: bool = False,
+) -> list[Path]:
+    """Render saved Section Vd archives without running optimization."""
+    if fps < 1:
         raise ValueError("--fps must be at least 1")
-    args.output_dir.mkdir(parents=True, exist_ok=True)
-    methods = [
-        load_method(args.data_dir, name) for name in ("collocated", "synergistic")
-    ]
+    if shutil.which("ffmpeg") is None:
+        raise RuntimeError(
+            "ffmpeg is required for offline animation rendering; install it and retry."
+        )
+    output_dir.mkdir(parents=True, exist_ok=True)
+    methods = [load_method(data_dir, name) for name in ("collocated", "synergistic")]
 
     expected: list[Path] = []
     for method in methods:
         expected.extend(
-            args.output_dir / f"{method.name}_tracking{suffix}"
+            output_dir / f"{method.name}_tracking{suffix}"
             for suffix in (".pdf", ".png", ".mp4")
         )
-        if args.gif:
-            expected.append(args.output_dir / f"{method.name}_tracking.gif")
-    metrics_path = args.output_dir / "intermediate_metrics.json"
+        if make_gif:
+            expected.append(output_dir / f"{method.name}_tracking.gif")
+    metrics_path = output_dir / "intermediate_metrics.json"
     expected.append(metrics_path)
-    _check_outputs(expected, args.force)
+    _check_outputs(expected, force)
 
     outputs: list[Path] = []
     for method in methods:
-        outputs.extend(render_method(method, args.output_dir, args.fps, args.gif))
+        outputs.extend(render_method(method, output_dir, fps, make_gif))
 
     metrics = {
         "source": "recoverable canonical NumPy archives",
@@ -360,7 +369,18 @@ def main() -> None:
     }
     metrics_path.write_text(json.dumps(metrics, indent=2) + "\n", encoding="utf-8")
     outputs.append(metrics_path)
+    return outputs
 
+
+def main() -> None:
+    args = parse_args()
+    outputs = render_saved_results(
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        fps=args.fps,
+        make_gif=args.gif,
+        force=args.force,
+    )
     print("Generated:")
     for path in outputs:
         print(f"  {path}")

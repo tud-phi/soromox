@@ -16,6 +16,7 @@ from control_gain_optimization_common import (  # noqa: E402
     finish_figure,
     parse_args,
     prepare_output_dirs,
+    run_saved_postprocessing,
     save_optimization_outputs,
 )
 from gain_optimization_loop import run_gain_optimization  # noqa: E402
@@ -50,6 +51,8 @@ if (
     raise ValueError(
         "--integral-error-saturation-scale must be finite and strictly positive"
     )
+if run_saved_postprocessing(ARGS, RESULT_DIR, OUTPUTS_DIR):
+    sys.exit(0)
 
 
 def evaluate_closed_loop_system(

@@ -49,6 +49,21 @@ To replace the canonical case-local data, omit `--result-dir` and pass
 `--force`. Diagnostic plots are always written to `--output-dir`; Open3D
 visualization is skipped with `--no-render`.
 
+If an optimization has already completed, either generator can reuse the saved
+archives without running the optimizer again. The saved-data modes read both
+controller result directories from the parent of `--result-dir`:
+
+```bash
+MPLBACKEND=Agg uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
+  --plot-only --no-show --force
+MPLBACKEND=Agg uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
+  --render-only --no-gif --force
+```
+
+`--plot-only` recreates the combined comparison PDF. `--render-only` creates
+the saved tracking plots, MP4 animations, and optional GIF previews; both modes
+skip steady-state setup and optimization entirely.
+
 Pressing Ctrl-C during an optimization preserves the finite iterations that
 finished before the interrupted evaluation. The generator then continues
 through its normal plot and data-saving path.
@@ -63,6 +78,6 @@ Render offline tracking diagnostics plus MP4 and GIF animations from the saved
 NumPy trajectories:
 
 ```bash
-uv run python paper_results/secVd_control_gain_optimization/code/render_control_gain_optimization_animations.py \
+MPLBACKEND=Agg uv run python paper_results/secVd_control_gain_optimization/code/render_control_gain_optimization_animations.py \
   --force
 ```

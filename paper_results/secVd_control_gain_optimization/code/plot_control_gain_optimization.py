@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -58,8 +59,30 @@ def configure_matplotlib() -> None:
         }
     )
 
-    if shutil.which("latex") is not None:
+    if _latex_is_usable():
         plt.rcParams.update({"text.usetex": True})
+
+
+def _latex_is_usable() -> bool:
+    """Return whether Matplotlib's LaTeX text backend is likely usable."""
+    if shutil.which("latex") is None:
+        return False
+
+    # A latex executable can be present while the package is incomplete. In
+    # particular, Matplotlib's default TeX preamble requires type1ec.sty.
+    kpsewhich = shutil.which("kpsewhich")
+    if kpsewhich is None:
+        return False
+    try:
+        result = subprocess.run(
+            [kpsewhich, "type1ec.sty"],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and bool(result.stdout.strip())
 
 
 def cm_to_inches(size_cm: tuple[float, float]) -> tuple[float, float]:

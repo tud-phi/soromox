@@ -44,6 +44,34 @@ def parse_args(
     parser.add_argument("--no-show", action="store_true")
     parser.add_argument("--no-render", action="store_true")
     parser.add_argument("--force", action="store_true")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
+        "--plot-only",
+        action="store_true",
+        help=(
+            "Skip optimization and recreate the saved Section Vd comparison "
+            "plot from the result archives."
+        ),
+    )
+    mode_group.add_argument(
+        "--render-only",
+        action="store_true",
+        help=(
+            "Skip optimization and render saved Section Vd trajectories and animations."
+        ),
+    )
+    parser.add_argument(
+        "--fps",
+        type=int,
+        default=24,
+        help="Animation frame rate used by --render-only.",
+    )
+    parser.add_argument(
+        "--gif",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Create GIF previews in --render-only mode.",
+    )
     parser.add_argument(
         "--debug-nans",
         action="store_true",
@@ -59,16 +87,61 @@ def parse_args(
 def prepare_output_dirs(args: argparse.Namespace) -> tuple[Path, Path]:
     if args.debug_nans:
         jax.config.update("jax_debug_nans", True)
-    if args.num_iters < 1:
+    if not (args.plot_only or args.render_only) and args.num_iters < 1:
         raise ValueError("--num-iters must be at least 1")
 
     result_dir = args.result_dir.resolve()
     output_dir = args.output_dir.resolve()
-    for filename in RESULT_FILENAMES:
-        output_path = result_dir / filename
+    if not (args.plot_only or args.render_only):
+        for filename in RESULT_FILENAMES:
+            output_path = result_dir / filename
+            if output_path.exists() and not args.force:
+                raise FileExistsError(
+                    f"Refusing to overwrite {output_path}; pass --force"
+                )
+    return result_dir, output_dir
+
+
+def run_saved_postprocessing(
+    args: argparse.Namespace, result_dir: Path, output_dir: Path
+) -> bool:
+    """Run a saved-data mode and return whether the generator should exit."""
+    if not (args.plot_only or args.render_only):
+        return False
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    data_dir = result_dir.parent
+
+    if args.plot_only:
+        from plot_control_gain_optimization import build_figure, configure_matplotlib
+
+        output_path = output_dir / "plot_control_gain_opt.pdf"
         if output_path.exists() and not args.force:
             raise FileExistsError(f"Refusing to overwrite {output_path}; pass --force")
-    return result_dir, output_dir
+
+        configure_matplotlib()
+        figure = build_figure(data_dir)
+        figure.savefig(output_path, dpi=300)
+        print(f"Plot saved at: {output_path}")
+        if args.no_show:
+            plt.close(figure)
+        else:
+            plt.show()
+        return True
+
+    from render_control_gain_optimization_animations import render_saved_results
+
+    outputs = render_saved_results(
+        data_dir=data_dir,
+        output_dir=output_dir,
+        fps=args.fps,
+        make_gif=args.gif,
+        force=args.force,
+    )
+    print("Generated:")
+    for path in outputs:
+        print(f"  {path}")
+    return True
 
 
 def finish_figure(args: argparse.Namespace, output_dir: Path, filename: str) -> None:

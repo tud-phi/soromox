@@ -15,6 +15,7 @@ from control_gain_optimization_common import (  # noqa: E402
     finish_figure,
     parse_args,
     prepare_output_dirs,
+    run_saved_postprocessing,
     save_optimization_outputs,
 )
 from gain_optimization_loop import run_gain_optimization  # noqa: E402
@@ -46,6 +47,8 @@ ARGS = parse_args(
     default_output_dir=DEFAULT_OUTPUTS_DIR / "synergistic_diagnostics",
 )
 RESULT_DIR, OUTPUTS_DIR = prepare_output_dirs(ARGS)
+if run_saved_postprocessing(ARGS, RESULT_DIR, OUTPUTS_DIR):
+    sys.exit(0)
 
 
 def evaluate_closed_loop_system(
