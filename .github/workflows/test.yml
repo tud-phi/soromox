@@ -37,8 +37,11 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -e ".[test]"
 
-      - name: Run regular tests
-        run: python -m pytest -m "not memory_intensive"
+      - name: Run non-system tests
+        run: python -m pytest --ignore=tests/systems -m "not memory_intensive"
+
+      - name: Run system tests
+        run: python -m pytest tests/systems -m "not memory_intensive"
 
       - name: Run memory-intensive GVS autodiff test
         run: python -m pytest -m memory_intensive
@@ -67,8 +70,11 @@ jobs:
           python -c "import diffrax; assert diffrax.__version__ == '0.7.2'"
           python -c "import jax; assert jax.__version__ == '0.10.0'"
 
-      - name: Run regular tests
-        run: python -m pytest -m "not memory_intensive"
+      - name: Run non-system tests
+        run: python -m pytest --ignore=tests/systems -m "not memory_intensive"
+
+      - name: Run system tests
+        run: python -m pytest tests/systems -m "not memory_intensive"
 
       - name: Run memory-intensive GVS autodiff test
         run: python -m pytest -m memory_intensive
