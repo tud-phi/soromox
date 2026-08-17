@@ -26,6 +26,7 @@ typed_params = PlanarHSAParams.from_npz(HSA_PARAMS_PATH)
 num_segments = 1
 num_rods_per_segment = 2
 
+
 def _create_robot():
     """Helper to create a robot instance."""
     return PlanarHSA(
@@ -76,8 +77,8 @@ def test_inverse_kinematics_is_reverse_mode_finite_when_straight():
     q = jnp.zeros(robot.num_dofs)
     chiee = robot.forward_kinematics_end_effector(q)
 
-    recovered = robot.inverse_kinematics_end_effector(chiee)
-    jacobian = jax.jacrev(robot.inverse_kinematics_end_effector)(chiee)
+    recovered = robot.inverse_kinematics(chiee)
+    jacobian = jax.jacrev(robot.inverse_kinematics)(chiee)
 
     assert jnp.isfinite(recovered).all()
     assert jnp.isfinite(jacobian).all()
@@ -87,17 +88,19 @@ def test_inverse_kinematics_retains_translation_at_tiny_nonzero_rotation():
     """Tiny bends must not lose translation through ``1 - cos(theta)``."""
     robot = _create_robot()
     theta = jnp.asarray(2.0 * robot.global_eps, dtype=jnp.float64)
-    expected_vxi = jnp.array([theta / robot.Lmax, 0.2, 1.1], dtype=jnp.float64)
-    T_pe_to_de = expm(se2.hat(expected_vxi * robot.Lmax))
+    expected_vxi = jnp.array([theta / robot.length, 0.2, 1.1], dtype=jnp.float64)
+    T_pe_to_de = expm(se2.hat(expected_vxi * robot.length))
 
-    hp = robot.pcudim[0, 1]
-    T_b_to_pe = poses.planar_pose_to_transform(jnp.array([0.0, 0.0, robot.lpc[0]]))
+    hp = robot.platform_dimension[0, 1]
+    T_b_to_pe = poses.planar_pose_to_transform(
+        jnp.array([0.0, 0.0, robot.proximal_cap_length[0]])
+    )
     T_de_to_ee = poses.planar_pose_to_transform(
         jnp.array(
             [
-                robot.chiee_off[0],
-                robot.chiee_off[1],
-                robot.ldc[0] + hp + robot.chiee_off[2],
+                robot.end_effector_offset[0],
+                robot.end_effector_offset[1],
+                robot.distal_cap_length[0] + hp + robot.end_effector_offset[2],
             ]
         )
     )
@@ -105,8 +108,8 @@ def test_inverse_kinematics_retains_translation_at_tiny_nonzero_rotation():
         T_b_to_pe @ T_pe_to_de @ T_de_to_ee, eps=robot.global_eps
     )
 
-    recovered_q = robot.inverse_kinematics_end_effector(chiee)
-    recovered_vxi = robot.B_xi @ recovered_q + robot.ref_strains()
+    recovered_q = robot.inverse_kinematics(chiee)
+    recovered_vxi = robot.B_xi @ recovered_q + robot.xi_ref
 
     assert_allclose(recovered_vxi, expected_vxi, rtol=1e-10, atol=1e-11)
 
@@ -220,7 +223,9 @@ def test_jacobian_and_time_derivative(seed: int = 0):
         qd = random.normal(subrng, shape=q.shape) * 0.1
 
         rng, subrng = random.split(rng)
-        s = random.uniform(subrng, (), minval=0.1 * robot.length, maxval=0.9 * robot.length)
+        s = random.uniform(
+            subrng, (), minval=0.1 * robot.length, maxval=0.9 * robot.length
+        )
 
         J, Jd = robot.jacobian_and_time_derivative(q, qd, s)
 

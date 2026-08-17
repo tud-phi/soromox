@@ -159,7 +159,9 @@ class PlanarHSA(PlanarPCS):
 
         # HSA has a distinct physical parameter schema, so initialize the
         # common SoftRobot fields directly instead of fabricating PCS params.
-        SoftRobot.__init__(self, eps=structure.eps, base_pose=params.base_pose, **kwargs)
+        SoftRobot.__init__(
+            self, eps=structure.eps, base_pose=params.base_pose, **kwargs
+        )
         self.params = params
 
         n_segments = int(params.length.shape[0])
@@ -171,11 +173,16 @@ class PlanarHSA(PlanarPCS):
         self.consider_underactuation = bool(structure.consider_underactuation)
         self.consider_hysteresis = bool(structure.consider_hysteresis)
         self.num_dofs = n_strains
-        self.num_actuators = n_segments * n_rods if self.consider_underactuation else n_strains
+        self.num_actuators = (
+            n_segments * n_rods if self.consider_underactuation else n_strains
+        )
 
         self.base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
         self.g = jnp.concatenate(
-            [jnp.zeros((1,), dtype=jnp.float64), jnp.asarray(params.gravity, dtype=jnp.float64)]
+            [
+                jnp.zeros((1,), dtype=jnp.float64),
+                jnp.asarray(params.gravity, dtype=jnp.float64),
+            ]
         )
         self.L = jnp.asarray(params.length, dtype=jnp.float64)
         self.L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros((1,)), self.L]))
@@ -222,10 +229,18 @@ class PlanarHSA(PlanarPCS):
     def _set_hsa_params(self, params: PlanarHSAParams) -> None:
         """Copy HSA-specific physical parameters to runtime JAX arrays."""
         self.rod_offset = jnp.asarray(params.rod_offset, dtype=jnp.float64)
-        self.platform_dimension = jnp.asarray(params.platform_dimension, dtype=jnp.float64)
-        self.proximal_cap_length = jnp.asarray(params.proximal_cap_length, dtype=jnp.float64)
-        self.distal_cap_length = jnp.asarray(params.distal_cap_length, dtype=jnp.float64)
-        self.end_effector_offset = jnp.asarray(params.end_effector_offset, dtype=jnp.float64)
+        self.platform_dimension = jnp.asarray(
+            params.platform_dimension, dtype=jnp.float64
+        )
+        self.proximal_cap_length = jnp.asarray(
+            params.proximal_cap_length, dtype=jnp.float64
+        )
+        self.distal_cap_length = jnp.asarray(
+            params.distal_cap_length, dtype=jnp.float64
+        )
+        self.end_effector_offset = jnp.asarray(
+            params.end_effector_offset, dtype=jnp.float64
+        )
         self.phi_max = jnp.asarray(params.phi_max, dtype=jnp.float64)
         self.strain_coupling = jnp.asarray(params.strain_coupling, dtype=jnp.float64)
         self.rod_height = jnp.asarray(params.rod_height, dtype=jnp.float64)
@@ -234,18 +249,34 @@ class PlanarHSA(PlanarPCS):
         self.rod_density = jnp.asarray(params.rod_density, dtype=jnp.float64)
         self.platform_density = jnp.asarray(params.platform_density, dtype=jnp.float64)
         self.end_cap_density = jnp.asarray(params.end_cap_density, dtype=jnp.float64)
-        self.nominal_bending_stiffness = jnp.asarray(params.nominal_bending_stiffness, dtype=jnp.float64)
-        self.nominal_shear_stiffness = jnp.asarray(params.nominal_shear_stiffness, dtype=jnp.float64)
-        self.nominal_axial_stiffness = jnp.asarray(params.nominal_axial_stiffness, dtype=jnp.float64)
-        self.bending_shear_stiffness = jnp.asarray(params.bending_shear_stiffness, dtype=jnp.float64)
-        self.bending_stiffness_correction = jnp.asarray(params.bending_stiffness_correction, dtype=jnp.float64)
-        self.shear_stiffness_correction = jnp.asarray(params.shear_stiffness_correction, dtype=jnp.float64)
-        self.axial_stiffness_correction = jnp.asarray(params.axial_stiffness_correction, dtype=jnp.float64)
+        self.nominal_bending_stiffness = jnp.asarray(
+            params.nominal_bending_stiffness, dtype=jnp.float64
+        )
+        self.nominal_shear_stiffness = jnp.asarray(
+            params.nominal_shear_stiffness, dtype=jnp.float64
+        )
+        self.nominal_axial_stiffness = jnp.asarray(
+            params.nominal_axial_stiffness, dtype=jnp.float64
+        )
+        self.bending_shear_stiffness = jnp.asarray(
+            params.bending_shear_stiffness, dtype=jnp.float64
+        )
+        self.bending_stiffness_correction = jnp.asarray(
+            params.bending_stiffness_correction, dtype=jnp.float64
+        )
+        self.shear_stiffness_correction = jnp.asarray(
+            params.shear_stiffness_correction, dtype=jnp.float64
+        )
+        self.axial_stiffness_correction = jnp.asarray(
+            params.axial_stiffness_correction, dtype=jnp.float64
+        )
         self.bending_damping = jnp.asarray(params.bending_damping, dtype=jnp.float64)
         self.shear_damping = jnp.asarray(params.shear_damping, dtype=jnp.float64)
         self.axial_damping = jnp.asarray(params.axial_damping, dtype=jnp.float64)
         self.platform_mass = jnp.asarray(params.platform_mass, dtype=jnp.float64)
-        self.platform_center_of_gravity = jnp.asarray(params.platform_center_of_gravity, dtype=jnp.float64)
+        self.platform_center_of_gravity = jnp.asarray(
+            params.platform_center_of_gravity, dtype=jnp.float64
+        )
 
     def _refresh_hsa_caches(self) -> None:
         """Refresh HSA quantities that do not depend on the configuration."""
@@ -259,22 +290,16 @@ class PlanarHSA(PlanarPCS):
         )(self.rod_offset)
         rod_adjoint_inverses = vmap(vmap(se2.adjoint_inverse))(rod_transforms)
 
-        area = jnp.pi * (
-            self.rod_outer_radius**2 - self.rod_inner_radius**2
-        )
-        second_moment = jnp.pi / 4.0 * (
-            self.rod_outer_radius**4 - self.rod_inner_radius**4
+        area = jnp.pi * (self.rod_outer_radius**2 - self.rod_inner_radius**2)
+        second_moment = (
+            jnp.pi / 4.0 * (self.rod_outer_radius**4 - self.rod_inner_radius**4)
         )
         rod_mass_matrices = jnp.zeros((*area.shape, 3, 3), dtype=area.dtype)
         rod_mass_matrices = rod_mass_matrices.at[..., 0, 0].set(
             self.rod_density * second_moment
         )
-        rod_mass_matrices = rod_mass_matrices.at[..., 1, 1].set(
-            self.rod_density * area
-        )
-        rod_mass_matrices = rod_mass_matrices.at[..., 2, 2].set(
-            self.rod_density * area
-        )
+        rod_mass_matrices = rod_mass_matrices.at[..., 1, 1].set(self.rod_density * area)
+        rod_mass_matrices = rod_mass_matrices.at[..., 2, 2].set(self.rod_density * area)
 
         segment_masses, segment_inertias, segment_rel_cogs = vmap(
             self._platform_mass_properties
@@ -333,17 +358,28 @@ class PlanarHSA(PlanarPCS):
     def _set_hysteresis(self, params: PlanarHSAParams) -> None:
         """Configure the optional Bouc--Wen hysteresis state and parameters."""
         if self.consider_hysteresis:
-            self.hysteresis_basis = jnp.asarray(params.hysteresis_basis, dtype=jnp.float64)
-            if self.hysteresis_basis.ndim != 2 or self.hysteresis_basis.shape[0] != self.num_strains:
+            self.hysteresis_basis = jnp.asarray(
+                params.hysteresis_basis, dtype=jnp.float64
+            )
+            if (
+                self.hysteresis_basis.ndim != 2
+                or self.hysteresis_basis.shape[0] != self.num_strains
+            ):
                 raise ValueError(
                     "hysteresis_basis must have shape (3 * num_segments, num_hysteresis)."
                 )
             self.num_hysteresis = int(self.hysteresis_basis.shape[1])
-            self.hysteresis_alpha = jnp.asarray(params.hysteresis_alpha, dtype=jnp.float64)
+            self.hysteresis_alpha = jnp.asarray(
+                params.hysteresis_alpha, dtype=jnp.float64
+            )
             self.hysteresis_A = jnp.asarray(params.hysteresis_A, dtype=jnp.float64)
             self.hysteresis_n = jnp.asarray(params.hysteresis_n, dtype=jnp.float64)
-            self.hysteresis_beta = jnp.asarray(params.hysteresis_beta, dtype=jnp.float64)
-            self.hysteresis_gamma = jnp.asarray(params.hysteresis_gamma, dtype=jnp.float64)
+            self.hysteresis_beta = jnp.asarray(
+                params.hysteresis_beta, dtype=jnp.float64
+            )
+            self.hysteresis_gamma = jnp.asarray(
+                params.hysteresis_gamma, dtype=jnp.float64
+            )
         else:
             self.num_hysteresis = 0
             self.hysteresis_basis = jnp.zeros((self.num_strains, 0), dtype=jnp.float64)
@@ -376,15 +412,22 @@ class PlanarHSA(PlanarPCS):
             raise TypeError("params must be a PlanarHSAParams instance.")
         params.validate()
         if params.length.shape != self.L.shape:
-            raise ValueError("length shape changes the model structure; construct a new PlanarHSA.")
+            raise ValueError(
+                "length shape changes the model structure; construct a new PlanarHSA."
+            )
         if params.rod_offset.shape != self.rod_offset.shape:
-            raise ValueError("rod_offset shape changes the model structure; construct a new PlanarHSA.")
+            raise ValueError(
+                "rod_offset shape changes the model structure; construct a new PlanarHSA."
+            )
 
         values = {
             "params": params,
             "base_pose": jnp.asarray(params.base_pose, dtype=jnp.float64),
             "g": jnp.concatenate(
-                [jnp.zeros((1,), dtype=jnp.float64), jnp.asarray(params.gravity, dtype=jnp.float64)]
+                [
+                    jnp.zeros((1,), dtype=jnp.float64),
+                    jnp.asarray(params.gravity, dtype=jnp.float64),
+                ]
             ),
             "L": jnp.asarray(params.length, dtype=jnp.float64),
             "L_cum": jnp.cumsum(jnp.concatenate([jnp.zeros((1,)), params.length])),
@@ -430,9 +473,7 @@ class PlanarHSA(PlanarPCS):
         updated = eqx.tree_at(
             lambda model: model.xi_ref,
             updated,
-            updated.physical_to_virtual_strains(
-                updated._reference_physical_strains()
-            ),
+            updated.physical_to_virtual_strains(updated._reference_physical_strains()),
         )
         if self.consider_hysteresis:
             updated = eqx.tree_at(
@@ -541,9 +582,7 @@ class PlanarHSA(PlanarPCS):
     @staticmethod
     def _translation_transform(x: Array, y: Array) -> Array:
         """Construct an SE(2) translation by local coordinates ``(x, y)``."""
-        return poses.planar_pose_to_transform(
-            jnp.stack([jnp.zeros_like(x), x, y])
-        )
+        return poses.planar_pose_to_transform(jnp.stack([jnp.zeros_like(x), x, y]))
 
     def _segment_bases_and_tips(self, xi: Array) -> tuple[Array, Array]:
         """Propagate virtual-backbone base and flexible-tip transforms.
@@ -582,7 +621,9 @@ class PlanarHSA(PlanarPCS):
         segment_idx, s_local = self.classify_segment(s)
         g_bases, _ = self._segment_bases_and_tips(xi)
         g_base = g_bases[segment_idx]
-        return g_base @ se2.exp(s_local * xi.reshape(self.num_segments, 3)[segment_idx], eps=self.global_eps)
+        return g_base @ se2.exp(
+            s_local * xi.reshape(self.num_segments, 3)[segment_idx], eps=self.global_eps
+        )
 
     def _forward_backbone_from_xi(self, xi: Array, s: Array) -> Array:
         """Convert the virtual-backbone transform at ``s`` to pose coordinates."""
@@ -603,10 +644,11 @@ class PlanarHSA(PlanarPCS):
     def _forward_platform_from_xi(self, xi: Array, segment_idx: Array) -> Array:
         """Return the center pose of a rigid segment platform."""
         _, g_tips = self._segment_bases_and_tips(xi)
-        offset = self.distal_cap_length[segment_idx] + self.platform_dimension[segment_idx, 1] / 2.0
-        platform_transform = self._translation_transform(
-            jnp.zeros_like(offset), offset
+        offset = (
+            self.distal_cap_length[segment_idx]
+            + self.platform_dimension[segment_idx, 1] / 2.0
         )
+        platform_transform = self._translation_transform(jnp.zeros_like(offset), offset)
         return poses.planar_pose_from_transform(
             g_tips[segment_idx] @ platform_transform, eps=self.global_eps
         )
@@ -618,7 +660,11 @@ class PlanarHSA(PlanarPCS):
             jnp.zeros_like(self.distal_cap_length[last]),
             self.distal_cap_length[last] + self.platform_dimension[last, 1],
         )
-        return g_tip @ platform_end @ poses.planar_pose_to_transform(self.end_effector_offset)
+        return (
+            g_tip
+            @ platform_end
+            @ poses.planar_pose_to_transform(self.end_effector_offset)
+        )
 
     def _forward_end_effector_from_xi(self, xi: Array) -> Array:
         """Return the end-effector pose from a full virtual strain vector."""
@@ -647,7 +693,9 @@ class PlanarHSA(PlanarPCS):
         self, q: Array, s: Array
     ) -> tuple[Array, Array]:
         """Return HSA pose and arc-length derivative from shared kinematics."""
-        return self._forward_kinematics(q, s), self._forward_kinematics_arc_length_derivative(q, s)
+        return self._forward_kinematics(
+            q, s
+        ), self._forward_kinematics_arc_length_derivative(q, s)
 
     def forward_kinematics_rod(self, q: Array, s: Array, rod_idx: Array) -> Array:
         """Return the pose of a physical rod centerline point.
@@ -721,9 +769,7 @@ class PlanarHSA(PlanarPCS):
         )
         return values
 
-    def _integration_geometry_full(
-        self, q: Array
-    ) -> tuple[Array, ...]:
+    def _integration_geometry_full(self, q: Array) -> tuple[Array, ...]:
         """Compute configuration-dependent integration geometry once."""
         xi = self.strain(q).reshape(self.num_segments, 3)
         Xs_scaled, Ws_scaled = vmap(
@@ -735,8 +781,8 @@ class PlanarHSA(PlanarPCS):
             self.L_cum[1:],
         )
         s_local = Xs_scaled - self.L_cum[:-1, None]
-        g_bases, J_bases, g_tips, J_tips = (
-            self._segment_bases_and_jacobians_geometry(xi)
+        g_bases, J_bases, g_tips, J_tips = self._segment_bases_and_jacobians_geometry(
+            xi
         )
 
         def segment_kinematics(
@@ -749,9 +795,7 @@ class PlanarHSA(PlanarPCS):
             def point_kinematics(s_local_ij: Array) -> tuple[Array, Array]:
                 Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, s_local_ij)
                 g_ij = g_base @ se2.exp(s_local_ij * xi_i, eps=self.global_eps)
-                J_ij = self._update_body_jacobian_step(
-                    J_base, i, Ad_inv, T
-                )
+                J_ij = self._update_body_jacobian_step(J_base, i, Ad_inv, T)
                 return g_ij, self._final_size_jacobian(J_ij)
 
             return vmap(point_kinematics)(s_local_i)
@@ -786,14 +830,12 @@ class PlanarHSA(PlanarPCS):
         xid = xid.reshape(self.num_segments, 3)
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
 
-        def scan_body(
-            Jd_prev: Array, i: Array
-        ) -> tuple[Array, tuple[Array, Array]]:
+        def scan_body(Jd_prev: Array, i: Array) -> tuple[Array, tuple[Array, Array]]:
             Jd_base = Jd_prev
             xi_i = xi[i]
             xid_i = xid[i]
             Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, self.L[i])
-            Td = constant_strain.tangent_derivative_se2(
+            Td = constant_strain.se2.tangent_derivative(
                 xi_i, xid_i, self.L[i], eps=self.tangent_eps
             )
             Jd_tip = self._update_body_jacobian_time_derivative_step(
@@ -821,9 +863,7 @@ class PlanarHSA(PlanarPCS):
         """Compute ``Jdot`` while reusing geometry already built for ``q``."""
         _, _, _, _, J_bases, xi, s_local, _, _ = geometry
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
-        Jd_bases, Jd_tips = self._segment_jacobian_time_derivatives(
-            xi, xid, J_bases
-        )
+        Jd_bases, Jd_tips = self._segment_jacobian_time_derivatives(xi, xid, J_bases)
 
         def segment_derivative(
             i: Array,
@@ -835,7 +875,7 @@ class PlanarHSA(PlanarPCS):
         ) -> Array:
             def point_derivative(s_local_ij: Array) -> Array:
                 Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, s_local_ij)
-                Td = constant_strain.tangent_derivative_se2(
+                Td = constant_strain.se2.tangent_derivative(
                     xi_i, xid_i, s_local_ij, eps=self.tangent_eps
                 )
                 Jd_ij = self._update_body_jacobian_time_derivative_step(
@@ -851,9 +891,13 @@ class PlanarHSA(PlanarPCS):
                     eta = (Ad_inv @ T) @ xid_i
                     Ad_inv_dot = -se2.small_adjoint(eta) @ Ad_inv
                     Jd_ij = (
-                        jnp.einsum("ab,nbc->nac", Ad_inv, Jd_base)
-                        + jnp.einsum("ab,nbc->nac", Ad_inv_dot, J_base)
-                    ).at[i].set(Ad_inv @ Td)
+                        (
+                            jnp.einsum("ab,nbc->nac", Ad_inv, Jd_base)
+                            + jnp.einsum("ab,nbc->nac", Ad_inv_dot, J_base)
+                        )
+                        .at[i]
+                        .set(Ad_inv @ Td)
+                    )
                 return self._final_size_jacobian(Jd_ij)
 
             return vmap(point_derivative)(s_local_i)
@@ -882,25 +926,15 @@ class PlanarHSA(PlanarPCS):
     ) -> tuple[Array, ...]:
         """Assemble mass-property geometry from a shared integration pass."""
         Ws, g_ps, J_full, _, _, _, _, g_tips, J_tips = geometry
-        basis = (
-            jnp.eye(self.num_strains, dtype=J_full.dtype)
-            if full
-            else self.B_xi
-        )
+        basis = jnp.eye(self.num_strains, dtype=J_full.dtype) if full else self.B_xi
         J_ps = jnp.einsum("sqab,bd->sqad", J_full, basis)
-        J_rods = jnp.einsum(
-            "srab,sqbd->sqrad", self.rod_adjoint_inverses, J_ps
-        )
-        g_rods = jnp.einsum(
-            "sqab,srbc->sqrac", g_ps, self.rod_transforms
-        )
+        J_rods = jnp.einsum("srab,sqbd->sqrad", self.rod_adjoint_inverses, J_ps)
+        g_rods = jnp.einsum("sqab,srbc->sqrac", g_ps, self.rod_transforms)
 
         tip_indices = jnp.arange(self.num_segments, dtype=jnp.int32)
         J_tips = J_tips[tip_indices, tip_indices]
         J_tips = jnp.einsum("sab,bd->sad", J_tips, basis)
-        J_cogs = jnp.einsum(
-            "sab,sbd->sad", self.cog_adjoint_inverses, J_tips
-        )
+        J_cogs = jnp.einsum("sab,sbd->sad", self.cog_adjoint_inverses, J_tips)
         g_cogs = jnp.einsum("sab,sbc->sac", g_tips, self.cog_transforms)
         J_payload = self.payload_adjoint_inverse @ J_tips[-1]
         g_payload = g_tips[-1] @ self.payload_transform
@@ -934,7 +968,9 @@ class PlanarHSA(PlanarPCS):
 
         def scan_body(
             carry: tuple[Array, Array, Array], i: Array
-        ) -> tuple[tuple[Array, Array, Array], tuple[Array, Array, Array, Array, Array, Array]]:
+        ) -> tuple[
+            tuple[Array, Array, Array], tuple[Array, Array, Array, Array, Array, Array]
+        ]:
             g_prev, J_prev, Jd_prev = carry
             g_base = g_prev.at[1, 2].add(self.proximal_cap_length[i])
             J_base = J_prev
@@ -944,7 +980,7 @@ class PlanarHSA(PlanarPCS):
             xid_i = xid[i]
             g_tip = g_base @ se2.exp(self.L[i] * xi_i, eps=self.global_eps)
             Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, self.L[i])
-            Td = constant_strain.tangent_derivative_se2(
+            Td = constant_strain.se2.tangent_derivative(
                 xi_i, xid_i, self.L[i], eps=self.tangent_eps
             )
             J_tip, Jd_tip = self._update_body_jacobian_time_derivative_step(
@@ -985,7 +1021,7 @@ class PlanarHSA(PlanarPCS):
         Jd_base = Jd_bases[segment_idx]
         g_base = g_bases[segment_idx]
         Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, s_local)
-        Td = constant_strain.tangent_derivative_se2(
+        Td = constant_strain.se2.tangent_derivative(
             xi_i, xid_i, s_local, eps=self.tangent_eps
         )
         g = g_base @ se2.exp(s_local * xi_i, eps=self.global_eps)
@@ -1184,7 +1220,9 @@ class PlanarHSA(PlanarPCS):
         m_platform = self.platform_density[i] * width * height * depth
         I_platform = m_platform / 12.0 * (width**2 + height**2)
         m_distal = jnp.sum(
-            self.end_cap_density[i] * self.distal_cap_length[i] * self.rod_outer_radius[i] ** 2
+            self.end_cap_density[i]
+            * self.distal_cap_length[i]
+            * self.rod_outer_radius[i] ** 2
         )
         I_distal = jnp.sum(
             self.end_cap_density[i]
@@ -1215,7 +1253,10 @@ class PlanarHSA(PlanarPCS):
                     * self.proximal_cap_length[next_i]
                     * self.rod_outer_radius[next_i] ** 2
                     / 12.0
-                    * (3.0 * self.rod_outer_radius[next_i] ** 2 + self.proximal_cap_length[next_i] ** 2)
+                    * (
+                        3.0 * self.rod_outer_radius[next_i] ** 2
+                        + self.proximal_cap_length[next_i] ** 2
+                    )
                 ),
                 0.0,
             )
@@ -1226,7 +1267,12 @@ class PlanarHSA(PlanarPCS):
         )
         rel_y_num = rel_y_num + jnp.where(
             i < self.num_segments - 1,
-            m_proximal * (self.distal_cap_length[i] + height + self.proximal_cap_length[i + 1] / 2.0),
+            m_proximal
+            * (
+                self.distal_cap_length[i]
+                + height
+                + self.proximal_cap_length[i + 1] / 2.0
+            ),
             0.0,
         )
         rel_cog = jnp.array([0.0, rel_y_num / mass])
@@ -1271,8 +1317,8 @@ class PlanarHSA(PlanarPCS):
             self.L_cum[1:],
         )
         s_local = Xs_scaled - self.L_cum[:-1, None]
-        g_bases, J_bases, Jd_bases, g_tips, J_tips, Jd_tips = self._segment_bases_and_jacobians(
-            xi, xid
+        g_bases, J_bases, Jd_bases, g_tips, J_tips, Jd_tips = (
+            self._segment_bases_and_jacobians(xi, xid)
         )
 
         def segment_kinematics(
@@ -1286,7 +1332,7 @@ class PlanarHSA(PlanarPCS):
         ) -> tuple[Array, Array, Array]:
             def point_kinematics(s_local_ij: Array) -> tuple[Array, Array, Array]:
                 Ad_inv, T = self._pcs_jacobian_step_terms(xi_i, s_local_ij)
-                Td = constant_strain.tangent_derivative_se2(
+                Td = constant_strain.se2.tangent_derivative(
                     xi_i, xid_i, s_local_ij, eps=self.tangent_eps
                 )
                 g_ij = g_base @ se2.exp(s_local_ij * xi_i, eps=self.global_eps)
@@ -1303,9 +1349,13 @@ class PlanarHSA(PlanarPCS):
                     eta = (Ad_inv @ T) @ xid_i
                     Ad_inv_dot = -se2.small_adjoint(eta) @ Ad_inv
                     Jd_ij = (
-                        jnp.einsum("ab,nbc->nac", Ad_inv, Jd_base)
-                        + jnp.einsum("ab,nbc->nac", Ad_inv_dot, J_base)
-                    ).at[i].set(Ad_inv @ Td)
+                        (
+                            jnp.einsum("ab,nbc->nac", Ad_inv, Jd_base)
+                            + jnp.einsum("ab,nbc->nac", Ad_inv_dot, J_base)
+                        )
+                        .at[i]
+                        .set(Ad_inv @ Td)
+                    )
                 return (
                     g_ij,
                     self._final_size_jacobian(J_ij),
@@ -1341,9 +1391,7 @@ class PlanarHSA(PlanarPCS):
             jnp.einsum("sqab,bd->sqad", Jd_full, self.B_xi),
         )
 
-    def integration_kinematics(
-        self, q: Array, qd: Array
-    ) -> tuple[Array, Array, Array]:
+    def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """Return quadrature poses, Jacobians, and Jacobian derivatives.
 
         The returned quantities are assembled over the interior fixed
@@ -1381,11 +1429,7 @@ class PlanarHSA(PlanarPCS):
         ) = self._integration_kinematics_full(
             q, qd, convective_only_jd, return_tips=True
         )
-        basis = (
-            jnp.eye(self.num_strains, dtype=J_full.dtype)
-            if full
-            else self.B_xi
-        )
+        basis = jnp.eye(self.num_strains, dtype=J_full.dtype) if full else self.B_xi
         J_ps = jnp.einsum("sqab,bd->sqad", J_full, basis)
         Jd_ps = jnp.einsum("sqab,bd->sqad", Jd_full, basis)
         rod_transforms = self.rod_transforms
@@ -1461,9 +1505,7 @@ class PlanarHSA(PlanarPCS):
             Jd_payload,
             g_payload,
             payload_mass_matrix,
-        ) = self._mass_properties_kinematics(
-            q, qd, convective_only_jd, full=full
-        )
+        ) = self._mass_properties_kinematics(q, qd, convective_only_jd, full=full)
         velocity = self.B_xi @ qd if full else qd
 
         rod_eta = jnp.einsum("sqrad,d->sqra", J_rods, velocity)
@@ -1471,9 +1513,7 @@ class PlanarHSA(PlanarPCS):
         rod_g_inv = vmap(vmap(vmap(se2.adjoint_inverse)))(g_rods)
         rod_mj = jnp.einsum("srab,sqrbd->sqrad", rod_mass_matrices, J_rods)
         rod_mjd = jnp.einsum("srab,sqrbd->sqrad", rod_mass_matrices, Jd_rods)
-        rod_local_gravity = jnp.einsum(
-            "sqrab,b->sqra", rod_g_inv, self.g
-        )
+        rod_local_gravity = jnp.einsum("sqrab,b->sqra", rod_g_inv, self.g)
         rod_gravity_wrench = jnp.einsum(
             "srab,sqrb->sqra", rod_mass_matrices, rod_local_gravity
         )
@@ -1485,9 +1525,10 @@ class PlanarHSA(PlanarPCS):
             J_rods,
         )
         C_rods = jnp.einsum(
-            "sq,sqrad,sqrae->de", Ws, J_rods, rod_mjd + jnp.einsum(
-                "sqrae,sqred->sqrad", rod_coad, rod_mj
-            )
+            "sq,sqrad,sqrae->de",
+            Ws,
+            J_rods,
+            rod_mjd + jnp.einsum("sqrae,sqred->sqrad", rod_coad, rod_mj),
         )
         G_rods = -jnp.einsum("sq,sqrad,sqra->d", Ws, J_rods, rod_gravity_wrench)
 
@@ -1501,13 +1542,13 @@ class PlanarHSA(PlanarPCS):
         cog_mjd = jnp.einsum("sab,sbd->sad", cog_matrices, Jd_cogs)
         cog_g_inv = vmap(se2.adjoint_inverse)(g_cogs)
         cog_local_gravity = jnp.einsum("sab,b->sa", cog_g_inv, self.g)
-        cog_gravity_wrench = jnp.einsum(
-            "sab,sb->sa", cog_matrices, cog_local_gravity
-        )
+        cog_gravity_wrench = jnp.einsum("sab,sb->sa", cog_matrices, cog_local_gravity)
         B_cogs = jnp.einsum("sad,sab,sbe->de", J_cogs, cog_matrices, J_cogs)
-        C_cogs = jnp.einsum("sad,sae->de", J_cogs, cog_mjd + jnp.einsum(
-            "sab,sbe->sae", cog_coad, cog_mj
-        ))
+        C_cogs = jnp.einsum(
+            "sad,sae->de",
+            J_cogs,
+            cog_mjd + jnp.einsum("sab,sbe->sae", cog_coad, cog_mj),
+        )
         G_cogs = -jnp.einsum("sad,sa->d", J_cogs, cog_gravity_wrench)
 
         payload_velocity = J_payload @ velocity
@@ -1538,25 +1579,20 @@ class PlanarHSA(PlanarPCS):
         # outputs compatible with the previous model.
         base_translation = self.base_pose[1:]
         s_points, weights = self._quadrature()
+
         def segment_energy(i: Array) -> Array:
             def rod_energy(j: Array) -> Array:
                 area = jnp.pi * (
-                    self.rod_outer_radius[i, j] ** 2
-                    - self.rod_inner_radius[i, j] ** 2
+                    self.rod_outer_radius[i, j] ** 2 - self.rod_inner_radius[i, j] ** 2
                 )
-                rods = vmap(
-                    lambda s: self._forward_rod_from_xi(xi, s, j)
-                )(s_points[i])
+                rods = vmap(lambda s: self._forward_rod_from_xi(xi, s, j))(s_points[i])
                 height = jnp.sum(
-                    weights[i]
-                    * ((rods[:, 1:] - base_translation) @ gravity)
+                    weights[i] * ((rods[:, 1:] - base_translation) @ gravity)
                 )
                 return -self.rod_density[i, j] * area * height
 
             rod_energy_total = jnp.sum(
-                vmap(rod_energy)(
-                    jnp.arange(self.num_rods_per_segment, dtype=jnp.int32)
-                )
+                vmap(rod_energy)(jnp.arange(self.num_rods_per_segment, dtype=jnp.int32))
             )
             mass, _, rel_cog = self._platform_mass_properties(i)
             tip = self._forward_backbone_from_xi(xi, self.L_cum[i + 1])
@@ -1567,9 +1603,7 @@ class PlanarHSA(PlanarPCS):
             return rod_energy_total - mass * (gravity @ (p_cog - base_translation))
 
         energy = jnp.sum(
-            vmap(segment_energy)(
-                jnp.arange(self.num_segments, dtype=jnp.int32)
-            )
+            vmap(segment_energy)(jnp.arange(self.num_segments, dtype=jnp.int32))
         )
 
         ee = self._forward_end_effector_from_xi(xi)
@@ -1582,7 +1616,9 @@ class PlanarHSA(PlanarPCS):
                 + c * self.platform_center_of_gravity[1],
             ]
         )
-        return energy - self.platform_mass * (gravity @ (payload_cog - base_translation))
+        return energy - self.platform_mass * (
+            gravity @ (payload_cog - base_translation)
+        )
 
     def _gravitational_energy(self, q: Array) -> Array:
         """Return gravitational potential energy for active coordinates."""
@@ -1591,11 +1627,7 @@ class PlanarHSA(PlanarPCS):
     def _assemble_gravity_force(self, q: Array, *, full: bool = False) -> Array:
         """Assemble gravity from pose/Jacobian data only."""
         Ws, g_ps, J_full, g_tips, J_tips = self._integration_kinematics_gravity(q)
-        basis = (
-            jnp.eye(self.num_strains, dtype=J_full.dtype)
-            if full
-            else self.B_xi
-        )
+        basis = jnp.eye(self.num_strains, dtype=J_full.dtype) if full else self.B_xi
         J_ps = jnp.einsum("sqab,bd->sqad", J_full, basis)
         rod_transforms = self.rod_transforms
         rod_adjoint_inverses = self.rod_adjoint_inverses
@@ -1609,20 +1641,14 @@ class PlanarHSA(PlanarPCS):
         rod_gravity_wrench = jnp.einsum(
             "srab,sqrb->sqra", self.rod_mass_matrices, rod_local_gravity
         )
-        G_rods = -jnp.einsum(
-            "sq,sqrad,sqra->d", Ws, J_rods, rod_gravity_wrench
-        )
+        G_rods = -jnp.einsum("sq,sqrad,sqra->d", Ws, J_rods, rod_gravity_wrench)
 
         tip_indices = jnp.arange(self.num_segments, dtype=jnp.int32)
         J_tips = J_tips[tip_indices, tip_indices]
         J_tips = jnp.einsum("sab,bd->sad", J_tips, basis)
-        J_cogs = jnp.einsum(
-            "sab,sbd->sad", self.cog_adjoint_inverses, J_tips
-        )
+        J_cogs = jnp.einsum("sab,sbd->sad", self.cog_adjoint_inverses, J_tips)
         g_cogs = jnp.einsum("sab,sbc->sac", g_tips, self.cog_transforms)
-        cog_matrices = jnp.zeros(
-            (*self.segment_masses.shape, 3, 3), dtype=Ws.dtype
-        )
+        cog_matrices = jnp.zeros((*self.segment_masses.shape, 3, 3), dtype=Ws.dtype)
         cog_matrices = cog_matrices.at[:, 0, 0].set(self.segment_inertias)
         cog_matrices = cog_matrices.at[:, 1, 1].set(self.segment_masses)
         cog_matrices = cog_matrices.at[:, 2, 2].set(self.segment_masses)
@@ -1682,21 +1708,15 @@ class PlanarHSA(PlanarPCS):
         velocity_basis = self.B_xi
 
         def directional_derivative(direction: Array) -> Array:
-            Jd_full, Jd_tips = (
-                self._integration_jacobian_time_derivative_from_geometry(
-                    direction, geometry
-                )
+            Jd_full, Jd_tips = self._integration_jacobian_time_derivative_from_geometry(
+                direction, geometry
             )
             Jd_ps = jnp.einsum("sqab,bd->sqad", Jd_full, velocity_basis)
-            Jd_rods = jnp.einsum(
-                "srab,sqbd->sqrad", self.rod_adjoint_inverses, Jd_ps
-            )
+            Jd_rods = jnp.einsum("srab,sqbd->sqrad", self.rod_adjoint_inverses, Jd_ps)
             tip_indices = jnp.arange(self.num_segments, dtype=jnp.int32)
             Jd_tips = Jd_tips[tip_indices, tip_indices]
             Jd_tips = jnp.einsum("sab,bd->sad", Jd_tips, velocity_basis)
-            Jd_cogs = jnp.einsum(
-                "sab,sbd->sad", self.cog_adjoint_inverses, Jd_tips
-            )
+            Jd_cogs = jnp.einsum("sab,sbd->sad", self.cog_adjoint_inverses, Jd_tips)
             Jd_payload = self.payload_adjoint_inverse @ Jd_tips[-1]
             rod_term = jnp.einsum(
                 "sq,sqrad,srab,sqrbe->de",
@@ -1743,9 +1763,7 @@ class PlanarHSA(PlanarPCS):
         dB = self._inertia_derivative_matrix(q)
         return 0.5 * jnp.einsum(
             "abk,k->ab",
-            dB
-            + jnp.swapaxes(dB, 1, 2)
-            - jnp.transpose(dB, (2, 1, 0)),
+            dB + jnp.swapaxes(dB, 1, 2) - jnp.transpose(dB, (2, 1, 0)),
             qd,
         )
 
@@ -1774,9 +1792,7 @@ class PlanarHSA(PlanarPCS):
                     ],
                     axis=-1,
                 ),
-                jnp.stack(
-                    [zeros, zeros, self.nominal_axial_stiffness], axis=-1
-                ),
+                jnp.stack([zeros, zeros, self.nominal_axial_stiffness], axis=-1),
             ],
             axis=-2,
         )
@@ -1811,21 +1827,13 @@ class PlanarHSA(PlanarPCS):
         zeros = jnp.zeros_like(self.bending_damping)
         damping_rod = jnp.stack(
             [
-                jnp.stack(
-                    [self.bending_damping, zeros, zeros], axis=-1
-                ),
-                jnp.stack(
-                    [zeros, self.shear_damping, zeros], axis=-1
-                ),
-                jnp.stack(
-                    [zeros, zeros, self.axial_damping], axis=-1
-                ),
+                jnp.stack([self.bending_damping, zeros, zeros], axis=-1),
+                jnp.stack([zeros, self.shear_damping, zeros], axis=-1),
+                jnp.stack([zeros, zeros, self.axial_damping], axis=-1),
             ],
             axis=-2,
         )
-        blocks = jnp.einsum(
-            "...ji,...jk,...kl->...il", mapping, damping_rod, mapping
-        )
+        blocks = jnp.einsum("...ji,...jk,...kl->...il", mapping, damping_rod, mapping)
         return blk_diag(jnp.sum(blocks, axis=1))
 
     def damping_matrix(self, q: Array) -> Array:
@@ -1847,9 +1855,9 @@ class PlanarHSA(PlanarPCS):
         physical = self.virtual_to_physical_strains(xi_rows.reshape(-1))
         references = self._reference_physical_strains()
         phi = jnp.asarray(phi).reshape(-1)
-        scale = (
-            self.rod_height / self.L[:, None]
-        ) * phi.reshape(self.num_segments, self.num_rods_per_segment)
+        scale = (self.rod_height / self.L[:, None]) * phi.reshape(
+            self.num_segments, self.num_rods_per_segment
+        )
         delta = jnp.stack(
             [
                 self.bending_stiffness_correction * scale,
@@ -1884,9 +1892,7 @@ class PlanarHSA(PlanarPCS):
             ],
             axis=-2,
         )
-        coupling = jnp.stack(
-            [zeros, zeros, self.strain_coupling * scale], axis=-1
-        )
+        coupling = jnp.stack([zeros, zeros, self.strain_coupling * scale], axis=-1)
         physical_error = physical - references
         rod_force_physical = -delta * physical_error + jnp.einsum(
             "...jk,...k->...j", Sr, coupling
@@ -1896,9 +1902,7 @@ class PlanarHSA(PlanarPCS):
         )
         return jnp.sum(rod_force_virtual, axis=1).reshape(self.num_strains)
 
-    def actuation_force(
-        self, q: Array, phi: Array, qd: Array | None = None
-    ) -> Array:
+    def actuation_force(self, q: Array, phi: Array, qd: Array | None = None) -> Array:
         """Return generalized forces generated by HSA actuation.
 
         With underactuation disabled, ``phi`` is interpreted directly as an
@@ -1946,9 +1950,7 @@ class PlanarHSA(PlanarPCS):
             A tuple ``(B, Cqd, G)`` with shapes ``(num_dofs, num_dofs)``,
             ``(num_dofs,)``, and ``(num_dofs,)`` respectively.
         """
-        return self._assemble_dynamics_terms(
-            q, qd, convective_only_jd=True
-        )
+        return self._assemble_dynamics_terms(q, qd, convective_only_jd=True)
 
     @eqx.filter_jit
     def forward_dynamics(
