@@ -45,6 +45,17 @@ def _assert_forward_and_reverse_mode_finite(fn, arg):
     assert jnp.isfinite(jac_rev).all()
 
 
+def _nested_grad_of_vmap(fn, singular, regular, tangent):
+    values = jnp.stack([singular, regular])
+    return jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(
+                lambda value: jnp.sum(jax.jvp(fn, (value,), (tangent,))[1])
+            )(batch)
+        )
+    )(values)
+
+
 def test_hat_se3_embeds_planar_hat():
     vec2 = jnp.array([0.4, -0.7, 1.2])
     vec6 = _embed_se2_twist(vec2)
@@ -602,6 +613,36 @@ def test_se3_helpers_are_autodiff_finite_at_zero():
     log_at_identity = log_fn(g_identity)
     assert not jnp.isnan(log_at_identity).any()
     assert_allclose(log_at_identity, jnp.zeros((6,)), rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize(
+    ("name", "fn", "singular", "regular", "tangent"),
+    [
+        (
+            "se3.exp",
+            lambda xi: se3.exp(xi, EPS),
+            jnp.zeros(6),
+            jnp.array([0.3, -0.2, 0.1, 0.2, -0.1, 0.4]),
+            jnp.linspace(0.1, 0.6, 6),
+        ),
+        (
+            "se3.log",
+            lambda g: se3.log(g, EPS),
+            jnp.eye(4),
+            se3.exp(jnp.array([0.3, -0.2, 0.1, 0.2, -0.1, 0.4]), EPS),
+            jnp.ones((4, 4)),
+        ),
+    ],
+    ids=["se3.exp", "se3.log"],
+)
+def test_nested_grad_of_vmap_is_finite_at_se3_branch_points(
+    name, fn, singular, regular, tangent
+):
+    gradient = _nested_grad_of_vmap(fn, singular, regular, tangent)
+
+    assert jnp.isfinite(gradient).all(), (
+        f"{name} produced a non-finite nested batched gradient"
+    )
 
 
 BRANCH_EPS = 1e1 * float(jnp.finfo(jnp.float64).eps)

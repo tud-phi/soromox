@@ -87,6 +87,18 @@ def assert_forward_and_reverse_mode_finite(fn, arg):
     assert jnp.isfinite(jac_rev).all()
 
 
+def nested_grad_of_vmap(fn, singular, regular, tangent):
+    """Differentiate a vmapped JVP at a value that takes a branch."""
+    values = jnp.stack([singular, regular])
+    return jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(
+                lambda value: jnp.sum(jax.jvp(fn, (value,), (tangent,))[1])
+            )(batch)
+        )
+    )(values)
+
+
 def test_normalize_quaternion_uses_configurable_eps():
     q = jnp.array([1e-8, 1e-8, 0.0, 0.0])
 
@@ -100,6 +112,49 @@ def test_normalize_quaternion_uses_configurable_eps():
         jnp.array([jnp.sqrt(0.5), jnp.sqrt(0.5), 0.0, 0.0]),
         atol=1e-12,
     )
+
+
+@pytest.mark.parametrize(
+    "fn,singular,regular,tangent",
+    [
+        (
+            lambda q: normalize_quaternion(q, eps=1e-10),
+            jnp.zeros(4),
+            jnp.array([0.9, 0.1, 0.2, 0.3]),
+            jnp.ones(4),
+        ),
+        (
+            lambda q: quaternion_to_rotation_vector(q, eps=1e-10),
+            jnp.array([1.0, 0.0, 0.0, 0.0]),
+            jnp.array([jnp.cos(0.1), 0.0, 0.0, jnp.sin(0.1)]),
+            jnp.ones(4),
+        ),
+        (
+            lambda omega: rotation_vector_to_quaternion(omega, eps=1e-10),
+            jnp.zeros(3),
+            jnp.array([0.1, -0.2, 0.3]),
+            jnp.ones(3),
+        ),
+        (
+            quaternion_to_rotation_matrix,
+            jnp.zeros(4),
+            jnp.array([0.9, 0.1, 0.2, 0.3]),
+            jnp.ones(4),
+        ),
+    ],
+    ids=[
+        "normalize_quaternion",
+        "quaternion_to_rotation_vector",
+        "rotation_vector_to_quaternion",
+        "quaternion_to_rotation_matrix",
+    ],
+)
+def test_nested_grad_of_vmap_is_finite_at_quaternion_branch_points(
+    fn, singular, regular, tangent
+):
+    gradient = nested_grad_of_vmap(fn, singular, regular, tangent)
+
+    assert jnp.isfinite(gradient).all()
 
 
 class TestRotationMatrixToQuaternion:

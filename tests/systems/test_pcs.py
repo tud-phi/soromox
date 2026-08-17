@@ -2064,17 +2064,6 @@ def test_reverse_mode_of_vmap_over_energy_custom_jvps_at_zero_configuration() ->
         )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pre-existing: the SoftRobot forward_kinematics custom-JVP wrapper "
-        "produces NaN under grad-of-vmap at the straight configuration. The "
-        "underlying _forward_kinematics and forward_kinematics_batched are both "
-        "clean, and disabling custom JVPs via soromox.autodiff.custom_jvp_mode "
-        "also makes it clean, so the defect is in the wrapper rather than in the "
-        "kinematics. Tracked separately; remove this marker once fixed."
-    ),
-)
 def test_reverse_mode_of_vmap_over_forward_kinematics_at_zero_configuration() -> None:
     model, _ = make_pcs(num_segments=1, total_length=PCS_TOTAL_LENGTH)
     dof = int(model.num_active_strains.item())

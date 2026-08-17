@@ -159,11 +159,13 @@ def normalize_quaternion(
     eps_arr = eps_for_dtype(eps, q.dtype)
     identity = jnp.array([1.0, 0.0, 0.0, 0.0], dtype=q.dtype)
     norm_sq = jnp.dot(q, q)
+    regular = norm_sq > eps_arr**2
+    norm_sq_safe = jnp.where(regular, norm_sq, jnp.ones_like(norm_sq))
 
     def _normalize(_: None) -> Array:
-        return q / jnp.sqrt(norm_sq)
+        return q / jnp.sqrt(norm_sq_safe)
 
-    return lax.cond(norm_sq > eps_arr**2, _normalize, lambda _: identity, operand=None)
+    return lax.cond(regular, _normalize, lambda _: identity, operand=None)
 
 
 def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -> Array:
@@ -354,16 +356,20 @@ def quaternion_to_rotation_vector(
     q_vec = quat[1:4]
     eps_arr = eps_for_dtype(eps, quat.dtype)
     q_vec_norm_sq = jnp.dot(q_vec, q_vec)
+    regular = q_vec_norm_sq > eps_arr**2
+    q_vec_norm_sq_safe = jnp.where(
+        regular, q_vec_norm_sq, jnp.ones_like(q_vec_norm_sq)
+    )
 
     def _small(_: None) -> Array:
         return 2.0 * q_vec
 
     def _general(_: None) -> Array:
-        q_vec_norm = jnp.sqrt(q_vec_norm_sq)
+        q_vec_norm = jnp.sqrt(q_vec_norm_sq_safe)
         angle = 2.0 * jnp.arctan2(q_vec_norm, q_w)
         return q_vec * (angle / q_vec_norm)
 
-    return lax.cond(q_vec_norm_sq > eps_arr**2, _general, _small, operand=None)
+    return lax.cond(regular, _general, _small, operand=None)
 
 
 def rotation_vector_to_quaternion(
@@ -398,6 +404,8 @@ def rotation_vector_to_quaternion(
     omega = jnp.asarray(omega).reshape(-1)
     eps_arr = eps_for_dtype(eps, omega.dtype)
     angle_sq = jnp.dot(omega, omega)
+    regular = angle_sq > eps_arr**2
+    angle_sq_safe = jnp.where(regular, angle_sq, jnp.ones_like(angle_sq))
 
     def _small(_: None) -> Array:
         return jnp.array(
@@ -406,12 +414,12 @@ def rotation_vector_to_quaternion(
         )
 
     def _general(_: None) -> Array:
-        angle = jnp.sqrt(angle_sq)
+        angle = jnp.sqrt(angle_sq_safe)
         half_angle = angle / 2.0
         q_vec = omega * (jnp.sin(half_angle) / angle)
         return jnp.array([jnp.cos(half_angle), q_vec[0], q_vec[1], q_vec[2]])
 
-    quat = lax.cond(angle_sq > eps_arr**2, _general, _small, operand=None)
+    quat = lax.cond(regular, _general, _small, operand=None)
 
     return normalize_quaternion(quat, eps=eps)
 

@@ -1,5 +1,4 @@
 import jax
-import pytest
 from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
@@ -328,18 +327,6 @@ def test_spatial_default_jacobian_fallback_is_finite_without_custom_jvp() -> Non
     assert_allclose(wrapper_disabled_grad, protected_grad, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Pre-existing: the SoftRobot jacobian custom-JVP wrapper produces NaN "
-        "under grad-of-vmap for a spatial default Jacobian whose protected "
-        "forward kinematics uses the finite se3.exp zero-angle branch. The "
-        "protected _jacobian path and the public wrapper with custom JVPs "
-        "disabled are finite, isolating the defect to the wrapper's q-only "
-        "nested-JVP fallback. Tracked with the forward_kinematics wrapper "
-        "failure; remove this marker once fixed."
-    ),
-)
 def test_spatial_default_jacobian_custom_jvp_is_finite_under_grad_of_vmap() -> None:
     robot = _SpatialLieExpDefaultRobot()
     q = jnp.zeros((6,), dtype=jnp.float64)

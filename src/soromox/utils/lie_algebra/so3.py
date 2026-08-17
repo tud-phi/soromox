@@ -33,12 +33,11 @@ def _rotation_magnitude(omega: Array, eps: float | Array) -> Array:
         Scalar array containing the regularized rotation angle.
     """
     theta_sq = jnp.dot(omega, omega)
-    return lax.cond(
-        theta_sq <= eps**2,
-        lambda _: jnp.zeros((), dtype=omega.dtype),
-        lambda _: jnp.sqrt(theta_sq),
-        operand=None,
-    )
+    eps_arr = jnp.asarray(eps, dtype=omega.dtype)
+    small = theta_sq <= eps_arr**2
+    theta_sq_safe = jnp.where(small, jnp.ones_like(theta_sq), theta_sq)
+    theta_regular = jnp.sqrt(theta_sq_safe)
+    return jnp.where(small, jnp.zeros_like(theta_sq), theta_regular)
 
 
 def vee(matrix: Array) -> Array:
@@ -215,11 +214,12 @@ def log(R: Array, eps: float | Array = 1e-10) -> Array:
 
     cos_theta = jnp.clip((trace_R - 1.0) * 0.5, -1.0, 1.0)
     skew_norm_sq = jnp.dot(skew_vec, skew_vec)
-    sin_theta = 0.5 * lax.cond(
-        skew_norm_sq <= eps_arr**2,
-        lambda _: jnp.zeros((), dtype=R.dtype),
-        lambda _: jnp.sqrt(skew_norm_sq),
-        operand=None,
+    small_sine = skew_norm_sq <= eps_arr**2
+    skew_norm_sq_safe = jnp.where(
+        small_sine, jnp.ones_like(skew_norm_sq), skew_norm_sq
+    )
+    sin_theta = 0.5 * jnp.where(
+        small_sine, jnp.zeros_like(skew_norm_sq), jnp.sqrt(skew_norm_sq_safe)
     )
     theta = jnp.arctan2(sin_theta, cos_theta)
     pi = jnp.asarray(jnp.pi, dtype=R.dtype)
@@ -231,7 +231,10 @@ def log(R: Array, eps: float | Array = 1e-10) -> Array:
         return 0.5 * skew_vec
 
     def _regular(_: None) -> Array:
-        scale = theta / (2.0 * jnp.sin(theta))
+        sine_safe = jnp.where(
+            theta <= small_threshold, jnp.ones_like(theta), jnp.sin(theta)
+        )
+        scale = theta / (2.0 * sine_safe)
         return scale * skew_vec
 
     def _large(_: None) -> Array:

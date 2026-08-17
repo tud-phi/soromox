@@ -12,7 +12,7 @@ __all__ = [
 ]
 
 import jax.numpy as jnp
-from jax import Array, lax
+from jax import Array
 
 from soromox.autodiff import strict_singularities_enabled
 
@@ -279,12 +279,11 @@ def _rotational_strain_magnitude(xi: Array, eps: float | Array) -> Array:
     """
     k = xi[:3]
     theta_sq = jnp.dot(k, k)
-    return lax.cond(
-        theta_sq <= eps**2,
-        lambda _: jnp.zeros((), dtype=xi.dtype),
-        lambda _: jnp.sqrt(theta_sq),
-        operand=None,
-    )
+    eps_arr = jnp.asarray(eps, dtype=xi.dtype)
+    small = theta_sq <= eps_arr**2
+    theta_sq_safe = jnp.where(small, jnp.ones_like(theta_sq), theta_sq)
+    theta_regular = jnp.sqrt(theta_sq_safe)
+    return jnp.where(small, jnp.zeros_like(theta_sq), theta_regular)
 
 
 def hat(xi: Array) -> Array:
@@ -341,13 +340,7 @@ def log(g: Array, eps: float | Array) -> Array:
 
     omega = so3.log(R, eps=eps).reshape((3, 1))
     omega_hat = so3.skew(omega)
-    theta_sq = jnp.dot(omega.reshape(-1), omega.reshape(-1))
-    theta = lax.cond(
-        theta_sq <= eps**2,
-        lambda _: jnp.zeros((), dtype=R.dtype),
-        lambda _: jnp.sqrt(theta_sq),
-        operand=None,
-    )
+    theta = so3._rotation_magnitude(omega.reshape(-1), eps)
     B = inverse_left_jacobian_quadratic_coefficient(theta)
     omega_sq = omega_hat @ omega_hat
     V_inv = jnp.eye(3, dtype=R.dtype) - 0.5 * omega_hat + B * omega_sq
