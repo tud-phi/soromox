@@ -1350,7 +1350,7 @@ class GVS(SoftRobot):
         Magnusd = B_Magnus @ qd_i
 
         g_step = se3.exp(Magnus, self.global_eps)
-        T_step, Td_step = constant_strain_se3._tangent_and_derivative(
+        T_step, Td_step = constant_strain_se3.tangent_and_derivative(
             Magnus, Magnusd, jnp.array(1.0), self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
@@ -1416,7 +1416,7 @@ class GVS(SoftRobot):
         )
 
         g_step = se3.exp(Magnus, self.global_eps)
-        T_step, T_step_H = constant_strain_se3._tangent_and_derivative(
+        T_step, T_step_H = constant_strain_se3.tangent_and_derivative(
             Magnus, Magnus_H, jnp.array(1.0), self.tangent_eps
         )
         Ad_step_inv = se3.adjoint_inverse(g_step)
@@ -1498,7 +1498,7 @@ class GVS(SoftRobot):
         xi_joint = B_joint @ q_joint + xi_ref_joint
         xid_joint = B_joint @ qd_joint
         g_joint = se3.exp(xi_joint, self.global_eps)
-        T_joint, Td_joint = constant_strain_se3._tangent_and_derivative(
+        T_joint, Td_joint = constant_strain_se3.tangent_and_derivative(
             xi_joint, xid_joint, jnp.array(1.0), self.tangent_eps
         )
         T_joint_B = T_joint @ B_joint

@@ -20,6 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``constant_strain.se3.operators`` bundles with a fixed named result for
   callers that need adjoints, tangents, and an optional analytic tangent
   derivative at the same strain and arclength.
+- Public ``constant_strain.se3.tangent_and_derivative`` for callers that need
+  the selective tangent pair without constructing unused adjoint operators.
 
 ### Changed
 

@@ -9,11 +9,17 @@ from soromox.utils.lie_algebra.constant_strain import se2, se3
 
 planar_tangent = se2.tangent(xi_planar, arc_length, eps)
 spatial_operators = se3.operators(xi_spatial, arc_length, eps, xid_spatial)
+spatial_tangent, spatial_tangent_derivative = se3.tangent_and_derivative(
+    xi_spatial, xid_spatial, arc_length, eps
+)
 ```
 
 Use a single-operator function when only one result is required. Use
 `operators` when several related expressions are needed at the same strain and
 arclength; it shares intermediate work and returns a fixed named bundle.
+When the caller already computes the relative pose and only needs the tangent
+and its directional derivative, `se3.tangent_and_derivative` shares the
+reduced-polynomial work without constructing adjoint operators.
 
 ## Package Structure
 

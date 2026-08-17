@@ -10,6 +10,7 @@ __all__ = [
     "adjoint_inverse",
     "operators",
     "tangent",
+    "tangent_and_derivative",
     "tangent_derivative",
 ]
 
@@ -286,7 +287,7 @@ def _operators(
     )
 
 
-def _tangent_and_derivative(
+def tangent_and_derivative(
     xi: Array,
     xid: Array,
     s: Array,
@@ -294,9 +295,11 @@ def _tangent_and_derivative(
 ) -> tuple[Array, Array]:
     r"""Evaluate spatial ``T`` and ``Td`` while sharing powers and coefficients.
 
-    This is the selective GVS counterpart to :func:`_operators`: it does
-    not construct an unused adjoint because GVS already obtains that operator
-    from the relative pose required by its kinematic recurrence.
+    This is the selective counterpart to :func:`_operators`: it does not
+    construct an unused adjoint, which is useful when the caller already has
+    the relative pose required by its kinematic recurrence. Unlike the
+    private execution helper, this function is part of the public SE(3)
+    constant-strain API.
 
     Args:
         xi: Spatial strain in angular-first order.
