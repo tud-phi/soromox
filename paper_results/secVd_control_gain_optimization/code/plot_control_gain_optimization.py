@@ -307,9 +307,11 @@ def build_figure(data_dir: Path) -> plt.Figure:
     plot_loss(axes[0, 0], data_c["history_loss"] / 100.0, "A", show_legend=True)
     plot_loss(axes[1, 0], data_s["history_loss"], "C", show_legend=False)
 
-    best_batch = best_batch_from_loss(data_c["history_loss"])
-    plot_angular_strains(axes[0, 1], data_c, best_batch, linecolors, fillcolors)
-    plot_end_effector_position(axes[1, 1], data_s, best_batch, linecolors, fillcolors)
+    # Each panel selects the best batch from its own loss history
+    best_batch_c = best_batch_from_loss(data_c["history_loss"])
+    best_batch_s = best_batch_from_loss(data_s["history_loss"])
+    plot_angular_strains(axes[0, 1], data_c, best_batch_c, linecolors, fillcolors)
+    plot_end_effector_position(axes[1, 1], data_s, best_batch_s, linecolors, fillcolors)
 
     return fig
 

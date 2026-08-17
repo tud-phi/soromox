@@ -1,16 +1,24 @@
-import argparse
 import math
-import pickle
-import time
+import sys
 from pathlib import Path
 
 import jax
 import matplotlib.pyplot as plt
-import numpy as onp
 import optax
-import scipy.io as sio
 from jax import Array, jit, value_and_grad, vmap
 from jax import numpy as jnp
+
+CODE_DIR = Path(__file__).resolve().parent
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+
+from control_gain_optimization_common import (  # noqa: E402
+    finish_figure,
+    parse_args,
+    prepare_output_dirs,
+    save_optimization_outputs,
+)
+from gain_optimization_loop import run_gain_optimization  # noqa: E402
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
@@ -27,48 +35,14 @@ jax.config.update("jax_enable_x64", True)  # double precision
 
 CASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = CASE_DIR / "data"
-OUTPUTS_DIR = CASE_DIR / "outputs"
+OUTPUTS_ROOT = CASE_DIR / "outputs"
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Optimize collocated control gains for the Section Vd study."
-    )
-    parser.add_argument(
-        "--result-dir",
-        type=Path,
-        default=DATA_DIR / "collocated",
-        help="Directory for generated MAT and pickle data.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=OUTPUTS_DIR / "collocated_diagnostics",
-        help="Directory for optional diagnostic figures.",
-    )
-    parser.add_argument("--num-iters", type=int, default=3)
-    parser.add_argument(
-        "--integral-error-saturation-scale",
-        type=float,
-        default=1e-2,
-        help=(
-            "Tendon-length error scale in meters for tanh integral-error "
-            "saturation. Gamma is its reciprocal (default: 0.01 m, i.e. "
-            "gamma = 100 1/m)."
-        ),
-    )
-    parser.add_argument("--save-figures", action="store_true")
-    parser.add_argument("--no-show", action="store_true")
-    parser.add_argument("--no-render", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    return parser.parse_args()
-
-
-ARGS = parse_args()
-RESULT_DIR = ARGS.result_dir.resolve()
-OUTPUTS_DIR = ARGS.output_dir.resolve()
-if ARGS.num_iters < 1:
-    raise ValueError("--num-iters must be at least 1")
+ARGS = parse_args(
+    description="Optimize collocated control gains for the Section Vd study.",
+    default_result_dir=DATA_DIR / "collocated",
+    default_output_dir=OUTPUTS_ROOT / "collocated_diagnostics",
+)
+RESULT_DIR, OUTPUTS_DIR = prepare_output_dirs(ARGS)
 if (
     not math.isfinite(ARGS.integral_error_saturation_scale)
     or ARGS.integral_error_saturation_scale <= 0.0
@@ -76,17 +50,6 @@ if (
     raise ValueError(
         "--integral-error-saturation-scale must be finite and strictly positive"
     )
-for output_name in ("optimization_results.mat", "animation_data.pkl"):
-    output_path = RESULT_DIR / output_name
-    if output_path.exists() and not ARGS.force:
-        raise FileExistsError(f"Refusing to overwrite {output_path}; pass --force")
-
-
-def finish_figure() -> None:
-    if ARGS.no_show:
-        plt.close()
-    else:
-        plt.show()
 
 
 def evaluate_closed_loop_system(
@@ -114,10 +77,11 @@ def evaluate_closed_loop_system(
     # Compute loss
     settling_idx = int(len(t_ts) / 2)
 
-    e_ts = jnp.linalg.norm(x_des_ts - q_ts, axis=1)
+    # Track the configuration-space setpoint the controller regulates
+    e_sq_ts = jnp.sum((x_des_ts - q_ts) ** 2, axis=1)
 
-    loss1 = jnp.trapezoid(e_ts[:settling_idx] ** 2, t_ts[:settling_idx])
-    loss2 = jnp.trapezoid(e_ts[settling_idx:] ** 2, t_ts[settling_idx:])
+    loss1 = jnp.trapezoid(e_sq_ts[:settling_idx], t_ts[:settling_idx])
+    loss2 = jnp.trapezoid(e_sq_ts[settling_idx:], t_ts[settling_idx:])
 
     loss = 1e3 * loss1 + 5e3 * loss2
 
@@ -193,7 +157,7 @@ print("\nFinding steady-state configuration under constant actuation...")
 
 # Apply positive tendon tensions.
 # Use asymmetric tensions to create an interesting configuration
-u_constant = jnp.array([1.2, 0.6, 0.05])
+u_constant = jnp.array([0.5, 0.2, 0.1])
 print(f"  Applied tendon tensions: {u_constant}")
 
 # Define simulation parameters
@@ -223,9 +187,11 @@ q_final, qd_final = jnp.split(trajectory.y[-1], 2)
 velocity_norm = jnp.linalg.norm(qd_final)
 print(f"  Final velocity norm: {velocity_norm:.2e}")
 if velocity_norm > 1e-3:
-    print(
-        "  Warning: Steady-state may not have been reached. "
-        "Consider increasing sim_duration."
+    raise RuntimeError(
+        "Setpoint generation did not reach steady state "
+        f"(final velocity norm {float(velocity_norm):.3e}). Refusing to optimize "
+        "gains for a transient target; increase sim_duration or choose an "
+        "actuation away from routing degeneracies."
     )
 
 q_des = q_final
@@ -235,6 +201,21 @@ print(f"  Steady-state configuration (q_des): {q_des}")
 # Compute the corresponding tendon lengths at steady-state
 y_des = asd.actuated_unactuated_coordinates(q_des)
 print(f"  Actuation-space coordinates (y_des): {y_des}")
+
+# A collapsed tendon has a nondifferentiable length coordinate: its first
+# derivative is direction-dependent and its second derivative grows like the
+# inverse path length. Reverse-mode sensitivities can therefore overflow even
+# while the forward trajectory stays finite. Keep the generated reference well
+# away from that geometric singularity.
+minimum_tendon_length = jnp.min(jnp.abs(y_des[:num_actuators]))
+minimum_tendon_length_threshold = 1e-2 * total_length
+if minimum_tendon_length <= minimum_tendon_length_threshold:
+    raise RuntimeError(
+        "Setpoint generation placed a tendon too close to path collapse "
+        f"(minimum length {float(minimum_tendon_length):.3e} m; required above "
+        f"{minimum_tendon_length_threshold:.3e} m). Choose smaller reference "
+        "tensions before differentiating the rollout."
+    )
 
 # Time parameters for closed-loop control
 t0, t1 = 0.0, 5.0
@@ -330,123 +311,43 @@ optimizer = optax.multi_transform(
     },
     param_labels,
 )
-opt_state = optimizer.init(opt_vars)
 
 # Gradient function
 gradient_fn = jit(value_and_grad(evaluate_closed_loop_system, 0, has_aux=True))
 
-
-# Update function of the optimization variables
-def update(opt_vars, opt_state):
-    # Compute gradient
-    (loss, aux), grad = gradient_fn(opt_vars, controller)
-
-    # Compute the update of the optimization variables
-    updates, opt_state = optimizer.update(grad, opt_state, params=opt_vars)
-
-    # Apply the update
-    opt_vars = optax.apply_updates(opt_vars, updates)
-
-    return opt_vars, opt_state, loss, aux
-
-
 print("Optimization variables = ", list(opt_vars.keys()))
-
-# Optimization loop
-num_iters = ARGS.num_iters
-
-# Optimization-wise variables
-time_iter = []
-loss_tot = []
-opt_vars_tot = []
-
-# Simulation-wise variables
-t_ts_tot = []
-q_ts_tot = []
-qd_ts_tot = []
-u_ts_tot = []
-
 print("\nStarting optimization...")
 
-# Track time
-compile_start = time.time()
-
-# Step
-opt_vars, opt_state, loss, aux = update(opt_vars, opt_state)
-jax.block_until_ready(aux)
-
-compile_end = time.time()
-print(
-    f"\n[INFO] Compilation + first execution time = {compile_end - compile_start:.2f} s"
+# Optimization loop
+history = run_gain_optimization(
+    gradient_fn=lambda variables: gradient_fn(variables, controller),
+    optimizer=optimizer,
+    opt_vars=opt_vars,
+    num_iters=ARGS.num_iters,
+    progress_label="Collocated",
 )
 
-# Store data
-time_iter.append(compile_end - compile_start)
-loss_tot.append(loss)
-t_ts_tot.append(aux["t_ts"])
-q_ts_tot.append(aux["q_ts"])
-qd_ts_tot.append(aux["qd_ts"])
-u_ts_tot.append(aux["u_ts"])
-opt_vars_tot.append(opt_vars)
+num_iters = len(history)
 
-i = 1
-while i < num_iters:
-    # Start of iteration
-    iter_start = time.time()
-
-    # Step
-    opt_vars, opt_state, loss, aux = update(opt_vars, opt_state)
-    jax.block_until_ready(aux)
-
-    # End of iteration
-    iter_end = time.time()
-    iter_duration = iter_end - iter_start
-
-    # Check validity
-    if jnp.isnan(aux["q_ts"]).any():
-        print(f"\n[WARNING] NaN detected at iteration {i}. Stopping.")
-        break
-
-    # Store data
-    time_iter.append(iter_duration)
-    loss_tot.append(loss)
-    t_ts_tot.append(aux["t_ts"])
-    q_ts_tot.append(aux["q_ts"])
-    qd_ts_tot.append(aux["qd_ts"])
-    u_ts_tot.append(aux["u_ts"])
-    opt_vars_tot.append(opt_vars)
-
-    # Log
-    t_left = (num_iters - i - 1) * sum(time_iter[1:]) / len(time_iter[1:])  # [s]
-    eta = time.localtime(time.time() + t_left)
-    print(
-        f"Completion: {100 * (i + 1) / num_iters:3.1f} %  |  iteration {i + 1:>4d} of "
-        + f"{num_iters:<4d}  |  iter time = {iter_duration:>.2f} s  |  ETA = {eta.tm_mday:02d}"
-        + f"/{eta.tm_mon:02d}/{eta.tm_year} {eta.tm_hour:02d}:{eta.tm_min:02d}",
-        end="\r",
-    )
-
-    # Update counter
-    i += 1
-
-# Log
-print(
-    f"Completion: {100 * i / num_iters:3.1f} %  |  iteration {i:>4d} of {num_iters:<4d}"
-    f"  |  iter time = {float(time_iter[-1]):>.4f} s"
-)
+if num_iters == 0:
+    print(f"\n[ERROR] {history.stop_reason}")
+    print("No finite iterate was recorded, so there is nothing to save or plot.")
+    sys.exit(1)
 
 # Cast to Array type
-time_iter = jnp.array(time_iter)  # (num_iters,)
-loss_tot = jnp.array(loss_tot)  # (num_iters,)
-t_ts_tot = jnp.array(t_ts_tot)  # (num_iters, num_ts)
-q_ts_tot = jnp.array(q_ts_tot)  # (num_iters, num_ts, num_dofs)
-qd_ts_tot = jnp.array(qd_ts_tot)  # (num_iters, num_ts, num_dofs)
-u_ts_tot = jnp.array(u_ts_tot)  # (num_iters, num_ts, num_actuators)
+time_iter = jnp.array(history.time_iter)  # (num_iters,)
+loss_tot = jnp.array(history.loss)  # (num_iters,)
+t_ts_tot = history.stacked_aux("t_ts")  # (num_iters, num_ts)
+q_ts_tot = history.stacked_aux("q_ts")  # (num_iters, num_ts, num_dofs)
+qd_ts_tot = history.stacked_aux("qd_ts")  # (num_iters, num_ts, num_dofs)
+u_ts_tot = history.stacked_aux("u_ts")  # (num_iters, num_ts, num_actuators)
+opt_vars_tot = history.opt_vars
 
 # Chosen iteration to display
-best_idx_opt = int(jnp.argmin(loss_tot))
+best_idx_opt = history.best_index()
 print(
-    "Optimization Finished. Best optimization variables:\n", opt_vars_tot[best_idx_opt]
+    "Optimization Finished. Best optimization variables:\n",
+    opt_vars_tot[best_idx_opt],
 )
 
 # Extract results for comparison
@@ -465,6 +366,32 @@ x_ts_init = vmap(robot.forward_kinematics, in_axes=(0, None))(q_ts_init, total_l
 x_ts_best = vmap(robot.forward_kinematics, in_axes=(0, None))(q_ts_best, total_length)[
     :, :3, 3
 ]  # (p, 3)
+
+# =====================================================
+# Save
+# =====================================================
+save_optimization_outputs(
+    RESULT_DIR,
+    loss_tot=loss_tot,
+    time_iter=time_iter,
+    opt_vars_tot=opt_vars_tot,
+    t_ts=t_ts,
+    q_ts_init=q_ts_init,
+    qd_ts_init=qd_ts_init,
+    u_ts_init=u_ts_init,
+    x_ts_init=x_ts_init,
+    q_ts_best=q_ts_best,
+    qd_ts_best=qd_ts_best,
+    u_ts_best=u_ts_best,
+    x_ts_best=x_ts_best,
+    num_iters=num_iters,
+    x_des_ts=x_des_ts,
+    best_idx_opt=best_idx_opt,
+    params=params,
+    active_tendon_routing=active_tendon_routing,
+    passive_elements=robot.passive_elements,
+    num_segments=num_segments,
+)
 
 
 # =====================================================
@@ -503,8 +430,6 @@ metrics_best = compute_metrics(t_ts, q_ts_best, q_des, strain_indices)
 # =====================================================
 # Plot
 # =====================================================
-savefigs = ARGS.save_figures
-
 # Create figure for loss
 plt.figure()
 plt.plot(loss_tot, linewidth=2)
@@ -513,12 +438,7 @@ plt.xlabel("Iterations [-]")
 plt.ylabel("Loss")
 plt.xlim([0, len(loss_tot)])
 plt.tight_layout()
-if savefigs:
-    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    plt.savefig(OUTPUTS_DIR / "loss.pdf", dpi=200, bbox_inches="tight")
-    print("\nPlots saved to:")
-    print("  - loss.pdf")
-finish_figure()
+finish_figure(ARGS, OUTPUTS_DIR, "loss.pdf")
 
 # Select key strains to plot (curvatures and axial strain)
 plot_strain_indices = [1, 2, 3]  # kappa_y, kappa_z, sigma_x
@@ -578,14 +498,7 @@ axes[-1].set_xlabel("Time [s]")
 axes[0].set_title("Actuation-Space Setpoint Regulation: Strain Tracking Comparison")
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_tracking.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_tracking.pdf")
-finish_figure()
+finish_figure(ARGS, OUTPUTS_DIR, "actuation_space_regulation_tracking.pdf")
 
 # Create figure for tracking errors
 fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -628,14 +541,7 @@ axes[-1].set_xlabel("Time [s]")
 axes[0].set_title("Actuation-Space Setpoint Regulation: Tracking Error Comparison")
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_errors.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_errors.pdf")
-finish_figure()
+finish_figure(ARGS, OUTPUTS_DIR, "actuation_space_regulation_errors.pdf")
 
 # Create figure for control inputs (tendon tensions)
 fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -686,14 +592,7 @@ axes[0].set_title(
 )
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_inputs.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_inputs.pdf")
-finish_figure()
+finish_figure(ARGS, OUTPUTS_DIR, "actuation_space_regulation_inputs.pdf")
 
 # Create bar chart for RMSE comparison
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -717,14 +616,7 @@ ax.legend()
 ax.grid(True, alpha=0.3, axis="y")
 
 plt.tight_layout()
-if savefigs:
-    plt.savefig(
-        OUTPUTS_DIR / "actuation_space_regulation_rmse.pdf",
-        dpi=200,
-        bbox_inches="tight",
-    )
-    print("  - actuation_space_regulation_rmse.pdf")
-finish_figure()
+finish_figure(ARGS, OUTPUTS_DIR, "actuation_space_regulation_rmse.pdf")
 
 if ARGS.no_render:
     pass
@@ -739,90 +631,3 @@ else:
         playback_speed=1.0,
         window_name=f"Actuation-Space Regulation ({render_name})",
     )
-
-# =====================================================
-# Save
-# =====================================================
-save_dir = RESULT_DIR
-save_dir.mkdir(parents=True, exist_ok=True)
-
-save_path = str(save_dir)
-
-
-def to_np(x):
-    return onp.array(x)
-
-
-mat_data = {}
-
-
-# Optimization
-def flatten_params_to_dict(params_tree, prefix=""):
-    """
-    Helper: Flatten params_tree.
-
-    :param params_tree: Description
-    :param prefix: Description
-    """
-    flat_dict = {}
-    leaves, _ = jax.tree_util.tree_flatten_with_path(params_tree)
-    for path, val in leaves:
-        key_str = "_".join([str(p.key) if hasattr(p, "key") else str(p) for p in path])
-        full_key = f"{prefix}{key_str}"
-        flat_dict[full_key] = to_np(val)
-    return flat_dict
-
-
-mat_data["history_loss"] = to_np(loss_tot)
-mat_data["history_time"] = to_np(time_iter)
-stacked_history_tree = jax.tree_util.tree_map(
-    lambda *xs: jnp.stack(xs, axis=0), *opt_vars_tot
-)
-mat_data.update(
-    flatten_params_to_dict(stacked_history_tree, prefix="history_opt_vars_")
-)
-
-# Simulation
-mat_data["t_ts"] = to_np(t_ts)
-
-mat_data["q_ts_init"] = to_np(q_ts_init)
-mat_data["qd_ts_init"] = to_np(qd_ts_init)
-mat_data["u_ts_init"] = to_np(u_ts_init)
-mat_data["x_ts_init"] = to_np(x_ts_init)
-
-mat_data["q_ts_best"] = to_np(q_ts_best)
-mat_data["qd_ts_best"] = to_np(qd_ts_best)
-mat_data["u_ts_best"] = to_np(u_ts_best)
-mat_data["x_ts_best"] = to_np(x_ts_best)
-
-# Metadata
-mat_data["num_iters"] = to_np(num_iters)
-mat_data["x_des_ts"] = to_np(x_des_ts)
-mat_data["best_idx_opt"] = to_np(best_idx_opt)
-
-# Save main summary .mat file
-mat_filename = save_dir / "optimization_results.mat"
-print(f"Saving data to {mat_filename}")
-sio.savemat(mat_filename, mat_data, do_compression=True)
-
-# Save Data for Python Animation (Pickle)
-animation_dict = {
-    # Robot parameters
-    "params": params,
-    "active_tendon_routing": active_tendon_routing,
-    "passive_elements": robot.passive_elements,
-    "num_segments": num_segments,
-    # Optimized Parameters
-    "best_opt_vars": opt_vars_tot[best_idx_opt],
-    # Trajectory Data
-    "t_ts": t_ts,
-    "q_ts": q_ts_best,
-    # Target
-    "x_des_ts": x_des_ts,
-}
-
-anim_filename = save_dir / "animation_data.pkl"
-with open(anim_filename, "wb") as f:
-    pickle.dump(animation_dict, f)
-
-print("Save complete.")  # '''

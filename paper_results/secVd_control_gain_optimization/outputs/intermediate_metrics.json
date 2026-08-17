@@ -1,0 +1,54 @@
+{
+  "source": "recoverable canonical MAT histories",
+  "note": "The explicitly interrupted live 285/119-iteration processes did not checkpoint their in-memory histories; these artifacts use the finite 100-iteration x 6-batch datasets already present on disk.",
+  "methods": {
+    "collocated": {
+      "iterations_per_batch": 100,
+      "batches": 6,
+      "recorded_evaluations": 600,
+      "initial_best_loss": 579.0678515061383,
+      "final_best_loss": 255.68481999304012,
+      "global_best_loss": 255.68481999304012,
+      "global_best_iteration_1_based": 100,
+      "global_best_batch_1_based": 4,
+      "global_best_is_final_iteration": true,
+      "loss_reduction_from_initial_best_percent": 55.845447242838375,
+      "last_10_iteration_best_loss_slope": -0.7559737560298845,
+      "initial_rmse": [
+        0.010742823293309094,
+        1.0646418687838393,
+        0.2588218061334834
+      ],
+      "optimized_rmse": [
+        0.016131561844254995,
+        0.669080845167236,
+        0.18691510447365872
+      ],
+      "rmse_units": "rad/m"
+    },
+    "synergistic": {
+      "iterations_per_batch": 100,
+      "batches": 6,
+      "recorded_evaluations": 600,
+      "initial_best_loss": 3.6713031134599627,
+      "final_best_loss": 1.9255167301784843,
+      "global_best_loss": 1.9255167301784843,
+      "global_best_iteration_1_based": 100,
+      "global_best_batch_1_based": 4,
+      "global_best_is_final_iteration": true,
+      "loss_reduction_from_initial_best_percent": 47.55222680690587,
+      "last_10_iteration_best_loss_slope": -0.0018086613980450913,
+      "initial_rmse": [
+        0.005105407585351894,
+        0.01017988101326631,
+        0.01855665853236518
+      ],
+      "optimized_rmse": [
+        0.006167190563073128,
+        0.010535211976811194,
+        0.009883800670462654
+      ],
+      "rmse_units": "m"
+    }
+  }
+}

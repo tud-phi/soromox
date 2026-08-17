@@ -1774,11 +1774,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
     def _create_visualizer(self, window_name: str):
         """Create a visualizer with common options set."""
         vis = o3d.visualization.VisualizerWithKeyCallback()
-        vis.create_window(
+        window_created = vis.create_window(
             window_name=window_name,
             width=self.width,
             height=self.height,
         )
+        if not window_created:
+            raise RuntimeError(
+                "Open3D failed to create the visualization window. Check that "
+                "a usable X11/Wayland display and OpenGL context are available, "
+                "or use a headless rendering path."
+            )
 
         opt = vis.get_render_option()
         opt.background_color = np.array(self.background_color, dtype=np.float64)

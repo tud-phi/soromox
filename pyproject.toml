@@ -204,6 +204,7 @@ test = [
     "coverage[toml]",
     "matplotlib",
     "opencv-python",
+    "optax",
     "plotly",
     "pytest",
     "pytest-cov",

@@ -7,6 +7,7 @@ from numpy.testing import assert_allclose, assert_array_equal
 
 pytest.importorskip("open3d")
 
+from soromox.rendering import open3d_renderer as open3d_renderer_module  # noqa: E402
 from soromox.rendering.camera_config import CameraConfig  # noqa: E402
 from soromox.rendering.open3d_renderer import (  # noqa: E402
     Open3DRenderer,
@@ -494,6 +495,23 @@ def test_open3d_interactive_camera_front_points_from_eye_to_target():
     assert vis.reset_view_point_arg is True
     assert vis.polled
     assert vis.updated
+
+
+def test_open3d_visualizer_reports_window_creation_failure(monkeypatch):
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    visualizer = Mock()
+    visualizer.create_window.return_value = False
+    visualizer_factory = Mock(return_value=visualizer)
+    monkeypatch.setattr(
+        open3d_renderer_module.o3d.visualization,
+        "VisualizerWithKeyCallback",
+        visualizer_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="failed to create the visualization window"):
+        renderer._create_visualizer("test")
+
+    visualizer.get_render_option.assert_not_called()
 
 
 def test_open3d_defaults_to_swept_backbone():

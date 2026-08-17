@@ -1,15 +1,23 @@
-import argparse
-import pickle
-import time
+import sys
 from pathlib import Path
 
 import jax
 import matplotlib.pyplot as plt
-import numpy as onp
 import optax
-import scipy.io as sio
 from jax import Array, jit, value_and_grad, vmap
 from jax import numpy as jnp
+
+CODE_DIR = Path(__file__).resolve().parent
+if str(CODE_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_DIR))
+
+from control_gain_optimization_common import (  # noqa: E402
+    finish_figure,
+    parse_args,
+    prepare_output_dirs,
+    save_optimization_outputs,
+)
+from gain_optimization_loop import run_gain_optimization  # noqa: E402
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.control import (
@@ -32,52 +40,12 @@ CASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = CASE_DIR / "data"
 DEFAULT_OUTPUTS_DIR = CASE_DIR / "outputs"
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Optimize synergistic control gains for the Section Vd study."
-    )
-    parser.add_argument(
-        "--result-dir",
-        type=Path,
-        default=DATA_DIR / "synergistic",
-        help="Directory for generated MAT and pickle data.",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=DEFAULT_OUTPUTS_DIR / "synergistic_diagnostics",
-        help="Directory for optional diagnostic figures.",
-    )
-    parser.add_argument("--num-iters", type=int, default=2)
-    parser.add_argument("--save-figures", action="store_true")
-    parser.add_argument("--no-show", action="store_true")
-    parser.add_argument("--no-render", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    return parser.parse_args()
-
-
-ARGS = parse_args()
-RESULT_DIR = ARGS.result_dir.resolve()
-OUTPUTS_DIR = ARGS.output_dir.resolve()
-if ARGS.num_iters < 1:
-    raise ValueError("--num-iters must be at least 1")
-for output_name in ("optimization_results.mat", "animation_data.pkl"):
-    output_path = RESULT_DIR / output_name
-    if output_path.exists() and not ARGS.force:
-        raise FileExistsError(f"Refusing to overwrite {output_path}; pass --force")
-
-
-def finish_figure(filename: str) -> None:
-    if ARGS.save_figures:
-        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-        output_path = OUTPUTS_DIR / filename
-        plt.savefig(output_path, dpi=200, bbox_inches="tight")
-        print(f"Saved {output_path}")
-    if ARGS.no_show:
-        plt.close()
-    else:
-        plt.show()
+ARGS = parse_args(
+    description="Optimize synergistic control gains for the Section Vd study.",
+    default_result_dir=DATA_DIR / "synergistic",
+    default_output_dir=DEFAULT_OUTPUTS_DIR / "synergistic_diagnostics",
+)
+RESULT_DIR, OUTPUTS_DIR = prepare_output_dirs(ARGS)
 
 
 def evaluate_closed_loop_system(
@@ -105,10 +73,13 @@ def evaluate_closed_loop_system(
     # Compute loss
     settling_idx = int(len(t_ts) / 2)
 
-    e_ts = jnp.linalg.norm(x_des_ts - q_ts, axis=1)
+    # Track the operational-space pose the controller regulates
+    x_ts = vmap(osd.operational_space_poses)(q_ts)
+    e_ts = vmap(osd.compute_task_pose_error)(x_ts, x_des_ts)
+    e_sq_ts = jnp.sum(e_ts**2, axis=1)
 
-    loss1 = jnp.trapezoid(e_ts[:settling_idx] ** 2, t_ts[:settling_idx])
-    loss2 = jnp.trapezoid(e_ts[settling_idx:] ** 2, t_ts[settling_idx:])
+    loss1 = jnp.trapezoid(e_sq_ts[:settling_idx], t_ts[:settling_idx])
+    loss2 = jnp.trapezoid(e_sq_ts[settling_idx:], t_ts[settling_idx:])
 
     loss = 1e3 * loss1 + 5e3 * loss2
 
@@ -343,121 +314,39 @@ optimizer = optax.multi_transform(
     },
     param_labels,
 )
-opt_state = optimizer.init(opt_vars)
-
 # Gradient function
 gradient_fn = jit(value_and_grad(evaluate_closed_loop_system, 0, has_aux=True))
 
-
-# Update function of the optimization variables
-def update(opt_vars, opt_state):
-    # Compute gradient
-    (loss, aux), grad = gradient_fn(opt_vars, controller)
-
-    # Compute the update of the optimization variables
-    updates, opt_state = optimizer.update(grad, opt_state, params=opt_vars)
-
-    # Apply the update
-    opt_vars = optax.apply_updates(opt_vars, updates)
-
-    return opt_vars, opt_state, loss, aux
-
-
 print("Optimization variables = ", list(opt_vars.keys()))
-
-# Optimization loop
-num_iters = ARGS.num_iters
-
-# Optimization-wise variables
-time_iter = []
-loss_tot = []
-opt_vars_tot = []
-
-# Simulation-wise variables
-t_ts_tot = []
-q_ts_tot = []
-qd_ts_tot = []
-u_ts_tot = []
-
 print("\nStarting optimization...")
 
-# Track time
-compile_start = time.time()
-
-# Step
-opt_vars, opt_state, loss, aux = update(opt_vars, opt_state)
-jax.block_until_ready(aux)
-
-compile_end = time.time()
-print(
-    f"\n[INFO] Compilation + first execution time = {compile_end - compile_start:.2f} s"
+# Optimization loop
+history = run_gain_optimization(
+    gradient_fn=lambda variables: gradient_fn(variables, controller),
+    optimizer=optimizer,
+    opt_vars=opt_vars,
+    num_iters=ARGS.num_iters,
+    progress_label="Synergistic",
 )
 
-# Store data
-time_iter.append(compile_end - compile_start)
-loss_tot.append(loss)
-t_ts_tot.append(aux["t_ts"])
-q_ts_tot.append(aux["q_ts"])
-qd_ts_tot.append(aux["qd_ts"])
-u_ts_tot.append(aux["u_ts"])
-opt_vars_tot.append(opt_vars)
+num_iters = len(history)
 
-i = 1
-while i < num_iters:
-    # Start of iteration
-    iter_start = time.time()
-
-    # Step
-    opt_vars, opt_state, loss, aux = update(opt_vars, opt_state)
-    jax.block_until_ready(aux)
-
-    # End of iteration
-    iter_end = time.time()
-    iter_duration = iter_end - iter_start
-
-    # Check validity
-    if jnp.isnan(aux["q_ts"]).any():
-        print(f"\n[WARNING] NaN detected at iteration {i}. Stopping.")
-        break
-
-    # Store data
-    time_iter.append(iter_duration)
-    loss_tot.append(loss)
-    t_ts_tot.append(aux["t_ts"])
-    q_ts_tot.append(aux["q_ts"])
-    qd_ts_tot.append(aux["qd_ts"])
-    u_ts_tot.append(aux["u_ts"])
-    opt_vars_tot.append(opt_vars)
-
-    # Log
-    t_left = (num_iters - i - 1) * sum(time_iter[1:]) / len(time_iter[1:])  # [s]
-    eta = time.localtime(time.time() + t_left)
-    print(
-        f"Completion: {100 * (i + 1) / num_iters:3.1f} %  |  iteration {i + 1:>4d} of "
-        + f"{num_iters:<4d}  |  iter time = {iter_duration:>.2f} s  |  ETA = {eta.tm_mday:02d}"
-        + f"/{eta.tm_mon:02d}/{eta.tm_year} {eta.tm_hour:02d}:{eta.tm_min:02d}",
-        end="\r",
-    )
-
-    # Update counter
-    i += 1
-
-# Log
-print(
-    f"Completion: {100 * i / num_iters:3.1f} %  |  iteration {i:>4d} of {num_iters:<4d}"
-    f"  |  iter time = {float(time_iter[-1]):>.4f} s"
-)
+if num_iters == 0:
+    print(f"\n[ERROR] {history.stop_reason}")
+    print("No finite iterate was recorded, so there is nothing to save or plot.")
+    sys.exit(1)
 
 # Cast to Array type
-time_iter = jnp.array(time_iter)  # (num_iters,)
-loss_tot = jnp.array(loss_tot)  # (num_iters,)
-t_ts_tot = jnp.array(t_ts_tot)  # (num_iters, num_ts)
-q_ts_tot = jnp.array(q_ts_tot)  # (num_iters, num_ts, num_dofs)
-qd_ts_tot = jnp.array(qd_ts_tot)  # (num_iters, num_ts, num_dofs)
-u_ts_tot = jnp.array(u_ts_tot)  # (num_iters, num_ts, num_actuators)
+time_iter = jnp.array(history.time_iter)  # (num_iters,)
+loss_tot = jnp.array(history.loss)  # (num_iters,)
+t_ts_tot = history.stacked_aux("t_ts")  # (num_iters, num_ts)
+q_ts_tot = history.stacked_aux("q_ts")  # (num_iters, num_ts, num_dofs)
+qd_ts_tot = history.stacked_aux("qd_ts")  # (num_iters, num_ts, num_dofs)
+u_ts_tot = history.stacked_aux("u_ts")  # (num_iters, num_ts, num_actuators)
+opt_vars_tot = history.opt_vars
 
 # Chosen iteration to display
-best_idx_opt = int(jnp.argmin(loss_tot))
+best_idx_opt = history.best_index()
 print(
     "Optimization Finished. Best optimization variables:\n", opt_vars_tot[best_idx_opt]
 )
@@ -481,6 +370,32 @@ pos_indices = jnp.arange(6)  # All components
 
 pos_ts_init = x_ts_init[:, pos_indices]
 pos_ts_best = x_ts_best[:, pos_indices]
+
+# =====================================================
+# Save
+# =====================================================
+save_optimization_outputs(
+    RESULT_DIR,
+    loss_tot=loss_tot,
+    time_iter=time_iter,
+    opt_vars_tot=opt_vars_tot,
+    t_ts=t_ts,
+    q_ts_init=q_ts_init,
+    qd_ts_init=qd_ts_init,
+    u_ts_init=u_ts_init,
+    x_ts_init=x_ts_init,
+    q_ts_best=q_ts_best,
+    qd_ts_best=qd_ts_best,
+    u_ts_best=u_ts_best,
+    x_ts_best=x_ts_best,
+    num_iters=num_iters,
+    x_des_ts=x_des_ts,
+    best_idx_opt=best_idx_opt,
+    params=params,
+    active_tendon_routing=active_tendon_routing,
+    passive_elements=robot.passive_elements,
+    num_segments=num_segments,
+)
 
 
 # =====================================================
@@ -527,7 +442,7 @@ plt.xlabel("Iterations [-]")
 plt.ylabel("Loss")
 plt.xlim([0, len(loss_tot)])
 plt.tight_layout()
-finish_figure("loss.pdf")
+finish_figure(ARGS, OUTPUTS_DIR, "loss.pdf")
 
 # Select key operational variable to plot (tip positions)
 plot_task_indices = [3, 4, 5]  # p_x, p_y, p_z
@@ -585,7 +500,7 @@ axes[-1].set_xlabel("Time [s]")
 axes[0].set_title("Operational-Space Setpoint Regulation: Position Tracking")
 
 plt.tight_layout()
-finish_figure("operational_space_regulation_tracking.pdf")
+finish_figure(ARGS, OUTPUTS_DIR, "operational_space_regulation_tracking.pdf")
 
 # Create figure for tracking errors
 fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -626,7 +541,7 @@ axes[-1].set_xlabel("Time [s]")
 axes[0].set_title("Operational-Space Setpoint Regulation: Tracking Error Comparison")
 
 plt.tight_layout()
-finish_figure("operational_space_regulation_errors.pdf")
+finish_figure(ARGS, OUTPUTS_DIR, "operational_space_regulation_errors.pdf")
 
 # Create figure for control inputs (tendon tensions)
 fig, axes = plt.subplots(3, 1, figsize=(12, 8), sharex=True)
@@ -677,7 +592,7 @@ axes[0].set_title(
 )
 
 plt.tight_layout()
-finish_figure("operational_space_regulation_inputs.pdf")
+finish_figure(ARGS, OUTPUTS_DIR, "operational_space_regulation_inputs.pdf")
 
 # Create bar chart for RMSE comparison
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -699,7 +614,7 @@ ax.legend()
 ax.grid(True, alpha=0.3, axis="y")
 
 plt.tight_layout()
-finish_figure("operational_space_regulation_rmse.pdf")
+finish_figure(ARGS, OUTPUTS_DIR, "operational_space_regulation_rmse.pdf")
 
 if ARGS.no_render:
     print("Skipping Open3D rendering (--no-render).")
@@ -714,87 +629,3 @@ else:
         playback_speed=1.0,
         window_name=f"Operational-Space Regulation ({render_name})",
     )
-
-# =====================================================
-# Save
-# =====================================================
-RESULT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def to_np(x):
-    return onp.array(x)
-
-
-mat_data = {}
-
-
-# Optimization
-def flatten_params_to_dict(params_tree, prefix=""):
-    """
-    Helper: Flatten params_tree.
-
-    :param params_tree: Description
-    :param prefix: Description
-    """
-    flat_dict = {}
-    leaves, _ = jax.tree_util.tree_flatten_with_path(params_tree)
-    for path, val in leaves:
-        key_str = "_".join([str(p.key) if hasattr(p, "key") else str(p) for p in path])
-        full_key = f"{prefix}{key_str}"
-        flat_dict[full_key] = to_np(val)
-    return flat_dict
-
-
-mat_data["history_loss"] = to_np(loss_tot)
-mat_data["history_time"] = to_np(time_iter)
-stacked_history_tree = jax.tree_util.tree_map(
-    lambda *xs: jnp.stack(xs, axis=0), *opt_vars_tot
-)
-mat_data.update(
-    flatten_params_to_dict(stacked_history_tree, prefix="history_opt_vars_")
-)
-
-# Simulation
-mat_data["t_ts"] = to_np(t_ts)
-
-mat_data["q_ts_init"] = to_np(q_ts_init)
-mat_data["qd_ts_init"] = to_np(qd_ts_init)
-mat_data["u_ts_init"] = to_np(u_ts_init)
-mat_data["x_ts_init"] = to_np(x_ts_init)
-
-mat_data["q_ts_best"] = to_np(q_ts_best)
-mat_data["qd_ts_best"] = to_np(qd_ts_best)
-mat_data["u_ts_best"] = to_np(u_ts_best)
-mat_data["x_ts_best"] = to_np(x_ts_best)
-
-# Metadata
-mat_data["num_iters"] = to_np(num_iters)
-mat_data["x_des_ts"] = to_np(x_des_ts)
-mat_data["best_idx_opt"] = to_np(best_idx_opt)
-
-# Save main summary .mat file
-mat_filename = RESULT_DIR / "optimization_results.mat"
-print(f"Saving data to {mat_filename}")
-sio.savemat(mat_filename, mat_data, do_compression=True)
-
-# Save Data for Python Animation (Pickle)
-animation_dict = {
-    # Robot parameters
-    "params": params,
-    "active_tendon_routing": active_tendon_routing,
-    "passive_elements": robot.passive_elements,
-    "num_segments": num_segments,
-    # Optimized Parameters
-    "best_opt_vars": opt_vars_tot[best_idx_opt],
-    # Trajectory Data
-    "t_ts": t_ts,
-    "q_ts": q_ts_best,
-    # Target
-    "x_des_ts": x_des_ts,
-}
-
-anim_filename = RESULT_DIR / "animation_data.pkl"
-with open(anim_filename, "wb") as f:
-    pickle.dump(animation_dict, f)
-
-print("Save complete.")  # '''

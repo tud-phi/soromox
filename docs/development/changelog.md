@@ -23,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Public ``se2`` and ``se3`` left Jacobians and analytic directional
   derivatives for accumulated Lie-algebra coordinates, independent of any
   constant-strain rod interpretation.
+- Public ``constant_strain.se3.tangent_and_derivative`` for callers that need
+  the selective tangent pair without constructing unused adjoint operators.
+- An offline Section Vd post-processing renderer for saved optimization
+  trajectories, with reproducible tracking plots, MP4 animations, optional GIF
+  conversion, and intermediate metrics.
 
 ### Changed
 
@@ -61,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made the Section V.d collocated optimizer derive ``gamma`` from a configurable
   tendon-length error scale (default 10 mm), validate finite saturation
   parameters, and document stale committed artifacts.
+- Consolidated the Section Vd control-gain optimization scripts around a shared,
+  testable optimization loop and independently configured collocated and
+  synergistic cases, with shared CLI/output helpers, explicit output locations,
+  overwrite protection, paper-result iteration defaults, and consistent MAT,
+  pickle, and diagnostic-figure handling. Diagnostic figures are always saved,
+  the obsolete ``--save-figures`` switch is no longer needed, and the primary
+  optimization data is persisted before plotting or interactive rendering
+  begins; saved trajectory diagnostics can be rendered without rerunning
+  optimization.
 
 ### Fixed
 
@@ -77,6 +91,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arbitrary-axis SE(3) inputs, without adding autodiff to production paths.
 - Made simulation benchmark timing treat Python solver/save parameters as static
   JAX arguments so the existing rollout benchmark can compile and run.
+- Set the Section Vd collocated and synergistic optimization defaults to the
+  100 iterations used by the paper-result histories, and document that setting
+  in the reproduction commands.
+- Corrected Section Vd loss/parameter history pairing, rejected non-finite
+  optimization candidates, and selected the best collocated and synergistic
+  plotting batches independently.
+- Guarded the collocated optimization reference against transient setpoints and
+  collapsed tendon paths by using stable asymmetric tensions and failing fast
+  when the generated steady state is unsuitable for reverse-mode optimization.
+- Reported Open3D window-creation failures explicitly, with a clear error for
+  environments that lack a usable display or OpenGL context.
 
 ## [0.2.2] - 2026-08-11
 
