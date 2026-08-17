@@ -19,14 +19,6 @@ Parameter handling, validation, and default configurations for soft robot system
 - Conversion utilities between parameter representations
 - Factory functions for common robot configurations
 
-### [Geometry](geometry.md)
-
-Pose encodings, rotation representation conversions, and geometric errors.
-
-- Direct pose-coordinate transform helpers
-- Quaternion, rotation-vector, rotation-matrix, and 6D conversions
-- Geodesic orientation errors for control and tracking
-
 ### [Numerics](numerics.md)
 
 Finite singular-point conventions for common JAX numerical operations.
@@ -34,6 +26,14 @@ Finite singular-point conventions for common JAX numerical operations.
 - Safe square root, Euclidean norm, division, and normalization
 - Defined values and derivatives at removable or model singularities
 - Strict-singularity diagnostics for locating invalid configurations
+
+### [Geometry](geometry.md)
+
+Pose encodings, rotation representation conversions, and geometric errors.
+
+- Direct pose-coordinate transform helpers
+- Quaternion, rotation-vector, rotation-matrix, and 6D conversions
+- Geodesic orientation errors for control and tracking
 
 ### [Lie Algebra](lie-algebra.md)
 
@@ -54,7 +54,7 @@ Rod-segment operators organized into planar and spatial namespaces.
 ## Quick Links
 
 - [Parameters API Reference](parameters.md) - Parameter management utilities
-- [Geometry API Reference](geometry.md) - Pose, rotation, and error utilities
 - [Numerics API Reference](numerics.md) - Safe numerical primitives
+- [Geometry API Reference](geometry.md) - Pose, rotation, and error utilities
 - [Lie Algebra API Reference](lie-algebra.md) - Lie group and Jacobian utilities
 - [Constant-Strain API Reference](constant-strain.md) - Rod-segment Lie operators

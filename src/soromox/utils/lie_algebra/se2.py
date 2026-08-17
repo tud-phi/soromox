@@ -247,10 +247,18 @@ def left_jacobian(xi: Array, eps: float | Array) -> Array:
     The operation is intrinsic to ``SE(2)`` and does not assume that ``xi``
     came from a constant-strain rod segment.
 
+    The angular-first convention makes the first coordinate the accumulated
+    rotation and the remaining coordinates the accumulated translation. The
+    result is a coordinate Jacobian in the same basis as ``xi``; it is not an
+    arclength-scaled constant-strain tangent operator.
+
     Args:
         xi: Accumulated planar twist with shape ``(3,)`` or ``(3, 1)`` in
             ``[theta, v_x, v_y]`` order.
-        eps: Minimum small-angle threshold for the stable coefficient series.
+        eps: Minimum dimensionless small-angle threshold for the stable
+            coefficient series. The implementation also applies a
+            dtype-aware threshold so first and higher derivatives remain
+            finite near zero.
 
     Returns:
         Left Jacobian with shape ``(3, 3)``.
@@ -269,10 +277,18 @@ def left_jacobian_directional_derivative(
     ``xid`` is an arbitrary direction in the Lie algebra; it need not be a
     physical time derivative or a constant-strain rate.
 
+    This is the Fréchet derivative of the full matrix-valued function
+    ``left_jacobian`` along ``xid``. Both the rotational and translational
+    components of ``xid`` contribute to the result.
+
     Args:
-        xi: Accumulated planar twist in angular-first order.
+        xi: Accumulated planar twist with shape ``(3,)`` or ``(3, 1)`` in
+            ``[theta, v_x, v_y]`` order.
         xid: Direction with the same shape and coordinate order as ``xi``.
-        eps: Minimum small-angle threshold for the stable coefficient series.
+            It is interpreted as a directional derivative, not necessarily a
+            physical time derivative.
+        eps: Minimum dimensionless small-angle threshold for the stable
+            coefficient series.
 
     Returns:
         Directional derivative with shape ``(3, 3)``.
@@ -293,10 +309,18 @@ def left_jacobian_and_directional_derivative(
 ) -> tuple[Array, Array]:
     r"""Evaluate ``J_l(xi)`` and ``D J_l(xi)[xid]`` with shared work.
 
+    This bundle is numerically equivalent to calling
+    :func:`left_jacobian` and
+    :func:`left_jacobian_directional_derivative` separately, but reuses the
+    scalar coefficients needed by both evaluations. Use it when both the
+    Jacobian and its directional derivative are required at the same point.
+
     Args:
-        xi: Accumulated planar twist in angular-first order.
+        xi: Accumulated planar twist with shape ``(3,)`` or ``(3, 1)`` in
+            ``[theta, v_x, v_y]`` order.
         xid: Direction with the same shape and coordinate order as ``xi``.
-        eps: Minimum small-angle threshold for the stable coefficient series.
+        eps: Minimum dimensionless small-angle threshold for the stable
+            coefficient series.
 
     Returns:
         Tuple ``(J, Jd)`` whose arrays both have shape ``(3, 3)``.
