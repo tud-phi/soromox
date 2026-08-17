@@ -10,11 +10,10 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.io as sio
 from matplotlib.lines import Line2D
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
-RESULTS_FILENAME = "optimization_results.mat"
+RESULTS_FILENAME = "optimization_results.npz"
 PAPER_RESULTS_DIR = SCRIPT_DIR.parent
 if str(PAPER_RESULTS_DIR) not in sys.path:
     sys.path.insert(0, str(PAPER_RESULTS_DIR))
@@ -69,13 +68,10 @@ def cm_to_inches(size_cm: tuple[float, float]) -> tuple[float, float]:
 
 
 def load_results(directory: Path) -> dict[str, np.ndarray]:
-    """Load an optimization_results.mat file from a data directory."""
+    """Load an optimization_results.npz file from a data directory."""
     path = directory / RESULTS_FILENAME
-    return {
-        key: np.asarray(value)
-        for key, value in sio.loadmat(path, squeeze_me=False).items()
-        if not key.startswith("__")
-    }
+    with np.load(path, allow_pickle=False) as archive:
+        return {key: np.asarray(archive[key]) for key in archive.files}
 
 
 def best_batch_from_loss(history_loss: np.ndarray) -> int:
@@ -319,7 +315,7 @@ def build_figure(data_dir: Path) -> plt.Figure:
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
-        description="Plot control gain optimization results from .mat files."
+        description="Plot control gain optimization results from .npz files."
     )
     parser.add_argument(
         "--data-dir",

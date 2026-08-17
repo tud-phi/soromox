@@ -62,6 +62,19 @@ def test_best_batch_from_loss_finds_the_minimizing_batch():
     assert best_batch_from_loss(_loss_history(2)) == 2
 
 
+def test_load_results_reads_the_numpy_archive(tmp_path):
+    expected = {
+        "history_loss": _loss_history(COLLOCATED_BEST_BATCH),
+        "q_ts_init": np.zeros((NUM_BATCHES, NUM_STEPS, 6)),
+    }
+    np.savez_compressed(tmp_path / "optimization_results.npz", **expected)
+
+    loaded = plot_module.load_results(tmp_path)
+
+    for key, value in expected.items():
+        np.testing.assert_array_equal(loaded[key], value)
+
+
 def test_each_panel_receives_its_own_best_batch(monkeypatch):
     data_c = _fake_results(COLLOCATED_BEST_BATCH, 6, "q_des_ts")
     data_c["q_ts_init"] = data_c.pop("raw_initial")

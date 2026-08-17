@@ -69,8 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Consolidated the Section Vd control-gain optimization scripts around a shared,
   testable optimization loop and independently configured collocated and
   synergistic cases, with shared CLI/output helpers, explicit output locations,
-  overwrite protection, paper-result iteration defaults, and consistent MAT,
-  pickle, and diagnostic-figure handling. Diagnostic figures are always saved,
+  overwrite protection, paper-result iteration defaults, and consistent NumPy
+  archive, pickle, and diagnostic-figure handling. Diagnostic figures are always
+  saved,
   the obsolete ``--save-figures`` switch is no longer needed, and the primary
   optimization data is persisted before plotting or interactive rendering
   begins; saved trajectory diagnostics can be rendered without rerunning

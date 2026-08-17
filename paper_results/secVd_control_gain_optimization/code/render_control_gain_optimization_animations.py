@@ -1,9 +1,9 @@
-"""Render Section Vd tracking diagnostics and animations from saved MAT data.
+"""Render Section Vd tracking diagnostics and animations from saved NumPy data.
 
 The optimization generators normally create interactive Open3D previews, but
 the committed Section Vd datasets contain the trajectory fields needed for an
 offline, reproducible Matplotlib rendering.  This script supports both the
-legacy batched MAT layout and the newer single-run layout.
+legacy batched and newer single-run layouts.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy.io as sio
 from matplotlib.animation import FFMpegWriter, FuncAnimation
 
 CASE_DIR = Path(__file__).resolve().parent.parent
@@ -60,14 +59,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _load_mat(path: Path) -> dict[str, np.ndarray]:
+def _load_npz(path: Path) -> dict[str, np.ndarray]:
     if not path.is_file():
         raise FileNotFoundError(path)
-    return {
-        key: np.asarray(value)
-        for key, value in sio.loadmat(path, squeeze_me=False).items()
-        if not key.startswith("__")
-    }
+    with np.load(path, allow_pickle=False) as archive:
+        return {key: np.asarray(archive[key]) for key in archive.files}
 
 
 def _normalize_loss_and_batches(
@@ -135,7 +131,7 @@ def _normalize_target(
 
 
 def load_method(data_dir: Path, name: str) -> MethodData:
-    data = _load_mat(data_dir / name / "optimization_results.mat")
+    data = _load_npz(data_dir / name / "optimization_results.npz")
     if name == "collocated":
         initial_key, best_key = "q_ts_init", "q_ts_best"
         target_key = "q_des_ts" if "q_des_ts" in data else "x_des_ts"
@@ -153,7 +149,7 @@ def load_method(data_dir: Path, name: str) -> MethodData:
     required = {"history_loss", "t_ts", initial_key, best_key, target_key}
     missing = required.difference(data)
     if missing:
-        raise KeyError(f"{name} MAT file is missing {sorted(missing)}")
+        raise KeyError(f"{name} NumPy archive is missing {sorted(missing)}")
 
     loss, initial, best = _normalize_loss_and_batches(
         data["history_loss"], data[initial_key], data[best_key]
@@ -354,7 +350,7 @@ def main() -> None:
         outputs.extend(render_method(method, args.output_dir, args.fps, args.gif))
 
     metrics = {
-        "source": "recoverable canonical MAT histories",
+        "source": "recoverable canonical NumPy archives",
         "note": (
             "The explicitly interrupted live 285/119-iteration processes did not "
             "checkpoint their in-memory histories; these artifacts use the finite "

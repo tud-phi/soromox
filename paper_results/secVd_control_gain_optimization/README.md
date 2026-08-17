@@ -1,8 +1,9 @@
 # Section Vd: Control-Gain Optimization
 
 This case compares gain optimization for collocated actuation-space control and
-synergistic operational-space control. Each generator writes a MAT result under
-its controller-specific directory in `data/`; the plotter combines both files.
+synergistic operational-space control. Each generator writes a compressed NumPy
+archive to its controller-specific directory in `data/`; the plotter combines
+both files.
 
 > [!WARNING]
 > The committed Section Vd MAT files and derived plots are stale. In particular,
@@ -52,14 +53,14 @@ Pressing Ctrl-C during an optimization preserves the finite iterations that
 finished before the interrupted evaluation. The generator then continues
 through its normal plot and data-saving path.
 
-Recreate the canonical comparison from the committed MAT files:
+Recreate the canonical comparison from the committed `.npz` files:
 
 ```bash
 uv run python paper_results/secVd_control_gain_optimization/code/plot_control_gain_optimization.py
 ```
 
 Render offline tracking diagnostics plus MP4 and GIF animations from the saved
-MAT trajectories:
+NumPy trajectories:
 
 ```bash
 uv run python paper_results/secVd_control_gain_optimization/code/render_control_gain_optimization_animations.py \

@@ -5,9 +5,8 @@ from pathlib import Path
 import jax
 import matplotlib.pyplot as plt
 import numpy as onp
-import scipy.io as sio
 
-RESULT_FILENAMES = ("optimization_results.mat", "animation_data.pkl")
+RESULT_FILENAMES = ("optimization_results.npz", "animation_data.pkl")
 
 
 def parse_args(
@@ -18,7 +17,7 @@ def parse_args(
         "--result-dir",
         type=Path,
         default=default_result_dir,
-        help="Directory for generated MAT and pickle data.",
+        help="Directory for generated NumPy archive and pickle data.",
     )
     parser.add_argument(
         "--output-dir",
@@ -88,7 +87,7 @@ def to_np(x):
 
 
 def flatten_params_to_dict(params_tree, prefix=""):
-    """Flatten a JAX parameter tree into keys suitable for a MAT file."""
+    """Flatten a JAX parameter tree into keys suitable for a NumPy archive."""
     flat_dict = {}
     leaves, _ = jax.tree_util.tree_flatten_with_path(params_tree)
     for path, val in leaves:
@@ -122,10 +121,10 @@ def save_optimization_outputs(
     passive_elements,
     num_segments,
 ) -> None:
-    """Save the common MAT summary and animation pickle for either case."""
+    """Save the common NumPy summary and animation pickle for either case."""
     result_dir.mkdir(parents=True, exist_ok=True)
 
-    mat_data = {
+    result_data = {
         "history_loss": to_np(loss_tot),
         "history_time": to_np(time_iter),
         "t_ts": to_np(t_ts),
@@ -144,13 +143,13 @@ def save_optimization_outputs(
     stacked_history_tree = jax.tree_util.tree_map(
         lambda *xs: jax.numpy.stack(xs, axis=0), *opt_vars_tot
     )
-    mat_data.update(
+    result_data.update(
         flatten_params_to_dict(stacked_history_tree, prefix="history_opt_vars_")
     )
 
-    mat_filename = result_dir / "optimization_results.mat"
-    print(f"Saving data to {mat_filename}")
-    sio.savemat(mat_filename, mat_data, do_compression=True)
+    result_filename = result_dir / "optimization_results.npz"
+    print(f"Saving data to {result_filename}")
+    onp.savez_compressed(result_filename, **result_data)
 
     animation_dict = {
         "params": params,

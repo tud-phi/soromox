@@ -1,5 +1,5 @@
 {
-  "source": "recoverable canonical MAT histories",
+  "source": "recoverable canonical NumPy archives",
   "note": "The explicitly interrupted live 285/119-iteration processes did not checkpoint their in-memory histories; these artifacts use the finite 100-iteration x 6-batch datasets already present on disk.",
   "methods": {
     "collocated": {
