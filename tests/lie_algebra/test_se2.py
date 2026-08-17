@@ -6,7 +6,7 @@ from numpy.testing import assert_allclose
 
 from soromox.autodiff import strict_singularities_mode
 from soromox.utils.geometry import poses
-from soromox.utils.lie_algebra import se2
+from soromox.utils.lie_algebra import se2, so2
 from soromox.utils.lie_algebra.jacobian_coefficients import (
     inverse_left_jacobian_series_threshold,
 )
@@ -20,12 +20,47 @@ ATOL = Tolerance.atol()
 EPS = float(jnp.finfo(jnp.float64).eps)
 J = jnp.array([[0.0, -1.0], [1.0, 0.0]])
 
+BRANCH_EPS = 1e1 * float(jnp.finfo(jnp.float64).eps)
+
+
+def _batched_grad(fn, x, batch: int = 3):
+    """Differentiate ``sum(vmap(fn)(x))`` through small-angle branches."""
+    stacked = jnp.broadcast_to(x, (batch,) + x.shape)
+    return jax.grad(lambda values: jnp.sum(jax.vmap(fn)(values)))(stacked)
+
 
 def test_strict_mode_exposes_exp_quotients_at_zero_rotation():
     with strict_singularities_mode():
         result = se2.exp(jnp.array([0.0, 0.7, -0.4]), 0.0)
 
     assert not jnp.isfinite(result).all()
+
+
+@pytest.mark.parametrize(
+    ("name", "fn", "argument"),
+    [
+        (
+            "se2.exp",
+            lambda xi: se2.exp(xi, BRANCH_EPS),
+            jnp.array([0.0, 1.0, 0.0]),
+        ),
+        ("so2.exp", so2.exp, jnp.array(0.0)),
+        (
+            "se2.log",
+            lambda g: se2.log(g, BRANCH_EPS),
+            jnp.eye(3),
+        ),
+        ("so2.log", lambda R: so2.log(R, BRANCH_EPS), jnp.eye(2)),
+    ],
+    ids=["se2.exp", "so2.exp", "se2.log", "so2.log"],
+)
+def test_grad_of_vmap_is_finite_at_zero_rotation(name, fn, argument):
+    """Batched reverse mode stays finite on every planar Lie branch."""
+    gradient = _batched_grad(lambda value: jnp.sum(fn(value)), argument)
+
+    assert jnp.isfinite(gradient).all(), (
+        f"{name} produced a non-finite batched gradient"
+    )
 
 
 def test_log_se2_pure_translation():

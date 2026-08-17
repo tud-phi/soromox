@@ -1,4 +1,5 @@
 import jax
+import pytest
 from jax import Array
 from jax import numpy as jnp
 from numpy.testing import assert_allclose
@@ -10,6 +11,7 @@ from soromox.autodiff import (
 )
 from soromox.systems.soft_robot import CrossSectionGeometry, SoftRobot
 from soromox.utils.geometry import poses
+from soromox.utils.lie_algebra import se3
 
 jax.config.update("jax_enable_x64", True)
 
@@ -93,6 +95,17 @@ class _SpatialDefaultRobot(_PlanarDefaultRobot):
         g = jnp.eye(4, dtype=q.dtype)
         g = g.at[:3, :3].set(R)
         return g.at[:3, 3].set(p)
+
+
+class _SpatialLieExpDefaultRobot(_SpatialDefaultRobot):
+    """Spatial default-hook fixture whose protected pose uses the SE(3) branch."""
+
+    def __init__(self):
+        super().__init__()
+        self.num_dofs = 6
+
+    def _forward_kinematics(self, q: Array, s: Array) -> Array:
+        return se3.exp(s * q, eps=jnp.asarray(1e-10, dtype=q.dtype))
 
 
 class _DynamicsTermsEnergyJVPDefaultRobot(_PlanarDefaultRobot):
@@ -237,6 +250,109 @@ def test_default_spatial_jacobian_converts_se3_pose_derivative() -> None:
 
     assert robot.forward_kinematics_tips(q).shape == (2, 4, 4)
     assert robot.jacobian_tips(q).shape == (2, 6, 2)
+
+
+def test_default_custom_jvp_paths_are_finite_under_grad_of_vmap() -> None:
+    """Inherited nested-AD fallback paths remain finite under batched reverse mode."""
+    robot = _PlanarDefaultRobot()
+    q = jnp.zeros((2,), dtype=jnp.float64)
+    q_batch = jnp.stack([q, jnp.array([0.3, -0.2], dtype=jnp.float64)])
+    qd = jnp.array([0.7, -0.4], dtype=jnp.float64)
+    s = jnp.asarray(0.8, dtype=jnp.float64)
+    sd = jnp.asarray(0.13, dtype=jnp.float64)
+
+    q_paths = (
+        (
+            "forward_kinematics",
+            lambda q_: jnp.sum(robot.forward_kinematics(q_, s)),
+        ),
+        ("jacobian", lambda q_: jnp.sum(robot.jacobian(q_, s))),
+        ("kinetic_energy", lambda q_: robot.kinetic_energy(q_, qd)),
+        ("total_energy", lambda q_: robot.total_energy(q_, qd)),
+        (
+            "mixed_forward_kinematics_jvp",
+            lambda q_: jnp.sum(
+                jax.jvp(
+                    lambda q__, s__: robot.forward_kinematics(q__, s__),
+                    (q_, s),
+                    (qd, sd),
+                )[1]
+            ),
+        ),
+        (
+            "mixed_jacobian_jvp",
+            lambda q_: jnp.sum(
+                jax.jvp(
+                    lambda q__, s__: robot.jacobian(q__, s__),
+                    (q_, s),
+                    (qd, sd),
+                )[1]
+            ),
+        ),
+    )
+
+    for name, fn in q_paths:
+        grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(q_batch)
+        assert jnp.isfinite(grad).all(), f"default {name} path contains NaN!"
+
+    s_batch = jnp.array([0.8, 1.2], dtype=jnp.float64)
+    for name, fn in (
+        (
+            "forward_kinematics_arc_length",
+            lambda s_: jnp.sum(robot.forward_kinematics(q, s_)),
+        ),
+        ("jacobian_arc_length", lambda s_: jnp.sum(robot.jacobian(q, s_))),
+    ):
+        grad = jax.grad(lambda values, fn=fn: jnp.sum(jax.vmap(fn)(values)))(s_batch)
+        assert jnp.isfinite(grad).all(), f"default {name} path contains NaN!"
+
+
+def test_spatial_default_jacobian_fallback_is_finite_without_custom_jvp() -> None:
+    """The spatial Jacobian fallback is finite when its public wrapper is bypassed."""
+    robot = _SpatialLieExpDefaultRobot()
+    q = jnp.zeros((6,), dtype=jnp.float64)
+    q_batch = jnp.stack([q, q.at[0].set(0.3)])
+    s = jnp.asarray(0.8, dtype=jnp.float64)
+
+    def batch_grad(fn):
+        return jax.grad(
+            lambda batch: jnp.sum(jax.vmap(lambda q_: jnp.sum(fn(q_)))(batch))
+        )(q_batch)
+
+    protected_grad = batch_grad(lambda q_: robot._jacobian(q_, s))
+    with custom_jvp_mode(False):
+        wrapper_disabled_grad = batch_grad(lambda q_: robot.jacobian(q_, s))
+
+    assert jnp.isfinite(protected_grad).all()
+    assert jnp.isfinite(wrapper_disabled_grad).all()
+    assert_allclose(wrapper_disabled_grad, protected_grad, rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Pre-existing: the SoftRobot jacobian custom-JVP wrapper produces NaN "
+        "under grad-of-vmap for a spatial default Jacobian whose protected "
+        "forward kinematics uses the finite se3.exp zero-angle branch. The "
+        "protected _jacobian path and the public wrapper with custom JVPs "
+        "disabled are finite, isolating the defect to the wrapper's q-only "
+        "nested-JVP fallback. Tracked with the forward_kinematics wrapper "
+        "failure; remove this marker once fixed."
+    ),
+)
+def test_spatial_default_jacobian_custom_jvp_is_finite_under_grad_of_vmap() -> None:
+    robot = _SpatialLieExpDefaultRobot()
+    q = jnp.zeros((6,), dtype=jnp.float64)
+    q_batch = jnp.stack([q, q.at[0].set(0.3)])
+    s = jnp.asarray(0.8, dtype=jnp.float64)
+
+    grad = jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(lambda q_: jnp.sum(robot.jacobian(q_, s)))(batch)
+        )
+    )(q_batch)
+
+    assert jnp.isfinite(grad).all(), "d(vmap(jacobian))/dq contains NaN!"
 
 
 def test_default_integration_kinematics_uses_bodyframe_samples() -> None:

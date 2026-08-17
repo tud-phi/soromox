@@ -2005,6 +2005,65 @@ def test_reverse_mode_of_vmap_at_zero_configuration() -> None:
     assert not jnp.isnan(coriolis).any(), "d(vmap(coriolis_matrix))/dq contains NaN!"
 
 
+def test_reverse_mode_of_vmap_over_jacobian_mixed_jvp_at_zero_configuration() -> None:
+    """The Jacobian custom-JVP mixed fallback stays finite in a batched reverse pass."""
+    model, _ = make_pcs(num_segments=1, total_length=PCS_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    s = model.L_cum[-1]
+    qd = jnp.linspace(0.01, 0.06, dof, dtype=jnp.float64)
+    sd = jnp.asarray(0.07, dtype=jnp.float64)
+    q_batch = jnp.stack([jnp.zeros((dof,)), jnp.zeros((dof,)).at[0].set(0.3)])
+
+    grad = jax.grad(
+        lambda batch: jnp.sum(
+            jax.vmap(
+                lambda q: jnp.sum(
+                    jax.jvp(
+                        lambda q_, s_: model.jacobian(q_, s_),
+                        (q, s),
+                        (qd, sd),
+                    )[1]
+                )
+            )(batch)
+        )
+    )(q_batch)
+
+    assert jnp.isfinite(grad).all(), (
+        "d(vmap(jvp(jacobian, q, s)))/dq contains NaN!"
+    )
+
+
+def test_reverse_mode_of_vmap_over_energy_custom_jvps_at_zero_configuration() -> None:
+    """Kinetic and total-energy custom JVPs stay finite in a batched reverse pass."""
+    model, _ = make_pcs(num_segments=1, total_length=PCS_TOTAL_LENGTH)
+    dof = int(model.num_active_strains.item())
+    qd = jnp.linspace(0.01, 0.06, dof, dtype=jnp.float64)
+    q_batch = jnp.stack([jnp.zeros((dof,)), jnp.zeros((dof,)).at[0].set(0.3)])
+
+    for name, fn in (
+        ("kinetic_energy", lambda q: model.kinetic_energy(q, qd)),
+        ("gravitational_energy", lambda q: model.gravitational_energy(q)),
+        ("elastic_energy", lambda q: model.elastic_energy(q)),
+        ("potential_energy", lambda q: model.potential_energy(q)),
+        ("total_energy", lambda q: model.total_energy(q, qd)),
+    ):
+        grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(q_batch)
+        assert jnp.isfinite(grad).all(), (
+            f"d(vmap({name}))/dq contains NaN!"
+        )
+
+    q = jnp.zeros((dof,))
+    qd_batch = jnp.stack([jnp.zeros_like(qd), qd])
+    for name, fn in (
+        ("kinetic_energy", lambda qd_: model.kinetic_energy(q, qd_)),
+        ("total_energy", lambda qd_: model.total_energy(q, qd_)),
+    ):
+        grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(qd_batch)
+        assert jnp.isfinite(grad).all(), (
+            f"d(vmap({name}))/dqd contains NaN!"
+        )
+
+
 @pytest.mark.xfail(
     strict=True,
     reason=(

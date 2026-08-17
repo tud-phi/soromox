@@ -88,6 +88,13 @@ class TestSafeSqrt:
         assert float(jax.grad(safe_sqrt)(jnp.array(0.0))) == 0.0
         assert not jnp.isfinite(jax.grad(jnp.sqrt)(jnp.array(0.0)))
 
+    def test_finite_under_grad_of_vmap_at_zero(self):
+        grad = jax.grad(
+            lambda values: jnp.sum(jax.vmap(safe_sqrt)(values))
+        )(jnp.zeros(4))
+
+        assert jnp.isfinite(grad).all()
+
 
 class TestSafeNorm:
     def test_matches_linalg_norm_away_from_zero(self):
