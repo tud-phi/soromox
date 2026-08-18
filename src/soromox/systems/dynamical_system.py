@@ -2,7 +2,7 @@ __all__ = ["DynamicalSystem"]
 import math
 import warnings
 from abc import abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -76,18 +76,24 @@ class DynamicalSystem(eqx.Module):
         t1: float | Array,
         solver_dt: float | Array,
         save_dt: float | Array | None,
-        save_ts: Array | None = None,
+        save_ts: Array | Sequence[float] | None = None,
     ) -> Array:
         """Build the array of time stamps to save during integration."""
         if save_ts is not None:
-            return save_ts
+            return jnp.asarray(save_ts)
 
         assert save_dt is not None, "Either save_ts or save_dt must be provided."
         assert save_dt > 0.0, "save_dt must be positive."
         assert save_dt >= solver_dt, (
             "save_dt must be greater than or equal to the solver step size."
         )
-        return jnp.arange(t0, t1 + save_dt, save_dt)
+        assert t1 >= t0, "t1 must be greater than or equal to t0."
+
+        # Stopping at (rather than beyond) t1 ensures that round-off cannot
+        # produce an invalid save time after the integration interval. Append
+        # t1 explicitly so the final requested time is represented exactly.
+        save_times = jnp.arange(t0, t1, save_dt)
+        return jnp.concatenate([save_times, jnp.atleast_1d(t1)])
 
     @staticmethod
     def _zero_like_pytree(state: Any | None) -> Any | None:
@@ -261,7 +267,7 @@ class DynamicalSystem(eqx.Module):
         t1: float | Array = 10.0,
         solver_dt: float | Array = 1e-4,
         save_dt: float | Array | None = 0.01,
-        save_ts: Array | None = None,
+        save_ts: Array | Sequence[float] | None = None,
         solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
@@ -364,8 +370,8 @@ class DynamicalSystem(eqx.Module):
         | None = None,
         t1: float | Array = 10.0,
         solver_dt: float | Array = 1e-4,
-        save_dt: float | Array = 0.01,
-        save_ts: Array | None = None,
+        save_dt: float | Array | None = 0.01,
+        save_ts: Array | Sequence[float] | None = None,
         solver: AbstractSolver | None = None,
         stepsize_controller: AbstractStepSizeController | None = ConstantStepSize(),
         max_steps: int | None = None,
