@@ -114,12 +114,14 @@ def test_inverse_kinematics_retains_translation_at_tiny_nonzero_rotation():
     assert_allclose(recovered_vxi, expected_vxi, rtol=1e-10, atol=1e-11)
 
 
-def test_planar_hsa_exposes_phi_max():
+def test_planar_hsa_archive_uses_descriptive_parameter_names():
     robot = _create_robot()
 
     with np.load(HSA_PARAMS_PATH) as data:
-        assert str(data["schema_version"]) == "planar_hsa_params_v1"
+        assert str(data["schema_version"]) == "planar_hsa_params_v2"
         assert str(data["robot_name"]) == "PlanarHSA"
+        assert "xi_ref" not in data
+        assert jnp.allclose(typed_params.reference_strain, data["reference_strain"])
         assert jnp.allclose(typed_params.phi_max, data["phi_max"])
     assert jnp.allclose(robot.phi_max, typed_params.phi_max)
 

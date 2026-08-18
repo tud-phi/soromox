@@ -62,7 +62,9 @@ class PlanarHSA(PlanarPCS):
         proximal_cap_length: Rigid proximal cap lengths.
         distal_cap_length: Rigid distal cap lengths.
         end_effector_offset: End-effector pose offset ``[theta, x, y]``.
-        xi_ref: Reference virtual-backbone strain.
+        xi_ref: Runtime reference virtual-backbone strain inherited from
+            :class:`PlanarPCS`. The canonical physical-rod input is
+            ``params.reference_strain``.
         phi_max: Motor limits for underactuated operation.
         hysteresis_basis: Basis mapping hysteresis states to full strains.
         hysteresis_alpha: Post-yield to pre-yield stiffness ratios.
@@ -534,7 +536,7 @@ class PlanarHSA(PlanarPCS):
 
     def _reference_physical_strains(self) -> Array:
         """Return the physical rod reference strains from the parameter set."""
-        return jnp.asarray(self.params.xi_ref, dtype=self.L.dtype)
+        return jnp.asarray(self.params.reference_strain, dtype=self.L.dtype)
 
     def virtual_to_physical_strains(self, vxi: Array) -> Array:
         """Map virtual-backbone strains to physical rod strains.

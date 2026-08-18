@@ -86,8 +86,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recurrences while preserving full Jacobian derivatives in public kinematics.
 - Replaced generated symbolic PlanarHSA expressions with a JAX-native
   PlanarPCS implementation, reusing shared planar kinematics, Jacobians,
-  quadrature, and dynamics; migrated parameter files to the ``xi_ref`` schema
-  and removed the obsolete symbolic and legacy-parameter modules.
+  quadrature, and dynamics; migrated parameter files to the descriptive
+  ``reference_strain`` schema and removed the obsolete symbolic and
+  legacy-parameter modules.
 - Compared with ``main`` on CPU/JAX 0.11.0 across five fresh processes, the
   40-case Lie benchmark reduced geometric-mean steady-state and compile time by
   24.3% and 5.3%. A fresh raw before/after table is reported in this PR for

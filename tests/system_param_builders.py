@@ -256,7 +256,7 @@ def planar_hsa_params_from_legacy(params: dict) -> PlanarHSAParams:
         rod_outer_radius=jnp.asarray(params["rout"]),
         rod_inner_radius=jnp.asarray(params["rin"]),
         rod_offset=jnp.asarray(params["roff"]),
-        xi_ref=jnp.stack(
+        reference_strain=jnp.stack(
             [
                 jnp.asarray(params["kappa_b_ref"]),
                 jnp.asarray(params["sigma_sh_ref"]),
