@@ -111,6 +111,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   optimization data is persisted before plotting or interactive rendering
   begins; saved trajectory diagnostics can be rendered without rerunning
   optimization.
+- Normalized explicit continuous-rollout `save_ts` sequences to JAX arrays and
+  preserved traced initial times for JIT-compiled and vectorized open- and
+  closed-loop rollouts.
 
 ### Fixed
 
@@ -137,6 +140,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   arbitrary-axis SE(3) inputs, without adding autodiff to production paths.
 - Made simulation benchmark timing treat Python solver/save parameters as static
   JAX arguments so the existing rollout benchmark can compile and run.
+- Prevented automatically generated continuous-rollout save grids from
+  overshooting the requested final time, while always including that endpoint
+  exactly for both divisible and non-divisible save intervals.
 - Set the Section Vd collocated and synergistic optimization defaults to the
   100 iterations used by the paper-result histories, and document that setting
   in the reproduction commands.
