@@ -1665,6 +1665,32 @@ def test_cached_constant_matrices_refresh_after_update_params() -> None:
     assert not jnp.isnan(updated.D_full).any()
 
 
+def test_update_params_is_jittable():
+    selector_per_segment = (False, False, True, True, False, False)
+    robot = build_constant_strain_gvs(
+        num_segments=2,
+        selector_per_segment=selector_per_segment,
+        max_dof=6,
+    )
+
+    @jax.jit
+    def potential_force(base_pose, q):
+        displaced_robot = robot.update_params(base_pose=base_pose)
+        return displaced_robot.potential_force(q)
+
+    # Change orientation of the 2 poses
+    base_pose_1 = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    base_pose_2 = jnp.array([0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.0])
+    q = jnp.zeros(robot.num_dofs)
+
+    force_1 = potential_force(base_pose_1, q)
+    force_2 = potential_force(base_pose_2, q)
+
+    assert not jnp.isnan(force_1).any()
+    assert not jnp.isnan(force_2).any()
+    assert not onp.allclose(force_1, force_2, rtol=RTOL, atol=ATOL)
+
+
 def test_active_dof_map_creation_matches_joint_and_link_dofs() -> None:
     robot = build_varied_basis_gvs(num_segments=3)
 
