@@ -76,6 +76,15 @@ def test_resampling_matches_requested_fps():
     np.testing.assert_allclose(frame_pose[:, 5], frame_t)
 
 
+def test_desired_shape_wireframe_is_finite_and_three_dimensional():
+    z = np.linspace(0.0, 0.1, 12)
+    curve = np.column_stack([0.01 * np.sin(8 * z), np.zeros_like(z), z])
+    segments = renderer.make_tube_wire_segments(curve, radius=0.02)
+    assert segments.ndim == 3
+    assert segments.shape[1:] == (2, 3)
+    assert np.all(np.isfinite(segments))
+
+
 def test_method_selection_and_overwrite(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(
@@ -140,8 +149,21 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
     )
     assert outputs == [tmp_path / "synergistic_tracking.mp4"]
     assert captured["render"]["q_ts"].shape == (5, 6)
-    assert captured["render"]["dynamic_spheres_positions"].shape == (1, 5, 3)
-    assert captured["render"]["static_spheres_positions"].shape[1] == 3
+    assert captured["init"][1]["desired_q_ts"] is None
+    backbone_colors = captured["init"][1]["color_config"].backbone.point_colors
+    np.testing.assert_allclose(
+        backbone_colors[:, 3], renderer.SYNERGISTIC_ROBOT_OPACITY
+    )
+    assert captured["render"]["dynamic_spheres_positions"].shape == (2, 5, 3)
+    np.testing.assert_allclose(
+        captured["render"]["dynamic_spheres_radii"],
+        [renderer.MARKER_RADIUS, renderer.TARGET_MARKER_RADIUS],
+    )
+    np.testing.assert_allclose(
+        captured["render"]["dynamic_spheres_colors"],
+        np.stack([renderer.CURRENT_POSITION_COLOR, renderer.TARGET_COLOR]),
+    )
+    assert captured["render"]["static_spheres_positions"] is None
     assert captured["render"]["record_path"].endswith("synergistic_tracking.mp4")
 
     outputs[0].touch()
@@ -159,6 +181,91 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
             record_frame_timeout=3.0,
             renderer_factory=FakeRenderer,
         )
+
+
+def test_synergistic_trail_contains_only_time_varying_reference(monkeypatch, tmp_path):
+    timesteps = 5
+    reference_pose = np.zeros((1, timesteps, 6))
+    reference_pose[0, :, 3] = np.linspace(0.0, 0.04, timesteps)
+    data = {
+        "t_ts": np.linspace(0, 1, timesteps)[None, :],
+        "q_ts_best": np.zeros((1, timesteps, 6)),
+        "x_ts_best": np.zeros((1, timesteps, 6)),
+        "x_des_ts": reference_pose,
+    }
+    monkeypatch.setattr(renderer, "load_results", lambda *_args, **_kwargs: data)
+    monkeypatch.setattr(renderer, "build_sec_vd_robot", lambda: (object(), None, 0.1))
+    monkeypatch.setattr(renderer, "validate_pose_consistency", lambda *_args: None)
+    captured = {}
+
+    class FakeRenderer:
+        def __init__(self, _robot, **_kwargs):
+            pass
+
+        def render_sequence(self, **kwargs):
+            captured.update(kwargs)
+
+    renderer.render_method(
+        name="synergistic",
+        data_dir=tmp_path,
+        output_dir=tmp_path,
+        fps=4,
+        make_gif=False,
+        force=False,
+        port=8080,
+        open_browser=False,
+        record_client_timeout=2.0,
+        record_frame_timeout=3.0,
+        renderer_factory=FakeRenderer,
+    )
+    expected_reference = reference_pose[0, :, 3:6]
+    np.testing.assert_allclose(captured["static_spheres_positions"], expected_reference)
+    np.testing.assert_allclose(
+        captured["static_spheres_colors"],
+        np.tile(renderer.TARGET_TRAIL_COLOR, (timesteps, 1)),
+    )
+
+
+def test_collocated_render_receives_configuration_target(monkeypatch, tmp_path):
+    timesteps = 5
+    data = {
+        "t_ts": np.linspace(0, 1, timesteps)[None, :],
+        "q_ts_best": np.zeros((1, timesteps, 6)),
+        "q_des_ts": np.ones((1, timesteps, 6)),
+        "x_ts_best": np.zeros((1, timesteps, 6)),
+        "x_des_ts": np.zeros((1, timesteps, 6)),
+    }
+    monkeypatch.setattr(renderer, "load_results", lambda *_args, **_kwargs: data)
+    monkeypatch.setattr(renderer, "build_sec_vd_robot", lambda: (object(), None, 0.1))
+    monkeypatch.setattr(renderer, "validate_pose_consistency", lambda *_args: None)
+    captured = {}
+
+    class FakeRenderer:
+        def __init__(self, _robot, **kwargs):
+            captured["init"] = kwargs
+
+        def render_sequence(self, **kwargs):
+            captured["render"] = kwargs
+
+    renderer.render_method(
+        name="collocated",
+        data_dir=tmp_path,
+        output_dir=tmp_path,
+        fps=4,
+        make_gif=False,
+        force=False,
+        port=8080,
+        open_browser=False,
+        record_client_timeout=2.0,
+        record_frame_timeout=3.0,
+        renderer_factory=FakeRenderer,
+    )
+    assert captured["init"]["desired_q_ts"].shape == (5, 6)
+    np.testing.assert_allclose(
+        captured["init"]["color_config"].backbone.point_colors[:, 3], 1.0
+    )
+    assert captured["render"]["static_spheres_positions"] is None
+    assert captured["render"]["dynamic_spheres_positions"] is None
 
 
 @pytest.mark.parametrize("method", ["collocated", "synergistic"])

@@ -70,8 +70,14 @@ uv run python paper_results/secVd_control_gain_optimization/code/plot_control_ga
 
 The renderer reconstructs the optimized robot from `q_ts_best`, validates it
 against the stored full pose, resamples the dense rollout to the requested FPS,
-and shows the robot, end-effector trail, and position target in Viser. It writes
-MP4 files and, when requested, GIF previews:
+and follows the paper rendering style in Viser. The solid coral body is the
+current robot. Collocated control additionally shows the desired configuration
+as a pale blue-gray wireframe, without task-space markers. Synergistic control
+uses a translucent coral body so that the current task position in magenta and
+the larger desired task position in green remain visible. A dotted trail shows
+the desired path only when the reference is time-varying; the animation does
+not reveal the robot's future actual trajectory. It writes MP4 files and, when
+requested, GIF previews:
 
 ```bash
 uv run python paper_results/secVd_control_gain_optimization/code/render_control_gain_optimization_animations.py \
