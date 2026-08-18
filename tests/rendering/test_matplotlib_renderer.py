@@ -8,7 +8,7 @@ from numpy.testing import assert_allclose
 from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
-from soromox.systems.soft_robot import CrossSectionGeometry
+from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 
 

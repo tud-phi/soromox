@@ -10,7 +10,7 @@ from PIL import Image
 
 from soromox.rendering.actuators import ActuatorVisualLayer
 from soromox.rendering.camera_config import CameraConfig
-from soromox.systems.soft_robot import CrossSectionGeometry
+from soromox.systems.components import CrossSectionGeometry
 from soromox.utils.geometry import poses
 
 
