@@ -54,10 +54,10 @@ archives without running the optimizer again. The saved-data modes read both
 controller result directories from the parent of `--result-dir`:
 
 ```bash
-MPLBACKEND=Agg uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
-  --plot-only --no-show --force
-MPLBACKEND=Agg uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
-  --render-only --no-gif --force
+uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
+  --plot-only --force
+uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
+  --render-only --force
 ```
 
 `--plot-only` recreates the combined comparison PDF. `--render-only` creates
@@ -78,6 +78,6 @@ Render offline tracking diagnostics plus MP4 and GIF animations from the saved
 NumPy trajectories:
 
 ```bash
-MPLBACKEND=Agg uv run python paper_results/secVd_control_gain_optimization/code/render_control_gain_optimization_animations.py \
+uv run python paper_results/secVd_control_gain_optimization/code/render_control_gain_optimization_animations.py \
   --force
 ```
