@@ -2,6 +2,7 @@ __all__ = ["GVSLinkParams", "GVSParams"]
 
 from typing import ClassVar
 
+import jax
 from jax import Array
 from jax import numpy as jnp
 
@@ -148,17 +149,18 @@ class GVSParams(BaseSoftRobotParams):
             Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
             for segment in structure.segments
         ]
-        dofs_link = [
-            int(
-                Basis.DOF_BRANCHES[Basis.BASISTYPE_MAP[segment.basis.type]](
-                    (
-                        jnp.asarray(segment.basis.active),
-                        jnp.asarray(segment.basis.orders),
+        with jax.ensure_compile_time_eval():
+            dofs_link = [
+                int(
+                    Basis.DOF_BRANCHES[Basis.BASISTYPE_MAP[segment.basis.type]](
+                        (
+                            jnp.asarray(segment.basis.active),
+                            jnp.asarray(segment.basis.orders),
+                        )
                     )
                 )
-            )
-            for segment in structure.segments
-        ]
+                for segment in structure.segments
+            ]
         real_max_dof = max(dofs_joint + dofs_link)
         max_dof = real_max_dof if structure.max_dof is None else structure.max_dof
         if max_dof < real_max_dof:
