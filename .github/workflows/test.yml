@@ -45,8 +45,11 @@ jobs:
       - name: Run system tests
         run: python -m pytest tests/systems -m "not memory_intensive"
 
-      - name: Run memory-intensive GVS autodiff test
-        run: python -m pytest -m memory_intensive
+      - name: Run memory-intensive GVS autodiff tests
+        run: |
+          python -m pytest tests/systems/test_gvs.py::test_forward_mode_automatic_differentiability_at_zero_configuration
+          python -m pytest tests/systems/test_gvs.py::test_reverse_mode_automatic_differentiability_at_zero_configuration
+          python -m pytest tests/systems/test_gvs.py::test_gvs_autodiff_checks
 
   minimum-numerical-dependencies:
     name: test (minimum numerical dependencies, Python 3.11)
@@ -94,5 +97,8 @@ jobs:
       - name: Run PlanarPCS system tests
         run: python -m pytest tests/systems/test_planar_pcs.py -m "not memory_intensive"
 
-      - name: Run memory-intensive GVS autodiff test
-        run: python -m pytest -m memory_intensive
+      - name: Run memory-intensive GVS autodiff tests
+        run: |
+          python -m pytest tests/systems/test_gvs.py::test_forward_mode_automatic_differentiability_at_zero_configuration
+          python -m pytest tests/systems/test_gvs.py::test_reverse_mode_automatic_differentiability_at_zero_configuration
+          python -m pytest tests/systems/test_gvs.py::test_gvs_autodiff_checks
