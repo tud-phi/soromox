@@ -148,6 +148,15 @@ dmypy.json
 !docs/assets/**/*.mp4
 !docs/assets/**/*.gif
 
+# Section Vd keeps canonical paper figures and robot renderings. The binary
+# video formats are routed through Git LFS in .gitattributes.
+!paper_results/secVd_control_gain_optimization/outputs/*.mp4
+!paper_results/secVd_control_gain_optimization/outputs/*.gif
+
+# Local diagnostics from superseded optimizer-embedded plotting are not
+# canonical Section Vd outputs.
+paper_results/secVd_control_gain_optimization/outputs/*_diagnostics/
+
 # Generated example artifacts stay next to the script that creates them.
 examples/**/figures/*
 examples/**/videos/*

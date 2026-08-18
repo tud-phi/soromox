@@ -6,3 +6,7 @@ paper_results/secVf_parallel_rl/outputs/*.gif filter=lfs diff=lfs merge=lfs -tex
 # Deduplicate the Section Vf grid media embedded in the generated docs site.
 docs/assets/paper/parallel-rl-trained-64-envs.mp4 filter=lfs diff=lfs merge=lfs -text
 docs/assets/paper/parallel-rl-trained-64-envs.gif filter=lfs diff=lfs merge=lfs -text
+# Keep Section Vd rollout archives and rendered media out of normal Git object history.
+paper_results/secVd_control_gain_optimization/data/*/optimization_results.npz filter=lfs diff=lfs merge=lfs -text
+paper_results/secVd_control_gain_optimization/outputs/*.mp4 filter=lfs diff=lfs merge=lfs -text
+paper_results/secVd_control_gain_optimization/outputs/*.gif filter=lfs diff=lfs merge=lfs -text
