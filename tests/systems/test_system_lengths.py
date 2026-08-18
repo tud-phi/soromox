@@ -13,7 +13,6 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
-import soromox
 from soromox.actuation import (
     ArticulatedTendonActuator,
     ThreadlikeActuator,

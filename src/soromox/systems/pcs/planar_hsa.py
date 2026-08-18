@@ -189,8 +189,6 @@ class PlanarHSA(PlanarPCS):
         self.L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros((1,)), self.L]))
         self.r = None
         self.rho = None
-        self.E = None
-        self.G = None
         self.scale_rotational_basis_by_length = False
 
         num_gauss_points = structure.num_gauss_points

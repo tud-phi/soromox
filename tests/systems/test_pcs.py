@@ -2034,9 +2034,7 @@ def test_reverse_mode_of_vmap_over_jacobian_mixed_jvp_at_zero_configuration() ->
         )
     )(q_batch)
 
-    assert jnp.isfinite(grad).all(), (
-        "d(vmap(jvp(jacobian, q, s)))/dq contains NaN!"
-    )
+    assert jnp.isfinite(grad).all(), "d(vmap(jvp(jacobian, q, s)))/dq contains NaN!"
 
 
 def test_reverse_mode_of_vmap_over_energy_custom_jvps_at_zero_configuration() -> None:
@@ -2054,9 +2052,7 @@ def test_reverse_mode_of_vmap_over_energy_custom_jvps_at_zero_configuration() ->
         ("total_energy", lambda q: model.total_energy(q, qd)),
     ):
         grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(q_batch)
-        assert jnp.isfinite(grad).all(), (
-            f"d(vmap({name}))/dq contains NaN!"
-        )
+        assert jnp.isfinite(grad).all(), f"d(vmap({name}))/dq contains NaN!"
 
     q = jnp.zeros((dof,))
     qd_batch = jnp.stack([jnp.zeros_like(qd), qd])
@@ -2065,9 +2061,7 @@ def test_reverse_mode_of_vmap_over_energy_custom_jvps_at_zero_configuration() ->
         ("total_energy", lambda qd_: model.total_energy(q, qd_)),
     ):
         grad = jax.grad(lambda batch, fn=fn: jnp.sum(jax.vmap(fn)(batch)))(qd_batch)
-        assert jnp.isfinite(grad).all(), (
-            f"d(vmap({name}))/dqd contains NaN!"
-        )
+        assert jnp.isfinite(grad).all(), f"d(vmap({name}))/dqd contains NaN!"
 
 
 def test_reverse_mode_of_vmap_over_forward_kinematics_at_zero_configuration() -> None:

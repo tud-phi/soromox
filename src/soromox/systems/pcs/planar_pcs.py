@@ -100,21 +100,33 @@ class PlanarPCS(SoftRobot):
     num_segments: int = eqx.field(static=True, default=0)
     num_gauss_points: int = eqx.field(static=True, default=0)
     num_integration_points: int = eqx.field(static=True, default=0)
-    num_strains: int = eqx.field(static=True, default=0)  # Number of strains (3 * num_segments)
+    num_strains: int = eqx.field(
+        static=True, default=0
+    )  # Number of strains (3 * num_segments)
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
 
     xi_ref: Array | None = eqx.field(default=None)  # Reference configuration strain
-    B_xi_unscaled: Array | None = eqx.field(default=None)  # Unscaled strain basis matrix
+    B_xi_unscaled: Array | None = eqx.field(
+        default=None
+    )  # Unscaled strain basis matrix
     B_xi: Array | None = eqx.field(default=None)  # Strain basis matrix
-    num_active_strains: Array | None = eqx.field(default=None)  # Number of selected strains
+    num_active_strains: Array | None = eqx.field(
+        default=None
+    )  # Number of selected strains
 
     integration_points: Array | None = eqx.field(default=None)
     integration_weights: Array | None = eqx.field(default=None)
-    M_segments: Array | None = eqx.field(default=None)  # Cached per-segment mass matrices
+    M_segments: Array | None = eqx.field(
+        default=None
+    )  # Cached per-segment mass matrices
     K_full: Array | None = eqx.field(default=None)  # Cached full stiffness matrix
-    K_active: Array | None = eqx.field(default=None)  # Cached active-coordinate stiffness matrix
+    K_active: Array | None = eqx.field(
+        default=None
+    )  # Cached active-coordinate stiffness matrix
     D_full: Array | None = eqx.field(default=None)  # Cached full damping matrix
-    D_active: Array | None = eqx.field(default=None)  # Cached active-coordinate damping matrix
+    D_active: Array | None = eqx.field(
+        default=None
+    )  # Cached active-coordinate damping matrix
     young_stiffness_operator: Array | None = eqx.field(default=None)
     shear_stiffness_operator: Array | None = eqx.field(default=None)
     material_damping_operator: Array | None = eqx.field(default=None)

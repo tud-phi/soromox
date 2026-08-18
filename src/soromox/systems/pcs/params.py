@@ -249,6 +249,8 @@ class ISupportParams(PCSParams):
                     "pcs_segment_lengths must be one-dimensional with shape "
                     "(num_pcs_segments,)."
                 )
+
+
 class PlanarHSAParams(BaseSoftRobotParams):
     """Dynamic parameters for planar HSA systems.
 
@@ -367,8 +369,7 @@ class PlanarHSAParams(BaseSoftRobotParams):
         xi_ref = jnp.asarray(self.xi_ref)
         if xi_ref.shape != rod_shape + (3,):
             raise ValueError(
-                "xi_ref must have shape "
-                f"{rod_shape + (3,)}, got {xi_ref.shape}."
+                f"xi_ref must have shape {rod_shape + (3,)}, got {xi_ref.shape}."
             )
 
         per_segment_shapes = {

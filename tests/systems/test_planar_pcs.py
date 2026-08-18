@@ -329,6 +329,7 @@ def test_public_planar_pcs_accessors_geometry() -> None:
         atol=ATOL,
     )
 
+
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
 def test_forward_kinematics_tips_matches_pointwise_evaluation(num_segments):
     model, _ = make_planar_pcs(num_segments=num_segments)
