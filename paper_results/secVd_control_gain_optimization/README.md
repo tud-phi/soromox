@@ -4,11 +4,9 @@ This case compares single-start gain optimization for collocated
 actuation-space control and synergistic operational-space control.
 
 > [!WARNING]
-> The committed archives and comparison figures are **five-iteration
-> placeholder results** created to exercise the repaired workflow. They are not
-> final paper results and must not be used for scientific conclusions. Replace
-> them with complete optimization runs before publishing updated Section Vd
-> results.
+> The committed archives and comparison figures are single-start results from
+> the current workflow. They do not reproduce the published six-start Section
+> Vd study and must not be treated as recovered paper results.
 
 ## Canonical result format
 
@@ -26,8 +24,9 @@ pose trajectory. The archive also retains iteration-aligned loss, gain,
 velocity, control-input, and timing histories. Legacy archives,
 `animation_data.pkl`, and `intermediate_metrics.json` are not supported.
 
-The placeholder metadata is stored as `is_placeholder=true` together with
-`completed_iterations=5`. Omit `--placeholder` when producing full results.
+`completed_iterations` records the actual run length and is validated against
+the stored histories. `is_placeholder` identifies development-only archives;
+omit `--placeholder` when producing full results.
 
 ## Optimization
 
@@ -40,6 +39,9 @@ uv run python paper_results/secVd_control_gain_optimization/code/control_gain_op
   --num-iters 100 --force
 ```
 
+`--num-iters` defaults to 100. Pass another positive value when intentionally
+running a shorter or longer optimization.
+
 Use `--result-dir` to stage results elsewhere. A run is saved only if every
 requested iteration completed with finite data, so an interrupted or non-finite
 run cannot replace an archive.
@@ -49,7 +51,10 @@ optimization start (`B=1`), so auto mode selects the CPU; the `vmap` used by the
 synergistic controller over rollout timesteps does not make it a batched
 optimization. The shared selector chooses the GPU when an optimizer supplies
 multiple independent starts (`B>1`) in a future batched implementation. Use
-`--device cpu` or `--device gpu` to override either automatic choice.
+`--device cpu` or `--device gpu` to override either automatic choice. The GPU
+label maps to JAX's `cuda` platform name. An automatically selected GPU may fall
+back to CPU with a warning, while an explicit `--device gpu` request fails if
+CUDA is unavailable.
 
 The collocated controller integrates tendon-length errors in metres and uses
 the unit-preserving saturation
@@ -102,8 +107,3 @@ files are also versioned, but routed through Git LFS because full optimization
 and rendering runs can make them substantially larger. Directories matching
 `outputs/*_diagnostics/` are local scratch artifacts from the removed embedded
 diagnostic workflow and are intentionally ignored.
-
-The current five-iteration placeholder set contains the two NPZ archives, the
-regenerated comparison PDF/PNG, and genuine Viser MP4/GIF robot captures from
-those archives. Chart-animation files from the former renderer are not
-canonical outputs.

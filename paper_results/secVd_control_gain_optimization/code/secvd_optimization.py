@@ -11,6 +11,11 @@ from secvd_results import RESULTS_FILENAME
 
 DEVICE_CHOICES = ("auto", "cpu", "gpu")
 
+# ``gpu`` is the user-facing device name, but JAX names its CUDA platform
+# ``cuda`` in JAX_PLATFORMS. Automatic GPU selection keeps CPU as a fallback;
+# an explicit GPU request remains strict so it cannot silently run elsewhere.
+_PLATFORM_FOR_DEVICE = {"cpu": "cpu", "gpu": "cuda"}
+
 
 def _add_device_argument(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
@@ -19,7 +24,7 @@ def _add_device_argument(parser: argparse.ArgumentParser) -> None:
         default="auto",
         help=(
             "Optimization device. 'auto' uses CPU for one optimization start "
-            "and GPU for batched starts."
+            "and prefers GPU for batched starts, falling back to CPU."
         ),
     )
 
@@ -45,6 +50,16 @@ def resolve_optimization_device(*, requested: str, batch_size: int) -> str:
     return "cpu" if batch_size == 1 else "gpu"
 
 
+def jax_platforms_for(device: str, *, allow_fallback: bool) -> str:
+    """Translate a user-facing device into a valid ``JAX_PLATFORMS`` value."""
+    if device not in _PLATFORM_FOR_DEVICE:
+        raise ValueError(f"Unknown optimization device {device!r}")
+    platform = _PLATFORM_FOR_DEVICE[device]
+    if allow_fallback and platform != "cpu":
+        return f"{platform},cpu"
+    return platform
+
+
 def configure_optimization_device(
     *, batch_size: int, argv: Sequence[str] | None = None
 ) -> str:
@@ -54,7 +69,9 @@ def configure_optimization_device(
         requested=requested,
         batch_size=batch_size,
     )
-    os.environ["JAX_PLATFORMS"] = resolved
+    os.environ["JAX_PLATFORMS"] = jax_platforms_for(
+        resolved, allow_fallback=requested == "auto"
+    )
     return resolved
 
 
@@ -108,13 +125,25 @@ def prepare_result_dir(args: argparse.Namespace) -> Path:
             "optimization backend. Select another backend with --device."
         ) from exc
     if actual_device != args.resolved_device:
-        raise RuntimeError(
-            "JAX initialized on an unexpected backend: "
-            f"expected {args.resolved_device!r}, got {actual_device!r}. Device "
-            "selection must run before importing JAX."
+        automatic_gpu_fallback = (
+            args.device == "auto"
+            and args.resolved_device == "gpu"
+            and actual_device == "cpu"
         )
+        if not automatic_gpu_fallback:
+            raise RuntimeError(
+                "JAX initialized on an unexpected backend: "
+                f"expected {args.resolved_device!r}, got {actual_device!r}. Device "
+                "selection must run before importing JAX."
+            )
+        print(
+            f"[WARNING] Preferred {args.resolved_device!r} for "
+            f"{args.optimization_batch_size} starts but JAX initialized on "
+            f"{actual_device!r}; the run continues, more slowly."
+        )
+        args.resolved_device = actual_device
     print(
-        f"Optimization device: {actual_device} "
+        f"Optimization device: {args.resolved_device} "
         f"(batch size {args.optimization_batch_size}, requested {args.device})"
     )
     return result_dir

@@ -269,10 +269,7 @@ def test_collocated_render_receives_configuration_target(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("method", ["collocated", "synergistic"])
-def test_committed_placeholder_pose_matches_forward_kinematics(method):
+def test_committed_pose_matches_forward_kinematics(method):
     data = load_results(SECTION_DIR / "data" / method, expected_method=method)
-    assert data["history_loss"].shape == (5, 1)
-    assert int(data["completed_iterations"]) == 5
-    assert bool(data["is_placeholder"])
     robot, _routing, total_length = build_sec_vd_robot()
     renderer.validate_pose_consistency(robot, total_length, data)
