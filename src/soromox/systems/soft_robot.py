@@ -3,7 +3,7 @@ __all__ = [
 ]
 
 from abc import abstractmethod
-from typing import Any
+from typing import Any, Self
 
 import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, vmap
@@ -18,6 +18,7 @@ from soromox.actuation.core import (
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.params import (
+    BaseSystemParams,
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
@@ -40,6 +41,13 @@ class SoftRobot(DynamicalSystem):
     - Forward kinematics and Jacobians at arbitrary points along the backbone
     - Dynamical matrices (inertia, Coriolis, damping, etc.) in configuration space
     - Energy computation methods
+
+    Concrete parameterized models expose ``params`` and implement
+    ``with_params(...)`` and ``update_params(...)``. A complete parameter
+    replacement must return a new model, refresh every parameter-dependent
+    runtime array and cache, and preserve the model's static structure. It must
+    not mutate the original model or rely on the constructor-time
+    :meth:`precompute` hook.
 
     Attributes:
         num_dofs (int): Number of degrees of freedom (configuration variables).
@@ -136,12 +144,14 @@ class SoftRobot(DynamicalSystem):
             self.global_eps = 1e1 * float(jnp.finfo(jnp.float64).eps)
 
     def precompute(self) -> None:
-        """
-        Optional hook for refreshing state-independent cached quantities.
+        """Optionally initialize state-independent cached quantities.
 
         Subclasses with cached mass, stiffness, damping, basis, or quadrature
-        data can override this method and call it during initialization. Models
-        without such caches can inherit this no-op implementation.
+        data can override this method and call it during construction. Models
+        without such caches can inherit this no-op implementation. Immutable
+        parameter updates must instead refresh dependent caches functionally on
+        the model returned by ``with_params(...)``; they must not call this
+        potentially mutating constructor hook.
         """
         return None
 
@@ -185,7 +195,7 @@ class SoftRobot(DynamicalSystem):
         """Metadata groups in the same order used to concatenate controls."""
         return tuple(actuator.metadata for actuator in self.actuators)
 
-    def with_actuator_params(self, index: int, params) -> "SoftRobot":
+    def with_actuator_params(self, index: int, params: BaseSystemParams) -> Self:
         """Return a robot with one actuator's complete parameter object replaced."""
         if not 0 <= index < len(self.actuators):
             raise IndexError(f"actuator index {index} is out of range.")
@@ -194,7 +204,7 @@ class SoftRobot(DynamicalSystem):
         actuators[index].validate_for_robot(self)
         return eqx.tree_at(lambda robot: robot.actuators, self, tuple(actuators))
 
-    def update_actuator_params(self, index: int, **updates) -> "SoftRobot":
+    def update_actuator_params(self, index: int, **updates: Any) -> Self:
         """Return a robot with selected fields of one actuator's params replaced."""
         if not 0 <= index < len(self.actuators):
             raise IndexError(f"actuator index {index} is out of range.")
@@ -202,7 +212,7 @@ class SoftRobot(DynamicalSystem):
             index, self.actuators[index].params.replace(**updates)
         )
 
-    def with_passive_element_params(self, index: int, params) -> "SoftRobot":
+    def with_passive_element_params(self, index: int, params: BaseSystemParams) -> Self:
         """Return a robot with one passive element's complete params replaced."""
         if not 0 <= index < len(self.passive_elements):
             raise IndexError(f"passive element index {index} is out of range.")
@@ -211,7 +221,7 @@ class SoftRobot(DynamicalSystem):
         elements[index].validate_for_robot(self)
         return eqx.tree_at(lambda robot: robot.passive_elements, self, tuple(elements))
 
-    def update_passive_element_params(self, index: int, **updates) -> "SoftRobot":
+    def update_passive_element_params(self, index: int, **updates: Any) -> Self:
         """Return a robot with selected passive-element parameter fields replaced."""
         if not 0 <= index < len(self.passive_elements):
             raise IndexError(f"passive element index {index} is out of range.")
