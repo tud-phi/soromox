@@ -103,27 +103,32 @@ GVS matrices are zero-padded beyond each link's active basis coordinates.
 
 ## Isotropic material model
 
-Young's modulus, shear modulus, and material damping are useful construction
-and identification variables, but they are not duplicated in the runtime robot
-parameters. Instead, callers keep an `IsotropicMaterialParams` PyTree:
+Young's modulus, either shear modulus or Poisson's ratio, and optional material
+damping are useful construction and identification variables, but they are not
+duplicated in the runtime robot parameters. Instead, callers keep an
+`IsotropicMaterialParams` PyTree:
 
 ```python
-from soromox.systems import (
-    IsotropicMaterialParams,
-    shear_modulus_from_poisson_ratio,
-)
+from soromox.systems import IsotropicMaterialParams
 
 young = 1.0e6
 material = IsotropicMaterialParams(
     young_modulus=young,
-    shear_modulus=shear_modulus_from_poisson_ratio(young, 0.45),
-    material_damping_coefficient=1.0e4,
+    poisson_ratio=0.45,
 )
 ```
 
-Each field may be scalar or contain one value per link. Scalar values are
-broadcast when the material is applied. Young's and shear moduli must be finite
-and strictly positive; material damping must be finite and nonnegative.
+Each active field may be scalar or contain one value per link. Scalar values
+are broadcast when the material is applied. Exactly one of `shear_modulus` and
+`poisson_ratio` is required. Young's and shear moduli must be finite and
+strictly positive, Poisson's ratio must lie in `(-1, 0.5)`, and material
+damping must be finite and nonnegative when supplied. Omitting material damping
+produces a zero damping matrix.
+
+The optional-field pattern is structural: shear-modulus, Poisson-ratio, damped,
+and undamped materials have different PyTree structures. JIT compilation
+therefore specializes on these choices, while the active arrays remain normal
+differentiable leaves.
 
 Geometry, link length, strain basis, rotational scaling, and quadrature are
 projected into unit-response operators. Material matrices are then evaluated
@@ -132,8 +137,12 @@ as
 \[
 K_i = E_i K_{i,E} + G_i K_{i,G},
 \qquad
-D_i = \eta_i D_{i,\eta}.
+D_i = \eta_i D_{i,\eta}\quad\text{or}\quad 0,
 \]
+
+For the Young/Poisson parameterization,
+\(G_i = E_i / (2 (1 + \nu_i))\) is evaluated inside this mapping so gradients
+propagate through both \(E_i\) and \(\nu_i\).
 
 Equivalently, the unit operators represent the discretized integrals
 

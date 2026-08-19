@@ -16,6 +16,7 @@ from .cross_sections import (
     LinearProfile,
     ProfileType,
 )
+from .materials import shear_modulus_from_poisson_ratio
 
 __all__ = ["ContinuumLinkParams", "LinkSpec"]
 
@@ -150,10 +151,11 @@ class LinkSpec:
     """Construction specification for one continuum link.
 
     Prefer the geometry-specific :meth:`circular`, :meth:`rectangular`, and
-    :meth:`elliptical` factories. Stiffness must be described by exactly one of
-    ``young_modulus`` plus ``shear_modulus`` or an explicit ``stiffness``
-    matrix. Damping must similarly use exactly one of
-    ``material_damping_coefficient`` or an explicit ``damping`` matrix.
+    :meth:`elliptical` factories. Stiffness must be described by an explicit
+    ``stiffness`` matrix or by ``young_modulus`` together with exactly one of
+    ``shear_modulus`` and ``poisson_ratio``. Damping may use
+    ``material_damping_coefficient`` or an explicit ``damping`` matrix; omitting
+    both disables damping.
 
     Attributes:
         cross_section_geometry: Static cross-section family.
@@ -169,7 +171,9 @@ class LinkSpec:
             the packed coefficients.
         young_modulus: Optional isotropic Young's modulus.
         shear_modulus: Optional isotropic shear modulus.
+        poisson_ratio: Optional isotropic Poisson's ratio.
         material_damping_coefficient: Optional isotropic material damping value.
+            Omitting it together with ``damping`` disables damping.
         stiffness: Optional explicit generalized stiffness matrix.
         damping: Optional explicit generalized damping matrix.
     """
@@ -184,6 +188,7 @@ class LinkSpec:
     cross_section_coefficient_names: tuple[str, ...]
     young_modulus: float | None = None
     shear_modulus: float | None = None
+    poisson_ratio: float | None = None
     material_damping_coefficient: float | None = None
     stiffness: Array | None = None
     damping: Array | None = None
@@ -202,31 +207,34 @@ class LinkSpec:
             jnp.asarray(self.cross_section_coefficients),
             strictly_positive=True,
         )
-        material_stiffness = (
-            self.young_modulus is not None or self.shear_modulus is not None
+        material_stiffness = any(
+            value is not None
+            for value in (
+                self.young_modulus,
+                self.shear_modulus,
+                self.poisson_ratio,
+            )
         )
         if material_stiffness and self.stiffness is not None:
             raise ValueError(
-                "Provide either young_modulus/shear_modulus or stiffness, not both."
+                "Provide either isotropic material properties or stiffness, not both."
             )
         if not material_stiffness and self.stiffness is None:
             raise ValueError(
-                "Provide young_modulus and shear_modulus or an explicit stiffness."
+                "Provide isotropic material properties or an explicit stiffness."
             )
+        if material_stiffness and self.young_modulus is None:
+            raise ValueError("Material stiffness construction requires young_modulus.")
         if material_stiffness and (
-            self.young_modulus is None or self.shear_modulus is None
+            (self.shear_modulus is None) == (self.poisson_ratio is None)
         ):
             raise ValueError(
-                "Material stiffness construction requires both young_modulus "
-                "and shear_modulus."
+                "Material stiffness construction requires exactly one of "
+                "shear_modulus and poisson_ratio."
             )
         if self.material_damping_coefficient is not None and self.damping is not None:
             raise ValueError(
                 "Provide either material_damping_coefficient or damping, not both."
-            )
-        if self.material_damping_coefficient is None and self.damping is None:
-            raise ValueError(
-                "Provide material_damping_coefficient or an explicit damping matrix."
             )
         if self.young_modulus is not None:
             _validate_finite_domain(
@@ -236,6 +244,21 @@ class LinkSpec:
             _validate_finite_domain(
                 "shear_modulus", self.shear_modulus, strictly_positive=True
             )
+        if self.poisson_ratio is not None:
+            _validate_finite_domain("poisson_ratio", self.poisson_ratio)
+            try:
+                valid_poisson_ratio = bool(
+                    jnp.all(
+                        (jnp.asarray(self.poisson_ratio) > -1.0)
+                        & (jnp.asarray(self.poisson_ratio) < 0.5)
+                    )
+                )
+            except (ConcretizationTypeError, TracerBoolConversionError):
+                valid_poisson_ratio = True
+            if not valid_poisson_ratio:
+                raise ValueError(
+                    "poisson_ratio must be greater than -1 and less than 0.5."
+                )
         if self.material_damping_coefficient is not None:
             _validate_finite_domain(
                 "material_damping_coefficient", self.material_damping_coefficient
@@ -257,6 +280,14 @@ class LinkSpec:
                 raise ValueError(f"Explicit {name} must be a square matrix.")
             _validate_symmetric(name, matrix)
 
+    def _resolved_shear_modulus(self) -> Array | float:
+        """Return the supplied or Poisson-ratio-derived shear modulus."""
+        if self.shear_modulus is not None:
+            return self.shear_modulus
+        if self.young_modulus is None or self.poisson_ratio is None:
+            raise ValueError("The link does not define isotropic material stiffness.")
+        return shear_modulus_from_poisson_ratio(self.young_modulus, self.poisson_ratio)
+
     @classmethod
     def _make(
         cls,
@@ -268,6 +299,7 @@ class LinkSpec:
         reference_strain: Array | list[float],
         young_modulus: float | None,
         shear_modulus: float | None,
+        poisson_ratio: float | None,
         material_damping_coefficient: float | None,
         stiffness: Array | None,
         damping: Array | None,
@@ -290,6 +322,7 @@ class LinkSpec:
             ),
             young_modulus=young_modulus,
             shear_modulus=shear_modulus,
+            poisson_ratio=poisson_ratio,
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
@@ -305,6 +338,7 @@ class LinkSpec:
         reference_strain: Array | list[float],
         young_modulus: float | None = None,
         shear_modulus: float | None = None,
+        poisson_ratio: float | None = None,
         material_damping_coefficient: float | None = None,
         stiffness: Array | None = None,
         damping: Array | None = None,
@@ -320,8 +354,12 @@ class LinkSpec:
             young_modulus: Young's modulus used with ``shear_modulus`` to build
                 generalized stiffness. Mutually exclusive with ``stiffness``.
             shear_modulus: Shear modulus used with ``young_modulus``.
+                Mutually exclusive with ``poisson_ratio``.
+            poisson_ratio: Poisson's ratio used with ``young_modulus`` to derive
+                the shear modulus. Mutually exclusive with ``shear_modulus``.
             material_damping_coefficient: Isotropic damping value used to build
-                generalized damping. Mutually exclusive with ``damping``.
+                generalized damping. Mutually exclusive with ``damping``. If
+                both are omitted, damping is disabled.
             stiffness: Explicit generalized stiffness matrix.
             damping: Explicit generalized damping matrix.
 
@@ -343,6 +381,7 @@ class LinkSpec:
             reference_strain=reference_strain,
             young_modulus=young_modulus,
             shear_modulus=shear_modulus,
+            poisson_ratio=poisson_ratio,
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
@@ -359,6 +398,7 @@ class LinkSpec:
         reference_strain: Array | list[float],
         young_modulus: float | None = None,
         shear_modulus: float | None = None,
+        poisson_ratio: float | None = None,
         material_damping_coefficient: float | None = None,
         stiffness: Array | None = None,
         damping: Array | None = None,
@@ -374,8 +414,12 @@ class LinkSpec:
             young_modulus: Young's modulus used with ``shear_modulus`` to build
                 generalized stiffness. Mutually exclusive with ``stiffness``.
             shear_modulus: Shear modulus used with ``young_modulus``.
+                Mutually exclusive with ``poisson_ratio``.
+            poisson_ratio: Poisson's ratio used with ``young_modulus`` to derive
+                the shear modulus. Mutually exclusive with ``shear_modulus``.
             material_damping_coefficient: Isotropic damping value used to build
-                generalized damping. Mutually exclusive with ``damping``.
+                generalized damping. Mutually exclusive with ``damping``. If
+                both are omitted, damping is disabled.
             stiffness: Explicit generalized stiffness matrix.
             damping: Explicit generalized damping matrix.
 
@@ -397,6 +441,7 @@ class LinkSpec:
             reference_strain=reference_strain,
             young_modulus=young_modulus,
             shear_modulus=shear_modulus,
+            poisson_ratio=poisson_ratio,
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,
@@ -413,6 +458,7 @@ class LinkSpec:
         reference_strain: Array | list[float],
         young_modulus: float | None = None,
         shear_modulus: float | None = None,
+        poisson_ratio: float | None = None,
         material_damping_coefficient: float | None = None,
         stiffness: Array | None = None,
         damping: Array | None = None,
@@ -428,8 +474,12 @@ class LinkSpec:
             young_modulus: Young's modulus used with ``shear_modulus`` to build
                 generalized stiffness. Mutually exclusive with ``stiffness``.
             shear_modulus: Shear modulus used with ``young_modulus``.
+                Mutually exclusive with ``poisson_ratio``.
+            poisson_ratio: Poisson's ratio used with ``young_modulus`` to derive
+                the shear modulus. Mutually exclusive with ``shear_modulus``.
             material_damping_coefficient: Isotropic damping value used to build
-                generalized damping. Mutually exclusive with ``damping``.
+                generalized damping. Mutually exclusive with ``damping``. If
+                both are omitted, damping is disabled.
             stiffness: Explicit generalized stiffness matrix.
             damping: Explicit generalized damping matrix.
 
@@ -451,6 +501,7 @@ class LinkSpec:
             reference_strain=reference_strain,
             young_modulus=young_modulus,
             shear_modulus=shear_modulus,
+            poisson_ratio=poisson_ratio,
             material_damping_coefficient=material_damping_coefficient,
             stiffness=stiffness,
             damping=damping,

@@ -16,8 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   PCS and PlanarPCS, with the same material/update APIs on GVS.
 - GVS joint stiffness and damping parameters that participate in global matrix
   assembly, plus `update_joint_params` for immutable joint-local updates.
-- Differentiable unit-response mappings from Young's modulus, shear modulus,
-  and material damping to canonical generalized link matrices.
+- Differentiable unit-response mappings from Young's modulus with either shear
+  modulus or Poisson's ratio, plus optional material damping, to canonical
+  generalized link matrices.
 - Continuum-component, parameter-update, material-optimization, and
   [parameter-API migration](../user-guide/parameter-api-migration.md)
   documentation with complete PCS and GVS examples.

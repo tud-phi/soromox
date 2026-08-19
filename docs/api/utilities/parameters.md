@@ -78,10 +78,11 @@ or `(num_links,)`.
 | `reference_strain` | Reference strain vector |
 | `joint_rest_configuration` | Joint coordinates where elastic joint force is zero |
 
-Young's modulus, shear modulus, and material damping use the separate
-`IsotropicMaterialParams` fields `young_modulus`, `shear_modulus`, and
-`material_damping_coefficient`. See the linked components page for their
-mapping to canonical matrices and the user guide for optimization examples.
+Young's modulus, either shear modulus or Poisson's ratio, and optional material
+damping use the separate `IsotropicMaterialParams` fields `young_modulus`,
+`shear_modulus`, `poisson_ratio`, and `material_damping_coefficient`. See the
+linked components page for their mapping to canonical matrices and the user
+guide for optimization examples.
 
 ## World Frame, Mounting, and Gravity Defaults
 

@@ -1137,9 +1137,9 @@ class GVS(SoftRobot):
         """Map isotropic material variables to canonical GVS link matrices.
 
         Args:
-            material: Scalar or per-segment Young's modulus, shear modulus, and
-                material damping coefficient. Scalars are broadcast over all
-                segments.
+            material: Scalar or per-segment Young's modulus, either shear
+                modulus or Poisson's ratio, and optional material damping
+                coefficient. Scalars are broadcast over all segments.
 
         Returns:
             A tuple ``(stiffness, damping)`` whose arrays both have shape
@@ -1151,14 +1151,18 @@ class GVS(SoftRobot):
                 shape ``(num_segments,)``.
         """
         material = material.broadcast(self.num_segments)
+        shear_modulus = material._resolved_shear_modulus()
         stiffness = (
             material.young_modulus[:, None, None] * self.young_stiffness_operator
-            + material.shear_modulus[:, None, None] * self.shear_stiffness_operator
+            + shear_modulus[:, None, None] * self.shear_stiffness_operator
         )
-        damping = (
-            material.material_damping_coefficient[:, None, None]
-            * self.material_damping_operator
-        )
+        if material.material_damping_coefficient is None:
+            damping = jnp.zeros_like(self.material_damping_operator)
+        else:
+            damping = (
+                material.material_damping_coefficient[:, None, None]
+                * self.material_damping_operator
+            )
         return stiffness, damping
 
     def with_isotropic_material(self, material: IsotropicMaterialParams) -> Self:

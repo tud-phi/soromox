@@ -79,7 +79,7 @@ matrix into one block per link; cross-link damping terms are unsupported.
 | Before | After |
 | --- | --- |
 | `E` | `young_modulus` |
-| `nu` | derive `shear_modulus` with `shear_modulus_from_poisson_ratio` |
+| `nu` | `poisson_ratio` (or derive and pass `shear_modulus`) |
 | `rho` | `density` |
 | `eta` | `material_damping_coefficient` |
 | `L` | `length` |
@@ -103,7 +103,7 @@ segment = GVSSegment(
         radius=LinearProfile(base=0.015, tip=0.010),
         density=1000.0,
         young_modulus=1.0e6,
-        shear_modulus=3.4e5,
+        poisson_ratio=0.45,
         material_damping_coefficient=1.0e4,
         reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
     ),
@@ -123,14 +123,15 @@ GVS joint matrices are available at `params.joint.stiffness` and
 ## Update isotropic material values
 
 Material values are caller-owned optimization variables, not duplicated in
-runtime system params:
+runtime system params. Supply exactly one of `shear_modulus` and
+`poisson_ratio`; omit `material_damping_coefficient` to disable damping:
 
 ```python
 from soromox.systems import IsotropicMaterialParams
 
 material = IsotropicMaterialParams(
     young_modulus=[1.0e6],
-    shear_modulus=[3.4e5],
+    poisson_ratio=[0.45],
     material_damping_coefficient=[1.0e4],
 )
 material = material.replace(

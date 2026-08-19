@@ -368,20 +368,22 @@ def params_and_structure_from_segments(
         if segment.link.stiffness is None:
             stiffness = (
                 segment.link.young_modulus * young_operator[index]
-                + segment.link.shear_modulus * shear_operator[index]
+                + segment.link._resolved_shear_modulus() * shear_operator[index]
             )
         else:
             stiffness = _pad_matrix(
                 segment.link.stiffness, link_dof, layout_max_dof, "link stiffness"
             )
-        if segment.link.damping is None:
+        if segment.link.damping is not None:
+            damping = _pad_matrix(
+                segment.link.damping, link_dof, layout_max_dof, "link damping"
+            )
+        elif segment.link.material_damping_coefficient is not None:
             damping = (
                 segment.link.material_damping_coefficient * damping_operator[index]
             )
         else:
-            damping = _pad_matrix(
-                segment.link.damping, link_dof, layout_max_dof, "link damping"
-            )
+            damping = jnp.zeros_like(damping_operator[index])
         link_stiffness.append(stiffness)
         link_damping.append(damping)
     params = params.replace(

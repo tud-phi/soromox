@@ -26,23 +26,15 @@ parameter PyTree.
 ## Constructing PCS and GVS
 
 The shared `LinkSpec` accepts either isotropic material properties or explicit
-generalized matrices. This PCS example derives shear modulus from Poisson's
-ratio:
+generalized matrices. Isotropic stiffness may be parameterized by Young's and
+shear moduli or by Young's modulus and Poisson's ratio:
 
 ```python
 import jax.numpy as jnp
 
-from soromox.systems import (
-    PCS,
-    LinkSpec,
-    shear_modulus_from_poisson_ratio,
-)
+from soromox.systems import PCS, LinkSpec
 
 young = 1.0e6
-shear = shear_modulus_from_poisson_ratio(
-    young,
-    poisson_ratio=0.45,
-)
 reference = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
 
 pcs = PCS.from_links([
@@ -51,7 +43,7 @@ pcs = PCS.from_links([
         radius=0.012,
         density=1000.0,
         young_modulus=young,
-        shear_modulus=shear,
+        poisson_ratio=0.45,
         material_damping_coefficient=1.0e4,
         reference_strain=reference,
     )
@@ -76,7 +68,7 @@ gvs = GVS.from_segments([
             radius=0.012,
             density=1000.0,
             young_modulus=young,
-            shear_modulus=shear,
+            poisson_ratio=0.45,
             material_damping_coefficient=1.0e4,
             reference_strain=reference,
         ),
@@ -168,8 +160,9 @@ or quadrature padding requires reconstruction.
 ## Isotropic material updates
 
 Generalized stiffness and damping matrices are the canonical runtime values.
-Young's modulus, shear modulus, and material damping remain convenient
-construction and optimization variables in a separate caller-owned PyTree:
+Young's modulus, either shear modulus or Poisson's ratio, and optional material
+damping remain convenient construction and optimization variables in a
+separate caller-owned PyTree:
 
 ```python
 from soromox.systems import IsotropicMaterialParams
@@ -194,6 +187,22 @@ The same call works for PlanarPCS and GVS. Scalar fields are broadcast; arrays
 must contain one value per link. The robot stores only the generated canonical
 matrices, not `material`.
 
+Use `poisson_ratio` instead of `shear_modulus` to optimize the alternative
+isotropic parameterization. Exactly one must be supplied:
+
+```python
+poisson_material = IsotropicMaterialParams(
+    young_modulus=jnp.array([1.0e6]),
+    poisson_ratio=jnp.array([0.45]),
+)
+```
+
+Here material damping is omitted, so applying the material produces zero link
+damping. The presence of the optional fields is part of the PyTree structure:
+JIT compilation specializes on the chosen stiffness parameterization and on
+whether damping is active, while gradients are traced through only the active
+numeric fields.
+
 Inspect the mapping without updating the robot:
 
 ```python
@@ -207,7 +216,7 @@ assert jnp.allclose(updated.params.link.damping, damping)
 ## Differentiating parameter updates
 
 Typed params and robot updates are JAX PyTrees, so a loss can construct a
-candidate robot without mutation. This example differentiates all three
+candidate robot without mutation. This example differentiates all active
 isotropic material fields:
 
 ```python
@@ -263,7 +272,8 @@ matrix_value, matrix_gradient = jax.value_and_grad(matrix_loss)(
 
 Optimize material properties in log space when they must remain nonnegative.
 This constrains the material scalars without imposing positive-definiteness on
-the canonical generalized matrices:
+the canonical generalized matrices. The following applies to the
+Young/shear/damping parameterization:
 
 ```python
 log_material = jax.tree.map(jnp.log, material)
@@ -277,6 +287,11 @@ def decode(log_values):
         ),
     )
 ```
+
+For the Young/Poisson parameterization, constrain Poisson's ratio to its open
+physical interval with a sigmoid transform, for example
+`poisson_ratio = -1 + 1.5 * jax.nn.sigmoid(raw_poisson_ratio)`. Omitted damping
+remains `None` and is not an optimization leaf.
 
 ## Optax optimization loop
 
@@ -339,10 +354,11 @@ explicit update order.
 
 ## Material variables or direct matrices?
 
-Prefer isotropic material optimization when Young's modulus, shear modulus, and
-material damping have physical meaning in the identification problem. Optimize
-canonical `params.link.stiffness` and `params.link.damping` directly for
-anisotropic, coupled, or learned constitutive models.
+Prefer isotropic material optimization when Young's modulus, shear modulus or
+Poisson's ratio, and optional material damping have physical meaning in the
+identification problem. Optimize canonical `params.link.stiffness` and
+`params.link.damping` directly for anisotropic, coupled, or learned
+constitutive models.
 
 PCS matrices have shape `(N, 6, 6)`, PlanarPCS matrices `(N, 3, 3)`, and GVS
 matrices `(N, max_dof, max_dof)` with zero padding beyond each link's active

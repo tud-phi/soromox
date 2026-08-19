@@ -13,7 +13,9 @@ from soromox.systems import (
     JointSpec,
     LinearProfile,
     LinkSpec,
+    PlanarPCS,
     StrainBasisSpec,
+    shear_modulus_from_poisson_ratio,
 )
 from soromox.systems.components import section_properties
 
@@ -27,6 +29,14 @@ def _material() -> IsotropicMaterialParams:
         young_modulus=jnp.array([1.0e6]),
         shear_modulus=jnp.array([3.4e5]),
         material_damping_coefficient=jnp.array([1.0e4]),
+    )
+
+
+def _poisson_material(*, damping: bool = True) -> IsotropicMaterialParams:
+    return IsotropicMaterialParams(
+        young_modulus=jnp.array([1.0e6]),
+        poisson_ratio=jnp.array([1.0e6 / (2.0 * 3.4e5) - 1.0]),
+        material_damping_coefficient=(jnp.array([1.0e4]) if damping else None),
     )
 
 
@@ -110,6 +120,18 @@ def test_material_params_normalize_python_sequences() -> None:
     assert_allclose(updated.young_modulus, jnp.array([1.1e6]))
 
 
+def test_material_params_preserve_static_parameterization_structure() -> None:
+    shear_material = _material()
+    poisson_material = _poisson_material()
+    undamped_material = _poisson_material(damping=False)
+
+    assert jax.tree.structure(shear_material) != jax.tree.structure(poisson_material)
+    assert jax.tree.structure(poisson_material) != jax.tree.structure(undamped_material)
+    assert poisson_material.shear_modulus is None
+    assert shear_material.poisson_ratio is None
+    assert undamped_material.material_damping_coefficient is None
+
+
 @pytest.mark.parametrize(
     ("field", "value", "match"),
     [
@@ -139,6 +161,44 @@ def test_link_spec_rejects_nonphysical_values(field, value, match) -> None:
 
     with pytest.raises(ValueError, match=match):
         LinkSpec.circular(**kwargs)
+
+
+@pytest.mark.parametrize("poisson_ratio", [-1.0, 0.5, jnp.nan])
+def test_link_spec_rejects_invalid_poisson_ratio(poisson_ratio) -> None:
+    with pytest.raises(ValueError, match="poisson_ratio"):
+        LinkSpec.circular(
+            length=0.2,
+            radius=0.012,
+            density=1000.0,
+            young_modulus=1.0e6,
+            poisson_ratio=poisson_ratio,
+            reference_strain=REFERENCE,
+        )
+
+
+@pytest.mark.parametrize(
+    "stiffness_kwargs",
+    [
+        {},
+        {"young_modulus": 1.0e6},
+        {
+            "young_modulus": 1.0e6,
+            "shear_modulus": 3.4e5,
+            "poisson_ratio": 0.45,
+        },
+    ],
+)
+def test_link_spec_requires_exactly_one_isotropic_parameterization(
+    stiffness_kwargs,
+) -> None:
+    with pytest.raises(ValueError, match="material|shear_modulus"):
+        LinkSpec.circular(
+            length=0.2,
+            radius=0.012,
+            density=1000.0,
+            reference_strain=REFERENCE,
+            **stiffness_kwargs,
+        )
 
 
 @pytest.mark.parametrize("radius", [0.0, -0.01, jnp.nan])
@@ -211,6 +271,33 @@ def test_material_params_reject_nonphysical_values(field, value, match) -> None:
         IsotropicMaterialParams(**kwargs)
 
 
+@pytest.mark.parametrize("poisson_ratio", [[-1.0], [0.5], [jnp.nan]])
+def test_material_params_reject_invalid_poisson_ratio(poisson_ratio) -> None:
+    with pytest.raises(ValueError, match="poisson_ratio"):
+        IsotropicMaterialParams(
+            young_modulus=[1.0e6],
+            poisson_ratio=poisson_ratio,
+        )
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"young_modulus": [1.0e6]},
+        {
+            "young_modulus": [1.0e6],
+            "shear_modulus": [3.4e5],
+            "poisson_ratio": [0.45],
+        },
+    ],
+)
+def test_material_params_require_exactly_one_stiffness_parameterization(
+    kwargs,
+) -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        IsotropicMaterialParams(**kwargs)
+
+
 def test_gvs_joint_and_link_blocks_both_contribute() -> None:
     robot = _gvs()
     assert_allclose(
@@ -277,6 +364,112 @@ def test_geometry_refreshes_operators_without_overwriting_matrices() -> None:
     assert not jnp.allclose(rebuilt.params.link.stiffness, original_stiffness)
 
 
+def test_poisson_ratio_construction_and_omitted_damping_for_all_systems() -> None:
+    young_modulus = 1.0e6
+    poisson_ratio = 0.45
+    shear_modulus = shear_modulus_from_poisson_ratio(young_modulus, poisson_ratio)
+
+    pcs_from_shear = PCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.2,
+                radius=0.012,
+                density=1000.0,
+                young_modulus=young_modulus,
+                shear_modulus=shear_modulus,
+                reference_strain=REFERENCE,
+            )
+        ]
+    )
+    pcs_from_poisson = PCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.2,
+                radius=0.012,
+                density=1000.0,
+                young_modulus=young_modulus,
+                poisson_ratio=poisson_ratio,
+                reference_strain=REFERENCE,
+            )
+        ]
+    )
+
+    planar_from_poisson = PlanarPCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.2,
+                radius=0.012,
+                density=1000.0,
+                young_modulus=young_modulus,
+                poisson_ratio=poisson_ratio,
+                reference_strain=[0.0, 0.0, 1.0],
+            )
+        ]
+    )
+
+    gvs_from_poisson = GVS.from_segments(
+        [
+            GVSSegment(
+                link=LinkSpec.rectangular(
+                    length=0.2,
+                    height=0.03,
+                    width=0.025,
+                    density=1000.0,
+                    young_modulus=young_modulus,
+                    poisson_ratio=poisson_ratio,
+                    reference_strain=REFERENCE,
+                ),
+                joint=JointSpec.fixed(),
+                basis=StrainBasisSpec(
+                    type="legendre",
+                    strain_selector=("kappa_y", "sigma_x"),
+                    basis_order=1,
+                ),
+                num_gauss_points=5,
+            )
+        ]
+    )
+
+    assert_allclose(
+        pcs_from_poisson.params.link.stiffness,
+        pcs_from_shear.params.link.stiffness,
+    )
+    for robot in (pcs_from_poisson, planar_from_poisson, gvs_from_poisson):
+        assert_allclose(robot.params.link.damping, 0.0)
+
+
+def test_poisson_material_gradients_and_disabled_damping_are_jittable() -> None:
+    for robot in (_pcs(), _gvs()):
+        material = _poisson_material(damping=False)
+
+        def objective(candidate, robot=robot):
+            updated = robot.with_isotropic_material(candidate)
+            return jnp.sum(updated.params.link.stiffness) + jnp.sum(
+                updated.params.link.damping
+            )
+
+        stiffness, damping = jax.jit(
+            lambda candidate, robot=robot: robot.link_matrices_from_material(candidate)
+        )(material)
+        shear_stiffness_sum = jnp.sum(robot.shear_stiffness_operator, axis=(1, 2))
+        expected_young_gradient = jnp.sum(
+            robot.young_stiffness_operator, axis=(1, 2)
+        ) + shear_stiffness_sum / (2.0 * (1.0 + material.poisson_ratio))
+        expected_poisson_gradient = (
+            -material.young_modulus
+            * shear_stiffness_sum
+            / (2.0 * (1.0 + material.poisson_ratio) ** 2)
+        )
+        gradient = jax.jit(jax.grad(objective))(material)
+
+        assert_allclose(stiffness, robot.params.link.stiffness)
+        assert_allclose(damping, 0.0)
+        assert_allclose(gradient.young_modulus, expected_young_gradient)
+        assert gradient.shear_modulus is None
+        assert_allclose(gradient.poisson_ratio, expected_poisson_gradient)
+        assert gradient.material_damping_coefficient is None
+
+
 def test_material_gradients_and_jit_for_pcs_and_gvs() -> None:
     for robot in (_pcs(), _gvs()):
         material = _material()
@@ -300,6 +493,23 @@ def test_material_gradients_and_jit_for_pcs_and_gvs() -> None:
             gradient.material_damping_coefficient,
             jnp.sum(robot.material_damping_operator, axis=(1, 2)),
         )
+
+
+def test_poisson_material_gradient_matches_finite_difference() -> None:
+    robot = _pcs()
+    material = _poisson_material(damping=False)
+
+    def objective(poisson_ratio):
+        candidate = material.replace(poisson_ratio=poisson_ratio)
+        return jnp.sum(robot.link_matrices_from_material(candidate)[0])
+
+    automatic = jax.grad(objective)(material.poisson_ratio)
+    step = 1e-5
+    finite_difference = (
+        objective(material.poisson_ratio + step)
+        - objective(material.poisson_ratio - step)
+    ) / (2.0 * step)
+    assert_allclose(automatic[0], finite_difference, rtol=1e-7, atol=1e-7)
 
 
 def test_scalar_and_per_link_material_inputs() -> None:
@@ -340,9 +550,27 @@ def test_scalar_and_per_link_material_inputs() -> None:
     assert_allclose(scalar_matrices[0], per_link_matrices[0])
     assert_allclose(scalar_matrices[1], per_link_matrices[1])
 
+    scalar_poisson = IsotropicMaterialParams(
+        young_modulus=jnp.array(1.0e6),
+        poisson_ratio=jnp.array(1.0e6 / (2.0 * 3.4e5) - 1.0),
+    )
+    per_link_poisson = IsotropicMaterialParams(
+        young_modulus=jnp.full((2,), 1.0e6),
+        poisson_ratio=jnp.full((2,), 1.0e6 / (2.0 * 3.4e5) - 1.0),
+    )
+    scalar_poisson_matrices = robot.link_matrices_from_material(scalar_poisson)
+    per_link_poisson_matrices = robot.link_matrices_from_material(per_link_poisson)
+    assert_allclose(scalar_poisson_matrices[0], per_link_poisson_matrices[0])
+    assert_allclose(scalar_poisson_matrices[1], 0.0)
+    assert_allclose(per_link_poisson_matrices[1], 0.0)
+
     with pytest.raises(ValueError, match=r"shape \(2,\)"):
         robot.link_matrices_from_material(
             per_link.replace(young_modulus=jnp.ones((3,)))
+        )
+    with pytest.raises(ValueError, match=r"shape \(2,\)"):
+        robot.link_matrices_from_material(
+            per_link_poisson.replace(poisson_ratio=jnp.zeros((3,)))
         )
 
 
