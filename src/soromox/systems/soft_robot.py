@@ -18,7 +18,6 @@ from soromox.actuation.core import (
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.params import (
-    BaseSystemParams,
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
@@ -195,7 +194,7 @@ class SoftRobot(DynamicalSystem):
         """Metadata groups in the same order used to concatenate controls."""
         return tuple(actuator.metadata for actuator in self.actuators)
 
-    def with_actuator_params(self, index: int, params: BaseSystemParams) -> Self:
+    def with_actuator_params(self, index: int, params) -> Self:
         """Return a robot with one actuator's complete parameter object replaced."""
         if not 0 <= index < len(self.actuators):
             raise IndexError(f"actuator index {index} is out of range.")
@@ -212,7 +211,7 @@ class SoftRobot(DynamicalSystem):
             index, self.actuators[index].params.replace(**updates)
         )
 
-    def with_passive_element_params(self, index: int, params: BaseSystemParams) -> Self:
+    def with_passive_element_params(self, index: int, params) -> Self:
         """Return a robot with one passive element's complete params replaced."""
         if not 0 <= index < len(self.passive_elements):
             raise IndexError(f"passive element index {index} is out of range.")
