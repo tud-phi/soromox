@@ -367,7 +367,7 @@ D_x = 10.0 * jnp.eye(3)   # Damping matrix
 | **Missing example dependencies** | Install examples group with `pip install -e ".[examples]"` |
 | **Missing renderers** | Ensure SoRoMoX is installed with `pip install -e ".[rendering]"` or `pip install -e ".[all]"` |
 | **JAX precision warnings or simulation instability** | Most simulations require double precision. Enable with `jax.config.update("jax_enable_x64", True)` at the beginning of the script |
-| **Video codec issues** | Install the FFmpeg executable with your system package manager and verify it is available with `ffmpeg -version`; `ffmpeg-python` does not install FFmpeg |
+| **Video codec issues** | Install FFmpeg with your system package manager and verify the executable is available with `ffmpeg -version` |
 | **Matplotlib backend errors** | Try setting backend: `export MPLBACKEND=Agg` for headless systems |
 | **Out of memory errors** | Reduce batch sizes or use smaller simulation parameters |
 | **Optimization convergence issues** | Check initial parameter guesses and optimization settings in system identification examples |

@@ -55,6 +55,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Updated the dependency metadata and lockfile for a CUDA 13-enabled JAX and
   PyTorch stack, and declared `ipywidgets` with the optional Open3D extras.
+- Simplified rendering, example, paper-result, and complete installations by
+  removing an unused video-encoding package; video output continues to use the
+  system `ffmpeg` executable.
 - Made the Section V.d collocated optimizer derive ``gamma`` from a configurable
   tendon-length error scale (default 10 mm), validate finite saturation
   parameters, and document stale committed artifacts.
