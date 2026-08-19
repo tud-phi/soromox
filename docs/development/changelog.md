@@ -141,11 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Made same-PyTree, same-shape, same-dtype system, environment, actuator, and
-  passive-element replacements usable inside JIT-compiled code across
-  Pendulum, articulated systems, PCS, PlanarPCS, PlanarHSA, I-SUPPORT, and GVS.
-  Concrete eager calls retain value validation, while traced calls enforce the
-  statically observable type and shape contract.
+- Made same-PyTree, same-shape, same-dtype system, environment, actuator,
+  passive-element, and isotropic-material replacements usable inside
+  JIT-compiled code. Concrete eager calls retain value validation, while traced
+  calls enforce the statically observable type and shape contract.
 - Reused I-SUPPORT routing spans and McKibben joint-pair topology during
   compiled numeric updates, and kept GVS cross-section index dtypes stable when
   refreshing parameter-dependent caches.

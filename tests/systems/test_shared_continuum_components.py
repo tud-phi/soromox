@@ -24,11 +24,11 @@ jax.config.update("jax_enable_x64", True)
 REFERENCE = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
 
 
-def _material() -> IsotropicMaterialParams:
+def _material(*, damping: bool = True) -> IsotropicMaterialParams:
     return IsotropicMaterialParams(
         young_modulus=jnp.array([1.0e6]),
         shear_modulus=jnp.array([3.4e5]),
-        material_damping_coefficient=jnp.array([1.0e4]),
+        material_damping_coefficient=(jnp.array([1.0e4]) if damping else None),
     )
 
 
@@ -51,6 +51,22 @@ def _pcs() -> PCS:
                 shear_modulus=3.4e5,
                 material_damping_coefficient=1.0e4,
                 reference_strain=REFERENCE,
+            )
+        ]
+    )
+
+
+def _planar_pcs() -> PlanarPCS:
+    return PlanarPCS.from_links(
+        [
+            LinkSpec.circular(
+                length=0.2,
+                radius=0.012,
+                density=1000.0,
+                young_modulus=1.0e6,
+                shear_modulus=3.4e5,
+                material_damping_coefficient=1.0e4,
+                reference_strain=[0.0, 0.0, 1.0],
             )
         ]
     )
@@ -439,7 +455,7 @@ def test_poisson_ratio_construction_and_omitted_damping_for_all_systems() -> Non
 
 
 def test_poisson_material_gradients_and_disabled_damping_are_jittable() -> None:
-    for robot in (_pcs(), _gvs()):
+    for robot in (_pcs(), _planar_pcs(), _gvs()):
         material = _poisson_material(damping=False)
 
         def objective(candidate, robot=robot):
@@ -470,8 +486,8 @@ def test_poisson_material_gradients_and_disabled_damping_are_jittable() -> None:
         assert gradient.material_damping_coefficient is None
 
 
-def test_material_gradients_and_jit_for_pcs_and_gvs() -> None:
-    for robot in (_pcs(), _gvs()):
+def test_material_gradients_and_jit_for_continuum_systems() -> None:
+    for robot in (_pcs(), _planar_pcs(), _gvs()):
         material = _material()
 
         def objective(candidate, robot=robot):
@@ -493,6 +509,46 @@ def test_material_gradients_and_jit_for_pcs_and_gvs() -> None:
             gradient.material_damping_coefficient,
             jnp.sum(robot.material_damping_operator, axis=(1, 2)),
         )
+
+
+@pytest.mark.parametrize(
+    "robot_factory",
+    [
+        pytest.param(_pcs, id="pcs"),
+        pytest.param(_planar_pcs, id="planar-pcs"),
+        pytest.param(_gvs, id="gvs"),
+    ],
+)
+@pytest.mark.parametrize(
+    "material_factory",
+    [
+        pytest.param(_material, id="shear-damped"),
+        pytest.param(lambda: _material(damping=False), id="shear-undamped"),
+        pytest.param(_poisson_material, id="poisson-damped"),
+        pytest.param(lambda: _poisson_material(damping=False), id="poisson-undamped"),
+    ],
+)
+def test_same_structure_material_updates_compile_once(
+    robot_factory, material_factory
+) -> None:
+    robot = robot_factory()
+    material = material_factory()
+    updated_material = material.replace(young_modulus=1.05 * material.young_modulus)
+    trace_count = {"value": 0}
+
+    @jax.jit
+    def compiled_matrices(candidate):
+        trace_count["value"] += 1
+        return robot.link_matrices_from_material(candidate)
+
+    baseline = compiled_matrices(material)
+    actual = compiled_matrices(updated_material)
+    expected = robot.link_matrices_from_material(updated_material)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual[0], baseline[0])
+    assert_allclose(actual[0], expected[0])
+    assert_allclose(actual[1], expected[1])
 
 
 def test_poisson_material_gradient_matches_finite_difference() -> None:
