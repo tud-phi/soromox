@@ -3,10 +3,59 @@
 from __future__ import annotations
 
 import argparse
+import os
+from collections.abc import Sequence
 from pathlib import Path
 
-import jax
 from secvd_results import RESULTS_FILENAME
+
+DEVICE_CHOICES = ("auto", "cpu", "gpu")
+
+
+def _add_device_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--device",
+        choices=DEVICE_CHOICES,
+        default="auto",
+        help=(
+            "Optimization device. 'auto' uses CPU for one optimization start "
+            "and GPU for batched starts."
+        ),
+    )
+
+
+def requested_device_from_argv(argv: Sequence[str] | None = None) -> str:
+    """Read only the early device option, leaving all other arguments untouched."""
+    parser = argparse.ArgumentParser(add_help=False)
+    _add_device_argument(parser)
+    args, _unknown = parser.parse_known_args(argv)
+    return str(args.device)
+
+
+def resolve_optimization_device(*, requested: str, batch_size: int) -> str:
+    """Resolve the backend from the number of independently optimized starts."""
+    if requested not in DEVICE_CHOICES:
+        raise ValueError(
+            f"Unknown optimization device {requested!r}; expected {DEVICE_CHOICES}"
+        )
+    if batch_size < 1:
+        raise ValueError("optimization batch_size must be at least 1")
+    if requested != "auto":
+        return requested
+    return "cpu" if batch_size == 1 else "gpu"
+
+
+def configure_optimization_device(
+    *, batch_size: int, argv: Sequence[str] | None = None
+) -> str:
+    """Select the JAX platform before JAX is imported by an optimizer entrypoint."""
+    requested = requested_device_from_argv(argv)
+    resolved = resolve_optimization_device(
+        requested=requested,
+        batch_size=batch_size,
+    )
+    os.environ["JAX_PLATFORMS"] = resolved
+    return resolved
 
 
 def parse_optimization_args(
@@ -14,6 +63,7 @@ def parse_optimization_args(
     description: str,
     default_result_dir: Path,
     include_integral_error_saturation_scale: bool = False,
+    optimization_batch_size: int = 1,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--result-dir", type=Path, default=default_result_dir)
@@ -29,16 +79,42 @@ def parse_optimization_args(
     )
     parser.add_argument("--debug-nans", action="store_true")
     parser.add_argument("--force", action="store_true")
-    return parser.parse_args()
+    _add_device_argument(parser)
+    args = parser.parse_args()
+    args.optimization_batch_size = optimization_batch_size
+    args.resolved_device = resolve_optimization_device(
+        requested=args.device,
+        batch_size=optimization_batch_size,
+    )
+    return args
 
 
 def prepare_result_dir(args: argparse.Namespace) -> Path:
     if args.num_iters < 1:
         raise ValueError("--num-iters must be at least 1")
-    if args.debug_nans:
-        jax.config.update("jax_debug_nans", True)
     result_dir = args.result_dir.resolve()
     path = result_dir / RESULTS_FILENAME
     if path.exists() and not args.force:
         raise FileExistsError(f"Refusing to overwrite {path}; pass --force")
+    import jax
+
+    if args.debug_nans:
+        jax.config.update("jax_debug_nans", True)
+    try:
+        actual_device = jax.default_backend()
+    except RuntimeError as exc:
+        raise RuntimeError(
+            f"Could not initialize the requested {args.resolved_device!r} "
+            "optimization backend. Select another backend with --device."
+        ) from exc
+    if actual_device != args.resolved_device:
+        raise RuntimeError(
+            "JAX initialized on an unexpected backend: "
+            f"expected {args.resolved_device!r}, got {actual_device!r}. Device "
+            "selection must run before importing JAX."
+        )
+    print(
+        f"Optimization device: {actual_device} "
+        f"(batch size {args.optimization_batch_size}, requested {args.device})"
+    )
     return result_dir

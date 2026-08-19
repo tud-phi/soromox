@@ -6,16 +6,21 @@ import math
 import sys
 from pathlib import Path
 
-import jax
-import jax.numpy as jnp
-import optax
-from jax import jit, value_and_grad
-
 CODE_DIR = Path(__file__).resolve().parent
 if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
+from secvd_optimization import configure_optimization_device  # noqa: E402
+
+# Number of independently optimized gain initializations; timestep maps do not count.
+OPTIMIZATION_BATCH_SIZE = 1
+configure_optimization_device(batch_size=OPTIMIZATION_BATCH_SIZE)
+
+import jax  # noqa: E402
+import jax.numpy as jnp  # noqa: E402
+import optax  # noqa: E402
 from gain_optimization_loop import run_gain_optimization  # noqa: E402
+from jax import jit, value_and_grad  # noqa: E402
 from secvd_case import build_sec_vd_case, end_effector_pose_trajectory  # noqa: E402
 from secvd_optimization import (  # noqa: E402
     parse_optimization_args,
@@ -38,6 +43,7 @@ def main() -> None:
         description="Optimize collocated control gains for Section Vd.",
         default_result_dir=CASE_DIR / "data" / "collocated",
         include_integral_error_saturation_scale=True,
+        optimization_batch_size=OPTIMIZATION_BATCH_SIZE,
     )
     result_dir = prepare_result_dir(args)
     if (

@@ -44,6 +44,13 @@ Use `--result-dir` to stage results elsewhere. A run is saved only if every
 requested iteration completed with finite data, so an interrupted or non-finite
 run cannot replace an archive.
 
+Device selection defaults to `--device auto`. The current optimizers have one
+optimization start (`B=1`), so auto mode selects the CPU; the `vmap` used by the
+synergistic controller over rollout timesteps does not make it a batched
+optimization. The shared selector chooses the GPU when an optimizer supplies
+multiple independent starts (`B>1`) in a future batched implementation. Use
+`--device cpu` or `--device gpu` to override either automatic choice.
+
 The collocated controller integrates tendon-length errors in metres and uses
 the unit-preserving saturation
 
