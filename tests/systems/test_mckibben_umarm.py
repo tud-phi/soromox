@@ -351,6 +351,95 @@ def test_mckibben_optional_qd_power_jit_and_independent_updates() -> None:
     )
 
 
+def _updated_umarm_parameter_pair(robot):
+    body = robot.params.replace(
+        base_pose=robot.params.base_pose.at[4].set(0.05),
+        gravity=robot.params.gravity.at[2].set(-9.7),
+        mass=1.01 * robot.params.mass,
+        joint_armature=robot.params.joint_armature + 1.0e-5,
+    )
+    actuator = robot.actuators[0].params
+    transmission = actuator.transmission.replace(
+        moving_points=actuator.transmission.moving_points + 1.0e-5,
+        length_offset=actuator.transmission.length_offset + 1.0e-5,
+        thread_length=1.001 * actuator.transmission.thread_length,
+        num_turns=1.001 * actuator.transmission.num_turns,
+    )
+    return body, actuator.replace(
+        transmission=transmission,
+        lower_bounds=actuator.lower_bounds + 1.0,
+        upper_bounds=actuator.upper_bounds,
+    )
+
+
+def _umarm_parameter_summary(robot):
+    transmission = robot.actuators[0].params.transmission
+    return jnp.concatenate(
+        [
+            robot.base_pose,
+            robot.g,
+            robot.m,
+            robot.joint_armature,
+            transmission.moving_points.reshape(-1),
+            transmission.length_offset.reshape(-1),
+            transmission.thread_length.reshape(-1),
+            transmission.num_turns.reshape(-1),
+        ]
+    )
+
+
+def test_umarm_body_and_actuator_parameter_updates_refresh_eager_runtime_arrays():
+    robot = make_robot()
+    body_params, actuator_params = _updated_umarm_parameter_pair(robot)
+    before = _umarm_parameter_summary(robot)
+
+    updated = robot.with_params(body_params).with_actuator_params(0, actuator_params)
+
+    assert_allclose(_umarm_parameter_summary(robot), before)
+    assert not jnp.allclose(_umarm_parameter_summary(updated), before)
+
+
+def test_umarm_body_and_actuator_parameter_updates_compile_once():
+    robot = make_robot()
+    body_params, actuator_params = _updated_umarm_parameter_pair(robot)
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_body, current_actuator):
+        trace_count["value"] += 1
+        updated = robot.with_params(current_body).with_actuator_params(
+            0, current_actuator
+        )
+        return _umarm_parameter_summary(updated)
+
+    baseline = compiled_summary(robot.params, robot.actuators[0].params)
+    actual = compiled_summary(body_params, actuator_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    eager = robot.with_params(body_params).with_actuator_params(0, actuator_params)
+    assert_allclose(actual, _umarm_parameter_summary(eager))
+
+
+def test_umarm_parameter_gradient_passes_through_compiled_updates():
+    robot = make_robot()
+    q = jnp.linspace(-0.1, 0.1, robot.num_dofs)
+    actuator_params = robot.actuators[0].params
+
+    @eqx.filter_jit
+    def coordinate_sum(length_offset):
+        transmission = actuator_params.transmission.replace(length_offset=length_offset)
+        current = actuator_params.replace(transmission=transmission)
+        updated = robot.with_actuator_params(0, current)
+        return jnp.sum(updated.actuator_coordinates(q))
+
+    gradient = jax.grad(coordinate_sum)(actuator_params.transmission.length_offset)
+
+    assert gradient.shape == actuator_params.transmission.length_offset.shape
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.any(gradient != 0.0)
+
+
 def test_mckibben_forward_dynamics_is_inherited_and_matches_dense_equation() -> None:
     assert (
         McKibbenActuatedUMArm.forward_dynamics is ArticulatedSoftRobot.forward_dynamics

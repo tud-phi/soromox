@@ -1,4 +1,3 @@
-import math
 from typing import Any
 
 import equinox as eqx
@@ -7,6 +6,7 @@ from jax import Array, vmap
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems.components import ContinuumLinkParams, CrossSectionParams
+from soromox.systems.params import _contains_tracer
 from soromox.systems.pcs.params import ISupportParams
 from soromox.systems.pcs.structures import ISupportStructure, PCSStructure
 
@@ -81,6 +81,30 @@ def _pneumatic_chamber_actuator(
         routing,
         effective_areas=effective_areas,
     )
+
+
+def _with_pneumatic_chamber_params(
+    actuator: ThreadlikeActuator,
+    params: ISupportParams,
+) -> ThreadlikeActuator:
+    """Refresh chamber geometry while retaining precomputed routing spans."""
+    angles = jnp.asarray(params.chamber_azimuth_angles, dtype=jnp.float64)
+    distances = jnp.asarray(params.chamber_distance, dtype=jnp.float64)[:, None]
+    y_offsets = (distances * jnp.cos(angles)).reshape(-1)
+    z_offsets = (distances * jnp.sin(angles)).reshape(-1)
+    intercept = jnp.stack((jnp.zeros_like(y_offsets), y_offsets, z_offsets), axis=-1)
+    num_chambers = angles.shape[1]
+
+    actuator_params = actuator.params
+    transmission = actuator_params.transmission
+    routing = transmission.routing.replace(intercept=intercept)
+    transmission = transmission.replace(
+        routing=routing,
+        coordinate_scale=jnp.repeat(
+            _resolve_chamber_effective_pressure_area(params), num_chambers
+        ),
+    )
+    return actuator.with_params(actuator_params.replace(transmission=transmission))
 
 
 def _straight_reference_strain(dtype: jnp.dtype) -> Array:
@@ -167,7 +191,8 @@ def _resolve_pcs_segment_lengths(
             "pcs_segment_lengths must contain one length per pneumatic PCS segment; "
             f"expected {expected_num_pcs_segments}, got {pcs_segment_lengths.shape[0]}."
         )
-    if not bool(jnp.all(pcs_segment_lengths > 0.0)):
+    tracing_values = _contains_tracer((pcs_segment_lengths, physical_lengths))
+    if not tracing_values and not bool(jnp.all(pcs_segment_lengths > 0.0)):
         raise ValueError("pcs_segment_lengths entries must be positive.")
 
     segment_lengths_by_pneumatic_segment = []
@@ -175,14 +200,15 @@ def _resolve_pcs_segment_lengths(
     for i, count in enumerate(pcs_segment_counts):
         stop = start + count
         child_lengths = pcs_segment_lengths[start:stop]
-        child_length_sum = float(jnp.sum(child_lengths))
-        pneumatic_length = float(physical_lengths[pneumatic_physical_indices[i]])
-        if not math.isclose(
+        child_length_sum = jnp.sum(child_lengths)
+        pneumatic_length = physical_lengths[pneumatic_physical_indices[i]]
+        matching_length = jnp.isclose(
             child_length_sum,
             pneumatic_length,
-            rel_tol=1e-9,
-            abs_tol=1e-12,
-        ):
+            rtol=1e-9,
+            atol=1e-12,
+        )
+        if not tracing_values and not bool(matching_length):
             raise ValueError(
                 "Each pcs_segment_lengths group must sum to the matching "
                 "pneumatic segment length; "
@@ -199,7 +225,7 @@ def _expand_isupport_layout(
     structure: ISupportStructure,
 ) -> tuple[ISupportParams, PCSStructure, ISupportStructure, Array, Array]:
     params = _with_default_chamber_azimuth_angles(params)
-    params.validate()
+    params.validate_for_update()
     structure = _normalize_structure_for_params(params, structure)
 
     num_physical_segments = int(params.link.length.shape[0])
@@ -218,8 +244,13 @@ def _expand_isupport_layout(
     ).reshape(num_physical_segments, 6)
     straight_reference_strain = _straight_reference_strain(reference_strain.dtype)
     for physical_index, is_rigid in enumerate(structure.rigid_segment_selector):
-        if is_rigid and not bool(
-            jnp.allclose(reference_strain[physical_index], straight_reference_strain)
+        rigid_reference_matches = jnp.allclose(
+            reference_strain[physical_index], straight_reference_strain
+        )
+        if (
+            is_rigid
+            and not _contains_tracer(reference_strain)
+            and not bool(rigid_reference_matches)
         ):
             raise ValueError(
                 "Rigid segment reference_strain entries must equal "
@@ -601,18 +632,11 @@ class ISupport(PCS):
             pcs_params,
             _,
             _,
-            pcs_segment_to_pneumatic_segment,
+            _,
             _,
         ) = _expand_isupport_layout(params, self.structure)
-        chamber_actuator = _pneumatic_chamber_actuator(
-            params, pcs_segment_to_pneumatic_segment
-        )
         current_actuator = self.actuators[0]
-        chamber_actuator_params = chamber_actuator.params.replace(
-            lower_bounds=current_actuator.params.lower_bounds,
-            upper_bounds=current_actuator.params.upper_bounds,
-        )
-        chamber_actuator = current_actuator.with_params(chamber_actuator_params)
+        chamber_actuator = _with_pneumatic_chamber_params(current_actuator, params)
         chamber_arrays = (
             jnp.asarray(pcs_params.chamber_inner_radius, dtype=jnp.float64),
             jnp.asarray(pcs_params.chamber_outer_radius, dtype=jnp.float64),

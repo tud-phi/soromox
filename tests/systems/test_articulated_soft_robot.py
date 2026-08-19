@@ -2,6 +2,7 @@
 import jax
 
 jax.config.update("jax_enable_x64", True)
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as onp
 import pytest
@@ -36,6 +37,87 @@ def make_articulated_robot(num_links: int = 2) -> ArticulatedSoftRobot:
         gravity=jnp.array([0.0, -9.81, 0.0]),
     )
     return ArticulatedSoftRobot(params)
+
+
+def _updated_articulated_params(params):
+    return params.replace(
+        base_pose=params.base_pose.at[4].set(0.15),
+        gravity=params.gravity.at[2].set(-9.7),
+        mass=params.mass + 0.1,
+        center_of_mass_inertia=1.02 * params.center_of_mass_inertia,
+        joint_stiffness=params.joint_stiffness + 0.2 * jnp.eye(params.mass.shape[0]),
+    )
+
+
+def _articulated_parameter_summary(robot):
+    return jnp.concatenate(
+        [
+            robot.base_pose,
+            robot.g,
+            robot.m,
+            robot.I_com.reshape(-1),
+            robot.K.reshape(-1),
+        ]
+    )
+
+
+def test_parameter_updates_refresh_eager_runtime_arrays_immutably():
+    robot = make_articulated_robot()
+    updated_params = _updated_articulated_params(robot.params)
+    before = _articulated_parameter_summary(robot)
+
+    updated = robot.with_params(updated_params)
+
+    assert_allclose(_articulated_parameter_summary(robot), before)
+    assert not jnp.allclose(_articulated_parameter_summary(updated), before)
+
+
+def test_same_structure_parameter_updates_compile_once():
+    robot = make_articulated_robot()
+    updated_params = _updated_articulated_params(robot.params)
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_params):
+        trace_count["value"] += 1
+        return _articulated_parameter_summary(robot.with_params(current_params))
+
+    baseline = compiled_summary(robot.params)
+    actual = compiled_summary(updated_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(
+        actual, _articulated_parameter_summary(robot.with_params(updated_params))
+    )
+
+
+def test_parameter_gradient_passes_through_compiled_update():
+    robot = make_articulated_robot()
+
+    @eqx.filter_jit
+    def scalar_summary(current_params):
+        return jnp.sum(
+            _articulated_parameter_summary(robot.with_params(current_params))
+        )
+
+    gradient = eqx.filter_grad(scalar_summary)(robot.params)
+
+    assert gradient.mass.shape == robot.params.mass.shape
+    assert jnp.all(jnp.isfinite(gradient.mass))
+    assert jnp.any(gradient.mass != 0.0)
+
+
+def test_parameter_structure_changes_require_reconstruction():
+    robot = make_articulated_robot()
+    wrong_shape = eqx.tree_at(
+        lambda params: params.mass,
+        robot.params,
+        jnp.ones((3,), dtype=jnp.float64),
+    )
+
+    with pytest.raises(ValueError, match="shape|structure|construct"):
+        robot.with_params(wrong_shape)
 
 
 def make_matching_pendulum(num_links: int = 2) -> Pendulum:

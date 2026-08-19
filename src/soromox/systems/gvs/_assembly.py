@@ -144,7 +144,7 @@ def assign_gvs_runtime_arrays(
     basis_type_index = jnp.empty((n_segments,), dtype=int)
     basis_active_params = jnp.empty((n_segments, 6))
     basis_order_params = jnp.empty((n_segments, 6))
-    cross_section_geometry = jnp.empty((n_segments,), dtype=int)
+    cross_section_geometry = jnp.empty((n_segments,), dtype=jnp.int32)
     radius_params = jnp.empty((n_segments, 2))
     height_params = jnp.empty((n_segments, 2))
     width_params = jnp.empty((n_segments, 2))

@@ -3,6 +3,7 @@ import jax
 
 jax.config.update("jax_enable_x64", True)
 
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 from system_param_builders import spatial_base_pose
@@ -99,6 +100,111 @@ def expected_isupport_segment_actuation(
             )
         )
     return jnp.stack(expected_columns, axis=-1)
+
+
+def updated_isupport_params(params):
+    return params.replace(
+        base_pose=params.base_pose.at[4].set(0.05),
+        gravity=params.gravity.at[2].set(-9.7),
+        link=params.link.replace(
+            length=1.02 * params.link.length,
+            density=1.01 * params.link.density,
+            stiffness=1.03 * params.link.stiffness,
+            damping=1.04 * params.link.damping,
+        ),
+        chamber_outer_radius=1.05 * params.chamber_outer_radius,
+        chamber_distance=1.06 * params.chamber_distance,
+        chamber_azimuth_angles=params.chamber_azimuth_angles + 0.1,
+    )
+
+
+def isupport_runtime_summary(robot):
+    actuator = robot.actuators[0]
+    return jnp.concatenate(
+        [
+            robot.base_pose,
+            robot.g,
+            robot.L,
+            robot.rho,
+            robot.r_chamber_out,
+            robot.d_chamber,
+            robot.K_full.reshape(-1),
+            robot.D_full.reshape(-1),
+            actuator.params.transmission.routing.intercept.reshape(-1),
+            actuator.params.transmission.coordinate_scale,
+        ]
+    )
+
+
+def test_isupport_parameter_updates_are_immutable_and_refresh_eager_caches():
+    params = make_isupport_params()
+    robot = ISupport(
+        params=params,
+        structure=make_pneumatic_isupport_structure(num_gauss_points=1),
+    )
+    updated_params = updated_isupport_params(params)
+    before = isupport_runtime_summary(robot)
+
+    updated = robot.with_params(updated_params)
+
+    assert jnp.allclose(isupport_runtime_summary(robot), before)
+    assert not jnp.allclose(isupport_runtime_summary(updated), before)
+
+
+def test_isupport_same_structure_parameter_updates_compile_once():
+    params = make_isupport_params()
+    robot = ISupport(
+        params=params,
+        structure=make_pneumatic_isupport_structure(num_gauss_points=1),
+    )
+    updated_params = updated_isupport_params(params)
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_params):
+        trace_count["value"] += 1
+        return isupport_runtime_summary(robot.with_params(current_params))
+
+    baseline = compiled_summary(params)
+    actual = compiled_summary(updated_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert jnp.allclose(
+        actual, isupport_runtime_summary(robot.with_params(updated_params))
+    )
+
+
+def test_isupport_parameter_gradient_passes_through_compiled_update():
+    params = make_isupport_params()
+    robot = ISupport(
+        params=params,
+        structure=make_pneumatic_isupport_structure(num_gauss_points=1),
+    )
+
+    @eqx.filter_jit
+    def pressure_scale(outer_radius):
+        current = params.replace(chamber_outer_radius=outer_radius)
+        updated = robot.with_params(current)
+        return jnp.sum(updated.actuators[0].params.transmission.coordinate_scale)
+
+    gradient = jax.grad(pressure_scale)(params.chamber_outer_radius)
+
+    assert gradient.shape == params.chamber_outer_radius.shape
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.any(gradient != 0.0)
+
+
+def test_isupport_chamber_count_change_requires_reconstruction():
+    params = make_isupport_params()
+    robot = ISupport(
+        params=params,
+        structure=make_pneumatic_isupport_structure(num_gauss_points=1),
+    )
+    four_angles = 2.0 * jnp.pi * jnp.arange(4, dtype=jnp.float64)[None, :] / 4.0
+
+    with pytest.raises(ValueError, match="number of chambers|reconstruction"):
+        robot.with_params(params.replace(chamber_azimuth_angles=four_angles))
 
 
 def test_isupport_geometry_helpers_and_actuation_matrix_shape():

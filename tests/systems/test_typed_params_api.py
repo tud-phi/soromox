@@ -1,6 +1,5 @@
 from dataclasses import fields
 
-import equinox as eqx
 import jax
 import pytest
 from jax import Array, vmap
@@ -338,37 +337,6 @@ def test_planar_params_validate_base_pose_finite_values():
     )
     with pytest.raises(ValueError, match="finite"):
         planar.validate()
-
-
-def test_same_shape_param_updates_do_not_retrace_under_filter_jit():
-    params = _pendulum_params()
-    robot = Pendulum(params=params)
-    q = jnp.array([0.2, -0.1], dtype=jnp.float64)
-    trace_count = {"value": 0}
-
-    @eqx.filter_jit
-    def potential_energy(current_params, current_q):
-        trace_count["value"] += 1
-        return robot.with_params(current_params).potential_energy(current_q)
-
-    potential_energy(params, q)
-    potential_energy(params.replace(mass=params.mass + 0.1), q)
-    potential_energy(params.replace(gravity=params.gravity.at[1].set(-9.7)), q)
-
-    assert trace_count["value"] == 1
-
-
-def test_grad_differentiates_through_typed_params():
-    params = _pendulum_params()
-    robot = Pendulum(params=params)
-    q = jnp.array([0.25, -0.15], dtype=jnp.float64)
-
-    def energy_for_first_mass(mass_0):
-        current = params.replace(mass=params.mass.at[0].set(mass_0))
-        return robot.with_params(current).potential_energy(q)
-
-    grad_value = jax.grad(energy_for_first_mass)(params.mass[0])
-    assert jnp.isfinite(grad_value)
 
 
 def test_articulated_tendon_impedance_stores_per_tendon_mechanics():
