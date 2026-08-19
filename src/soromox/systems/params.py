@@ -12,11 +12,16 @@ from dataclasses import fields
 from typing import Any, ClassVar, Literal
 
 import equinox as eqx
-from jax import Array
+from jax import Array, core, tree_util
 from jax import numpy as jnp
 from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 DEFAULT_GRAVITY_MAGNITUDE = 9.81
+
+
+def _contains_tracer(tree: Any) -> bool:
+    """Return whether a parameter PyTree is currently under a JAX transform."""
+    return any(isinstance(leaf, core.Tracer) for leaf in tree_util.tree_leaves(tree))
 
 
 def _validate_finite_array(
@@ -132,7 +137,7 @@ class BaseSystemParams(eqx.Module):
                 value,
                 is_leaf=lambda leaf: leaf is None,
             )
-        updated.validate()
+        updated.validate_for_update()
         return updated
 
     def _normalize_replacement(self, name: str, value: Any) -> Any:
@@ -147,6 +152,17 @@ class BaseSystemParams(eqx.Module):
             shapes, values, or component relationships.
         """
         return None
+
+    def validate_structure(self) -> None:
+        """Validate the shape/type contract observable during JAX tracing."""
+        self.validate()
+
+    def validate_for_update(self) -> None:
+        """Validate fully in eager code and structurally under JAX transforms."""
+        if _contains_tracer(self):
+            self.validate_structure()
+        else:
+            self.validate()
 
     def validate_against_structure(self, structure: Any) -> None:
         """Validate parameters against static construction choices.

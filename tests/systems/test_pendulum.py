@@ -1,4 +1,5 @@
 # ruff: noqa: E402
+import equinox as eqx
 import jax
 
 jax.config.update("jax_enable_x64", True)  # double precision
@@ -35,6 +36,64 @@ def make_pendulum(N: int = 2):
         gravity=jnp.array([0.0, -9.81]),
     )
     return Pendulum(params)
+
+
+def _parameter_summary(model):
+    return jnp.concatenate([model.base_pose, model.g, model.m, model.K.reshape(-1)])
+
+
+def test_parameter_updates_refresh_eager_runtime_arrays_immutably():
+    robot = make_pendulum(2)
+    params = robot.params
+    updated_params = params.replace(
+        base_pose=params.base_pose.at[1].set(0.15),
+        gravity=params.gravity.at[1].set(-9.7),
+        mass=params.mass + 0.1,
+        joint_stiffness=params.joint_stiffness + 0.2 * jnp.eye(2),
+    )
+    before = _parameter_summary(robot)
+
+    updated = robot.with_params(updated_params)
+
+    assert_allclose(_parameter_summary(robot), before)
+    assert not jnp.allclose(_parameter_summary(updated), before)
+
+
+def test_same_structure_parameter_updates_compile_once():
+    robot = make_pendulum(2)
+    params = robot.params
+    updated_params = params.replace(
+        base_pose=params.base_pose.at[1].set(0.15),
+        gravity=params.gravity.at[1].set(-9.7),
+        mass=params.mass + 0.1,
+        joint_stiffness=params.joint_stiffness + 0.2 * jnp.eye(2),
+    )
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_params):
+        trace_count["value"] += 1
+        return _parameter_summary(robot.with_params(current_params))
+
+    baseline = compiled_summary(params)
+    actual = compiled_summary(updated_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(actual, _parameter_summary(robot.with_params(updated_params)))
+
+
+def test_grad_differentiates_through_typed_params():
+    robot = make_pendulum(2)
+    params = robot.params
+    q = jnp.array([0.25, -0.15], dtype=jnp.float64)
+
+    def energy_for_first_mass(mass_0):
+        current = params.replace(mass=params.mass.at[0].set(mass_0))
+        return robot.with_params(current).potential_energy(q)
+
+    grad_value = jax.grad(energy_for_first_mass)(params.mass[0])
+    assert jnp.isfinite(grad_value)
 
 
 def test_pendulum_update_rejects_all_fixed_size_shape_changes():

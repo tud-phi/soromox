@@ -8,7 +8,7 @@ import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems.params import BaseSystemParams
+from soromox.systems.params import BaseSystemParams, _contains_tracer
 
 from .core import (
     Actuator,
@@ -39,6 +39,8 @@ def _validate_tendon_routing(matrix: Array, num_dofs: int, name: str) -> None:
             f"{name} must have one column per degree of freedom; expected "
             f"{num_dofs}, got {matrix.shape[1]}."
         )
+    if _contains_tracer(matrix):
+        return
     count = matrix.shape[0]
     if count > 0 and int(jnp.linalg.matrix_rank(matrix)) != count:
         raise ValueError(f"{name} must be full row rank.")

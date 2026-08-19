@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as onp
@@ -31,6 +32,52 @@ TIP_ATOL = 1e-8
 RTOL = Tolerance.rtol()
 ATOL = Tolerance.atol()
 NUM_RANDOM_SAMPLES = 5
+
+
+def _updated_gvs_params(robot: GVS):
+    params = robot.params
+    return params.replace(
+        base_pose=params.base_pose.at[4].set(0.05),
+        gravity=params.gravity.at[2].set(-9.7),
+        link=params.link.replace(
+            length=1.02 * params.link.length,
+            density=1.01 * params.link.density,
+            reference_strain=params.link.reference_strain.at[:, 1].add(1e-3),
+            cross_section=params.link.cross_section.replace(
+                coefficients=1.01 * params.link.cross_section.coefficients
+            ),
+            stiffness=1.03 * params.link.stiffness,
+            damping=params.link.damping
+            + 1e-4 * jnp.eye(params.link.damping.shape[-1])[None, :, :],
+        ),
+        joint=params.joint.replace(
+            stiffness=params.joint.stiffness
+            + 1e-4 * jnp.eye(params.joint.stiffness.shape[-1])[None, :, :],
+            damping=params.joint.damping
+            + 1e-4 * jnp.eye(params.joint.damping.shape[-1])[None, :, :],
+        ),
+    )
+
+
+def _gvs_runtime_summary(robot: GVS):
+    return jnp.concatenate(
+        [
+            robot.base_pose,
+            robot.g,
+            robot.segment_lengths,
+            robot.mass_matrices.reshape(-1),
+            robot.K_full.reshape(-1),
+            robot.D_full.reshape(-1),
+        ]
+    )
+
+
+def _array_signature(tree):
+    return tuple(
+        (leaf.shape, leaf.dtype)
+        for leaf in jax.tree.leaves(tree)
+        if isinstance(leaf, Array)
+    )
 
 
 def build_matched_gvs_pcs(
@@ -102,6 +149,65 @@ def build_matched_gvs_pcs(
     )
 
     return robot_gvs, robot_pcs
+
+
+def test_gvs_parameter_updates_are_immutable_and_refresh_eager_runtime_arrays():
+    robot, _ = build_matched_gvs_pcs()
+    updated_params = _updated_gvs_params(robot)
+    before = _gvs_runtime_summary(robot)
+
+    updated = robot.with_params(updated_params)
+
+    assert_allclose(_gvs_runtime_summary(robot), before)
+    assert not jnp.allclose(_gvs_runtime_summary(updated), before)
+    assert _array_signature(updated) == _array_signature(robot)
+
+
+def test_gvs_same_structure_parameter_updates_compile_once():
+    robot, _ = build_matched_gvs_pcs()
+    params = robot.params
+    updated_params = _updated_gvs_params(robot)
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_params):
+        trace_count["value"] += 1
+        return _gvs_runtime_summary(robot.with_params(current_params))
+
+    baseline = compiled_summary(params)
+    actual = compiled_summary(updated_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(actual, _gvs_runtime_summary(robot.with_params(updated_params)))
+
+
+def test_gvs_parameter_gradient_passes_through_compiled_update():
+    robot, _ = build_matched_gvs_pcs()
+    params = robot.params
+
+    @eqx.filter_jit
+    def mass_summary(density):
+        current = params.replace(link=params.link.replace(density=density))
+        return jnp.sum(robot.with_params(current).mass_matrices)
+
+    gradient = jax.grad(mass_summary)(params.link.density)
+
+    assert gradient.shape == params.link.density.shape
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.any(gradient != 0.0)
+
+
+def test_gvs_parameter_structure_changes_require_reconstruction():
+    robot, _ = build_matched_gvs_pcs()
+    wrong_shape = eqx.tree_at(
+        lambda params: params.link.length,
+        robot.params,
+        jnp.ones((2,), dtype=jnp.float64),
+    )
+
+    with pytest.raises(ValueError, match="shape|contain"):
+        robot.with_params(wrong_shape)
 
 
 def test_params_from_segments_stores_resolved_max_dof():

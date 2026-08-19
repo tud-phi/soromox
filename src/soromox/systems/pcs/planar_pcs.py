@@ -490,7 +490,7 @@ class PlanarPCS(SoftRobot):
         current_params = self._current_body_params()
         if not isinstance(params, PlanarPCSParams):
             raise TypeError("params must be a PlanarPCSParams instance.")
-        params.validate()
+        params.validate_for_update()
         if params.link.length.shape != current_params.link.length.shape:
             raise ValueError(
                 "length shape changes the model structure; construct a new PlanarPCS."

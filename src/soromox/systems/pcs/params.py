@@ -154,18 +154,8 @@ class ISupportParams(PCSParams):
     pcs_segment_lengths: Array | None = None
     chamber_effective_pressure_area: Array | None = None
 
-    def validate(self) -> None:
-        """Validate PCS and pneumatic chamber parameters.
-
-        Returns:
-            ``None`` after successful validation.
-
-        Raises:
-            ValueError: If inherited PCS fields are invalid; chamber arrays
-                disagree in shape; radii, effective areas, or segment lengths
-                are invalid; or chamber azimuths are non-finite or not uniformly
-                distributed.
-        """
+    def validate_structure(self) -> None:
+        """Validate array shapes independently of runtime chamber values."""
         super().validate()
         chamber_inner_radius = jnp.asarray(self.chamber_inner_radius)
         if chamber_inner_radius.ndim != 1:
@@ -185,6 +175,49 @@ class ISupportParams(PCSParams):
         ):
             _require_shape(name, getattr(self, name), (n_pneumatic_segments,))
 
+        if self.chamber_effective_pressure_area is not None:
+            effective_area = jnp.asarray(self.chamber_effective_pressure_area)
+            _require_shape(
+                "chamber_effective_pressure_area",
+                effective_area,
+                (n_pneumatic_segments,),
+            )
+
+        if self.chamber_azimuth_angles is not None:
+            angles = jnp.asarray(self.chamber_azimuth_angles)
+            if (
+                angles.ndim != 2
+                or angles.shape[0] != n_pneumatic_segments
+                or angles.shape[1] < 1
+            ):
+                raise ValueError(
+                    "chamber_azimuth_angles must have shape "
+                    "(num_pneumatic_segments, num_chambers_per_segment) with at "
+                    "least one chamber per segment"
+                )
+
+        if self.pcs_segment_lengths is not None:
+            pcs_segment_lengths = jnp.asarray(self.pcs_segment_lengths)
+            if pcs_segment_lengths.ndim != 1:
+                raise ValueError(
+                    "pcs_segment_lengths must be one-dimensional with shape "
+                    "(num_pcs_segments,)."
+                )
+
+    def validate(self) -> None:
+        """Validate PCS and pneumatic chamber parameters.
+
+        Returns:
+            ``None`` after successful validation.
+
+        Raises:
+            ValueError: If inherited PCS fields are invalid; chamber arrays
+                disagree in shape; radii, effective areas, or segment lengths
+                are invalid; or chamber azimuths are non-finite or not uniformly
+                distributed.
+        """
+        self.validate_structure()
+        chamber_inner_radius = jnp.asarray(self.chamber_inner_radius)
         chamber_outer_radius = jnp.asarray(self.chamber_outer_radius)
         if not bool(
             jnp.all(
@@ -205,11 +238,6 @@ class ISupportParams(PCSParams):
 
         if self.chamber_effective_pressure_area is not None:
             effective_area = jnp.asarray(self.chamber_effective_pressure_area)
-            _require_shape(
-                "chamber_effective_pressure_area",
-                effective_area,
-                (n_pneumatic_segments,),
-            )
             if not bool(jnp.all(jnp.isfinite(effective_area) & (effective_area > 0.0))):
                 raise ValueError(
                     "chamber_effective_pressure_area entries must be finite and positive"
@@ -217,16 +245,6 @@ class ISupportParams(PCSParams):
 
         if self.chamber_azimuth_angles is not None:
             angles = jnp.asarray(self.chamber_azimuth_angles)
-            if (
-                angles.ndim != 2
-                or angles.shape[0] != n_pneumatic_segments
-                or angles.shape[1] < 1
-            ):
-                raise ValueError(
-                    "chamber_azimuth_angles must have shape "
-                    "(num_pneumatic_segments, num_chambers_per_segment) with at "
-                    "least one chamber per segment"
-                )
             if not bool(jnp.all(jnp.isfinite(angles))):
                 raise ValueError("chamber_azimuth_angles entries must be finite")
             wrapped = jnp.mod(angles, 2.0 * jnp.pi)
@@ -240,14 +258,6 @@ class ISupportParams(PCSParams):
                 raise ValueError(
                     "chamber_azimuth_angles must be uniformly distributed around "
                     "the full circle for every pneumatic segment"
-                )
-
-        if self.pcs_segment_lengths is not None:
-            pcs_segment_lengths = jnp.asarray(self.pcs_segment_lengths)
-            if pcs_segment_lengths.ndim != 1:
-                raise ValueError(
-                    "pcs_segment_lengths must be one-dimensional with shape "
-                    "(num_pcs_segments,)."
                 )
 
 

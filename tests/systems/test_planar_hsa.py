@@ -1,8 +1,10 @@
 # ruff: noqa: E402
 from pathlib import Path
 
+import equinox as eqx
 import jax
 import numpy as np
+import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
 
@@ -33,6 +35,87 @@ def _create_robot():
         params=typed_params,
         structure=PlanarHSAStructure(),
     )
+
+
+def _updated_typed_params():
+    return typed_params.replace(
+        base_pose=typed_params.base_pose.at[1].set(0.05),
+        gravity=typed_params.gravity.at[1].set(-9.7),
+        length=1.01 * typed_params.length,
+        rod_density=1.02 * typed_params.rod_density,
+        nominal_bending_stiffness=1.03 * typed_params.nominal_bending_stiffness,
+        bending_damping=1.04 * typed_params.bending_damping,
+    )
+
+
+def _parameter_runtime_summary(robot):
+    return jnp.concatenate(
+        [
+            robot.base_pose,
+            robot.g,
+            robot.L,
+            robot.rod_density.reshape(-1),
+            robot.K_full.reshape(-1),
+            robot.D_full.reshape(-1),
+        ]
+    )
+
+
+def test_planar_hsa_parameter_updates_are_immutable_and_refresh_eager_caches():
+    robot = _create_robot()
+    updated_params = _updated_typed_params()
+    before = _parameter_runtime_summary(robot)
+
+    updated = robot.with_params(updated_params)
+
+    assert_allclose(_parameter_runtime_summary(robot), before)
+    assert not jnp.allclose(_parameter_runtime_summary(updated), before)
+
+
+def test_planar_hsa_same_structure_parameter_updates_compile_once():
+    robot = _create_robot()
+    updated_params = _updated_typed_params()
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_params):
+        trace_count["value"] += 1
+        return _parameter_runtime_summary(robot.with_params(current_params))
+
+    baseline = compiled_summary(typed_params)
+    actual = compiled_summary(updated_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(
+        actual, _parameter_runtime_summary(robot.with_params(updated_params))
+    )
+
+
+def test_planar_hsa_parameter_gradient_passes_through_compiled_update():
+    robot = _create_robot()
+
+    @eqx.filter_jit
+    def mass_summary(rod_density):
+        current = typed_params.replace(rod_density=rod_density)
+        return jnp.sum(robot.with_params(current).rod_mass_matrices)
+
+    gradient = jax.grad(mass_summary)(typed_params.rod_density)
+
+    assert gradient.shape == typed_params.rod_density.shape
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.any(gradient != 0.0)
+
+
+def test_planar_hsa_parameter_structure_changes_require_reconstruction():
+    wrong_shape = eqx.tree_at(
+        lambda params: params.length,
+        typed_params,
+        jnp.ones((2,), dtype=jnp.float64),
+    )
+
+    with pytest.raises(ValueError, match="shape|structure|construct"):
+        _create_robot().with_params(wrong_shape)
 
 
 def _sample_configuration(rng, num_segments):

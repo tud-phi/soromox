@@ -516,7 +516,7 @@ class PCS(SoftRobot):
         current_params = self._current_body_params()
         if not isinstance(params, PCSParams):
             raise TypeError("params must be a PCSParams instance.")
-        params.validate()
+        params.validate_for_update()
         if params.link.length.shape != current_params.link.length.shape:
             raise ValueError(
                 "length shape changes the model structure; construct a new PCS."

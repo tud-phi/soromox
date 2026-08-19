@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax
 import numpy as onp
 import pytest
@@ -60,6 +61,87 @@ def make_pcs(
     )
 
     return model, params
+
+
+def _updated_pcs_params(params):
+    return params.replace(
+        base_pose=params.base_pose.at[4].set(0.15),
+        gravity=params.gravity.at[2].set(-9.7),
+        link=params.link.replace(
+            length=params.link.length + 0.01,
+            density=params.link.density + 10.0,
+            stiffness=1.02 * params.link.stiffness,
+            damping=1.03 * params.link.damping,
+        ),
+    )
+
+
+def _pcs_parameter_summary(model):
+    return jnp.concatenate(
+        [
+            model.base_pose,
+            model.g,
+            model.L,
+            model.rho,
+            model.K_full.reshape(-1),
+            model.D_full.reshape(-1),
+        ]
+    )
+
+
+def test_parameter_updates_refresh_eager_runtime_arrays_immutably():
+    model, params = make_pcs()
+    updated_params = _updated_pcs_params(params)
+    before = _pcs_parameter_summary(model)
+
+    updated = model.with_params(updated_params)
+
+    assert_allclose(_pcs_parameter_summary(model), before)
+    assert not jnp.allclose(_pcs_parameter_summary(updated), before)
+
+
+def test_same_structure_parameter_updates_compile_once():
+    model, params = make_pcs()
+    updated_params = _updated_pcs_params(params)
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_params):
+        trace_count["value"] += 1
+        return _pcs_parameter_summary(model.with_params(current_params))
+
+    baseline = compiled_summary(params)
+    actual = compiled_summary(updated_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(actual, _pcs_parameter_summary(model.with_params(updated_params)))
+
+
+def test_parameter_gradient_passes_through_compiled_update():
+    model, params = make_pcs()
+
+    @eqx.filter_jit
+    def scalar_summary(current_params):
+        return jnp.sum(_pcs_parameter_summary(model.with_params(current_params)))
+
+    gradient = eqx.filter_grad(scalar_summary)(params)
+
+    assert gradient.link.density.shape == params.link.density.shape
+    assert jnp.all(jnp.isfinite(gradient.link.density))
+    assert jnp.any(gradient.link.density != 0.0)
+
+
+def test_parameter_structure_changes_require_reconstruction():
+    model, params = make_pcs()
+    wrong_shape = eqx.tree_at(
+        lambda current: current.link.length,
+        params,
+        jnp.ones((3,), dtype=jnp.float64),
+    )
+
+    with pytest.raises(ValueError, match="shape|structure|construct"):
+        model.with_params(wrong_shape)
 
 
 def sample_arc_lengths(model: PCS) -> list[float]:

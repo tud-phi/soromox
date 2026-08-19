@@ -157,6 +157,56 @@ Updates may change numeric values but not static layout. Changing the number of
 links, GVS basis orders, active strain selectors, joint types, matrix padding,
 or quadrature padding requires reconstruction.
 
+## Compiled update contract
+
+`with_params(...)` can participate in JAX transformations when the model's
+static structure remains fixed. Close over the constructed robot and pass its
+complete parameter PyTree as a dynamic argument:
+
+```python
+import equinox as eqx
+
+q = jnp.zeros(pcs.num_dofs)
+
+@eqx.filter_jit
+def energy(params, configuration):
+    candidate = pcs.with_params(params)
+    return candidate.potential_energy(configuration)
+
+baseline = energy(pcs.params, q)
+candidate_params = pcs.params.replace(
+    link=pcs.params.link.replace(
+        density=1.05 * pcs.params.link.density,
+        stiffness=0.95 * pcs.params.link.stiffness,
+    )
+)
+candidate = energy(candidate_params, q)
+```
+
+The two calls share one compiled executable when every parameter leaf keeps
+the same PyTree position, shape, and dtype. Numeric system, environment,
+actuator, and passive-element values are dynamic under this contract. Updates
+remain differentiable and vectorizable with `grad`, `value_and_grad`, and
+`vmap`.
+
+Installed components use the corresponding immutable delegates:
+`with_actuator_params(...)` and `with_passive_element_params(...)`. The same
+fixed-layout rule applies to their parameter PyTrees.
+
+The distinction between dynamic params and static structure is described in
+the parameter API [Overview](../api/utilities/parameters.md#overview). Changing
+structure, or changing a parameter leaf's shape, dtype, or `None`/array
+presence, requires reconstruction and normally a new compilation.
+
+Eager updates perform both structural and value validation. During tracing,
+only validation based on statically observable types and shapes is possible;
+runtime numeric candidates must therefore remain in their physical domains.
+Use constrained parameterizations where appropriate, and validate externally
+supplied values eagerly before a compiled optimization or simulation loop.
+
+Start from `robot.params` so constructor-resolved defaults already have their
+runtime PyTree representation.
+
 ## Isotropic material updates
 
 Generalized stiffness and damping matrices are the canonical runtime values.

@@ -117,8 +117,11 @@ robot = robot.update_passive_element_params(0, stiffness=new_stiffness)
 Each component also provides `params`, `with_params(...)`, and
 `update_params(...)`. Parameter replacement is immutable. Numeric fields may be
 updated, while changing component type, channel count, routing count, or segment
-span requires reconstructing the component and robot. Visual styling is configured
-on renderers rather than stored in actuator parameters.
+span requires reconstructing the component and robot. The `with_*_params`
+delegates are JAX-transformable when PyTree structure, shapes, dtypes, and
+topology remain fixed. Threadlike segment spans and McKibben joint-pair indices
+are precomputed topology; compiled numeric updates retain them. Visual styling
+is configured on renderers rather than stored in actuator parameters.
 
 See [Joint-space actuation](joint-space.md) for affine articulated coordinates,
 [Threadlike actuation](threadlike.md) for routed continuum examples, and the
