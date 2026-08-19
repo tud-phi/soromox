@@ -151,7 +151,6 @@ docs = [
     # Do not add mkdocs-section-index unless we intentionally reintroduce the MkDocs plugin runtime.
 ]
 examples = [
-    "ffmpeg-python",
     "ipython",
     "matplotlib",
     "numpy",
@@ -167,7 +166,6 @@ examples = [
 ]
 paper_results = [
     "cbfpy",
-    "ffmpeg-python",
     "gymnasium",
     "ipython",
     "matplotlib",
@@ -187,7 +185,6 @@ paper_results = [
     "viser",
 ]
 rendering = [
-    "ffmpeg-python",
     "matplotlib",
     "open3d>=0.18",
     "ipywidgets>=8.0.4",
@@ -222,7 +219,6 @@ all = [
     "codecov",
     "coverage[toml]",
     "pyelastica",
-    "ffmpeg-python",
     "gymnasium",
     "ipython",
     "matplotlib",

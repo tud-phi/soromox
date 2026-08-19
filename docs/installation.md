@@ -91,7 +91,14 @@ pip install soromox[rendering]
 - `open3d` - High-quality 3D visualization
 - `viser` - Web-based interactive rendering
 - `opencv-python` - 2D rendering for planar robots
-- ``ffmpeg`` - Video encoding and processing
+
+!!! note "FFmpeg Video Encoding"
+    Video output uses the `ffmpeg` executable directly; the `ffmpeg-python`
+    package is neither required nor used. Install FFmpeg separately with your
+    system package manager and ensure `ffmpeg` is available on `PATH`, for
+    example with `brew install ffmpeg` on macOS or `sudo apt install ffmpeg`
+    on Debian/Ubuntu. Some renderers fall back to image sequences or OpenCV
+    video encoding when FFmpeg is unavailable.
 
 !!! note "Open3D Compatibility"
     Open3D rendering is currently not compatible with Python 3.13+. If you need 3D visualization, please use Python 3.12 or earlier, or use the `viser` renderer instead.
@@ -106,7 +113,6 @@ pip install soromox[examples]
 
 **Includes:**
 
-- `ffmpeg-python` - Video encoding and processing
 - `ipython` - Enhanced interactive Python shell
 - `matplotlib` - Publication-ready plotting and visualization
 - `open3d` - High-quality 3D visualization
