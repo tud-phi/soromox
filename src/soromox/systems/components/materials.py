@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 from jax import Array
-from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 from soromox.systems.params import BaseSystemParams
 
@@ -70,7 +69,7 @@ class IsotropicMaterialParams(BaseSystemParams):
             value = getattr(self, name)
             if value is not None:
                 object.__setattr__(self, name, jnp.asarray(value))
-        self.validate()
+        self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
         """Normalize replacement material values to JAX arrays."""
@@ -87,8 +86,8 @@ class IsotropicMaterialParams(BaseSystemParams):
             return jnp.asarray(value)
         return value
 
-    def validate(self) -> None:
-        """Validate material field dimensionality and physical values.
+    def validate_structure(self) -> None:
+        """Validate the material parameterization and static array layout.
 
         Returns:
             None.
@@ -96,9 +95,7 @@ class IsotropicMaterialParams(BaseSystemParams):
         Raises:
             ValueError: If both or neither of ``shear_modulus`` and
                 ``poisson_ratio`` are provided; any active material field has
-                more than one dimension; either modulus is non-finite or not
-                strictly positive; Poisson's ratio is outside ``(-1, 0.5)``;
-                or the material damping coefficient is non-finite or negative.
+                more than one dimension; or a one-dimensional field is empty.
         """
         if (self.shear_modulus is None) == (self.poisson_ratio is None):
             raise ValueError("Provide exactly one of shear_modulus and poisson_ratio.")
@@ -117,16 +114,37 @@ class IsotropicMaterialParams(BaseSystemParams):
                 raise ValueError(f"{name} must be scalar or one-dimensional.")
             if value.ndim == 1 and value.shape[0] < 1:
                 raise ValueError(f"{name} must not be empty.")
-            try:
-                finite = bool(jnp.all(jnp.isfinite(value)))
-                if name == "material_damping_coefficient":
-                    valid_domain = bool(jnp.all(value >= 0.0))
-                elif name == "poisson_ratio":
-                    valid_domain = bool(jnp.all((value > -1.0) & (value < 0.5)))
-                else:
-                    valid_domain = bool(jnp.all(value > 0.0))
-            except (ConcretizationTypeError, TracerBoolConversionError):
+
+    def validate(self) -> None:
+        """Validate material structure and eager physical values.
+
+        Returns:
+            None.
+
+        Raises:
+            ValueError: If structural validation fails; either modulus is
+                non-finite or not strictly positive; Poisson's ratio is outside
+                ``(-1, 0.5)``; or the material damping coefficient is
+                non-finite or negative.
+        """
+        self.validate_structure()
+        for name in (
+            "young_modulus",
+            "shear_modulus",
+            "poisson_ratio",
+            "material_damping_coefficient",
+        ):
+            field_value = getattr(self, name)
+            if field_value is None:
                 continue
+            value = jnp.asarray(field_value)
+            finite = bool(jnp.all(jnp.isfinite(value)))
+            if name == "material_damping_coefficient":
+                valid_domain = bool(jnp.all(value >= 0.0))
+            elif name == "poisson_ratio":
+                valid_domain = bool(jnp.all((value > -1.0) & (value < 0.5)))
+            else:
+                valid_domain = bool(jnp.all(value > 0.0))
             if not finite:
                 raise ValueError(f"{name} must contain only finite values.")
             if not valid_domain:
