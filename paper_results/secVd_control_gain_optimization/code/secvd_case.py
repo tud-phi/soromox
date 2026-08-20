@@ -9,7 +9,7 @@ import jax.numpy as jnp
 from jax import Array, vmap
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
-from soromox.systems import PCS, PCSParams, SystemState
+from soromox.systems import PCS, LinkSpec, SystemState
 from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
 
 jax.config.update("jax_enable_x64", True)
@@ -45,27 +45,18 @@ def build_sec_vd_robot() -> tuple[PCS, ThreadlikeRouting, float]:
     num_segments = 1
     radius = 2e-2
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
-    damping_matrix = 1e-3 * jnp.diag(
-        (
-            jnp.repeat(
-                jnp.array([[1.0, 1.0, 1.0, 1e3, 1e3, 1e3]]), num_segments, axis=0
-            )
-            * segment_lengths[:, None]
-        ).flatten()
-    )
-    params = PCSParams(
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
-        length=segment_lengths,
-        radius=radius * jnp.ones((num_segments,)),
-        density=1070.0 * jnp.ones((num_segments,)),
-        gravity=jnp.array([0.0, 0.0, 9.81]),
-        young_modulus=2e3 * jnp.ones((num_segments,)),
-        shear_modulus=1e3 * jnp.ones((num_segments,)),
-        damping_matrix=damping_matrix,
-        reference_strain=jnp.tile(
-            jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
-        ),
-    )
+    links = [
+        LinkSpec.circular(
+            length=float(segment_lengths[index]),
+            radius=radius,
+            density=1070.0,
+            young_modulus=2e3,
+            shear_modulus=1e3,
+            material_damping_coefficient=3.6e2,
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        )
+        for index in range(num_segments)
+    ]
     angles = jnp.deg2rad(jnp.array([0.0, 120.0, 240.0]))
     routing = ThreadlikeRouting.linear(
         intercept=0.8
@@ -76,7 +67,12 @@ def build_sec_vd_robot() -> tuple[PCS, ThreadlikeRouting, float]:
         start_segment_index=0,
         end_segment_index=(0, 0, 0),
     )
-    robot = PCS(params=params, actuators=ThreadlikeActuator.tendons(routing))
+    robot = PCS.from_links(
+        links,
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        gravity=jnp.array([0.0, 0.0, 9.81]),
+        actuators=ThreadlikeActuator.tendons(routing),
+    )
     return robot, routing, float(jnp.sum(segment_lengths))
 
 

@@ -389,20 +389,13 @@ def test_articulated_tendon_impedance_stores_per_tendon_mechanics():
 
 
 def test_removed_plural_typed_param_names_fail():
-    pcs_kwargs = {
-        "radius": jnp.array([0.01], dtype=jnp.float64),
-        "density": jnp.array([1000.0], dtype=jnp.float64),
-        "young_modulus": jnp.array([1e6], dtype=jnp.float64),
-        "shear_modulus": jnp.array([1e5], dtype=jnp.float64),
-        "damping_matrix": jnp.eye(6, dtype=jnp.float64),
-        "gravity": jnp.array([0.0, 0.0, -9.81], dtype=jnp.float64),
-        "base_pose": spatial_base_pose(),
-        "reference_strain": jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]),
-    }
+    valid_pcs_params = _pcs_params(num_segments=1)
     with pytest.raises(TypeError, match="segment_lengths"):
         PCSParams(
             segment_lengths=jnp.array([0.1], dtype=jnp.float64),
-            **pcs_kwargs,
+            link=valid_pcs_params.link,
+            gravity=valid_pcs_params.gravity,
+            base_pose=valid_pcs_params.base_pose,
         )
 
     pendulum_kwargs = {

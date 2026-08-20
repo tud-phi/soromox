@@ -84,44 +84,6 @@ if __name__ == "__main__":
     bases.append(basis2)
     num_gauss_points.append(5)  # Number of Gauss points for the second link
 
-    # link3 = LinkAttributes(
-    #     cross_section_geometry=CrossSectionGeometry.ELLIPTICAL,  # Section type
-    #     E=1e7,                # Young's modulus in Pascals
-    #     nu=0.4,               # Poisson's ratio [-1, 0.5]
-    #     rho=1050,             # Density [kg/m^3]
-    #     eta=1e4,              # Damping coefficient
-    #     L=0.3,                # Length in meters
-    #     a_i=0.04,             # Initial semi-major axis in meters
-    #     a_f=0.04,             # Final semi-major axis in meters
-    #     b_i=0.02,             # Initial semi-minor axis in meters
-    #     b_f=0.02              # Final semi-minor axis in meters
-    # )
-    # List_links.append(link3)
-    # joint3 = JointAttributes(
-    #     jointtype='Revolute',  # Prismatic joint
-    #     axis='z',               # Axis of translation
-    # )
-    # List_joints.append(joint3)
-    # basis3 = BasisAttributes(
-    #     basistype='Chebychev',       # Type of basis
-    #     Bdof=[0, 1, 0, 1, 0, 0],    # Degrees of freedom for each deformation type
-    #     Bodr=[0, 0, 0, 0, 0, 0],    # Order of basis functions for each deformation type
-    #     xi_ref=[0, 0, 0, 1, 0, 0], # Reference strain values as vector
-    # )
-    # List_basis.append(basis3)
-    # List_nGauss.append(5)  # Number of Gauss points for the third link
-
-    # ======================================================
-    # Robot initialization
-    # ======================================================
-    # robot = GVS(
-    #     links_list=List_links,
-    #     joints_list=List_joints,
-    #     basis_list=List_basis,
-    #     n_gauss_list=List_nGauss,
-    #     gravity_vector=[-9.81*1, -9.81*1, 0],
-    # )
-
     segments = [
         GVSSegment(link=link, joint=joint, basis=basis, num_gauss_points=n)
         for link, joint, basis, n in zip(links, joints, bases, num_gauss_points)
