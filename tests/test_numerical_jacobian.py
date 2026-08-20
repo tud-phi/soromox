@@ -2,6 +2,7 @@
 from functools import partial
 
 import jax
+import pytest
 
 jax.config.update("jax_enable_x64", True)  # double precision
 from jax import Array, random
@@ -10,7 +11,8 @@ from jax import numpy as jnp
 from soromox.utils.numerical_jacobian import approx_derivative
 
 
-def test_finite_differences(method="2-point"):
+@pytest.mark.parametrize("method", ["2-point", "3-point"])
+def test_finite_differences(method):
     def fun(x: Array):
         return jnp.stack([x[0] * jnp.sin(x[1]), x[0] * jnp.cos(x[1])])
 
@@ -38,6 +40,29 @@ def test_finite_differences(method="2-point"):
 
         if not jnp.allclose(jac_autodiff, jac_numdiff, atol=1e-6):
             raise ValueError("Jacobian mismatch!")
+
+
+@pytest.mark.parametrize(
+    ("x0", "bounds", "expected"),
+    [
+        (0.0, (0.0, 1.0), 0.0),
+        (1.0, (0.0, 1.0), 2.0),
+    ],
+)
+def test_one_sided_scheme(x0, bounds, expected):
+    def fun(x: Array):
+        return x[0] ** 2
+
+    jac = approx_derivative(fun, jnp.array([x0]), method="3-point", bounds=bounds)
+
+    assert jnp.allclose(jac, jnp.array([expected]))
+
+
+def test_scalar_input_and_output():
+    jac = approx_derivative(lambda x: x[0] ** 2, 1.0, method="3-point")
+
+    assert jac.shape == (1,)
+    assert jnp.allclose(jac, jnp.array([2.0]))
 
 
 if __name__ == "__main__":

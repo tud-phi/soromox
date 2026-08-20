@@ -104,6 +104,7 @@ nav:
           - Geometry: api/utilities/geometry.md
           - Lie Algebra: api/utilities/lie-algebra.md
           - Constant Strain: api/utilities/constant-strain.md
+          - Numerical Jacobian: api/utilities/numerical-jacobian.md
   - Paper & Results: research.md
   - Citation: citation.md
   - Development:

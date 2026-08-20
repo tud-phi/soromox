@@ -51,6 +51,11 @@ Rod-segment operators organized into planar and spatial namespaces.
 - Bundled evaluation when several related operators are needed
 - Separate planar and spatial operator namespaces
 
+### [Numerical Jacobian](numerical-jacobian.md)
+
+Finite-difference gradients and Jacobians for scalar- and vector-valued
+functions, including bound-aware one-sided schemes.
+
 ## Quick Links
 
 - [Parameters API Reference](parameters.md) - Parameter management utilities
@@ -58,3 +63,4 @@ Rod-segment operators organized into planar and spatial namespaces.
 - [Geometry API Reference](geometry.md) - Pose, rotation, and error utilities
 - [Lie Algebra API Reference](lie-algebra.md) - Lie group and Jacobian utilities
 - [Constant-Strain API Reference](constant-strain.md) - Rod-segment Lie operators
+- [Numerical Jacobian API Reference](numerical-jacobian.md) - Finite-difference gradients and Jacobians
