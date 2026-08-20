@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made bound-aware finite-difference Jacobians compatible with JAX immutable
+  arrays and documented the `numerical_jacobian` utility.
+
 ## [0.2.3] - 2026-08-19
 
 ### Added
