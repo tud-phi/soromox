@@ -71,6 +71,7 @@ The [Utilities](utilities/index.md) module includes:
 - **[Geometry](utilities/geometry.md)**: Pose encodings, rotations, and geometric errors
 - **[Lie Algebra](utilities/lie-algebra.md)**: Rigid-body maps and stable Jacobian coefficients
 - **[Constant Strain](utilities/constant-strain.md)**: Planar and spatial rod-segment operators
+- **[Numerical Jacobian](utilities/numerical-jacobian.md)**: Bound-aware finite-difference gradients and Jacobians
 
 ---
 
