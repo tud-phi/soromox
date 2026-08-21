@@ -25,10 +25,25 @@ from soromox.systems import (
     PendulumParams,
     PlanarPCSParams,
 )
+from soromox.systems.params import BaseSystemParams
 from soromox.utils.array_math import blk_diag
 from soromox.utils.geometry import poses
 
 jax.config.update("jax_enable_x64", True)
+
+
+class SplitValidationParams(BaseSystemParams):
+    """Test parameter whose value validation cannot run on tracers."""
+
+    value: Array
+
+    def validate_structure(self) -> None:
+        if self.value.shape != (1,):
+            raise ValueError("value must have shape (1,).")
+
+    def validate_values(self) -> None:
+        if not bool(jnp.all(self.value > 0.0)):
+            raise ValueError("value must be positive.")
 
 
 def _pendulum_params():
@@ -41,6 +56,21 @@ def _pendulum_params():
         joint_stiffness=jnp.eye(2, dtype=jnp.float64),
         joint_damping=0.1 * jnp.eye(2, dtype=jnp.float64),
     )
+
+
+def test_validation_hooks_separate_traced_structure_from_eager_values():
+    params = SplitValidationParams(value=jnp.ones((1,), dtype=jnp.float64))
+
+    with pytest.raises(ValueError, match="positive"):
+        params.replace(value=-jnp.ones((1,), dtype=jnp.float64))
+
+    @jax.jit
+    def traced_replace(value):
+        return params.replace(value=value).value
+
+    assert_allclose(traced_replace(-jnp.ones((1,), dtype=jnp.float64)), [-1.0])
+    with pytest.raises(ValueError, match="shape"):
+        traced_replace(jnp.ones((2,), dtype=jnp.float64))
 
 
 def _pcs_params(num_segments: int = 2):

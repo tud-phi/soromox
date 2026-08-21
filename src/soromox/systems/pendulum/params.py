@@ -31,7 +31,7 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
     center_of_mass_length: Array
     radius: Array
 
-    def validate(self) -> None:
+    def validate_structure(self) -> None:
         mass = jnp.asarray(self.mass)
         if len(mass.shape) != 1:
             raise ValueError("mass must be one-dimensional with shape (num_links,).")
@@ -59,4 +59,11 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (2,):
             raise ValueError(f"gravity must have shape (2,), got {gravity.shape}.")
+        if jnp.asarray(self.base_pose).shape != (3,):
+            raise ValueError(
+                f"base_pose must have shape (3,), got {self.base_pose.shape}."
+            )
+
+    def validate_values(self) -> None:
+        """Validate eager pendulum parameter values."""
         validate_planar_base_pose("base_pose", self.base_pose)

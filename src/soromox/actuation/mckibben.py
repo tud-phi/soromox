@@ -42,7 +42,7 @@ class ArticulatedMcKibbenTransmissionParams(BaseSystemParams):
     joint_pair_indices: Array
 
     def __check_init__(self) -> None:
-        self.validate()
+        self.validate_for_update()
 
     @property
     def group_shape(self) -> tuple[int, int]:
@@ -79,8 +79,8 @@ class ArticulatedMcKibbenTransmissionParams(BaseSystemParams):
                     f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
 
-    def validate(self) -> None:
-        self.validate_structure()
+    def validate_values(self) -> None:
+        """Validate eager McKibben topology values."""
         shape = jnp.asarray(self.thread_length).shape
         joint_pair_indices = jnp.asarray(self.joint_pair_indices)
         if shape[0] > 0 and bool(
@@ -373,14 +373,19 @@ class ArticulatedMcKibbenActuatorParams(BaseSystemParams):
     upper_bounds: Array
 
     def __check_init__(self) -> None:
-        self.validate()
+        self.validate_for_update()
 
-    def validate(self) -> None:
-        self.transmission.validate_for_update()
+    def validate_structure(self) -> None:
+        """Validate McKibben actuator parameter structure."""
+        self.transmission.validate_structure()
         count = self.transmission.num_channels
         for name in ("lower_bounds", "upper_bounds"):
             if jnp.asarray(getattr(self, name)).shape != (count,):
                 raise ValueError(f"{name} must have shape ({count},).")
+
+    def validate_values(self) -> None:
+        """Validate eager nested McKibben transmission values."""
+        self.transmission.validate_values()
 
 
 class ArticulatedMcKibbenActuator(Actuator):

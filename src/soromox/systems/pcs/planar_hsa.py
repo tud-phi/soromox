@@ -422,7 +422,7 @@ class PlanarHSA(PlanarPCS):
         """
         if not isinstance(params, PlanarHSAParams):
             raise TypeError("params must be a PlanarHSAParams instance.")
-        params.validate()
+        params.validate_for_update()
         if params.length.shape != self.L.shape:
             raise ValueError(
                 "length shape changes the model structure; construct a new PlanarHSA."

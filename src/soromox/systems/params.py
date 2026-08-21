@@ -9,12 +9,11 @@ __all__ = [
 ]
 
 from dataclasses import fields
-from typing import Any, ClassVar, Literal
+from typing import Any, ClassVar, Literal, final
 
 import equinox as eqx
 from jax import Array, core, tree_util
 from jax import numpy as jnp
-from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 DEFAULT_GRAVITY_MAGNITUDE = 9.81
 
@@ -27,15 +26,11 @@ def _contains_tracer(tree: Any) -> bool:
 def _validate_finite_array(
     name: str, value: Array, expected_shape: tuple[int, ...]
 ) -> Array:
-    """Validate array shape and concrete finite values when available."""
+    """Validate an eager array's shape and finite values."""
     array = jnp.asarray(value)
     if array.shape != expected_shape:
         raise ValueError(f"{name} must have shape {expected_shape}, got {array.shape}.")
-    try:
-        all_finite = bool(jnp.isfinite(array).all())
-    except (ConcretizationTypeError, TracerBoolConversionError):
-        return array
-    if not all_finite:
+    if not bool(jnp.isfinite(array).all()):
         raise ValueError(f"{name} must contain only finite values.")
     return array
 
@@ -54,9 +49,7 @@ def validate_planar_base_pose(name: str, value: Array) -> None:
         None.
 
     Raises:
-        ValueError: If the shape is not ``(3,)`` or any concrete entry is
-            non-finite. During JAX tracing, only the static shape check is
-            performed.
+        ValueError: If the shape is not ``(3,)`` or any entry is non-finite.
     """
     _validate_finite_array(name, value, (3,))
 
@@ -78,10 +71,9 @@ def validate_quaternion_base_pose(
         expected_shape: Required full pose shape, typically ``(7,)``.
         min_norm: Minimum allowed Euclidean norm for the quaternion component.
 
-    Concrete parameter objects are checked for finite entries and nonzero
-    quaternion norm. During JAX tracing, only the static shape check is
-    performed; transform helpers still avoid zero-norm division to keep traced
-    code finite.
+    Parameter objects are checked for finite entries and nonzero quaternion
+    norm. Transform helpers still avoid zero-norm division to keep runtime code
+    finite.
 
     Returns:
         ``None`` after successful validation.
@@ -92,10 +84,7 @@ def validate_quaternion_base_pose(
             safely.
     """
     pose = _validate_finite_array(name, value, expected_shape)
-    try:
-        quaternion_norm = float(jnp.linalg.norm(pose[:4]))
-    except (ConcretizationTypeError, TracerBoolConversionError):
-        return
+    quaternion_norm = float(jnp.linalg.norm(pose[:4]))
     if quaternion_norm <= min_norm:
         raise ValueError(
             f"{name} quaternion must have norm greater than {min_norm}, "
@@ -144,19 +133,32 @@ class BaseSystemParams(eqx.Module):
         """Normalize a field replacement before rebuilding the PyTree."""
         return value
 
-    def validate(self) -> None:
-        """Validate intrinsic parameter consistency.
+    def validate_structure(self) -> None:
+        """Validate statically observable parameter structure.
 
         Returns:
-            ``None``. Subclasses override this method to raise on invalid
-            shapes, values, or component relationships.
+            ``None``. Subclasses override this hook to raise on invalid types,
+            shapes, PyTree layout, or static topology. Implementations must be
+            safe when array leaves are JAX tracers.
         """
         return None
 
-    def validate_structure(self) -> None:
-        """Validate the shape/type contract observable during JAX tracing."""
-        self.validate()
+    def validate_values(self) -> None:
+        """Validate eager value-dependent parameter invariants.
 
+        Returns:
+            ``None``. Subclasses override this hook for finiteness, physical
+            domains, symmetry, and other checks requiring concrete values.
+        """
+        return None
+
+    @final
+    def validate(self) -> None:
+        """Validate both parameter structure and eager numeric values."""
+        self.validate_structure()
+        self.validate_values()
+
+    @final
     def validate_for_update(self) -> None:
         """Validate fully in eager code and structurally under JAX transforms."""
         if _contains_tracer(self):
@@ -164,8 +166,17 @@ class BaseSystemParams(eqx.Module):
         else:
             self.validate()
 
+    def validate_structure_compatibility(self, structure: Any) -> None:
+        """Validate statically observable compatibility with a model structure."""
+        del structure
+
+    def validate_value_compatibility(self, structure: Any) -> None:
+        """Validate eager value compatibility with a model structure."""
+        del structure
+
+    @final
     def validate_against_structure(self, structure: Any) -> None:
-        """Validate parameters against static construction choices.
+        """Validate parameters fully against static construction choices.
 
         Args:
             structure: System-specific static structure to validate against.
@@ -174,10 +185,20 @@ class BaseSystemParams(eqx.Module):
             ``None`` after successful validation.
 
         Raises:
-            ValueError: If intrinsic or structure-dependent validation fails in
-                a subclass implementation.
+            ValueError: If intrinsic or structure-dependent validation fails.
         """
         self.validate()
+        self.validate_structure_compatibility(structure)
+        self.validate_value_compatibility(structure)
+
+    @final
+    def validate_for_update_against_structure(self, structure: Any) -> None:
+        """Validate structure compatibility at the active JAX trace level."""
+        if _contains_tracer(self):
+            self.validate_structure()
+            self.validate_structure_compatibility(structure)
+        else:
+            self.validate_against_structure(structure)
 
 
 class BaseSoftRobotParams(BaseSystemParams):

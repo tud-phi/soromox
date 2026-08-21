@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, ClassVar
 
 import jax.numpy as jnp
-from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 from soromox.systems.components import ContinuumLinkParams, JointParams
 from soromox.systems.params import BaseSoftRobotParams, validate_quaternion_base_pose
@@ -34,19 +33,19 @@ class GVSParams(BaseSoftRobotParams):
     link: ContinuumLinkParams
     joint: JointParams
 
-    def validate(self) -> None:
-        """Validate intrinsic shapes and values of the GVS parameters.
+    def validate_structure(self) -> None:
+        """Validate intrinsic GVS parameter structure.
 
         Returns:
             ``None`` after successful validation.
 
         Raises:
-            ValueError: If a component is invalid, link and joint batch shapes
-                disagree, reference strains do not have six components, or the
-                gravity and base-pose arrays have invalid shapes or values.
+            ValueError: If a component shape is invalid, link and joint batch
+                shapes disagree, reference strains do not have six components,
+                or the gravity and base-pose arrays have invalid shapes.
         """
-        self.link.validate()
-        self.joint.validate()
+        self.link.validate_structure()
+        self.joint.validate_structure()
         num_segments = self.link.length.shape[0]
         if self.link.reference_strain.shape != (num_segments, 6):
             raise ValueError(
@@ -62,10 +61,19 @@ class GVSParams(BaseSoftRobotParams):
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (3,):
             raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
+        if jnp.asarray(self.base_pose).shape != (7,):
+            raise ValueError(
+                f"base_pose must have shape (7,), got {self.base_pose.shape}."
+            )
+
+    def validate_values(self) -> None:
+        """Validate eager GVS component and base-pose values."""
+        self.link.validate_values()
+        self.joint.validate_values()
         validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
 
-    def validate_against_structure(self, structure: GVSStructure) -> None:
-        """Validate dynamic arrays against a static padded GVS layout.
+    def validate_structure_compatibility(self, structure: GVSStructure) -> None:
+        """Validate dynamic array shapes against a static padded GVS layout.
 
         Args:
             structure: Static :class:`GVSStructure` defining the number of
@@ -79,7 +87,7 @@ class GVSParams(BaseSoftRobotParams):
             TypeError: If ``structure`` is not a :class:`GVSStructure`.
             ValueError: If the structure is empty or any parameter batch,
                 padded matrix, cross-section coefficient array, basis DOF, or
-                quadrature setting is inconsistent with ``structure``.
+                quadrature setting is structurally inconsistent.
         """
         from soromox.systems.gvs.primitives import Joint
         from soromox.systems.gvs.structures import GVSStructure
@@ -88,7 +96,6 @@ class GVSParams(BaseSoftRobotParams):
             raise TypeError("structure must be a GVSStructure instance.")
         if not structure.segments:
             raise ValueError("GVS requires at least one segment.")
-        self.validate()
         num_segments = len(structure.segments)
         if self.link.length.shape != (num_segments,):
             raise ValueError(f"link params must contain {num_segments} links.")
@@ -103,19 +110,6 @@ class GVSParams(BaseSoftRobotParams):
                 f"{expected_cross_section_shape}, got "
                 f"{self.link.cross_section.coefficients.shape}."
             )
-        for index, segment in enumerate(structure.segments):
-            count = sum(segment.link.cross_section_profile_parameter_counts)
-            active_coefficients = self.link.cross_section.coefficients[index, :count]
-            try:
-                valid_dimensions = bool(jnp.all(active_coefficients > 0.0))
-            except (ConcretizationTypeError, TracerBoolConversionError):
-                continue
-            if not valid_dimensions:
-                raise ValueError(
-                    "Active cross-section coefficients must be strictly positive "
-                    f"for GVS segment {index}."
-                )
-
         joint_dofs = [
             Joint.DICT_JOINT_TYPE_DOF[segment.joint.type]
             for segment in structure.segments
@@ -166,4 +160,15 @@ class GVSParams(BaseSoftRobotParams):
             ):
                 raise ValueError(
                     "max_num_gauss_points must cover every segment quadrature rule."
+                )
+
+    def validate_value_compatibility(self, structure: GVSStructure) -> None:
+        """Validate eager geometry values against the static GVS layout."""
+        for index, segment in enumerate(structure.segments):
+            count = sum(segment.link.cross_section_profile_parameter_counts)
+            active_coefficients = self.link.cross_section.coefficients[index, :count]
+            if not bool(jnp.all(active_coefficients > 0.0)):
+                raise ValueError(
+                    "Active cross-section coefficients must be strictly positive "
+                    f"for GVS segment {index}."
                 )

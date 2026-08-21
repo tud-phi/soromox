@@ -203,6 +203,9 @@ only validation based on statically observable types and shapes is possible;
 runtime numeric candidates must therefore remain in their physical domains.
 Use constrained parameterizations where appropriate, and validate externally
 supplied values eagerly before a compiled optimization or simulation loop.
+Parameter subclasses express this boundary through separate tracer-safe
+`validate_structure()` and eager-only `validate_values()` hooks; the framework
+owns the composed `validate()` and dispatched `validate_for_update()` methods.
 
 Start from `robot.params` so constructor-resolved defaults already have their
 runtime PyTree representation.

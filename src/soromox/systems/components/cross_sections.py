@@ -8,7 +8,6 @@ from typing import Literal
 
 import jax.numpy as jnp
 from jax import Array
-from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 from soromox.systems.params import BaseSystemParams
 
@@ -53,10 +52,7 @@ class LinearProfile:
                 positive.
         """
         values = jnp.asarray([self.base, self.tip])
-        try:
-            valid = bool(jnp.all(jnp.isfinite(values) & (values > 0.0)))
-        except (ConcretizationTypeError, TracerBoolConversionError):
-            return
+        valid = bool(jnp.all(jnp.isfinite(values) & (values > 0.0)))
         if not valid:
             raise ValueError(
                 "LinearProfile base and tip must be finite and strictly positive."
@@ -81,7 +77,7 @@ class CrossSectionParams(BaseSystemParams):
 
     def __check_init__(self) -> None:
         object.__setattr__(self, "coefficients", jnp.asarray(self.coefficients))
-        self.validate()
+        self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
         """Normalize replacement coefficient values to JAX arrays."""
@@ -89,16 +85,15 @@ class CrossSectionParams(BaseSystemParams):
             return jnp.asarray(value)
         return value
 
-    def validate(self) -> None:
-        """Validate the batched cross-section coefficient array.
+    def validate_structure(self) -> None:
+        """Validate the batched cross-section coefficient array shape.
 
         Returns:
             None.
 
         Raises:
             ValueError: If ``coefficients`` is not a nonempty two-dimensional
-                array, contains non-finite or negative values, or has a row
-                without any positive geometric coefficient.
+                array.
         """
         coefficients = jnp.asarray(self.coefficients)
         if coefficients.ndim != 2:
@@ -108,13 +103,14 @@ class CrossSectionParams(BaseSystemParams):
             )
         if coefficients.shape[0] < 1 or coefficients.shape[1] < 1:
             raise ValueError("cross-section coefficients must be non-empty.")
-        try:
-            finite_and_nonnegative = bool(
-                jnp.all(jnp.isfinite(coefficients) & (coefficients >= 0.0))
-            )
-            positive_per_link = bool(jnp.all(jnp.any(coefficients > 0.0, axis=1)))
-        except (ConcretizationTypeError, TracerBoolConversionError):
-            return
+
+    def validate_values(self) -> None:
+        """Validate eager cross-section coefficient values."""
+        coefficients = jnp.asarray(self.coefficients)
+        finite_and_nonnegative = bool(
+            jnp.all(jnp.isfinite(coefficients) & (coefficients >= 0.0))
+        )
+        positive_per_link = bool(jnp.all(jnp.any(coefficients > 0.0, axis=1)))
         if not finite_and_nonnegative:
             raise ValueError(
                 "cross-section coefficients must be finite and nonnegative."

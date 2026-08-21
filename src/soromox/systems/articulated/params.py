@@ -64,7 +64,7 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
         self.center_of_mass_inertia = jnp.asarray(center_of_mass_inertia)
         self.radius = jnp.asarray(radius)
 
-    def validate(self) -> None:
+    def validate_structure(self) -> None:
         joint_screw = jnp.asarray(self.joint_screw)
         if joint_screw.ndim != 2 or joint_screw.shape[1] != 6:
             raise ValueError(
@@ -91,6 +91,13 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
                 raise ValueError(
                     f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
+        if jnp.asarray(self.base_pose).shape != (7,):
+            raise ValueError(
+                f"base_pose must have shape (7,), got {self.base_pose.shape}."
+            )
+
+    def validate_values(self) -> None:
+        """Validate eager articulated-system parameter values."""
         validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
 
 
@@ -217,8 +224,8 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
             + (skew @ skew) * ((1.0 - cos_angle) / (sin_angle**2))
         )
 
-    def validate(self) -> None:
-        super().validate()
+    def validate_structure(self) -> None:
+        super().validate_structure()
         num_links = int(jnp.asarray(self.joint_screw).shape[0])
         if jnp.asarray(self.joint_armature).shape != (num_links,):
             raise ValueError(

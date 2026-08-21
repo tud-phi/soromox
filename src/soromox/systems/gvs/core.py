@@ -843,7 +843,7 @@ class GVS(SoftRobot):
         Raises:
             ValueError: If link params do not contain one entry per segment.
         """
-        link.validate()
+        link.validate_for_update()
         if link.length.shape != (self.num_segments,):
             raise ValueError(
                 "link params must contain one entry per segment, "
@@ -979,7 +979,7 @@ class GVS(SoftRobot):
         """
         if not isinstance(params, GVSParams):
             raise TypeError("params must be a GVSParams instance.")
-        params.validate_against_structure(self.structure)
+        params.validate_for_update_against_structure(self.structure)
         link_arrays = self._link_parameter_arrays(params.link)
         (
             xi_ref_joint,

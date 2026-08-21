@@ -145,6 +145,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passive-element, and isotropic-material replacements usable inside
   JIT-compiled code. Concrete eager calls retain value validation, while traced
   calls enforce the statically observable type and shape contract.
+- Split parameter validation into explicit `validate_structure()` and
+  `validate_values()` subclass hooks, with framework-owned eager and traced
+  dispatch for intrinsic and model-structure-dependent validation.
 - Reused I-SUPPORT routing spans and McKibben joint-pair topology during
   compiled numeric updates, and kept GVS cross-section index dtypes stable when
   refreshing parameter-dependent caches.
