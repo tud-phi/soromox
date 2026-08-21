@@ -608,3 +608,29 @@ def test_open3d_closes_window_when_recording_finishes(monkeypatch):
 
     assert update_scene.call_count == 2
     vis.destroy_window.assert_called_once_with()
+
+
+def test_open3d_quit_callback_requests_close_without_destroying_window():
+    renderer = Open3DRenderer(_AnimatingSpatialRobot())
+    callbacks: dict[int, object] = {}
+    vis = Mock()
+    vis.register_key_callback.side_effect = callbacks.__setitem__
+    state = {"idx": 0, "playing": True, "last_tick": 0.0, "dt_seq": np.zeros(1)}
+
+    renderer._register_key_callbacks(
+        vis=vis,
+        ctrl=Mock(),
+        state=state,
+        update_frame=Mock(),
+        save_frame_fn=Mock(),
+        initial_cam=Mock(),
+        saved_cam_holder=[Mock()],
+        print_prefix="[Open3D]",
+    )
+
+    for key in (81, 256):  # Q, Esc
+        assert callbacks[key](vis) is False
+
+    assert state["playing"] is False
+    assert vis.close.call_count == 2
+    vis.destroy_window.assert_not_called()
