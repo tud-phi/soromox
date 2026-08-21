@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made the Open3D viewer's Q/Esc shortcuts close windows cleanly so execution
+  continues after the viewer exits.
 - Made bound-aware finite-difference Jacobians compatible with JAX immutable
   arrays and documented the `numerical_jacobian` utility.
 
