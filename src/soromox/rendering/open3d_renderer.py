@@ -1912,8 +1912,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         def cb_quit(_):
             state["playing"] = False
-            vis.destroy_window()
-            state["window_destroyed"] = True
+            vis.close()
             return False
 
         vis.register_key_callback(ord(" "), cb_space)
@@ -2346,7 +2345,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             "playing": bool(autoplay),
             "last_tick": time.time(),
             "dt_seq": dt_seq,
-            "window_destroyed": False,
         }
 
         def _fallback_to_frames(reason: str):
@@ -2452,5 +2450,4 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 if video_writer is not None:
                     video_writer.close()
             finally:
-                if not state["window_destroyed"]:
-                    vis.destroy_window()
+                vis.destroy_window()
