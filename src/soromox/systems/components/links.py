@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 import jax.numpy as jnp
 from jax import Array
-from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 from soromox.systems.params import BaseSystemParams
 
@@ -22,11 +21,8 @@ __all__ = ["ContinuumLinkParams", "LinkSpec"]
 
 
 def _validate_symmetric(name: str, value: Array) -> None:
-    try:
-        finite = bool(jnp.all(jnp.isfinite(value)))
-        symmetric = bool(jnp.allclose(value, jnp.swapaxes(value, -1, -2)))
-    except (ConcretizationTypeError, TracerBoolConversionError):
-        return
+    finite = bool(jnp.all(jnp.isfinite(value)))
+    symmetric = bool(jnp.allclose(value, jnp.swapaxes(value, -1, -2)))
     if not finite:
         raise ValueError(f"{name} must contain only finite values.")
     if not symmetric:
@@ -36,13 +32,10 @@ def _validate_symmetric(name: str, value: Array) -> None:
 def _validate_finite_domain(
     name: str, value: Array | float, *, strictly_positive: bool = False
 ) -> None:
-    """Validate concrete numeric values while remaining safe under JAX tracing."""
+    """Validate eager numeric values."""
     array = jnp.asarray(value)
-    try:
-        finite = bool(jnp.all(jnp.isfinite(array)))
-        positive = bool(jnp.all(array > 0.0)) if strictly_positive else True
-    except (ConcretizationTypeError, TracerBoolConversionError):
-        return
+    finite = bool(jnp.all(jnp.isfinite(array)))
+    positive = bool(jnp.all(array > 0.0)) if strictly_positive else True
     if not finite:
         raise ValueError(f"{name} must contain only finite values.")
     if not positive:
@@ -75,7 +68,7 @@ class ContinuumLinkParams(BaseSystemParams):
     def __check_init__(self) -> None:
         for name in ("length", "density", "reference_strain", "stiffness", "damping"):
             object.__setattr__(self, name, jnp.asarray(getattr(self, name)))
-        self.validate()
+        self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
         """Normalize replacement link-array values to JAX arrays."""
@@ -83,19 +76,16 @@ class ContinuumLinkParams(BaseSystemParams):
             return jnp.asarray(value)
         return value
 
-    def validate(self) -> None:
-        """Validate link-array shapes and canonical matrix properties.
+    def validate_structure(self) -> None:
+        """Validate link-array and canonical matrix shapes.
 
         Returns:
             None.
 
         Raises:
             ValueError: If link fields disagree on ``num_links``, reference
-                strain or coefficient arrays are not two-dimensional, canonical
-                matrices are not equally shaped square batches, or a canonical
-                matrix contains non-finite values or is not symmetric, length
-                or density is non-finite or not strictly positive, or reference
-                strain contains non-finite values.
+                strain or coefficient arrays are not two-dimensional, or
+                canonical matrices are not equally shaped square batches.
         """
         length = jnp.asarray(self.length)
         if length.ndim != 1 or length.shape[0] < 1:
@@ -106,8 +96,6 @@ class ContinuumLinkParams(BaseSystemParams):
             raise ValueError(
                 f"density must have shape ({num_links},), got {density.shape}."
             )
-        _validate_finite_domain("length", length, strictly_positive=True)
-        _validate_finite_domain("density", density, strictly_positive=True)
         reference_strain = jnp.asarray(self.reference_strain)
         if (
             reference_strain.ndim != 2
@@ -117,8 +105,7 @@ class ContinuumLinkParams(BaseSystemParams):
             raise ValueError(
                 "reference_strain must have shape (num_links, strain_dimension)."
             )
-        _validate_finite_domain("reference_strain", reference_strain)
-        self.cross_section.validate()
+        self.cross_section.validate_structure()
         if self.cross_section.coefficients.shape[0] != num_links:
             raise ValueError("cross-section coefficients must have one row per link.")
         stiffness = jnp.asarray(self.stiffness)
@@ -134,8 +121,15 @@ class ContinuumLinkParams(BaseSystemParams):
             raise ValueError(
                 f"damping must have shape {stiffness.shape}, got {damping.shape}."
             )
-        _validate_symmetric("stiffness", stiffness)
-        _validate_symmetric("damping", damping)
+
+    def validate_values(self) -> None:
+        """Validate eager link values and canonical matrix properties."""
+        _validate_finite_domain("length", self.length, strictly_positive=True)
+        _validate_finite_domain("density", self.density, strictly_positive=True)
+        _validate_finite_domain("reference_strain", self.reference_strain)
+        self.cross_section.validate_values()
+        _validate_symmetric("stiffness", self.stiffness)
+        _validate_symmetric("damping", self.damping)
 
 
 def _profile(
@@ -246,15 +240,12 @@ class LinkSpec:
             )
         if self.poisson_ratio is not None:
             _validate_finite_domain("poisson_ratio", self.poisson_ratio)
-            try:
-                valid_poisson_ratio = bool(
-                    jnp.all(
-                        (jnp.asarray(self.poisson_ratio) > -1.0)
-                        & (jnp.asarray(self.poisson_ratio) < 0.5)
-                    )
+            valid_poisson_ratio = bool(
+                jnp.all(
+                    (jnp.asarray(self.poisson_ratio) > -1.0)
+                    & (jnp.asarray(self.poisson_ratio) < 0.5)
                 )
-            except (ConcretizationTypeError, TracerBoolConversionError):
-                valid_poisson_ratio = True
+            )
             if not valid_poisson_ratio:
                 raise ValueError(
                     "poisson_ratio must be greater than -1 and less than 0.5."
@@ -263,12 +254,9 @@ class LinkSpec:
             _validate_finite_domain(
                 "material_damping_coefficient", self.material_damping_coefficient
             )
-            try:
-                nonnegative_damping = bool(
-                    jnp.all(jnp.asarray(self.material_damping_coefficient) >= 0.0)
-                )
-            except (ConcretizationTypeError, TracerBoolConversionError):
-                nonnegative_damping = True
+            nonnegative_damping = bool(
+                jnp.all(jnp.asarray(self.material_damping_coefficient) >= 0.0)
+            )
             if not nonnegative_damping:
                 raise ValueError("material_damping_coefficient must be nonnegative.")
         for name in ("stiffness", "damping"):

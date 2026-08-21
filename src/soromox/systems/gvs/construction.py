@@ -57,7 +57,7 @@ def _link_dof(segment: GVSSegmentStructure) -> int:
 
 def _resolve_structure(params: GVSParams, structure: GVSStructure) -> GVSStructure:
     """Return a fully resolved GVS structure compatible with ``params``."""
-    params.validate_against_structure(structure)
+    params.validate_for_update_against_structure(structure)
     max_dof = (
         int(params.link.stiffness.shape[-1])
         if structure.max_dof is None
@@ -130,7 +130,7 @@ def material_operators_from_params(
             coefficients, unsupported cross-section data, or invalid quadrature
             configuration.
     """
-    params.validate_against_structure(structure)
+    params.validate_for_update_against_structure(structure)
     max_dof = (
         int(params.link.stiffness.shape[-1])
         if structure.max_dof is None

@@ -115,19 +115,17 @@ class IsotropicMaterialParams(BaseSystemParams):
             if value.ndim == 1 and value.shape[0] < 1:
                 raise ValueError(f"{name} must not be empty.")
 
-    def validate(self) -> None:
-        """Validate material structure and eager physical values.
+    def validate_values(self) -> None:
+        """Validate eager material physical values.
 
         Returns:
             None.
 
         Raises:
-            ValueError: If structural validation fails; either modulus is
-                non-finite or not strictly positive; Poisson's ratio is outside
-                ``(-1, 0.5)``; or the material damping coefficient is
-                non-finite or negative.
+            ValueError: If either modulus is non-finite or not strictly
+                positive; Poisson's ratio is outside ``(-1, 0.5)``; or the
+                material damping coefficient is non-finite or negative.
         """
-        self.validate_structure()
         for name in (
             "young_modulus",
             "shear_modulus",

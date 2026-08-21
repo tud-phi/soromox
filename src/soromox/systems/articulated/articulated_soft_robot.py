@@ -939,7 +939,7 @@ class ArticulatedSoftRobot(SoftRobot):
         """Return an updated copy with a full typed parameter object."""
         if not isinstance(params, ArticulatedSoftRobotParams):
             raise TypeError("params must be an ArticulatedSoftRobotParams instance.")
-        params.validate()
+        params.validate_for_update()
         if params.mass.shape != self.params.mass.shape:
             raise ValueError(
                 "mass shape changes the model structure; construct a new ArticulatedSoftRobot."

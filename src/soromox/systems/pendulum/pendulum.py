@@ -172,7 +172,7 @@ class Pendulum(SoftRobot):
         current_params = self._current_body_params()
         if not isinstance(params, PendulumParams):
             raise TypeError("params must be a PendulumParams instance.")
-        params.validate()
+        params.validate_for_update()
         if params.mass.shape != current_params.mass.shape:
             raise ValueError(
                 "mass shape changes the model structure; construct a new Pendulum."

@@ -200,7 +200,7 @@ class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
     def num_paths(self) -> int:
         return int(self.amplitude.shape[0])
 
-    def validate(self) -> None:
+    def validate_structure(self) -> None:
         if self.frequency.shape != self.amplitude.shape:
             raise ValueError("frequency must match amplitude shape.")
 

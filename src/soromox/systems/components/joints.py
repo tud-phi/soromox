@@ -71,7 +71,7 @@ class JointParams(BaseSystemParams):
     def __check_init__(self) -> None:
         object.__setattr__(self, "stiffness", jnp.asarray(self.stiffness))
         object.__setattr__(self, "damping", jnp.asarray(self.damping))
-        self.validate()
+        self.validate_for_update()
 
     def _normalize_replacement(self, name: str, value: object) -> object:
         """Normalize replacement joint-matrix values to JAX arrays."""
@@ -79,16 +79,15 @@ class JointParams(BaseSystemParams):
             return jnp.asarray(value)
         return value
 
-    def validate(self) -> None:
-        """Validate joint matrix shapes, finiteness, and symmetry.
+    def validate_structure(self) -> None:
+        """Validate joint matrix shapes.
 
         Returns:
             None.
 
         Raises:
-            ValueError: If stiffness is not a batch of square matrices, damping
-                has a different shape, or either matrix batch is non-finite or
-                asymmetric.
+            ValueError: If stiffness is not a batch of square matrices or
+                damping has a different shape.
         """
         stiffness = jnp.asarray(self.stiffness)
         damping = jnp.asarray(self.damping)
@@ -101,8 +100,11 @@ class JointParams(BaseSystemParams):
             raise ValueError(
                 f"joint damping must have shape {stiffness.shape}, got {damping.shape}."
             )
-        _validate_symmetric("joint stiffness", stiffness)
-        _validate_symmetric("joint damping", damping)
+
+    def validate_values(self) -> None:
+        """Validate eager joint matrix finiteness and symmetry."""
+        _validate_symmetric("joint stiffness", self.stiffness)
+        _validate_symmetric("joint damping", self.damping)
 
 
 @dataclass

@@ -174,7 +174,7 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
     end_segment_index: tuple[int, ...] = eqx.field(static=True, converter=_index_tuple)
 
     def __check_init__(self) -> None:
-        self.validate()
+        self.validate_for_update()
 
     @property
     def num_paths(self) -> int:
@@ -220,8 +220,8 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
                     "end_segment_index."
                 )
 
-    def validate(self) -> None:
-        self.validate_structure()
+    def validate_values(self) -> None:
+        """Validate eager linear-routing values."""
         intercept = jnp.asarray(self.intercept)
         slope = jnp.asarray(self.slope)
         if bool(jnp.any(intercept[:, 0] != 0.0)):
@@ -328,16 +328,21 @@ class ThreadlikeTransmissionParams(BaseSystemParams):
     coordinate_scale: Array
 
     def __check_init__(self) -> None:
-        self.validate()
+        self.validate_for_update()
 
-    def validate(self) -> None:
-        self.routing.validate_for_update()
+    def validate_structure(self) -> None:
+        """Validate threadlike transmission parameter structure."""
+        self.routing.validate_structure()
         scale = jnp.asarray(self.coordinate_scale)
         if scale.shape != (self.routing.num_paths,):
             raise ValueError(
                 "coordinate_scale must have shape "
                 f"({self.routing.num_paths},), got {scale.shape}."
             )
+
+    def validate_values(self) -> None:
+        """Validate eager nested routing values."""
+        self.routing.validate_values()
 
 
 class ThreadlikeTransmission(Transmission):
@@ -410,10 +415,11 @@ class ThreadlikeActuatorParams(BaseSystemParams):
     upper_bounds: Array
 
     def __check_init__(self) -> None:
-        self.validate()
+        self.validate_for_update()
 
-    def validate(self) -> None:
-        self.transmission.validate_for_update()
+    def validate_structure(self) -> None:
+        """Validate threadlike actuator parameter structure."""
+        self.transmission.validate_structure()
         count = self.transmission.routing.num_paths
         for name in ("lower_bounds", "upper_bounds"):
             value = jnp.asarray(getattr(self, name))
@@ -421,6 +427,10 @@ class ThreadlikeActuatorParams(BaseSystemParams):
                 raise ValueError(
                     f"{name} must have shape ({count},), got {value.shape}."
                 )
+
+    def validate_values(self) -> None:
+        """Validate eager nested threadlike transmission values."""
+        self.transmission.validate_values()
 
 
 class ThreadlikeActuator(Actuator):
@@ -645,10 +655,11 @@ class ThreadlikeImpedanceParams(BaseSystemParams):
     rest_length: Array
 
     def __check_init__(self) -> None:
-        self.validate()
+        self.validate_for_update()
 
-    def validate(self) -> None:
-        self.routing.validate_for_update()
+    def validate_structure(self) -> None:
+        """Validate threadlike impedance parameter structure."""
+        self.routing.validate_structure()
         count = self.routing.num_paths
         for name in ("stiffness", "damping", "rest_length"):
             value = jnp.asarray(getattr(self, name))
@@ -656,6 +667,10 @@ class ThreadlikeImpedanceParams(BaseSystemParams):
                 raise ValueError(
                     f"{name} must have shape ({count},), got {value.shape}."
                 )
+
+    def validate_values(self) -> None:
+        """Validate eager nested threadlike routing values."""
+        self.routing.validate_values()
 
 
 class ThreadlikeImpedance(PassiveElement):
