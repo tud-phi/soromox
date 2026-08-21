@@ -59,15 +59,17 @@ Pass the complete PyTree to `with_params(...)` as a dynamic argument inside
 [Compiled update contract](../../user-guide/parameters-and-optimization.md#compiled-update-contract)
 for a compiled example and the eager-versus-traced validation boundary.
 
-During tracing, `BaseSystemParams` runs only tracer-safe structural validation;
-eager validation additionally enforces concrete numeric invariants. Subclasses
-implement these phases in `validate_structure()` and `validate_values()`.
-
 For GVS specifically, `GVS.from_segments(...)` is the recommended constructor.
 It accepts user-facing segment specs, stores canonical link and joint matrices
 in `GVSParams`, and stores stripped static choices in `GVSStructure`.
 `IsotropicMaterialParams` remains a separate caller-owned optimization PyTree,
 so runtime and material representations are not duplicated.
+
+## Validation
+
+During tracing, `BaseSystemParams` runs only tracer-safe structural validation;
+eager validation additionally enforces concrete numeric invariants. Subclasses
+implement these phases in `validate_structure()` and `validate_values()`.
 
 ## Naming
 
