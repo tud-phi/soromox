@@ -6,8 +6,9 @@ from abc import abstractmethod
 from typing import Any
 
 import equinox as eqx
-from jax import Array, grad, jacfwd, jvp, vmap
+from jax import Array, grad, jacfwd, jvp, lax, vmap
 from jax import numpy as jnp
+from jax.scipy.linalg import cho_solve
 
 from soromox.actuation.core import (
     Actuator,
@@ -1418,6 +1419,43 @@ class SoftRobot(DynamicalSystem):
         G = self.gravitational_force(q)
         return M, Cqd, G
 
+    def _solve_inertia(self, inertia: Array, rhs: Array) -> Array:
+        """
+        Solve an active-coordinate inertia system for an acceleration vector.
+
+        Soft-robot inertia matrices are symmetric positive definite. The CPU
+        path uses a Cholesky factorization for lower latency on the small dense
+        systems common in this package, while accelerator platforms retain the
+        generic dense solve. This is one platform-level dispatch shared by all
+        soft-robot implementations and does not use model-size heuristics.
+
+        Args:
+            inertia: Active-coordinate inertia matrix with shape
+                ``(self.num_dofs, self.num_dofs)``.
+            rhs: Generalized right-hand side with shape ``(self.num_dofs,)``.
+
+        Returns:
+            Acceleration vector satisfying ``inertia @ acceleration == rhs``,
+            with shape ``(self.num_dofs,)``.
+        """
+
+        def generic(matrix: Array, vector: Array) -> Array:
+            return jnp.linalg.solve(matrix, vector)
+
+        def cholesky(matrix: Array, vector: Array) -> Array:
+            symmetric = 0.5 * (matrix + matrix.T)
+            factor = jnp.linalg.cholesky(symmetric)
+            return cho_solve((factor, True), vector)
+
+        return lax.platform_dependent(
+            inertia,
+            rhs,
+            cpu=cholesky,
+            cuda=generic,
+            rocm=generic,
+            default=generic,
+        )
+
     def forward_dynamics(
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
@@ -1461,6 +1499,6 @@ class SoftRobot(DynamicalSystem):
         tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
-        qdd = jnp.linalg.solve(M, rhs)
+        qdd = self._solve_inertia(M, rhs)
 
         return jnp.concatenate([qd, qdd])

@@ -6,7 +6,6 @@ from typing import Any, Self
 import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
-from jax.scipy.linalg import cho_solve
 
 from soromox.actuation.core import Actuator, PassiveElement
 from soromox.actuation.threadlike import (
@@ -102,7 +101,7 @@ class PCS(SoftRobot):
     num_gauss_points: int = eqx.field(static=True)
     num_integration_points: int = eqx.field(static=True)
     num_strains: int = eqx.field(static=True)  # Number of strains (6 * num_segments)
-    segment_dof_ends: tuple[int, ...] = eqx.field(static=True)
+    _segment_dof_ends: tuple[int, ...] = eqx.field(static=True)
     scale_rotational_basis_by_length: bool = eqx.field(static=True)
 
     xi_ref: Array  # Reference configuration strain
@@ -375,11 +374,11 @@ class PCS(SoftRobot):
 
         self.num_active_strains = jnp.sum(strain_selector)
         self.num_dofs = int(self.num_active_strains.item())
-        active_strains_per_segment = jnp.sum(
+        active_dofs_per_segment = jnp.sum(
             strain_selector.reshape(self.num_segments, 6), axis=1
         )
-        self.segment_dof_ends = tuple(
-            int(value) for value in jnp.cumsum(active_strains_per_segment).tolist()
+        self._segment_dof_ends = tuple(
+            int(value) for value in jnp.cumsum(active_dofs_per_segment).tolist()
         )
 
         reference_strain = jnp.asarray(params.link.reference_strain, dtype=jnp.float64)
@@ -3264,7 +3263,7 @@ class PCS(SoftRobot):
 
         # This trace-time loop intentionally keeps each contraction at its causal
         # prefix width; scan/fori_loop require a fixed-width body and do extra work.
-        for segment_index, dof_end in enumerate(self.segment_dof_ends):
+        for segment_index, dof_end in enumerate(self._segment_dof_ends):
             mass_diagonal = jnp.diagonal(self.M_segments[segment_index])
             jacobian = jacobians[segment_index, :, :, :dof_end]
             weight = weights[segment_index]
@@ -3294,42 +3293,6 @@ class PCS(SoftRobot):
             gravity_force = gravity_force.at[:dof_end].add(gravity_segment)
 
         return inertia, coriolis_qd, gravity_force
-
-    def _solve_inertia(self, inertia: Array, rhs: Array) -> Array:
-        """
-        Solve the active-coordinate inertia system for an acceleration vector.
-
-        PCS inertia matrices are symmetric positive definite. The CPU path
-        uses a Cholesky factorization for lower latency on these small dense
-        systems, while accelerator platforms retain the generic dense solve.
-        This is a single platform-level dispatch without model-size heuristics.
-
-        Args:
-            inertia: Active-coordinate inertia matrix with shape
-                ``(self.num_dofs, self.num_dofs)``.
-            rhs: Generalized right-hand side with shape ``(self.num_dofs,)``.
-
-        Returns:
-            Acceleration vector satisfying ``inertia @ acceleration == rhs``,
-            with shape ``(self.num_dofs,)``.
-        """
-
-        def generic(matrix: Array, vector: Array) -> Array:
-            return jnp.linalg.solve(matrix, vector)
-
-        def cholesky(matrix: Array, vector: Array) -> Array:
-            symmetric = 0.5 * (matrix + matrix.T)
-            factor = jnp.linalg.cholesky(symmetric)
-            return cho_solve((factor, True), vector)
-
-        return lax.platform_dependent(
-            inertia,
-            rhs,
-            cpu=cholesky,
-            cuda=generic,
-            rocm=generic,
-            default=generic,
-        )
 
     @eqx.filter_jit
     def forward_dynamics(

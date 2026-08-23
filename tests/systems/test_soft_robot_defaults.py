@@ -168,6 +168,18 @@ def test_default_length_sums_segment_lengths() -> None:
     assert_allclose(robot.length, jnp.sum(robot.segment_length), rtol=1e-12, atol=1e-12)
 
 
+def test_shared_inertia_solver_matches_generic_dense_solve() -> None:
+    robot = _PlanarDefaultRobot()
+    inertia = jnp.array([[3.0, 0.4], [0.4, 1.5]], dtype=jnp.float64)
+    rhs = jnp.array([0.25, -0.75], dtype=jnp.float64)
+
+    actual = robot._solve_inertia(inertia, rhs)
+    expected = jnp.linalg.solve(inertia, rhs)
+
+    assert_allclose(actual, expected, rtol=1e-12, atol=1e-12)
+    assert_allclose(inertia @ actual, rhs, rtol=1e-12, atol=1e-12)
+
+
 def test_custom_jvp_toggle_controls_public_forward_kinematics_arc_length_jvp() -> None:
     robot = _ToggleSentinelDefaultRobot()
     q = jnp.array([0.2, -0.3], dtype=jnp.float64)

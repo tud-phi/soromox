@@ -333,6 +333,15 @@ def test_coadjoint_se2_matches_closed_form():
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
 
 
+def test_coadjoint_action_se2_matches_matrix_product():
+    xi = jnp.array([0.3, -0.5, 0.7])
+    dual = jnp.array([-0.2, 0.4, -0.6])
+
+    result = se2.coadjoint_action(xi, dual)
+
+    assert_allclose(result, se2.coadjoint(xi) @ dual, rtol=RTOL, atol=ATOL)
+
+
 def test_adjoint_g_se2_matches_manual_construction():
     vec = jnp.array([jnp.pi / 3.0, 0.5, -0.2])
     g = poses.planar_pose_to_transform(vec)

@@ -4,6 +4,7 @@ __all__ = [
     "log",
     "small_adjoint",
     "coadjoint",
+    "coadjoint_action",
     "adjoint",
     "adjoint_inverse",
     "left_jacobian",
@@ -420,6 +421,31 @@ def coadjoint(xi: Array) -> Array:
             jnp.concatenate([v.T @ J, omega * J], axis=0),
         ],
         axis=1,
+    )
+
+
+def coadjoint_action(xi: Array, dual: Array) -> Array:
+    """Apply the planar coadjoint without materializing its matrix.
+
+    Args:
+        xi: Planar twist with shape ``(3,)`` or ``(3, 1)`` in
+            ``[theta, v_x, v_y]`` order.
+        dual: Planar dual vector with shape ``(3,)`` or ``(3, 1)`` in
+            ``[moment_z, force_x, force_y]`` order.
+
+    Returns:
+        The three-vector ``coadjoint(xi) @ dual``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    dual = jnp.asarray(dual).reshape(-1)
+    omega, velocity_x, velocity_y = xi
+    _, force_x, force_y = dual
+    return jnp.stack(
+        [
+            velocity_y * force_x - velocity_x * force_y,
+            -omega * force_y,
+            omega * force_x,
+        ]
     )
 
 

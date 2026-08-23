@@ -103,6 +103,7 @@ class PlanarPCS(SoftRobot):
     num_strains: int = eqx.field(
         static=True, default=0
     )  # Number of strains (3 * num_segments)
+    _segment_dof_ends: tuple[int, ...] = eqx.field(static=True, default=())
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
 
     xi_ref: Array | None = eqx.field(default=None)  # Reference configuration strain
@@ -361,6 +362,12 @@ class PlanarPCS(SoftRobot):
 
         self.num_active_strains = jnp.sum(strain_selector)
         self.num_dofs = int(self.num_active_strains.item())
+        active_dofs_per_segment = jnp.sum(
+            strain_selector.reshape(self.num_segments, 3), axis=1
+        )
+        self._segment_dof_ends = tuple(
+            int(value) for value in jnp.cumsum(active_dofs_per_segment).tolist()
+        )
 
         reference_strain = jnp.asarray(params.link.reference_strain, dtype=jnp.float64)
         if reference_strain.size != self.num_strains:
@@ -2700,11 +2707,35 @@ class PlanarPCS(SoftRobot):
         self,
         xi: Array,
         xid: Array,
-        B_segments: Array,
+        B_xi_segments: Array,
         qd: Array,
         convective_only_jd: bool = False,
-    ) -> tuple[Array, Array]:
-        """Compute active-coordinate local Jacobians at all segment tips."""
+    ) -> tuple[Array, Array, Array]:
+        """
+        Propagate active-coordinate local Jacobians to every segment tip.
+
+        The recurrence remains in each segment's body frame. It can propagate
+        either the complete Jacobian time derivative or only its contraction
+        with ``qd``. The returned inverse adjoints let dynamics-only callers
+        propagate local quantities without constructing absolute poses.
+
+        Args:
+            xi: Segment strains with shape ``(self.num_segments, 3)``.
+            xid: Segment strain rates with shape ``(self.num_segments, 3)``.
+            B_xi_segments: Active strain bases with shape
+                ``(self.num_segments, 3, self.num_dofs)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            convective_only_jd: If true, propagate ``Jd @ qd`` instead of the
+                complete Jacobian time derivative.
+
+        Returns:
+            Tuple ``(J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips)``. ``J_tips`` has
+            shape ``(self.num_segments, 3, self.num_dofs)``. The second array
+            has the same shape when ``convective_only_jd`` is false and shape
+            ``(self.num_segments, 3)`` otherwise. ``Ad_inv_tips`` contains the
+            inverse adjoint of each segment-tip transform with shape
+            ``(self.num_segments, 3, 3)``.
+        """
         Ad_inv_tips, T_tips, Td_tips = vmap(
             lambda xi_i, xid_i, L_i: constant_strain_se2._operators(
                 xi_i, L_i, self.global_eps, self.tangent_eps, xid_i
@@ -2723,13 +2754,13 @@ class PlanarPCS(SoftRobot):
             J_prev, Jd_or_Jd_qd_prev = carry
 
             xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
-            B_i = lax.dynamic_index_in_dim(B_segments, i, axis=0, keepdims=False)
+            B_xi_i = lax.dynamic_index_in_dim(B_xi_segments, i, axis=0, keepdims=False)
             Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
             T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
             Td_i = lax.dynamic_index_in_dim(Td_tips, i, axis=0, keepdims=False)
 
             Ad_inv_T_i = Ad_inv_i @ T_i
-            J_segment = Ad_inv_T_i @ B_i
+            J_segment = Ad_inv_T_i @ B_xi_i
             J_next = Ad_inv_i @ J_prev + J_segment
 
             eta = Ad_inv_T_i @ xid_i
@@ -2745,7 +2776,7 @@ class PlanarPCS(SoftRobot):
                 )
                 Jd_or_Jd_qd_next = Jd_qd_next
             else:
-                Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_i
+                Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_xi_i
                 Jd_next = Ad_inv_i @ Jd_or_Jd_qd_prev + Ad_inv_dot @ J_prev + Jd_segment
                 Jd_or_Jd_qd_next = Jd_next
 
@@ -2756,7 +2787,7 @@ class PlanarPCS(SoftRobot):
             scan_body, (zeros, Jd_or_Jd_qd_zeros), indices
         )
 
-        return J_tips, Jd_or_Jd_qd_tips
+        return J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips
 
     @eqx.filter_jit
     def integration_kinematics(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
@@ -2804,7 +2835,7 @@ class PlanarPCS(SoftRobot):
         """
         xi = self.strain(q).reshape(self.num_segments, 3)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
-        B_segments = self.B_xi.reshape(self.num_segments, 3, self.num_dofs)
+        B_xi_segments = self.B_xi.reshape(self.num_segments, 3, self.num_dofs)
 
         Xs_scaled, Ws_scaled = vmap(
             scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
@@ -2836,8 +2867,8 @@ class PlanarPCS(SoftRobot):
 
         g_ps = vmap(segment_poses)(g_bases, xi, s_local)
 
-        J_tips, Jd_or_Jd_qd_tips = self._active_J_Jd_local_tips_from_strain(
-            xi, xid, B_segments, qd, convective_only_jd=convective_only_jd
+        J_tips, Jd_or_Jd_qd_tips, _ = self._active_J_Jd_local_tips_from_strain(
+            xi, xid, B_xi_segments, qd, convective_only_jd=convective_only_jd
         )
         zeros_tip = jnp.zeros_like(J_tips[:1])
         Jd_or_Jd_qd_zeros_tip = jnp.zeros_like(Jd_or_Jd_qd_tips[:1])
@@ -2849,7 +2880,7 @@ class PlanarPCS(SoftRobot):
         def segment_jacobians(
             xi_i: Array,
             xid_i: Array,
-            B_i: Array,
+            B_xi_i: Array,
             J_base_i: Array,
             Jd_or_Jd_qd_base_i: Array,
             s_local_i: Array,
@@ -2864,7 +2895,7 @@ class PlanarPCS(SoftRobot):
                 )
 
                 Ad_inv_T = Ad_inv @ T
-                J_segment = Ad_inv_T @ B_i
+                J_segment = Ad_inv_T @ B_xi_i
                 J_next = Ad_inv @ J_base_i + J_segment
 
                 eta = Ad_inv_T @ xid_i
@@ -2880,7 +2911,7 @@ class PlanarPCS(SoftRobot):
                     )
                     Jd_or_Jd_qd_next = Jd_qd_next
                 else:
-                    Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_i
+                    Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_xi_i
                     Jd_next = (
                         Ad_inv @ Jd_or_Jd_qd_base_i + Ad_inv_dot @ J_base_i + Jd_segment
                     )
@@ -2891,10 +2922,114 @@ class PlanarPCS(SoftRobot):
             return vmap(jacobian_at_s)(s_local_i)
 
         J_ps, Jd_or_Jd_qd_ps = vmap(segment_jacobians)(
-            xi, xid, B_segments, J_bases, Jd_or_Jd_qd_bases, s_local
+            xi, xid, B_xi_segments, J_bases, Jd_or_Jd_qd_bases, s_local
         )
 
         return Ws_scaled, g_ps, J_ps, Jd_or_Jd_qd_ps
+
+    @eqx.filter_jit
+    def _dynamics_integration_kinematics(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Return dynamics-only quadrature kinematics in local body frames.
+
+        Unlike :meth:`_integration_kinematics`, this path does not construct
+        absolute SE(2) poses. It propagates gravity between segment frames with
+        inverse adjoints and directly computes the convective contraction
+        ``Jd @ qd`` needed by :meth:`dynamics_terms`.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(weights, gravity, jacobians, jacobian_dot_qd)``.
+            ``weights`` has shape
+            ``(self.num_segments, self.num_gauss_points)``; ``gravity`` and
+            ``jacobian_dot_qd`` have shape
+            ``(self.num_segments, self.num_gauss_points, 3)``; and
+            ``jacobians`` has shape
+            ``(self.num_segments, self.num_gauss_points, 3, self.num_dofs)``.
+        """
+        xi = self.strain(q).reshape(self.num_segments, 3)
+        xid = (self.B_xi @ qd).reshape(self.num_segments, 3)
+        B_xi_segments = self.B_xi.reshape(self.num_segments, 3, self.num_dofs)
+
+        Xs_scaled, Ws_scaled = vmap(
+            scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
+        )(
+            self.integration_points,
+            self.integration_weights,
+            self.L_cum[:-1],
+            self.L_cum[1:],
+        )
+        s_local = Xs_scaled - self.L_cum[:-1, None]
+
+        J_tips, Jd_qd_tips, Ad_inv_tips = self._active_J_Jd_local_tips_from_strain(
+            xi,
+            xid,
+            B_xi_segments,
+            qd,
+            convective_only_jd=True,
+        )
+        J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
+        Jd_qd_bases = jnp.concatenate(
+            [jnp.zeros_like(Jd_qd_tips[:1]), Jd_qd_tips[:-1]], axis=0
+        )
+
+        g0 = poses.planar_pose_to_transform(jnp.asarray(self.base_pose, dtype=xi.dtype))
+        gravity_base_initial = se2.adjoint_inverse(g0) @ self.g
+
+        def scan_gravity(gravity_base: Array, Ad_inv_tip: Array) -> tuple[Array, Array]:
+            gravity_tip = Ad_inv_tip @ gravity_base
+            return gravity_tip, gravity_base
+
+        _, gravity_bases = lax.scan(scan_gravity, gravity_base_initial, Ad_inv_tips)
+
+        def segment_kinematics(
+            xi_i: Array,
+            xid_i: Array,
+            B_xi_i: Array,
+            gravity_base_i: Array,
+            J_base_i: Array,
+            Jd_qd_base_i: Array,
+            s_local_i: Array,
+        ) -> tuple[Array, Array, Array]:
+            def kinematics_at_s(s_local_ij: Array) -> tuple[Array, Array, Array]:
+                Ad_inv, T, Td = constant_strain_se2._operators(
+                    xi_i,
+                    s_local_ij,
+                    self.global_eps,
+                    self.tangent_eps,
+                    xid_i,
+                )
+                Ad_inv_T = Ad_inv @ T
+                J_segment = Ad_inv_T @ B_xi_i
+                J_next = Ad_inv @ J_base_i + J_segment
+
+                eta = Ad_inv_T @ xid_i
+                Ad_inv_dot = -se2.small_adjoint(eta) @ Ad_inv
+                Jd_qd_next = (
+                    Ad_inv @ Jd_qd_base_i
+                    + Ad_inv_dot @ (J_base_i @ qd)
+                    + Ad_inv @ (Td @ xid_i)
+                )
+                gravity_local = Ad_inv @ gravity_base_i
+                return gravity_local, J_next, Jd_qd_next
+
+            return vmap(kinematics_at_s)(s_local_i)
+
+        gravity_ps, J_ps, Jd_qd_ps = vmap(segment_kinematics)(
+            xi,
+            xid,
+            B_xi_segments,
+            gravity_bases,
+            J_bases,
+            Jd_qd_bases,
+            s_local,
+        )
+        return Ws_scaled, gravity_ps, J_ps, Jd_qd_ps
 
     @eqx.filter_jit
     def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
@@ -2915,42 +3050,45 @@ class PlanarPCS(SoftRobot):
             ``(self.num_dofs,)``. ``G`` is the active generalized gravity
             vector with shape ``(self.num_dofs,)``.
         """
-        Ws_scaled, g_ps, J_ps, Jd_qd_ps = self._integration_kinematics(
-            q, qd, convective_only_jd=True
+        weights, gravity, jacobians, jacobian_dot_qd = (
+            self._dynamics_integration_kinematics(q, qd)
         )
-        num_quad = self.num_gauss_points
+        inertia = jnp.zeros((self.num_dofs, self.num_dofs), dtype=jacobians.dtype)
+        coriolis_qd = jnp.zeros((self.num_dofs,), dtype=jacobians.dtype)
+        gravity_force = jnp.zeros((self.num_dofs,), dtype=jacobians.dtype)
 
-        def dynamical_terms_i(i: Array) -> tuple[Array, Array, Array]:
-            M_i = self.M_segments[i]
+        # This trace-time loop intentionally keeps each contraction at its causal
+        # prefix width; scan/fori_loop require a fixed-width body and do extra work.
+        for segment_index, dof_end in enumerate(self._segment_dof_ends):
+            mass_diagonal = jnp.diagonal(self.M_segments[segment_index])
+            jacobian = jacobians[segment_index, :, :, :dof_end]
+            weight = weights[segment_index]
 
-            def dynamical_terms_ij(j: Array) -> tuple[Array, Array, Array]:
-                Ws_ij = Ws_scaled[i, j]
-                g_ij = g_ps[i, j]
-                J_ij = J_ps[i, j]
-                Jd_qd_ij = Jd_qd_ps[i, j]
+            def mass_action(value: Array, diagonal: Array = mass_diagonal) -> Array:
+                shape = (1, diagonal.shape[0]) + (1,) * (value.ndim - 2)
+                return diagonal.reshape(shape) * value
 
-                Ad_g_inv_ij = se2.adjoint_inverse(g_ij)
-                eta_ij = J_ij @ qd
+            flattened_rows = self.num_gauss_points * 3
+            jacobian_flat = jacobian.reshape(flattened_rows, dof_end)
+            weighted_mass_jacobian = (
+                weight[:, None, None] * mass_action(jacobian)
+            ).reshape(flattened_rows, dof_end)
+            inertia_segment = jacobian_flat.T @ weighted_mass_jacobian
 
-                B_ij = Ws_ij * J_ij.T @ M_i @ J_ij
-                Cqd_ij = Ws_ij * (
-                    J_ij.T @ (M_i @ Jd_qd_ij + se2.coadjoint(eta_ij) @ M_i @ eta_ij)
-                )
-                G_ij = -Ws_ij * J_ij.T @ M_i @ Ad_g_inv_ij @ self.g
+            eta = jacobian @ qd[:dof_end]
+            momentum = mass_action(eta)
+            coadjoint_momentum = vmap(se2.coadjoint_action)(eta, momentum)
+            wrench = mass_action(jacobian_dot_qd[segment_index]) + coadjoint_momentum
+            coriolis_segment = jacobian_flat.T @ (weight[:, None] * wrench).reshape(-1)
+            gravity_segment = -jacobian_flat.T @ (
+                weight[:, None] * mass_action(gravity[segment_index])
+            ).reshape(-1)
 
-                return B_ij, Cqd_ij, G_ij
+            inertia = inertia.at[:dof_end, :dof_end].add(inertia_segment)
+            coriolis_qd = coriolis_qd.at[:dof_end].add(coriolis_segment)
+            gravity_force = gravity_force.at[:dof_end].add(gravity_segment)
 
-            return vmap(dynamical_terms_ij)(jnp.arange(num_quad))
-
-        B_blocks_tot, Cqd_blocks_tot, G_blocks_tot = vmap(dynamical_terms_i)(
-            jnp.arange(self.num_segments)
-        )
-
-        B = jnp.sum(B_blocks_tot, axis=(0, 1))
-        Cqd = jnp.sum(Cqd_blocks_tot, axis=(0, 1))
-        G = jnp.sum(G_blocks_tot, axis=(0, 1))
-
-        return B, Cqd, G
+        return inertia, coriolis_qd, gravity_force
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -2993,7 +3131,7 @@ class PlanarPCS(SoftRobot):
         tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
-        qdd = jnp.linalg.solve(B, rhs)
+        qdd = self._solve_inertia(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])
 
