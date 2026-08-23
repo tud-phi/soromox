@@ -4,6 +4,8 @@ Soromox ships development benchmarking CLIs under `tools/benchmarks`:
 
 - `benchmark_system_methods.py` profiles individual model routines (forward kinematics,
   dynamics, etc.) to track JIT compile and steady-state execution costs.
+- `benchmark_model_based_control.py` profiles the default model-based controller
+  and controller-facing transformed-dynamics paths for PCS and GVS.
 - `benchmark_derivative_paths.py` compares direct analytical derivative hooks,
   protected autograd fallbacks, and public APIs with custom JVPs enabled or disabled
   for PlanarPCS, PCS, and GVS systems.
@@ -61,27 +63,31 @@ For each system/function pair the script prints:
 The plots group results by system, highlighting how complexity evolves with segment
 count for each tracked method.
 
-For PCS and GVS, the method benchmark also exposes paired
-`dynamics_terms_separate` / `dynamics_terms`,
-`model_based_control_separate` / `model_based_control`,
-`actuation_dynamics_terms_separate` / `actuation_dynamics_terms`, and
-`operational_dynamics_terms_separate` / `operational_dynamics_terms` cases.
-These compare the legacy composition of individual public methods against the
-contracted fused paths used by model-based controllers:
-
-```bash
-python tools/benchmarks/benchmark_system_methods.py \
-  --systems pcs gvs \
-  --segment-counts 1 4 \
-  --gauss-points 5 \
-  --methods dynamics_terms_separate dynamics_terms \
-  --execution-repeats 50
-```
-
 For `articulated_soft_robot`, the method benchmark includes both the default
 articulated-body forward dynamics path and a dense Jacobian-energy forward
 dynamics solve (`forward_dynamics_dense`). Comparing these two cases is useful
 for tracking ABA performance against the controller-facing dense dynamics API.
+
+## Benchmarking model-based control
+
+`benchmark_model_based_control.py` measures the checked-out implementation of
+the computed-torque and configuration-/actuation-space feedforward terms, plus
+the operational-space dynamics terms used by operational controllers. The
+benchmark intentionally contains no legacy strategy switch: compare revisions
+by running the same command in separate clean worktrees.
+
+```bash
+python tools/benchmarks/benchmark_model_based_control.py \
+  --systems pcs gvs \
+  --segment-counts 1 4 \
+  --gauss-points 5 \
+  --execution-repeats 50 \
+  --json /tmp/model-based-control.json
+```
+
+Use `--methods` to select individual controller paths and `--csv` for a
+tabular export. Each row reports derived compile time and synchronized warm
+execution time for the default implementation on that revision.
 
 ## Benchmarking derivative paths
 
