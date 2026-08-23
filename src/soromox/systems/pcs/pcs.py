@@ -2871,11 +2871,38 @@ class PCS(SoftRobot):
         xi: Array,
         xid: Array,
         prepared_adjoint_powers: constant_strain_se3._PreparedAdjointPowers,
-        B_segments: Array,
+        B_xi_segments: Array,
         qd: Array,
         convective_only_jd: bool = False,
     ) -> tuple[Array, Array, Array]:
-        """Compute active-coordinate local Jacobians and adjoints at segment tips."""
+        """
+        Propagate active-coordinate local Jacobians to every segment tip.
+
+        The recurrence remains in each segment's body frame and uses prepared
+        constant-strain operators. It can propagate either the complete
+        Jacobian time derivative or only its contraction with ``qd``. The
+        returned inverse adjoints let dynamics-only callers propagate local
+        quantities, such as gravity, without constructing absolute poses.
+
+        Args:
+            xi: Segment strains with shape ``(self.num_segments, 6)``.
+            xid: Segment strain rates with shape ``(self.num_segments, 6)``.
+            prepared_adjoint_powers: Prepared constant-strain operators for
+                every segment.
+            B_xi_segments: Active strain bases with shape
+                ``(self.num_segments, 6, self.num_dofs)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            convective_only_jd: If true, propagate ``Jd @ qd`` instead of the
+                complete Jacobian time derivative.
+
+        Returns:
+            Tuple ``(J_tips, Jd_or_Jd_qd_tips, Ad_inv_tips)``. ``J_tips`` has
+            shape ``(self.num_segments, 6, self.num_dofs)``. The second array
+            has the same shape when ``convective_only_jd`` is false and shape
+            ``(self.num_segments, 6)`` otherwise. ``Ad_inv_tips`` contains the
+            inverse adjoint of each segment-tip transform with shape
+            ``(self.num_segments, 6, 6)``.
+        """
         zeros = jnp.zeros((6, self.num_dofs), dtype=xi.dtype)
         operators_tips = vmap(
             lambda prepared_adjoint_powers_i, L_i: (
@@ -2902,14 +2929,14 @@ class PCS(SoftRobot):
             J_prev, Jd_or_Jd_qd_prev = carry
 
             xid_i = lax.dynamic_index_in_dim(xid, i, axis=0, keepdims=False)
-            B_i = lax.dynamic_index_in_dim(B_segments, i, axis=0, keepdims=False)
+            B_xi_i = lax.dynamic_index_in_dim(B_xi_segments, i, axis=0, keepdims=False)
             Ad_inv_i = lax.dynamic_index_in_dim(Ad_inv_tips, i, axis=0, keepdims=False)
             Ad_inv_T_i = lax.dynamic_index_in_dim(
                 Ad_inv_T_tips, i, axis=0, keepdims=False
             )
             Td_i = lax.dynamic_index_in_dim(Td_tips, i, axis=0, keepdims=False)
 
-            J_segment = Ad_inv_T_i @ B_i
+            J_segment = Ad_inv_T_i @ B_xi_i
             J_next = Ad_inv_i @ J_prev + J_segment
 
             eta = Ad_inv_T_i @ xid_i
@@ -2925,7 +2952,7 @@ class PCS(SoftRobot):
             else:
                 assert T_tips is not None
                 T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
-                Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_i
+                Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_xi_i
                 Jd_next = Ad_inv_i @ Jd_or_Jd_qd_prev + Ad_inv_dot @ J_prev + Jd_segment
                 Jd_or_Jd_qd_next = Jd_next
 
@@ -2977,14 +3004,22 @@ class PCS(SoftRobot):
             convective_only_jd: If true, return ``Jd @ qd`` directly instead
                 of materializing the complete Jacobian time derivative.
 
-        When ``convective_only_jd`` is true, the fourth returned array has
-        shape ``(num_segments, num_gauss_points, 6)`` and contains the exact
-        contraction ``Jd @ qd`` required by forward dynamics. Otherwise it
-        contains the full Jacobian derivatives with the same shape as ``J``.
+        Returns:
+            Tuple ``(weights, poses, jacobians, jacobian_derivatives)``.
+            ``weights`` has shape
+            ``(self.num_segments, self.num_gauss_points)``; ``poses`` has
+            shape ``(self.num_segments, self.num_gauss_points, 4, 4)``; and
+            ``jacobians`` has shape
+            ``(self.num_segments, self.num_gauss_points, 6, self.num_dofs)``.
+            If ``convective_only_jd`` is true, the fourth array contains
+            ``Jd @ qd`` with shape
+            ``(self.num_segments, self.num_gauss_points, 6)``. Otherwise it
+            contains the complete Jacobian derivatives with the same shape as
+            ``jacobians``.
         """
         xi = self.strain(q).reshape(self.num_segments, 6)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
-        B_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
+        B_xi_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
         prepared_adjoint_powers = vmap(constant_strain_se3._prepare_adjoint_powers)(
             xi, xid
         )
@@ -3021,7 +3056,7 @@ class PCS(SoftRobot):
             xi,
             xid,
             prepared_adjoint_powers,
-            B_segments,
+            B_xi_segments,
             qd,
             convective_only_jd=convective_only_jd,
         )
@@ -3036,7 +3071,7 @@ class PCS(SoftRobot):
             xi_i: Array,
             xid_i: Array,
             prepared_adjoint_powers_i: constant_strain_se3._PreparedAdjointPowers,
-            B_i: Array,
+            B_xi_i: Array,
             J_base_i: Array,
             Jd_or_Jd_qd_base_i: Array,
             s_local_i: Array,
@@ -3054,7 +3089,7 @@ class PCS(SoftRobot):
                     T = None
                 else:
                     Ad_inv, Ad_inv_T, T, Td = operators
-                J_segment = Ad_inv_T @ B_i
+                J_segment = Ad_inv_T @ B_xi_i
                 J_next = Ad_inv @ J_base_i + J_segment
 
                 eta = Ad_inv_T @ xid_i
@@ -3069,7 +3104,7 @@ class PCS(SoftRobot):
                     Jd_or_Jd_qd_next = Jd_qd_next
                 else:
                     assert T is not None
-                    Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_i
+                    Jd_segment = (Ad_inv_dot @ T + Ad_inv @ Td) @ B_xi_i
                     Jd_next = (
                         Ad_inv @ Jd_or_Jd_qd_base_i + Ad_inv_dot @ J_base_i + Jd_segment
                     )
@@ -3083,7 +3118,7 @@ class PCS(SoftRobot):
             xi,
             xid,
             prepared_adjoint_powers,
-            B_segments,
+            B_xi_segments,
             J_bases,
             Jd_or_Jd_qd_bases,
             s_local,
@@ -3095,10 +3130,30 @@ class PCS(SoftRobot):
     def _dynamics_integration_kinematics(
         self, q: Array, qd: Array
     ) -> tuple[Array, Array, Array, Array]:
-        """Return quadrature kinematics for dynamics without absolute poses."""
+        """
+        Return dynamics-only quadrature kinematics in local body frames.
+
+        Unlike :meth:`_integration_kinematics`, this path does not construct
+        absolute SE(3) poses. It propagates gravity between segment frames with
+        inverse adjoints and directly computes the convective contraction
+        ``Jd @ qd`` needed by :meth:`dynamics_terms`.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(weights, gravity, jacobians, jacobian_dot_qd)``.
+            ``weights`` has shape
+            ``(self.num_segments, self.num_gauss_points)``; ``gravity`` and
+            ``jacobian_dot_qd`` have shape
+            ``(self.num_segments, self.num_gauss_points, 6)``; and
+            ``jacobians`` has shape
+            ``(self.num_segments, self.num_gauss_points, 6, self.num_dofs)``.
+        """
         xi = self.strain(q).reshape(self.num_segments, 6)
         xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
-        B_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
+        B_xi_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
         prepared_adjoint_powers = vmap(constant_strain_se3._prepare_adjoint_powers)(
             xi, xid
         )
@@ -3117,7 +3172,7 @@ class PCS(SoftRobot):
             xi,
             xid,
             prepared_adjoint_powers,
-            B_segments,
+            B_xi_segments,
             qd,
             convective_only_jd=True,
         )
@@ -3137,7 +3192,7 @@ class PCS(SoftRobot):
         def segment_kinematics(
             xid_i: Array,
             prepared_adjoint_powers_i: constant_strain_se3._PreparedAdjointPowers,
-            B_i: Array,
+            B_xi_i: Array,
             gravity_base_i: Array,
             J_base_i: Array,
             Jd_qd_base_i: Array,
@@ -3155,7 +3210,7 @@ class PCS(SoftRobot):
                         convective_only=True,
                     )
                 )
-                J_segment = Ad_inv_T @ B_i
+                J_segment = Ad_inv_T @ B_xi_i
                 J_next = Ad_inv @ J_base_i + J_segment
 
                 eta = Ad_inv_T @ xid_i
@@ -3173,7 +3228,7 @@ class PCS(SoftRobot):
         gravity_ps, J_ps, Jd_qd_ps = vmap(segment_kinematics)(
             xid,
             prepared_adjoint_powers,
-            B_segments,
+            B_xi_segments,
             gravity_bases,
             J_bases,
             Jd_qd_bases,
@@ -3241,7 +3296,23 @@ class PCS(SoftRobot):
         return inertia, coriolis_qd, gravity_force
 
     def _solve_inertia(self, inertia: Array, rhs: Array) -> Array:
-        """Solve the inertia system with one platform-level algorithm choice."""
+        """
+        Solve the active-coordinate inertia system for an acceleration vector.
+
+        PCS inertia matrices are symmetric positive definite. The CPU path
+        uses a Cholesky factorization for lower latency on these small dense
+        systems, while accelerator platforms retain the generic dense solve.
+        This is a single platform-level dispatch without model-size heuristics.
+
+        Args:
+            inertia: Active-coordinate inertia matrix with shape
+                ``(self.num_dofs, self.num_dofs)``.
+            rhs: Generalized right-hand side with shape ``(self.num_dofs,)``.
+
+        Returns:
+            Acceleration vector satisfying ``inertia @ acceleration == rhs``,
+            with shape ``(self.num_dofs,)``.
+        """
 
         def generic(matrix: Array, vector: Array) -> Array:
             return jnp.linalg.solve(matrix, vector)
