@@ -691,6 +691,30 @@ def coadjoint(xi: Array) -> Array:
     return -small_adjoint(xi).T
 
 
+def coadjoint_action(xi: Array, dual: Array) -> Array:
+    """Apply the spatial coadjoint without materializing its matrix.
+
+    Args:
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega, v]`` order.
+        dual: Spatial dual vector with shape ``(6,)`` or ``(6, 1)`` in
+            ``[moment, force]`` order.
+
+    Returns:
+        The six-vector ``coadjoint(xi) @ dual``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    dual = jnp.asarray(dual).reshape(-1)
+    omega, velocity = xi[:3], xi[3:]
+    moment, force = dual[:3], dual[3:]
+    return jnp.concatenate(
+        [
+            jnp.cross(omega, moment) + jnp.cross(velocity, force),
+            jnp.cross(omega, force),
+        ]
+    )
+
+
 def adjoint(g: Array) -> Array:
     """Return the group adjoint matrix ``Ad_g`` for an ``SE(3)`` transform.
 

@@ -1373,6 +1373,57 @@ def test_dynamics_terms_match_public_matrices(
         assert_allclose(yd, jnp.concatenate([qd, qdd_expected]), rtol=RTOL, atol=ATOL)
 
 
+def test_dynamics_terms_support_leading_inactive_segment():
+    strain_selector = jnp.array(
+        [
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            False,
+            True,
+            True,
+            False,
+            False,
+        ],
+        dtype=bool,
+    )
+    model, _ = make_pcs(num_segments=2, strain_selector=strain_selector)
+    key_q, key_qd = jax.random.split(jax.random.PRNGKey(6125))
+    q = random_q(model, key_q, scale=0.05)
+    qd = random_q(model, key_qd, scale=0.1)
+
+    inertia, coriolis_qd, gravity = model.dynamics_terms(q, qd)
+
+    assert_allclose(inertia, model.inertia_matrix(q), rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        coriolis_qd,
+        model.coriolis_matrix(q, qd) @ qd,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(gravity, model.gravitational_force(q), rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize("num_segments", [1, 4, 8, 16])
+def test_platform_inertia_solve_matches_generic_solve(num_segments: int):
+    model, _ = make_pcs(num_segments=num_segments, total_length=PCS_TOTAL_LENGTH)
+    key_q, key_qd, key_rhs = jax.random.split(jax.random.PRNGKey(6126), 3)
+    q = random_q(model, key_q, scale=0.05)
+    qd = random_q(model, key_qd, scale=0.1)
+    rhs = random_q(model, key_rhs, scale=0.2)
+    inertia, _, _ = model.dynamics_terms(q, qd)
+
+    actual = model._solve_inertia(inertia, rhs)
+    expected = jnp.linalg.solve(inertia, rhs)
+
+    assert_allclose(actual, expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(inertia @ actual, rhs, rtol=RTOL, atol=ATOL)
+
+
 def test_cached_constant_matrices_refresh_after_update_params():
     selector_per_segment = jnp.array(
         [False, False, True, True, False, False], dtype=bool

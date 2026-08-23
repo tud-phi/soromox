@@ -49,9 +49,7 @@ def _nested_grad_of_vmap(fn, singular, regular, tangent):
     values = jnp.stack([singular, regular])
     return jax.grad(
         lambda batch: jnp.sum(
-            jax.vmap(
-                lambda value: jnp.sum(jax.jvp(fn, (value,), (tangent,))[1])
-            )(batch)
+            jax.vmap(lambda value: jnp.sum(jax.jvp(fn, (value,), (tangent,))[1]))(batch)
         )
     )(values)
 
@@ -528,6 +526,15 @@ def test_coadjoint_se3_matches_block_structure():
     expected = jnp.block([[omega_tilde, v_tilde], [jnp.zeros((3, 3)), omega_tilde]])
 
     assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_coadjoint_action_se3_matches_matrix_product():
+    xi = jnp.array([0.3, -0.5, 0.7, 1.1, -1.3, 1.7])
+    dual = jnp.array([-0.2, 0.4, -0.6, 0.8, -1.0, 1.2])
+
+    result = se3.coadjoint_action(xi, dual)
+
+    assert_allclose(result, se3.coadjoint(xi) @ dual, rtol=RTOL, atol=ATOL)
 
 
 def test_adjoint_g_se3_matches_planar_embedding():
