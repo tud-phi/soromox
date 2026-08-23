@@ -139,15 +139,21 @@ def _build_operational_dynamics_case(system: Any, context: Mapping[str, Array]):
 def _benchmark_cases() -> tuple[BenchmarkCase, ...]:
     """Return controller paths whose implementation is tracked over revisions."""
     return (
-        BenchmarkCase("computed_torque_model_based", _build_computed_torque_case),
         BenchmarkCase(
-            "configuration_feedforward_model_based",
+            "configuration_space_computed_torque", _build_computed_torque_case
+        ),
+        BenchmarkCase(
+            "configuration_space_feedforward_compensation",
             _build_configuration_feedforward_case,
         ),
         BenchmarkCase(
-            "actuation_feedforward_model_based", _build_actuation_feedforward_case
+            "actuation_space_feedforward_compensation",
+            _build_actuation_feedforward_case,
         ),
-        BenchmarkCase("operational_dynamics_terms", _build_operational_dynamics_case),
+        BenchmarkCase(
+            "operational_space_dynamics_terms",
+            _build_operational_dynamics_case,
+        ),
     )
 
 

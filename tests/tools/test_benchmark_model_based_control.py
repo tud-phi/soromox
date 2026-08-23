@@ -12,10 +12,10 @@ def test_registry_is_limited_to_controller_benchmark_systems():
 def test_cases_track_only_current_default_paths():
     names = {case.name for case in _benchmark_cases()}
     assert names == {
-        "computed_torque_model_based",
-        "configuration_feedforward_model_based",
-        "actuation_feedforward_model_based",
-        "operational_dynamics_terms",
+        "configuration_space_computed_torque",
+        "configuration_space_feedforward_compensation",
+        "actuation_space_feedforward_compensation",
+        "operational_space_dynamics_terms",
     }
     assert all("separate" not in name and "fused" not in name for name in names)
 
@@ -31,7 +31,7 @@ def test_parse_args_normalizes_systems_and_selects_methods():
             "--gauss-points",
             "7",
             "--methods",
-            "computed_torque_model_based",
+            "configuration_space_computed_torque",
             "--execution-repeats",
             "3",
         ]
@@ -40,5 +40,5 @@ def test_parse_args_normalizes_systems_and_selects_methods():
     assert args.systems == ["pcs", "gvs"]
     assert args.segment_counts == [2]
     assert args.gauss_points == [7]
-    assert args.methods == ["computed_torque_model_based"]
+    assert args.methods == ["configuration_space_computed_torque"]
     assert args.execution_repeats == 3
