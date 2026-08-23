@@ -192,10 +192,10 @@ class FeedforwardCompensationTracker(PIDController):
         yd_des = self.reference_trajectory.xd_des_fn(t)
         ydd_des = self.reference_trajectory.xdd_des_fn(t)
 
-        # Compute actuation-space dynamics at DESIRED configuration q_des
-        M_y_des = asd.inertia_matrix(q_des)
-        eta_y_des = asd.coriolis_matrix(q_des, qd_des)
-        G_y_des = asd.gravitational_force(q_des)
+        # Compute the coupled actuation-space dynamics at the desired state.
+        # The returned Coriolis term is already contracted with yd_des because
+        # yd_des = J(q_des) @ qd_des for the converted reference trajectory.
+        M_y_des, Cyd_des, G_y_des = asd.dynamics_terms(q_des, qd_des)
         tau_el_y_des = asd.elastic_force(q_des)
         D_y_des = asd.damping_matrix(q_des)
 
@@ -203,7 +203,7 @@ class FeedforwardCompensationTracker(PIDController):
         # Using yd_des and ydd_des (actuation-space velocities/accelerations)
         tau_model_y = (
             M_y_des @ ydd_des
-            + eta_y_des @ yd_des
+            + Cyd_des
             + G_y_des
             + tau_el_y_des
             + D_y_des @ yd_des

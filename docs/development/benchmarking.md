@@ -61,6 +61,23 @@ For each system/function pair the script prints:
 The plots group results by system, highlighting how complexity evolves with segment
 count for each tracked method.
 
+For PCS and GVS, the method benchmark also exposes paired
+`dynamics_terms_separate` / `dynamics_terms`,
+`model_based_control_separate` / `model_based_control`,
+`actuation_dynamics_terms_separate` / `actuation_dynamics_terms`, and
+`operational_dynamics_terms_separate` / `operational_dynamics_terms` cases.
+These compare the legacy composition of individual public methods against the
+contracted fused paths used by model-based controllers:
+
+```bash
+python tools/benchmarks/benchmark_system_methods.py \
+  --systems pcs gvs \
+  --segment-counts 1 4 \
+  --gauss-points 5 \
+  --methods dynamics_terms_separate dynamics_terms \
+  --execution-repeats 50
+```
+
 For `articulated_soft_robot`, the method benchmark includes both the default
 articulated-body forward dynamics path and a dense Jacobian-energy forward
 dynamics solve (`forward_dynamics_dense`). Comparing these two cases is useful

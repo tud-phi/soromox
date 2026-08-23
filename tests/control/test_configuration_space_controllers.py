@@ -38,6 +38,7 @@ def test_computed_torque_model_based_term_uses_inverse_dynamics_and_actuation_in
     )
     expected = jnp.linalg.inv(robot.actuation_matrix(q)) @ tau_model
     assert jnp.allclose(u_model, expected)
+    assert robot.dynamics_terms_calls == 1
     assert control_state_dot is None
 
 
@@ -98,6 +99,7 @@ def test_computed_torque_supports_overactuated_pseudoinverse_and_rejects_underac
     assert jnp.allclose(
         u_model, jnp.linalg.pinv(overactuated_robot.actuation_matrix(q)) @ tau_model
     )
+    assert overactuated_robot.dynamics_terms_calls == 1
 
     with pytest.raises(ValueError, match="underactuated"):
         ComputedTorqueTracker(
@@ -257,4 +259,8 @@ def test_configuration_space_model_based_controllers_compute_expected_terms(
     u_model, control_state_dot = controller.model_based_term(state)
 
     assert jnp.allclose(u_model, expected_fn(robot, reference, state))
+    expected_dynamics_terms_calls = (
+        1 if controller_cls is FeedforwardCompensationTracker else 0
+    )
+    assert robot.dynamics_terms_calls == expected_dynamics_terms_calls
     assert control_state_dot is None

@@ -1012,13 +1012,11 @@ def model_based_term(
     q_des, qd_des, qdd_des = self.reference_trajectory.get_state(t)
 
     # Compute inverse dynamics
-    M = self.robot.inertia_matrix(q_des)
-    C = self.robot.coriolis_matrix(q_des, qd_des)
-    G = self.robot.gravitational_force(q_des)
+    M, Cqd, G = self.robot.dynamics_terms(q_des, qd_des)
     tau_el = self.robot.elastic_force(q_des)
 
     # Feedforward torque
-    tau_ff = M @ qdd_des + C @ qd_des + G + tau_el
+    tau_ff = M @ qdd_des + Cqd + G + tau_el
 
     # Map to actuation space
     A = self.robot.actuation_matrix(q_des)

@@ -35,6 +35,10 @@ except ImportError as exc:  # pragma: no cover - this is a runtime guard
 
 import matplotlib.pyplot as plt
 
+from soromox.coordinate_transformations import (
+    ActuationSpaceDynamics,
+    OperationalSpaceDynamics,
+)
 from soromox.systems import SystemState
 from tools.benchmarks._benchmark_common import (
     add_gauss_point_args,
@@ -126,6 +130,135 @@ def _dense_forward_dynamics(
     )
     qdd = jnp.linalg.solve(M, rhs)
     return jnp.concatenate([qd, qdd])
+
+
+def _separate_dynamics_terms(system: Any, q: Array, qd: Array) -> tuple[Array, ...]:
+    """Assemble the dynamics tuple through the separate public methods."""
+    return (
+        system.inertia_matrix(q),
+        system.coriolis_matrix(q, qd) @ qd,
+        system.gravitational_force(q),
+    )
+
+
+def _model_based_control(
+    system: Any, q: Array, qd: Array, qdd: Array, *, fused: bool
+) -> Array:
+    """Evaluate the common full inverse-dynamics controller term."""
+    if fused:
+        M, Cqd, G = system.dynamics_terms(q, qd)
+    else:
+        M, Cqd, G = _separate_dynamics_terms(system, q, qd)
+
+    generalized_force = (
+        M @ qdd
+        + Cqd
+        + G
+        + system.elastic_force(q)
+        + system.damping_matrix(q) @ qd
+    )
+    A = system.actuation_matrix(q)
+    if A.shape[0] == A.shape[1]:
+        return jnp.linalg.inv(A) @ generalized_force
+    return jnp.linalg.pinv(A) @ generalized_force
+
+
+def _model_based_control_cases() -> tuple[BenchmarkCase, ...]:
+    """Return separate/fused full inverse-dynamics controller cases."""
+    return (
+        BenchmarkCase(
+            name="model_based_control_separate",
+            description="Full inverse dynamics through separate dynamics methods",
+            builder=lambda sys, ctx, _: (
+                lambda q, qd, qdd: _model_based_control(
+                    sys, q, qd, qdd, fused=False
+                ),
+                (ctx["q"], ctx["qd"], -0.5 * ctx["qd"]),
+            ),
+        ),
+        BenchmarkCase(
+            name="model_based_control",
+            description="Full inverse dynamics through fused dynamics_terms",
+            builder=lambda sys, ctx, _: (
+                lambda q, qd, qdd: _model_based_control(
+                    sys, q, qd, qdd, fused=True
+                ),
+                (ctx["q"], ctx["qd"], -0.5 * ctx["qd"]),
+            ),
+        ),
+    )
+
+
+def _build_actuation_dynamics_terms_case(
+    system: Any, ctx: Mapping[str, Array], *, fused: bool
+) -> tuple[Callable[..., Tree], tuple[Array, Array]]:
+    """Build a transformed actuation-space dynamics benchmark case."""
+    dynamics = ActuationSpaceDynamics(system)
+    if fused:
+        fn = dynamics.dynamics_terms
+    else:
+
+        def fn(q: Array, qd: Array) -> tuple[Array, ...]:
+            return (
+                dynamics.inertia_matrix(q),
+                dynamics.coriolis_force(q, qd),
+                dynamics.gravitational_force(q),
+            )
+
+    return fn, (ctx["q"], ctx["qd"])
+
+
+def _build_operational_dynamics_terms_case(
+    system: Any, ctx: Mapping[str, Array], *, fused: bool
+) -> tuple[Callable[..., Tree], tuple[Array, Array]]:
+    """Build a transformed tip operational-space dynamics benchmark case."""
+    dynamics = OperationalSpaceDynamics(system, jnp.atleast_1d(ctx["s_tip"]))
+    if fused:
+        fn = dynamics.dynamics_terms
+    else:
+
+        def fn(q: Array, qd: Array) -> tuple[Array, ...]:
+            return (
+                dynamics.inertia_matrix(q),
+                dynamics.coriolis_force(q, qd),
+                dynamics.gravitational_force(q),
+            )
+
+    return fn, (ctx["q"], ctx["qd"])
+
+
+def _transformed_dynamics_cases() -> tuple[BenchmarkCase, ...]:
+    """Return separate/fused actuation- and operational-space cases."""
+    return (
+        BenchmarkCase(
+            name="actuation_dynamics_terms_separate",
+            description="Actuation-space terms through separate public methods",
+            builder=lambda sys, ctx, _: _build_actuation_dynamics_terms_case(
+                sys, ctx, fused=False
+            ),
+        ),
+        BenchmarkCase(
+            name="actuation_dynamics_terms",
+            description="Fused actuation-space dynamics terms",
+            builder=lambda sys, ctx, _: _build_actuation_dynamics_terms_case(
+                sys, ctx, fused=True
+            ),
+        ),
+        BenchmarkCase(
+            name="operational_dynamics_terms_separate",
+            description="Operational-space terms through separate public methods",
+            builder=lambda sys, ctx, _: _build_operational_dynamics_terms_case(
+                sys, ctx, fused=False
+            ),
+        ),
+        BenchmarkCase(
+            name="operational_dynamics_terms",
+            description="Fused operational-space dynamics terms",
+            builder=lambda sys, ctx, _: _build_operational_dynamics_terms_case(
+                sys, ctx, fused=True
+            ),
+        ),
+    )
 
 
 def _measure_jitted_call(
@@ -385,6 +518,22 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             ),
         ),
         BenchmarkCase(
+            name="dynamics_terms_separate",
+            description="M, C @ qd, and G through separate public methods",
+            builder=lambda sys, ctx, _: (
+                lambda q, qd: _separate_dynamics_terms(sys, q, qd),
+                (ctx["q"], ctx["qd"]),
+            ),
+        ),
+        BenchmarkCase(
+            name="dynamics_terms",
+            description="Fused M, C @ qd, and G path",
+            builder=lambda sys, ctx, _: (
+                sys.dynamics_terms,
+                (ctx["q"], ctx["qd"]),
+            ),
+        ),
+        BenchmarkCase(
             name="forward_dynamics",
             builder=lambda sys, ctx, _: (
                 lambda t, y, args: sys.forward_dynamics(t, y, args),
@@ -418,7 +567,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                 ),
             ),
         ),
-    )
+    ) + _model_based_control_cases() + _transformed_dynamics_cases()
 
     gvs_cases = (
         BenchmarkCase(
@@ -469,6 +618,22 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             builder=lambda sys, ctx, _: (sys.gravitational_force, (ctx["q"],)),
         ),
         BenchmarkCase(
+            name="dynamics_terms_separate",
+            description="M, C @ qd, and G through separate public methods",
+            builder=lambda sys, ctx, _: (
+                lambda q, qd: _separate_dynamics_terms(sys, q, qd),
+                (ctx["q"], ctx["qd"]),
+            ),
+        ),
+        BenchmarkCase(
+            name="dynamics_terms",
+            description="Fused M, C @ qd, and G path",
+            builder=lambda sys, ctx, _: (
+                sys.dynamics_terms,
+                (ctx["q"], ctx["qd"]),
+            ),
+        ),
+        BenchmarkCase(
             name="forward_dynamics",
             builder=lambda sys, ctx, _: (
                 lambda t, y, args: sys.forward_dynamics(t, y, args),
@@ -502,7 +667,7 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
                 ),
             ),
         ),
-    )
+    ) + _model_based_control_cases() + _transformed_dynamics_cases()
 
     return {
         "pendulum": SystemBenchmark(

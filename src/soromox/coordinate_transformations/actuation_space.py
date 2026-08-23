@@ -552,9 +552,16 @@ class ActuationSpaceDynamics(eqx.Module):
             Cyd: Actuation space Coriolis/centrifugal force of shape (num_dofs,).
             G_y: Actuation space gravitational force of shape (num_dofs,).
         """
-        M_y = self.inertia_matrix(q)
-        Cyd = self.coriolis_force(q, qd)
-        G_y = self.gravitational_force(q)
+        J_inv = self.jacobian_inverse(q)
+        J_inv_T = J_inv.T
+        M, Cqd, G = self.robot.dynamics_terms(q, qd)
+
+        # For yd = J @ qd, the existing actuation-space Coriolis definition
+        # contracts to J^{-T} @ (C @ qd). Reusing the robot's contracted term
+        # avoids materializing C and recomputing M, J, and their inverses.
+        M_y = J_inv_T @ M @ J_inv
+        Cyd = J_inv_T @ Cqd
+        G_y = J_inv_T @ G
         return M_y, Cyd, G_y
 
     # =========================================================================

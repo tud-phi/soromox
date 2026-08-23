@@ -1264,7 +1264,20 @@ class OperationalSpaceDynamics(eqx.Module):
             G_x: Operational space gravitational force of shape
                 (n_operational_space,).
         """
-        Lambda = self.inertia_matrix(q)
-        Cxd = self.coriolis_force(q, qd)
-        G_x = self.gravitational_force(q)
+        J, Jd = self.jacobian_and_time_derivative(q, qd)
+        M, Cqd, G = self.robot.dynamics_terms(q, qd)
+
+        # Solve once for all M^{-1}-weighted quantities needed below. This
+        # preserves the existing operational-space definitions while avoiding
+        # separate inertia, Coriolis-force, and gravity call graphs.
+        solve_rhs = jnp.concatenate([J.T, Cqd[:, None]], axis=1)
+        solved = jnp.linalg.solve(M, solve_rhs)
+        M_inv_J_T = solved[:, : J.shape[0]]
+        M_inv_Cqd = solved[:, J.shape[0]]
+
+        Lambda_inv = J @ M_inv_J_T
+        Lambda = jnp.linalg.inv(Lambda_inv)
+        J_bar = M_inv_J_T @ Lambda
+        Cxd = Lambda @ (J @ M_inv_Cqd - Jd @ qd)
+        G_x = J_bar.T @ G
         return Lambda, Cxd, G_x

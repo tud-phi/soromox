@@ -415,6 +415,35 @@ class TestOperationalSpaceForces:
             atol=Tolerance.atol(),
         )
 
+    def test_pcs_dynamics_terms_match_individual_methods(self, pcs_robot):
+        """Fused operational dynamics agree for a quadrature-based PCS."""
+        op_space = OperationalSpaceDynamics(
+            robot=pcs_robot, s_ps=jnp.atleast_1d(pcs_robot.length)
+        )
+        q = jnp.linspace(-0.1, 0.1, pcs_robot.num_dofs)
+        qd = jnp.linspace(0.2, -0.2, pcs_robot.num_dofs)
+
+        Lambda, Cxd, G_x = op_space.dynamics_terms(q, qd)
+
+        assert_allclose(
+            Lambda,
+            op_space.inertia_matrix(q),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        assert_allclose(
+            Cxd,
+            op_space.coriolis_force(q, qd),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+        assert_allclose(
+            G_x,
+            op_space.gravitational_force(q),
+            rtol=Tolerance.rtol(),
+            atol=Tolerance.atol(),
+        )
+
 
 # -----------------------
 # Null space projector tests
