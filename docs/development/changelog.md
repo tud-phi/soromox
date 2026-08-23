@@ -28,7 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Routed exact inverse-dynamics controllers through the contracted
   `dynamics_terms` interface and fused actuation- and operational-space term
   transformations to avoid repeated inertia, Coriolis, gravity, Jacobian, and
-  matrix-factorization work.
+  matrix-factorization work. Across affected PCS and GVS controller paths with
+  one and four segments, this reduced runtime by 38.3% on a geometric-mean
+  basis (up to 55.9%).
 
 ### Fixed
 
