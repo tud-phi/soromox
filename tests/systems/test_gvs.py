@@ -182,6 +182,20 @@ def test_gvs_same_structure_parameter_updates_compile_once():
     assert_allclose(actual, _gvs_runtime_summary(robot.with_params(updated_params)))
 
 
+def test_gvs_compiled_base_pose_update():
+    robot, _ = build_matched_gvs_pcs()
+    q = jnp.zeros((robot.num_dofs,), dtype=jnp.float64)
+
+    @eqx.filter_jit
+    def compiled_force(base_pose, configuration):
+        return robot.update_params(base_pose=base_pose).potential_force(configuration)
+
+    force = compiled_force(robot.params.base_pose, q)
+
+    assert force.shape == (robot.num_dofs,)
+    assert jnp.all(jnp.isfinite(force))
+
+
 def test_gvs_parameter_gradient_passes_through_compiled_update():
     robot, _ = build_matched_gvs_pcs()
     params = robot.params

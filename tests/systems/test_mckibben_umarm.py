@@ -421,6 +421,18 @@ def test_umarm_body_and_actuator_parameter_updates_compile_once():
     assert_allclose(actual, _umarm_parameter_summary(eager))
 
 
+def test_umarm_compiled_partial_actuator_update():
+    robot = make_robot()
+    lower_bounds = robot.actuators[0].params.lower_bounds + 1.0
+
+    @eqx.filter_jit
+    def compiled_update(current_lower_bounds):
+        updated = robot.update_actuator_params(0, lower_bounds=current_lower_bounds)
+        return updated.actuators[0].params.lower_bounds
+
+    assert_allclose(compiled_update(lower_bounds), lower_bounds)
+
+
 def test_umarm_parameter_gradient_passes_through_compiled_updates():
     robot = make_robot()
     q = jnp.linspace(-0.1, 0.1, robot.num_dofs)

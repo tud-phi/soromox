@@ -190,6 +190,28 @@ def test_threadlike_actuator_and_passive_parameter_updates_compile_once():
     assert_allclose(actual, _threadlike_component_summary(eager, q))
 
 
+def test_threadlike_compiled_partial_component_updates():
+    actuator, passive = _threadlike_components()
+    robot = _spatial_pcs(actuators=actuator, passive_elements=(passive,))
+    lower_bounds = actuator.params.lower_bounds - 1.0
+    stiffness = 1.1 * passive.params.stiffness
+
+    @eqx.filter_jit
+    def compiled_updates(current_lower_bounds, current_stiffness):
+        updated = robot.update_actuator_params(0, lower_bounds=current_lower_bounds)
+        updated = updated.update_passive_element_params(0, stiffness=current_stiffness)
+        return jnp.concatenate(
+            [
+                updated.actuators[0].params.lower_bounds,
+                updated.passive_elements[0].params.stiffness,
+            ]
+        )
+
+    actual = compiled_updates(lower_bounds, stiffness)
+
+    assert_allclose(actual, jnp.concatenate([lower_bounds, stiffness]))
+
+
 class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
     amplitude: jax.Array
     frequency: jax.Array

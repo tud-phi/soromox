@@ -125,6 +125,29 @@ def test_articulated_actuator_and_passive_parameter_updates_compile_once():
     assert_allclose(actual, _component_summary(eager, q))
 
 
+def test_articulated_tendon_compiled_partial_component_updates():
+    actuator = _actuator()
+    passive = _passive()
+    robot = Pendulum(_body_params(), actuators=actuator, passive_elements=(passive,))
+    upper_bounds = actuator.params.upper_bounds + 1.0
+    stiffness = 1.1 * passive.params.stiffness
+
+    @eqx.filter_jit
+    def compiled_updates(current_upper_bounds, current_stiffness):
+        updated = robot.update_actuator_params(0, upper_bounds=current_upper_bounds)
+        updated = updated.update_passive_element_params(0, stiffness=current_stiffness)
+        return jnp.concatenate(
+            [
+                updated.actuators[0].params.upper_bounds,
+                updated.passive_elements[0].params.stiffness,
+            ]
+        )
+
+    actual = compiled_updates(upper_bounds, stiffness)
+
+    assert_allclose(actual, jnp.concatenate([upper_bounds, stiffness]))
+
+
 def _spatial_articulated_robot(*, actuators=None):
     params = articulated_params(
         joint_screw=jnp.array([[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),
