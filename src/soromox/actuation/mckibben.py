@@ -481,22 +481,23 @@ class ArticulatedMcKibbenActuator(Actuator):
     def metadata(self) -> ActuatorMetadata:
         return self._metadata
 
-    def validate_for_robot(self, robot) -> None:
+    def validate_structure_for_robot(self, robot) -> None:
         if not callable(getattr(robot, "_kinematic_frames", None)):
             raise TypeError(
                 "ArticulatedMcKibbenActuator requires a spatial articulated host "
                 "implementing the _kinematic_frames geometry contract."
             )
+
+    def validate_values_for_robot(self, robot) -> None:
         indices = self.params.transmission.joint_pair_indices
-        if (
-            indices.shape[0] > 0
-            and not _contains_tracer(indices)
-            and (
-                np.any(np.asarray(indices) < 0)
-                or np.any(np.asarray(indices) >= robot.num_dofs)
-            )
+        if indices.shape[0] > 0 and (
+            np.any(np.asarray(indices) < 0)
+            or np.any(np.asarray(indices) >= robot.num_dofs)
         ):
             raise ValueError("joint_pair_indices must reference valid robot DOFs.")
+
+    def _robot_value_validation_tree(self):
+        return self.params.transmission.joint_pair_indices
 
     def with_params(self, params: BaseSystemParams) -> ArticulatedMcKibbenActuator:
         if not isinstance(params, ArticulatedMcKibbenActuatorParams):

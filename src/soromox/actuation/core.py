@@ -9,13 +9,13 @@ those coordinates, and generalized actuation forces are ``A(q) @ effort``.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, final
 
 import equinox as eqx
-from jax import Array
+from jax import Array, ensure_compile_time_eval
 from jax import numpy as jnp
 
-from soromox.systems.params import BaseSystemParams
+from soromox.systems.params import BaseSystemParams, _contains_tracer
 
 if TYPE_CHECKING:
     from soromox.systems.soft_robot import SoftRobot
@@ -121,9 +121,26 @@ class PassiveElement(eqx.Module):
     def update_params(self, **updates) -> PassiveElement:
         return self.with_params(self.params.replace(**updates))
 
-    def validate_for_robot(self, robot: SoftRobot) -> None:
-        """Validate static component topology against ``robot``."""
+    def validate_structure_for_robot(self, robot: SoftRobot) -> None:
+        """Validate tracer-safe component compatibility with ``robot``."""
         del robot
+
+    def validate_values_for_robot(self, robot: SoftRobot) -> None:
+        """Validate concrete component values against ``robot``."""
+        del robot
+
+    def _robot_value_validation_tree(self):
+        """Return the leaves used by concrete robot-compatibility checks."""
+        return self.params
+
+    @final
+    def validate_for_robot(self, robot: SoftRobot) -> None:
+        """Validate robot compatibility without concretizing dynamic leaves."""
+        self.validate_structure_for_robot(robot)
+        if _contains_tracer(self._robot_value_validation_tree()):
+            return
+        with ensure_compile_time_eval():
+            self.validate_values_for_robot(robot)
 
     def elastic_force(self, robot: SoftRobot, q: Array) -> Array:
         return jnp.zeros((robot.num_dofs,), dtype=q.dtype)
@@ -181,9 +198,26 @@ class Actuator(eqx.Module):
         velocity = self.velocities(robot, q, qd)
         return self.effort_model.effort(control, coordinate, velocity)
 
-    def validate_for_robot(self, robot: SoftRobot) -> None:
-        """Validate static component topology against ``robot``."""
+    def validate_structure_for_robot(self, robot: SoftRobot) -> None:
+        """Validate tracer-safe component compatibility with ``robot``."""
         del robot
+
+    def validate_values_for_robot(self, robot: SoftRobot) -> None:
+        """Validate concrete component values against ``robot``."""
+        del robot
+
+    def _robot_value_validation_tree(self):
+        """Return the leaves used by concrete robot-compatibility checks."""
+        return self.params
+
+    @final
+    def validate_for_robot(self, robot: SoftRobot) -> None:
+        """Validate robot compatibility without concretizing dynamic leaves."""
+        self.validate_structure_for_robot(robot)
+        if _contains_tracer(self._robot_value_validation_tree()):
+            return
+        with ensure_compile_time_eval():
+            self.validate_values_for_robot(robot)
 
     @abstractmethod
     def with_params(self, params: BaseSystemParams) -> Actuator: ...
@@ -253,7 +287,7 @@ class IdentityActuator(Actuator):
     def metadata(self) -> ActuatorMetadata:
         return self._metadata
 
-    def validate_for_robot(self, robot: SoftRobot) -> None:
+    def validate_structure_for_robot(self, robot: SoftRobot) -> None:
         if self.num_channels != robot.num_dofs:
             raise ValueError(
                 "IdentityActuator must have one channel per robot degree of "

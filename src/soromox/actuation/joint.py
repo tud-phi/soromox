@@ -8,7 +8,7 @@ import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems.params import BaseSystemParams, _contains_tracer
+from soromox.systems.params import BaseSystemParams
 
 from .core import (
     Actuator,
@@ -29,8 +29,8 @@ def _channel_array(value: Any, count: int, name: str) -> Array:
     return array
 
 
-def _validate_tendon_routing(matrix: Array, num_dofs: int, name: str) -> None:
-    """Validate articulated tendon rank and contiguous proximal routing."""
+def _validate_tendon_routing_structure(matrix: Array, num_dofs: int, name: str) -> None:
+    """Validate articulated tendon shape against a robot."""
     matrix = jnp.asarray(matrix)
     if matrix.ndim != 2:
         raise ValueError(f"{name} must be two-dimensional.")
@@ -39,8 +39,11 @@ def _validate_tendon_routing(matrix: Array, num_dofs: int, name: str) -> None:
             f"{name} must have one column per degree of freedom; expected "
             f"{num_dofs}, got {matrix.shape[1]}."
         )
-    if _contains_tracer(matrix):
-        return
+
+
+def _validate_tendon_routing_values(matrix: Array, num_dofs: int, name: str) -> None:
+    """Validate concrete articulated tendon routing values."""
+    matrix = jnp.asarray(matrix)
     count = matrix.shape[0]
     if count > 0 and int(jnp.linalg.matrix_rank(matrix)) != count:
         raise ValueError(f"{name} must be full row rank.")
@@ -286,13 +289,23 @@ class ArticulatedTendonActuator(Actuator):
     def metadata(self) -> ActuatorMetadata:
         return self._metadata
 
-    def validate_for_robot(self, robot) -> None:
+    def validate_structure_for_robot(self, robot) -> None:
         _validate_articulated_tendon_host(robot)
-        _validate_tendon_routing(
+        _validate_tendon_routing_structure(
             self.params.transmission.routing_matrix,
             robot.num_dofs,
             "routing_matrix",
         )
+
+    def validate_values_for_robot(self, robot) -> None:
+        _validate_tendon_routing_values(
+            self.params.transmission.routing_matrix,
+            robot.num_dofs,
+            "routing_matrix",
+        )
+
+    def _robot_value_validation_tree(self):
+        return self.params.transmission.routing_matrix
 
     def with_params(self, params: BaseSystemParams) -> ArticulatedTendonActuator:
         if not isinstance(params, ArticulatedTendonActuatorParams):
@@ -401,13 +414,23 @@ class ArticulatedTendonImpedance(PassiveElement):
     def params(self) -> ArticulatedTendonImpedanceParams:
         return self._params
 
-    def validate_for_robot(self, robot) -> None:
+    def validate_structure_for_robot(self, robot) -> None:
         _validate_articulated_tendon_host(robot)
-        _validate_tendon_routing(
+        _validate_tendon_routing_structure(
             self.params.transmission.routing_matrix,
             robot.num_dofs,
             "routing_matrix",
         )
+
+    def validate_values_for_robot(self, robot) -> None:
+        _validate_tendon_routing_values(
+            self.params.transmission.routing_matrix,
+            robot.num_dofs,
+            "routing_matrix",
+        )
+
+    def _robot_value_validation_tree(self):
+        return self.params.transmission.routing_matrix
 
     def with_params(self, params: BaseSystemParams) -> ArticulatedTendonImpedance:
         if not isinstance(params, ArticulatedTendonImpedanceParams):

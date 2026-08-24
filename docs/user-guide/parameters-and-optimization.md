@@ -204,8 +204,10 @@ runtime numeric candidates must therefore remain in their physical domains.
 Use constrained parameterizations where appropriate, and validate externally
 supplied values eagerly before a compiled optimization or simulation loop.
 Parameter subclasses express this boundary through separate tracer-safe
-`validate_structure()` and eager-only `validate_values()` hooks; the framework
-owns the composed `validate()` and dispatched `validate_for_update()` methods.
+`validate_structure()` and concrete-only `validate_values()` hooks. The
+framework owns the composed `validate()` and dispatched `validate_for_update()`
+methods. Closed-over concrete values encountered during JAX tracing are checked
+at trace time, while value checks for dynamic tracer leaves remain deferred.
 
 Start from `robot.params` so constructor-resolved defaults already have their
 runtime PyTree representation.

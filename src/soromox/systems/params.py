@@ -12,7 +12,7 @@ from dataclasses import fields
 from typing import Any, ClassVar, Literal, final
 
 import equinox as eqx
-from jax import Array, core, tree_util
+from jax import Array, core, ensure_compile_time_eval, tree_util
 from jax import numpy as jnp
 
 DEFAULT_GRAVITY_MAGNITUDE = 9.81
@@ -160,11 +160,12 @@ class BaseSystemParams(eqx.Module):
 
     @final
     def validate_for_update(self) -> None:
-        """Validate fully in eager code and structurally under JAX transforms."""
+        """Validate values when concrete and structure when dynamically traced."""
+        self.validate_structure()
         if _contains_tracer(self):
-            self.validate_structure()
-        else:
-            self.validate()
+            return
+        with ensure_compile_time_eval():
+            self.validate_values()
 
     def validate_structure_compatibility(self, structure: Any) -> None:
         """Validate statically observable compatibility with a model structure."""
@@ -193,12 +194,16 @@ class BaseSystemParams(eqx.Module):
 
     @final
     def validate_for_update_against_structure(self, structure: Any) -> None:
-        """Validate structure compatibility at the active JAX trace level."""
+        """Validate concrete values and traced structure against a model."""
+        self.validate_structure()
         if _contains_tracer(self):
-            self.validate_structure()
             self.validate_structure_compatibility(structure)
-        else:
-            self.validate_against_structure(structure)
+            return
+        with ensure_compile_time_eval():
+            self.validate_values()
+        self.validate_structure_compatibility(structure)
+        with ensure_compile_time_eval():
+            self.validate_value_compatibility(structure)
 
 
 class BaseSoftRobotParams(BaseSystemParams):

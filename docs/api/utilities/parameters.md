@@ -67,9 +67,11 @@ so runtime and material representations are not duplicated.
 
 ## Validation
 
-During tracing, `BaseSystemParams` runs only tracer-safe structural validation;
-eager validation additionally enforces concrete numeric invariants. Subclasses
-implement these phases in `validate_structure()` and `validate_values()`.
+`BaseSystemParams` always runs tracer-safe structural validation. Parameter
+trees containing dynamic tracers skip concrete numeric checks, while eager and
+closed-over concrete trees run `validate_values()` eagerly or at JAX trace time.
+Subclasses implement these two phases in `validate_structure()` and
+`validate_values()`.
 
 ## Naming
 

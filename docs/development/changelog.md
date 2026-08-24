@@ -147,7 +147,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls enforce the statically observable type and shape contract.
 - Split parameter validation into explicit `validate_structure()` and
   `validate_values()` subclass hooks, with framework-owned eager and traced
-  dispatch for intrinsic and model-structure-dependent validation.
+  dispatch for intrinsic and model-structure-dependent validation. Closed-over
+  concrete values are checked at JAX trace time, while dynamic leaves retain
+  structure-only validation. Component-to-robot checks use the same structural
+  and concrete-value phases.
 - Reused I-SUPPORT routing spans and McKibben joint-pair topology during
   compiled numeric updates, and kept GVS cross-section index dtypes stable when
   refreshing parameter-dependent caches.

@@ -9,7 +9,7 @@ import equinox as eqx
 from jax import Array, vmap
 from jax import numpy as jnp
 
-from soromox.systems.params import BaseSystemParams, _contains_tracer
+from soromox.systems.params import BaseSystemParams
 
 from .core import (
     Actuator,
@@ -22,8 +22,8 @@ from .core import (
 ThreadlikeKind = Literal["tendon", "push_rod", "muscle", "pneumatic", "generic"]
 
 
-def _validate_routing_for_robot(routing: ThreadlikeRouting, robot) -> None:
-    """Validate routing topology and host-specific geometric constraints."""
+def _validate_routing_structure_for_robot(routing: ThreadlikeRouting, robot) -> None:
+    """Validate routing topology and tracer-safe host compatibility."""
     required_hooks = (
         "_threadlike_path_lengths",
         "_threadlike_moment_matrix",
@@ -39,7 +39,7 @@ def _validate_routing_for_robot(routing: ThreadlikeRouting, robot) -> None:
             "Threadlike components require continuum segment topology through "
             "num_segments."
         )
-    routing.params.validate_for_robot(robot.num_segments)
+    routing.params.validate_structure_for_robot(robot.num_segments)
     if not robot.is_planar:
         return
     if not hasattr(robot, "L_cum"):
@@ -56,10 +56,21 @@ def _validate_routing_for_robot(routing: ThreadlikeRouting, robot) -> None:
             "ThreadlikeRouting.offset_fn must return material-frame [x, y, z] "
             "offsets with final shape (3,)."
         )
+
+
+def _validate_routing_values_for_robot(routing: ThreadlikeRouting, robot) -> None:
+    """Validate concrete routing values and host-specific geometry."""
+    routing.params.validate_values()
+    if not robot.is_planar:
+        return
+    samples = jnp.linspace(0.0, robot.L_cum[-1], 17)
+    offsets = vmap(
+        lambda path_params: vmap(lambda s: routing.offset(path_params, s))(samples)
+    )(routing.params)
     leaves_planar_frame = jnp.any(offsets[..., 0] != 0.0) | jnp.any(
         offsets[..., 2] != 0.0
     )
-    if not _contains_tracer(offsets) and bool(leaves_planar_frame):
+    if bool(leaves_planar_frame):
         raise ValueError(
             "PlanarPCS threadlike routing must remain in the local-y direction; "
             "its sampled local x and z offsets must be zero."
@@ -122,8 +133,8 @@ class BaseThreadlikeRoutingParams(BaseSystemParams):
     def end_segment_index_array(self) -> Array:
         return jnp.asarray(self.end_segment_index, dtype=jnp.int32)
 
-    def validate_for_robot(self, num_segments: int) -> None:
-        self.validate_for_update()
+    def validate_structure_for_robot(self, num_segments: int) -> None:
+        self.validate_structure()
         for start, end in zip(self.start_segment_index, self.end_segment_index):
             if start < 0 or start > end or end >= num_segments:
                 raise ValueError(
@@ -633,8 +644,14 @@ class ThreadlikeActuator(Actuator):
             kind=self.kind,
         )
 
-    def validate_for_robot(self, robot) -> None:
-        _validate_routing_for_robot(self.transmission.routing, robot)
+    def validate_structure_for_robot(self, robot) -> None:
+        _validate_routing_structure_for_robot(self.transmission.routing, robot)
+
+    def validate_values_for_robot(self, robot) -> None:
+        _validate_routing_values_for_robot(self.transmission.routing, robot)
+
+    def _robot_value_validation_tree(self):
+        return self.transmission.routing.params
 
     def path_lengths(self, robot, q: Array) -> Array:
         return self.transmission.path_lengths(robot, q)
@@ -727,8 +744,14 @@ class ThreadlikeImpedance(PassiveElement):
         params.validate_for_update()
         return self._from_params(params, name=self.name, routing=self.routing)
 
-    def validate_for_robot(self, robot) -> None:
-        _validate_routing_for_robot(self.routing, robot)
+    def validate_structure_for_robot(self, robot) -> None:
+        _validate_routing_structure_for_robot(self.routing, robot)
+
+    def validate_values_for_robot(self, robot) -> None:
+        _validate_routing_values_for_robot(self.routing, robot)
+
+    def _robot_value_validation_tree(self):
+        return self.routing.params
 
     def path_lengths(self, robot, q: Array) -> Array:
         """Return the raw lengths of the passive routed paths."""
