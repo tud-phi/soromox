@@ -4546,16 +4546,15 @@ class GVS(SoftRobot):
                 link_velocity = local_tangent_basis @ qd_blocks[segment_index, 1]
                 step_velocity = adjoint_inverse @ link_velocity
                 velocity_next = adjoint_inverse @ (velocity_previous + link_velocity)
-                adjoint_inverse_dot = (
-                    -se3.small_adjoint(step_velocity) @ adjoint_inverse
-                )
                 jacobian_next = adjoint_inverse @ (jacobian_previous + tangent_basis)
                 tangent_velocity_dot = (
                     tangent_dot @ magnus_basis + tangent @ magnus_basis_dot
                 ) @ qd_blocks[segment_index, 1]
                 jacobian_dot_qd_next = adjoint_inverse @ (
                     jacobian_dot_qd_previous + tangent_velocity_dot
-                ) + adjoint_inverse_dot @ (jacobian_previous @ qd)
+                ) - se3.small_adjoint_action(
+                    step_velocity, adjoint_inverse @ (jacobian_previous @ qd)
+                )
                 gravity_next = adjoint_inverse @ gravity_previous
                 return (
                     jacobian_next,

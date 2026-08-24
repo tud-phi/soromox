@@ -3,6 +3,7 @@ __all__ = [
     "exp",
     "log",
     "small_adjoint",
+    "small_adjoint_action",
     "coadjoint",
     "adjoint",
     "adjoint_inverse",
@@ -405,6 +406,31 @@ def small_adjoint(xi: Array) -> Array:
 
     return jnp.block(
         [[omega_hat, jnp.zeros((3, 3), dtype=xi.dtype)], [v_hat, omega_hat]]
+    )
+
+
+def small_adjoint_action(xi: Array, eta: Array) -> Array:
+    """Apply the Lie algebra adjoint without materializing its matrix.
+
+    Args:
+        xi: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega, v]`` order.
+        eta: Spatial twist with shape ``(6,)`` or ``(6, 1)`` in
+            ``[omega, v]`` order.
+
+    Returns:
+        The six-vector ``small_adjoint(xi) @ eta``, equivalently the Lie
+        bracket ``[xi, eta]``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    eta = jnp.asarray(eta).reshape(-1)
+    omega, velocity = xi[:3], xi[3:]
+    eta_omega, eta_velocity = eta[:3], eta[3:]
+    return jnp.concatenate(
+        [
+            jnp.cross(omega, eta_omega),
+            jnp.cross(velocity, eta_omega) + jnp.cross(omega, eta_velocity),
+        ]
     )
 
 

@@ -2939,17 +2939,17 @@ class PCS(SoftRobot):
             J_next = Ad_inv_i @ J_prev + J_segment
 
             eta = Ad_inv_T_i @ xid_i
-            Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv_i
 
             if convective_only_jd:
                 Jd_qd_next = (
                     Ad_inv_i @ Jd_or_Jd_qd_prev
-                    + Ad_inv_dot @ (J_prev @ qd)
+                    - se3.small_adjoint_action(eta, Ad_inv_i @ (J_prev @ qd))
                     + Ad_inv_i @ (Td_i @ xid_i)
                 )
                 Jd_or_Jd_qd_next = Jd_qd_next
             else:
                 assert T_tips is not None
+                Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv_i
                 T_i = lax.dynamic_index_in_dim(T_tips, i, axis=0, keepdims=False)
                 Jd_segment = (Ad_inv_dot @ T_i + Ad_inv_i @ Td_i) @ B_xi_i
                 Jd_next = Ad_inv_i @ Jd_or_Jd_qd_prev + Ad_inv_dot @ J_prev + Jd_segment
@@ -3213,10 +3213,9 @@ class PCS(SoftRobot):
                 J_next = Ad_inv @ J_base_i + J_segment
 
                 eta = Ad_inv_T @ xid_i
-                Ad_inv_dot = -se3.small_adjoint(eta) @ Ad_inv
                 Jd_qd_next = (
                     Ad_inv @ Jd_qd_base_i
-                    + Ad_inv_dot @ (J_base_i @ qd)
+                    - se3.small_adjoint_action(eta, Ad_inv @ (J_base_i @ qd))
                     + Ad_inv @ (Td @ xid_i)
                 )
                 gravity_local = Ad_inv @ gravity_base_i

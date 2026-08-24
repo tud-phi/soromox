@@ -537,6 +537,15 @@ def test_coadjoint_action_se3_matches_matrix_product():
     assert_allclose(result, se3.coadjoint(xi) @ dual, rtol=RTOL, atol=ATOL)
 
 
+def test_small_adjoint_action_se3_matches_matrix_product():
+    xi = jnp.array([0.2, -0.4, 0.7, 1.1, -0.3, 0.5])
+    eta = jnp.array([-0.6, 0.8, 0.1, -0.2, 0.9, 0.4])
+
+    result = se3.small_adjoint_action(xi, eta)
+
+    assert_allclose(result, se3.small_adjoint(xi) @ eta, rtol=RTOL, atol=ATOL)
+
+
 def test_adjoint_g_se3_matches_planar_embedding():
     vec2 = jnp.array([jnp.pi / 6.0, 0.4, -0.7])
     g2 = _transform_from_planar_pose(vec2)
