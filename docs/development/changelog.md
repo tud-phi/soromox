@@ -25,6 +25,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Accelerated PlanarPCS, PCS, and GVS forward dynamics. Warm runtime improved
+  in every measured CPU/GPU case: 1.17–2.31x for PlanarPCS, 1.20–7.99x for
+  PCS, and 1.49–2.21x for GVS; representative largest GPU workloads reduced
+  temporary memory from 459 MB to 87 MB, 1.73 GB to 270 MB, and 293 MiB to
+  48 MiB, respectively.
 - Routed exact inverse-dynamics controllers through the contracted
   `dynamics_terms` interface and fused actuation- and operational-space term
   transformations to avoid repeated inertia, Coriolis, gravity, Jacobian, and
