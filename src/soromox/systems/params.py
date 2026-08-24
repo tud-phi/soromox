@@ -8,12 +8,14 @@ __all__ = [
     "validate_quaternion_base_pose",
 ]
 
+from contextlib import suppress
 from dataclasses import fields
 from typing import Any, ClassVar, Literal, final
 
 import equinox as eqx
 from jax import Array, core, tree_util
 from jax import numpy as jnp
+from jax.errors import ConcretizationTypeError, TracerBoolConversionError
 
 DEFAULT_GRAVITY_MAGNITUDE = 9.81
 
@@ -160,11 +162,17 @@ class BaseSystemParams(eqx.Module):
 
     @final
     def validate_for_update(self) -> None:
-        """Validate fully in eager code and structurally under JAX transforms."""
+        """Validate eagerly when concrete and structurally under JAX transforms.
+
+        A nested parameter object can have concrete leaves while an enclosing
+        parameter update is being traced. In that case, value validation reveals
+        the enclosing trace only when it attempts a Python conversion.
+        """
+        self.validate_structure()
         if _contains_tracer(self):
-            self.validate_structure()
-        else:
-            self.validate()
+            return
+        with suppress(ConcretizationTypeError, TracerBoolConversionError):
+            self.validate_values()
 
     def validate_structure_compatibility(self, structure: Any) -> None:
         """Validate statically observable compatibility with a model structure."""

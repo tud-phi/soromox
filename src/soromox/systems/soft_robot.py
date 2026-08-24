@@ -18,6 +18,7 @@ from soromox.actuation.core import (
 from soromox.autodiff import custom_jvp_enabled
 from soromox.systems.dynamical_system import DynamicalSystem
 from soromox.systems.params import (
+    _contains_tracer,
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
@@ -200,7 +201,8 @@ class SoftRobot(DynamicalSystem):
             raise IndexError(f"actuator index {index} is out of range.")
         actuators = list(self.actuators)
         actuators[index] = actuators[index].with_params(params)
-        actuators[index].validate_for_robot(self)
+        if not _contains_tracer(actuators[index].params):
+            actuators[index].validate_for_robot(self)
         return eqx.tree_at(lambda robot: robot.actuators, self, tuple(actuators))
 
     def update_actuator_params(self, index: int, **updates: Any) -> Self:
@@ -217,7 +219,8 @@ class SoftRobot(DynamicalSystem):
             raise IndexError(f"passive element index {index} is out of range.")
         elements = list(self.passive_elements)
         elements[index] = elements[index].with_params(params)
-        elements[index].validate_for_robot(self)
+        if not _contains_tracer(elements[index].params):
+            elements[index].validate_for_robot(self)
         return eqx.tree_at(lambda robot: robot.passive_elements, self, tuple(elements))
 
     def update_passive_element_params(self, index: int, **updates: Any) -> Self:
