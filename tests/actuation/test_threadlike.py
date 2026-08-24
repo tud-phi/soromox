@@ -190,6 +190,71 @@ def test_threadlike_actuator_and_passive_parameter_updates_compile_once():
     assert_allclose(actual, _threadlike_component_summary(eager, q))
 
 
+def test_threadlike_compiled_partial_component_updates_match_eager_behavior():
+    actuator, passive = _threadlike_components()
+    robot = _spatial_pcs(actuators=actuator, passive_elements=(passive,))
+    q = jnp.array([0.01, -0.02, 0.03, 0.01, 0.02, -0.01])
+    lower_bounds = actuator.params.lower_bounds - 1.0
+    stiffness = 1.1 * passive.params.stiffness
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_lower_bounds, current_stiffness):
+        trace_count["value"] += 1
+        updated = robot.update_actuator_params(0, lower_bounds=current_lower_bounds)
+        updated = updated.update_passive_element_params(0, stiffness=current_stiffness)
+        return jnp.concatenate(
+            [
+                updated.actuators[0].metadata.lower_bounds,
+                updated.passive_elastic_force(q),
+            ]
+        )
+
+    baseline = compiled_summary(
+        actuator.params.lower_bounds,
+        passive.params.stiffness,
+    )
+    actual = compiled_summary(lower_bounds, stiffness)
+    eager = robot.update_actuator_params(0, lower_bounds=lower_bounds)
+    eager = eager.update_passive_element_params(0, stiffness=stiffness)
+    expected = jnp.concatenate(
+        [
+            eager.actuators[0].metadata.lower_bounds,
+            eager.passive_elastic_force(q),
+        ]
+    )
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(actual, expected)
+
+
+def test_planar_threadlike_dynamic_routing_updates_compile_once():
+    actuator, passive = _threadlike_components()
+    robot = _planar_pcs(actuators=actuator, passive_elements=(passive,))
+    q = jnp.array([0.01, -0.02, 0.03])
+    actuator_params, passive_params = _updated_threadlike_component_params(
+        actuator, passive
+    )
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_actuator, current_passive):
+        trace_count["value"] += 1
+        updated = robot.with_actuator_params(0, current_actuator)
+        updated = updated.with_passive_element_params(0, current_passive)
+        return _threadlike_component_summary(updated, q)
+
+    baseline = compiled_summary(actuator.params, passive.params)
+    actual = compiled_summary(actuator_params, passive_params)
+    eager = robot.with_actuator_params(0, actuator_params)
+    eager = eager.with_passive_element_params(0, passive_params)
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(actual, _threadlike_component_summary(eager, q))
+
+
 class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
     amplitude: jax.Array
     frequency: jax.Array

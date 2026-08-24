@@ -182,6 +182,58 @@ def test_gvs_same_structure_parameter_updates_compile_once():
     assert_allclose(actual, _gvs_runtime_summary(robot.with_params(updated_params)))
 
 
+def test_gvs_compiled_partial_base_pose_updates_match_eager_forces():
+    robot, _ = build_matched_gvs_pcs()
+    q = jnp.linspace(-0.02, 0.02, robot.num_dofs)
+    sqrt_half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float64))
+    base_poses = (
+        robot.params.base_pose,
+        jnp.array([sqrt_half, 0.0, sqrt_half, 0.0, 0.01, -0.02, 0.03]),
+    )
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_force(base_pose, configuration):
+        trace_count["value"] += 1
+        return robot.update_params(base_pose=base_pose).potential_force(configuration)
+
+    actual = tuple(compiled_force(base_pose, q) for base_pose in base_poses)
+    expected = tuple(
+        robot.update_params(base_pose=base_pose).potential_force(q)
+        for base_pose in base_poses
+    )
+
+    assert trace_count["value"] == 1
+    for compiled, eager in zip(actual, expected, strict=True):
+        assert_allclose(compiled, eager)
+    assert not jnp.allclose(actual[0], actual[1])
+
+
+def test_gvs_closed_over_complete_params_validate_inside_compiled_evaluation():
+    robot, _ = build_matched_gvs_pcs()
+    q = jnp.linspace(-0.02, 0.02, robot.num_dofs)
+
+    @eqx.filter_jit
+    def compiled_force(configuration):
+        return robot.with_params(robot.params).potential_force(configuration)
+
+    assert_allclose(
+        compiled_force(q),
+        robot.with_params(robot.params).potential_force(q),
+    )
+
+
+def test_gvs_compiled_partial_update_rejects_base_pose_shape_change():
+    robot, _ = build_matched_gvs_pcs()
+
+    @eqx.filter_jit
+    def compiled_base_pose(base_pose):
+        return robot.update_params(base_pose=base_pose).base_pose
+
+    with pytest.raises(ValueError, match="base_pose must have shape"):
+        compiled_base_pose(jnp.ones((6,), dtype=jnp.float64))
+
+
 def test_gvs_parameter_gradient_passes_through_compiled_update():
     robot, _ = build_matched_gvs_pcs()
     params = robot.params

@@ -125,6 +125,64 @@ def test_articulated_actuator_and_passive_parameter_updates_compile_once():
     assert_allclose(actual, _component_summary(eager, q))
 
 
+def test_articulated_compiled_partial_component_updates_match_eager_behavior():
+    actuator = _actuator()
+    passive = _passive()
+    robot = Pendulum(_body_params(), actuators=actuator, passive_elements=(passive,))
+    q = jnp.array([0.2, -0.15, 0.1])
+    upper_bounds = actuator.params.upper_bounds + 1.0
+    stiffness = 1.1 * passive.params.stiffness
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_summary(current_upper_bounds, current_stiffness):
+        trace_count["value"] += 1
+        updated = robot.update_actuator_params(0, upper_bounds=current_upper_bounds)
+        updated = updated.update_passive_element_params(0, stiffness=current_stiffness)
+        return jnp.concatenate(
+            [
+                updated.actuators[0].metadata.upper_bounds,
+                _component_summary(updated, q),
+            ]
+        )
+
+    baseline = compiled_summary(
+        actuator.params.upper_bounds,
+        passive.params.stiffness,
+    )
+    actual = compiled_summary(upper_bounds, stiffness)
+    eager = robot.update_actuator_params(0, upper_bounds=upper_bounds)
+    eager = eager.update_passive_element_params(0, stiffness=stiffness)
+    expected = jnp.concatenate(
+        [eager.actuators[0].metadata.upper_bounds, _component_summary(eager, q)]
+    )
+
+    assert trace_count["value"] == 1
+    assert not jnp.allclose(actual, baseline)
+    assert_allclose(actual, expected)
+
+
+def test_articulated_compiled_partial_update_retains_closed_routing_validation():
+    actuator = _actuator()
+    robot = Pendulum(_body_params(), actuators=actuator)
+    invalid_routing = actuator.params.transmission.routing_matrix.at[1].set(
+        2.0 * actuator.params.transmission.routing_matrix[0]
+    )
+    invalid_transmission = actuator.params.transmission.replace(
+        routing_matrix=invalid_routing
+    )
+    invalid_params = actuator.params.replace(transmission=invalid_transmission)
+
+    @eqx.filter_jit
+    def compiled_upper_bounds(current_upper_bounds):
+        current = invalid_params.replace(upper_bounds=current_upper_bounds)
+        updated = robot.with_actuator_params(0, current)
+        return updated.actuators[0].metadata.upper_bounds
+
+    with pytest.raises(ValueError, match="full row rank"):
+        compiled_upper_bounds(actuator.params.upper_bounds)
+
+
 def _spatial_articulated_robot(*, actuators=None):
     params = articulated_params(
         joint_screw=jnp.array([[0.0, 0.0, 1.0, 0.0, 0.0, 0.0]]),

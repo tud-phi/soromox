@@ -1,5 +1,6 @@
 from dataclasses import fields
 
+import equinox as eqx
 import jax
 import pytest
 from jax import Array, vmap
@@ -46,6 +47,24 @@ class SplitValidationParams(BaseSystemParams):
             raise ValueError("value must be positive.")
 
 
+class SplitCompatibilityValidationParams(SplitValidationParams):
+    """Test parameter with structure-dependent concrete value checks."""
+
+    def validate_structure_compatibility(
+        self, structure: tuple[tuple[int, ...], float]
+    ) -> None:
+        expected_shape, _ = structure
+        if self.value.shape != expected_shape:
+            raise ValueError("value has an incompatible shape.")
+
+    def validate_value_compatibility(
+        self, structure: tuple[tuple[int, ...], float]
+    ) -> None:
+        _, minimum = structure
+        if not bool(jnp.all(self.value >= minimum)):
+            raise ValueError("value is below the compatible minimum.")
+
+
 def _pendulum_params():
     return pendulum_params(
         mass=jnp.array([1.0, 1.2], dtype=jnp.float64),
@@ -71,6 +90,45 @@ def test_validation_hooks_separate_traced_structure_from_eager_values():
     assert_allclose(traced_replace(-jnp.ones((1,), dtype=jnp.float64)), [-1.0])
     with pytest.raises(ValueError, match="shape"):
         traced_replace(jnp.ones((2,), dtype=jnp.float64))
+
+
+def test_closed_over_concrete_parameter_validation_is_safe_inside_jit():
+    params = SplitValidationParams(value=jnp.ones((1,), dtype=jnp.float64))
+
+    @jax.jit
+    def validated_sum(offset):
+        params.validate_for_update()
+        return jnp.sum(params.value) + offset
+
+    assert_allclose(validated_sum(jnp.array(2.0)), 3.0)
+
+
+def test_closed_over_concrete_compatibility_validation_is_safe_inside_jit():
+    params = SplitCompatibilityValidationParams(value=jnp.ones((1,), dtype=jnp.float64))
+
+    @jax.jit
+    def validated_sum(offset):
+        params.validate_for_update_against_structure(((1,), 0.0))
+        return jnp.sum(params.value) + offset
+
+    assert_allclose(validated_sum(jnp.array(2.0)), 3.0)
+
+
+def test_closed_over_parameter_structure_validation_remains_active_inside_jit():
+    params = SplitValidationParams(value=jnp.ones((1,), dtype=jnp.float64))
+    invalid = eqx.tree_at(
+        lambda current: current.value,
+        params,
+        jnp.ones((2,), dtype=jnp.float64),
+    )
+
+    @jax.jit
+    def validated_sum(offset):
+        invalid.validate_for_update()
+        return jnp.sum(invalid.value) + offset
+
+    with pytest.raises(ValueError, match="shape"):
+        validated_sum(jnp.array(2.0))
 
 
 def _pcs_params(num_segments: int = 2):
