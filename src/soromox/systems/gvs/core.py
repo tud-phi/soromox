@@ -4378,15 +4378,17 @@ class GVS(SoftRobot):
     @eqx.filter_jit
     def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
         """
-        Assemble forward-dynamics terms with link-specialized recurrences.
+        Assemble forward-dynamics terms with rolled, fused link recurrences.
 
-        Each trace-time loop uses the exact joint/link DOF count and quadrature
-        count stored in the static GVS structure. This avoids padded basis
-        products, keeps every body Jacobian at its causal prefix width, and
-        immediately accumulates each quadrature contribution instead of
-        materializing poses and full-width pointwise Jacobians. Gravity is
-        propagated directly between local frames. The method also assembles
-        ``C(q, qd) @ qd`` without constructing the complete Coriolis matrix.
+        The trace-time segment loop uses the exact joint/link DOF count and
+        quadrature count stored in the static GVS structure. Within each link,
+        a rolled ``lax.scan`` advances the kinematic recurrence and immediately
+        accumulates the corresponding quadrature contribution. This avoids
+        padded basis products and materialized pointwise pose/Jacobian arrays,
+        while keeping compilation substantially smaller than a fully unrolled
+        quadrature loop. Gravity is propagated directly between local frames,
+        and ``C(q, qd) @ qd`` is assembled without constructing the complete
+        Coriolis matrix.
 
         Args:
             q: Active generalized coordinates, shape
@@ -4412,8 +4414,6 @@ class GVS(SoftRobot):
         gravity_tip = se3.adjoint_inverse(self.g0) @ self.g
         dof_start = 0
 
-        # These loops are unrolled while tracing because all counts are part of
-        # the static model structure.
         for segment_index, (
             (joint_dofs, link_dofs),
             integration_point_count,
@@ -4449,14 +4449,26 @@ class GVS(SoftRobot):
             q_link = q[joint_end:segment_end]
             qd_link = qd[joint_end:segment_end]
             qd_prefix = qd[:segment_end]
-            jacobian_previous = jnp.concatenate(
+            jacobian_initial = jnp.concatenate(
                 [jacobian_joint, jnp.zeros((6, link_dofs), dtype=dtype)], axis=1
             )
-            jacobian_dot_qd_previous = jacobian_dot_qd_joint
-            velocity_previous = velocity_joint
-            gravity_previous = gravity_joint
 
-            for cell_index in range(integration_point_count - 1):
+            def advance_cell(
+                cell_index: Array,
+                kinematics: tuple[Array, Array, Array, Array],
+                segment_index: int = segment_index,
+                link_dofs: int = link_dofs,
+                joint_end: int = joint_end,
+                q_link: Array = q_link,
+                qd_link: Array = qd_link,
+                qd_prefix: Array = qd_prefix,
+            ) -> tuple[Array, Array, Array, Array]:
+                (
+                    jacobian_previous,
+                    jacobian_dot_qd_previous,
+                    velocity_previous,
+                    gravity_previous,
+                ) = kinematics
                 cell_width = (
                     self.integration_points[segment_index, cell_index + 1]
                     - self.integration_points[segment_index, cell_index]
@@ -4501,38 +4513,115 @@ class GVS(SoftRobot):
                     jacobian_dot_qd_previous + tangent_velocity_dot
                 ) + adjoint_inverse_dot @ (jacobian_previous @ qd_prefix)
                 gravity_next = adjoint_inverse @ gravity_previous
+                return (
+                    jacobian_next,
+                    jacobian_dot_qd_next,
+                    velocity_next,
+                    gravity_next,
+                )
 
-                if cell_index < integration_point_count - 2:
-                    weight = self.inner_integration_weights[segment_index, cell_index]
-                    mass_diagonal = jnp.diagonal(
-                        self.inner_mass_matrices[segment_index, cell_index]
-                    )
-                    mass_jacobian = mass_diagonal[:, None] * jacobian_next
-                    inertia_point = weight * (jacobian_next.T @ mass_jacobian)
+            def scan_cell(
+                carry: tuple[
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                    Array,
+                ],
+                cell_index: Array,
+                segment_index: int = segment_index,
+                segment_end: int = segment_end,
+            ) -> tuple[tuple[Array, Array, Array, Array, Array, Array, Array], None]:
+                (
+                    jacobian_previous,
+                    jacobian_dot_qd_previous,
+                    velocity_previous,
+                    gravity_previous,
+                    inertia_previous,
+                    coriolis_previous,
+                    gravity_force_previous,
+                ) = carry
+                (
+                    jacobian_next,
+                    jacobian_dot_qd_next,
+                    velocity_next,
+                    gravity_next,
+                ) = advance_cell(
+                    cell_index,
+                    (
+                        jacobian_previous,
+                        jacobian_dot_qd_previous,
+                        velocity_previous,
+                        gravity_previous,
+                    ),
+                )
 
-                    momentum = mass_diagonal * velocity_next
-                    wrench = (
-                        mass_diagonal * jacobian_dot_qd_next
-                        + se3.coadjoint_action(velocity_next, momentum)
-                    )
-                    coriolis_point = weight * (jacobian_next.T @ wrench)
-                    gravity_point = -weight * (
-                        jacobian_next.T @ (mass_diagonal * gravity_next)
-                    )
+                weight = self.inner_integration_weights[segment_index, cell_index]
+                mass_diagonal = jnp.diagonal(
+                    self.inner_mass_matrices[segment_index, cell_index]
+                )
+                mass_jacobian = mass_diagonal[:, None] * jacobian_next
+                inertia_point = weight * (jacobian_next.T @ mass_jacobian)
 
-                    inertia = inertia.at[:segment_end, :segment_end].add(inertia_point)
-                    coriolis_qd = coriolis_qd.at[:segment_end].add(coriolis_point)
-                    gravity_force = gravity_force.at[:segment_end].add(gravity_point)
+                momentum = mass_diagonal * velocity_next
+                wrench = mass_diagonal * jacobian_dot_qd_next + se3.coadjoint_action(
+                    velocity_next, momentum
+                )
+                coriolis_point = weight * (jacobian_next.T @ wrench)
+                gravity_point = -weight * (
+                    jacobian_next.T @ (mass_diagonal * gravity_next)
+                )
 
-                jacobian_previous = jacobian_next
-                jacobian_dot_qd_previous = jacobian_dot_qd_next
-                velocity_previous = velocity_next
-                gravity_previous = gravity_next
+                return (
+                    jacobian_next,
+                    jacobian_dot_qd_next,
+                    velocity_next,
+                    gravity_next,
+                    inertia_previous.at[:segment_end, :segment_end].add(inertia_point),
+                    coriolis_previous.at[:segment_end].add(coriolis_point),
+                    gravity_force_previous.at[:segment_end].add(gravity_point),
+                ), None
 
-            jacobian_tip = jacobian_previous
-            jacobian_dot_qd_tip = jacobian_dot_qd_previous
-            velocity_tip = velocity_previous
-            gravity_tip = gravity_previous
+            interior_cell_count = integration_point_count - 2
+            scan_initial = (
+                jacobian_initial,
+                jacobian_dot_qd_joint,
+                velocity_joint,
+                gravity_joint,
+                inertia,
+                coriolis_qd,
+                gravity_force,
+            )
+            scan_final, _ = lax.scan(
+                scan_cell,
+                scan_initial,
+                jnp.arange(interior_cell_count),
+            )
+            (
+                jacobian_last_quad,
+                jacobian_dot_qd_last_quad,
+                velocity_last_quad,
+                gravity_last_quad,
+                inertia,
+                coriolis_qd,
+                gravity_force,
+            ) = scan_final
+            (
+                jacobian_tip,
+                jacobian_dot_qd_tip,
+                velocity_tip,
+                gravity_tip,
+            ) = advance_cell(
+                jnp.asarray(interior_cell_count),
+                (
+                    jacobian_last_quad,
+                    jacobian_dot_qd_last_quad,
+                    velocity_last_quad,
+                    gravity_last_quad,
+                ),
+            )
             dof_start = segment_end
 
         return inertia, coriolis_qd, gravity_force
