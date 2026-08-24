@@ -191,6 +191,13 @@ class PlanarHSA(PlanarPCS):
         self.L_cum = jnp.cumsum(jnp.concatenate([jnp.zeros((1,)), self.L]))
         self.r = None
         self.rho = None
+        # PlanarHSA has its own mass and material caches, but these inherited
+        # PlanarPCS fields still need to be initialized so that the Equinox
+        # module has a complete and stable PyTree structure.
+        self.M_segments = None
+        self.young_stiffness_operator = None
+        self.shear_stiffness_operator = None
+        self.material_damping_operator = None
         self.scale_rotational_basis_by_length = False
 
         num_gauss_points = structure.num_gauss_points
@@ -217,6 +224,10 @@ class PlanarHSA(PlanarPCS):
         self.B_xi = self.B_xi_unscaled
         self.num_active_strains = jnp.sum(selector)
         self.num_dofs = int(self.num_active_strains.item())
+        active_dofs_per_segment = jnp.sum(selector.reshape(n_segments, 3), axis=1)
+        self._segment_dof_ends = tuple(
+            int(value) for value in jnp.cumsum(active_dofs_per_segment).tolist()
+        )
 
         self._set_hsa_params(params)
         self.xi_ref = self.physical_to_virtual_strains(
