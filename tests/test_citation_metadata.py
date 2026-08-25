@@ -52,12 +52,14 @@ def test_software_release_and_project_urls_are_version_specific():
     cff = (ROOT / "CITATION.cff").read_text()
     citation_docs = (ROOT / "docs" / "citation.md").read_text()
     project = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]
+    version = project["version"]
+    citation_key = f"soromox_v{version.replace('.', '_')}"
 
-    assert 'repository-artifact: "https://pypi.org/project/soromox/0.2.3/"' in cff
-    software_bibtex = _extract_bibtex(citation_docs, "software", "soromox_v0_2_3")
-    assert "version = {0.2.3}," in software_bibtex
+    assert f'repository-artifact: "https://pypi.org/project/soromox/{version}/"' in cff
+    software_bibtex = _extract_bibtex(citation_docs, "software", citation_key)
+    assert f"version = {{{version}}}," in software_bibtex
     assert (
-        "url = {https://github.com/tud-phi/soromox/releases/tag/v0.2.3},"
+        f"url = {{https://github.com/tud-phi/soromox/releases/tag/v{version}}},"
         in software_bibtex
     )
     assert project["urls"]["Paper"] == f"https://doi.org/{ARXIV_DOI}"

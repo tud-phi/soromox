@@ -23,11 +23,11 @@ authors:
   - family-names: "Della Santina"
     given-names: "Cosimo"
 repository-code: "https://github.com/tud-phi/soromox"
-repository-artifact: "https://pypi.org/project/soromox/0.2.3/"
+repository-artifact: "https://pypi.org/project/soromox/0.3.0/"
 url: "https://tud-phi.github.io/soromox"
 license: MIT
-version: "0.2.3"
-date-released: "2026-08-19"
+version: "0.3.0"
+date-released: "2026-08-25"
 keywords:
   - "JAX"
   - "Soft Robotics"

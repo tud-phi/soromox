@@ -35,12 +35,12 @@ If reproducibility depends materially on a particular release, we encourage an
 additional software citation for that release:
 
 ```bibtex
-@software{soromox_v0_2_3,
+@software{soromox_v0_3_0,
   title = {{SoRoMoX}: Soft Robot Models in {JAX}},
   author = {Maximilian St{\"o}lzle and Solange Gribonval and Daniel {Feliu-Talegon} and Vito Daniele Perfetta and Michele Martini and Chuhan Zhang and Kiwan Wong and Daniela Rus and Cosimo {Della Santina}},
   year = {2026},
-  version = {0.2.3},
-  url = {https://github.com/tud-phi/soromox/releases/tag/v0.2.3},
+  version = {0.3.0},
+  url = {https://github.com/tud-phi/soromox/releases/tag/v0.3.0},
 }
 ```
 

@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.3.0] - 2026-08-25
+
+### Added
+
 - Shared continuum-component APIs under `soromox.systems.components` for link,
   joint, cross-section, and isotropic-material parameters and specifications.
 - Common `from_links`, `params_from_links`, `update_link_params`,
@@ -49,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   continues after the viewer exits.
 - Made bound-aware finite-difference Jacobians compatible with JAX immutable
   arrays and documented the `numerical_jacobian` utility.
+
+### Contributors
+
+- Thanks to [@matteodv99tn](https://github.com/matteodv99tn) for his
+  contributions to [PR #156](https://github.com/tud-phi/soromox/pull/156).
 
 ## [0.2.3] - 2026-08-19
 
