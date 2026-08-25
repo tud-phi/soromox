@@ -28,6 +28,19 @@ RELEASE_FILES = (
     Path("uv.lock"),
 )
 
+CHANGELOG_SECTIONS = (
+    "Added",
+    "Changed",
+    "Performance",
+    "Deprecated",
+    "Breaking changes",
+    "Fixed",
+    "Documentation",
+    "Contributors",
+)
+
+CHANGELOG_SECTION_PATTERN = re.compile(r"^### (?P<title>.+?)\s*$", re.MULTILINE)
+
 
 def parse_version(version_string: str) -> tuple[int, int, int]:
     """Parse a semantic version into major, minor, and patch components."""
@@ -169,21 +182,49 @@ def update_changelog(file_path: Path, new_version: str, release_date: date) -> N
             f"Could not find a bounded [Unreleased] section in {file_path}"
         )
 
-    notes = match.group("body").strip()
+    notes = _remove_empty_changelog_sections(match.group("body"))
     if not re.search(r"(?m)^- ", notes):
         notes = f"### Changed\n\n- Release version {new_version}."
 
     replacement = (
         "## [Unreleased]\n\n"
-        "### Added\n\n"
-        "### Changed\n\n"
-        "### Fixed\n\n"
+        f"{_format_changelog_template()}\n\n"
         f"## [{new_version}] - {release_date.isoformat()}\n\n"
         f"{notes}\n\n"
     )
     file_path.write_text(
         content[: match.start()] + replacement + content[match.end() :]
     )
+
+
+def _format_changelog_template() -> str:
+    """Format the canonical empty changelog template."""
+    return "\n\n".join(f"### {section}" for section in CHANGELOG_SECTIONS)
+
+
+def _remove_empty_changelog_sections(notes: str) -> str:
+    """Remove empty subsection placeholders while preserving populated notes."""
+    notes = notes.strip()
+    matches = list(CHANGELOG_SECTION_PATTERN.finditer(notes))
+    if not matches:
+        return notes
+
+    blocks = []
+    prefix = notes[: matches[0].start()].strip()
+    if prefix:
+        blocks.append(prefix)
+
+    for index, match in enumerate(matches):
+        body_end = (
+            matches[index + 1].start()
+            if index + 1 < len(matches)
+            else len(notes)
+        )
+        body = notes[match.end() : body_end].strip()
+        if body:
+            blocks.append(f"### {match.group('title')}\n\n{body}")
+
+    return "\n\n".join(blocks)
 
 
 def update_uv_lock(file_path: Path, new_version: str) -> None:

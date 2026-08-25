@@ -50,6 +50,31 @@ unmerged release branch.
 8. Monitor the GitHub Actions release workflow, approve the protected `pypi`
    environment if prompted, and verify the GitHub release and PyPI package.
 
+## Writing changelog entries
+
+Use the `[Unreleased]` sections in `docs/development/changelog.md` for concise,
+user-facing notes:
+
+- `Added`: new capabilities or public APIs.
+- `Changed`: behavior, API, dependency, or architectural changes that are not
+  breaking.
+- `Performance`: measured runtime, memory, compile-time, or scalability
+  improvements. Include the baseline, workload, hardware or backend, and metric.
+- `Deprecated`: still-supported functionality with its replacement and planned
+  removal version when known.
+- `Breaking changes`: incompatible API, behavior, or dependency changes. State
+  the old and new usage and link to migration guidance.
+- `Fixed`: bug fixes, including security fixes when applicable. Add a CVE or
+  advisory link when one exists.
+- `Documentation`: material improvements to user or developer documentation and
+  examples.
+- `Contributors`: meaningful acknowledgements with GitHub handles and pull
+  request links.
+
+Do not add separate `Removed` or `Security` sections. Record removals under
+`Breaking changes` when they affect users, and record security fixes under
+`Fixed`.
+
 ## What the version bump manages
 
 `bump_version.py` updates only release metadata:

@@ -8,8 +8,10 @@ def test_output_file_ends_with_newline(tmp_path):
     changelog.write_text(
         "# Changelog\n\n"
         "## [0.2.0] - 2026-07-29\n\n"
-        "### Fixed\n\n"
-        "- Preserve the GitHub output delimiter.\n"
+        "### Performance\n\n"
+        "- Preserve the benchmark context.\n\n"
+        "### Breaking changes\n\n"
+        "- Use the new API.\n"
     )
     output = tmp_path / "release-notes.md"
     script = Path(__file__).parents[1] / "extract_changelog.py"
@@ -30,5 +32,6 @@ def test_output_file_ends_with_newline(tmp_path):
     )
 
     assert output.read_text() == (
-        "### Fixed\n\n- Preserve the GitHub output delimiter.\n"
+        "### Performance\n\n- Preserve the benchmark context.\n\n"
+        "### Breaking changes\n\n- Use the new API.\n"
     )

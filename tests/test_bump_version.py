@@ -1,4 +1,6 @@
+import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +25,18 @@ def test_update_changelog_preserves_history(tmp_path):
         "## [Unreleased]\n\n"
         "### Added\n\n"
         "- New feature.\n\n"
+        "### Changed\n\n"
+        "### Performance\n\n"
+        "- Twice as fast.\n\n"
+        "### Deprecated\n\n"
+        "- Use the replacement API.\n\n"
+        "### Breaking changes\n\n"
+        "- Replace the old API with the new API.\n\n"
+        "### Fixed\n\n"
+        "### Documentation\n\n"
+        "- Added migration guidance.\n\n"
+        "### Contributors\n\n"
+        "- Thanks to the contributors.\n\n"
         "## [0.1.0] - 2025-09-01\n\n"
         "### Added\n\n"
         "- Development milestone.\n"
@@ -35,6 +49,37 @@ def test_update_changelog_preserves_history(tmp_path):
     assert "## [0.2.0] - 2026-07-29" in content
     assert "## [0.1.0] - 2025-09-01" in content
     assert content.index("## [0.2.0]") < content.index("## [0.1.0]")
+
+    release_body = content.split("## [0.2.0] - 2026-07-29\n\n", 1)[1].split(
+        "## [0.1.0]", 1
+    )[0]
+    assert "### Added\n\n- New feature." in release_body
+    assert "### Performance\n\n- Twice as fast." in release_body
+    assert "### Deprecated\n\n- Use the replacement API." in release_body
+    assert "### Breaking changes\n\n- Replace the old API with the new API." in release_body
+    assert "### Documentation\n\n- Added migration guidance." in release_body
+    assert "### Contributors\n\n- Thanks to the contributors." in release_body
+    assert "### Changed" not in release_body
+    assert "### Fixed" not in release_body
+
+    unreleased_body = content.split("## [Unreleased]\n\n", 1)[1].split(
+        "## [0.2.0]", 1
+    )[0]
+    assert re.findall(r"^### (.+)$", unreleased_body, flags=re.MULTILINE) == list(
+        bump_version.CHANGELOG_SECTIONS
+    )
+
+
+def test_changelog_template_matches_release_sections():
+    changelog = Path(__file__).parents[1] / "docs/development/changelog.md"
+    content = changelog.read_text()
+    unreleased_body = content.split("## [Unreleased]\n\n", 1)[1].split(
+        "## [0.3.0]", 1
+    )[0]
+
+    assert re.findall(r"^### (.+)$", unreleased_body, flags=re.MULTILINE) == list(
+        bump_version.CHANGELOG_SECTIONS
+    )
 
 
 def test_update_changelog_rejects_duplicate_version(tmp_path):
