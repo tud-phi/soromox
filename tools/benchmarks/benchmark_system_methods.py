@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import statistics
 import sys
 import time
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
@@ -21,6 +23,21 @@ from typing import Any
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+def _configure_device_before_jax_import(argv: Sequence[str]) -> str:
+    """Apply an explicit CLI device choice before JAX is imported."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--device", choices=("auto", "cpu", "gpu"), default="auto")
+    args, _ = parser.parse_known_args(argv)
+    if args.device == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+    elif args.device == "gpu":
+        os.environ["JAX_PLATFORMS"] = "cuda"
+    return str(args.device)
+
+
+_EARLY_DEVICE_CHOICE = _configure_device_before_jax_import(sys.argv[1:])
 
 try:
     import jax
@@ -53,6 +70,29 @@ Array = jax.Array
 Tree = Any
 
 
+def _active_cpu_affinity() -> str | None:
+    """Return the process CPU affinity as a compact, reproducible string."""
+    if not hasattr(os, "sched_getaffinity"):
+        return None
+    cpus = sorted(os.sched_getaffinity(0))
+    ranges: list[str] = []
+    range_start = range_end = cpus[0]
+    for cpu in cpus[1:]:
+        if cpu == range_end + 1:
+            range_end = cpu
+            continue
+        ranges.append(
+            str(range_start)
+            if range_start == range_end
+            else f"{range_start}-{range_end}"
+        )
+        range_start = range_end = cpu
+    ranges.append(
+        str(range_start) if range_start == range_end else f"{range_start}-{range_end}"
+    )
+    return ";".join(ranges)
+
+
 @dataclass
 class RuntimeConfig:
     """Holds runtime controls shared across benchmark cases."""
@@ -61,6 +101,7 @@ class RuntimeConfig:
     solver_dt: float
     save_dt: float
     execution_repeats: int
+    warmup_duration: float
 
 
 @dataclass
@@ -132,15 +173,21 @@ def _measure_jitted_call(
     fn: Callable[..., Tree],
     args: tuple[Any, ...],
     repeats: int,
+    warmup_duration: float,
 ) -> tuple[float, float]:
-    """Measure compile (first-call) and averaged execution time for a callable.
+    """Measure compile (first-call) and median warm time for a callable.
 
-    The first invocation is treated as "compile + execute" time. Subsequent invocations
-    (``repeats`` of them) are averaged to estimate the steady-state execution cost.
+    The first invocation is treated as "compile + execute" time. Calls made for
+    ``warmup_duration`` seconds are not measured; they let CPU frequency scaling and
+    the runtime thread pool settle. The median of the subsequent ``repeats``
+    synchronized calls estimates the steady-state execution cost while rejecting
+    scheduler outliers.
     """
 
     if repeats < 1:
         raise ValueError("execution repeats must be at least 1")
+    if warmup_duration < 0.0:
+        raise ValueError("warmup duration must be non-negative")
 
     # JIT a closure around the benchmark callable instead of jitting bound
     # methods directly. Bound Equinox methods carry ``self`` as part of the
@@ -160,6 +207,11 @@ def _measure_jitted_call(
     block_until_ready(first)
     first_time = time.perf_counter() - start
 
+    warmup_deadline = time.perf_counter() + warmup_duration
+    while time.perf_counter() < warmup_deadline:
+        warmup_out = jitted_fn(*args)
+        block_until_ready(warmup_out)
+
     exec_times: list[float] = []
     for _ in range(repeats):
         loop_start = time.perf_counter()
@@ -167,7 +219,7 @@ def _measure_jitted_call(
         block_until_ready(out)
         exec_times.append(time.perf_counter() - loop_start)
 
-    exec_time = sum(exec_times) / len(exec_times)
+    exec_time = statistics.median(exec_times)
     compile_time = max(0.0, first_time - exec_time)
     return compile_time, exec_time
 
@@ -662,12 +714,15 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
         "size_value",
         "gauss_points",
         "integration_points",
+        "backend",
+        "cpu_affinity",
         "jit_compile_time_s",
         "jit_execution_time_s",
         "duration",
         "solver_dt",
         "save_dt",
         "execution_repeats",
+        "warmup_duration",
     ]
     with path.open("w", encoding="utf-8") as fp:
         fp.write(",".join(headers) + "\n")
@@ -697,10 +752,25 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "gpu"),
+        default="auto",
+        help="JAX device to select before import (default: automatic selection)",
+    )
+    parser.add_argument(
         "--execution-repeats",
         type=int,
         default=3,
-        help="Number of post-compilation executions to average",
+        help="Number of synchronized post-warmup executions to measure",
+    )
+    parser.add_argument(
+        "--warmup-duration",
+        type=float,
+        default=0.0,
+        help=(
+            "Seconds of synchronized unmeasured execution before timing each "
+            "compiled case (useful for stabilizing CPU frequency)"
+        ),
     )
     parser.add_argument(
         "--json",
@@ -732,6 +802,10 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         args.systems = normalize_system_names(args.systems, registry)
     except ValueError as exc:
         parser.error(str(exc))
+    if args.execution_repeats < 1:
+        parser.error("--execution-repeats must be >= 1.")
+    if args.warmup_duration < 0.0:
+        parser.error("--warmup-duration must be >= 0.")
     if args.gauss_points is not None:
         if any(value < 1 for value in args.gauss_points):
             parser.error("All --gauss-points entries must be >= 1.")
@@ -741,12 +815,27 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.device != _EARLY_DEVICE_CHOICE:
+        raise RuntimeError(
+            "The --device choice must be present on the process command line so it "
+            "can be applied before JAX is imported."
+        )
+    active_backend = jax.default_backend()
+    if args.device == "cpu" and active_backend != "cpu":
+        raise RuntimeError(f"Requested CPU but JAX selected {active_backend!r}.")
+    if args.device == "gpu" and active_backend == "cpu":
+        raise RuntimeError("Requested GPU but JAX selected the CPU backend.")
+    print(f"JAX backend: {active_backend}")
+    active_cpu_affinity = _active_cpu_affinity()
+    if active_cpu_affinity is not None:
+        print(f"CPU affinity: {active_cpu_affinity}")
 
     runtime = RuntimeConfig(
         duration=args.duration,
         solver_dt=args.solver_dt,
         save_dt=max(0.0, args.save_dt),
         execution_repeats=args.execution_repeats,
+        warmup_duration=args.warmup_duration,
     )
 
     registry = _build_system_registry()
@@ -789,7 +878,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                     fn, call_args = case.builder(system, ctx, runtime)
                     print(f"  -> {case.name} ...", end=" ", flush=True)
                     compile_time, exec_time = _measure_jitted_call(
-                        fn, call_args, runtime.execution_repeats
+                        fn,
+                        call_args,
+                        runtime.execution_repeats,
+                        runtime.warmup_duration,
                     )
 
                     per_point_note = ""
@@ -823,12 +915,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "size_value": size,
                             "gauss_points": gauss_points,
                             "integration_points": integration_points,
+                            "backend": active_backend,
+                            "cpu_affinity": active_cpu_affinity,
                             "jit_compile_time_s": compile_time,
                             "jit_execution_time_s": exec_time,
                             "duration": runtime.duration,
                             "solver_dt": runtime.solver_dt,
                             "save_dt": runtime.save_dt,
                             "execution_repeats": runtime.execution_repeats,
+                            "warmup_duration": runtime.warmup_duration,
                         }
                     )
 

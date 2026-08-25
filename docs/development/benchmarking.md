@@ -27,15 +27,17 @@ robot once makes it accessible throughout the benchmarking suite.
 
 The `benchmark_system_methods.py` CLI times a range of core routines for a sweep of
 system sizes. Each measurement captures a cold call (compile + first execution) and
-averages a number of warm calls to estimate steady-state latency.
+reports the median of synchronized warm calls as steady-state latency.
 
 ```bash
 python tools/benchmarks/benchmark_system_methods.py \
+  --device cpu \
   --systems articulated_soft_robot pendulum planar_pcs pcs \
   --segment-counts 1 3 5 7 \
   --duration 2.0 \
   --solver-dt 5e-4 \
-  --execution-repeats 5 \
+  --warmup-duration 1 \
+  --execution-repeats 20 \
   --csv benchmarks/methods.csv \
   --plot benchmarks/methods.png
 ```
@@ -46,7 +48,12 @@ python tools/benchmarks/benchmark_system_methods.py \
 - `--segment-counts`: link/segment sweep; a fresh system instance is created per value.
 - `--duration`, `--solver-dt` (`--dt` alias), `--save-dt`: integration controls when benchmarking
   `rollout_to`.
-- `--execution-repeats`: number of warm calls to average after the cold run.
+- `--device`: select `cpu`, `gpu`, or JAX's default automatic device choice.
+  Explicit choices are applied before JAX is imported.
+- `--warmup-duration`: synchronized, unmeasured execution time used to settle
+  CPU frequency scaling and runtime worker threads before collecting samples.
+- `--execution-repeats`: number of synchronized calls whose median is reported
+  after the cold run and optional warmup.
 - `--json` / `--csv`: export raw results for regression tracking.
 - `--plot` / `--show-plot`: render Matplotlib summaries (compile vs. exec time).
 
@@ -55,13 +62,42 @@ python tools/benchmarks/benchmark_system_methods.py \
 For each system/function pair the script prints:
 
 1. Cold-call latency (compile + execution), synchronised via `block_until_ready()`.
-2. Mean warm-call latency, reflecting the steady-state cost once XLA caches the
-   executable.
+2. Median warm-call latency, reflecting the steady-state cost once XLA caches
+   the executable and rejecting transient scheduler outliers.
 3. Derived compile time = cold − warm. Pure-Python methods show near-zero compile
    time but still track runtime cost.
 
 The plots group results by system, highlighting how complexity evolves with segment
 count for each tracked method.
+
+### Pinning CPU benchmarks
+
+On machines with heterogeneous CPU cores, process migration between performance
+and efficiency cores can distort sub-millisecond measurements. Select the CPU
+backend with `--device cpu` and, where the operating system supports it, pin the
+whole benchmark process to a known core. On Linux, first inspect the topology and
+maximum frequencies:
+
+```bash
+lscpu -e=CPU,CORE,MAXMHZ,ONLINE
+```
+
+Then run the benchmark with `taskset`; CPU 0 is only an example and should be
+replaced with a performance core identified on the benchmark host:
+
+```bash
+taskset -c 0 python tools/benchmarks/benchmark_system_methods.py \
+  --device cpu \
+  --systems pcs \
+  --segment-counts 1 4 8 16 \
+  --warmup-duration 1 \
+  --execution-repeats 20
+```
+
+Affinity applies to the Python process and its JAX worker threads. JSON and CSV
+rows record the resolved `backend`, compact `cpu_affinity`, warmup duration, and
+sample count so the execution context remains auditable. When comparing
+revisions, use the same affinity and warmup settings for every run.
 
 For `articulated_soft_robot`, the method benchmark includes both the default
 articulated-body forward dynamics path and a dense Jacobian-energy forward
