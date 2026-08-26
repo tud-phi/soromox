@@ -15,6 +15,9 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
+- Made effort laws declare their transmission-state dependencies so
+  `DirectEffort` skips unused actuator-coordinate and velocity evaluation, and
+  generalized-force assembly evaluates each actuator moment matrix only once.
 - Made the system-method benchmark device-selectable and reproducible on
   heterogeneous CPUs by recording the JAX backend and CPU affinity, adding an
   optional steady-state warmup, and reporting the median of synchronized

@@ -1149,6 +1149,9 @@ New actuator modalities should implement the composable `Transmission` and
 `EffortModel` contracts described in the
 [actuation model](../api/actuation/index.md), rather than introducing a new
 continuum host subclass.
+An effort law should set its static `requires_coordinate` and
+`requires_velocity` flags to `False` for transmission state that it does not
+consume. The defaults are both `True`, which is safe for state-dependent laws.
 
 Operate directly in the transmission's work coordinates:
 

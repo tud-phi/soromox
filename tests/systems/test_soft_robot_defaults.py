@@ -18,16 +18,17 @@ jax.config.update("jax_enable_x64", True)
 
 class _PlanarDefaultRobot(SoftRobot):
     L: Array
+    _num_fixture_dofs = 2
 
     def __init__(self):
         super().__init__()
-        self.num_dofs = 2
-        self.num_actuators = 2
+        self.num_dofs = self._num_fixture_dofs
         self.L = jnp.array([1.0, 2.0], dtype=jnp.float64)
         self.num_gauss_points = 1
         self.num_integration_points = 3
         self.integration_points = jnp.array([0.0, 0.5, 1.0], dtype=jnp.float64)
         self.integration_weights = jnp.array([0.0, 1.0, 0.0], dtype=jnp.float64)
+        self._configure_actuation(None)
 
     @property
     def segment_length(self) -> Array:
@@ -70,9 +71,6 @@ class _PlanarDefaultRobot(SoftRobot):
     def _gravitational_energy(self, q: Array) -> Array:
         return q[0] ** 2 + 3.0 * q[1]
 
-    def actuation_matrix(self, q: Array) -> Array:
-        return jnp.eye(2, dtype=q.dtype)
-
 
 class _SpatialDefaultRobot(_PlanarDefaultRobot):
     @property
@@ -100,9 +98,7 @@ class _SpatialDefaultRobot(_PlanarDefaultRobot):
 class _SpatialLieExpDefaultRobot(_SpatialDefaultRobot):
     """Spatial default-hook fixture whose protected pose uses the SE(3) branch."""
 
-    def __init__(self):
-        super().__init__()
-        self.num_dofs = 6
+    _num_fixture_dofs = 6
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
         return se3.exp(s * q, eps=jnp.asarray(1e-10, dtype=q.dtype))

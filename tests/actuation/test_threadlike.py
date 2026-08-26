@@ -16,6 +16,7 @@ from system_param_builders import (
 
 from soromox.actuation import (
     BaseThreadlikeRoutingParams,
+    EffortModel,
     IdentityActuator,
     IdentityTransmission,
     ThreadlikeActuator,
@@ -336,6 +337,111 @@ def test_identity_unactuated_and_mixed_construction():
 def test_identity_actuator_rejects_channel_count_mismatch_during_construction():
     with pytest.raises(ValueError, match="one channel per robot degree of freedom"):
         _spatial_pcs(actuators=IdentityActuator(3))
+
+
+@pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs, _gvs])
+@pytest.mark.parametrize(
+    "configuration",
+    ["identity", "unactuated", "threadlike", "mixed_threadlike"],
+)
+def test_actuation_force_matches_matrix_times_effort(factory, configuration):
+    if configuration == "identity":
+        robot = factory()
+    elif configuration == "unactuated":
+        robot = factory(actuators=())
+    elif configuration == "threadlike":
+        robot = factory(actuators=ThreadlikeActuator.tendons(_routing()))
+    else:
+        routing = _routing()
+        robot = factory(
+            actuators=(
+                ThreadlikeActuator.tendons(routing),
+                ThreadlikeActuator.push_rods(routing),
+            )
+        )
+
+    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
+    qd = jnp.linspace(0.04, -0.01, robot.num_dofs)
+    control = jnp.linspace(1.0, 2.0, robot.num_actuators)
+
+    expected = robot.actuation_matrix(q) @ robot.actuator_efforts(q, control, qd=qd)
+    assert_allclose(robot.actuation_force(q, control, qd=qd), expected)
+
+
+def test_direct_effort_skips_unused_threadlike_state(monkeypatch):
+    robot = _spatial_pcs(actuators=ThreadlikeActuator.tendons(_routing()))
+    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
+    qd = jnp.linspace(0.04, -0.01, robot.num_dofs)
+    control = jnp.array([3.0, 4.0])
+    expected_force = robot.actuation_matrix(q) @ control
+    calls = {"moment_matrix": 0}
+    original_moment_matrix = PCS._threadlike_moment_matrix
+
+    def counted_moment_matrix(self, q, routing):
+        calls["moment_matrix"] += 1
+        return original_moment_matrix(self, q, routing)
+
+    def unexpected_path_lengths(self, q, routing):
+        del self, q, routing
+        raise AssertionError("DirectEffort must not evaluate actuator coordinates.")
+
+    monkeypatch.setattr(PCS, "_threadlike_moment_matrix", counted_moment_matrix)
+    monkeypatch.setattr(PCS, "_threadlike_path_lengths", unexpected_path_lengths)
+
+    assert_allclose(robot.actuator_efforts(q, control, qd=qd), control)
+    assert calls["moment_matrix"] == 0
+
+    assert_allclose(
+        robot.actuation_force(q, control, qd=qd),
+        expected_force,
+    )
+    assert calls["moment_matrix"] == 1
+
+
+class CoordinateVelocityEffort(EffortModel):
+    """Test law exercising both optional transmission-state dependencies."""
+
+    def effort(self, control, coordinate, velocity):
+        assert coordinate is not None
+        assert velocity is not None
+        return control + coordinate + velocity
+
+
+def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypatch):
+    actuator = ThreadlikeActuator.tendons(_routing())
+    actuator = eqx.tree_at(
+        lambda current: current._effort_model,
+        actuator,
+        CoordinateVelocityEffort(),
+    )
+    robot = _spatial_pcs(actuators=actuator)
+    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
+    qd = jnp.linspace(0.04, -0.01, robot.num_dofs)
+    control = jnp.array([3.0, 4.0])
+
+    matrix = robot.actuation_matrix(q)
+    coordinate = robot.actuator_coordinates(q)
+    expected_effort = robot.actuator_efforts(q, control, qd=qd)
+    assert_allclose(expected_effort, control + coordinate + matrix.T @ qd)
+    expected_force = matrix @ expected_effort
+
+    calls = {"moment_matrix": 0, "path_lengths": 0}
+    original_moment_matrix = PCS._threadlike_moment_matrix
+    original_path_lengths = PCS._threadlike_path_lengths
+
+    def counted_moment_matrix(self, q, routing):
+        calls["moment_matrix"] += 1
+        return original_moment_matrix(self, q, routing)
+
+    def counted_path_lengths(self, q, routing):
+        calls["path_lengths"] += 1
+        return original_path_lengths(self, q, routing)
+
+    monkeypatch.setattr(PCS, "_threadlike_moment_matrix", counted_moment_matrix)
+    monkeypatch.setattr(PCS, "_threadlike_path_lengths", counted_path_lengths)
+
+    assert_allclose(robot.actuation_force(q, control, qd=qd), expected_force)
+    assert calls == {"moment_matrix": 1, "path_lengths": 1}
 
 
 @pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs, _gvs])

@@ -79,10 +79,8 @@ tau = robot.actuation_force(q, u, qd=qd)
 metadata = robot.actuator_input_metadata
 ```
 
-`qd` is optional for effort and force evaluation. Omitting it evaluates the
-effort model at zero actuator velocity. This is exactly equivalent for
-`DirectEffort`; forward dynamics supplies the actual `qd` so future
-velocity-dependent effort laws receive the physical actuator velocity.
+`qd` is optional for effort and force evaluation. For an effort law that
+requires velocity, omitting it evaluates the law at zero actuator velocity.
 
 [Actuation-space controllers](../control/actuation-space.md) consume the same
 `actuator_coordinates(q)` contract. The coordinate transformation requires the

@@ -1029,7 +1029,25 @@ class SoftRobot(DynamicalSystem):
         )
 
     def actuation_matrix(self, q: Array) -> Array:
-        """Return the concatenated transmission moment matrix."""
+        """
+        Return the actuator transmission matrix ``A(q)``.
+
+        ``A(q)`` is the concatenated moment-arm matrix of the installed
+        transmissions. It maps work-conjugate actuator efforts ``u`` to
+        generalized forces,
+
+        ``tau_u = A(q) @ u``.
+
+        Equivalently, ``A(q).T`` is the Jacobian of the actuator coordinates
+        with respect to the generalized coordinates.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+
+        Returns:
+            A: Actuator transmission matrix of shape
+                (num_dofs, num_actuators).
+        """
         if not self.actuators:
             return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
         return jnp.concatenate(
@@ -1038,29 +1056,92 @@ class SoftRobot(DynamicalSystem):
         )
 
     def actuator_efforts(self, q: Array, u: Array, qd: Array | None = None) -> Array:
-        """Map ordered user controls to ordered work-conjugate efforts."""
-        if qd is None:
-            qd = jnp.zeros_like(q)
+        """
+        Map user controls to work-conjugate actuator efforts.
+
+        Controls and returned efforts follow the order of the installed
+        actuators. Effort models evaluate the actuator coordinates or
+        velocities only when those quantities are required. If an effort model
+        requires velocity and ``qd`` is omitted, zero generalized velocity is
+        used.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            u: Actuator controls of shape (num_actuators,).
+            qd: Optional generalized velocities of shape (num_dofs,).
+
+        Returns:
+            e: Work-conjugate actuator efforts of shape (num_actuators,).
+
+        Raises:
+            ValueError: If ``u`` does not have shape (num_actuators,).
+        """
+        return self._actuator_efforts(q, u, qd=qd)
+
+    def _actuator_efforts(
+        self,
+        q: Array,
+        u: Array,
+        qd: Array | None = None,
+        *,
+        moment_matrix: Array | None = None,
+    ) -> Array:
+        """Evaluate efforts, optionally reusing a concatenated moment matrix."""
         u = jnp.asarray(u)
         if u.shape != (self.num_actuators,):
             raise ValueError(
                 f"u must have shape ({self.num_actuators},), got {u.shape}."
             )
         if not self.actuators:
-            # Legacy SoftRobot subclasses may provide their own actuation_matrix
-            # without installing composable actuator objects.
-            return u
+            return jnp.zeros((0,), dtype=u.dtype)
         efforts = []
         start = 0
         for actuator in self.actuators:
             stop = start + actuator.num_channels
-            efforts.append(actuator.efforts(self, q, u[start:stop], qd=qd))
+            actuator_moment_matrix = (
+                None if moment_matrix is None else moment_matrix[:, start:stop]
+            )
+            efforts.append(
+                actuator._efforts(
+                    self,
+                    q,
+                    u[start:stop],
+                    qd=qd,
+                    moment_matrix=actuator_moment_matrix,
+                )
+            )
             start = stop
         return jnp.concatenate(tuple(efforts))
 
     def actuation_force(self, q: Array, u: Array, qd: Array | None = None) -> Array:
-        """Return generalized actuation force ``A(q) @ effort``."""
-        return self.actuation_matrix(q) @ self.actuator_efforts(q, u, qd=qd)
+        """
+        Compute the generalized actuation force.
+
+        The installed effort models first map the ordered controls ``u`` to
+        work-conjugate actuator efforts ``e``. The actuator transmission matrix
+        then maps those efforts to generalized forces as
+
+        ``tau_u = A(q) @ e``.
+
+        Args:
+            q: Generalized coordinates of shape (num_dofs,).
+            u: Actuator controls of shape (num_actuators,).
+            qd: Optional generalized velocities of shape (num_dofs,).
+
+        Returns:
+            tau_u: Generalized actuation force of shape (num_dofs,).
+
+        Raises:
+            ValueError: If ``u`` does not have shape (num_actuators,).
+        """
+        moment_matrix = self.actuation_matrix(q)
+        effort = self._actuator_efforts(
+            q,
+            u,
+            qd=qd,
+            moment_matrix=moment_matrix,
+        )
+        return moment_matrix @ effort
 
     def passive_elastic_force(self, q: Array) -> Array:
         """Return the sum of installed passive conservative forces."""
