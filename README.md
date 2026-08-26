@@ -132,7 +132,7 @@ SoRoSim in matched PCS and GVS cases:
 </p>
 
 On the paper's RTX 5090 benchmark, increasing the leading batch size from 1 to
-256 yields up to 221.6× higher simulation throughput. See
+256 yields up to 220.4× higher simulation throughput. See
 [Paper & Results](https://tud-phi.github.io/soromox/research/) for the full
 benchmark context and reproduction pointers.
 

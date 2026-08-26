@@ -22,6 +22,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Performance
 
+- Refreshed the RTX 5090 parallel-rollout results for 216 matched configurations
+  spanning 1–256 environments, with a 1.49× geometric-mean speedup over the
+  previous committed measurements, and synchronized the publication figures.
+
 ### Deprecated
 
 ### Breaking changes

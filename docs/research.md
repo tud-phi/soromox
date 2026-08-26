@@ -47,7 +47,7 @@ table below retains the matched PCS and GVS comparison with SoRoSim:
 
 <figure markdown>
   ![GPU batch simulation throughput for articulated, PCS, and GVS models as the leading batch size increases](assets/paper/gpu-batch-scaling.png){ .soromox-figure .soromox-figure--plot }
-  <figcaption>On the reported RTX 5090 benchmark, scaling the leading batch size from 1 to 256 yields up to 221.6× higher simulation throughput.</figcaption>
+  <figcaption>On the reported RTX 5090 benchmark, scaling the leading batch size from 1 to 256 yields up to 220.4× higher simulation throughput.</figcaption>
 </figure>
 
 The exact scaling depends on the model, number of links or segments, hardware,
