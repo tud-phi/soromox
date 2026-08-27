@@ -22,6 +22,12 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Performance
 
+- Accelerated JAX GVS dynamics-term assembly with compact strain bases,
+  velocity reuse, and four bounded active-DOF prefix buckets. Against the
+  previous full-width scan for a 16-segment, strain-order-5/9-Gauss-point model,
+  warmed runtime fell 36.4% on single-environment CPU (12.65 to 8.04 ms) and
+  35.7% on 256-environment GPU (146.76 to 94.32 ms); see
+  [PR #174](https://github.com/tud-phi/soromox/pull/174).
 - Refreshed the RTX 5090 parallel-rollout results for 216 matched configurations
   spanning 1–256 environments, with a 1.49× geometric-mean speedup over the
   previous committed measurements, and synchronized the publication figures.
