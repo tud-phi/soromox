@@ -799,14 +799,15 @@ The base class provides useful helpers:
 backbone = self.compute_backbone_curve(q)
 # Returns: (num_points, 2) for 2D or (num_points, 3) for 3D
 
-# Get actuator visual layers (if robot exposes actuator_visual_layers)
+# Get actuator visual layers from the renderer-owned generic adapter or a
+# robot-specific override
 actuator_layers = self.compute_actuator_visual_layers(q)
 # Returns: tuple of ActuatorVisualLayer objects
 
 # Batched and trajectory actuator visual helpers use optional robot fast paths
 # named actuator_visual_layers_batched(...) and
-# actuator_visual_layers_trajectory(...) when available. Otherwise they fall
-# back to repeated calls to the single-configuration actuator_visual_layers(...).
+# actuator_visual_layers_trajectory(...) when available. Otherwise they use the
+# generic SoftRobot adapter or fall back to repeated custom-hook calls.
 
 # Resolve colors with hierarchy
 colors = self.resolve_backbone_colors(num_robots=1, color_config=color_config)

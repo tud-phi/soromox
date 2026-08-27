@@ -9,6 +9,7 @@ import pytest
 from system_param_builders import spatial_base_pose
 
 from soromox.actuation import ThreadlikeActuator
+from soromox.rendering import MatplotlibRenderer
 from soromox.systems import (
     PCS,
     ContinuumLinkParams,
@@ -365,6 +366,12 @@ def test_isupport_uses_threadlike_pressure_chambers_and_resolves_area():
     assert (
         robot.actuator_visual_layers(
             jnp.zeros((robot.num_dofs,)), jnp.linspace(0.0, robot.length, 5)
+        )
+        == ()
+    )
+    assert (
+        MatplotlibRenderer(robot, num_points=5).compute_actuator_visual_layers(
+            jnp.zeros((robot.num_dofs,))
         )
         == ()
     )

@@ -33,6 +33,12 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Moved generic actuator-visualization adaptation out of
+  `SoftRobot.actuator_visual_layers(...)` and into
+  `soromox.rendering.actuator_visual_layers(...)`. Renderers continue to adapt
+  standard `SoftRobot` systems automatically, while robot-defined hooks remain
+  available for specialized visualization behavior.
+
 ### Fixed
 
 ### Documentation

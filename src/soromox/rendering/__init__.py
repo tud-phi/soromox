@@ -11,6 +11,7 @@ This module provides various backends for visualizing robots:
 - OpenCVPlanarRenderer: Generic renderer for planar robots
 """
 
+from soromox.rendering.actuation import actuator_visual_layers
 from soromox.rendering.actuators import (
     ActuatorVisualLayer,
     BatchedActuatorVisualLayer,
@@ -83,6 +84,7 @@ __all__ = [
     "ActuatorVisualLayer",
     "BatchedActuatorVisualLayer",
     "TrajectoryActuatorVisualLayer",
+    "actuator_visual_layers",
     # Generic renderers
     "MatplotlibRenderer",
     "Open3DRenderer",

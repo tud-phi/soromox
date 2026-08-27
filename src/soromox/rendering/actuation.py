@@ -8,22 +8,38 @@ from jax import numpy as jnp
 
 from soromox.actuation.mckibben import ArticulatedMcKibbenActuator
 from soromox.actuation.threadlike import ThreadlikeActuator, ThreadlikeImpedance
+from soromox.systems.soft_robot import SoftRobot
 
 from .actuators import ActuatorVisualLayer, TrajectoryActuatorVisualLayer
 
 
 def actuator_visual_layers(
-    robot,
+    robot: SoftRobot,
     q: Array,
     s_points: Array,
     *,
     actuator_inputs: Array | None = None,
 ) -> tuple[ActuatorVisualLayer, ...]:
-    """Adapt installed actuator mechanics to renderer-facing visual layers.
+    """Return renderer-facing geometry for installed actuation components.
 
-    Actuation objects provide path geometry and semantic kinds. Visual styling is
-    deliberately left unset here so renderer configuration owns colors, radii,
-    line widths, and scalar colormaps.
+    The returned layers describe semantic geometry and optional scalar fields
+    for supported active actuators and passive elements. Actuation objects
+    provide path geometry and semantic kinds, while visual styling such as
+    colors, radii, line widths, and scalar colormaps remains the renderer's
+    responsibility. Unsupported components do not produce a layer.
+
+    Args:
+        robot: Soft robot containing the installed actuation components.
+        q: Generalized coordinates of shape ``(robot.num_dofs,)``.
+        s_points: Backbone sample coordinates with shape ``(num_points,)``
+            used for routed continuum geometry.
+        actuator_inputs: Optional actuator inputs of shape
+            ``(robot.num_actuators,)``. When supplied, supported adapters attach
+            input-dependent scalar fields such as pressure or axial force.
+
+    Returns:
+        layers: Tuple of semantic actuator visual layers. The tuple is empty
+            when no installed component has a renderer adapter.
     """
     layers: list[ActuatorVisualLayer] = []
     start = 0
@@ -89,7 +105,7 @@ def actuator_visual_layers(
 
 
 def vectorized_actuator_visual_layers_trajectory(
-    robot,
+    robot: SoftRobot,
     q_ts: Array,
     s_points: Array,
     *,

@@ -3,7 +3,7 @@ __all__ = [
 ]
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING, Any, Self
+from typing import Any, Self
 
 import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, lax, vmap
@@ -23,9 +23,6 @@ from soromox.systems.params import (
     validate_quaternion_base_pose,
 )
 from soromox.utils.geometry import poses
-
-if TYPE_CHECKING:
-    from soromox.rendering.actuators import ActuatorVisualLayer
 
 
 class SoftRobot(DynamicalSystem):
@@ -1258,39 +1255,6 @@ class SoftRobot(DynamicalSystem):
         for element in self.passive_elements:
             energy = energy + element.elastic_energy(self, q)
         return energy
-
-    def actuator_visual_layers(
-        self,
-        q: Array,
-        s_points: Array,
-        *,
-        actuator_inputs: Array | None = None,
-    ) -> tuple["ActuatorVisualLayer", ...]:
-        """
-        Return renderer-facing geometry for installed actuation components.
-
-        The returned layers describe semantic geometry and optional scalar
-        fields for supported active actuators and passive elements. Visual
-        styling such as colors, radii, and line widths remains the renderer's
-        responsibility. Unsupported components do not produce a layer.
-
-        Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
-            s_points: Backbone sample coordinates with shape
-                ``(num_points,)`` used for routed continuum geometry.
-            actuator_inputs: Optional actuator inputs of shape
-                ``(num_actuators,)``. When supplied, supported adapters attach
-                input-dependent scalar fields such as pressure or axial force.
-
-        Returns:
-            layers: Tuple of semantic actuator visual layers. The tuple is
-                empty when no installed component has a renderer adapter.
-        """
-        from soromox.rendering.actuation import actuator_visual_layers
-
-        return actuator_visual_layers(
-            self, q, s_points, actuator_inputs=actuator_inputs
-        )
 
     # -----------------------------------------
     # Energy methods

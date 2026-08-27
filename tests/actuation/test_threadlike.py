@@ -23,6 +23,7 @@ from soromox.actuation import (
     ThreadlikeImpedance,
     ThreadlikeRouting,
 )
+from soromox.rendering import MatplotlibRenderer, actuator_visual_layers
 from soromox.systems import (
     GVS,
     PCS,
@@ -713,10 +714,22 @@ def test_actuator_nested_update_and_topology_rejection():
 def test_visual_layers_are_semantic_unstyled_and_carry_inputs():
     actuator = ThreadlikeActuator.muscles(_routing(count=2))
     robot = _spatial_pcs(actuators=actuator)
-    layers = robot.actuator_visual_layers(
-        jnp.zeros(robot.num_dofs),
+    q = jnp.zeros(robot.num_dofs)
+    actuator_inputs = jnp.array([2.0, 3.0])
+    layers = actuator_visual_layers(
+        robot,
+        q,
         jnp.linspace(0.0, robot.length, 8),
-        actuator_inputs=jnp.array([2.0, 3.0]),
+        actuator_inputs=actuator_inputs,
+    )
+    renderer_layers = MatplotlibRenderer(
+        robot, num_points=8
+    ).compute_actuator_visual_layers(q, actuator_inputs=actuator_inputs)
+    assert not hasattr(robot, "actuator_visual_layers")
+    assert_allclose(renderer_layers[0].points, layers[0].points)
+    assert_allclose(
+        renderer_layers[0].scalar_fields["input"],
+        layers[0].scalar_fields["input"],
     )
     assert len(layers) == 1
     assert layers[0].kind == "muscle"

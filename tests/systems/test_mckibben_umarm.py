@@ -19,6 +19,7 @@ from examples.simulation.articulated.simulate_mckibben_umarm import (
     build_robot as build_example_robot,
 )
 from soromox.actuation import ArticulatedMcKibbenActuator
+from soromox.rendering import actuator_visual_layers
 from soromox.rendering.viser_renderer import VISER_AVAILABLE
 from soromox.systems import (
     PCS,
@@ -143,7 +144,7 @@ def test_zero_actuator_umarm_exposes_empty_actuator_interface() -> None:
     assert actuator.axial_forces(q, pressures).shape == (0,)
     assert robot.actuation_matrix(q).shape == (robot.num_dofs, 0)
     assert_allclose(robot.actuation_force(q, pressures), jnp.zeros((robot.num_dofs,)))
-    assert robot.actuator_visual_layers(q, jnp.linspace(0.0, 1.0, 3)) == ()
+    assert actuator_visual_layers(robot, q, jnp.linspace(0.0, 1.0, 3)) == ()
     assert robot.forward_dynamics(jnp.array(0.0), y, (pressures, None)).shape == y.shape
 
 

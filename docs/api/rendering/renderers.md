@@ -30,16 +30,21 @@ BaseSoftRobotRenderer (abstract base)
 
 ### Actuator and Helper Geometry
 
-If a robot exposes
-`actuator_visual_layers(q, s_points, *, actuator_inputs=None)`, the renderers
-can display its semantic actuator geometry when `render_actuators=True`. The
-hook returns one or more `ActuatorVisualLayer` objects with points shaped
-`(num_actuators_in_layer, num_points, dim)`.
+For `SoftRobot` systems, the rendering layer automatically adapts supported
+installed actuators and passive elements into semantic geometry when
+`render_actuators=True`. The adapter returns one or more `ActuatorVisualLayer`
+objects with points shaped
+`(num_actuators_in_layer, num_points, dim)`. It is also available directly as
+`soromox.rendering.actuator_visual_layers(...)`.
+
+Specialized or third-party robots may override this default by exposing
+`actuator_visual_layers(q, s_points, *, actuator_inputs=None)`.
 
 For batches and trajectories, robots may additionally provide
 `actuator_visual_layers_batched(...)` or
 `actuator_visual_layers_trajectory(...)`. The base renderer uses these hooks
-when available and otherwise falls back to the single-configuration hook.
+when available and otherwise falls back to the generic adapter or the
+single-configuration custom hook.
 
 Open3D and Viser also accept helper spheres through
 `static_spheres_positions`, `static_spheres_radii`, and
