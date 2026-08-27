@@ -1093,7 +1093,10 @@ class SoftRobot(DynamicalSystem):
         if not self.actuators:
             return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
         return jnp.concatenate(
-            tuple(actuator.transmission_matrix(self, q) for actuator in self.actuators),
+            tuple(
+                actuator.transmission.moment_matrix(self, q)
+                for actuator in self.actuators
+            ),
             axis=1,
         )
 

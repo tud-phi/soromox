@@ -198,22 +198,6 @@ class Actuator(eqx.Module):
     def velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
         return self.transmission.velocities(robot, q, qd)
 
-    def transmission_matrix(self, robot: SoftRobot, q: Array) -> Array:
-        """Return this actuator's transmission matrix.
-
-        The returned matrix is the moment matrix of the installed transmission,
-        with one column per actuator channel.
-
-        Args:
-            robot: Soft robot on which the actuator is installed.
-            q: Generalized coordinates of shape ``(robot.num_dofs,)``.
-
-        Returns:
-            A: Transmission matrix of shape
-                ``(robot.num_dofs, self.num_channels)``.
-        """
-        return self.transmission.moment_matrix(robot, q)
-
     def efforts(
         self,
         robot: SoftRobot,

@@ -444,17 +444,6 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
     assert calls == {"moment_matrix": 1, "path_lengths": 1}
 
 
-def test_actuator_transmission_matrix_delegates_to_transmission_moment_matrix():
-    actuator = ThreadlikeActuator.tendons(_routing())
-    robot = _spatial_pcs(actuators=actuator)
-    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
-
-    assert_allclose(
-        actuator.transmission_matrix(robot, q),
-        actuator.transmission.moment_matrix(robot, q),
-    )
-
-
 def test_precomputed_transmission_matrices_require_compatible_shapes():
     actuator = ThreadlikeActuator.tendons(_routing())
     robot = _spatial_pcs(actuators=actuator)
