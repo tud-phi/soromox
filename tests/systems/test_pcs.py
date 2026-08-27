@@ -1677,6 +1677,44 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates():
     )
 
 
+def test_scaled_strain_basis_tracks_dynamic_segment_length_updates():
+    model, params = make_pcs(
+        num_segments=2,
+        total_length=0.4,
+        scale_rotational_basis_by_length=True,
+    )
+    updated_lengths = jnp.array([0.15, 0.32], dtype=model.L.dtype)
+    updated_params = params.replace(link=params.link.replace(length=updated_lengths))
+    updated = model.with_params(updated_params)
+
+    rotational_rows = jnp.arange(model.num_strains) % 6 < 3
+    length_ratio_by_row = jnp.repeat(model.L / updated_lengths, 6)
+    expected_basis = jnp.where(
+        rotational_rows[:, None],
+        model.B_xi * length_ratio_by_row[:, None],
+        model.B_xi,
+    )
+    assert_allclose(updated.B_xi, expected_basis, rtol=RTOL, atol=ATOL)
+    assert not jnp.allclose(updated.B_xi, model.B_xi)
+
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_scaled_basis(current_params):
+        trace_count["value"] += 1
+        current = model.with_params(current_params)
+        return current.L, current.B_xi
+
+    compiled_scaled_basis(params)
+    actual = compiled_scaled_basis(updated_params)
+
+    assert trace_count["value"] == 1
+    for actual_array, expected_array in zip(
+        actual, (updated.L, updated.B_xi), strict=True
+    ):
+        assert_allclose(actual_array, expected_array, rtol=RTOL, atol=ATOL)
+
+
 def _make_full_and_reduced_pcs(num_segments: int, selector_per_segment: Array):
     """Utility to build a full-DOF PCS and a reduced-DOF PCS sharing parameters.
 
