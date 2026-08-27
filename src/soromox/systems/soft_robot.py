@@ -3,7 +3,7 @@ __all__ = [
 ]
 
 from abc import abstractmethod
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import equinox as eqx
 from jax import Array, grad, jacfwd, jvp, lax, vmap
@@ -23,6 +23,9 @@ from soromox.systems.params import (
     validate_quaternion_base_pose,
 )
 from soromox.utils.geometry import poses
+
+if TYPE_CHECKING:
+    from soromox.rendering.actuators import ActuatorVisualLayer
 
 
 class SoftRobot(DynamicalSystem):
@@ -1007,13 +1010,37 @@ class SoftRobot(DynamicalSystem):
         """
         Protected gravitational-force hook.
 
-        Default implementation differentiates the protected gravitational-energy
-        hook to avoid recursively invoking the public custom-JVP energy wrapper.
+        The default implementation differentiates the protected
+        :meth:`_gravitational_energy` hook. Subclasses may override this method
+        with an analytical or fused implementation. Differentiating the
+        protected energy hook avoids recursively invoking the public
+        custom-JVP energy wrapper.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+
+        Returns:
+            G: Gravitational generalized force of shape ``(num_dofs,)``.
         """
         return grad(lambda q_: self._gravitational_energy(q_))(q)
 
     def actuator_coordinates(self, q: Array) -> Array:
-        """Return all work-conjugate actuator coordinates in control order."""
+        """
+        Return the installed transmissions' work-conjugate coordinates.
+
+        Coordinates are concatenated in actuator and channel order, matching
+        the columns of :meth:`actuation_matrix` and the entries returned by
+        :meth:`actuator_efforts`. Their physical units may differ between
+        actuator families, such as length for tendons or volume for pressure
+        actuation.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+
+        Returns:
+            y_a: Actuator coordinates of shape ``(num_actuators,)``. An
+                unactuated robot returns an empty array.
+        """
         if not self.actuators:
             return jnp.zeros((0,), dtype=q.dtype)
         return jnp.concatenate(
@@ -1021,7 +1048,22 @@ class SoftRobot(DynamicalSystem):
         )
 
     def actuator_velocities(self, q: Array, qd: Array) -> Array:
-        """Return all actuator-coordinate velocities in control order."""
+        """
+        Return the installed transmissions' coordinate velocities.
+
+        Velocities are concatenated in actuator and channel order and satisfy
+        ``yd_a = A(q).T @ qd``, where ``A(q)`` is the concatenated actuator
+        transmission matrix.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+            qd: Generalized velocities of shape ``(num_dofs,)``.
+
+        Returns:
+            yd_a: Actuator-coordinate velocities of shape
+                ``(num_actuators,)``. An unactuated robot returns an empty
+                array.
+        """
         if not self.actuators:
             return jnp.zeros((0,), dtype=q.dtype)
         return jnp.concatenate(
@@ -1033,10 +1075,10 @@ class SoftRobot(DynamicalSystem):
         Return the actuator transmission matrix ``A(q)``.
 
         ``A(q)`` is the concatenated moment-arm matrix of the installed
-        transmissions. It maps work-conjugate actuator efforts ``u`` to
+        transmissions. It maps work-conjugate actuator efforts ``e`` to
         generalized forces,
 
-        ``tau_u = A(q) @ u``.
+        ``tau_u = A(q) @ e``.
 
         Equivalently, ``A(q).T`` is the Jacobian of the actuator coordinates
         with respect to the generalized coordinates.
@@ -1051,11 +1093,18 @@ class SoftRobot(DynamicalSystem):
         if not self.actuators:
             return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
         return jnp.concatenate(
-            tuple(actuator.moment_matrix(self, q) for actuator in self.actuators),
+            tuple(actuator.transmission_matrix(self, q) for actuator in self.actuators),
             axis=1,
         )
 
-    def actuator_efforts(self, q: Array, u: Array, qd: Array | None = None) -> Array:
+    def actuator_efforts(
+        self,
+        q: Array,
+        u: Array,
+        qd: Array | None = None,
+        *,
+        actuation_matrix: Array | None = None,
+    ) -> Array:
         """
         Map user controls to work-conjugate actuator efforts.
 
@@ -1069,28 +1118,30 @@ class SoftRobot(DynamicalSystem):
             q: Generalized coordinates of shape (num_dofs,).
             u: Actuator controls of shape (num_actuators,).
             qd: Optional generalized velocities of shape (num_dofs,).
+            actuation_matrix: Optional precomputed actuator transmission matrix
+                with shape ``(num_dofs, num_actuators)``. It is reused for
+                velocity-dependent effort laws.
 
         Returns:
             e: Work-conjugate actuator efforts of shape (num_actuators,).
 
         Raises:
-            ValueError: If ``u`` does not have shape (num_actuators,).
+            ValueError: If ``u`` or ``actuation_matrix`` has an incompatible
+                shape.
         """
-        return self._actuator_efforts(q, u, qd=qd)
-
-    def _actuator_efforts(
-        self,
-        q: Array,
-        u: Array,
-        qd: Array | None = None,
-        *,
-        moment_matrix: Array | None = None,
-    ) -> Array:
-        """Evaluate efforts, optionally reusing a concatenated moment matrix."""
         u = jnp.asarray(u)
         if u.shape != (self.num_actuators,):
             raise ValueError(
                 f"u must have shape ({self.num_actuators},), got {u.shape}."
+            )
+        if actuation_matrix is not None and actuation_matrix.shape != (
+            self.num_dofs,
+            self.num_actuators,
+        ):
+            raise ValueError(
+                "actuation_matrix must have shape "
+                f"({self.num_dofs}, {self.num_actuators}), got "
+                f"{actuation_matrix.shape}."
             )
         if not self.actuators:
             return jnp.zeros((0,), dtype=u.dtype)
@@ -1098,16 +1149,16 @@ class SoftRobot(DynamicalSystem):
         start = 0
         for actuator in self.actuators:
             stop = start + actuator.num_channels
-            actuator_moment_matrix = (
-                None if moment_matrix is None else moment_matrix[:, start:stop]
+            actuator_transmission_matrix = (
+                None if actuation_matrix is None else actuation_matrix[:, start:stop]
             )
             efforts.append(
-                actuator._efforts(
+                actuator.efforts(
                     self,
                     q,
                     u[start:stop],
                     qd=qd,
-                    moment_matrix=actuator_moment_matrix,
+                    transmission_matrix=actuator_transmission_matrix,
                 )
             )
             start = stop
@@ -1134,31 +1185,72 @@ class SoftRobot(DynamicalSystem):
         Raises:
             ValueError: If ``u`` does not have shape (num_actuators,).
         """
-        moment_matrix = self.actuation_matrix(q)
-        effort = self._actuator_efforts(
+        actuation_matrix = self.actuation_matrix(q)
+        effort = self.actuator_efforts(
             q,
             u,
             qd=qd,
-            moment_matrix=moment_matrix,
+            actuation_matrix=actuation_matrix,
         )
-        return moment_matrix @ effort
+        return actuation_matrix @ effort
 
     def passive_elastic_force(self, q: Array) -> Array:
-        """Return the sum of installed passive conservative forces."""
+        """
+        Return the installed passive elements' elastic generalized force.
+
+        This method sums only composable passive-element contributions. System
+        implementations add the result to their intrinsic body elasticity when
+        evaluating :meth:`elastic_force`.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+
+        Returns:
+            tau_passive: Passive elastic generalized force of shape
+                ``(num_dofs,)``. A robot without passive elements returns
+                zeros.
+        """
         force = jnp.zeros((self.num_dofs,), dtype=q.dtype)
         for element in self.passive_elements:
             force = force + element.elastic_force(self, q)
         return force
 
     def passive_damping_matrix(self, q: Array) -> Array:
-        """Return the sum of installed passive damping matrices."""
+        """
+        Return the installed passive elements' generalized damping matrix.
+
+        This method sums only composable passive-element contributions. System
+        implementations add the result to their intrinsic body damping when
+        evaluating :meth:`damping_matrix`.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+
+        Returns:
+            D_passive: Passive damping matrix of shape
+                ``(num_dofs, num_dofs)``. A robot without passive elements
+                returns zeros.
+        """
         matrix = jnp.zeros((self.num_dofs, self.num_dofs), dtype=q.dtype)
         for element in self.passive_elements:
             matrix = matrix + element.damping_matrix(self, q)
         return matrix
 
     def passive_elastic_energy(self, q: Array) -> Array:
-        """Return the sum of installed passive elastic energies."""
+        """
+        Return the installed passive elements' stored elastic energy.
+
+        This method sums only composable passive-element contributions. System
+        implementations add the result to their intrinsic body strain energy
+        when evaluating elastic or potential energy.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+
+        Returns:
+            U_passive: Scalar passive elastic energy. A robot without passive
+                elements returns zero.
+        """
         energy = jnp.zeros((), dtype=q.dtype)
         for element in self.passive_elements:
             energy = energy + element.elastic_energy(self, q)
@@ -1170,8 +1262,27 @@ class SoftRobot(DynamicalSystem):
         s_points: Array,
         *,
         actuator_inputs: Array | None = None,
-    ):
-        """Return semantic active and passive actuator geometry for renderers."""
+    ) -> tuple["ActuatorVisualLayer", ...]:
+        """
+        Return renderer-facing geometry for installed actuation components.
+
+        The returned layers describe semantic geometry and optional scalar
+        fields for supported active actuators and passive elements. Visual
+        styling such as colors, radii, and line widths remains the renderer's
+        responsibility. Unsupported components do not produce a layer.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+            s_points: Backbone sample coordinates with shape
+                ``(num_points,)`` used for routed continuum geometry.
+            actuator_inputs: Optional actuator inputs of shape
+                ``(num_actuators,)``. When supplied, supported adapters attach
+                input-dependent scalar fields such as pressure or axial force.
+
+        Returns:
+            layers: Tuple of semantic actuator visual layers. The tuple is
+                empty when no installed component has a renderer adapter.
+        """
         from soromox.rendering.actuation import actuator_visual_layers
 
         return actuator_visual_layers(

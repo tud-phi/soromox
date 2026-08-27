@@ -444,6 +444,39 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
     assert calls == {"moment_matrix": 1, "path_lengths": 1}
 
 
+def test_actuator_transmission_matrix_delegates_to_transmission_moment_matrix():
+    actuator = ThreadlikeActuator.tendons(_routing())
+    robot = _spatial_pcs(actuators=actuator)
+    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
+
+    assert_allclose(
+        actuator.transmission_matrix(robot, q),
+        actuator.transmission.moment_matrix(robot, q),
+    )
+
+
+def test_precomputed_transmission_matrices_require_compatible_shapes():
+    actuator = ThreadlikeActuator.tendons(_routing())
+    robot = _spatial_pcs(actuators=actuator)
+    q = jnp.zeros(robot.num_dofs)
+    control = jnp.ones(robot.num_actuators)
+
+    with pytest.raises(ValueError, match="actuation_matrix must have shape"):
+        robot.actuator_efforts(
+            q,
+            control,
+            actuation_matrix=jnp.zeros((robot.num_dofs, robot.num_actuators + 1)),
+        )
+
+    with pytest.raises(ValueError, match="transmission_matrix must have shape"):
+        actuator.efforts(
+            robot,
+            q,
+            control,
+            transmission_matrix=jnp.zeros((robot.num_dofs, actuator.num_channels + 1)),
+        )
+
+
 @pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs, _gvs])
 def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
     actuator = ThreadlikeActuator.tendons(_routing())

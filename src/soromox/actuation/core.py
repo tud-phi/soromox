@@ -198,7 +198,20 @@ class Actuator(eqx.Module):
     def velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
         return self.transmission.velocities(robot, q, qd)
 
-    def moment_matrix(self, robot: SoftRobot, q: Array) -> Array:
+    def transmission_matrix(self, robot: SoftRobot, q: Array) -> Array:
+        """Return this actuator's transmission matrix.
+
+        The returned matrix is the moment matrix of the installed transmission,
+        with one column per actuator channel.
+
+        Args:
+            robot: Soft robot on which the actuator is installed.
+            q: Generalized coordinates of shape ``(robot.num_dofs,)``.
+
+        Returns:
+            A: Transmission matrix of shape
+                ``(robot.num_dofs, self.num_channels)``.
+        """
         return self.transmission.moment_matrix(robot, q)
 
     def efforts(
@@ -207,19 +220,43 @@ class Actuator(eqx.Module):
         q: Array,
         control: Array,
         qd: Array | None = None,
-    ) -> Array:
-        return self._efforts(robot, q, control, qd=qd)
-
-    def _efforts(
-        self,
-        robot: SoftRobot,
-        q: Array,
-        control: Array,
-        qd: Array | None = None,
         *,
-        moment_matrix: Array | None = None,
+        transmission_matrix: Array | None = None,
     ) -> Array:
-        """Evaluate effort using only the transmission state required by its law."""
+        """Map controls to work-conjugate efforts for this actuator.
+
+        Only transmission coordinates and velocities required by the installed
+        effort model are evaluated. A precomputed transmission matrix may be
+        supplied to reuse it when evaluating actuator-coordinate velocities.
+
+        Args:
+            robot: Soft robot on which the actuator is installed.
+            q: Generalized coordinates of shape ``(robot.num_dofs,)``.
+            control: Controls for this actuator with shape
+                ``(self.num_channels,)``.
+            qd: Optional generalized velocities of shape
+                ``(robot.num_dofs,)``. If omitted for a velocity-dependent
+                effort model, zero generalized velocity is used.
+            transmission_matrix: Optional precomputed transmission matrix with
+                shape ``(robot.num_dofs, self.num_channels)``.
+
+        Returns:
+            e: Work-conjugate actuator efforts with shape
+                ``(self.num_channels,)``.
+
+        Raises:
+            ValueError: If ``transmission_matrix`` has an incompatible shape.
+        """
+        if transmission_matrix is not None and transmission_matrix.shape != (
+            robot.num_dofs,
+            self.num_channels,
+        ):
+            raise ValueError(
+                "transmission_matrix must have shape "
+                f"({robot.num_dofs}, {self.num_channels}), got "
+                f"{transmission_matrix.shape}."
+            )
+
         coordinate = None
         if self.effort_model.requires_coordinate:
             coordinate = self.coordinates(robot, q)
@@ -228,10 +265,10 @@ class Actuator(eqx.Module):
         if self.effort_model.requires_velocity:
             if qd is None:
                 qd = jnp.zeros_like(q)
-            if moment_matrix is None:
+            if transmission_matrix is None:
                 velocity = self.velocities(robot, q, qd)
             else:
-                velocity = moment_matrix.T @ qd
+                velocity = transmission_matrix.T @ qd
 
         return self.effort_model.effort(control, coordinate, velocity)
 
