@@ -18,14 +18,12 @@ and include benchmark baseline and measurement context for performance claims.
 - Made effort laws declare their transmission-state dependencies so
   `DirectEffort` skips unused actuator-coordinate and velocity evaluation, and
   generalized-force assembly evaluates each actuator moment matrix only once.
-- Made the system-method benchmark device-selectable and reproducible on
-  heterogeneous CPUs by recording the JAX backend and CPU affinity, adding an
-  optional steady-state warmup, and reporting the median of synchronized
-  execution samples.
-- Made benchmark artifacts record source, software, precision, and accelerator
-  metadata. The parallel-rollout generator now defaults explicitly to GPU,
-  refuses silent CPU fallback when no compatible GPU is available, and supports
-  opt-in CPU measurements.
+- Made the system-method and parallel-rollout benchmarks device-selectable and
+  reproducible by recording source, software, precision, accelerator, and CPU
+  affinity metadata. The system-method benchmark adds optional steady-state
+  warmup and reports median synchronized execution samples; the parallel-rollout
+  generator defaults explicitly to GPU, refuses silent CPU fallback when no
+  compatible GPU is available, and supports opt-in CPU measurements.
 
 ### Performance
 
