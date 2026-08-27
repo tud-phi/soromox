@@ -65,6 +65,25 @@ from soromox.utils.numerics import safe_divide, safe_norm, safe_normalize
 
 __all__ = ["GVS"]
 
+_DEFAULT_NUM_DYNAMICS_PREFIX_BUCKETS = 4
+
+
+def _equal_count_prefix_buckets(
+    active_prefixes: tuple[int, ...], bucket_count: int
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Partition ordered segments into equally populated prefix buckets."""
+    effective_bucket_count = min(bucket_count, len(active_prefixes))
+    bucket_ends = tuple(
+        math.ceil(len(active_prefixes) * index / effective_bucket_count)
+        for index in range(1, effective_bucket_count + 1)
+    )
+    widths = tuple(active_prefixes[end - 1] for end in bucket_ends)
+    bucket_indices = tuple(
+        next(index for index, end in enumerate(bucket_ends) if segment < end)
+        for segment in range(len(active_prefixes))
+    )
+    return widths, bucket_indices
+
 
 class GVS(SoftRobot):
     """
@@ -83,6 +102,8 @@ class GVS(SoftRobot):
         max_num_integration_points: Maximum number of integration points per link (= max_num_gauss_points + 2).
         num_dofs: Total number of DOFs for the robot (sum of joint + link DOFs).
         num_padded_dofs: Theoretical maximum number of DOFs (num_segments * 2 * max_dof).
+        num_dynamics_prefix_buckets: Maximum number of active-DOF prefix
+            widths used by the dynamics reductions.
         active_dof_map: Basis matrix mapping active DOFs into the full padded
             joint/link coordinate space.
         scale_rotational_basis_by_length: If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
@@ -155,6 +176,8 @@ class GVS(SoftRobot):
     num_padded_dofs: int = eqx.field(
         static=True
     )  # Total number of DOFs for the robot, considering the maximum DOFs per link: num_segments * 2 * max_dof
+    num_dynamics_prefix_buckets: int = eqx.field(static=True)
+    active_dof_prefixes: tuple[int, ...] = eqx.field(static=True)
 
     Z1: float = eqx.field(static=True, default=0.5 - math.sqrt(3) / 6)
     Z2: float = eqx.field(static=True, default=0.5 + math.sqrt(3) / 6)
@@ -179,6 +202,9 @@ class GVS(SoftRobot):
     inner_integration_weights: Array
     mass_matrices: Array
     inner_mass_matrices: Array
+    link_basis_rows: Array
+    scaled_B_Z1_values: Array
+    scaled_B_Z2_values: Array
 
     B_joint: Array
     B_Xs: Array
@@ -226,6 +252,7 @@ class GVS(SoftRobot):
         structure: GVSStructure,
         actuators: Actuator | tuple[Actuator, ...] | None = None,
         passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
+        num_dynamics_prefix_buckets: int = _DEFAULT_NUM_DYNAMICS_PREFIX_BUCKETS,
         **kwargs: Any,
     ) -> None:
         """Initialize a GVS robot from typed parameters and static structure.
@@ -239,6 +266,9 @@ class GVS(SoftRobot):
                 model.
             passive_elements: Optional passive element or tuple of passive
                 elements. Pass ``None`` or an empty tuple to disable them.
+            num_dynamics_prefix_buckets: Maximum number of active-DOF prefix
+                widths compiled for the dynamics reductions. Larger values can
+                reduce padded arithmetic at the cost of additional compilation.
             **kwargs: Additional keyword arguments forwarded to
                 :class:`BaseContinuumSoftRobot`.
 
@@ -251,10 +281,17 @@ class GVS(SoftRobot):
             raise TypeError("params must be a GVSParams instance.")
         if not isinstance(structure, GVSStructure):
             raise TypeError("structure must be a GVSStructure instance.")
+        if isinstance(num_dynamics_prefix_buckets, bool) or not isinstance(
+            num_dynamics_prefix_buckets, int
+        ):
+            raise TypeError("num_dynamics_prefix_buckets must be an integer.")
+        if num_dynamics_prefix_buckets < 1:
+            raise ValueError("num_dynamics_prefix_buckets must be positive.")
         structure = _resolve_structure(params, structure)
         super().__init__(base_pose=params.base_pose, **kwargs)
         self.params = params
         self.structure = structure
+        self.num_dynamics_prefix_buckets = num_dynamics_prefix_buckets
         self.scale_rotational_basis_by_length = bool(
             structure.scale_rotational_basis_by_length
         )
@@ -333,6 +370,7 @@ class GVS(SoftRobot):
         max_dof: int | None = None,
         max_num_gauss_points: int | None = None,
         scale_rotational_basis_by_length: bool = False,
+        num_dynamics_prefix_buckets: int = _DEFAULT_NUM_DYNAMICS_PREFIX_BUCKETS,
         **kwargs: Any,
     ) -> "GVS":
         """Construct a GVS model directly from user-facing segment specs.
@@ -351,6 +389,8 @@ class GVS(SoftRobot):
             max_num_gauss_points: Optional common quadrature padding size.
             scale_rotational_basis_by_length: Whether to normalize rotational
                 strain-basis rows by link length.
+            num_dynamics_prefix_buckets: Maximum number of active-DOF prefix
+                widths compiled for the dynamics reductions.
             **kwargs: Additional keyword arguments forwarded to the GVS
                 constructor, such as actuators or passive elements.
 
@@ -371,7 +411,12 @@ class GVS(SoftRobot):
             max_num_gauss_points=max_num_gauss_points,
             scale_rotational_basis_by_length=scale_rotational_basis_by_length,
         )
-        return cls(params=params, structure=structure, **kwargs)
+        return cls(
+            params=params,
+            structure=structure,
+            num_dynamics_prefix_buckets=num_dynamics_prefix_buckets,
+            **kwargs,
+        )
 
     @property
     def is_planar(self) -> bool:
@@ -742,6 +787,44 @@ class GVS(SoftRobot):
             joint_stiffness=K_joint_full,
         )
 
+    def _compact_link_basis_operands(
+        self, segment_lengths: Array
+    ) -> tuple[Array, Array, Array]:
+        """Pack the structurally one-row columns of each link strain basis."""
+        active = self.basis_active_params.astype(jnp.int32)
+        orders = self.basis_order_params.astype(jnp.int32)
+        standard_widths = active * (orders + 1)
+        fourier_widths = active * (2 * orders + 1)
+        widths = jnp.where(
+            (self.basis_type_index == Basis.BASISTYPE_MAP["fourier"])[:, None],
+            fourier_widths,
+            standard_widths,
+        )
+        offsets = jnp.concatenate(
+            [
+                jnp.zeros((self.num_segments, 1), dtype=jnp.int32),
+                jnp.cumsum(widths[:, :-1], axis=1),
+            ],
+            axis=1,
+        )
+        columns = jnp.arange(self.max_dof, dtype=jnp.int32)[None, None, :]
+        row_numbers = jnp.arange(6, dtype=jnp.int32)[None, :, None]
+        active_columns = (columns >= offsets[:, :, None]) & (
+            columns < (offsets + widths)[:, :, None]
+        )
+        rows = jnp.max(jnp.where(active_columns, row_numbers, -1), axis=1)
+
+        B_Z1 = self.B_Z1
+        B_Z2 = self.B_Z2
+        if self.scale_rotational_basis_by_length:
+            scales = segment_lengths[:, None, None, None]
+            B_Z1 = B_Z1.at[:, :, :3].divide(scales)
+            B_Z2 = B_Z2.at[:, :, :3].divide(scales)
+        gather_rows = jnp.maximum(rows, 0)[:, None, None, :]
+        values_Z1 = jnp.take_along_axis(B_Z1, gather_rows, axis=2).squeeze(2)
+        values_Z2 = jnp.take_along_axis(B_Z2, gather_rows, axis=2).squeeze(2)
+        return rows.astype(jnp.int32), values_Z1, values_Z2
+
     def precompute(self) -> None:
         """Precompute padded gathers and canonical system matrices.
 
@@ -754,6 +837,10 @@ class GVS(SoftRobot):
             initial construction.
         """
         dofs_flat = self.dofs_per_segment.reshape(-1)
+        active_dof_prefixes = tuple(
+            int(value) for value in jnp.cumsum(jnp.sum(self.dofs_per_segment, axis=1))
+        )
+        object.__setattr__(self, "active_dof_prefixes", active_dof_prefixes)
         start_indices_flat = jnp.cumsum(jnp.pad(dofs_flat, (1, 0)))[:-1]
         start_indices = start_indices_flat.reshape(self.num_segments, 2)
         gather_indices = start_indices[..., None] + jnp.arange(self.max_dof)
@@ -782,6 +869,12 @@ class GVS(SoftRobot):
             "inner_mass_matrices",
             self.mass_matrices[:, 1 : self.max_num_integration_points - 1],
         )
+        link_basis_rows, scaled_B_Z1_values, scaled_B_Z2_values = (
+            self._compact_link_basis_operands(self.segment_lengths)
+        )
+        object.__setattr__(self, "link_basis_rows", link_basis_rows)
+        object.__setattr__(self, "scaled_B_Z1_values", scaled_B_Z1_values)
+        object.__setattr__(self, "scaled_B_Z2_values", scaled_B_Z2_values)
         object.__setattr__(self, "gather_indices", gather_indices)
         object.__setattr__(self, "gather_mask", gather_mask)
         object.__setattr__(self, "young_stiffness_operator", young_operator)
@@ -1041,10 +1134,16 @@ class GVS(SoftRobot):
         young_operator, shear_operator, damping_operator = (
             material_operators_from_params(params, self.structure)
         )
+        link_basis_rows, scaled_B_Z1_values, scaled_B_Z2_values = (
+            updated_self._compact_link_basis_operands(updated_self.segment_lengths)
+        )
         return eqx.tree_at(
             lambda model: (
                 model.inner_integration_weights,
                 model.inner_mass_matrices,
+                model.link_basis_rows,
+                model.scaled_B_Z1_values,
+                model.scaled_B_Z2_values,
                 model.young_stiffness_operator,
                 model.shear_stiffness_operator,
                 model.material_damping_operator,
@@ -1062,6 +1161,9 @@ class GVS(SoftRobot):
                 updated_self.mass_matrices[
                     :, 1 : updated_self.max_num_integration_points - 1
                 ],
+                link_basis_rows,
+                scaled_B_Z1_values,
+                scaled_B_Z2_values,
                 young_operator,
                 shear_operator,
                 damping_operator,
@@ -1533,6 +1635,56 @@ class GVS(SoftRobot):
         )
         B_Magnus_dot = comm_coeff * (
             se3.small_adjoint(xid_Z1) @ B_Z2 - se3.small_adjoint(xid_Z2) @ B_Z1
+        )
+        Magnusd = B_Magnus @ qd_i
+
+        g_step, T_step, Td_step = (
+            se3._exp_with_left_jacobian_and_directional_derivative(
+                Magnus, Magnusd, self.global_eps, self.tangent_eps
+            )
+        )
+        Ad_step_inv = se3.adjoint_inverse(g_step)
+        return g_step, T_step, Td_step, Ad_step_inv, B_Magnus, B_Magnus_dot
+
+    def _compact_magnus_jacobian_time_derivative_step_terms(
+        self,
+        length: Array,
+        H: Array,
+        q_i: Array,
+        qd_i: Array,
+        basis_rows: Array,
+        B_Z1_values: Array,
+        B_Z2_values: Array,
+        xi_ref_Z1: Array,
+        xi_ref_Z2: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """Evaluate one cell from compact one-row-per-column basis operands."""
+        valid = basis_rows >= 0
+        safe_rows = jnp.maximum(basis_rows, 0)
+        values_Z1 = jnp.where(valid, B_Z1_values, 0.0)
+        values_Z2 = jnp.where(valid, B_Z2_values, 0.0)
+        row_indicators = (
+            jax.nn.one_hot(safe_rows, 6, dtype=q_i.dtype).T * valid[None, :]
+        )
+
+        xi_Z1 = row_indicators @ (values_Z1 * q_i) + xi_ref_Z1
+        xi_Z2 = row_indicators @ (values_Z2 * q_i) + xi_ref_Z2
+        xid_Z1 = row_indicators @ (values_Z1 * qd_i)
+        xid_Z2 = row_indicators @ (values_Z2 * qd_i)
+
+        ad_xi_Z1 = se3.small_adjoint(xi_Z1)
+        ad_xi_Z2 = se3.small_adjoint(xi_Z2)
+        comm_coeff = jnp.sqrt(3) * (length**2) * H**2 / 12
+        Magnus = length * (H / 2) * (xi_Z1 + xi_Z2) + comm_coeff * (ad_xi_Z1 @ xi_Z2)
+        B_Magnus = length * (H / 2) * row_indicators * (values_Z1 + values_Z2)[
+            None, :
+        ] + comm_coeff * (
+            ad_xi_Z1[:, safe_rows] * values_Z2[None, :]
+            - ad_xi_Z2[:, safe_rows] * values_Z1[None, :]
+        )
+        B_Magnus_dot = comm_coeff * (
+            se3.small_adjoint(xid_Z1)[:, safe_rows] * values_Z2[None, :]
+            - se3.small_adjoint(xid_Z2)[:, safe_rows] * values_Z1[None, :]
         )
         Magnusd = B_Magnus @ qd_i
 
@@ -4369,11 +4521,14 @@ class GVS(SoftRobot):
         interior quadrature values are reduced with matrix products. The
         Jacobian remains in active coordinates throughout; masked scatters
         insert the current joint or link basis without multiplying by dense
-        selectors. Keeping both scan bodies independent of a segment's concrete
-        DOF and quadrature counts bounds tracing work as the number of segments
-        grows. Gravity is propagated directly between local frames, and
-        ``C(q, qd) @ qd`` is assembled without constructing the complete
-        Coriolis matrix.
+        selectors. The three global reductions dispatch over at most
+        ``num_dynamics_prefix_buckets`` equally populated active-prefix widths.
+        This bounds the compiled branch count independently of the number of
+        segments while avoiding most arithmetic on future-segment DOFs. Keeping
+        both scan bodies independent of a segment's concrete DOF and quadrature
+        counts bounds tracing work as the number of segments grows. Gravity is
+        propagated directly between local frames, and ``C(q, qd) @ qd`` is
+        assembled without constructing the complete Coriolis matrix.
 
         Args:
             q: Active generalized coordinates, shape
@@ -4437,13 +4592,14 @@ class GVS(SoftRobot):
                     adjoint_inverse,
                     magnus_basis,
                     magnus_basis_dot,
-                ) = self._magnus_jacobian_time_derivative_step_terms(
+                ) = self._compact_magnus_jacobian_time_derivative_step_terms(
                     self.segment_lengths[segment_index],
                     cell_width,
                     q_blocks[segment_index, 1],
                     qd_blocks[segment_index, 1],
-                    self.B_Z1[segment_index, cell_index],
-                    self.B_Z2[segment_index, cell_index],
+                    self.link_basis_rows[segment_index],
+                    self.scaled_B_Z1_values[segment_index, cell_index],
+                    self.scaled_B_Z2_values[segment_index, cell_index],
                     self.xi_ref_Z1[segment_index, cell_index],
                     self.xi_ref_Z2[segment_index, cell_index],
                 )
@@ -4467,6 +4623,52 @@ class GVS(SoftRobot):
         gravity_initial = se3.adjoint_inverse(self.g0) @ self.g
         inertia_initial = jnp.zeros((self.num_dofs, self.num_dofs), dtype=dtype)
         generalized_vector_initial = jnp.zeros((self.num_dofs,), dtype=dtype)
+        prefix_bucket_widths, segment_bucket_indices = _equal_count_prefix_buckets(
+            self.active_dof_prefixes, self.num_dynamics_prefix_buckets
+        )
+        segment_bucket_indices_array = jnp.asarray(segment_bucket_indices)
+
+        def make_reduction_branch(bucket_width: int):
+            def reduce_bucket(
+                operands: tuple[Array, Array, Array, Array, Array],
+            ) -> tuple[Array, Array, Array]:
+                (
+                    jacobians,
+                    weights,
+                    mass_diagonals_i,
+                    wrenches,
+                    gravity_wrenches,
+                ) = operands
+                flattened_row_count = (self.max_num_integration_points - 2) * 6
+                jacobians_prefix = jacobians[..., :bucket_width]
+                jacobians_flat = jacobians_prefix.reshape(
+                    flattened_row_count, bucket_width
+                )
+                weighted_jacobians_flat = (
+                    weights[:, None, None]
+                    * mass_diagonals_i[:, :, None]
+                    * jacobians_prefix
+                ).reshape(flattened_row_count, bucket_width)
+                inertia_prefix = jacobians_flat.T @ weighted_jacobians_flat
+                coriolis_prefix = jacobians_flat.T @ (
+                    weights[:, None] * wrenches
+                ).reshape(flattened_row_count)
+                gravity_prefix = -jacobians_flat.T @ (
+                    weights[:, None] * gravity_wrenches
+                ).reshape(flattened_row_count)
+                vector_padding = (0, self.num_dofs - bucket_width)
+                matrix_padding = (vector_padding, vector_padding)
+                return (
+                    jnp.pad(inertia_prefix, matrix_padding),
+                    jnp.pad(coriolis_prefix, vector_padding),
+                    jnp.pad(gravity_prefix, vector_padding),
+                )
+
+            return reduce_bucket
+
+        reduction_branches = tuple(
+            make_reduction_branch(width) for width in prefix_bucket_widths
+        )
 
         def insert_local_basis(
             local_basis: Array, segment_index: Array, block_index: int
@@ -4513,10 +4715,14 @@ class GVS(SoftRobot):
 
             joint_tangent = insert_local_basis(joint_tangent_basis, segment_index, 0)
             jacobian_joint = joint_adjoint_inverse @ (jacobian_tip + joint_tangent)
-            jacobian_dot_qd_joint = joint_adjoint_inverse @ (
-                jacobian_dot_qd_tip
-                + joint_tangent_basis_dot @ qd_blocks[segment_index, 0]
-            ) + joint_adjoint_inverse_dot @ (jacobian_tip @ qd)
+            jacobian_dot_qd_joint = (
+                joint_adjoint_inverse
+                @ (
+                    jacobian_dot_qd_tip
+                    + joint_tangent_basis_dot @ qd_blocks[segment_index, 0]
+                )
+                + joint_adjoint_inverse_dot @ velocity_tip
+            )
             velocity_joint = joint_adjoint_inverse @ (velocity_tip + joint_velocity)
             gravity_joint = joint_adjoint_inverse @ gravity_tip
 
@@ -4552,7 +4758,7 @@ class GVS(SoftRobot):
                 jacobian_dot_qd_next = adjoint_inverse @ (
                     jacobian_dot_qd_previous + tangent_velocity_dot
                 ) - se3.small_adjoint_action(
-                    step_velocity, adjoint_inverse @ (jacobian_previous @ qd)
+                    step_velocity, adjoint_inverse @ velocity_previous
                 )
                 gravity_next = adjoint_inverse @ gravity_previous
                 return (
@@ -4591,21 +4797,21 @@ class GVS(SoftRobot):
 
             weights = self.inner_integration_weights[segment_index]
             mass_diagonals_i = mass_diagonals[segment_index]
-            flattened_row_count = (self.max_num_integration_points - 2) * 6
-            jacobians_flat = jacobians.reshape(flattened_row_count, self.num_dofs)
-            inertia_segment = jacobians_flat.T @ (
-                weights[:, None, None] * mass_diagonals_i[:, :, None] * jacobians
-            ).reshape(flattened_row_count, self.num_dofs)
-
             momenta = mass_diagonals_i * velocities
             coadjoint_momenta = jax.vmap(se3.coadjoint_action)(velocities, momenta)
             wrenches = mass_diagonals_i * jacobians_dot_qd + coadjoint_momenta
-            coriolis_segment = jacobians_flat.T @ (weights[:, None] * wrenches).reshape(
-                flattened_row_count
+            gravity_wrenches = mass_diagonals_i * gravities
+            inertia_segment, coriolis_segment, gravity_segment = lax.switch(
+                segment_bucket_indices_array[segment_index],
+                reduction_branches,
+                (
+                    jacobians,
+                    weights,
+                    mass_diagonals_i,
+                    wrenches,
+                    gravity_wrenches,
+                ),
             )
-            gravity_segment = -jacobians_flat.T @ (
-                weights[:, None] * mass_diagonals_i * gravities
-            ).reshape(flattened_row_count)
 
             kinematics_tip = advance_cell(kinematics_last_quad, tip_cell_terms_i)
             return (

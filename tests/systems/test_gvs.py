@@ -534,6 +534,68 @@ def build_constant_strain_gvs(
     return GVS(params=params, structure=structure)
 
 
+def test_gvs_dynamics_prefix_bucket_count_is_configurable() -> None:
+    default = build_constant_strain_gvs(num_segments=3)
+    one_bucket = GVS(
+        params=default.params,
+        structure=default.structure,
+        num_dynamics_prefix_buckets=1,
+    )
+    many_buckets = GVS(
+        params=default.params,
+        structure=default.structure,
+        num_dynamics_prefix_buckets=16,
+    )
+    q = jnp.linspace(-0.02, 0.02, default.num_dofs)
+    qd = jnp.linspace(0.03, -0.03, default.num_dofs)
+
+    assert default.num_dynamics_prefix_buckets == 4
+    assert one_bucket.num_dynamics_prefix_buckets == 1
+    assert many_buckets.num_dynamics_prefix_buckets == 16
+    expected = default.dynamics_terms(q, qd)
+    for actual in (
+        one_bucket.dynamics_terms(q, qd),
+        many_buckets.dynamics_terms(q, qd),
+    ):
+        for actual_term, expected_term in zip(actual, expected, strict=True):
+            assert_allclose(actual_term, expected_term, rtol=RTOL, atol=ATOL)
+
+    tangent = (0.1 * jnp.ones_like(q), -0.2 * jnp.ones_like(qd))
+
+    def dynamics_jvp(robot: GVS):
+        return jvp(
+            lambda state: robot.dynamics_terms(*state),
+            ((q, qd),),
+            (tangent,),
+        )
+
+    expected_primal, expected_tangent = dynamics_jvp(default)
+    for robot in (one_bucket, many_buckets):
+        actual_primal, actual_tangent = dynamics_jvp(robot)
+        for actual_tree, expected_tree in (
+            (actual_primal, expected_primal),
+            (actual_tangent, expected_tangent),
+        ):
+            for actual_term, expected_term in zip(
+                actual_tree, expected_tree, strict=True
+            ):
+                assert_allclose(actual_term, expected_term, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize(
+    ("value", "error"),
+    [(0, ValueError), (-1, ValueError), (True, TypeError), (2.0, TypeError)],
+)
+def test_gvs_dynamics_prefix_bucket_count_validation(value, error) -> None:
+    default = build_constant_strain_gvs()
+    with pytest.raises(error, match="num_dynamics_prefix_buckets"):
+        GVS(
+            params=default.params,
+            structure=default.structure,
+            num_dynamics_prefix_buckets=value,
+        )
+
+
 def test_gvs_segment_factories_match_explicit_constructor() -> None:
     segments = [
         GVSSegment(
