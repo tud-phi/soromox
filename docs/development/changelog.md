@@ -22,6 +22,10 @@ and include benchmark baseline and measurement context for performance claims.
   heterogeneous CPUs by recording the JAX backend and CPU affinity, adding an
   optional steady-state warmup, and reporting the median of synchronized
   execution samples.
+- Made benchmark artifacts record source, software, precision, and accelerator
+  metadata. The parallel-rollout generator now defaults explicitly to GPU,
+  refuses silent CPU fallback when no compatible GPU is available, and supports
+  opt-in CPU measurements.
 
 ### Performance
 

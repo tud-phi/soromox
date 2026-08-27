@@ -47,3 +47,14 @@ def test_measure_jitted_call_supports_warmup_duration() -> None:
 
     assert compile_time >= 0.0
     assert execution_time > 0.0
+
+
+def test_csv_records_environment_metadata(tmp_path) -> None:
+    path = tmp_path / "results.csv"
+    benchmark._write_csv([{}], path)
+
+    header = path.read_text(encoding="utf-8").splitlines()[0].split(",")
+
+    assert "git_revision" in header
+    assert "jax_version" in header
+    assert "device_id" in header

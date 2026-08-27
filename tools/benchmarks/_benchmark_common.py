@@ -3,8 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import importlib.metadata
+import subprocess
+import sys
 from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import jax
@@ -27,6 +32,67 @@ from soromox.systems import (
 )
 
 Array = jax.Array
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _distribution_version(distribution: str) -> str | None:
+    """Return an installed distribution version without importing its package."""
+
+    try:
+        return importlib.metadata.version(distribution)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _git_output(*args: str) -> str | None:
+    """Return one Git query result, or ``None`` outside a readable checkout."""
+
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return result.stdout.strip()
+
+
+def benchmark_environment_metadata(device: jax.Device) -> dict[str, Any]:
+    """Describe the software and accelerator environment for an artifact row.
+
+    The returned fields are intentionally flat so they can be copied into both
+    JSON objects and CSV rows. Hostnames and user-specific paths are excluded;
+    the metadata captures the factors most likely to explain benchmark changes
+    without exposing machine identity.
+
+    Args:
+        device: JAX device on which the benchmark executes.
+
+    Returns:
+        Reproducibility metadata containing the UTC start time, source revision,
+        installed runtime versions, FP64 setting, and accelerator identity.
+    """
+
+    git_revision = _git_output("rev-parse", "HEAD")
+    tracked_changes = _git_output("status", "--porcelain", "--untracked-files=no")
+    device_kind = getattr(device, "device_kind", None)
+    platform_version = getattr(device.client, "platform_version", None)
+    return {
+        "timestamp_utc": datetime.now(UTC).isoformat(),
+        "git_revision": git_revision,
+        "git_dirty": None if tracked_changes is None else bool(tracked_changes),
+        "python_version": sys.version.split()[0],
+        "soromox_version": _distribution_version("soromox"),
+        "jax_version": jax.__version__,
+        "jaxlib_version": _distribution_version("jaxlib"),
+        "x64_enabled": bool(jax.config.x64_enabled),
+        "device_kind": device_kind,
+        "device_id": f"{device.platform}:{device_kind or 'unknown'}:{device.id}",
+        "platform_version": platform_version,
+        "device_count": len(jax.devices(device.platform)),
+    }
 
 
 @dataclass(frozen=True)

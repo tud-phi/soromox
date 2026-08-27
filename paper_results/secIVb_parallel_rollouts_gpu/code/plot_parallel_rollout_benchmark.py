@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Visualise batch-scaling benchmark CSV results."""
+"""Visualise CPU or GPU parallel-rollout benchmark CSV results."""
 
 from __future__ import annotations
 
@@ -303,6 +303,21 @@ def _curve_xy(rows: Sequence[Mapping[str, Any]]) -> tuple[np.ndarray, np.ndarray
     return x_values, y_values
 
 
+def _device_title(rows: Sequence[Mapping[str, Any]]) -> str:
+    """Return a plot title describing the platforms represented by ``rows``."""
+
+    devices = sorted(
+        {
+            str(row["device"]).strip().upper()
+            for row in rows
+            if not _is_missing(row.get("device"))
+        }
+    )
+    if not devices:
+        return "Parallel-Rollout Throughput"
+    return f"Parallel-Rollout Throughput ({' and '.join(devices)})"
+
+
 # --- Plotting Functions ---
 def _plot(
     rows: list[Mapping[str, Any]],
@@ -538,7 +553,7 @@ def _plot_combined_scaling(
     ax.set_yscale("log")
     ax.set_xlabel(r"Number of parallel environments $n_\mathrm{b}$")
     ax.set_ylabel(r"Simulation throughput $\Gamma_\mathrm{sim}$")
-    ax.set_title("GPU Batch-Scaling Throughput")
+    ax.set_title(_device_title(rows))
 
     if y_min <= 1.0 <= y_max:
         ax.axhline(1.0, color="#717674", linestyle=":", linewidth=1.8, alpha=0.9)
@@ -617,7 +632,7 @@ def _interactive_selection(
 ) -> argparse.Namespace:
     """Prompt user for model and segment selections if not provided via CLI."""
     print("\n" + "=" * 40)
-    print(" SoRoMoX Batch Scaling Plotter")
+    print(" SoRoMoX Parallel Rollout Benchmark Plotter")
     print("=" * 40)
 
     # 1. Model Selection
@@ -677,7 +692,7 @@ def _interactive_selection(
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Visualise batch-scaling benchmark CSV results."
+        description="Visualise CPU or GPU parallel-rollout benchmark CSV results."
     )
     parser.add_argument(
         "--csv",
@@ -701,7 +716,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--output-name",
         type=str,
-        default="batch_scaling.pdf",
+        default="parallel_rollout_benchmark.pdf",
         help="Filename for the main scaling plot.",
     )
     parser.add_argument(

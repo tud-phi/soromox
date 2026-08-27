@@ -11,6 +11,7 @@ of link or segment counts, and can optionally visualise the results.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import statistics
@@ -57,6 +58,7 @@ from tools.benchmarks._benchmark_common import (
     add_gauss_point_args,
     add_integration_args,
     add_system_selection_args,
+    benchmark_environment_metadata,
     block_until_ready,
     build_system_with_gauss_points,
     gauss_point_sweep_values,
@@ -715,6 +717,18 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
         "gauss_points",
         "integration_points",
         "backend",
+        "timestamp_utc",
+        "git_revision",
+        "git_dirty",
+        "python_version",
+        "soromox_version",
+        "jax_version",
+        "jaxlib_version",
+        "x64_enabled",
+        "device_kind",
+        "device_id",
+        "platform_version",
+        "device_count",
         "cpu_affinity",
         "jit_compile_time_s",
         "jit_execution_time_s",
@@ -724,10 +738,10 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
         "execution_repeats",
         "warmup_duration",
     ]
-    with path.open("w", encoding="utf-8") as fp:
-        fp.write(",".join(headers) + "\n")
-        for row in results:
-            fp.write(",".join(str(row[key]) for key in headers) + "\n")
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(results)
     print(f"Wrote benchmark data to {path}")
 
 
@@ -826,6 +840,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.device == "gpu" and active_backend == "cpu":
         raise RuntimeError("Requested GPU but JAX selected the CPU backend.")
     print(f"JAX backend: {active_backend}")
+    environment_metadata = benchmark_environment_metadata(jax.devices()[0])
     active_cpu_affinity = _active_cpu_affinity()
     if active_cpu_affinity is not None:
         print(f"CPU affinity: {active_cpu_affinity}")
@@ -916,6 +931,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "gauss_points": gauss_points,
                             "integration_points": integration_points,
                             "backend": active_backend,
+                            **environment_metadata,
                             "cpu_affinity": active_cpu_affinity,
                             "jit_compile_time_s": compile_time,
                             "jit_execution_time_s": exec_time,

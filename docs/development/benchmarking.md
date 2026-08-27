@@ -148,17 +148,20 @@ execution time, ratios to the direct analytical and protected-autograd reference
 and `max_abs_diff` / `max_rel_diff` sanity checks. The Markdown summary groups the
 main speedup ratios by system and case.
 
-## Benchmarking simulation batch scaling
+## Benchmarking parallel rollouts
 
-`generate_benchmark_gpu.py` runs full simulations in parallel batches
-using `jax.vmap`. It records both the per-environment speed
+`generate_parallel_rollout_benchmark.py` runs full simulations in parallel
+batches using `jax.vmap`. GPU execution is the default; use `--device cpu` for
+an explicit CPU run. If the default GPU cannot be initialized, the generator
+warns and exits without silently recording CPU results. It records both the
+per-environment speed
 (`simulated_time / wall_time`) and the aggregate throughput
 (`num_envs * simulated_time / wall_time`), so you can see whether each environment is
 running faster than real-time *and* how many simulated seconds are produced per wall
 second. Each configuration can export tables and plots spanning multiple segment counts.
 
 ```bash
-python paper_results/secIVb_parallel_rollouts_gpu/code/generate_benchmark_gpu.py \
+python paper_results/secIVb_parallel_rollouts_gpu/code/generate_parallel_rollout_benchmark.py \
   --systems articulated_soft_robot pcs planar_pcs \
   --segment-counts 1 3 5 \
   --batch-sizes 1 2 4 8 16 32 64 \
@@ -172,11 +175,12 @@ python paper_results/secIVb_parallel_rollouts_gpu/code/generate_benchmark_gpu.py
 ### Key options
 
 - `--batch-sizes`: number of environments to launch per measurement.
+- `--device`: execution platform (`gpu` by default, or explicit `cpu`).
 - Shared `--systems`, `--segment-counts`, `--duration`, `--solver-dt` (`--dt` alias), `--save-dt`.
 - `--noise-scale`: per-environment perturbation applied to `q`/`qd` to avoid feeding
   identical states to all replicas (helps stress vectorisation paths).
 - `--repeats`, `--warmup-runs`: control timing stability.
-- `--csv`, `--npz`, `--plot`, `--show-plot`, `--log-x`, `--log-y`: artifact and
+- `--csv`, `--plot`, `--show-plot`, `--log-x`, `--log-y`: artifact and
   visualisation controls.
 
 ### Output and interpretation
@@ -189,6 +193,9 @@ For each combination of system, segment count, and number of environments the sc
 - Per-environment speed ratio `simulated_time / wall_time`, total throughput
   `number_of_environments * simulated_time / wall_time`, and per-environment wall time. Ratios > 1
   indicate faster-than-real-time performance.
+- A reproducibility fingerprint containing source revision/dirty state,
+  software versions, FP64 mode, UTC timestamp, and accelerator/runtime
+  identity.
 
 The generator's optional diagnostic plots show two stacked panels per system:
 the top tracks per-environment
@@ -213,7 +220,7 @@ optional filters for systems/functions. Pass `--show` to open a window interacti
 For the polished Section IVb publication plots, use:
 
 ```bash
-python paper_results/secIVb_parallel_rollouts_gpu/code/plot_benchmark_gpu.py \
+python paper_results/secIVb_parallel_rollouts_gpu/code/plot_parallel_rollout_benchmark.py \
   --systems articulated_soft_robot planar_pcs pcs gvs \
   --segment-counts 1 2 4 8 16 32
 ```

@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
-"""Generate the Section IVb batched-rollout benchmark data.
+"""Generate the Section IVb parallel-rollout benchmark data.
 
 The available systems are provided by `_benchmark_common.get_system_registry`,
 including articulated soft robots, pendulums, PCS, planar PCS, and GVS models.
+
+GPU execution is the default because Section IVb studies accelerator batch
+scaling. Pass ``--device cpu`` to run the same workload on the CPU. A requested
+GPU must be visible to JAX; otherwise the script emits an actionable warning
+and exits without writing misleading CPU measurements.
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
+import os
 import sys
 import time
+import warnings
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +25,24 @@ from typing import Any
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+
+
+def _configure_device_before_jax_import(argv: list[str]) -> str:
+    """Apply an explicit CPU selection before JAX initializes its backends."""
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--device", choices=("gpu", "cpu"), default="gpu")
+    args, _ = parser.parse_known_args(argv)
+    if args.device == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"
+    return str(args.device)
+
+
+_EARLY_DEVICE_CHOICE = (
+    _configure_device_before_jax_import(sys.argv[1:])
+    if __name__ == "__main__"
+    else None
+)
 
 import jax
 import jax.numpy as jnp
@@ -28,6 +54,7 @@ from tools.benchmarks._benchmark_common import (  # noqa: E402
     add_gauss_point_args,
     add_integration_args,
     add_system_selection_args,
+    benchmark_environment_metadata,
     block_until_ready,
     build_system_with_gauss_points,
     gauss_point_sweep_values,
@@ -55,6 +82,54 @@ class RuntimeConfig:
     solver_dt: float
     save_dt: float
     t0: float = 0.0
+
+
+def _select_device(requested_device: str) -> jax.Device | None:
+    """Select the requested JAX device without silently changing platforms.
+
+    Args:
+        requested_device: JAX platform name. The CLI accepts ``"gpu"`` and
+            ``"cpu"``.
+
+    Returns:
+        The first visible device on the requested platform. ``None`` is
+        returned when GPU execution was requested but JAX cannot initialize a
+        compatible accelerator.
+
+    Raises:
+        RuntimeError: If CPU execution was requested but JAX cannot initialize
+            its CPU backend.
+    """
+
+    try:
+        devices = jax.devices(requested_device)
+    except RuntimeError as error:
+        if requested_device != "gpu":
+            raise
+        warnings.warn(
+            "GPU benchmark requested, but JAX could not initialize a compatible "
+            "GPU. Check the CUDA-capable device, NVIDIA driver, and CUDA-enabled "
+            "jaxlib installation, or pass '--device cpu' to run an explicit CPU "
+            "benchmark. No benchmark data was written. "
+            f"JAX reported: {error}",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return None
+
+    if devices:
+        return devices[0]
+    if requested_device != "gpu":
+        raise RuntimeError("JAX reported no CPU devices.")
+    warnings.warn(
+        "GPU benchmark requested, but JAX reported no compatible GPU devices. "
+        "Check the NVIDIA driver and CUDA-enabled jaxlib installation, or pass "
+        "'--device cpu' to run an explicit CPU benchmark. No benchmark data was "
+        "written.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return None
 
 
 def _repeat_with_noise(
@@ -159,11 +234,22 @@ def _write_csv(results: Sequence[Mapping[str, Any]], path: Path) -> None:
         "timing_repeats",
         "device",
         "device_id",
+        "timestamp_utc",
+        "git_revision",
+        "git_dirty",
+        "python_version",
+        "soromox_version",
+        "jax_version",
+        "jaxlib_version",
+        "x64_enabled",
+        "device_kind",
+        "platform_version",
+        "device_count",
     ]
-    with path.open("w", encoding="utf-8") as fp:
-        fp.write(",".join(headers) + "\n")
-        for row in results:
-            fp.write(",".join(str(row.get(col, "")) for col in headers) + "\n")
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=headers, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(results)
     print(f"[+] Wrote CSV results to {path}")
 
 
@@ -275,6 +361,15 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         registry,
         default_segment_counts=DEFAULT_SEGMENT_COUNTS,
         default_systems=DEFAULT_SYSTEMS,
+    )
+    parser.add_argument(
+        "--device",
+        choices=("gpu", "cpu"),
+        default="gpu",
+        help=(
+            "JAX platform on which to run the benchmark. GPU is the default; "
+            "CPU execution must be requested explicitly."
+        ),
     )
     add_gauss_point_args(parser)
     add_integration_args(parser)
@@ -388,8 +483,17 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
     return args
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    args = parse_args(sys.argv[1:] if argv is None else argv)
+def _run_benchmarks(args: argparse.Namespace, device: jax.Device) -> int:
+    """Run all requested benchmark cases on one explicitly selected device.
+
+    Args:
+        args: Validated command-line arguments.
+        device: JAX device selected from the requested platform.
+
+    Returns:
+        Zero after writing the requested artifacts.
+    """
+
     runtime = RuntimeConfig(
         duration=args.duration,
         solver_dt=args.solver_dt,
@@ -399,9 +503,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.gvs_scaling == "basis-order":
         registry["gvs"] = get_gvs_basis_order_system_config()
     key = jax.random.PRNGKey(args.seed)
-    device = jax.devices()[0]
-    device_name = getattr(device, "device_kind", getattr(device, "device_type", ""))
-    device_id = f"{device.platform}:{device_name or 'unknown'}:{device.id}"
+    environment_metadata = benchmark_environment_metadata(device)
 
     results: list[dict[str, Any]] = []
     for system_name in args.systems:
@@ -498,7 +600,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             "warmup_runs": args.warmup_runs,
                             "timing_repeats": args.repeats,
                             "device": device.platform,
-                            "device_id": device_id,
+                            **environment_metadata,
                         }
                     )
 
@@ -507,6 +609,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         _plot_results(results, args.plot, args.show_plot, args.log_x, args.log_y)
 
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Parse arguments, validate the requested platform, and run the benchmark."""
+
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    if _EARLY_DEVICE_CHOICE is not None and args.device != _EARLY_DEVICE_CHOICE:
+        raise RuntimeError(
+            "The --device choice changed after JAX was imported. Pass it on the "
+            "process command line so CPU selection can occur before initialization."
+        )
+    device = _select_device(args.device)
+    if device is None:
+        return 2
+    if jax.default_backend() != args.device:
+        raise RuntimeError(
+            f"Requested {args.device!r}, but JAX selected "
+            f"{jax.default_backend()!r}. Run the generator in a fresh process "
+            "with the intended --device option."
+        )
+    with jax.default_device(device):
+        return _run_benchmarks(args, device)
 
 
 if __name__ == "__main__":  # pragma: no cover
