@@ -1975,6 +1975,61 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates() -
     )
 
 
+def test_scaled_compact_basis_tracks_dynamic_segment_length_updates() -> None:
+    robot = build_constant_strain_gvs(
+        num_segments=2,
+        max_dof=8,
+        segment_length=0.2,
+        scale_rotational_basis_by_length=True,
+    )
+    updated_lengths = jnp.array([0.15, 0.32], dtype=robot.segment_lengths.dtype)
+    updated_params = robot.params.replace(
+        link=robot.params.link.replace(length=updated_lengths)
+    )
+    updated = robot.with_params(updated_params)
+
+    rotational_columns = (robot.link_basis_rows >= 0) & (robot.link_basis_rows < 3)
+    length_ratio = robot.segment_lengths[:, None, None] / updated_lengths[:, None, None]
+    for original_values, updated_values in (
+        (robot.scaled_B_Z1_values, updated.scaled_B_Z1_values),
+        (robot.scaled_B_Z2_values, updated.scaled_B_Z2_values),
+    ):
+        expected_values = jnp.where(
+            rotational_columns[:, None, :],
+            original_values * length_ratio,
+            original_values,
+        )
+        assert_allclose(updated_values, expected_values, rtol=RTOL, atol=ATOL)
+        assert not jnp.allclose(updated_values, original_values)
+
+    trace_count = {"value": 0}
+
+    @eqx.filter_jit
+    def compiled_compact_basis(current_params):
+        trace_count["value"] += 1
+        current = robot.with_params(current_params)
+        return (
+            current.segment_lengths,
+            current.scaled_B_Z1_values,
+            current.scaled_B_Z2_values,
+        )
+
+    compiled_compact_basis(robot.params)
+    actual = compiled_compact_basis(updated_params)
+
+    assert trace_count["value"] == 1
+    for actual_array, expected_array in zip(
+        actual,
+        (
+            updated.segment_lengths,
+            updated.scaled_B_Z1_values,
+            updated.scaled_B_Z2_values,
+        ),
+        strict=True,
+    ):
+        assert_allclose(actual_array, expected_array, rtol=RTOL, atol=ATOL)
+
+
 @pytest.mark.parametrize("num_segments", [1, 2])
 def test_strain_basis_consistency_kinematics_jacobians_and_dynamics(
     num_segments: int,

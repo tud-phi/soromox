@@ -102,8 +102,14 @@ class GVS(SoftRobot):
         max_num_integration_points: Maximum number of integration points per link (= max_num_gauss_points + 2).
         num_dofs: Total number of DOFs for the robot (sum of joint + link DOFs).
         num_padded_dofs: Theoretical maximum number of DOFs (num_segments * 2 * max_dof).
-        num_dynamics_prefix_buckets: Maximum number of active-DOF prefix
-            widths used by the dynamics reductions.
+        num_dynamics_prefix_buckets: Upper bound on the number of specialized
+            active-DOF widths compiled for the dynamics reductions. A segment
+            can depend only on its own and preceding segments' DOFs, so ordered
+            segments are grouped into at most this many buckets and each bucket
+            reduces only up to its largest required DOF prefix. Higher values
+            remove more zero-padded arithmetic, but add compiled branches and
+            can increase JAX compilation time. The default is 4; a value of 1
+            uses one full-width reduction branch.
         active_dof_map: Basis matrix mapping active DOFs into the full padded
             joint/link coordinate space.
         scale_rotational_basis_by_length: If True, apply scaling to the angular component of the strain basis matrix for improved numerical stability.
@@ -266,9 +272,14 @@ class GVS(SoftRobot):
                 model.
             passive_elements: Optional passive element or tuple of passive
                 elements. Pass ``None`` or an empty tuple to disable them.
-            num_dynamics_prefix_buckets: Maximum number of active-DOF prefix
-                widths compiled for the dynamics reductions. Larger values can
-                reduce padded arithmetic at the cost of additional compilation.
+            num_dynamics_prefix_buckets: Upper bound on the number of
+                specialized active-DOF widths compiled for dynamics. Ordered
+                segments are grouped into at most this many buckets, and each
+                bucket reduces only up to the largest causal DOF prefix needed
+                by one of its segments. Higher values remove more zero-padded
+                arithmetic, but add compiled branches and can increase JAX
+                compilation time. The default is 4; a value of 1 uses one
+                full-width reduction branch.
             **kwargs: Additional keyword arguments forwarded to
                 :class:`BaseContinuumSoftRobot`.
 
@@ -389,8 +400,12 @@ class GVS(SoftRobot):
             max_num_gauss_points: Optional common quadrature padding size.
             scale_rotational_basis_by_length: Whether to normalize rotational
                 strain-basis rows by link length.
-            num_dynamics_prefix_buckets: Maximum number of active-DOF prefix
-                widths compiled for the dynamics reductions.
+            num_dynamics_prefix_buckets: Upper bound on the number of
+                specialized active-DOF widths compiled for dynamics. Segments
+                are grouped in order, and each bucket reduces only up to its
+                largest required causal DOF prefix. Higher values trade more
+                compiled branches for less zero-padded arithmetic. The default
+                is 4; a value of 1 uses one full-width reduction branch.
             **kwargs: Additional keyword arguments forwarded to the GVS
                 constructor, such as actuators or passive elements.
 
@@ -790,7 +805,30 @@ class GVS(SoftRobot):
     def _compact_link_basis_operands(
         self, segment_lengths: Array
     ) -> tuple[Array, Array, Array]:
-        """Pack the structurally one-row columns of each link strain basis."""
+        """Pack the structurally one-row columns of every link strain basis.
+
+        Every active generalized-coordinate column in a link basis belongs to
+        exactly one of the six strain rows. Storing that row index and its value
+        avoids dense ``(6, self.max_dof)`` matrix products in the dynamics path.
+        Columns used only for padding receive row index ``-1``.
+
+        When rotational basis scaling is enabled, the values for strain rows
+        ``0:3`` are divided by the supplied link lengths. Passing lengths into
+        this helper keeps them dynamic JAX parameters: :meth:`with_params`
+        recomputes these compact values whenever a user updates link lengths.
+
+        Args:
+            segment_lengths: Current physical link lengths, shape
+                ``(self.num_segments,)``.
+
+        Returns:
+            Tuple ``(basis_rows, B_Z1_values, B_Z2_values)``. ``basis_rows`` has
+            shape ``(self.num_segments, self.max_dof)`` and maps active columns
+            to strain rows. Each values array has shape
+            ``(self.num_segments, self.max_num_integration_points - 1,
+            self.max_dof)`` and contains the corresponding scalar basis value
+            at a Magnus quadrature point.
+        """
         active = self.basis_active_params.astype(jnp.int32)
         orders = self.basis_order_params.astype(jnp.int32)
         standard_widths = active * (orders + 1)
@@ -1658,33 +1696,74 @@ class GVS(SoftRobot):
         xi_ref_Z1: Array,
         xi_ref_Z2: Array,
     ) -> tuple[Array, Array, Array, Array, Array, Array]:
-        """Evaluate one cell from compact one-row-per-column basis operands."""
-        valid = basis_rows >= 0
-        safe_rows = jnp.maximum(basis_rows, 0)
-        values_Z1 = jnp.where(valid, B_Z1_values, 0.0)
-        values_Z2 = jnp.where(valid, B_Z2_values, 0.0)
-        row_indicators = (
-            jax.nn.one_hot(safe_rows, 6, dtype=q_i.dtype).T * valid[None, :]
+        """Compute local ``J`` and ``Jdot`` terms from compact link bases.
+
+        This is algebraically equivalent to
+        :meth:`_magnus_jacobian_time_derivative_step_terms`, but exploits the
+        GVS basis structure that every active generalized-coordinate column has
+        a value in exactly one of the six strain rows. ``basis_rows`` and the
+        two value vectors reconstruct only the row selectors needed by the
+        second-order Magnus expansion; no dense link-basis matrices are formed.
+
+        The returned terms support the same local product-rule recurrence for
+        propagating a body Jacobian and its time derivative. Rotational basis
+        values are already length-scaled when that model option is enabled.
+
+        Args:
+            length: Physical length of the current link. Shape ``()``.
+            H: Normalized full or partial cell width. Shape ``()``.
+            q_i: Padded link generalized coordinates, shape
+                ``(self.max_dof,)``.
+            qd_i: Padded link generalized velocities, shape
+                ``(self.max_dof,)``.
+            basis_rows: Strain-row index for each compact basis column, shape
+                ``(self.max_dof,)``. Padding columns are marked with ``-1``.
+            B_Z1_values: Scalar basis value for each column at the first Magnus
+                quadrature point, shape ``(self.max_dof,)``.
+            B_Z2_values: Scalar basis value for each column at the second Magnus
+                quadrature point, shape ``(self.max_dof,)``.
+            xi_ref_Z1: Reference strain at the first quadrature point, shape
+                ``(6,)``.
+            xi_ref_Z2: Reference strain at the second quadrature point, shape
+                ``(6,)``.
+
+        Returns:
+            Tuple ``(g_step, T_step, Td_step, Ad_step_inv, B_Magnus,
+            B_Magnus_dot)``. ``g_step`` has shape ``(4, 4)``; ``T_step``,
+            ``Td_step``, and ``Ad_step_inv`` have shape ``(6, 6)``;
+            ``B_Magnus`` and ``B_Magnus_dot`` have shape
+            ``(6, self.max_dof)``.
+        """
+        # The compact arrays retain ``self.max_dof`` columns for fixed JAX
+        # shapes. A row of -1 marks a padding column with no strain-basis entry.
+        active_basis_columns = basis_rows >= 0
+        safe_basis_rows = jnp.maximum(basis_rows, 0)
+        masked_B_Z1_values = jnp.where(active_basis_columns, B_Z1_values, 0.0)
+        masked_B_Z2_values = jnp.where(active_basis_columns, B_Z2_values, 0.0)
+        basis_row_selectors = (
+            jax.nn.one_hot(safe_basis_rows, 6, dtype=q_i.dtype).T
+            * active_basis_columns[None, :]
         )
 
-        xi_Z1 = row_indicators @ (values_Z1 * q_i) + xi_ref_Z1
-        xi_Z2 = row_indicators @ (values_Z2 * q_i) + xi_ref_Z2
-        xid_Z1 = row_indicators @ (values_Z1 * qd_i)
-        xid_Z2 = row_indicators @ (values_Z2 * qd_i)
+        xi_Z1 = basis_row_selectors @ (masked_B_Z1_values * q_i) + xi_ref_Z1
+        xi_Z2 = basis_row_selectors @ (masked_B_Z2_values * q_i) + xi_ref_Z2
+        xid_Z1 = basis_row_selectors @ (masked_B_Z1_values * qd_i)
+        xid_Z2 = basis_row_selectors @ (masked_B_Z2_values * qd_i)
 
         ad_xi_Z1 = se3.small_adjoint(xi_Z1)
         ad_xi_Z2 = se3.small_adjoint(xi_Z2)
         comm_coeff = jnp.sqrt(3) * (length**2) * H**2 / 12
         Magnus = length * (H / 2) * (xi_Z1 + xi_Z2) + comm_coeff * (ad_xi_Z1 @ xi_Z2)
-        B_Magnus = length * (H / 2) * row_indicators * (values_Z1 + values_Z2)[
-            None, :
-        ] + comm_coeff * (
-            ad_xi_Z1[:, safe_rows] * values_Z2[None, :]
-            - ad_xi_Z2[:, safe_rows] * values_Z1[None, :]
+        B_Magnus = length * (H / 2) * basis_row_selectors * (
+            masked_B_Z1_values + masked_B_Z2_values
+        )[None, :] + comm_coeff * (
+            ad_xi_Z1[:, safe_basis_rows] * masked_B_Z2_values[None, :]
+            - ad_xi_Z2[:, safe_basis_rows] * masked_B_Z1_values[None, :]
         )
         B_Magnus_dot = comm_coeff * (
-            se3.small_adjoint(xid_Z1)[:, safe_rows] * values_Z2[None, :]
-            - se3.small_adjoint(xid_Z2)[:, safe_rows] * values_Z1[None, :]
+            se3.small_adjoint(xid_Z1)[:, safe_basis_rows] * masked_B_Z2_values[None, :]
+            - se3.small_adjoint(xid_Z2)[:, safe_basis_rows]
+            * masked_B_Z1_values[None, :]
         )
         Magnusd = B_Magnus @ qd_i
 
