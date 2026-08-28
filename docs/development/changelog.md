@@ -49,6 +49,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Fixed
 
+- Fixed GVS abscissa-batched partial-cell poses and inertial Jacobians so
+  rotational strain-basis values consistently honor
+  `scale_rotational_basis_by_length` for every supported basis family.
+
 ### Documentation
 
 ### Contributors

@@ -1975,6 +1975,65 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates() -
     )
 
 
+@pytest.mark.parametrize(
+    "basis_type",
+    ("monomial", "legendre", "chebyshev", "fourier", "gaussian", "imq"),
+)
+def test_scaled_rotational_basis_batched_partial_cells_match_scalar_paths(
+    basis_type: str,
+) -> None:
+    """Guard batched partial cells for every rotational strain-basis family."""
+
+    length = 0.37
+    segment = GVSSegment(
+        link=LinkSpec.circular(
+            young_modulus=1e6,
+            shear_modulus=1e6 / 3.0,
+            density=1000.0,
+            material_damping_coefficient=0.0,
+            length=length,
+            radius=0.02,
+            reference_strain=[0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+        ),
+        joint=JointSpec(type="fixed"),
+        basis=StrainBasisSpec(
+            type=basis_type,
+            strain_selector=[1, 0, 0, 0, 0, 0],
+            basis_order=[1, 0, 0, 0, 0, 0],
+        ),
+        num_gauss_points=5,
+    )
+    robot = GVS.from_segments(
+        [segment],
+        max_dof=8,
+        scale_rotational_basis_by_length=True,
+    )
+    q = jnp.linspace(-0.07, 0.08, robot.num_dofs, dtype=jnp.float64)
+    samples = jnp.array(
+        [0.031, length, 0.0, 0.211, 0.031, length - 1e-7],
+        dtype=jnp.float64,
+    )
+
+    expected_poses = jnp.stack([robot.forward_kinematics(q, s) for s in samples])
+    expected_jacobians = jnp.stack(
+        [robot.jacobian_inertialframe(q, s) for s in samples]
+    )
+
+    assert robot.max_dof > robot.num_dofs
+    assert_allclose(
+        robot.forward_kinematics_batched(q, samples),
+        expected_poses,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        robot.jacobian_inertialframe_batched(q, samples),
+        expected_jacobians,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
 def test_scaled_compact_basis_tracks_dynamic_segment_length_updates() -> None:
     robot = build_constant_strain_gvs(
         num_segments=2,

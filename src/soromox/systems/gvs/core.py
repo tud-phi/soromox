@@ -2689,8 +2689,9 @@ class GVS(SoftRobot):
                     [x_base + self.Z1 * Hp_signed, x_base + self.Z2 * Hp_signed]
                 )
                 Bp = self._eval_B_segment(i, Xp)
-                xi_Z1 = Bp[0] @ q_link + xi_ref_Z1_i[cell_idx]
-                xi_Z2 = Bp[1] @ q_link + xi_ref_Z2_i[cell_idx]
+                Bp_Z1, Bp_Z2 = self._scaled_link_basis_pair(length_i, Bp[0], Bp[1])
+                xi_Z1 = Bp_Z1 @ q_link + xi_ref_Z1_i[cell_idx]
+                xi_Z2 = Bp_Z2 @ q_link + xi_ref_Z2_i[cell_idx]
                 ad_xi_Z1 = se3.small_adjoint(xi_Z1)
                 Magnus = (ds / 2.0) * (xi_Z1 + xi_Z2) + (
                     jnp.sqrt(3.0) * ds * ds / 12.0
