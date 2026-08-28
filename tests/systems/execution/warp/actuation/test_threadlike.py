@@ -34,9 +34,7 @@ from soromox.systems.execution.warp.pcs.actuation.operands import (
 def _link(*, planar: bool, length: float) -> LinkSpec:
     """Create one deterministic circular continuum link."""
 
-    reference_strain = (
-        [0.0, 1.0, 0.0] if planar else [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
-    )
+    reference_strain = [0.0, 1.0, 0.0] if planar else [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
     return LinkSpec.circular(
         length=length,
         radius=0.015,
@@ -48,9 +46,7 @@ def _link(*, planar: bool, length: float) -> LinkSpec:
     )
 
 
-def _routing(
-    num_segments: int, num_paths: int, *, planar: bool
-) -> ThreadlikeRouting:
+def _routing(num_segments: int, num_paths: int, *, planar: bool) -> ThreadlikeRouting:
     """Create deterministic, non-identical linear routes over all segments."""
 
     angles = 2.0 * jnp.pi * (jnp.arange(num_paths) + 0.25) / max(num_paths, 1)
@@ -131,16 +127,12 @@ def _rebuild_with_actuators(model, actuators):
     if isinstance(model, PlanarPCS):
         structure = PlanarPCSStructure(
             num_gauss_points=model.num_gauss_points,
-            scale_rotational_basis_by_length=(
-                model.scale_rotational_basis_by_length
-            ),
+            scale_rotational_basis_by_length=(model.scale_rotational_basis_by_length),
         )
     elif isinstance(model, PCS):
         structure = PCSStructure(
             num_gauss_points=model.num_gauss_points,
-            scale_rotational_basis_by_length=(
-                model.scale_rotational_basis_by_length
-            ),
+            scale_rotational_basis_by_length=(model.scale_rotational_basis_by_length),
         )
     else:
         structure = model.structure
@@ -193,6 +185,31 @@ def _build_with_quadrature(family: str, count: int):
     )
 
 
+def _build_joint_gvs(num_paths: int = 4) -> GVS:
+    """Construct a GVS model containing joint-only active coordinates."""
+
+    segments = [
+        GVSSegment(
+            link=_link(planar=False, length=0.1),
+            joint=JointSpec(type="revolute", axis="z")
+            if index == 0
+            else JointSpec.fixed(),
+            basis=StrainBasisSpec(
+                type="legendre",
+                strain_selector=[1, 1, 1, 1, 1, 1],
+                basis_order=[0, 0, 0, 0, 0, 0],
+            ),
+            num_gauss_points=5,
+        )
+        for index in range(2)
+    ]
+    return GVS.from_segments(
+        segments,
+        actuators=ThreadlikeActuator.tendons(_routing(2, num_paths, planar=False)),
+        backend="jax",
+    )
+
+
 @pytest.mark.parametrize("family", ["planar_pcs", "pcs", "gvs"])
 def test_low_level_threadlike_executors_match_jax_on_cpu_and_cuda(
     family: str, monkeypatch: pytest.MonkeyPatch, tmp_path
@@ -221,9 +238,7 @@ def test_low_level_threadlike_executors_match_jax_on_cpu_and_cuda(
     matrix = loader.execute_actuation(key, "matrix", operands, q)
     force = loader.execute_actuation(key, "force", operands, q, controls)
     expected_matrix = jax.vmap(model._actuation_matrix)(q)
-    expected_force = jax.vmap(model._actuation_force)(
-        q, controls, jnp.zeros_like(q)
-    )
+    expected_force = jax.vmap(model._actuation_force)(q, controls, jnp.zeros_like(q))
     assert_allclose(matrix, expected_matrix, rtol=2e-10, atol=2e-11)
     assert_allclose(force, expected_force, rtol=2e-10, atol=2e-11)
     assert_allclose(force, jnp.einsum("eda,ea->ed", matrix, controls))
@@ -277,40 +292,49 @@ def test_caller_owned_launchers_match_jax(
             )
 
             operands = GVSThreadlikeOperands.from_model(model)
-            shapes = GVSThreadlikeShapes.from_operands(
-                operands, batch_size=q.shape[0]
-            )
+            shapes = GVSThreadlikeShapes.from_operands(operands, batch_size=q.shape[0])
             routing = operands.routing
             common = (
                 warp_array(q, wp.float64),
                 warp_array(operands.link_local_to_global, wp.int32),
+                warp_array(operands.link_global_to_local, wp.int32),
                 warp_array(operands.link_basis, wp.float64),
                 warp_array(operands.reference_strain, wp.float64),
-                warp_array(operands.integration_points, wp.float64),
+                warp_array(operands.physical_points, wp.float64),
                 warp_array(operands.integration_weights, wp.float64),
-                warp_array(operands.segment_lengths, wp.float64),
-                warp_array(operands.segment_starts, wp.float64),
                 warp_array(routing.intercepts, wp.float64),
                 warp_array(routing.slopes, wp.float64),
                 warp_array(routing.start_segments, wp.int32),
                 warp_array(routing.end_segments, wp.int32),
                 warp_array(routing.coordinate_scales, wp.float64),
-                warp_array(
-                    [int(operands.scale_rotational_basis_by_length)], wp.int32
-                ),
                 warp_array([operands.global_eps], wp.float64),
             )
-            matrix_output = wp.empty(
-                shapes.matrix_output(), dtype=wp.float64, device=device
+            strain_workspace = wp.full(
+                shapes.strain_workspace(),
+                value=np.nan,
+                dtype=wp.float64,
+                device=device,
             )
-            force_output = wp.empty(
-                shapes.force_output(), dtype=wp.float64, device=device
+            matrix_output = wp.full(
+                shapes.matrix_output(),
+                value=np.nan,
+                dtype=wp.float64,
+                device=device,
             )
-            launch_gvs_threadlike_actuation_matrix(*common, matrix_output)
+            force_output = wp.full(
+                shapes.force_output(),
+                value=np.nan,
+                dtype=wp.float64,
+                device=device,
+            )
+            launch_gvs_threadlike_actuation_matrix(
+                *common, strain_workspace, matrix_output
+            )
             launch_gvs_threadlike_actuation_force(
                 common[0],
                 warp_array(controls, wp.float64),
                 *common[1:],
+                strain_workspace,
                 force_output,
             )
         else:
@@ -322,9 +346,7 @@ def test_caller_owned_launchers_match_jax(
             )
 
             operands = PCSThreadlikeOperands.from_model(model)
-            shapes = PCSThreadlikeShapes.from_operands(
-                operands, batch_size=q.shape[0]
-            )
+            shapes = PCSThreadlikeShapes.from_operands(operands, batch_size=q.shape[0])
             routing = operands.routing
             spatial_dim = 3 if operands.is_planar else 6
             common = (
@@ -337,10 +359,8 @@ def test_caller_owned_launchers_match_jax(
                     ),
                     wp.float64,
                 ),
-                warp_array(operands.local_points, wp.float64),
-                warp_array(operands.quadrature_weights, wp.float64),
-                warp_array(operands.segment_lengths, wp.float64),
-                warp_array(operands.segment_starts, wp.float64),
+                warp_array(operands.physical_points, wp.float64),
+                warp_array(operands.physical_weights, wp.float64),
                 warp_array(routing.intercepts, wp.float64),
                 warp_array(routing.slopes, wp.float64),
                 warp_array(routing.start_segments, wp.int32),
@@ -348,11 +368,17 @@ def test_caller_owned_launchers_match_jax(
                 warp_array(routing.coordinate_scales, wp.float64),
                 warp_array([operands.global_eps], wp.float64),
             )
-            matrix_output = wp.empty(
-                shapes.matrix_output(), dtype=wp.float64, device=device
+            matrix_output = wp.full(
+                shapes.matrix_output(),
+                value=np.nan,
+                dtype=wp.float64,
+                device=device,
             )
-            force_output = wp.empty(
-                shapes.force_output(), dtype=wp.float64, device=device
+            force_output = wp.full(
+                shapes.force_output(),
+                value=np.nan,
+                dtype=wp.float64,
+                device=device,
             )
             matrix_launcher = (
                 launch_planar_threadlike_actuation_matrix
@@ -374,11 +400,49 @@ def test_caller_owned_launchers_match_jax(
         wp.synchronize_device(device)
 
     expected_matrix = jax.vmap(model._actuation_matrix)(q)
-    expected_force = jax.vmap(model._actuation_force)(
-        q, controls, jnp.zeros_like(q)
-    )
+    expected_force = jax.vmap(model._actuation_force)(q, controls, jnp.zeros_like(q))
     assert_allclose(matrix_output.numpy(), expected_matrix, rtol=2e-10, atol=2e-11)
     assert_allclose(force_output.numpy(), expected_force, rtol=2e-10, atol=2e-11)
+
+
+def test_gvs_joint_only_coordinates_are_written_as_zeros(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Leave no stale values in coordinates owned by rigid joints."""
+
+    pytest.importorskip("warp")
+    monkeypatch.setenv("WARP_CACHE_PATH", str(tmp_path / "gvs-joint-coordinates"))
+    model = _build_joint_gvs()
+    q = jnp.stack(
+        (
+            jnp.linspace(-0.03, 0.02, model.num_dofs),
+            jnp.linspace(0.015, -0.01, model.num_dofs),
+        )
+    )
+    controls = jnp.reshape(
+        jnp.linspace(-0.7, 1.1, q.shape[0] * model.num_actuators),
+        (q.shape[0], model.num_actuators),
+    )
+    operands = GVSThreadlikeOperands.from_model(model)
+    matrix = loader.execute_actuation("gvs", "matrix", operands, q)
+    force = loader.execute_actuation("gvs", "force", operands, q, controls)
+    joint_mask = jnp.any(model.joint_global_to_local >= 0, axis=0)
+
+    assert bool(jnp.any(joint_mask))
+    assert_allclose(matrix[:, joint_mask], 0.0, rtol=0.0, atol=0.0)
+    assert_allclose(force[:, joint_mask], 0.0, rtol=0.0, atol=0.0)
+    assert_allclose(
+        matrix,
+        jax.vmap(model._actuation_matrix)(q),
+        rtol=2e-10,
+        atol=2e-11,
+    )
+    assert_allclose(
+        force,
+        jax.vmap(model._actuation_force)(q, controls, jnp.zeros_like(q)),
+        rtol=2e-10,
+        atol=2e-11,
+    )
 
 
 @pytest.mark.parametrize("family", ["planar_pcs", "pcs", "gvs"])
@@ -422,9 +486,7 @@ def test_ordered_groups_modalities_and_segment_spans(
         else PCSThreadlikeOperands.from_model(model)
     )
     actual_matrix = loader.execute_actuation(key, "matrix", operands, q)
-    actual_force = loader.execute_actuation(
-        key, "force", operands, q, controls
-    )
+    actual_force = loader.execute_actuation(key, "force", operands, q, controls)
     expected_matrix = jax.vmap(model._actuation_matrix)(q)
     assert_allclose(actual_matrix, expected_matrix, rtol=2e-10, atol=2e-11)
     assert_allclose(
@@ -513,10 +575,23 @@ def test_threadlike_operand_and_shape_contracts(family: str) -> None:
         shapes = GVSThreadlikeShapes.from_operands(operands, batch_size=7)
         assert operands.link_basis.shape[:3] == (2, 5, 6)
         assert operands.link_local_to_global.shape[0] == 2
+        assert operands.link_global_to_local.shape == (2, model.num_dofs)
+        assert operands.physical_points.shape == (2, 5)
+        assert shapes.strain_workspace() == (7, 2, 5, 6)
+        assert shapes.matrix_outputs() == {
+            "strain_workspace": (7, 2, 5, 6),
+            "output": (7, model.num_dofs, 4),
+        }
+        assert shapes.force_outputs() == {
+            "strain_workspace": (7, 2, 5, 6),
+            "output": (7, model.num_dofs),
+        }
     else:
         operands = PCSThreadlikeOperands.from_model(model)
         shapes = PCSThreadlikeShapes.from_operands(operands, batch_size=7)
         assert operands.local_points.shape == (2, 5)
+        assert operands.physical_points.shape == (2, 5)
+        assert operands.physical_weights.shape == (2, 5)
         assert operands.active_strain_indices.shape[0] == 2
     assert operands.routing.intercepts.shape == (4, 3)
     assert operands.routing.slopes.shape == (4, 3)
@@ -530,9 +605,7 @@ def test_threadlike_operand_and_shape_contracts(family: str) -> None:
     ("batch_size", "error"),
     [(True, TypeError), (1.5, TypeError), (0, ValueError), (-1, ValueError)],
 )
-def test_threadlike_shapes_reject_invalid_batches(
-    factory, batch_size, error
-) -> None:
+def test_threadlike_shapes_reject_invalid_batches(factory, batch_size, error) -> None:
     model = _build_system("gvs" if factory is GVSThreadlikeShapes else "pcs", 2, 4)
     operands = (
         GVSThreadlikeOperands.from_model(model)
@@ -544,8 +617,8 @@ def test_threadlike_shapes_reject_invalid_batches(
 
 
 @pytest.mark.parametrize("family", ["planar_pcs", "pcs", "gvs"])
-def test_public_gate_falls_back_to_jax_and_explains_explicit_warp(family: str) -> None:
-    """Keep production methods on JAX after a failed benchmark gate."""
+def test_public_gate_uses_only_benchmark_qualified_warp_paths(family: str) -> None:
+    """Enable PCS matrices while retaining JAX for the five failed gates."""
 
     model = _build_system(family, 2, 4)
     q = jnp.linspace(-0.02, 0.03, model.num_dofs)
@@ -557,8 +630,16 @@ def test_public_gate_falls_back_to_jax_and_explains_explicit_warp(family: str) -
         model.actuation_force(q, controls, backend="auto"),
         model._actuation_force(q, controls, jnp.zeros_like(q)),
     )
-    with pytest.raises(NotImplementedError, match="low-level Warp-native"):
-        model.actuation_matrix(q, backend="warp")
+    if family == "pcs":
+        assert_allclose(
+            model.actuation_matrix(q, backend="warp"),
+            model._actuation_matrix(q),
+            rtol=2e-10,
+            atol=2e-11,
+        )
+    else:
+        with pytest.raises(NotImplementedError, match="low-level Warp-native"):
+            model.actuation_matrix(q, backend="warp")
     with pytest.raises(NotImplementedError, match="low-level Warp-native"):
         model.actuation_force(q, controls, backend="warp")
 
@@ -630,8 +711,10 @@ def test_public_actuation_autodiff_uses_jax(family: str) -> None:
     q = jnp.linspace(-0.02, 0.03, model.num_dofs)
     u = jnp.linspace(0.4, 1.0, model.num_actuators)
     direction = jnp.linspace(0.1, -0.2, model.num_dofs)
+
     def matrix(q_):
         return model.actuation_matrix(q_, backend="jax")
+
     public_jvp = jax.jvp(matrix, (q,), (direction,))[1]
     protected_jvp = jax.jvp(model._actuation_matrix, (q,), (direction,))[1]
     assert_allclose(public_jvp, protected_jvp)
@@ -642,9 +725,7 @@ def test_public_actuation_autodiff_uses_jax(family: str) -> None:
         atol=2e-10,
     )
     gradient = jax.grad(
-        lambda controls: jnp.sum(
-            model.actuation_force(q, controls, backend="jax")
-        )
+        lambda controls: jnp.sum(model.actuation_force(q, controls, backend="jax"))
     )(u)
     expected = jnp.sum(model._actuation_matrix(q), axis=0)
     assert_allclose(gradient, expected, rtol=2e-9, atol=2e-10)

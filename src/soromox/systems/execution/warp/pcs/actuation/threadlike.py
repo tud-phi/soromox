@@ -1,21 +1,17 @@
 # ruff: noqa: I001, UP018
 """Allocation-free Warp kernels for linear threadlike PCS actuation.
 
-The public launchers execute two kernels in a fixed order: clear the caller-
-owned result and then integrate the routed-path contributions. They allocate no
-arrays, call no JAX functions, perform no synchronization, and transfer no
-data. Consequently callers may retain zero-copy operand views and capture the
-launch sequence in a CUDA graph.
+The public launchers enqueue one write-complete integration kernel. Physical
+quadrature coordinates and weights are prepared in the operand bundle, and
+inactive path/segment entries are written as exact zeros. The launchers
+allocate no arrays, call no JAX functions, perform no synchronization, and
+transfer no data, so callers may capture them in a CUDA graph.
 """
 
 from __future__ import annotations
 
 import warp as wp
 
-from soromox.systems.execution.warp.actuation.kernels import (
-    clear_threadlike_force_kernel,
-    clear_threadlike_matrix_kernel,
-)
 from soromox.systems.execution.warp.common.se3 import Vec6d
 
 wp.set_module_options({"enable_backward": False})
@@ -27,10 +23,8 @@ def planar_threadlike_matrix_kernel(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -47,8 +41,9 @@ def planar_threadlike_matrix_kernel(
     item = item // num_paths
     segment = item % num_segments
     environment = item // num_segments
-    if segment < path_start_segments[path] or segment > path_end_segments[path]:
-        return
+    active_path = (
+        segment >= path_start_segments[path] and segment <= path_end_segments[path]
+    )
 
     strain = wp.vec3d()
     row = int(0)
@@ -61,21 +56,22 @@ def planar_threadlike_matrix_kernel(
 
     integrated = wp.vec3d()
     point = int(0)
-    while point < local_points.shape[1]:
-        s = segment_starts[segment] + local_points[segment, point]
-        offset = routing_intercepts[path, 1] + s * routing_slopes[path, 1]
-        axial = strain[1] + offset * strain[0]
-        shear = strain[2] + routing_slopes[path, 1]
-        norm = wp.sqrt(axial * axial + shear * shear)
-        axial_ratio = wp.float64(0.0)
-        shear_ratio = wp.float64(0.0)
-        if norm > epsilons[0]:
-            axial_ratio = axial / norm
-            shear_ratio = shear / norm
-        weight = quadrature_weights[point] * segment_lengths[segment]
-        integrated[0] += weight * offset * axial_ratio
-        integrated[1] += weight * axial_ratio
-        integrated[2] += weight * shear_ratio
+    while point < physical_points.shape[1]:
+        if active_path:
+            s = physical_points[segment, point]
+            offset = routing_intercepts[path, 1] + s * routing_slopes[path, 1]
+            axial = strain[1] + offset * strain[0]
+            shear = strain[2] + routing_slopes[path, 1]
+            norm = wp.sqrt(axial * axial + shear * shear)
+            axial_ratio = wp.float64(0.0)
+            shear_ratio = wp.float64(0.0)
+            if norm > epsilons[0]:
+                axial_ratio = axial / norm
+                shear_ratio = shear / norm
+            weight = physical_weights[segment, point]
+            integrated[0] += weight * offset * axial_ratio
+            integrated[1] += weight * axial_ratio
+            integrated[2] += weight * shear_ratio
         point += 1
 
     scale = coordinate_scales[path]
@@ -96,10 +92,8 @@ def planar_threadlike_force_kernel(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -129,8 +123,8 @@ def planar_threadlike_force_kernel(
         if segment >= path_start_segments[path] and segment <= path_end_segments[path]:
             effort = coordinate_scales[path] * controls[environment, path]
             point = int(0)
-            while point < local_points.shape[1]:
-                s = segment_starts[segment] + local_points[segment, point]
+            while point < physical_points.shape[1]:
+                s = physical_points[segment, point]
                 offset = routing_intercepts[path, 1] + s * routing_slopes[path, 1]
                 axial = strain[1] + offset * strain[0]
                 shear = strain[2] + routing_slopes[path, 1]
@@ -140,9 +134,7 @@ def planar_threadlike_force_kernel(
                 if norm > epsilons[0]:
                     axial_ratio = axial / norm
                     shear_ratio = shear / norm
-                weight = (
-                    quadrature_weights[point] * segment_lengths[segment] * effort
-                )
+                weight = physical_weights[segment, point] * effort
                 accumulated[0] += weight * offset * axial_ratio
                 accumulated[1] += weight * axial_ratio
                 accumulated[2] += weight * shear_ratio
@@ -153,9 +145,7 @@ def planar_threadlike_force_kernel(
     while row < 3:
         active = active_indices[segment, row]
         if active >= 0:
-            output[environment, active] = (
-                active_scales[segment, row] * accumulated[row]
-            )
+            output[environment, active] = active_scales[segment, row] * accumulated[row]
         row += 1
 
 
@@ -165,10 +155,8 @@ def spatial_threadlike_matrix_kernel(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -185,8 +173,9 @@ def spatial_threadlike_matrix_kernel(
     item = item // num_paths
     segment = item % num_segments
     environment = item // num_segments
-    if segment < path_start_segments[path] or segment > path_end_segments[path]:
-        return
+    active_path = (
+        segment >= path_start_segments[path] and segment <= path_end_segments[path]
+    )
 
     strain = Vec6d()
     row = int(0)
@@ -199,33 +188,34 @@ def spatial_threadlike_matrix_kernel(
 
     integrated = Vec6d()
     point = int(0)
-    while point < local_points.shape[1]:
-        s = segment_starts[segment] + local_points[segment, point]
-        offset = wp.vec3d(
-            routing_intercepts[path, 0] + s * routing_slopes[path, 0],
-            routing_intercepts[path, 1] + s * routing_slopes[path, 1],
-            routing_intercepts[path, 2] + s * routing_slopes[path, 2],
-        )
-        omega = wp.vec3d(strain[0], strain[1], strain[2])
-        linear = wp.vec3d(strain[3], strain[4], strain[5])
-        slope = wp.vec3d(
-            routing_slopes[path, 0],
-            routing_slopes[path, 1],
-            routing_slopes[path, 2],
-        )
-        tangent_raw = slope + wp.cross(omega, offset) + linear
-        norm = wp.length(tangent_raw)
-        tangent = wp.vec3d()
-        if norm > epsilons[0]:
-            tangent = tangent_raw / norm
-        moment = wp.cross(offset, tangent)
-        weight = quadrature_weights[point] * segment_lengths[segment]
-        integrated[0] += weight * moment[0]
-        integrated[1] += weight * moment[1]
-        integrated[2] += weight * moment[2]
-        integrated[3] += weight * tangent[0]
-        integrated[4] += weight * tangent[1]
-        integrated[5] += weight * tangent[2]
+    while point < physical_points.shape[1]:
+        if active_path:
+            s = physical_points[segment, point]
+            offset = wp.vec3d(
+                routing_intercepts[path, 0] + s * routing_slopes[path, 0],
+                routing_intercepts[path, 1] + s * routing_slopes[path, 1],
+                routing_intercepts[path, 2] + s * routing_slopes[path, 2],
+            )
+            omega = wp.vec3d(strain[0], strain[1], strain[2])
+            linear = wp.vec3d(strain[3], strain[4], strain[5])
+            slope = wp.vec3d(
+                routing_slopes[path, 0],
+                routing_slopes[path, 1],
+                routing_slopes[path, 2],
+            )
+            tangent_raw = slope + wp.cross(omega, offset) + linear
+            norm = wp.length(tangent_raw)
+            tangent = wp.vec3d()
+            if norm > epsilons[0]:
+                tangent = tangent_raw / norm
+            moment = wp.cross(offset, tangent)
+            weight = physical_weights[segment, point]
+            integrated[0] += weight * moment[0]
+            integrated[1] += weight * moment[1]
+            integrated[2] += weight * moment[2]
+            integrated[3] += weight * tangent[0]
+            integrated[4] += weight * tangent[1]
+            integrated[5] += weight * tangent[2]
         point += 1
 
     scale = coordinate_scales[path]
@@ -246,10 +236,8 @@ def spatial_threadlike_force_kernel(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -279,8 +267,8 @@ def spatial_threadlike_force_kernel(
         if segment >= path_start_segments[path] and segment <= path_end_segments[path]:
             effort = coordinate_scales[path] * controls[environment, path]
             point = int(0)
-            while point < local_points.shape[1]:
-                s = segment_starts[segment] + local_points[segment, point]
+            while point < physical_points.shape[1]:
+                s = physical_points[segment, point]
                 offset = wp.vec3d(
                     routing_intercepts[path, 0] + s * routing_slopes[path, 0],
                     routing_intercepts[path, 1] + s * routing_slopes[path, 1],
@@ -299,9 +287,7 @@ def spatial_threadlike_force_kernel(
                 if norm > epsilons[0]:
                     tangent = tangent_raw / norm
                 moment = wp.cross(offset, tangent)
-                weight = (
-                    quadrature_weights[point] * segment_lengths[segment] * effort
-                )
+                weight = physical_weights[segment, point] * effort
                 accumulated[0] += weight * moment[0]
                 accumulated[1] += weight * moment[1]
                 accumulated[2] += weight * moment[2]
@@ -315,9 +301,7 @@ def spatial_threadlike_force_kernel(
     while row < 6:
         active = active_indices[segment, row]
         if active >= 0:
-            output[environment, active] = (
-                active_scales[segment, row] * accumulated[row]
-            )
+            output[environment, active] = active_scales[segment, row] * accumulated[row]
         row += 1
 
 
@@ -327,10 +311,8 @@ def _launch_matrix(
     active_indices,
     active_scales,
     reference_strain,
-    local_points,
-    quadrature_weights,
-    segment_lengths,
-    segment_starts,
+    physical_points,
+    physical_weights,
     routing_intercepts,
     routing_slopes,
     path_start_segments,
@@ -339,12 +321,7 @@ def _launch_matrix(
     epsilons,
     output,
 ):
-    """Clear then launch one dimension-specific matrix kernel."""
-    wp.launch(
-        clear_threadlike_matrix_kernel,
-        dim=output.shape[0] * output.shape[1] * output.shape[2],
-        outputs=[output],
-    )
+    """Launch one write-complete dimension-specific matrix kernel."""
     wp.launch(
         kernel,
         dim=q.shape[0] * active_indices.shape[0] * routing_intercepts.shape[0],
@@ -353,10 +330,8 @@ def _launch_matrix(
             active_indices,
             active_scales,
             reference_strain,
-            local_points,
-            quadrature_weights,
-            segment_lengths,
-            segment_starts,
+            physical_points,
+            physical_weights,
             routing_intercepts,
             routing_slopes,
             path_start_segments,
@@ -376,10 +351,8 @@ def _launch_force(
     active_indices,
     active_scales,
     reference_strain,
-    local_points,
-    quadrature_weights,
-    segment_lengths,
-    segment_starts,
+    physical_points,
+    physical_weights,
     routing_intercepts,
     routing_slopes,
     path_start_segments,
@@ -388,12 +361,7 @@ def _launch_force(
     epsilons,
     output,
 ):
-    """Clear then launch one dimension-specific fused-force kernel."""
-    wp.launch(
-        clear_threadlike_force_kernel,
-        dim=output.shape[0] * output.shape[1],
-        outputs=[output],
-    )
+    """Launch one write-complete dimension-specific fused-force kernel."""
     wp.launch(
         kernel,
         dim=q.shape[0] * active_indices.shape[0],
@@ -403,10 +371,8 @@ def _launch_force(
             active_indices,
             active_scales,
             reference_strain,
-            local_points,
-            quadrature_weights,
-            segment_lengths,
-            segment_starts,
+            physical_points,
+            physical_weights,
             routing_intercepts,
             routing_slopes,
             path_start_segments,
@@ -424,10 +390,8 @@ def launch_planar_threadlike_actuation_matrix(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -436,17 +400,15 @@ def launch_planar_threadlike_actuation_matrix(
     epsilons: wp.array[wp.float64],
     output: wp.array3d[wp.float64],
 ):
-    """Clear and fill a caller-owned ``(E, D, A)`` PlanarPCS matrix."""
+    """Fill a caller-owned ``(E, D, A)`` PlanarPCS matrix."""
     _launch_matrix(
         planar_threadlike_matrix_kernel,
         q,
         active_indices,
         active_scales,
         reference_strain,
-        local_points,
-        quadrature_weights,
-        segment_lengths,
-        segment_starts,
+        physical_points,
+        physical_weights,
         routing_intercepts,
         routing_slopes,
         path_start_segments,
@@ -462,10 +424,8 @@ def launch_spatial_threadlike_actuation_matrix(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -474,17 +434,15 @@ def launch_spatial_threadlike_actuation_matrix(
     epsilons: wp.array[wp.float64],
     output: wp.array3d[wp.float64],
 ):
-    """Clear and fill a caller-owned ``(E, D, A)`` spatial PCS matrix."""
+    """Fill a caller-owned ``(E, D, A)`` spatial PCS matrix."""
     _launch_matrix(
         spatial_threadlike_matrix_kernel,
         q,
         active_indices,
         active_scales,
         reference_strain,
-        local_points,
-        quadrature_weights,
-        segment_lengths,
-        segment_starts,
+        physical_points,
+        physical_weights,
         routing_intercepts,
         routing_slopes,
         path_start_segments,
@@ -501,10 +459,8 @@ def launch_planar_threadlike_actuation_force(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -513,7 +469,7 @@ def launch_planar_threadlike_actuation_force(
     epsilons: wp.array[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """Clear and fill a caller-owned ``(E, D)`` PlanarPCS fused force."""
+    """Fill a caller-owned ``(E, D)`` PlanarPCS fused force."""
     _launch_force(
         planar_threadlike_force_kernel,
         q,
@@ -521,10 +477,8 @@ def launch_planar_threadlike_actuation_force(
         active_indices,
         active_scales,
         reference_strain,
-        local_points,
-        quadrature_weights,
-        segment_lengths,
-        segment_starts,
+        physical_points,
+        physical_weights,
         routing_intercepts,
         routing_slopes,
         path_start_segments,
@@ -541,10 +495,8 @@ def launch_spatial_threadlike_actuation_force(
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
     reference_strain: wp.array2d[wp.float64],
-    local_points: wp.array2d[wp.float64],
-    quadrature_weights: wp.array[wp.float64],
-    segment_lengths: wp.array[wp.float64],
-    segment_starts: wp.array[wp.float64],
+    physical_points: wp.array2d[wp.float64],
+    physical_weights: wp.array2d[wp.float64],
     routing_intercepts: wp.array2d[wp.float64],
     routing_slopes: wp.array2d[wp.float64],
     path_start_segments: wp.array[wp.int32],
@@ -553,7 +505,7 @@ def launch_spatial_threadlike_actuation_force(
     epsilons: wp.array[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """Clear and fill a caller-owned ``(E, D)`` spatial PCS fused force."""
+    """Fill a caller-owned ``(E, D)`` spatial PCS fused force."""
     _launch_force(
         spatial_threadlike_force_kernel,
         q,
@@ -561,10 +513,8 @@ def launch_spatial_threadlike_actuation_force(
         active_indices,
         active_scales,
         reference_strain,
-        local_points,
-        quadrature_weights,
-        segment_lengths,
-        segment_starts,
+        physical_points,
+        physical_weights,
         routing_intercepts,
         routing_slopes,
         path_start_segments,

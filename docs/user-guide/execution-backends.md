@@ -105,10 +105,12 @@ from `soromox.systems.execution.warp.pcs` and `.gvs` for Newton and other
 Warp-native integrations. They support multiple ordered threadlike actuator
 groups and every built-in modality.
 
-The system-level `actuation_matrix` and `actuation_force` methods currently use
-JAX. Passing `backend="warp"` to either method explains how to access the
-low-level Warp-native API. Passive threadlike impedance and actuator path
-coordinates also remain JAX operations.
+For spatial `PCS`, `actuation_matrix` uses the Warp implementation when the GPU
+backend is selected. `PlanarPCS` and `GVS` actuation matrices, and all
+system-level `actuation_force` methods, use JAX. Passing `backend="warp"` for an
+unsupported system-level operation explains how to access the low-level
+Warp-native API. Passive threadlike impedance and actuator path coordinates
+also remain JAX operations.
 
 ## Model-level and per-call selection
 

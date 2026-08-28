@@ -20,13 +20,13 @@ class GVSThreadlikeOperands(eqx.Module):
     num_dofs: int = eqx.field(static=True)
     max_dof: int = eqx.field(static=True)
     num_quadrature: int = eqx.field(static=True)
-    scale_rotational_basis_by_length: bool = eqx.field(static=True)
     routing: LinearThreadlikeActuationData
     link_local_to_global: Array
+    link_global_to_local: Array
     link_basis: Array
     reference_strain: Array
-    integration_points: Array
     integration_weights: Array
+    physical_points: Array
     segment_lengths: Array
     segment_starts: Array
     global_eps: float
@@ -36,24 +36,34 @@ class GVSThreadlikeOperands(eqx.Module):
         """Build GVS body/routing operands while retaining runtime dimensions."""
 
         routing = LinearThreadlikeActuationData.from_model(model)
+        link_basis = model.B_Xs[:, 1 : model.max_num_integration_points - 1]
+        if model.scale_rotational_basis_by_length:
+            link_basis = link_basis.at[:, :, :3, :].divide(
+                model.segment_lengths[:, None, None, None]
+            )
+        integration_points = model.integration_points[
+            :, 1 : model.max_num_integration_points - 1
+        ]
+        segment_starts = model.segment_end_positions[:-1]
         return cls(
             num_segments=model.num_segments,
             num_dofs=model.num_dofs,
             max_dof=model.max_dof,
             num_quadrature=model.max_num_integration_points - 2,
-            scale_rotational_basis_by_length=model.scale_rotational_basis_by_length,
             routing=routing,
             link_local_to_global=model.link_local_to_global,
-            link_basis=model.B_Xs[:, 1 : model.max_num_integration_points - 1],
+            link_global_to_local=model.link_global_to_local,
+            link_basis=link_basis,
             reference_strain=model.xi_ref_Xs[
                 :, 1 : model.max_num_integration_points - 1
             ],
-            integration_points=model.integration_points[
-                :, 1 : model.max_num_integration_points - 1
-            ],
             integration_weights=model.inner_integration_weights,
+            physical_points=(
+                segment_starts[:, None]
+                + integration_points * model.segment_lengths[:, None]
+            ),
             segment_lengths=model.segment_lengths,
-            segment_starts=model.segment_end_positions[:-1],
+            segment_starts=segment_starts,
             global_eps=model.global_eps,
         )
 
@@ -63,8 +73,10 @@ class GVSThreadlikeShapes:
     """Allocation contract for batched GVS threadlike matrix/force launches."""
 
     batch_size: int
+    num_segments: int
     num_dofs: int
     num_paths: int
+    num_quadrature: int
 
     @classmethod
     def from_operands(
@@ -74,7 +86,18 @@ class GVSThreadlikeShapes:
             raise TypeError("batch_size must be an integer.")
         if batch_size < 1:
             raise ValueError("batch_size must be positive.")
-        return cls(batch_size, operands.num_dofs, operands.routing.num_paths)
+        return cls(
+            batch_size,
+            operands.num_segments,
+            operands.num_dofs,
+            operands.routing.num_paths,
+            operands.num_quadrature,
+        )
+
+    def strain_workspace(self) -> tuple[int, int, int, int]:
+        """Return the caller-owned quadrature-strain workspace shape."""
+
+        return self.batch_size, self.num_segments, self.num_quadrature, 6
 
     def matrix_output(self) -> tuple[int, int, int]:
         """Return the caller-owned batched matrix output shape."""
@@ -85,6 +108,22 @@ class GVSThreadlikeShapes:
         """Return the caller-owned batched generalized-force output shape."""
 
         return self.batch_size, self.num_dofs
+
+    def matrix_outputs(self) -> dict[str, tuple[int, ...]]:
+        """Return named workspace/output shapes for the matrix callable."""
+
+        return {
+            "strain_workspace": self.strain_workspace(),
+            "output": self.matrix_output(),
+        }
+
+    def force_outputs(self) -> dict[str, tuple[int, ...]]:
+        """Return named workspace/output shapes for the force callable."""
+
+        return {
+            "strain_workspace": self.strain_workspace(),
+            "output": self.force_output(),
+        }
 
 
 __all__ = ["GVSThreadlikeOperands", "GVSThreadlikeShapes"]

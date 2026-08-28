@@ -17,7 +17,7 @@ PLANAR_PCS_ACTUATION = ActuationCapabilities(
 PCS_ACTUATION = ActuationCapabilities(
     family_name="PCS",
     warp_executor="pcs",
-    matrix_enabled=False,
+    matrix_enabled=True,
     force_enabled=False,
 )
 GVS_ACTUATION = ActuationCapabilities(

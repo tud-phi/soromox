@@ -33,6 +33,7 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
         "gvs_pose_samples_kernel",
         "gvs_samples_kernel",
         "gvs_threadlike_force_kernel",
+        "gvs_threadlike_force_block_kernel",
         "gvs_threadlike_matrix_kernel",
         "launch_cell_terms",
         "launch_cooperative_joint_terms",
@@ -47,6 +48,7 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
         "launch_inertial_jacobians",
         "launch_persistent_chain",
         "persistent_chain_kernel",
+        "prepare_gvs_threadlike_strain_kernel",
     }
     assert expected == set(gvs.__all__)
     assert expected <= set(dir(gvs))

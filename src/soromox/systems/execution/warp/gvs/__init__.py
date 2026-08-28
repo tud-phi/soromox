@@ -47,9 +47,11 @@ __all__ = [
     "launch_persistent_chain",
     "persistent_chain_kernel",
     "gvs_threadlike_force_kernel",
+    "gvs_threadlike_force_block_kernel",
     "gvs_threadlike_matrix_kernel",
     "launch_gvs_threadlike_actuation_force",
     "launch_gvs_threadlike_actuation_matrix",
+    "prepare_gvs_threadlike_strain_kernel",
 ]
 
 _PUBLIC_MODULES = {
@@ -69,9 +71,11 @@ _PUBLIC_MODULES = {
     "launch_persistent_chain": "chain",
     "persistent_chain_kernel": "chain",
     "gvs_threadlike_force_kernel": "actuation.threadlike",
+    "gvs_threadlike_force_block_kernel": "actuation.threadlike",
     "gvs_threadlike_matrix_kernel": "actuation.threadlike",
     "launch_gvs_threadlike_actuation_force": "actuation.threadlike",
     "launch_gvs_threadlike_actuation_matrix": "actuation.threadlike",
+    "prepare_gvs_threadlike_strain_kernel": "actuation.threadlike",
     "gvs_cooperative_node_states_kernel": "kinematics",
     "gvs_jacobian_samples_kernel": "kinematics",
     "gvs_node_poses_kernel": "kinematics",

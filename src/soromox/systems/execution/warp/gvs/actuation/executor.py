@@ -21,20 +21,16 @@ def _common(operands: GVSThreadlikeOperands, q: Array) -> tuple:
     return (
         q,
         operands.link_local_to_global,
+        operands.link_global_to_local,
         operands.link_basis,
         operands.reference_strain,
-        operands.integration_points,
+        operands.physical_points,
         operands.integration_weights,
-        operands.segment_lengths,
-        operands.segment_starts,
         routing.intercepts,
         routing.slopes,
         routing.start_segments,
         routing.end_segments,
         routing.coordinate_scales,
-        jnp.asarray(
-            [int(operands.scale_rotational_basis_by_length)], dtype=jnp.int32
-        ),
         jnp.asarray([operands.global_eps], dtype=jnp.float64),
     )
 
@@ -43,8 +39,8 @@ def execute_actuation_matrix(operands: GVSThreadlikeOperands, q: Array) -> Array
     """Return a canonical batched GVS actuation matrix with shape ``(E,D,A)``."""
     shapes = GVSThreadlikeShapes.from_operands(operands, batch_size=q.shape[0])
     return gvs_threadlike_actuation_matrix(
-        *_common(operands, q), output_dims=shapes.matrix_output()
-    )[0]
+        *_common(operands, q), output_dims=shapes.matrix_outputs()
+    )[-1]
 
 
 def execute_actuation_force(
@@ -54,8 +50,8 @@ def execute_actuation_force(
     shapes = GVSThreadlikeShapes.from_operands(operands, batch_size=q.shape[0])
     common = _common(operands, q)
     return gvs_threadlike_actuation_force(
-        common[0], controls, *common[1:], output_dims=shapes.force_output()
-    )[0]
+        common[0], controls, *common[1:], output_dims=shapes.force_outputs()
+    )[-1]
 
 
 __all__ = ["execute_actuation_force", "execute_actuation_matrix"]

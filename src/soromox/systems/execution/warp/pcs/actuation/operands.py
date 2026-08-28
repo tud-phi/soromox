@@ -31,6 +31,8 @@ class PCSThreadlikeOperands(eqx.Module):
     reference_strain: Array
     local_points: Array
     quadrature_weights: Array
+    physical_points: Array
+    physical_weights: Array
     segment_lengths: Array
     segment_starts: Array
     global_eps: float
@@ -40,6 +42,8 @@ class PCSThreadlikeOperands(eqx.Module):
         """Build the ordered body/routing operand bundle for one PCS model."""
 
         routing = LinearThreadlikeActuationData.from_model(model)
+        local_points = model.dynamics_local_points[:, : model.num_gauss_points]
+        segment_starts = model.L_cum[:-1]
         return cls(
             is_planar=model.is_planar,
             num_segments=model.num_segments,
@@ -49,10 +53,12 @@ class PCSThreadlikeOperands(eqx.Module):
             active_strain_indices=model.active_strain_indices,
             active_strain_scales=model.active_strain_scales,
             reference_strain=model.xi_ref,
-            local_points=model.dynamics_local_points[:, : model.num_gauss_points],
+            local_points=local_points,
             quadrature_weights=model.integration_weights[1:-1],
+            physical_points=segment_starts[:, None] + local_points,
+            physical_weights=(model.L[:, None] * model.integration_weights[None, 1:-1]),
             segment_lengths=model.L,
-            segment_starts=model.L_cum[:-1],
+            segment_starts=segment_starts,
             global_eps=model.global_eps,
         )
 
