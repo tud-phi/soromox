@@ -629,7 +629,7 @@ class Pendulum(SoftRobot):
         return chi
 
     @eqx.filter_jit
-    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+    def forward_kinematics_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute forward kinematics at multiple arc-length positions.
 
@@ -685,7 +685,7 @@ class Pendulum(SoftRobot):
         return J
 
     @eqx.filter_jit
-    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute Jacobians at multiple arc-length positions.
 
@@ -747,7 +747,7 @@ class Pendulum(SoftRobot):
         return J, Jd
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_batched(
+    def jacobian_and_time_derivative_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """

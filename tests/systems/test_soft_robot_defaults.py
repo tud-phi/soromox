@@ -363,7 +363,7 @@ def test_default_integration_kinematics_uses_bodyframe_samples() -> None:
     g_expected = jax.vmap(
         lambda s: poses.planar_pose_to_transform(robot.forward_kinematics(q, s))
     )(s_flat).reshape(2, 1, 3, 3)
-    J_expected, Jd_expected = robot.jacobian_and_time_derivative_bodyframe_batched(
+    J_expected, Jd_expected = robot.jacobian_and_time_derivative_bodyframe_abscissa_batched(
         q, qd, s_flat
     )
 

@@ -287,10 +287,10 @@ def test_jacobian_tips(seed: int = 0):
 
     s_tips = robot.L_cum[1:]
     J_tips = robot.jacobian_tips(q)
-    J_expected = robot.jacobian_batched(q, s_tips)
+    J_expected = robot.jacobian_abscissa_batched(q, s_tips)
 
     assert jnp.allclose(J_tips, J_expected, atol=1e-12), (
-        "jacobian_tips should match jacobian_batched at segment tips"
+        "jacobian_tips should match jacobian_abscissa_batched at segment tips"
     )
 
 

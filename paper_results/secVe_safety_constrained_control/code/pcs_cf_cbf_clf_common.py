@@ -239,7 +239,7 @@ class TendonSoroConfig(CLFCBFConfig):
             return jnp.array([0.0])
 
         q, _ = self.setup.dyn.split(y)
-        g_ps = self.setup.robot.forward_kinematics_batched(q, self.s_ps)
+        g_ps = self.setup.robot.forward_kinematics_abscissa_batched(q, self.s_ps)
         p = g_ps[:, :3, 3]
 
         H = pairwise_h(
@@ -420,7 +420,7 @@ def run_case(setup: SimulationSetup, controller_key: str) -> dict[str, Any]:
 
     q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
     g_body_ts = jax.vmap(
-        lambda q: setup.robot.forward_kinematics_batched(q, config.s_ps)
+        lambda q: setup.robot.forward_kinematics_abscissa_batched(q, config.s_ps)
     )(q_ts)
     p_body_ts = g_body_ts[:, :, :3, 3]
     clearances = jnp.linalg.norm(

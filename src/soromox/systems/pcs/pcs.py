@@ -925,7 +925,7 @@ class PCS(SoftRobot):
         return g_tips
 
     @eqx.filter_jit
-    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+    def forward_kinematics_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a batch of points s_ps along the robot.
 
@@ -1100,7 +1100,7 @@ class PCS(SoftRobot):
         return J_local_tips
 
     @eqx.filter_jit
-    def _J_local_batched(self, q: Array, s_ps: Array) -> Array:
+    def _J_local_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the Jacobian for the forward kinematics at a batch of points s_ps along the robot.
 
@@ -1657,7 +1657,7 @@ class PCS(SoftRobot):
         return Js
 
     @eqx.filter_jit
-    def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_bodyframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a batch of points s_ps along the robot in the body frame.
 
@@ -1668,7 +1668,7 @@ class PCS(SoftRobot):
         Returns:
             J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
         """
-        J_local_ps_ = self._J_local_batched(q, s_ps)  # shape (N, 6, num_strains)
+        J_local_ps_ = self._J_local_abscissa_batched(q, s_ps)  # shape (N, 6, num_strains)
 
         J_local_ps = jnp.einsum(
             "ijk, kl->ijl", J_local_ps_, self.B_xi
@@ -1758,7 +1758,7 @@ class PCS(SoftRobot):
         return Js
 
     @eqx.filter_jit
-    def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_inertialframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the Jacobian of the forward kinematics at a batch of points s_ps along the robot in the inertial frame.
         Args:
@@ -1769,11 +1769,11 @@ class PCS(SoftRobot):
             J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
         """
         # compute the Jacobian in the body frame
-        J_local_ps = self.jacobian_bodyframe_batched(
+        J_local_ps = self.jacobian_bodyframe_abscissa_batched(
             q, s_ps
         )  # shape (N, 6, num_active_strains)
 
-        g_ps = self.forward_kinematics_batched(q, s_ps)  # shape (N, 4, 4)
+        g_ps = self.forward_kinematics_abscissa_batched(q, s_ps)  # shape (N, 4, 4)
         # construct g with zero translation for the Adjoint transformation
         g_rot_ps = jnp.block(
             [
@@ -1876,7 +1876,7 @@ class PCS(SoftRobot):
         return J_local_tips, Jd_local_tips
 
     @eqx.filter_jit
-    def _J_Jd_local_batched(
+    def _J_Jd_local_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -2061,7 +2061,7 @@ class PCS(SoftRobot):
         return J_local, Jd_local
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_bodyframe_batched(
+    def jacobian_and_time_derivative_bodyframe_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -2076,7 +2076,7 @@ class PCS(SoftRobot):
             J_local_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
             Jd_local_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_active_strains)
         """
-        J_local_ps_, Jd_local_ps_ = self._J_Jd_local_batched(
+        J_local_ps_, Jd_local_ps_ = self._J_Jd_local_abscissa_batched(
             q, qd, s_ps
         )  # shape (N, 6, num_strains)
 
@@ -2125,7 +2125,7 @@ class PCS(SoftRobot):
 
         return J_global, Jd_global
 
-    def jacobian_and_time_derivative_inertialframe_batched(
+    def jacobian_and_time_derivative_inertialframe_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -2140,11 +2140,11 @@ class PCS(SoftRobot):
             J_global_ps (Array): Jacobians evaluated at all points, shape (N, 6, num_active_strains)
             Jd_global_ps (Array): Time-derivative of the Jacobians, shape (N, 6, num_active_strains)
         """
-        J_local_ps, Jd_local_ps = self.jacobian_and_time_derivative_bodyframe_batched(
+        J_local_ps, Jd_local_ps = self.jacobian_and_time_derivative_bodyframe_abscissa_batched(
             q, qd, s_ps
         )  # shape (N, 6, num_active_strains)
 
-        g_ps = self.forward_kinematics_batched(q, s_ps)  # shape (N, 4, 4)
+        g_ps = self.forward_kinematics_abscissa_batched(q, s_ps)  # shape (N, 4, 4)
         # construct g with zero translation for the Adjoint transformation
         g_rot_ps = jnp.block(
             [
@@ -2194,7 +2194,7 @@ class PCS(SoftRobot):
         return self.jacobian_and_arc_length_derivative_inertialframe(q, s)
 
     @eqx.filter_jit
-    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """Compute inertial-frame Jacobians at multiple arc-length positions.
 
         Args:
@@ -2206,7 +2206,7 @@ class PCS(SoftRobot):
             Inertial-frame Jacobians with shape
             ``(num_points, 6, num_active_strains)``.
         """
-        return self.jacobian_inertialframe_batched(q, s_ps)
+        return self.jacobian_inertialframe_abscissa_batched(q, s_ps)
 
     @eqx.filter_jit
     def _jacobian_and_time_derivative(
@@ -2216,7 +2216,7 @@ class PCS(SoftRobot):
         return self.jacobian_and_time_derivative_inertialframe(q, qd, s)
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_batched(
+    def jacobian_and_time_derivative_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """Compute batched inertial Jacobians and their time derivatives.
@@ -2232,7 +2232,7 @@ class PCS(SoftRobot):
             A tuple ``(J, J_dot)`` whose arrays both have shape
             ``(num_points, 6, num_active_strains)``.
         """
-        return self.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
+        return self.jacobian_and_time_derivative_inertialframe_abscissa_batched(q, qd, s_ps)
 
     # ==========================================
     # Useful functions for the system
@@ -2336,7 +2336,7 @@ class PCS(SoftRobot):
         )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the jacobian for each quadrature point
-        J_ps = self._J_local_batched(
+        J_ps = self._J_local_abscissa_batched(
             q, Xs_scaled.flatten()
         )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
         J_ps = J_ps.reshape(
@@ -2416,7 +2416,7 @@ class PCS(SoftRobot):
         )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the jacobian and its time-derivative for each quadrature point
-        J_ps, Jd_ps = self._J_Jd_local_batched(
+        J_ps, Jd_ps = self._J_Jd_local_abscissa_batched(
             q, qd, Xs_scaled.flatten()
         )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
         J_ps = J_ps.reshape(
@@ -2494,7 +2494,7 @@ class PCS(SoftRobot):
         )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(
+        g_ps = self.forward_kinematics_abscissa_batched(
             q, Xs_scaled.flatten()
         )  # shape (num_segments * num_gauss_points, 4, 4)
         g_ps = g_ps.reshape(
@@ -2502,7 +2502,7 @@ class PCS(SoftRobot):
         )  # shape (num_segments, num_gauss_points, 4, 4)
 
         # compute the jacobian for each quadrature point
-        J_ps = self._J_local_batched(
+        J_ps = self._J_local_abscissa_batched(
             q, Xs_scaled.flatten()
         )  # shape (num_segments * num_gauss_points, 6, num_active_strains)
         J_ps = J_ps.reshape(
@@ -2818,7 +2818,7 @@ class PCS(SoftRobot):
         )  # shape (num_segments, num_gauss_points) for both Xs_scaled and Ws_scaled
 
         # compute the forward kinematics for each quadrature point
-        g_ps = self.forward_kinematics_batched(
+        g_ps = self.forward_kinematics_abscissa_batched(
             q, Xs_scaled.flatten()
         )  # shape (num_segments * num_gauss_points, 4, 4)
         g_ps = g_ps.reshape(

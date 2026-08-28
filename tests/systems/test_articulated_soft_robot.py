@@ -372,15 +372,15 @@ def test_batched_kinematics_and_jacobian_match_pointwise_evaluation(num_links):
     qd = jnp.linspace(0.6, -0.5, num_links)
     s_ps = robot.L_cum[1:]
 
-    g_batched = robot.forward_kinematics_batched(q, s_ps)
+    g_batched = robot.forward_kinematics_abscissa_batched(q, s_ps)
     g_expected = jax.vmap(lambda s: robot.forward_kinematics(q, s))(s_ps)
     assert_allclose(g_batched, g_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
-    J_batched = robot.jacobian_batched(q, s_ps)
+    J_batched = robot.jacobian_abscissa_batched(q, s_ps)
     J_expected = robot.jacobian_tips(q)
     assert_allclose(J_batched, J_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
-    J_batched, Jd_batched = robot.jacobian_and_time_derivative_batched(q, qd, s_ps)
+    J_batched, Jd_batched = robot.jacobian_and_time_derivative_abscissa_batched(q, qd, s_ps)
     J_expected, Jd_expected = robot.jacobian_and_time_derivatives_tips(q, qd)
     assert_allclose(J_batched, J_expected, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(

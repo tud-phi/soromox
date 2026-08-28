@@ -416,9 +416,9 @@ def _build_system_registry() -> Mapping[str, SystemBenchmark]:
             ),
         ),
         BenchmarkCase(
-            name="forward_kinematics_batched",
+            name="forward_kinematics_abscissa_batched",
             builder=lambda sys, ctx, _: (
-                sys.forward_kinematics_batched,
+                sys.forward_kinematics_abscissa_batched,
                 (ctx["q"], ctx["s_points"]),
             ),
         ),
@@ -901,7 +901,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
                     per_point_note = ""
                     if (
-                        case.name == "forward_kinematics_batched"
+                        case.name == "forward_kinematics_abscissa_batched"
                         and len(call_args) >= 2
                     ):
                         s_arg = call_args[1]

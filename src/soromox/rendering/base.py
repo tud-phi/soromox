@@ -313,8 +313,8 @@ class BaseSoftRobotRenderer(ABC):
     def compute_backbone_poses(self, q: Array) -> Array:
         """Compute full FK poses at the configured backbone sample points."""
         s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        if hasattr(self.robot, "forward_kinematics_batched"):
-            return self.robot.forward_kinematics_batched(q, s_ps)
+        if hasattr(self.robot, "forward_kinematics_abscissa_batched"):
+            return self.robot.forward_kinematics_abscissa_batched(q, s_ps)
         return jax.vmap(lambda s: self.robot.forward_kinematics(q, s))(s_ps)
 
     def compute_actuator_visual_layers(
@@ -1095,7 +1095,7 @@ class BaseSoftRobotRenderer(ABC):
     ) -> Array:
         """Compute backbone curves for multiple robots with base offsets.
 
-        Uses forward_kinematics_batched if available (optimized), otherwise
+        Uses forward_kinematics_abscissa_batched if available (optimized), otherwise
         falls back to jax.vmap over compute_backbone_curve.
 
         Args:

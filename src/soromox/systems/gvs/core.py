@@ -2636,7 +2636,7 @@ class GVS(SoftRobot):
         return self._forward_kinematics_gauss(q_gathered)[:, -1]
 
     @eqx.filter_jit
-    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+    def forward_kinematics_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the forward kinematics of the robot at a batch of points along the backbone.
 
@@ -3336,7 +3336,7 @@ class GVS(SoftRobot):
         return Js
 
     @eqx.filter_jit
-    def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_bodyframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the body-frame Jacobian at multiple arclength locations.
 
@@ -3424,7 +3424,7 @@ class GVS(SoftRobot):
         return vmap(body_single)(s_flat)
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_bodyframe_batched(
+    def jacobian_and_time_derivative_bodyframe_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -3639,7 +3639,7 @@ class GVS(SoftRobot):
         return vmap(self._body_jacobian_to_inertial)(g_tips, J_local_tips)
 
     @eqx.filter_jit
-    def jacobian_inertialframe_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_inertialframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the inertial-frame Jacobian at multiple arclength locations.
 
@@ -3650,13 +3650,13 @@ class GVS(SoftRobot):
         Returns:
             Array: Jacobians with shape (N, 6, num_active_strains).
         """
-        J_body = self.jacobian_bodyframe_batched(q, s_ps)  # (N, 6, num_active_strains)
-        g_ps = self.forward_kinematics_batched(q, s_ps)  # (N, 4, 4)
+        J_body = self.jacobian_bodyframe_abscissa_batched(q, s_ps)  # (N, 6, num_active_strains)
+        g_ps = self.forward_kinematics_abscissa_batched(q, s_ps)  # (N, 4, 4)
 
         return vmap(self._body_jacobian_to_inertial)(g_ps, J_body)
 
     @eqx.filter_jit
-    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute inertial-frame Jacobians at multiple arclength locations.
 
@@ -3673,7 +3673,7 @@ class GVS(SoftRobot):
             J_global (Array): inertial-frame Jacobians with shape
                 ``(N, 6, num_active_strains)``.
         """
-        return self.jacobian_inertialframe_batched(q, s_ps)
+        return self.jacobian_inertialframe_abscissa_batched(q, s_ps)
 
     @eqx.filter_jit
     def _jacobian_time_derivative_gauss(
@@ -4174,7 +4174,7 @@ class GVS(SoftRobot):
         )
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_inertialframe_batched(
+    def jacobian_and_time_derivative_inertialframe_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -4189,10 +4189,10 @@ class GVS(SoftRobot):
             Tuple[Array, Array]: Jacobians and derivatives with shape
             (N, 6, num_active_strains).
         """
-        J_body, Jd_body = self.jacobian_and_time_derivative_bodyframe_batched(
+        J_body, Jd_body = self.jacobian_and_time_derivative_bodyframe_abscissa_batched(
             q, qd, s_ps
         )
-        g_ps = self.forward_kinematics_batched(q, s_ps)
+        g_ps = self.forward_kinematics_abscissa_batched(q, s_ps)
 
         return vmap(
             self._body_jacobian_time_derivative_to_inertial, in_axes=(0, 0, 0, None)
@@ -4217,7 +4217,7 @@ class GVS(SoftRobot):
         return self.jacobian_and_time_derivative_inertialframe(q, qd, s)
 
     @eqx.filter_jit
-    def jacobian_and_time_derivative_batched(
+    def jacobian_and_time_derivative_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -4238,7 +4238,7 @@ class GVS(SoftRobot):
             Tuple[Array, Array]: inertial-frame Jacobians and time derivatives.
             Each array has shape ``(N, 6, num_active_strains)``.
         """
-        return self.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
+        return self.jacobian_and_time_derivative_inertialframe_abscissa_batched(q, qd, s_ps)
 
     def _active_selector_blocks(self) -> Array:
         """

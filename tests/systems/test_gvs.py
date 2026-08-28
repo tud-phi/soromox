@@ -1068,7 +1068,7 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_forward_kinematics_batched_matches_pointwise_evaluation(
+def test_forward_kinematics_abscissa_batched_matches_pointwise_evaluation(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1097,7 +1097,7 @@ def test_forward_kinematics_batched_matches_pointwise_evaluation(
             )
         )
 
-        g_batched = robot.forward_kinematics_batched(q, s_points)
+        g_batched = robot.forward_kinematics_abscissa_batched(q, s_points)
         g_expected = stack_forward_kinematics(robot, q, s_points)
 
         assert_allclose(g_batched, g_expected, rtol=RTOL, atol=ATOL)
@@ -1165,7 +1165,7 @@ def test_jacobian_bodyframe_matches_autodiff(num_segments: int) -> None:
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(
+def test_jacobian_bodyframe_abscissa_batched_matches_pointwise_evaluation(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1194,7 +1194,7 @@ def test_jacobian_bodyframe_batched_matches_pointwise_evaluation(
             )
         )
 
-        J_batch = robot.jacobian_bodyframe_batched(q, s_points)
+        J_batch = robot.jacobian_bodyframe_abscissa_batched(q, s_points)
         J_expected = stack_jacobians(robot, q, s_points)
 
         assert_allclose(J_batch, J_expected, rtol=RTOL, atol=ATOL)
@@ -1315,7 +1315,7 @@ def test_jacobian_inertialframe_matches_central_differences(num_segments: int) -
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(
+def test_jacobian_inertialframe_abscissa_batched_matches_pointwise_evaluation(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1344,7 +1344,7 @@ def test_jacobian_inertialframe_batched_matches_pointwise_evaluation(
             )
         )
 
-        J_batch = robot.jacobian_inertialframe_batched(q, s_points)
+        J_batch = robot.jacobian_inertialframe_abscissa_batched(q, s_points)
         J_expected = jnp.stack(
             [robot.jacobian_inertialframe(q, float(s)) for s in s_points],
             axis=0,
@@ -1487,7 +1487,7 @@ def test_jacobian_time_derivative_inertialframe_matches_autograd_jvp(
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_jacobian_and_time_derivative_bodyframe_batched_matches_pointwise_evaluation(
+def test_jacobian_and_time_derivative_bodyframe_abscissa_batched_matches_pointwise_evaluation(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1502,7 +1502,7 @@ def test_jacobian_and_time_derivative_bodyframe_batched_matches_pointwise_evalua
     s_points = sample_arc_lengths(robot)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = robot.jacobian_and_time_derivative_bodyframe_batched(
+        J_batch, Jd_batch = robot.jacobian_and_time_derivative_bodyframe_abscissa_batched(
             q, qd, s_points
         )
 
@@ -1515,7 +1515,7 @@ def test_jacobian_and_time_derivative_bodyframe_batched_matches_pointwise_evalua
 
 
 @pytest.mark.parametrize("num_segments", [1, 2])
-def test_jacobian_and_time_derivative_inertialframe_batched_matches_pointwise_evaluation(
+def test_jacobian_and_time_derivative_inertialframe_abscissa_batched_matches_pointwise_evaluation(
     num_segments: int,
 ) -> None:
     robot = build_varied_basis_gvs(num_segments=num_segments)
@@ -1530,7 +1530,7 @@ def test_jacobian_and_time_derivative_inertialframe_batched_matches_pointwise_ev
     s_points = sample_arc_lengths(robot)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = robot.jacobian_and_time_derivative_inertialframe_batched(
+        J_batch, Jd_batch = robot.jacobian_and_time_derivative_inertialframe_abscissa_batched(
             q, qd, s_points
         )
 
@@ -1557,8 +1557,8 @@ def test_public_gvs_jacobian_adapters_match_inertialframe_methods() -> None:
         atol=ATOL,
     )
     assert_allclose(
-        robot.jacobian_batched(q, s_ps),
-        robot.jacobian_inertialframe_batched(q, s_ps),
+        robot.jacobian_abscissa_batched(q, s_ps),
+        robot.jacobian_inertialframe_abscissa_batched(q, s_ps),
         rtol=RTOL,
         atol=ATOL,
     )
@@ -1568,9 +1568,9 @@ def test_public_gvs_jacobian_adapters_match_inertialframe_methods() -> None:
     assert_allclose(J, J_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd, Jd_expected, rtol=RTOL, atol=ATOL)
 
-    J_batch, Jd_batch = robot.jacobian_and_time_derivative_batched(q, qd, s_ps)
+    J_batch, Jd_batch = robot.jacobian_and_time_derivative_abscissa_batched(q, qd, s_ps)
     J_batch_expected, Jd_batch_expected = (
-        robot.jacobian_and_time_derivative_inertialframe_batched(q, qd, s_ps)
+        robot.jacobian_and_time_derivative_inertialframe_abscissa_batched(q, qd, s_ps)
     )
     assert_allclose(J_batch, J_batch_expected, rtol=RTOL, atol=ATOL)
     assert_allclose(Jd_batch, Jd_batch_expected, rtol=RTOL, atol=ATOL)

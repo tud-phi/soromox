@@ -32,7 +32,7 @@ class _AnimatingSpatialRobot:
     base_pose = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
     base_transform = jnp.eye(4)
 
-    def forward_kinematics_batched(self, q, s_points):
+    def forward_kinematics_abscissa_batched(self, q, s_points):
         angles = q[0] * s_points
         cosines = jnp.cos(angles)
         sines = jnp.sin(angles)

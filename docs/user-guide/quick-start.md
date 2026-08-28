@@ -284,7 +284,7 @@ Ready for something more advanced? Let's simulate a soft continuum robot:
 
     # Compute forward kinematics along the robot
     s_values = jnp.linspace(0, robot.L.sum(), 100)
-    backbone_shape = robot.forward_kinematics_batched(q, s_values)
+    backbone_shape = robot.forward_kinematics_abscissa_batched(q, s_values)
 
     # Extract positions for plotting
     # forward_kinematics returns [theta, px, py] for planar systems

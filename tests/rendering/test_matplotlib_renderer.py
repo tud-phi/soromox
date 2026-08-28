@@ -21,7 +21,7 @@ class DummySpatialRobot:
         self.base_pose = jnp.asarray(base_pose)
         self.base_transform = poses.quaternion_pose_to_transform(self.base_pose)
 
-    def forward_kinematics_batched(self, q, s_points):
+    def forward_kinematics_abscissa_batched(self, q, s_points):
         del q
         transforms = jnp.repeat(
             self.base_transform[None, :, :], s_points.shape[0], axis=0

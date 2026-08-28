@@ -377,7 +377,7 @@ class SoftRobot(DynamicalSystem):
         s_tips = jnp.cumsum(jnp.atleast_1d(jnp.asarray(self.segment_length)))
         return vmap(lambda s: self.forward_kinematics(q, s))(s_tips)
 
-    def forward_kinematics_batched(self, q: Array, s_ps: Array) -> Array:
+    def forward_kinematics_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the forward kinematics at multiple points along the robot.
 
@@ -530,7 +530,7 @@ class SoftRobot(DynamicalSystem):
         s_tips = jnp.cumsum(jnp.atleast_1d(jnp.asarray(self.segment_length)))
         return vmap(lambda s: self.jacobian(q, s))(s_tips)
 
-    def jacobian_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute the Jacobian at multiple points along the robot.
 
@@ -619,7 +619,7 @@ class SoftRobot(DynamicalSystem):
         J, Jd = jvp(lambda q_: self._jacobian(q_, s), (q,), (qd,))
         return J, Jd
 
-    def jacobian_and_time_derivative_batched(
+    def jacobian_and_time_derivative_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -651,7 +651,7 @@ class SoftRobot(DynamicalSystem):
         J = self.jacobian(q, s)
         return self._inertial_jacobian_to_bodyframe(pose, J)
 
-    def jacobian_bodyframe_batched(self, q: Array, s_ps: Array) -> Array:
+    def jacobian_bodyframe_abscissa_batched(self, q: Array, s_ps: Array) -> Array:
         """
         Compute body-frame Jacobians at multiple points along the robot.
         """
@@ -669,7 +669,7 @@ class SoftRobot(DynamicalSystem):
         J, Jd = jvp(lambda q_: self.jacobian_bodyframe(q_, s), (q,), (qd,))
         return J, Jd
 
-    def jacobian_and_time_derivative_bodyframe_batched(
+    def jacobian_and_time_derivative_bodyframe_abscissa_batched(
         self, q: Array, qd: Array, s_ps: Array
     ) -> tuple[Array, Array]:
         """
@@ -725,7 +725,7 @@ class SoftRobot(DynamicalSystem):
 
         s_flat = s_ps.reshape(-1)
         g_flat = vmap(lambda s: self._homogeneous_forward_kinematics(q, s))(s_flat)
-        J_flat, Jd_flat = self.jacobian_and_time_derivative_bodyframe_batched(
+        J_flat, Jd_flat = self.jacobian_and_time_derivative_bodyframe_abscissa_batched(
             q, qd, s_flat
         )
 

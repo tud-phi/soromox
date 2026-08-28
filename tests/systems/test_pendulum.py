@@ -570,17 +570,17 @@ def test_batched_methods(N):
     s_ps = jnp.array(L_cum[1:])  # all tip positions
 
     # Forward kinematics batched
-    chi_batched = robot.forward_kinematics_batched(q, s_ps)
+    chi_batched = robot.forward_kinematics_abscissa_batched(q, s_ps)
     chi_tips = robot.forward_kinematics_tips(q)
     assert_allclose(chi_batched, chi_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     # Jacobian batched
-    J_batched = robot.jacobian_batched(q, s_ps)
+    J_batched = robot.jacobian_abscissa_batched(q, s_ps)
     J_tips = robot.jacobian_tips(q)
     assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
 
     # Jacobian and derivative batched
-    J_batched, Jd_batched = robot.jacobian_and_time_derivative_batched(q, qd, s_ps)
+    J_batched, Jd_batched = robot.jacobian_and_time_derivative_abscissa_batched(q, qd, s_ps)
     J_tips, Jd_tips = robot.jacobian_and_time_derivatives_tips(q, qd)
     assert_allclose(J_batched, J_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())
     assert_allclose(Jd_batched, Jd_tips, rtol=Tolerance.rtol(), atol=Tolerance.atol())

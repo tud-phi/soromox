@@ -41,6 +41,12 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Renamed abscissa-only batch APIs to identify their mapped argument:
+  `forward_kinematics_batched(...)` is now
+  `forward_kinematics_abscissa_batched(...)`, `jacobian_batched(...)` is now
+  `jacobian_abscissa_batched(...)`, and the body-frame, inertial-frame, and
+  Jacobian-time-derivative variants follow the same `*_abscissa_batched`
+  convention. The old names have been removed.
 - Moved generic actuator-visualization adaptation out of
   `SoftRobot.actuator_visual_layers(...)` and into
   `soromox.rendering.actuator_visual_layers(...)`. Renderers continue to adapt

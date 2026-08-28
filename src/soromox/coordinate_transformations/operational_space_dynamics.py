@@ -452,7 +452,7 @@ class OperationalSpaceDynamics(eqx.Module):
         """
         Compute the full stacked Jacobian for all points (before task selection).
 
-        Uses the robot's jacobian_batched method if available for efficiency.
+        Uses the robot's jacobian_abscissa_batched method if available for efficiency.
 
         The Jacobian relates configuration velocities to operational space velocities.
         It has n_velocity_dim rows per point (6 for 3D, 3 for planar), which is
@@ -465,7 +465,7 @@ class OperationalSpaceDynamics(eqx.Module):
             J_full: Stacked Jacobian of shape (n_points * n_velocity_dim, num_dofs).
         """
         # Use batched method from the robot
-        J_ps = self.robot.jacobian_batched(q, self.s_ps)
+        J_ps = self.robot.jacobian_abscissa_batched(q, self.s_ps)
         # J_ps has shape (n_points, n_velocity_dim, num_dofs)
 
         # Stack to get (n_points * n_velocity_dim, num_dofs)
@@ -480,7 +480,7 @@ class OperationalSpaceDynamics(eqx.Module):
         """
         Compute the full stacked Jacobian and its time derivative for all points.
 
-        Uses the robot's jacobian_and_time_derivative_batched method if available.
+        Uses the robot's jacobian_and_time_derivative_abscissa_batched method if available.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -491,7 +491,7 @@ class OperationalSpaceDynamics(eqx.Module):
             Jd_full: Stacked Jacobian time derivative of shape (n_points * n_velocity_dim, num_dofs).
         """
         # Use batched method from the robot
-        J_ps, Jd_ps = self.robot.jacobian_and_time_derivative_batched(q, qd, self.s_ps)
+        J_ps, Jd_ps = self.robot.jacobian_and_time_derivative_abscissa_batched(q, qd, self.s_ps)
         # J_ps, Jd_ps have shape (n_points, n_pose_dim, num_dofs)
 
         # Stack to get (n_points * n_pose_dim, num_dofs)
@@ -828,7 +828,7 @@ class OperationalSpaceDynamics(eqx.Module):
             compute_task_pose_error: Returns task-selected pose error.
         """
         # Compute forward kinematics at all points
-        fk_results = self.robot.forward_kinematics_batched(q, self.s_ps)
+        fk_results = self.robot.forward_kinematics_abscissa_batched(q, self.s_ps)
 
         # Extract pose vectors from forward kinematics results
         poses = vmap(self._extract_pose_from_fk)(fk_results)
