@@ -3,7 +3,7 @@
 
 Both public launchers first prepare quadrature-point strains in a caller-owned
 ``(E, S, Q, 6)`` workspace. Matrix projection then writes every ``(E, D, A)``
-entry exactly once. Fused CUDA force execution uses one 64-lane block per
+entry exactly once. Fused CUDA force execution uses one 128-lane block per
 environment and segment to reduce paths in parallel; the CPU fallback writes
 one active coordinate per thread. Joint-only coordinates and inactive paths
 are written as exact zeros without a separate clear launch.
@@ -20,7 +20,7 @@ from soromox.systems.execution.warp.common.se3 import Vec6d
 
 wp.set_module_options({"enable_backward": False})
 
-GVS_THREADLIKE_FORCE_BLOCK_DIM = 64
+GVS_THREADLIKE_FORCE_BLOCK_DIM = 128
 
 
 @wp.kernel(enable_backward=False)

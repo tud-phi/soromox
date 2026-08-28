@@ -13,6 +13,14 @@ from __future__ import annotations
 import warp as wp
 
 from soromox.systems.execution.warp.common.se3 import Vec6d
+from soromox.systems.execution.warp.pcs.actuation.cooperative import (
+    PCS_THREADLIKE_PATH_POINT_MAX_PATHS,
+    PCS_THREADLIKE_SERIAL_MAX_PATHS,
+    launch_planar_threadlike_force_path,
+    launch_planar_threadlike_force_path_point,
+    launch_spatial_threadlike_force_path,
+    launch_spatial_threadlike_force_path_point,
+)
 
 wp.set_module_options({"enable_backward": False})
 
@@ -345,7 +353,9 @@ def _launch_matrix(
 
 
 def _launch_force(
-    kernel,
+    serial_kernel,
+    path_launcher,
+    path_point_launcher,
     q,
     controls,
     active_indices,
@@ -361,28 +371,35 @@ def _launch_force(
     epsilons,
     output,
 ):
-    """Launch one write-complete dimension-specific fused-force kernel."""
-    wp.launch(
-        kernel,
-        dim=q.shape[0] * active_indices.shape[0],
-        inputs=[
-            q,
-            controls,
-            active_indices,
-            active_scales,
-            reference_strain,
-            physical_points,
-            physical_weights,
-            routing_intercepts,
-            routing_slopes,
-            path_start_segments,
-            path_end_segments,
-            coordinate_scales,
-            epsilons,
-        ],
-        outputs=[output],
-        block_dim=128,
-    )
+    """Launch the static-layout-selected dimension-specific force kernel."""
+    inputs = [
+        q,
+        controls,
+        active_indices,
+        active_scales,
+        reference_strain,
+        physical_points,
+        physical_weights,
+        routing_intercepts,
+        routing_slopes,
+        path_start_segments,
+        path_end_segments,
+        coordinate_scales,
+        epsilons,
+    ]
+    num_paths = routing_intercepts.shape[0]
+    if not q.device.is_cuda or num_paths <= PCS_THREADLIKE_SERIAL_MAX_PATHS:
+        wp.launch(
+            serial_kernel,
+            dim=q.shape[0] * active_indices.shape[0],
+            inputs=inputs,
+            outputs=[output],
+            block_dim=128,
+        )
+    elif num_paths <= PCS_THREADLIKE_PATH_POINT_MAX_PATHS:
+        path_point_launcher(*inputs, output)
+    else:
+        path_launcher(*inputs, output)
 
 
 def launch_planar_threadlike_actuation_matrix(
@@ -472,6 +489,8 @@ def launch_planar_threadlike_actuation_force(
     """Fill a caller-owned ``(E, D)`` PlanarPCS fused force."""
     _launch_force(
         planar_threadlike_force_kernel,
+        launch_planar_threadlike_force_path,
+        launch_planar_threadlike_force_path_point,
         q,
         controls,
         active_indices,
@@ -508,6 +527,8 @@ def launch_spatial_threadlike_actuation_force(
     """Fill a caller-owned ``(E, D)`` spatial PCS fused force."""
     _launch_force(
         spatial_threadlike_force_kernel,
+        launch_spatial_threadlike_force_path,
+        launch_spatial_threadlike_force_path_point,
         q,
         controls,
         active_indices,
@@ -532,14 +553,40 @@ spatial_threadlike_actuation_matrix = wp.jax_callable(
     launch_spatial_threadlike_actuation_matrix, num_outputs=1
 )
 planar_threadlike_actuation_force = wp.jax_callable(
-    launch_planar_threadlike_actuation_force, num_outputs=1
+    launch_planar_threadlike_actuation_force,
+    num_outputs=1,
+    module_preload_mode=wp.JaxModulePreloadMode.NONE,
 )
 spatial_threadlike_actuation_force = wp.jax_callable(
-    launch_spatial_threadlike_actuation_force, num_outputs=1
+    launch_spatial_threadlike_actuation_force,
+    num_outputs=1,
+    module_preload_mode=wp.JaxModulePreloadMode.NONE,
+)
+planar_threadlike_matrix = wp.jax_kernel(
+    planar_threadlike_matrix_kernel,
+    num_outputs=1,
+    block_dim=128,
+)
+spatial_threadlike_matrix = wp.jax_kernel(
+    spatial_threadlike_matrix_kernel,
+    num_outputs=1,
+    block_dim=128,
+)
+planar_threadlike_force = wp.jax_kernel(
+    planar_threadlike_force_kernel,
+    num_outputs=1,
+    block_dim=128,
+)
+spatial_threadlike_force = wp.jax_kernel(
+    spatial_threadlike_force_kernel,
+    num_outputs=1,
+    block_dim=128,
 )
 
 
 __all__ = [
+    "PCS_THREADLIKE_PATH_POINT_MAX_PATHS",
+    "PCS_THREADLIKE_SERIAL_MAX_PATHS",
     "launch_planar_threadlike_actuation_force",
     "launch_planar_threadlike_actuation_matrix",
     "launch_spatial_threadlike_actuation_force",

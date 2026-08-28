@@ -3733,4 +3733,6 @@ class PCS(SoftRobot):
             ValueError: If ``actuation_args`` does not contain one or two
                 elements.
         """
-        return evaluate_forward_dynamics(self, t, y, actuation_args, backend)
+        return evaluate_forward_dynamics(
+            self, t, y, actuation_args, backend, PCS_DYNAMICS
+        )

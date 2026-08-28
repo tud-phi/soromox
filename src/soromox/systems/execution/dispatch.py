@@ -13,10 +13,12 @@ from soromox.systems.execution.transforms import (
 from soromox.systems.execution.types import (
     ActuationCapabilities,
     ActuationModel,
+    DynamicsActuationTerms,
     DynamicsCapabilities,
     DynamicsModel,
     DynamicsTerms,
     ExecutionBackend,
+    ForwardDynamicsModel,
     KinematicsCapabilities,
     KinematicsModel,
     KinematicsOperation,
@@ -29,6 +31,7 @@ from soromox.systems.execution.warp.actuation.threadlike import (
 from soromox.systems.execution.warp.loader import (
     get_abscissa_batched_kinematics_evaluator,
     get_actuation_evaluator,
+    get_dynamics_actuation_evaluator,
     get_dynamics_evaluator,
     get_kinematics_evaluator,
 )
@@ -161,9 +164,7 @@ def dispatch_actuation_force(
     if q.shape != (model.num_dofs,):
         raise ValueError(f"q must have shape ({model.num_dofs},), got {q.shape}.")
     if u.shape != (model.num_actuators,):
-        raise ValueError(
-            f"u must have shape ({model.num_actuators},), got {u.shape}."
-        )
+        raise ValueError(f"u must have shape ({model.num_actuators},), got {u.shape}.")
     if qd is None:
         qd = jnp.zeros_like(q)
     else:
@@ -194,6 +195,40 @@ def dispatch_actuation_force(
         return model._actuation_force(q, u, qd)
     evaluator = get_actuation_evaluator(capabilities.warp_executor, "force")
     return evaluator(model, q, u, qd)  # type: ignore[operator]
+
+
+def dispatch_fused_dynamics_actuation_force(
+    model: ForwardDynamicsModel,
+    q: Array,
+    qd: Array,
+    u: Array,
+    *,
+    backend: ExecutionBackend | None,
+    capabilities: DynamicsCapabilities,
+) -> DynamicsActuationTerms | None:
+    """Use a benchmark-qualified fused Warp primal when it is eligible.
+
+    Returning ``None`` preserves the independently dispatched dynamics and
+    actuation paths. An explicit Warp request therefore continues to permit
+    JAX actuation for custom transmissions or effort laws.
+    """
+
+    if (
+        not capabilities.fused_threadlike_force_enabled
+        or jax.default_backend() != "gpu"
+        or not supports_linear_threadlike_force(model)
+    ):
+        return None
+    selected = _select_backend(
+        model,
+        backend,
+        capabilities,
+        warp_supported=True,
+    )
+    if selected != "warp":
+        return None
+    evaluator = get_dynamics_actuation_evaluator(capabilities.warp_executor)
+    return evaluator(model, q, qd, u)
 
 
 def dispatch_dynamics_terms(

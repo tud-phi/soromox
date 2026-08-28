@@ -16,6 +16,9 @@ from soromox.systems.execution.types import (
     ActuationMatrixEvaluator,
     ActuationModel,
     ActuationOperation,
+    DynamicsActuationEvaluator,
+    DynamicsActuationTerms,
+    DynamicsCapabilities,
     DynamicsEvaluator,
     DynamicsModel,
     DynamicsTerms,
@@ -28,6 +31,9 @@ from soromox.systems.execution.types import (
 )
 
 BatchExecutor = Callable[[DynamicsModel, Array, Array], DynamicsTerms]
+DynamicsActuationBatchExecutor = Callable[
+    [ForwardDynamicsModel, Array, Array, Array], DynamicsActuationTerms
+]
 KinematicsBatchExecutor = Callable[
     [KinematicsModel, Array, Array, KinematicsOperation], KinematicsResult
 ]
@@ -81,9 +87,7 @@ def make_actuation_evaluator(
         return matrix_evaluator
 
     @jax.custom_batching.custom_vmap
-    def force_primal(
-        model: ActuationModel, q: Array, u: Array, qd: Array
-    ) -> Array:
+    def force_primal(model: ActuationModel, q: Array, u: Array, qd: Array) -> Array:
         del qd
         return execute_batch(model, q[None, :], u[None, :])[0]
 
@@ -109,9 +113,7 @@ def make_actuation_evaluator(
         return execute_batch(model, q, u), True
 
     @eqx.filter_custom_jvp
-    def force_evaluator(
-        model: ActuationModel, q: Array, u: Array, qd: Array
-    ) -> Array:
+    def force_evaluator(model: ActuationModel, q: Array, u: Array, qd: Array) -> Array:
         return force_primal(model, q, u, qd)
 
     @force_evaluator.def_jvp
@@ -512,6 +514,83 @@ def make_dynamics_evaluator(
     return evaluate_terms
 
 
+def make_dynamics_actuation_evaluator(
+    execute_batch: DynamicsActuationBatchExecutor,
+    *,
+    family_name: str,
+) -> DynamicsActuationEvaluator:
+    """Adapt fused batch execution to scalar and transformation semantics.
+
+    Args:
+        execute_batch: Family executor accepting canonical ``(E, D)`` states
+            and ``(E, A)`` controls.
+        family_name: Human-readable name used in batching diagnostics.
+
+    Returns:
+        Scalar evaluator whose mapped primal uses one batch invocation and
+        whose derivatives use the protected JAX implementations.
+    """
+
+    def reference(
+        model: ForwardDynamicsModel,
+        q: Array,
+        qd: Array,
+        u: Array,
+    ) -> DynamicsActuationTerms:
+        inertia, coriolis_qd, gravity = model._assemble_dynamics_terms(q, qd)
+        return inertia, coriolis_qd, gravity, model._actuation_force(q, u, qd)
+
+    @jax.custom_batching.custom_vmap
+    def execute_primal(
+        model: ForwardDynamicsModel,
+        q: Array,
+        qd: Array,
+        u: Array,
+    ) -> DynamicsActuationTerms:
+        batched = execute_batch(model, q[None, :], qd[None, :], u[None, :])
+        return jax.tree.map(lambda value: value[0], batched)
+
+    @execute_primal.def_vmap
+    def vmap_rule(
+        axis_size: int,
+        in_batched: tuple[Any, bool, bool, bool],
+        model: ForwardDynamicsModel,
+        q: Array,
+        qd: Array,
+        u: Array,
+    ) -> tuple[DynamicsActuationTerms, tuple[bool, bool, bool, bool]]:
+        model_batched, q_batched, qd_batched, u_batched = in_batched
+        if any(jax.tree.leaves(model_batched)):
+            raise ValueError(
+                f"Batching over {family_name} model parameters is not supported."
+            )
+        if not q_batched:
+            q = jnp.broadcast_to(q, (axis_size, *q.shape))
+        if not qd_batched:
+            qd = jnp.broadcast_to(qd, (axis_size, *qd.shape))
+        if not u_batched:
+            u = jnp.broadcast_to(u, (axis_size, *u.shape))
+        return execute_batch(model, q, qd, u), (True, True, True, True)
+
+    @eqx.filter_custom_jvp
+    def evaluate_terms(
+        model: ForwardDynamicsModel,
+        q: Array,
+        qd: Array,
+        u: Array,
+    ) -> DynamicsActuationTerms:
+        return execute_primal(model, q, qd, u)
+
+    @evaluate_terms.def_jvp
+    def jvp_rule(
+        primals: tuple[ForwardDynamicsModel, Array, Array, Array],
+        tangents: tuple[Any, Array | None, Array | None, Array | None],
+    ) -> tuple[DynamicsActuationTerms, DynamicsActuationTerms]:
+        return eqx.filter_jvp(reference, primals, tangents)
+
+    return evaluate_terms
+
+
 @eqx.filter_custom_jvp
 def evaluate_forward_dynamics(
     model: ForwardDynamicsModel,
@@ -519,6 +598,7 @@ def evaluate_forward_dynamics(
     y: Array,
     actuation_args: tuple | None,
     backend: ExecutionBackend | None,
+    capabilities: DynamicsCapabilities | None = None,
 ) -> Array:
     """Evaluate compiled forward dynamics with transform-aware backend routing.
 
@@ -537,25 +617,28 @@ def evaluate_forward_dynamics(
             unchanged to the system.
         backend: Optional per-call backend override. ``None`` uses the model's
             configured backend.
+        capabilities: Optional family capabilities enabling a benchmark-gated
+            fused dynamics-and-threadlike-actuation primal path.
 
     Returns:
         The state derivative produced by the model's compiled forward-dynamics
         implementation.
     """
 
-    return _assemble_forward_dynamics(model, t, y, actuation_args, backend=backend)
+    return _assemble_forward_dynamics(
+        model,
+        t,
+        y,
+        actuation_args,
+        backend=backend,
+        capabilities=capabilities,
+    )
 
 
 @evaluate_forward_dynamics.def_jvp
 def _evaluate_forward_dynamics_jvp(
-    primals: tuple[
-        ForwardDynamicsModel,
-        Array,
-        Array,
-        tuple | None,
-        ExecutionBackend | None,
-    ],
-    tangents: tuple[Any, Any, Any, Any, Any],
+    primals: tuple[Any, ...],
+    tangents: tuple[Any, ...],
 ) -> tuple[Array, Array]:
     """Differentiate forward dynamics using the model's JAX term assembly.
 
@@ -569,14 +652,42 @@ def _evaluate_forward_dynamics_jvp(
         directional derivative.
     """
 
-    model, t, y, actuation_args, _backend = primals
-    model_tangent, t_tangent, y_tangent, actuation_tangent, _backend_tangent = tangents
+    if len(primals) == 5:
+        model, t, y, actuation_args, _backend = primals
+        model_tangent, t_tangent, y_tangent, actuation_tangent, _backend_tangent = (
+            tangents
+        )
+        capabilities = None
+        capabilities_tangent = None
+    else:
+        model, t, y, actuation_args, _backend, capabilities = primals
+        (
+            model_tangent,
+            t_tangent,
+            y_tangent,
+            actuation_tangent,
+            _backend_tangent,
+            capabilities_tangent,
+        ) = tangents
     return eqx.filter_jvp(
-        lambda model_, t_, y_, actuation_args_: _assemble_forward_dynamics(
-            model_, t_, y_, actuation_args_, backend="jax"
+        lambda model_, t_, y_, actuation_args_, capabilities_: (
+            _assemble_forward_dynamics(
+                model_,
+                t_,
+                y_,
+                actuation_args_,
+                backend="jax",
+                capabilities=capabilities_,
+            )
         ),
-        (model, t, y, actuation_args),
-        (model_tangent, t_tangent, y_tangent, actuation_tangent),
+        (model, t, y, actuation_args, capabilities),
+        (
+            model_tangent,
+            t_tangent,
+            y_tangent,
+            actuation_tangent,
+            capabilities_tangent,
+        ),
     )
 
 
@@ -588,6 +699,7 @@ def _assemble_forward_dynamics(
     actuation_args: tuple | None,
     *,
     backend: ExecutionBackend | None,
+    capabilities: DynamicsCapabilities | None,
 ) -> Array:
     """Assemble generalized forces and solve one forward-dynamics request.
 
@@ -606,6 +718,7 @@ def _assemble_forward_dynamics(
             actuation and external force values default to zero.
         backend: Backend used to assemble dynamics terms. ``None`` uses the
             model's configured backend.
+        capabilities: Optional family support for fused primal execution.
 
     Returns:
         State time derivative ``[qd, qdd]`` with the same shape as ``y``.
@@ -631,13 +744,30 @@ def _assemble_forward_dynamics(
     if tau_ext is None:
         tau_ext = jnp.zeros((q.shape[-1],))
 
-    inertia, coriolis_qd, gravity = model.dynamics_terms(q, qd, backend=backend)
     elastic = model.elastic_force(q)
-    requested = model.backend if backend is None else backend
-    actuation_backend: ExecutionBackend | None = (
-        "auto" if requested == "warp" else backend
-    )
-    actuation = model.actuation_force(q, u, qd=qd, backend=actuation_backend)
+    fused = None
+    if capabilities is not None:
+        from soromox.systems.execution.dispatch import (
+            dispatch_fused_dynamics_actuation_force,
+        )
+
+        fused = dispatch_fused_dynamics_actuation_force(
+            model,
+            q,
+            qd,
+            u,
+            backend=backend,
+            capabilities=capabilities,
+        )
+    if fused is None:
+        inertia, coriolis_qd, gravity = model.dynamics_terms(q, qd, backend=backend)
+        requested = model.backend if backend is None else backend
+        actuation_backend: ExecutionBackend | None = (
+            "auto" if requested == "warp" else backend
+        )
+        actuation = model.actuation_force(q, u, qd=qd, backend=actuation_backend)
+    else:
+        inertia, coriolis_qd, gravity, actuation = fused
     rhs = (
         actuation
         + tau_ext
@@ -654,9 +784,11 @@ __all__ = [
     "ActuationForceBatchExecutor",
     "ActuationMatrixBatchExecutor",
     "BatchExecutor",
+    "DynamicsActuationBatchExecutor",
     "KinematicsBatchExecutor",
     "evaluate_forward_dynamics",
     "make_actuation_evaluator",
     "make_dynamics_evaluator",
+    "make_dynamics_actuation_evaluator",
     "make_kinematics_evaluators",
 ]

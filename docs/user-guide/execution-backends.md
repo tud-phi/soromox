@@ -112,6 +112,11 @@ unsupported system-level operation explains how to access the low-level
 Warp-native API. Passive threadlike impedance and actuator path coordinates
 also remain JAX operations.
 
+When Warp dynamics is selected, `GVS.forward_dynamics` combines eligible
+built-in linear threadlike actuation with the dynamics evaluation. Other
+actuation layouts and the `PCS` and `PlanarPCS` systems continue to evaluate
+actuation with JAX.
+
 ## Model-level and per-call selection
 
 The constructor setting controls normal use:

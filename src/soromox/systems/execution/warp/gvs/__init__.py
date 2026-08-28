@@ -44,6 +44,7 @@ __all__ = [
     "launch_gvs_forward_kinematics",
     "launch_gvs_inertial_jacobians",
     "launch_gvs_kinematics",
+    "launch_gvs_dynamics_and_threadlike_actuation_force",
     "launch_persistent_chain",
     "persistent_chain_kernel",
     "gvs_threadlike_force_kernel",
@@ -52,6 +53,7 @@ __all__ = [
     "launch_gvs_threadlike_actuation_force",
     "launch_gvs_threadlike_actuation_matrix",
     "prepare_gvs_threadlike_strain_kernel",
+    "gvs_dynamics_and_threadlike_actuation_force",
 ]
 
 _PUBLIC_MODULES = {
@@ -69,6 +71,7 @@ _PUBLIC_MODULES = {
     "launch_cooperative_joint_terms": "common.joints_cooperative",
     "launch_joint_terms": "common.joints",
     "launch_persistent_chain": "chain",
+    "launch_gvs_dynamics_and_threadlike_actuation_force": "fused",
     "persistent_chain_kernel": "chain",
     "gvs_threadlike_force_kernel": "actuation.threadlike",
     "gvs_threadlike_force_block_kernel": "actuation.threadlike",
@@ -76,6 +79,7 @@ _PUBLIC_MODULES = {
     "launch_gvs_threadlike_actuation_force": "actuation.threadlike",
     "launch_gvs_threadlike_actuation_matrix": "actuation.threadlike",
     "prepare_gvs_threadlike_strain_kernel": "actuation.threadlike",
+    "gvs_dynamics_and_threadlike_actuation_force": "fused",
     "gvs_cooperative_node_states_kernel": "kinematics",
     "gvs_jacobian_samples_kernel": "kinematics",
     "gvs_node_poses_kernel": "kinematics",

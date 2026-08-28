@@ -10,6 +10,7 @@ from jax import Array
 ExecutionBackend = Literal["auto", "jax", "warp"]
 WarpExecutorKey = Literal["gvs", "pcs"]
 DynamicsTerms = tuple[Array, Array, Array]
+DynamicsActuationTerms = tuple[Array, Array, Array, Array]
 KinematicsOperation = Literal["pose", "jacobian", "both"]
 KinematicsResult = Array | tuple[Array, Array]
 ActuationOperation = Literal["matrix", "force"]
@@ -128,6 +129,11 @@ class ForwardDynamicsModel(DynamicsModel, Protocol):
 
         ...
 
+    def _actuation_force(self, q: Array, u: Array, qd: Array) -> Array:
+        """Return the differentiable JAX generalized actuator force."""
+
+        ...
+
     def _solve_inertia(self, inertia: Array, rhs: Array) -> Array:
         """Solve the generalized inertia system.
 
@@ -162,6 +168,21 @@ class DynamicsEvaluator(Protocol):
         Returns:
             Inertia, Coriolis/centrifugal, and gravity terms ``(B, Cqd, G)``.
         """
+
+        ...
+
+
+class DynamicsActuationEvaluator(Protocol):
+    """Scalar dynamics-and-actuation evaluator backed by one batched executor."""
+
+    def __call__(
+        self,
+        model: ForwardDynamicsModel,
+        q: Array,
+        qd: Array,
+        u: Array,
+    ) -> DynamicsActuationTerms:
+        """Evaluate inertia, convective, gravity, and actuator-force terms."""
 
         ...
 
@@ -253,9 +274,7 @@ class ActuationMatrixEvaluator(Protocol):
 class ActuationForceEvaluator(Protocol):
     """Scalar fused-force evaluator backed by one canonical batched executor."""
 
-    def __call__(
-        self, model: ActuationModel, q: Array, u: Array, qd: Array
-    ) -> Array:
+    def __call__(self, model: ActuationModel, q: Array, u: Array, qd: Array) -> Array:
         """Return one generalized actuator force with shape ``(D,)``."""
 
         ...
@@ -273,12 +292,16 @@ class DynamicsCapabilities:
             back to JAX on CPU.
         required_num_gauss_points: Exact quadrature size required by Warp, or
             ``None`` when the executor is shape-generic in quadrature count.
+        fused_threadlike_force_enabled: Whether eligible linear-threadlike
+            forward dynamics may combine dynamics and direct-effort actuation
+            in one family executor invocation.
     """
 
     family_name: str
     warp_executor: WarpExecutorKey
     warp_cpu_supported: bool = False
     required_num_gauss_points: int | None = None
+    fused_threadlike_force_enabled: bool = False
 
 
 @dataclass(frozen=True)
@@ -320,6 +343,8 @@ __all__ = [
     "ActuationModel",
     "ActuationOperation",
     "DynamicsCapabilities",
+    "DynamicsActuationEvaluator",
+    "DynamicsActuationTerms",
     "DynamicsEvaluator",
     "DynamicsModel",
     "DynamicsTerms",

@@ -24,6 +24,8 @@ and include benchmark baseline and measurement context for performance claims.
 - Added public allocation-free, CUDA-graph-capturable Warp kernels, operand
   bundles, output-shape contracts, and fused direct-effort launchers for
   built-in linear threadlike actuation in `PlanarPCS`, `PCS`, and `GVS`.
+  Eligible `GVS.forward_dynamics` calls combine dynamics and threadlike
+  actuation in one Warp invocation.
 
 ### Changed
 

@@ -31,6 +31,7 @@ GVS_DYNAMICS = DynamicsCapabilities(
     family_name="GVS",
     warp_executor="gvs",
     warp_cpu_supported=True,
+    fused_threadlike_force_enabled=True,
 )
 PCS_DYNAMICS = DynamicsCapabilities(
     family_name="PCS",

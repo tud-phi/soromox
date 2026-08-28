@@ -14,6 +14,7 @@ from jax import Array
 
 from soromox.systems.execution.transforms import (
     make_actuation_evaluator,
+    make_dynamics_actuation_evaluator,
     make_dynamics_evaluator,
     make_kinematics_evaluators,
 )
@@ -23,9 +24,12 @@ from soromox.systems.execution.types import (
     ActuationMatrixEvaluator,
     ActuationModel,
     ActuationOperation,
+    DynamicsActuationEvaluator,
+    DynamicsActuationTerms,
     DynamicsEvaluator,
     DynamicsModel,
     DynamicsTerms,
+    ForwardDynamicsModel,
     KinematicsEvaluator,
     KinematicsModel,
     KinematicsOperation,
@@ -49,6 +53,9 @@ from soromox.systems.execution.warp.pcs.operands import (
 )
 
 WarpExecutor = Callable[[Any, Array, Array], DynamicsTerms]
+WarpDynamicsActuationExecutor = Callable[
+    [Any, Any, Array, Array, Array], DynamicsActuationTerms
+]
 WarpKinematicsExecutor = Callable[
     [Any, Array, Array, KinematicsOperation], KinematicsResult
 ]
@@ -57,6 +64,10 @@ WarpActuationExecutor = Callable[..., Array]
 _EXECUTOR_MODULES: dict[WarpExecutorKey, str] = {
     "gvs": "soromox.systems.execution.warp.gvs.executor",
     "pcs": "soromox.systems.execution.warp.pcs.executor",
+}
+_FUSED_EXECUTOR_MODULES: dict[WarpExecutorKey, str] = {
+    "gvs": "soromox.systems.execution.warp.gvs.fused_executor",
+    "pcs": "soromox.systems.execution.warp.pcs.fused_executor",
 }
 _KINEMATICS_EXECUTOR_MODULES: dict[WarpExecutorKey, str] = {
     "gvs": "soromox.systems.execution.warp.gvs.kinematics_executor",
@@ -97,6 +108,29 @@ def load_executor(key: WarpExecutorKey) -> WarpExecutor:
             ) from error
         raise
     return cast(WarpExecutor, module.execute_dynamics_terms)
+
+
+@cache
+def load_dynamics_actuation_executor(
+    key: WarpExecutorKey,
+) -> WarpDynamicsActuationExecutor:
+    """Load one fused family executor behind the optional-Warp boundary."""
+
+    module_name = _FUSED_EXECUTOR_MODULES[key]
+    try:
+        module = import_module(module_name)
+    except ModuleNotFoundError as error:
+        if error.name == "warp":
+            raise ImportError(
+                "The requested fused dynamics executor requires the optional "
+                "'warp-lang' dependency. Install it with "
+                "`pip install soromox[warp]`."
+            ) from error
+        raise
+    return cast(
+        WarpDynamicsActuationExecutor,
+        module.execute_dynamics_and_threadlike_actuation_force,
+    )
 
 
 @cache
@@ -145,7 +179,9 @@ def load_actuation_executor(
                 "`pip install soromox[warp]`."
             ) from error
         raise
-    return cast(WarpActuationExecutor, getattr(module, f"execute_actuation_{operation}"))
+    return cast(
+        WarpActuationExecutor, getattr(module, f"execute_actuation_{operation}")
+    )
 
 
 def execute_dynamics_terms(
@@ -170,6 +206,25 @@ def execute_dynamics_terms(
     """
 
     return load_executor(key)(operands, q, qd)
+
+
+def execute_dynamics_and_threadlike_actuation_force(
+    key: WarpExecutorKey,
+    dynamics_operands: Any,
+    actuation_operands: Any,
+    q: Array,
+    qd: Array,
+    controls: Array,
+) -> DynamicsActuationTerms:
+    """Invoke one fused family dynamics-and-direct-effort executor."""
+
+    return load_dynamics_actuation_executor(key)(
+        dynamics_operands,
+        actuation_operands,
+        q,
+        qd,
+        controls,
+    )
 
 
 def execute_kinematics(
@@ -318,6 +373,48 @@ def _execute_pcs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTer
     return execute_dynamics_terms("pcs", PCSOperands.from_model(model), q, qd)
 
 
+@eqx.filter_jit
+def _execute_gvs_dynamics_actuation_batch(
+    model: ForwardDynamicsModel,
+    q: Array,
+    qd: Array,
+    controls: Array,
+) -> DynamicsActuationTerms:
+    """Build GVS operands and execute one fused canonical batch."""
+
+    _validate_batch(q, qd, "GVS")
+    _validate_actuation_batch(q, controls, "GVS")
+    dynamics = GVSOperands.from_model(
+        model,
+        block_dim=gvs_block_dim(model.num_dofs, gpu=jax.default_backend() == "gpu"),
+    )
+    actuation = GVSThreadlikeOperands.from_model(model)
+    return execute_dynamics_and_threadlike_actuation_force(
+        "gvs", dynamics, actuation, q, qd, controls
+    )
+
+
+@eqx.filter_jit
+def _execute_pcs_dynamics_actuation_batch(
+    model: ForwardDynamicsModel,
+    q: Array,
+    qd: Array,
+    controls: Array,
+) -> DynamicsActuationTerms:
+    """Build PCS operands and execute one fused canonical batch."""
+
+    _validate_batch(q, qd, "PCS")
+    _validate_actuation_batch(q, controls, "PCS")
+    return execute_dynamics_and_threadlike_actuation_force(
+        "pcs",
+        PCSOperands.from_model(model),
+        PCSThreadlikeOperands.from_model(model),
+        q,
+        qd,
+        controls,
+    )
+
+
 def _call_gvs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTerms:
     """Call the replaceable GVS batch boundary.
 
@@ -356,8 +453,38 @@ def _call_pcs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTerms:
     return _execute_pcs_batch(model, q, qd)
 
 
+def _call_gvs_dynamics_actuation_batch(
+    model: ForwardDynamicsModel,
+    q: Array,
+    qd: Array,
+    controls: Array,
+) -> DynamicsActuationTerms:
+    """Call the replaceable fused GVS batch boundary."""
+
+    return _execute_gvs_dynamics_actuation_batch(model, q, qd, controls)
+
+
+def _call_pcs_dynamics_actuation_batch(
+    model: ForwardDynamicsModel,
+    q: Array,
+    qd: Array,
+    controls: Array,
+) -> DynamicsActuationTerms:
+    """Call the replaceable fused PCS batch boundary."""
+
+    return _execute_pcs_dynamics_actuation_batch(model, q, qd, controls)
+
+
 _GVS_EVALUATOR = make_dynamics_evaluator(_call_gvs_batch, family_name="GVS")
 _PCS_EVALUATOR = make_dynamics_evaluator(_call_pcs_batch, family_name="PCS")
+_GVS_DYNAMICS_ACTUATION_EVALUATOR = make_dynamics_actuation_evaluator(
+    _call_gvs_dynamics_actuation_batch,
+    family_name="GVS",
+)
+_PCS_DYNAMICS_ACTUATION_EVALUATOR = make_dynamics_actuation_evaluator(
+    _call_pcs_dynamics_actuation_batch,
+    family_name="PCS",
+)
 
 
 @eqx.filter_jit
@@ -449,9 +576,7 @@ _KINEMATICS_EVALUATORS = {
 
 
 @eqx.filter_jit
-def _execute_gvs_actuation_matrix_batch(
-    model: ActuationModel, q: Array
-) -> Array:
+def _execute_gvs_actuation_matrix_batch(model: ActuationModel, q: Array) -> Array:
     _validate_actuation_batch(q, None, "GVS")
     return execute_actuation(
         "gvs", "matrix", GVSThreadlikeOperands.from_model(model), q
@@ -469,9 +594,7 @@ def _execute_gvs_actuation_force_batch(
 
 
 @eqx.filter_jit
-def _execute_pcs_actuation_matrix_batch(
-    model: ActuationModel, q: Array
-) -> Array:
+def _execute_pcs_actuation_matrix_batch(model: ActuationModel, q: Array) -> Array:
     _validate_actuation_batch(q, None, "PCS")
     return execute_actuation(
         "pcs", "matrix", PCSThreadlikeOperands.from_model(model), q
@@ -540,6 +663,16 @@ def get_dynamics_evaluator(key: WarpExecutorKey) -> DynamicsEvaluator:
     return _PCS_EVALUATOR
 
 
+def get_dynamics_actuation_evaluator(
+    key: WarpExecutorKey,
+) -> DynamicsActuationEvaluator:
+    """Return one transform-aware fused dynamics-and-actuation evaluator."""
+
+    if key == "gvs":
+        return _GVS_DYNAMICS_ACTUATION_EVALUATOR
+    return _PCS_DYNAMICS_ACTUATION_EVALUATOR
+
+
 def get_actuation_evaluator(
     key: WarpExecutorKey, operation: ActuationOperation
 ) -> ActuationMatrixEvaluator | ActuationForceEvaluator:
@@ -582,17 +715,21 @@ def get_abscissa_batched_kinematics_evaluator(
 
 __all__ = [
     "WarpActuationExecutor",
+    "WarpDynamicsActuationExecutor",
     "WarpExecutor",
     "WarpKinematicsExecutor",
     "WarpExecutorKey",
     "execute_actuation",
     "execute_dynamics_terms",
+    "execute_dynamics_and_threadlike_actuation_force",
     "execute_kinematics",
     "get_abscissa_batched_kinematics_evaluator",
     "get_actuation_evaluator",
     "get_dynamics_evaluator",
+    "get_dynamics_actuation_evaluator",
     "get_kinematics_evaluator",
     "load_actuation_executor",
     "load_executor",
+    "load_dynamics_actuation_executor",
     "load_kinematics_executor",
 ]
