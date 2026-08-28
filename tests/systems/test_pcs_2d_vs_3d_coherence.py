@@ -10,6 +10,7 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
+from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
 from soromox.utils.tolerance import Tolerance
 
@@ -24,7 +25,7 @@ NUM_RANDOM_SAMPLES = 5
 
 
 def make_planar_model(
-    num_segments: int, total_length: float = TOTAL_LENGTH
+    num_segments: int, total_length: float = TOTAL_LENGTH, actuators=None
 ) -> PlanarPCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
@@ -45,10 +46,13 @@ def make_planar_model(
         params=params,
         structure=PlanarPCSStructure(num_gauss_points=3),
         base_pose=planar_base_pose(),
+        actuators=actuators,
     )
 
 
-def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) -> PCS:
+def make_spatial_model(
+    num_segments: int, total_length: float = TOTAL_LENGTH, actuators=None
+) -> PCS:
     segment_length = total_length / num_segments
     L = segment_length * jnp.ones((num_segments,))
     diag_entries = (
@@ -69,6 +73,7 @@ def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) ->
         params=params,
         structure=PCSStructure(num_gauss_points=3),
         base_pose=spatial_base_pose(),
+        actuators=actuators,
     )
 
 
@@ -434,3 +439,41 @@ def test_forward_dynamics_coherence(num_segments):
 if __name__ == "__main__":
     # run pytest with activated stdout
     pytest.main([__file__])
+
+
+@pytest.mark.parametrize("num_segments", [1, 2, 3])
+@pytest.mark.parametrize("friction_coefficient", [0.0, 0.7])
+def test_threadlike_actuation_coherence(num_segments, friction_coefficient):
+    """The planar and spatial hosts must route and attenuate identically."""
+    routing = ThreadlikeRouting.linear(
+        intercept=jnp.array([[0.0, 2e-2, 0.0], [0.0, -1.5e-2, 0.0]]),
+        start_segment_index=(0, 0),
+        end_segment_index=(num_segments - 1,) * 2,
+    )
+
+    def tendons(coefficient):
+        return ThreadlikeActuator.tendons(routing, friction_coefficient=coefficient)
+
+    planar = make_planar_model(num_segments, actuators=tendons(friction_coefficient))
+    spatial = make_spatial_model(num_segments, actuators=tendons(friction_coefficient))
+
+    q_planar = jnp.concatenate(
+        [jnp.array([4.0 + 2.0 * seg, 2e-2, -1e-2]) for seg in range(num_segments)]
+    )
+    q_spatial = lift_planar_configuration(planar, spatial, q_planar)
+    indices = spatial_planar_indices(num_segments)
+
+    planar_matrix = planar.actuation_matrix(q_planar)
+    assert_allclose(
+        planar_matrix,
+        spatial.actuation_matrix(q_spatial)[indices],
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+    if friction_coefficient > 0.0:
+        frictionless = make_planar_model(num_segments, actuators=tendons(0.0))
+        attenuated = jnp.abs(planar_matrix)
+        reference = jnp.abs(frictionless.actuation_matrix(q_planar))
+        assert jnp.all(attenuated <= reference + ATOL)
+        assert jnp.max(reference - attenuated) > 1e-4

@@ -486,12 +486,22 @@ def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
 
 
 @pytest.mark.parametrize(
-    ("factory", "axial_index"),
-    [(_spatial_pcs, 3), (_planar_pcs, 1), (_gvs, 3)],
+    ("factory", "axial_index", "friction_coefficient"),
+    [
+        (_spatial_pcs, 3, 0.0),
+        (_spatial_pcs, 3, 0.7),
+        (_planar_pcs, 1, 0.0),
+        (_planar_pcs, 1, 0.7),
+        (_gvs, 3, 0.0),  # GVS refuses a nonzero coefficient at construction
+    ],
 )
-def test_collapsed_threadlike_tangent_has_finite_reverse_mode(factory, axial_index):
+def test_collapsed_threadlike_tangent_has_finite_reverse_mode(
+    factory, axial_index, friction_coefficient
+):
     """Cover normalization and path density at an exactly zero routing tangent."""
-    actuator = ThreadlikeActuator.tendons(_routing(count=1))
+    actuator = ThreadlikeActuator.tendons(
+        _routing(count=1), friction_coefficient=friction_coefficient
+    )
     robot = factory(actuators=actuator)
     q = jnp.zeros(robot.num_internal_dofs).at[axial_index].set(-1.0)
 
