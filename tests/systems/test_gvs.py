@@ -1952,6 +1952,10 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates() -
         J_unscaled = unscaled.jacobian_bodyframe(q_unscaled, float(s))
         assert_allclose(J_scaled, J_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
 
+        Ji_scaled = scaled.jacobian_inertialframe(q_scaled, float(s))
+        Ji_unscaled = unscaled.jacobian_inertialframe(q_unscaled, float(s))
+        assert_allclose(Ji_scaled, Ji_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+
         J_scaled, Jd_scaled = scaled.jacobian_and_time_derivative_bodyframe(
             q_scaled, qd_scaled, float(s)
         )
@@ -1960,6 +1964,83 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates() -
         )
         assert_allclose(J_scaled, J_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
         assert_allclose(Jd_scaled, Jd_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+
+        Ji_scaled, Jid_scaled = scaled.jacobian_and_time_derivative_inertialframe(
+            q_scaled, qd_scaled, float(s)
+        )
+        Ji_unscaled, Jid_unscaled = unscaled.jacobian_and_time_derivative_inertialframe(
+            q_unscaled, qd_unscaled, float(s)
+        )
+        assert_allclose(Ji_scaled, Ji_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+        assert_allclose(Jid_scaled, Jid_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+
+        gs_scaled = scaled.forward_kinematics_arc_length_derivative(q_scaled, float(s))
+        gs_unscaled = unscaled.forward_kinematics_arc_length_derivative(
+            q_unscaled, float(s)
+        )
+        assert_allclose(gs_scaled, gs_unscaled, rtol=RTOL, atol=ATOL)
+
+        J_scaled, Js_scaled = scaled.jacobian_and_arc_length_derivative_bodyframe(
+            q_scaled, float(s)
+        )
+        J_unscaled, Js_unscaled = unscaled.jacobian_and_arc_length_derivative_bodyframe(
+            q_unscaled, float(s)
+        )
+        assert_allclose(J_scaled, J_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+        assert_allclose(Js_scaled, Js_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+
+        Ji_scaled, Jis_scaled = scaled.jacobian_and_arc_length_derivative_inertialframe(
+            q_scaled, float(s)
+        )
+        Ji_unscaled, Jis_unscaled = (
+            unscaled.jacobian_and_arc_length_derivative_inertialframe(
+                q_unscaled, float(s)
+            )
+        )
+        assert_allclose(Ji_scaled, Ji_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+        assert_allclose(Jis_scaled, Jis_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+
+    assert_allclose(
+        scaled.forward_kinematics_tips(q_scaled),
+        unscaled.forward_kinematics_tips(q_unscaled),
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        scaled.jacobian_tips(q_scaled),
+        unscaled.jacobian_tips(q_unscaled) @ coordinate_map,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+    g_scaled, J_scaled, Jd_scaled = scaled.integration_kinematics(q_scaled, qd_scaled)
+    g_unscaled, J_unscaled, Jd_unscaled = unscaled.integration_kinematics(
+        q_unscaled, qd_unscaled
+    )
+    assert_allclose(g_scaled, g_unscaled, rtol=RTOL, atol=ATOL)
+    assert_allclose(J_scaled, J_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+    assert_allclose(Jd_scaled, Jd_unscaled @ coordinate_map, rtol=RTOL, atol=ATOL)
+
+    dynamics_scaled = scaled.dynamics_terms(q_scaled, qd_scaled)
+    dynamics_unscaled = unscaled.dynamics_terms(q_unscaled, qd_unscaled)
+    assert_allclose(
+        dynamics_scaled[0],
+        coordinate_map.T @ dynamics_unscaled[0] @ coordinate_map,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        dynamics_scaled[1],
+        coordinate_map.T @ dynamics_unscaled[1],
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        dynamics_scaled[2],
+        coordinate_map.T @ dynamics_unscaled[2],
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
     assert_allclose(
         scaled.stiffness_matrix(),
@@ -2009,14 +2090,35 @@ def test_scaled_rotational_basis_batched_partial_cells_match_scalar_paths(
         scale_rotational_basis_by_length=True,
     )
     q = jnp.linspace(-0.07, 0.08, robot.num_dofs, dtype=jnp.float64)
+    qd = jnp.linspace(0.05, -0.04, robot.num_dofs, dtype=jnp.float64)
     samples = jnp.array(
         [0.031, length, 0.0, 0.211, 0.031, length - 1e-7],
         dtype=jnp.float64,
     )
 
     expected_poses = jnp.stack([robot.forward_kinematics(q, s) for s in samples])
-    expected_jacobians = jnp.stack(
+    expected_body_jacobians = jnp.stack(
+        [robot.jacobian_bodyframe(q, s) for s in samples]
+    )
+    expected_inertial_jacobians = jnp.stack(
         [robot.jacobian_inertialframe(q, s) for s in samples]
+    )
+    expected_body_terms = tuple(
+        jnp.stack(values)
+        for values in zip(
+            *[robot.jacobian_and_time_derivative_bodyframe(q, qd, s) for s in samples],
+            strict=True,
+        )
+    )
+    expected_inertial_terms = tuple(
+        jnp.stack(values)
+        for values in zip(
+            *[
+                robot.jacobian_and_time_derivative_inertialframe(q, qd, s)
+                for s in samples
+            ],
+            strict=True,
+        )
     )
 
     assert robot.max_dof > robot.num_dofs
@@ -2027,11 +2129,29 @@ def test_scaled_rotational_basis_batched_partial_cells_match_scalar_paths(
         atol=ATOL,
     )
     assert_allclose(
-        robot.jacobian_inertialframe_batched(q, samples),
-        expected_jacobians,
+        robot.jacobian_bodyframe_batched(q, samples),
+        expected_body_jacobians,
         rtol=RTOL,
         atol=ATOL,
     )
+    assert_allclose(
+        robot.jacobian_inertialframe_batched(q, samples),
+        expected_inertial_jacobians,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    actual_body_terms = robot.jacobian_and_time_derivative_bodyframe_batched(
+        q, qd, samples
+    )
+    actual_inertial_terms = robot.jacobian_and_time_derivative_inertialframe_batched(
+        q, qd, samples
+    )
+    for actual, expected in zip(actual_body_terms, expected_body_terms, strict=True):
+        assert_allclose(actual, expected, rtol=RTOL, atol=ATOL)
+    for actual, expected in zip(
+        actual_inertial_terms, expected_inertial_terms, strict=True
+    ):
+        assert_allclose(actual, expected, rtol=RTOL, atol=ATOL)
 
 
 def test_scaled_compact_basis_tracks_dynamic_segment_length_updates() -> None:
