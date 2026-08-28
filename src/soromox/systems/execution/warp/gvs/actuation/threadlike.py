@@ -31,7 +31,18 @@ def prepare_gvs_threadlike_strain_kernel(
     reference_strain: wp.array3d[wp.float64],
     strain_workspace: wp.array4d[wp.float64],
 ):
-    """Prepare each ``(environment, segment, quadrature)`` strain once."""
+    """Prepare each environment-segment-quadrature strain once.
+
+    Args:
+        q: Batched active configurations with shape ``(E, D)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis: Length-scaled link basis with shape ``(S, Q, 6, L)``.
+        reference_strain: Reference strain with shape ``(S, Q, 6)``.
+        strain_workspace: Caller-owned output workspace ``(E, S, Q, 6)``.
+
+    Returns:
+        None. Prepared strains are written to ``strain_workspace``.
+    """
     item = wp.tid()
     num_points = reference_strain.shape[1]
     num_segments = reference_strain.shape[0]
@@ -67,7 +78,22 @@ def _gvs_local_moment(
     routing_slopes: wp.array2d[wp.float64],
     epsilons: wp.array[wp.float64],
 ) -> Vec6d:
-    """Evaluate one routed local moment from a prepared GVS strain."""
+    """Evaluate one routed local moment from a prepared GVS strain.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        environment: Environment index.
+        segment: Segment index.
+        point: Interior quadrature-point index.
+        path: Ordered routing-path index.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        epsilons: One-entry array containing the normalization threshold.
+
+    Returns:
+        Six-dimensional local moment and tangent basis.
+    """
     s = physical_points[segment, point]
     offset = wp.vec3d(
         routing_intercepts[path, 0] + s * routing_slopes[path, 0],
@@ -110,7 +136,15 @@ def _find_link_coordinate(
     global_dof: int,
     link_global_to_local: wp.array2d[wp.int32],
 ) -> wp.vec2i:
-    """Return ``(segment, local)`` or ``(-1, -1)`` for a joint coordinate."""
+    """Map an active coordinate to its owning link and local coordinate.
+
+    Args:
+        global_dof: Active generalized-coordinate index.
+        link_global_to_local: Active-coordinate to link-local map.
+
+    Returns:
+        Pair ``(segment, local)`` or ``(-1, -1)`` for a joint coordinate.
+    """
     segment = int(0)
     while segment < link_global_to_local.shape[0]:
         local = link_global_to_local[segment, global_dof]
@@ -135,7 +169,25 @@ def gvs_threadlike_matrix_kernel(
     epsilons: wp.array[wp.float64],
     output: wp.array3d[wp.float64],
 ):
-    """Integrate and write one complete ``(environment, DOF, path)`` entry."""
+    """Integrate one complete environment-DOF-path matrix entry.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned actuation matrix ``(E, D, A)``.
+
+    Returns:
+        None. Every matrix entry, including zeros, is written to ``output``.
+    """
     item = wp.tid()
     num_paths = routing_intercepts.shape[0]
     num_dofs = link_global_to_local.shape[1]
@@ -193,7 +245,26 @@ def gvs_threadlike_force_kernel(
     epsilons: wp.array[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """CPU fallback: fuse path reduction for one active coordinate."""
+    """Reduce all paths for one active coordinate on Warp CPU.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned generalized force ``(E, D)``.
+
+    Returns:
+        None. Every generalized-force entry is written to ``output``.
+    """
     item = wp.tid()
     num_dofs = link_global_to_local.shape[1]
     global_dof = item % num_dofs
@@ -254,7 +325,28 @@ def gvs_threadlike_force_block_kernel(
     epsilons: wp.array[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """CUDA path-parallel reduction owned by one environment/segment block."""
+    """Reduce paths with one CUDA block per environment and segment.
+
+    Args:
+        strain_workspace: Prepared quadrature strains ``(E, S, Q, 6)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        output: Caller-owned generalized force ``(E, D)``.
+
+    Returns:
+        None. Link-coordinate contributions are accumulated into ``output``;
+        joint-only coordinates are written as exact zeros.
+    """
     work_item, lane = wp.tid()
     num_segments = link_local_to_global.shape[0]
     segment = work_item % num_segments
@@ -327,7 +419,18 @@ def _launch_strain_preparation(
     reference_strain,
     strain_workspace,
 ):
-    """Enqueue the shared first-stage GVS strain preparation."""
+    """Enqueue the shared first-stage GVS strain preparation.
+
+    Args:
+        q: Batched active configurations with shape ``(E, D)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        reference_strain: Reference strain ``(S, Q, 6)``.
+        strain_workspace: Caller-owned output workspace ``(E, S, Q, 6)``.
+
+    Returns:
+        None. The launch is enqueued without synchronization.
+    """
     wp.launch(
         prepare_gvs_threadlike_strain_kernel,
         dim=q.shape[0] * reference_strain.shape[0] * reference_strain.shape[1],
@@ -354,7 +457,32 @@ def launch_gvs_threadlike_actuation_matrix(
     strain_workspace: wp.array4d[wp.float64],
     output: wp.array3d[wp.float64],
 ):
-    """Prepare strains, then fill caller-owned GVS matrix output ``(E,D,A)``."""
+    """Prepare strains and fill a caller-owned GVS actuation matrix.
+
+    Args:
+        q: Batched active configurations with shape ``(E, D)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        reference_strain: Reference strain ``(S, Q, 6)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        strain_workspace: Caller-owned workspace ``(E, S, Q, 6)``.
+        output: Caller-owned actuation matrix ``(E, D, A)``.
+
+    Returns:
+        None. Both launches are enqueued without synchronization.
+
+    Notes:
+        The launcher allocates no arrays and performs no JAX call or data
+        transfer, so callers may capture the fixed sequence in a CUDA graph.
+    """
     _launch_strain_preparation(
         q,
         link_local_to_global,
@@ -401,7 +529,34 @@ def launch_gvs_threadlike_actuation_force(
     strain_workspace: wp.array4d[wp.float64],
     output: wp.array2d[wp.float64],
 ):
-    """Prepare strains, then fill caller-owned fused GVS force ``(E,D)``."""
+    """Prepare strains and fill a caller-owned fused GVS force.
+
+    Args:
+        q: Batched active configurations with shape ``(E, D)``.
+        controls: Batched direct-effort controls ``(E, A)``.
+        link_local_to_global: Padded link-local to active-coordinate map.
+        link_global_to_local: Active-coordinate to link-local map.
+        link_basis: Length-scaled link basis ``(S, Q, 6, L)``.
+        reference_strain: Reference strain ``(S, Q, 6)``.
+        physical_points: Global backbone coordinates ``(S, Q)``.
+        integration_weights: Physical quadrature weights ``(S, Q)``.
+        routing_intercepts: Linear-routing intercept vectors ``(A, 3)``.
+        routing_slopes: Linear-routing slope vectors ``(A, 3)``.
+        path_start_segments: Inclusive first segment for every path.
+        path_end_segments: Inclusive last segment for every path.
+        coordinate_scales: Signed or physical scale for every path.
+        epsilons: One-entry array containing the normalization threshold.
+        strain_workspace: Caller-owned workspace ``(E, S, Q, 6)``.
+        output: Caller-owned generalized force ``(E, D)``.
+
+    Returns:
+        None. Both launches are enqueued without synchronization.
+
+    Notes:
+        CUDA execution reduces path-point contributions cooperatively; Warp CPU
+        execution uses the scalar fallback. Neither path allocates arrays,
+        invokes JAX, synchronizes, or transfers data.
+    """
     _launch_strain_preparation(
         q,
         link_local_to_global,

@@ -27,12 +27,6 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
-- Reduced Warp-native linear-threadlike work by reusing prepared GVS
-  quadrature strains, reducing fused GVS paths cooperatively on CUDA,
-  precomputing physical quadrature operands, and removing separate output-clear
-  launches. Enabled benchmark-qualified high-level Warp dispatch for the PCS
-  actuation matrix while retaining JAX dispatch for the other system-level
-  threadlike operations.
 - Made effort laws declare their transmission-state dependencies so
   `DirectEffort` skips unused actuator-coordinate and velocity evaluation, and
   generalized-force assembly evaluates each actuator moment matrix only once.
