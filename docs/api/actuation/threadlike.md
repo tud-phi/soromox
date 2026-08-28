@@ -18,12 +18,13 @@ The transmission model assumes that:
 - the routing is fixed in the material frame and depends only on arc length;
 - the actuator coordinate is determined by path length, scaled by a constant
   effective area for the pressure-chamber preset; and
-- each path carries one scalar work-conjugate effort, uniform along its route.
+- each path carries one scalar work-conjugate effort, attenuated along its
+  route only by the optional Capstan friction model described below.
 
 Consequently, configuration- or time-dependent rerouting, changes in chamber
-cross-section, along-path friction or slack, and internal actuator dynamics are
-outside the transmission model. Representing these effects requires an extended
-routing, transmission, or effort model.
+cross-section, path slack, and internal actuator dynamics are outside the
+transmission model. Representing these effects requires an extended routing,
+transmission, or effort model.
 
 Threadlike components require continuum segment topology and the host's native
 path-integration hooks. `PCS`, `PlanarPCS`, and `GVS` provide this contract.
@@ -165,13 +166,120 @@ coordinates = robot.actuator_coordinates(q)
 ```
 
 For tendons, `coordinates == -lengths`; for a pressure preset, coordinates are
-equivalent volumes. In every case,
+equivalent volumes. Without guide friction,
 `jax.jacrev(robot.actuator_coordinates)(q) == robot.actuation_matrix(q).T` up
-to quadrature tolerance.
+to quadrature tolerance. A nonzero friction coefficient breaks that identity by
+design, because the moment matrix then carries a transmission loss that path
+length does not; see [Guide friction](#guide-friction).
 
 PCS integrates the local path basis and performs the constant-strain projection
 once. GVS applies its strain basis inside the existing quadrature. The public
 behavior is common, while each host keeps its native evaluation path.
+
+## Guide friction
+
+By default a path transmits its effort undiminished along its whole route. Set
+`friction_coefficient` to model Coulomb friction against the guides the path
+runs through, following the force model of
+[Feliu-Talegon et al. (2025)](https://doi.org/10.1109/TMECH.2025.3550846). A
+tendon threaded through spacer disks loses tension at every contact, and the
+loss at each contact obeys the classical Capstan (Euler) law
+\(T_{out} = T_{in}e^{-\mu\varphi}\), which depends on the accumulated turn
+\(\varphi\) alone and not on the guide radius.
+
+Taking the guide spacing to zero turns the product of per-contact losses into
+
+\[
+\eta(q, s) = e^{-\mu\Theta(q, s)}, \qquad
+\Theta(q, s) = \int_0^s \lVert\omega \times \hat{u}\rVert\,\mathrm{d}s'
+\]
+
+the fraction of the base effort that survives to arc length \(s\), with
+\(\hat{u}\) the unit routed-path tangent. Because \(\eta\) weights the integrand
+of the moment matrix rather than scaling its result, the distal part of a path
+contributes less than the proximal part:
+
+\[
+A_\mu(q) = B_\xi^\top \int_0^L \eta(q, s)\,\Phi(q, s)\,\mathrm{d}s
+\]
+
+\(\eta\) depends on the configuration only, so the actuation force stays linear
+in the effort and every controller keeps working. Since \(\eta \in (0, 1]\), the
+model can only ever remove effort, never add it, and a coefficient of zero
+reproduces the frictionless matrix exactly.
+
+The wrap density reduces to \(\lvert\kappa\rvert\) identically in the plane, for
+any offset and any strain. Under torsion it recovers the helix curvature of an
+off-axis path, so a twisted robot correctly reports a nonzero wrap angle.
+
+```python
+robot = PCS.from_links(
+    links,
+    structure=PCSStructure(num_gauss_points=5),
+    # a scalar shares one coefficient; pass shape (num_paths,) for per-path values
+    actuators=ThreadlikeActuator.tendons(routing, friction_coefficient=0.2),
+)
+
+tau = robot.actuation_force(q, jnp.array([5.0, 0.0]))
+```
+
+`PCS` and `PlanarPCS` implement the wrap-angle model. `GVS` strain varies along
+arc length, so its wrap angle is not piecewise linear; it rejects a nonzero
+coefficient during construction with a descriptive `TypeError`.
+
+### Identifying the coefficient
+
+The coefficient is an ordinary dynamic leaf, so it is traceable and
+differentiable under `jit`:
+
+```python
+def with_friction(mu):
+    transmission = robot.actuators[0].params.transmission.replace(
+        friction_coefficient=mu
+    )
+    return robot.update_actuator_params(0, transmission=transmission)
+
+
+@jax.jit
+def loss(mu):
+    identified = with_friction(mu)
+    residual = (
+        identified.elastic_force(q_meas)
+        + identified.gravitational_force(q_meas)
+        - identified.actuation_force(q_meas, u_meas)
+    )
+    return jnp.sum(residual**2)
+
+
+value, grad = jax.value_and_grad(loss)(jnp.array(0.2))
+```
+
+Zero is a valid optimizer start, but \(\mathrm{d}A/\mathrm{d}\mu\) vanishes
+wherever \(\Theta = 0\), so a perfectly straight pose carries no information
+about \(\mu\). Set `wrap_angle_smoothing` on the host structure to replace
+\(\lvert\kappa\rvert\) with \(\sqrt{\kappa^2 + \epsilon^2}\) if the fit can
+approach a straight configuration. It never under-estimates the wrap angle and
+over-estimates it by at most \(\epsilon L\), and it also removes the \(C^0\)
+kink at zero curvature.
+
+### What changes at a nonzero coefficient
+
+- `moment_matrix` is no longer the transpose of the length gradient, so
+  `actuation_space` conversions that assume the identity do not apply.
+- The generalized actuation force has no potential: work around a closed
+  configuration loop at constant effort is nonzero and orientation dependent.
+- For a loaded passive path, `actuation_force(q, u)` is affine in `u` rather
+  than linear, and `actuation_force(q, 0)` is nonzero. Prefer
+  `actuation_force(q, u)` over `actuation_matrix(q) @ e` wherever passive
+  elements exist.
+- The moment matrix acquires a mild dependence on `num_gauss_points`, because
+  the attenuated integrand is no longer polynomial.
+- `path_lengths`, `path_velocities`, and `path_poses` are unchanged. They are
+  pure geometry at any coefficient.
+- The model assumes the effort drives the path. A back-driven path is still
+  modelled with the driving branch of Euler's law, so keep the passive
+  coefficient conservative or zero for long dynamic rollouts with
+  sign-changing path rates.
 
 ## Passive paths
 
@@ -196,7 +304,10 @@ robot = PCS(
 ```
 
 The passive element contributes to elastic force, damping, and elastic energy;
-it never consumes an active control channel.
+it never consumes an active control channel. A passive path may also declare a
+`friction_coefficient`, in which case part of its spring force becomes
+non-conservative and is applied through `actuation_force`; see
+[Guide friction](#guide-friction).
 
 ## Updating routing and actuator parameters
 

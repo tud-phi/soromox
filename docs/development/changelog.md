@@ -15,11 +15,34 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
+- Added opt-in Capstan guide friction to threadlike transmissions. A
+  `friction_coefficient` on `ThreadlikeActuator` and `ThreadlikeImpedance`
+  attenuates effort along a routed path as `exp(-mu * Theta(s))`, where `Theta`
+  is the accumulated turn of the path, instead of applying it uniformly. `PCS`
+  and `PlanarPCS` implement the wrap-angle model; `GVS` rejects a nonzero
+  coefficient during construction. The coefficient is a differentiable leaf and
+  can be identified under `jit`. Zero is the default and reproduces the
+  frictionless model exactly. See
+  [threadlike actuation](../api/actuation/threadlike.md#guide-friction).
+- Added `wrap_angle_smoothing` to `PCSStructure` and `PlanarPCSStructure`, which
+  replaces `|kappa|` with `sqrt(kappa**2 + eps**2)` in the wrap-angle density so
+  the friction coefficient stays identifiable near a straight configuration.
 
 ### Changed
 
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
+- Replaced `ThreadlikeImpedanceParams.routing` with a nested
+  `transmission` field, so a passive routed path now carries a
+  `ThreadlikeTransmission` like its articulated counterpart. The
+  `ThreadlikeImpedance` constructor keeps its `routing=` keyword; direct
+  construction of `ThreadlikeImpedanceParams` and `update_params(routing=...)`
+  become `transmission=...`.
+- Corrected the planar routed-path offset sign, which used
+  `sigma_x + d * kappa` where `PlanarPCS` kinematics require
+  `sigma_x - d * kappa`. Planar routings must negate their `y` offsets to
+  reproduce previous behavior, which is exactly equivalent when the routing
+  slope is zero.
 
 ### Performance
 
@@ -39,8 +62,16 @@ and include benchmark baseline and measurement context for performance claims.
   shape-morphing funnel when adjacent links used different cross-sections.
 - Fixed Open3D swept meshes reusing the first endpoint cross-section at both
   ends, which previously rendered tapered profiles as piecewise-constant.
+- Fixed planar threadlike path lengths and moment arms disagreeing with `PCS`
+  and with the path positions the renderer draws. At `kappa = 10`, `L = 0.1`
+  and offset `0.02` the model reported `0.120` for a path whose rendered arc
+  length is `0.080`; planar and spatial hosts now agree exactly.
 
 ### Documentation
+
+- Documented guide friction on the threadlike actuation page, replacing the
+  paragraph that listed along-path friction as outside the transmission model,
+  and recorded the invariants a nonzero coefficient deliberately breaks.
 
 ### Contributors
 
