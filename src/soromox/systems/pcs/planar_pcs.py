@@ -2977,17 +2977,26 @@ class PlanarPCS(SoftRobot):
         start_segment_index: Array,
         end_segment_index: Array,
     ) -> Array:
+        """Return one planar routed-path length gradient density.
+
+        The offset is measured along the local ``+y`` axis, so a path at
+        positive offset lies on the inside of a positive-curvature bend and
+        shortens as that bend increases. Differentiating the routed position
+        ``p + d Rot(theta) e_y`` gives ``(sigma_x - d kappa)`` along the tangent
+        and ``(sigma_y + d')`` along the normal, which is what the spatial host
+        obtains from ``v + omega x r + r'``.
+        """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
         )
         offset = routing.offset(path_params, s)[1]
         offset_derivative = routing.derivative(path_params, s)[1]
-        axial = strain[1] + offset * strain[0]
+        axial = strain[1] - offset * strain[0]
         shear = strain[2] + offset_derivative
         norm = safe_norm(jnp.stack([axial, shear]))
         axial_ratio = safe_divide(axial, norm, self.global_eps)
         shear_ratio = safe_divide(shear, norm, self.global_eps)
-        return active * jnp.asarray([offset * axial_ratio, axial_ratio, shear_ratio])
+        return active * jnp.asarray([-offset * axial_ratio, axial_ratio, shear_ratio])
 
     def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
         """Integrate raw routed-length moment arms in the planar PCS basis."""
@@ -3059,7 +3068,7 @@ class PlanarPCS(SoftRobot):
                     offset = routing.offset(path_params, s)[1]
                     derivative = routing.derivative(path_params, s)[1]
                     axial = (
-                        strains[segment_index, 1] + offset * strains[segment_index, 0]
+                        strains[segment_index, 1] - offset * strains[segment_index, 0]
                     )
                     shear = strains[segment_index, 2] + derivative
                     return active * safe_norm(jnp.stack([axial, shear]))
