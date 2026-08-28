@@ -171,12 +171,13 @@ def _updated_threadlike_component_params(actuator, passive):
     updated_actuator = actuator_params.replace(transmission=actuator_transmission)
 
     passive_params = passive.params
-    passive_routing = passive_params.routing.replace(
-        intercept=1.01 * passive_params.routing.intercept,
-        slope=1.02 * passive_params.routing.slope,
+    passive_routing = passive_params.transmission.routing.replace(
+        intercept=1.01 * passive_params.transmission.routing.intercept,
+        slope=1.02 * passive_params.transmission.routing.slope,
     )
+    passive_transmission = passive_params.transmission.replace(routing=passive_routing)
     updated_passive = passive_params.replace(
-        routing=passive_routing,
+        transmission=passive_transmission,
         stiffness=1.03 * passive_params.stiffness,
         damping=1.04 * passive_params.damping,
         rest_length=1.01 * passive_params.rest_length,
@@ -411,11 +412,11 @@ def test_direct_effort_skips_unused_threadlike_state(monkeypatch):
     calls = {"moment_matrix": 0}
     original_moment_matrix = PCS._threadlike_moment_matrix
 
-    def counted_moment_matrix(self, q, routing):
+    def counted_moment_matrix(self, q, routing, friction_coefficient=None):
         calls["moment_matrix"] += 1
         return original_moment_matrix(self, q, routing)
 
-    def unexpected_path_lengths(self, q, routing):
+    def unexpected_path_lengths(self, q, routing, friction_coefficient=None):
         del self, q, routing
         raise AssertionError("DirectEffort must not evaluate actuator coordinates.")
 
@@ -463,11 +464,11 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
     original_moment_matrix = PCS._threadlike_moment_matrix
     original_path_lengths = PCS._threadlike_path_lengths
 
-    def counted_moment_matrix(self, q, routing):
+    def counted_moment_matrix(self, q, routing, friction_coefficient=None):
         calls["moment_matrix"] += 1
         return original_moment_matrix(self, q, routing)
 
-    def counted_path_lengths(self, q, routing):
+    def counted_path_lengths(self, q, routing, friction_coefficient=None):
         calls["path_lengths"] += 1
         return original_path_lengths(self, q, routing)
 

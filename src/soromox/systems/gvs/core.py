@@ -5868,8 +5868,22 @@ class GVS(SoftRobot):
         local = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
         return active * local
 
-    def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw routed-length moment arms in the native GVS basis."""
+    def _threadlike_moment_matrix(
+        self,
+        q: Array,
+        routing: ThreadlikeRouting,
+        friction_coefficient: Array | None = None,
+    ) -> Array:
+        """Integrate raw routed-length moment arms in the native GVS basis.
+
+        GVS strain varies along the arc length, so the Capstan wrap angle is
+        not piecewise linear and would need its own cumulative quadrature. The
+        wrap-angle model is therefore not implemented for this host and
+        ``friction_coefficient`` is ignored; installing a threadlike component
+        carrying a nonzero coefficient on a GVS robot is refused at
+        construction instead of being silently dropped.
+        """
+        del friction_coefficient
         params = routing.params
         count = params.num_paths
         if count == 0:

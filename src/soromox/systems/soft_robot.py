@@ -2428,7 +2428,7 @@ class SoftRobot(DynamicalSystem):
             qd=qd,
             actuation_matrix=actuation_matrix,
         )
-        return actuation_matrix @ effort
+        return actuation_matrix @ effort - self.passive_nonconservative_force(q)
 
     def actuation_force(
         self,
@@ -2446,6 +2446,13 @@ class SoftRobot(DynamicalSystem):
         then maps those efforts to generalized forces as
 
         ``tau_u = A(q) @ e``.
+
+        Any non-conservative passive force is subtracted here as well, because
+        it has no potential and therefore cannot be carried by
+        :meth:`elastic_force`. It is independent of ``u``, so with such an
+        element installed the returned force is affine in ``u`` rather than
+        linear and ``actuation_force(q, 0)`` is nonzero. Prefer this method
+        over ``actuation_matrix(q) @ e`` wherever passive elements exist.
 
         Args:
             q: Generalized coordinates of shape (num_coordinates,).
@@ -2575,6 +2582,30 @@ class SoftRobot(DynamicalSystem):
         for element in self.passive_elements:
             energy = energy + element.elastic_energy(self, q)
         return energy
+
+    def passive_nonconservative_force(self, q: Array) -> Array:
+        """
+        Return the installed passive elements' non-conservative generalized force.
+
+        This is the part of the passive force that is not the gradient of any
+        potential and therefore cannot live in :meth:`elastic_force` without
+        breaking its energy contract. It is applied through
+        :meth:`actuation_force`, so the total dynamics is unchanged by the
+        split and no system implementation needs to be modified.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+
+        Returns:
+            tau_nc: Non-conservative passive generalized force of shape
+                ``(num_dofs,)``, in the same sign convention as
+                :meth:`elastic_force`. A robot whose passive elements are all
+                conservative returns zeros.
+        """
+        force = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        for element in self.passive_elements:
+            force = force + element.nonconservative_force(self, q)
+        return force
 
     # -----------------------------------------
     # Energy methods
