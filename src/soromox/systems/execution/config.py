@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 DEFAULT_PLANAR_PCS_BLOCK_DIM = 128
 DEFAULT_PCS_BLOCK_DIM = 192
+DEFAULT_GVS_BLOCK_DIM = 128
+DEFAULT_GVS_LARGE_BLOCK_DIM = 192
+GVS_LARGE_DOF_THRESHOLD = 64
 
 
 def _validate_warp_block_dim(value: int) -> int:
@@ -70,8 +73,65 @@ class PCSBackendParams:
         _validate_warp_block_dim(self.warp_block_dim)
 
 
+@dataclass(frozen=True)
+class GVSBackendParams:
+    """Tune execution of the optional GVS Warp kernels.
+
+    Attributes:
+        warp_block_dim: CUDA threads per persistent dynamics and body-state
+            recurrence block. It must be a multiple of 32 between 32 and 1024.
+            Models with at most 64 active coordinates default to 128 threads;
+            larger models default to 192.
+    """
+
+    warp_block_dim: int
+
+    def __post_init__(self) -> None:
+        """Validate the immutable launch configuration.
+
+        Returns:
+            None.
+
+        Raises:
+            TypeError: If :attr:`warp_block_dim` is not an integer.
+            ValueError: If :attr:`warp_block_dim` is not a supported CUDA block
+                dimension.
+        """
+
+        _validate_warp_block_dim(self.warp_block_dim)
+
+
+def default_gvs_block_dim(num_dofs: int) -> int:
+    """Return the default GVS cooperative block size for a model shape.
+
+    Args:
+        num_dofs: Number of active generalized coordinates in the model.
+
+    Returns:
+        128 threads for at most 64 coordinates and 192 threads for larger
+        models.
+
+    Raises:
+        TypeError: If ``num_dofs`` is not an integer or is a boolean.
+        ValueError: If ``num_dofs`` is not positive.
+    """
+
+    if isinstance(num_dofs, bool) or not isinstance(num_dofs, int):
+        raise TypeError("num_dofs must be an integer.")
+    if num_dofs < 1:
+        raise ValueError("num_dofs must be positive.")
+    if num_dofs > GVS_LARGE_DOF_THRESHOLD:
+        return DEFAULT_GVS_LARGE_BLOCK_DIM
+    return DEFAULT_GVS_BLOCK_DIM
+
+
 __all__ = [
+    "DEFAULT_GVS_BLOCK_DIM",
+    "DEFAULT_GVS_LARGE_BLOCK_DIM",
     "DEFAULT_PCS_BLOCK_DIM",
     "DEFAULT_PLANAR_PCS_BLOCK_DIM",
+    "GVSBackendParams",
+    "GVS_LARGE_DOF_THRESHOLD",
     "PCSBackendParams",
+    "default_gvs_block_dim",
 ]

@@ -115,49 +115,46 @@ def test_cooperative_pcs_force_topologies_match_jax(
     assert_allclose(actual, expected, rtol=3e-9, atol=3e-10)
 
 
-def test_only_gvs_enables_fused_system_dispatch(
+@pytest.mark.parametrize("family", ["pcs", "gvs"])
+def test_gvs_and_pcs_enable_fused_system_dispatch(
+    family: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Activate the system-level fusion for GVS while PCS remains separate."""
+    """Activate system-level fusion for both production Warp families."""
 
-    model = _build_system("gvs", 2, 4)
+    model = _build_system(family, 2, 4)
     q = jnp.linspace(-0.02, 0.03, model.num_dofs)
     qd = jnp.linspace(0.12, -0.08, model.num_dofs)
     controls = jnp.linspace(-0.4, 0.7, model.num_actuators)
     observed_batches: list[tuple[int, ...]] = []
 
-    def fake_gvs_batch(model_, q_, qd_, controls_):
+    def fake_batch(model_, q_, qd_, controls_):
         observed_batches.append(q_.shape)
         dynamics = jax.vmap(model_._assemble_dynamics_terms)(q_, qd_)
         force = jax.vmap(model_._actuation_force)(q_, controls_, qd_)
         return *dynamics, force
 
-    monkeypatch.setattr(loader, "_execute_gvs_dynamics_actuation_batch", fake_gvs_batch)
+    monkeypatch.setattr(
+        loader,
+        f"_execute_{family}_dynamics_actuation_batch",
+        fake_batch,
+    )
     monkeypatch.setattr(
         "soromox.systems.execution.dispatch.jax.default_backend",
         lambda: "gpu",
     )
 
-    gvs_result = dispatch_fused_dynamics_actuation_force(
+    result = dispatch_fused_dynamics_actuation_force(
         model,
         q,
         qd,
         controls,
         backend="warp",
-        capabilities=GVS_DYNAMICS,
-    )
-    pcs_result = dispatch_fused_dynamics_actuation_force(
-        model,
-        q,
-        qd,
-        controls,
-        backend="warp",
-        capabilities=PCS_DYNAMICS,
+        capabilities=GVS_DYNAMICS if family == "gvs" else PCS_DYNAMICS,
     )
 
-    assert gvs_result is not None
+    assert result is not None
     assert observed_batches == [(1, model.num_dofs)]
-    assert pcs_result is None
 
 
 def test_fused_gvs_vmap_uses_one_canonical_batch(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from soromox.systems.execution.config import default_gvs_block_dim
+
 
 def gvs_block_dim(num_dofs: int, *, gpu: bool) -> int:
     """Return the retained shape-generic GVS launch configuration.
@@ -17,7 +19,7 @@ def gvs_block_dim(num_dofs: int, *, gpu: bool) -> int:
 
     if not gpu:
         return 1
-    return 192 if num_dofs > 64 else 128
+    return default_gvs_block_dim(num_dofs)
 
 
 __all__ = [

@@ -19,7 +19,6 @@ from soromox.systems.execution.warp.common.se3 import (
 wp.set_module_options({"enable_backward": False})
 
 SPATIAL_DIM = 6
-GVS_KINEMATICS_BLOCK_DIM = 128
 BASIS_FAMILY_MONOMIAL = wp.constant(0)
 BASIS_FAMILY_LEGENDRE = wp.constant(1)
 BASIS_FAMILY_CHEBYSHEV = wp.constant(2)
@@ -544,7 +543,7 @@ def gvs_cooperative_node_states_kernel(
                 )
                 k += 1
             node_jacobian[node_item * SPATIAL_DIM + row, column] = value
-            entry += GVS_KINEMATICS_BLOCK_DIM
+            entry += wp.block_dim()
         wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
 
         cell = int(0)
@@ -576,7 +575,7 @@ def gvs_cooperative_node_states_kernel(
                     )
                     k += 1
                 node_jacobian[next_item * SPATIAL_DIM + row, column] = value
-                entry += GVS_KINEMATICS_BLOCK_DIM
+                entry += wp.block_dim()
             wp.tile_scatter_masked(barrier, 0, int(0), lane == 0)
             cell += 1
         segment += 1
@@ -1264,6 +1263,7 @@ def _launch_gvs_node_states(
     link_global_to_local: wp.array2d[wp.int32],
     base_transform: wp.array2d[wp.float64],
     num_cells: wp.array[wp.int32],
+    block_dim: int,
     node_pose: wp.array2d[wp.float64],
     node_jacobian: wp.array2d[wp.float64],
 ) -> None:
@@ -1278,6 +1278,7 @@ def _launch_gvs_node_states(
         link_global_to_local: Active-to-local link-coordinate map.
         base_transform: Absolute robot base transform.
         num_cells: One-entry array containing the padded cell count.
+        block_dim: CUDA threads in each cooperative environment block.
         node_pose: Caller-owned flattened node-pose workspace.
         node_jacobian: Caller-owned flattened body-Jacobian workspace.
 
@@ -1301,7 +1302,7 @@ def _launch_gvs_node_states(
             dim=q.shape[0],
             inputs=inputs,
             outputs=outputs,
-            block_dim=GVS_KINEMATICS_BLOCK_DIM,
+            block_dim=block_dim,
         )
     else:
         wp.launch(
@@ -1335,6 +1336,7 @@ def launch_gvs_inertial_jacobians(
     scale_rotations: wp.array[wp.int32],
     epsilons: wp.array[wp.float64],
     num_cells: wp.array[wp.int32],
+    block_dim: int,
     node_pose: wp.array2d[wp.float64],
     node_jacobian: wp.array2d[wp.float64],
     jacobians: wp.array4d[wp.float64],
@@ -1364,6 +1366,7 @@ def launch_gvs_inertial_jacobians(
         scale_rotations: One-entry flag for rotational basis scaling.
         epsilons: Exponential and tangent thresholds.
         num_cells: One-entry array containing the padded cell count.
+        block_dim: CUDA threads in each cooperative environment block.
         node_pose: Caller-owned flattened node-pose workspace.
         node_jacobian: Caller-owned flattened body-Jacobian workspace.
         jacobians: Caller-owned inertial-Jacobian output.
@@ -1381,6 +1384,7 @@ def launch_gvs_inertial_jacobians(
         link_global_to_local,
         base_transform,
         num_cells,
+        block_dim,
         node_pose,
         node_jacobian,
     )
@@ -1436,6 +1440,7 @@ def launch_gvs_kinematics(
     scale_rotations: wp.array[wp.int32],
     epsilons: wp.array[wp.float64],
     num_cells: wp.array[wp.int32],
+    block_dim: int,
     node_pose: wp.array2d[wp.float64],
     node_jacobian: wp.array2d[wp.float64],
     poses: wp.array4d[wp.float64],
@@ -1466,6 +1471,7 @@ def launch_gvs_kinematics(
         scale_rotations: One-entry flag for rotational basis scaling.
         epsilons: Exponential and tangent thresholds.
         num_cells: One-entry array containing the padded cell count.
+        block_dim: CUDA threads in each cooperative environment block.
         node_pose: Caller-owned flattened node-pose workspace.
         node_jacobian: Caller-owned flattened body-Jacobian workspace.
         poses: Caller-owned SE(3) pose output.
@@ -1484,6 +1490,7 @@ def launch_gvs_kinematics(
         link_global_to_local,
         base_transform,
         num_cells,
+        block_dim,
         node_pose,
         node_jacobian,
     )

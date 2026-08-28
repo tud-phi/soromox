@@ -18,7 +18,6 @@ wp.set_module_options({"enable_backward": False})
 
 
 SPATIAL_DIM = 6
-BLOCK_DIM = 128
 
 
 @wp.kernel(enable_backward=False)
@@ -588,6 +587,7 @@ def launch_persistent_chain(
     num_cells: wp.array[wp.int32],
     num_quadrature: wp.array[wp.int32],
     lanes_per_block: wp.array[wp.int32],
+    block_dim: int,
     jacobian_first: wp.array2d[wp.float64],
     jacobian_dot_qd_first: wp.array2d[wp.float64],
     velocity_first: wp.array2d[wp.float64],
@@ -630,6 +630,7 @@ def launch_persistent_chain(
         num_quadrature: One-entry INT32 array containing interior quadrature
             points per segment.
         lanes_per_block: One-entry INT32 array containing cooperative lanes.
+        block_dim: CUDA threads in the cooperative persistent block.
         jacobian_first: First preallocated ping-pong Jacobian buffer.
         jacobian_dot_qd_first: First ping-pong Jacobian-derivative buffer.
         velocity_first: First ping-pong spatial-velocity buffer.
@@ -684,7 +685,7 @@ def launch_persistent_chain(
             coriolis_qd,
             gravity_force,
         ],
-        block_dim=192 if qd.shape[1] > 64 else BLOCK_DIM,
+        block_dim=block_dim,
     )
 
 

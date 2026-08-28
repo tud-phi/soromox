@@ -10,7 +10,14 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from soromox.systems import GVS, GVSSegment, JointSpec, LinkSpec, StrainBasisSpec
+from soromox.systems import (
+    GVS,
+    GVSBackendParams,
+    GVSSegment,
+    JointSpec,
+    LinkSpec,
+    StrainBasisSpec,
+)
 from soromox.systems.execution.warp.gvs.operands import (
     GVSKinematicsOperands,
     GVSKinematicsShapes,
@@ -158,6 +165,40 @@ def test_gvs_public_kinematics_match_jax_on_cpu_and_gpu(
     assert_kinematics_backend_equivalence(model)
     assert_inertial_jacobian_finite_difference(model)
     assert_warp_derivatives_use_jax(model)
+
+
+def test_gvs_backend_params_override_reaches_warp_launches(
+    make_gvs_model: Callable[[str], Any],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Use an explicit block size in dynamics and Jacobian recurrences."""
+
+    pytest.importorskip("warp")
+    monkeypatch.setenv("WARP_CACHE_PATH", str(tmp_path / "gvs-block-override"))
+    base = make_gvs_model("jax")
+    model = GVS(
+        params=base.params,
+        structure=base.structure,
+        backend="warp",
+        backend_params=GVSBackendParams(warp_block_dim=192),
+    )
+    q = jnp.linspace(-0.018, 0.023, model.num_dofs, dtype=jnp.float64)
+    qd = jnp.linspace(0.11, -0.09, model.num_dofs, dtype=jnp.float64)
+    for actual, expected in zip(
+        model.dynamics_terms(q, qd, backend="warp"),
+        model.dynamics_terms(q, qd, backend="jax"),
+        strict=True,
+    ):
+        assert_allclose(actual, expected, rtol=2e-8, atol=2e-10)
+
+    s = 0.41 * jnp.sum(model.segment_lengths)
+    assert_allclose(
+        model.jacobian_inertialframe(q, s, backend="warp"),
+        model.jacobian_inertialframe(q, s, backend="jax"),
+        rtol=2e-9,
+        atol=2e-10,
+    )
 
 
 def test_gvs_warp_kinematics_supports_every_basis_family_and_high_order(

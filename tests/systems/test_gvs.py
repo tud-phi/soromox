@@ -14,6 +14,7 @@ from soromox.systems import (
     GVS,
     PCS,
     CrossSectionGeometry,
+    GVSBackendParams,
     GVSSegment,
     IsotropicMaterialParams,
     JointSpec,
@@ -580,6 +581,20 @@ def test_gvs_dynamics_prefix_bucket_count_is_configurable() -> None:
                 actual_tree, expected_tree, strict=True
             ):
                 assert_allclose(actual_term, expected_term, rtol=RTOL, atol=ATOL)
+
+
+def test_gvs_backend_params_default_and_override() -> None:
+    """Expose the selected cooperative Warp block size on each GVS model."""
+
+    default = build_constant_strain_gvs(num_segments=2)
+    configured = GVS(
+        params=default.params,
+        structure=default.structure,
+        backend_params=GVSBackendParams(warp_block_dim=192),
+    )
+
+    assert default.backend_params.warp_block_dim == 128
+    assert configured.backend_params.warp_block_dim == 192
 
 
 @pytest.mark.parametrize(

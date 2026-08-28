@@ -163,6 +163,7 @@ def execute_dynamics_terms(
         jnp.asarray([num_cells], dtype=jnp.int32),
         jnp.asarray([num_quadrature], dtype=jnp.int32),
         jnp.asarray([operands.block_dim], dtype=jnp.int32),
+        operands.block_dim,
         output_dims=output_dims,
     )
     return outputs[-3], outputs[-2], outputs[-1]

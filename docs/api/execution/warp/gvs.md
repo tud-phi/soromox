@@ -21,7 +21,7 @@ The exact launch sequences are:
    strain once in `(E, S, Q, 6)`, then integrates and writes every matrix entry.
 2. `launch_gvs_threadlike_actuation_force(...)` prepares the same workspace,
    applies `coordinate_scale[path] * controls[e, path]`, and reduces paths
-   directly into `(E, D)`. CUDA uses one 64-lane block per environment and
+   directly into `(E, D)`. CUDA uses one 128-lane block per environment and
    segment; Warp CPU uses a scalar-coordinate kernel.
 
 Both second stages explicitly write inactive paths and joint-only coordinates

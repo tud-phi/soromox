@@ -3,7 +3,8 @@
 This public package defines backend selection and transformation semantics used
 by supported Soromox system classes. Most users only need the ``backend``
 constructor argument; :class:`ExecutionBackend` names its accepted values and
-:class:`PCSBackendParams` provides optional advanced PCS tuning.
+the family-specific backend parameter objects provide optional advanced
+tuning.
 
 Integrations that need direct Warp execution can import stable family-specific
 building blocks from :mod:`soromox.systems.execution.warp`. Importing this
@@ -22,9 +23,13 @@ from soromox.systems.execution.catalog import (
     PLANAR_PCS_ACTUATION,
 )
 from soromox.systems.execution.config import (
+    DEFAULT_GVS_BLOCK_DIM,
+    DEFAULT_GVS_LARGE_BLOCK_DIM,
     DEFAULT_PCS_BLOCK_DIM,
     DEFAULT_PLANAR_PCS_BLOCK_DIM,
+    GVSBackendParams,
     PCSBackendParams,
+    default_gvs_block_dim,
 )
 from soromox.systems.execution.dispatch import (
     dispatch_actuation_force,
@@ -82,6 +87,7 @@ __all__ = [
     "ExecutionBackend",
     "ForwardDynamicsModel",
     "GVS_ACTUATION",
+    "GVSBackendParams",
     "GVS_DYNAMICS",
     "GVS_KINEMATICS",
     "KinematicsCapabilities",
@@ -94,6 +100,8 @@ __all__ = [
     "PCS_KINEMATICS",
     "PCSBackendParams",
     "PLANAR_PCS_ACTUATION",
+    "DEFAULT_GVS_BLOCK_DIM",
+    "DEFAULT_GVS_LARGE_BLOCK_DIM",
     "DEFAULT_PCS_BLOCK_DIM",
     "DEFAULT_PLANAR_PCS_BLOCK_DIM",
     "WarpExecutorKey",
@@ -103,6 +111,7 @@ __all__ = [
     "dispatch_fused_dynamics_actuation_force",
     "dispatch_kinematics",
     "dispatch_kinematics_abscissa_batched",
+    "default_gvs_block_dim",
     "evaluate_forward_dynamics",
     "evaluate_forward_kinematics",
     "evaluate_inertial_jacobian",

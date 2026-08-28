@@ -36,7 +36,6 @@ from soromox.systems.execution.types import (
     KinematicsResult,
     WarpExecutorKey,
 )
-from soromox.systems.execution.warp.config import gvs_block_dim
 from soromox.systems.execution.warp.gvs.actuation.operands import (
     GVSThreadlikeOperands,
 )
@@ -334,6 +333,14 @@ def _validate_actuation_batch(
         )
 
 
+def _gvs_model_block_dim(model: Any) -> int:
+    """Return the model-owned GVS lane count, or one for Warp CPU."""
+
+    if jax.default_backend() != "gpu":
+        return 1
+    return cast(int, model.backend_params.warp_block_dim)
+
+
 @eqx.filter_jit
 def _execute_gvs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTerms:
     """Build GVS operands and execute one compiled batch-shaped pipeline.
@@ -348,10 +355,7 @@ def _execute_gvs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTer
     """
 
     _validate_batch(q, qd, "GVS")
-    block_dim = gvs_block_dim(
-        model.num_dofs,
-        gpu=jax.default_backend() == "gpu",
-    )
+    block_dim = _gvs_model_block_dim(model)
     operands = GVSOperands.from_model(model, block_dim=block_dim)
     return execute_dynamics_terms("gvs", operands, q, qd)
 
@@ -386,7 +390,7 @@ def _execute_gvs_dynamics_actuation_batch(
     _validate_actuation_batch(q, controls, "GVS")
     dynamics = GVSOperands.from_model(
         model,
-        block_dim=gvs_block_dim(model.num_dofs, gpu=jax.default_backend() == "gpu"),
+        block_dim=_gvs_model_block_dim(model),
     )
     actuation = GVSThreadlikeOperands.from_model(model)
     return execute_dynamics_and_threadlike_actuation_force(
@@ -509,10 +513,7 @@ def _execute_gvs_kinematics_batch(
     _validate_kinematics_batch(q, s, "GVS")
     operands = GVSKinematicsOperands.from_model(
         model,
-        block_dim=gvs_block_dim(
-            model.num_dofs,
-            gpu=jax.default_backend() == "gpu",
-        ),
+        block_dim=_gvs_model_block_dim(model),
     )
     return execute_kinematics("gvs", operands, q, s, operation)
 

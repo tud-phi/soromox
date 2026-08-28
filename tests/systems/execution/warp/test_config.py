@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from soromox.systems.execution import GVSBackendParams
+from soromox.systems.execution.warp import loader
 from soromox.systems.execution.warp.config import gvs_block_dim
 
 
@@ -16,3 +20,18 @@ def test_gvs_retains_bounded_shape_rule(num_dofs: int, expected: int) -> None:
 
     assert gvs_block_dim(num_dofs, gpu=True) == expected
     assert gvs_block_dim(num_dofs, gpu=False) == 1
+
+
+def test_gvs_executor_uses_model_owned_gpu_block_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Route GVS execution through the public backend parameters."""
+
+    model = SimpleNamespace(
+        backend_params=GVSBackendParams(warp_block_dim=256),
+    )
+    monkeypatch.setattr(loader.jax, "default_backend", lambda: "gpu")
+    assert loader._gvs_model_block_dim(model) == 256
+
+    monkeypatch.setattr(loader.jax, "default_backend", lambda: "cpu")
+    assert loader._gvs_model_block_dim(model) == 1

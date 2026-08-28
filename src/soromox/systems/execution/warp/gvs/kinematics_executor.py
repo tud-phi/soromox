@@ -142,6 +142,7 @@ def execute_kinematics(
             operands.link_local_to_global,
             operands.link_global_to_local,
             *sample_operands,
+            operands.block_dim,
             output_dims=output_dims,
         )[-1]
     outputs = gvs_kinematics(
@@ -155,6 +156,7 @@ def execute_kinematics(
         operands.link_local_to_global,
         operands.link_global_to_local,
         *sample_operands,
+        operands.block_dim,
         output_dims=output_dims,
     )
     poses, jacobians = outputs[-2:]

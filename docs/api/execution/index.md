@@ -13,9 +13,9 @@ described in [Execution Backends](../../user-guide/execution-backends.md).
 
 ## Public configuration
 
-`ExecutionBackend` is the accepted backend-name type. `PCSBackendParams` groups
-optional PlanarPCS and PCS launch tuning rather than adding backend-specific
-keywords to each system constructor.
+`ExecutionBackend` is the accepted backend-name type. `GVSBackendParams` and
+`PCSBackendParams` group family-specific launch tuning rather than adding
+backend-specific keywords to each system constructor.
 
 ```python
 from soromox.systems import PCS, PCSBackendParams
@@ -34,7 +34,10 @@ robot = PCS.from_links(
       heading_level: 2
       members:
         - ExecutionBackend
+        - GVSBackendParams
         - PCSBackendParams
+        - DEFAULT_GVS_BLOCK_DIM
+        - DEFAULT_GVS_LARGE_BLOCK_DIM
         - DEFAULT_PLANAR_PCS_BLOCK_DIM
         - DEFAULT_PCS_BLOCK_DIM
 

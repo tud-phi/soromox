@@ -112,10 +112,9 @@ unsupported system-level operation explains how to access the low-level
 Warp-native API. Passive threadlike impedance and actuator path coordinates
 also remain JAX operations.
 
-When Warp dynamics is selected, `GVS.forward_dynamics` combines eligible
-built-in linear threadlike actuation with the dynamics evaluation. Other
-actuation layouts and the `PCS` and `PlanarPCS` systems continue to evaluate
-actuation with JAX.
+When Warp dynamics is selected, `GVS`, `PCS`, and `PlanarPCS` forward dynamics
+combine eligible built-in linear threadlike actuation with the dynamics
+evaluation. Other actuation layouts continue to evaluate actuation with JAX.
 
 ## Model-level and per-call selection
 
@@ -237,25 +236,32 @@ The default block sizes are portable choices rather than GPU-specific tuning
 heuristics:
 
 - `PlanarPCS`: `PCSBackendParams(warp_block_dim=128)`;
-- `PCS`: `PCSBackendParams(warp_block_dim=192)`.
+- `PCS`: `PCSBackendParams(warp_block_dim=192)`;
+- `GVS`: `GVSBackendParams(warp_block_dim=128)` for at most 64 active
+  coordinates and `warp_block_dim=192` for larger models.
 
 Advanced users can provide a multiple of 32 from 32 through 1024 when the model
 is constructed:
 
 ```python
-from soromox.systems import PCSBackendParams
+from soromox.systems import GVS, PCS, GVSBackendParams, PCSBackendParams
 
 robot = PCS.from_links(
     links,
     backend="auto",
     backend_params=PCSBackendParams(warp_block_dim=256),
 )
+
+gvs_robot = GVS.from_segments(
+    segments,
+    backend="auto",
+    backend_params=GVSBackendParams(warp_block_dim=192),
+)
 ```
 
 Changing this value affects compilation and may improve or reduce performance
 depending on topology, batch size, and GPU architecture. Benchmark the complete
-application rather than selecting a block size from occupancy alone. GVS does
-not currently expose a public Warp block-size override.
+application rather than selecting a block size from occupancy alone.
 
 For reliable GPU measurements:
 

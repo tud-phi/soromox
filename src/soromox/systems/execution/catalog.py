@@ -37,6 +37,7 @@ PCS_DYNAMICS = DynamicsCapabilities(
     family_name="PCS",
     warp_executor="pcs",
     required_num_gauss_points=5,
+    fused_threadlike_force_enabled=True,
 )
 GVS_KINEMATICS = KinematicsCapabilities(
     family_name="GVS",

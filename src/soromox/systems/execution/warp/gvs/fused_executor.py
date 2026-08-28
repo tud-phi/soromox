@@ -79,6 +79,7 @@ def execute_dynamics_and_threadlike_actuation_force(
         jnp.asarray([dynamics.num_cells], dtype=jnp.int32),
         jnp.asarray([dynamics.num_quadrature], dtype=jnp.int32),
         jnp.asarray([dynamics.block_dim], dtype=jnp.int32),
+        dynamics.block_dim,
         q,
         controls,
         actuation.link_local_to_global,
