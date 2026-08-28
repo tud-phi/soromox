@@ -57,11 +57,19 @@ class _TransformProbe(eqx.Module):
 
         return jnp.zeros((q.size, q.size), dtype=q.dtype)
 
-    def actuation_force(self, q: Array, u: Array, *, qd: Array) -> Array:
-        """Return zero actuation for the execution probe."""
+    def actuation_force(
+        self,
+        q: Array,
+        u: Array,
+        *,
+        qd: Array,
+        backend: ExecutionBackend | None = None,
+    ) -> Array:
+        """Expose automatic actuation routing in the primal calculation."""
 
         del u, qd
-        return jnp.zeros_like(q)
+        factor = 2.0 if backend == "auto" else 0.0
+        return factor * jnp.ones_like(q)
 
     def _solve_inertia(self, inertia: Array, rhs: Array) -> Array:
         """Solve the probe's generalized inertia system."""
@@ -124,7 +132,10 @@ def test_forward_dynamics_boundary_routes_derivatives_to_jax() -> None:
 
     primal = evaluate_forward_dynamics(model, time, y, None, None)
     expected_primal = jnp.concatenate(
-        (y[model.num_dofs :], -10.0 * model.scale * jnp.sin(y[: model.num_dofs]))
+        (
+            y[model.num_dofs :],
+            2.0 - 10.0 * model.scale * jnp.sin(y[: model.num_dofs]),
+        )
     )
     assert_allclose(primal, expected_primal, rtol=0.0, atol=0.0)
 

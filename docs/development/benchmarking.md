@@ -9,7 +9,6 @@ Soromox ships development benchmarking CLIs under `tools/benchmarks`:
 - `benchmark_derivative_paths.py` compares direct analytical derivative hooks,
   protected autograd fallbacks, and public APIs with custom JVPs enabled or disabled
   for PlanarPCS, PCS, and GVS systems.
-
 The publication's batched simulation benchmark lives with the Section IVb paper
 artifacts under `paper_results/secIVb_parallel_rollouts_gpu/`.
 

@@ -13,10 +13,13 @@ executor.
 """
 
 from soromox.systems.execution.catalog import (
+    GVS_ACTUATION,
     GVS_DYNAMICS,
     GVS_KINEMATICS,
+    PCS_ACTUATION,
     PCS_DYNAMICS,
     PCS_KINEMATICS,
+    PLANAR_PCS_ACTUATION,
 )
 from soromox.systems.execution.config import (
     DEFAULT_PCS_BLOCK_DIM,
@@ -24,6 +27,8 @@ from soromox.systems.execution.config import (
     PCSBackendParams,
 )
 from soromox.systems.execution.dispatch import (
+    dispatch_actuation_force,
+    dispatch_actuation_matrix,
     dispatch_dynamics_terms,
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
@@ -32,11 +37,17 @@ from soromox.systems.execution.transforms import (
     evaluate_forward_dynamics,
     evaluate_forward_kinematics,
     evaluate_inertial_jacobian,
+    make_actuation_evaluator,
     make_dynamics_evaluator,
     make_kinematics_evaluators,
 )
 from soromox.systems.execution.types import (
     AbscissaBatchedKinematicsEvaluator,
+    ActuationCapabilities,
+    ActuationForceEvaluator,
+    ActuationMatrixEvaluator,
+    ActuationModel,
+    ActuationOperation,
     DynamicsCapabilities,
     DynamicsEvaluator,
     DynamicsModel,
@@ -53,12 +64,18 @@ from soromox.systems.execution.types import (
 
 __all__ = [
     "AbscissaBatchedKinematicsEvaluator",
+    "ActuationCapabilities",
+    "ActuationForceEvaluator",
+    "ActuationMatrixEvaluator",
+    "ActuationModel",
+    "ActuationOperation",
     "DynamicsCapabilities",
     "DynamicsEvaluator",
     "DynamicsModel",
     "DynamicsTerms",
     "ExecutionBackend",
     "ForwardDynamicsModel",
+    "GVS_ACTUATION",
     "GVS_DYNAMICS",
     "GVS_KINEMATICS",
     "KinematicsCapabilities",
@@ -66,18 +83,23 @@ __all__ = [
     "KinematicsModel",
     "KinematicsOperation",
     "KinematicsResult",
+    "PCS_ACTUATION",
     "PCS_DYNAMICS",
     "PCS_KINEMATICS",
     "PCSBackendParams",
+    "PLANAR_PCS_ACTUATION",
     "DEFAULT_PCS_BLOCK_DIM",
     "DEFAULT_PLANAR_PCS_BLOCK_DIM",
     "WarpExecutorKey",
+    "dispatch_actuation_force",
+    "dispatch_actuation_matrix",
     "dispatch_dynamics_terms",
     "dispatch_kinematics",
     "dispatch_kinematics_abscissa_batched",
     "evaluate_forward_dynamics",
     "evaluate_forward_kinematics",
     "evaluate_inertial_jacobian",
+    "make_actuation_evaluator",
     "make_dynamics_evaluator",
     "make_kinematics_evaluators",
 ]

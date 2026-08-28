@@ -12,6 +12,10 @@ from jax import Array
 
 from soromox.systems.execution.types import (
     AbscissaBatchedKinematicsEvaluator,
+    ActuationForceEvaluator,
+    ActuationMatrixEvaluator,
+    ActuationModel,
+    ActuationOperation,
     DynamicsEvaluator,
     DynamicsModel,
     DynamicsTerms,
@@ -27,6 +31,101 @@ BatchExecutor = Callable[[DynamicsModel, Array, Array], DynamicsTerms]
 KinematicsBatchExecutor = Callable[
     [KinematicsModel, Array, Array, KinematicsOperation], KinematicsResult
 ]
+ActuationMatrixBatchExecutor = Callable[[ActuationModel, Array], Array]
+ActuationForceBatchExecutor = Callable[[ActuationModel, Array, Array], Array]
+
+
+def make_actuation_evaluator(
+    execute_batch: ActuationMatrixBatchExecutor | ActuationForceBatchExecutor,
+    *,
+    family_name: str,
+    operation: ActuationOperation,
+) -> ActuationMatrixEvaluator | ActuationForceEvaluator:
+    """Adapt a canonical actuation batch to scalar and autodiff semantics."""
+
+    if operation == "matrix":
+
+        @jax.custom_batching.custom_vmap
+        def matrix_primal(model: ActuationModel, q: Array) -> Array:
+            return execute_batch(model, q[None, :])[0]
+
+        @matrix_primal.def_vmap
+        def matrix_vmap(
+            axis_size: int,
+            in_batched: tuple[Any, bool],
+            model: ActuationModel,
+            q: Array,
+        ) -> tuple[Array, bool]:
+            model_batched, q_batched = in_batched
+            if any(jax.tree.leaves(model_batched)):
+                raise ValueError(
+                    f"Batching over {family_name} model parameters is unsupported."
+                )
+            if not q_batched:
+                q = jnp.broadcast_to(q, (axis_size, *q.shape))
+            return execute_batch(model, q), True
+
+        @eqx.filter_custom_jvp
+        def matrix_evaluator(model: ActuationModel, q: Array) -> Array:
+            return matrix_primal(model, q)
+
+        @matrix_evaluator.def_jvp
+        def matrix_jvp(
+            primals: tuple[ActuationModel, Array],
+            tangents: tuple[Any, Array | None],
+        ) -> tuple[Array, Array]:
+            return eqx.filter_jvp(
+                lambda model_, q_: model_._actuation_matrix(q_), primals, tangents
+            )
+
+        return matrix_evaluator
+
+    @jax.custom_batching.custom_vmap
+    def force_primal(
+        model: ActuationModel, q: Array, u: Array, qd: Array
+    ) -> Array:
+        del qd
+        return execute_batch(model, q[None, :], u[None, :])[0]
+
+    @force_primal.def_vmap
+    def force_vmap(
+        axis_size: int,
+        in_batched: tuple[Any, bool, bool, bool],
+        model: ActuationModel,
+        q: Array,
+        u: Array,
+        qd: Array,
+    ) -> tuple[Array, bool]:
+        model_batched, q_batched, u_batched, _qd_batched = in_batched
+        if any(jax.tree.leaves(model_batched)):
+            raise ValueError(
+                f"Batching over {family_name} model parameters is unsupported."
+            )
+        if not q_batched:
+            q = jnp.broadcast_to(q, (axis_size, *q.shape))
+        if not u_batched:
+            u = jnp.broadcast_to(u, (axis_size, *u.shape))
+        del qd
+        return execute_batch(model, q, u), True
+
+    @eqx.filter_custom_jvp
+    def force_evaluator(
+        model: ActuationModel, q: Array, u: Array, qd: Array
+    ) -> Array:
+        return force_primal(model, q, u, qd)
+
+    @force_evaluator.def_jvp
+    def force_jvp(
+        primals: tuple[ActuationModel, Array, Array, Array],
+        tangents: tuple[Any, Array | None, Array | None, Array | None],
+    ) -> tuple[Array, Array]:
+        return eqx.filter_jvp(
+            lambda model_, q_, u_, qd_: model_._actuation_force(q_, u_, qd_),
+            primals,
+            tangents,
+        )
+
+    return force_evaluator
 
 
 @jax.custom_batching.custom_vmap
@@ -493,9 +592,10 @@ def _assemble_forward_dynamics(
     """Assemble generalized forces and solve one forward-dynamics request.
 
     This shared implementation keeps the public system methods small and makes
-    the force convention identical for GVS, PCS, and PlanarPCS. The selected
-    backend affects only ``(B, Cqd, G)`` assembly; passive forces, actuation,
-    damping, and the inertia solve remain JAX operations.
+    the force convention identical for GVS, PCS, and PlanarPCS. Passive forces,
+    damping, and the inertia solve remain JAX operations. Actuation follows the
+    same backend request but independently falls back to JAX unless its fused
+    high-level Warp path is enabled.
 
     Args:
         model: System implementing the forward-dynamics execution contract.
@@ -533,7 +633,11 @@ def _assemble_forward_dynamics(
 
     inertia, coriolis_qd, gravity = model.dynamics_terms(q, qd, backend=backend)
     elastic = model.elastic_force(q)
-    actuation = model.actuation_force(q, u, qd=qd)
+    requested = model.backend if backend is None else backend
+    actuation_backend: ExecutionBackend | None = (
+        "auto" if requested == "warp" else backend
+    )
+    actuation = model.actuation_force(q, u, qd=qd, backend=actuation_backend)
     rhs = (
         actuation
         + tau_ext
@@ -547,9 +651,12 @@ def _assemble_forward_dynamics(
 
 
 __all__ = [
+    "ActuationForceBatchExecutor",
+    "ActuationMatrixBatchExecutor",
     "BatchExecutor",
     "KinematicsBatchExecutor",
     "evaluate_forward_dynamics",
+    "make_actuation_evaluator",
     "make_dynamics_evaluator",
     "make_kinematics_evaluators",
 ]

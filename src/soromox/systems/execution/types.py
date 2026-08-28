@@ -12,6 +12,7 @@ WarpExecutorKey = Literal["gvs", "pcs"]
 DynamicsTerms = tuple[Array, Array, Array]
 KinematicsOperation = Literal["pose", "jacobian", "both"]
 KinematicsResult = Array | tuple[Array, Array]
+ActuationOperation = Literal["matrix", "force"]
 
 
 class DynamicsModel(Protocol):
@@ -105,13 +106,21 @@ class ForwardDynamicsModel(DynamicsModel, Protocol):
 
         ...
 
-    def actuation_force(self, q: Array, u: Array, *, qd: Array) -> Array:
+    def actuation_force(
+        self,
+        q: Array,
+        u: Array,
+        *,
+        qd: Array,
+        backend: ExecutionBackend | None = None,
+    ) -> Array:
         """Return the generalized actuator force.
 
         Args:
             q: Generalized coordinates for one environment.
             u: Actuator inputs.
             qd: Generalized velocities for the same environment.
+            backend: Optional per-call backend override.
 
         Returns:
             Generalized actuator force vector.
@@ -214,6 +223,44 @@ class AbscissaBatchedKinematicsEvaluator(Protocol):
         ...
 
 
+class ActuationModel(Protocol):
+    """Structural contract for transform-aware actuation execution."""
+
+    backend: ExecutionBackend
+    num_dofs: int
+    num_actuators: int
+
+    def _actuation_matrix(self, q: Array) -> Array:
+        """Return the differentiable scalar JAX transmission matrix."""
+
+        ...
+
+    def _actuation_force(self, q: Array, u: Array, qd: Array) -> Array:
+        """Return the differentiable scalar JAX generalized actuator force."""
+
+        ...
+
+
+class ActuationMatrixEvaluator(Protocol):
+    """Scalar matrix evaluator backed by one canonical batched executor."""
+
+    def __call__(self, model: ActuationModel, q: Array) -> Array:
+        """Return one transmission matrix with shape ``(D, A)``."""
+
+        ...
+
+
+class ActuationForceEvaluator(Protocol):
+    """Scalar fused-force evaluator backed by one canonical batched executor."""
+
+    def __call__(
+        self, model: ActuationModel, q: Array, u: Array, qd: Array
+    ) -> Array:
+        """Return one generalized actuator force with shape ``(D,)``."""
+
+        ...
+
+
 @dataclass(frozen=True)
 class DynamicsCapabilities:
     """Describe optional dynamics support for one system family.
@@ -250,8 +297,28 @@ class KinematicsCapabilities:
     warp_cpu_supported: bool = True
 
 
+@dataclass(frozen=True)
+class ActuationCapabilities:
+    """Record benchmark-gated high-level threadlike Warp support.
+
+    The low-level Warp-native operand and launcher API is independent of these
+    flags and remains available even when a public operation is disabled.
+    """
+
+    family_name: str
+    warp_executor: WarpExecutorKey
+    matrix_enabled: bool
+    force_enabled: bool
+    warp_cpu_supported: bool = False
+
+
 __all__ = [
     "AbscissaBatchedKinematicsEvaluator",
+    "ActuationCapabilities",
+    "ActuationForceEvaluator",
+    "ActuationMatrixEvaluator",
+    "ActuationModel",
+    "ActuationOperation",
     "DynamicsCapabilities",
     "DynamicsEvaluator",
     "DynamicsModel",

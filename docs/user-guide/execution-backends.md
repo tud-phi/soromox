@@ -63,9 +63,9 @@ pip install "soromox[warp]"
 
 | System | Warp support | Requirements |
 |---|---|---|
-| `PlanarPCS` | Kinematics and dynamics on GPU; explicit Warp kinematics is also available on CPU | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
-| `PCS` | Kinematics and dynamics on GPU; explicit Warp kinematics is also available on CPU | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
-| `GVS` | Kinematics and dynamics on GPU; explicit Warp execution is also available on CPU | FP64 arrays |
+| `PlanarPCS` | Kinematics and dynamics on GPU; Warp-native linear-threadlike integration; explicit Warp kinematics is also available on CPU | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
+| `PCS` | Kinematics and dynamics on GPU; Warp-native linear-threadlike integration; explicit Warp kinematics is also available on CPU | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
+| `GVS` | Kinematics and dynamics on GPU; Warp-native linear-threadlike integration; explicit Warp execution is also available on CPU | FP64 arrays |
 
 Other systems, including `PlanarHSA`, continue to use JAX/XLA. For PCS models
 with a quadrature rule other than five Gauss points, `"auto"` falls back to
@@ -91,9 +91,24 @@ The selected kinematics backend is used by:
 
 The setting does **not** change direct calls to `inertia_matrix`,
 `coriolis_matrix`, `gravitational_force`, body-frame Jacobians, Jacobian
-derivatives, energy functions, constitutive forces, actuation, or rendering.
-Those methods remain JAX operations. To evaluate backend-accelerated inertia,
+derivatives, energy functions, constitutive forces, passive threadlike
+impedance, actuator path coordinates, or rendering. Those methods remain JAX
+operations. To evaluate backend-accelerated inertia,
 Coriolis/centrifugal, and gravity terms together, call `dynamics_terms`.
+
+### Threadlike actuation
+
+Built-in linear threadlike layouts have public Warp-native operands, FP64
+kernels, and allocation-free launchers for actuation matrices `(E, D, A)` and
+fused direct-effort forces `(E, D)`. These low-level APIs are always available
+from `soromox.systems.execution.warp.pcs` and `.gvs` for Newton and other
+Warp-native integrations. They support multiple ordered threadlike actuator
+groups and every built-in modality.
+
+The system-level `actuation_matrix` and `actuation_force` methods currently use
+JAX. Passing `backend="warp"` to either method explains how to access the
+low-level Warp-native API. Passive threadlike impedance and actuator path
+coordinates also remain JAX operations.
 
 ## Model-level and per-call selection
 

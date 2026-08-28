@@ -21,6 +21,9 @@ and include benchmark baseline and measurement context for performance claims.
   Warp-native execution APIs; see
   [Execution Backends](../user-guide/execution-backends.md) and
   [PR #177](https://github.com/tud-phi/soromox/pull/177).
+- Added public allocation-free, CUDA-graph-capturable Warp kernels, operand
+  bundles, output-shape contracts, and fused direct-effort launchers for
+  built-in linear threadlike actuation in `PlanarPCS`, `PCS`, and `GVS`.
 
 ### Changed
 

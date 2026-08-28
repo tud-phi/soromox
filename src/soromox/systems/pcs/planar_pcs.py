@@ -23,8 +23,11 @@ from soromox.systems.execution import (
     DEFAULT_PLANAR_PCS_BLOCK_DIM,
     PCS_DYNAMICS,
     PCS_KINEMATICS,
+    PLANAR_PCS_ACTUATION,
     ExecutionBackend,
     PCSBackendParams,
+    dispatch_actuation_force,
+    dispatch_actuation_matrix,
     dispatch_dynamics_terms,
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
@@ -2859,6 +2862,34 @@ class PlanarPCS(SoftRobot):
     def _elastic_energy(self, q: Array) -> Array:
         """Return body strain energy plus installed passive-element energy."""
         return 0.5 * q @ self.K_active @ q + self.passive_elastic_energy(q)
+
+    def actuation_matrix(
+        self, q: Array, *, backend: ExecutionBackend | None = None
+    ) -> Array:
+        """Return the actuator matrix through the selected execution backend."""
+
+        return dispatch_actuation_matrix(
+            self, q, backend=backend, capabilities=PLANAR_PCS_ACTUATION
+        )
+
+    def actuation_force(
+        self,
+        q: Array,
+        u: Array,
+        qd: Array | None = None,
+        *,
+        backend: ExecutionBackend | None = None,
+    ) -> Array:
+        """Return generalized actuator force through the selected backend."""
+
+        return dispatch_actuation_force(
+            self,
+            q,
+            u,
+            qd,
+            backend=backend,
+            capabilities=PLANAR_PCS_ACTUATION,
+        )
 
     def _threadlike_local_basis(
         self,

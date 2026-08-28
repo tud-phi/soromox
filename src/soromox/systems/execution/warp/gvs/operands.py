@@ -22,6 +22,9 @@ class GVSOperandSource(Protocol):
     num_dofs: int
     max_dof: int
     max_num_integration_points: int
+    B_Xs: Array
+    xi_ref_Xs: Array
+    inner_integration_weights: Array
     B_joint: Array
     xi_ref_joint: Array
     joint_local_to_global: Array

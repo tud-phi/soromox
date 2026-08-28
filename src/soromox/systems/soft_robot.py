@@ -1067,7 +1067,20 @@ class SoftRobot(DynamicalSystem):
             tuple(actuator.velocities(self, q, qd) for actuator in self.actuators)
         )
 
-    def actuation_matrix(self, q: Array) -> Array:
+    def _actuation_matrix(self, q: Array) -> Array:
+        """Return the protected differentiable JAX transmission matrix."""
+
+        if not self.actuators:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        return jnp.concatenate(
+            tuple(
+                actuator.transmission.moment_matrix(self, q)
+                for actuator in self.actuators
+            ),
+            axis=1,
+        )
+
+    def actuation_matrix(self, q: Array, *, backend: str | None = None) -> Array:
         """
         Return the actuator transmission matrix ``A(q)``.
 
@@ -1082,20 +1095,18 @@ class SoftRobot(DynamicalSystem):
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
+            backend: Optional execution-backend override. The base
+                implementation supports JAX execution.
 
         Returns:
             A: Actuator transmission matrix of shape
                 (num_dofs, num_actuators).
         """
-        if not self.actuators:
-            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
-        return jnp.concatenate(
-            tuple(
-                actuator.transmission.moment_matrix(self, q)
-                for actuator in self.actuators
-            ),
-            axis=1,
-        )
+        if backend not in (None, "auto", "jax"):
+            raise NotImplementedError(
+                "This system exposes only the JAX actuation_matrix implementation."
+            )
+        return self._actuation_matrix(q)
 
     def actuator_efforts(
         self,
@@ -1164,7 +1175,26 @@ class SoftRobot(DynamicalSystem):
             start = stop
         return jnp.concatenate(tuple(efforts))
 
-    def actuation_force(self, q: Array, u: Array, qd: Array | None = None) -> Array:
+    def _actuation_force(self, q: Array, u: Array, qd: Array | None = None) -> Array:
+        """Return the protected differentiable JAX generalized actuator force."""
+
+        actuation_matrix = self._actuation_matrix(q)
+        effort = self.actuator_efforts(
+            q,
+            u,
+            qd=qd,
+            actuation_matrix=actuation_matrix,
+        )
+        return actuation_matrix @ effort
+
+    def actuation_force(
+        self,
+        q: Array,
+        u: Array,
+        qd: Array | None = None,
+        *,
+        backend: str | None = None,
+    ) -> Array:
         """
         Compute the generalized actuation force.
 
@@ -1178,6 +1208,8 @@ class SoftRobot(DynamicalSystem):
             q: Generalized coordinates of shape (num_dofs,).
             u: Actuator controls of shape (num_actuators,).
             qd: Optional generalized velocities of shape (num_dofs,).
+            backend: Optional execution-backend override. The base
+                implementation supports JAX execution.
 
         Returns:
             tau_u: Generalized actuation force of shape (num_dofs,).
@@ -1185,14 +1217,11 @@ class SoftRobot(DynamicalSystem):
         Raises:
             ValueError: If ``u`` does not have shape (num_actuators,).
         """
-        actuation_matrix = self.actuation_matrix(q)
-        effort = self.actuator_efforts(
-            q,
-            u,
-            qd=qd,
-            actuation_matrix=actuation_matrix,
-        )
-        return actuation_matrix @ effort
+        if backend not in (None, "auto", "jax"):
+            raise NotImplementedError(
+                "This system exposes only the JAX actuation_force implementation."
+            )
+        return self._actuation_force(q, u, qd)
 
     def passive_elastic_force(self, q: Array) -> Array:
         """

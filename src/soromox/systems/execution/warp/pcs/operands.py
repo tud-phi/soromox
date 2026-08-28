@@ -28,6 +28,7 @@ class PCSOperandSource(Protocol):
     active_strain_scales: Array
     xi_ref: Array
     dynamics_local_points: Array
+    integration_weights: Array
     active_dof_ends: Array
     inertia_upper_rows: Array
     inertia_upper_columns: Array

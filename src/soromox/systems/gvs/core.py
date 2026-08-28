@@ -17,9 +17,12 @@ from soromox.systems.components import (
     IsotropicMaterialParams,
 )
 from soromox.systems.execution import (
+    GVS_ACTUATION,
     GVS_DYNAMICS,
     GVS_KINEMATICS,
     ExecutionBackend,
+    dispatch_actuation_force,
+    dispatch_actuation_matrix,
     dispatch_dynamics_terms,
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
@@ -5618,6 +5621,29 @@ class GVS(SoftRobot):
             return -length_i * jnp.sum(weights * mass_density * height_along_gravity)
 
         return jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
+
+    def actuation_matrix(
+        self, q: Array, *, backend: ExecutionBackend | None = None
+    ) -> Array:
+        """Return the actuator matrix through the selected execution backend."""
+
+        return dispatch_actuation_matrix(
+            self, q, backend=backend, capabilities=GVS_ACTUATION
+        )
+
+    def actuation_force(
+        self,
+        q: Array,
+        u: Array,
+        qd: Array | None = None,
+        *,
+        backend: ExecutionBackend | None = None,
+    ) -> Array:
+        """Return generalized actuator force through the selected backend."""
+
+        return dispatch_actuation_force(
+            self, q, u, qd, backend=backend, capabilities=GVS_ACTUATION
+        )
 
     def _threadlike_local_basis(
         self,
