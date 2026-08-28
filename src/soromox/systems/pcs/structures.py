@@ -57,11 +57,23 @@ class PCSStructure(eqx.Module):
             ``None`` activates every strain coordinate.
         scale_rotational_basis_by_length: Whether rotational strain coordinates
             are normalized by their link length.
+        wrap_angle_smoothing: Regularizer for the threadlike Capstan wrap
+            angle, in radians per metre. It replaces ``|kappa|`` by
+            ``sqrt(kappa**2 + wrap_angle_smoothing**2)``, which makes the
+            transmission ratio smooth across a straight segment instead of
+            merely continuous, and keeps a friction coefficient identifiable
+            at a straight configuration. It never under-estimates the wrap
+            angle and over-estimates it by at most
+            ``wrap_angle_smoothing * sum(length)``. It is static because it is
+            a numerical choice rather than a physical parameter, so it is
+            neither differentiated nor identified. The default reproduces the
+            exact ``|kappa|``.
     """
 
     num_gauss_points: int = eqx.field(static=True, default=5)
     strain_selector: Array | None = None
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
+    wrap_angle_smoothing: float = eqx.field(static=True, default=0.0)
 
 
 class PlanarPCSStructure(eqx.Module):
@@ -73,11 +85,23 @@ class PlanarPCSStructure(eqx.Module):
             ``None`` activates every strain coordinate.
         scale_rotational_basis_by_length: Whether the rotational strain
             coordinate is normalized by its link length.
+        wrap_angle_smoothing: Regularizer for the threadlike Capstan wrap
+            angle, in radians per metre. It replaces ``|kappa|`` by
+            ``sqrt(kappa**2 + wrap_angle_smoothing**2)``, which makes the
+            transmission ratio smooth across a straight segment instead of
+            merely continuous, and keeps a friction coefficient identifiable
+            at a straight configuration. It never under-estimates the wrap
+            angle and over-estimates it by at most
+            ``wrap_angle_smoothing * sum(length)``. It is static because it is
+            a numerical choice rather than a physical parameter, so it is
+            neither differentiated nor identified. The default reproduces the
+            exact ``|kappa|``.
     """
 
     num_gauss_points: int = eqx.field(static=True, default=5)
     strain_selector: Array | None = None
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
+    wrap_angle_smoothing: float = eqx.field(static=True, default=0.0)
 
 
 class PlanarHSAStructure(eqx.Module):

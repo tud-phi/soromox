@@ -126,6 +126,7 @@ class PlanarPCS(SoftRobot):
     )
     _segment_dof_ends: tuple[int, ...] = eqx.field(static=True, default=())
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
+    wrap_angle_smoothing: float = eqx.field(static=True, default=0.0)
 
     xi_ref: Array | None = eqx.field(default=None)  # Reference configuration strain
     B_xi_unscaled: Array | None = eqx.field(
@@ -352,6 +353,12 @@ class PlanarPCS(SoftRobot):
         self.scale_rotational_basis_by_length = bool(
             structure.scale_rotational_basis_by_length
         )
+        self.wrap_angle_smoothing = float(structure.wrap_angle_smoothing)
+        if self.wrap_angle_smoothing < 0.0:
+            raise ValueError(
+                "wrap_angle_smoothing must be non-negative, got "
+                f"{self.wrap_angle_smoothing}."
+            )
 
         # Number of segments
         num_segments = int(params.link.length.shape[0])
@@ -2998,13 +3005,79 @@ class PlanarPCS(SoftRobot):
         shear_ratio = safe_divide(shear, norm, self.global_eps)
         return active * jnp.asarray([-offset * axial_ratio, axial_ratio, shear_ratio])
 
-    def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw routed-length moment arms in the planar PCS basis."""
+    def _threadlike_wrap_density(self, strains: Array) -> Array:
+        """Return the Capstan wrap-angle density of each segment.
+
+        The density is ``|omega x u_hat|``, the turning rate of the routed path
+        tangent with its material-frame rotation dropped. In the plane the
+        angular strain is perpendicular to the in-plane unit tangent, so this
+        reduces to ``|kappa|`` identically, for any routing offset and any
+        strain, and is therefore shared by every path.
+
+        Args:
+            strains: Segment strains of shape ``(num_segments, 3)``.
+
+        Returns:
+            w: Wrap-angle density per segment, shape ``(num_segments,)``, in
+                radians per metre.
+        """
+        density = jnp.abs(strains[:, 0])
+        if self.wrap_angle_smoothing == 0.0:
+            return density
+        return jnp.sqrt(density**2 + self.wrap_angle_smoothing**2)
+
+    def _threadlike_wrap_angle(self, density: Array, s: Array) -> Array:
+        """Accumulate the wrap angle from the base up to ``s``.
+
+        The density is piecewise constant, so the accumulated angle is
+        piecewise linear in ``s`` and therefore exact at every quadrature node.
+
+        Args:
+            density: Per-segment wrap density of shape ``(num_segments,)``.
+            s: Arc-length coordinate, scalar or shape ``(num_points,)``.
+
+        Returns:
+            Theta: Accumulated wrap angle in radians, matching the shape of
+                ``s``.
+        """
+        arc_in_segment = jnp.clip(
+            jnp.asarray(s)[..., None] - self.L_cum[:-1], 0.0, self.L
+        )
+        return jnp.sum(density * arc_in_segment, axis=-1)
+
+    def _threadlike_moment_matrix(
+        self,
+        q: Array,
+        routing: ThreadlikeRouting,
+        friction_coefficient: Array | None = None,
+    ) -> Array:
+        """Integrate routed-length moment arms in the planar PCS basis.
+
+        When a ``friction_coefficient`` is supplied, the Capstan transmission
+        ratio ``exp(-mu * Theta(s))`` weights the local basis inside the
+        arc-length integral, because guide friction accumulates along the path
+        rather than scaling the applied effort. A zero coefficient reproduces
+        the frictionless matrix exactly.
+
+        Args:
+            q: Generalized coordinates of shape ``(num_dofs,)``.
+            routing: Routed-path family to integrate.
+            friction_coefficient: Optional Capstan coefficient, scalar or one
+                entry per path. ``None`` skips the weighting entirely.
+
+        Returns:
+            A: Moment-arm matrix of shape ``(num_dofs, num_paths)``.
+        """
         params = routing.params
         count = params.num_paths
         if count == 0:
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         strains = self.strain(q).reshape((self.num_segments, 3))
+
+        mu = None
+        if friction_coefficient is not None:
+            mu = jnp.broadcast_to(jnp.asarray(friction_coefficient), (count,))
+            wrap_density = self._threadlike_wrap_density(strains)
 
         def segment_matrix(segment_index: Array) -> Array:
             points, weights = scale_gaussian_quadrature(
@@ -3028,7 +3101,13 @@ class PlanarPCS(SoftRobot):
                     params.start_segment_index_array,
                     params.end_segment_index_array,
                 )
-                return weights[point_index] * basis
+                weighted = weights[point_index] * basis
+                if mu is None:
+                    return weighted
+                transmission_ratio = jnp.exp(
+                    -mu * self._threadlike_wrap_angle(wrap_density, points[point_index])
+                )
+                return weighted * transmission_ratio[None, :]
 
             return jnp.sum(
                 vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0
