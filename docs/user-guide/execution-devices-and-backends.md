@@ -97,20 +97,20 @@ dependency is unavailable, install it or construct the model with
     - **Small and moderate batches:** CPU with JAX often remains competitive.
       GPU execution becomes more attractive as the model, quadrature, sampled
       abscissae, or operation becomes more expensive. Compare CPU JAX, GPU JAX,
-      and GPU `"auto"` for the actual workload when this regime matters.
+      and GPU Warp for the actual workload when this regime matters.
     - **Large batches and parallel rollouts:** a GPU is usually the strongest
       starting point when the working set fits in VRAM and states remain on the
       device. For supported forward-only primal kinematics and dynamics, GPU
-      `"auto"`/Warp often outperforms GPU JAX, with larger gains becoming more
-      likely as batch size and per-environment work increase. Warp is not a
+      Warp often outperforms GPU JAX, with larger gains becoming more likely as
+      batch size and per-environment work increase. Warp is not a
       universal GPU winner: short or unsupported operations, some topologies,
       and differentiation continue to favor or require JAX.
 
     Benchmark your specific application before choosing a production device and
     backend. Compare the practical combinations—CPU JAX, GPU JAX, and GPU
-    `"auto"`/Warp—using the actual robot structure, quadrature, operations, and
-    batch shapes after warmup. Include host/device transfers and synchronization,
-    and verify that peak memory use fits the available RAM or VRAM. Choose the
+    Warp—using the actual robot structure, quadrature, operations, and batch
+    shapes after warmup. Include host/device transfers and synchronization, and
+    verify that peak memory use fits the available RAM or VRAM. Choose the
     combination that provides the best end-to-end performance for your use case
     while satisfying its differentiation and backend-support requirements;
     crossover points from another model or machine may not apply.
@@ -321,10 +321,9 @@ application rather than selecting a block size from occupancy alone.
 
 ## Benchmarking devices and backends
 
-Compare CPU JAX, GPU JAX, and GPU `"auto"`/Warp with the exact model, batch
-shape, and operation mix used by the application. Record compilation separately
-from warmed execution, and include transfers when they are part of the real
-workflow.
+Compare CPU JAX, GPU JAX, and GPU Warp with the exact model, batch shape, and
+operation mix used by the application. Record compilation separately from
+warmed execution, and include transfers when they are part of the real workflow.
 
 For reliable GPU measurements:
 
