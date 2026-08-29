@@ -42,6 +42,40 @@ This keeps behavior predictable across devices. If a GPU environment does not
 have the optional Warp dependency installed, either install it or construct the
 model with `backend="jax"`.
 
+!!! tip "Practical device and backend guidance"
+    Treat the device and execution backend as separate choices. CPU versus GPU
+    determines where JAX executes; `backend="jax"` does not by itself select a
+    CPU. The `backend` setting selects the implementation for supported methods,
+    and `"auto"` uses JAX on CPU and Warp for supported methods on GPU without
+    moving arrays between devices or measuring a runtime crossover.
+
+    - **One environment:** CPU with JAX is usually the best starting point for
+      compact systems and short calls because it avoids GPU launch, dispatch,
+      and transfer overhead. This is not universal: an expensive GVS model,
+      many segments or quadrature points, multiple abscissa samples, or full
+      Jacobian and dynamics evaluations can provide enough parallel work for a
+      GPU to win even for one environment.
+    - **Small and moderate batches:** CPU with JAX often remains competitive.
+      GPU execution becomes more attractive as the model, quadrature, sampled
+      abscissae, or operation becomes more expensive. Compare CPU JAX, GPU JAX,
+      and GPU `"auto"` for the actual workload when this regime matters.
+    - **Large batches and parallel rollouts:** a GPU is usually the strongest
+      starting point when the working set fits in VRAM and states remain on the
+      device. For supported forward-only primal kinematics and dynamics, GPU
+      `"auto"`/Warp often outperforms GPU JAX, with larger gains becoming more
+      likely as batch size and per-environment work increase. Warp is not a
+      universal GPU winner: short or unsupported operations, some topologies,
+      and differentiation continue to favor or require JAX.
+
+    The crossover depends on the exact robot structure, active coordinates,
+    segment and quadrature counts, requested operations, batch shape, and
+    compilation reuse. It also depends on CPU and GPU architecture—especially
+    FP64 throughput and memory bandwidth—available RAM and VRAM, host/device
+    transfer costs, and software versions. More parallel work is a useful trend,
+    not a guarantee of monotonic speedup. Benchmark the complete JIT-compiled
+    application after warmup, including any transfers and synchronization,
+    before fixing a production device/backend policy.
+
 Install SoRoMoX together with the CUDA 13 and Warp dependencies using:
 
 ```bash
