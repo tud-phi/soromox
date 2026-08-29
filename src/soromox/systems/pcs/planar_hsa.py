@@ -2338,7 +2338,10 @@ class PlanarHSA(PlanarPCS):
         else:
             tau_el = self.elastic_force(q)
         B, Cqd, G = self.dynamics_terms(q, qd)
-        qdd = self._solve_inertia(
+        qdd = jnp.linalg.solve(
             B, tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         )
-        return jnp.concatenate((self.configuration_derivative(q, qd), qdd, zd))
+        qdot = self.configuration_derivative(q, qd)
+        if not self.consider_hysteresis:
+            return jnp.concatenate((qdot, qdd))
+        return jnp.concatenate((qdot, qdd, zd))
