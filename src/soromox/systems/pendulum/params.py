@@ -5,10 +5,7 @@ from typing import ClassVar
 import jax.numpy as jnp
 from jax import Array
 
-from soromox.systems.params import (
-    BaseArticulatedSoftRobotParams,
-    validate_planar_base_pose,
-)
+from soromox.systems.params import BaseArticulatedSoftRobotParams
 
 
 class PendulumParams(BaseArticulatedSoftRobotParams):
@@ -17,11 +14,8 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
     The leading axis indexes links/joints. ``moment_inertia`` and
     ``center_of_mass_length`` are per link, while stiffness and damping are
     generalized-coordinate matrices inherited from the articulated base class.
-    ``base_pose`` stores the planar pose ``[theta, x, y]`` with shape ``(3,)``.
-    ``theta`` is a right-handed angle in radians about the out-of-plane z-axis,
-    and ``x``/``y`` are direct translations in the parent frame. Omitting
-    ``base_pose`` and ``gravity`` selects upright mounting and negative-y Earth
-    gravity.
+    Fixed mounting belongs to the constructed model and floating pose belongs
+    to runtime configuration state.
     """
 
     is_planar: ClassVar[bool] = True
@@ -59,11 +53,6 @@ class PendulumParams(BaseArticulatedSoftRobotParams):
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (2,):
             raise ValueError(f"gravity must have shape (2,), got {gravity.shape}.")
-        if jnp.asarray(self.base_pose).shape != (3,):
-            raise ValueError(
-                f"base_pose must have shape (3,), got {self.base_pose.shape}."
-            )
 
     def validate_values(self) -> None:
         """Validate eager pendulum parameter values."""
-        validate_planar_base_pose("base_pose", self.base_pose)

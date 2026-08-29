@@ -492,7 +492,7 @@ class ArticulatedMcKibbenActuator(Actuator):
         indices = self.params.transmission.joint_pair_indices
         if indices.shape[0] > 0 and (
             np.any(np.asarray(indices) < 0)
-            or np.any(np.asarray(indices) >= robot.num_dofs)
+            or np.any(np.asarray(indices) >= robot.num_internal_dofs)
         ):
             raise ValueError("joint_pair_indices must reference valid robot DOFs.")
 

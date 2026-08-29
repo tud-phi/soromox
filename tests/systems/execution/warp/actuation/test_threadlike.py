@@ -127,6 +127,53 @@ def _build_system(
     raise ValueError(f"Unknown system family: {family}")
 
 
+def test_floating_gvs_fused_dynamics_and_threadlike_force_matches_jax(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Fuse augmented GVS dynamics with an exact-zero actuator base prefix."""
+    pytest.importorskip("warp")
+    monkeypatch.setenv("WARP_CACHE_PATH", str(tmp_path / "floating-gvs-fused"))
+    fixed = _build_system("gvs", 2, 4)
+    model = GVS(
+        params=fixed.params,
+        structure=fixed.structure,
+        actuators=fixed.actuators,
+        floating_base=True,
+        backend="jax",
+    )
+    q = model.pack_configuration(
+        jnp.linspace(-0.02, 0.03, model.num_internal_dofs),
+        base_pose=jnp.array([0.97, 0.1, -0.05, 0.16, 0.2, -0.1, 0.3]),
+    )
+    velocity = model.pack_velocity(
+        jnp.linspace(0.03, -0.02, model.num_internal_dofs),
+        base_velocity=jnp.linspace(-0.1, 0.2, model.num_base_velocities),
+    )
+    controls = jnp.linspace(0.4, 1.0, model.num_actuators)
+
+    actual = loader._execute_gvs_dynamics_actuation_batch(
+        model, q[None], velocity[None], controls[None]
+    )
+    expected = (
+        *model.dynamics_terms(q, velocity, backend="jax"),
+        model.actuation_force(q, controls, qd=velocity, backend="jax"),
+    )
+    for actual_term, expected_term in zip(actual, expected, strict=True):
+        assert_allclose(
+            actual_term[0], expected_term, rtol=2.0e-10, atol=2.0e-11
+        )
+    assert_allclose(actual[-1][0, : model.num_base_velocities], 0.0, atol=0.0)
+
+    y = model.pack_state(q, velocity)
+    warp_yd = model.forward_dynamics(
+        jnp.array(0.0), y, (controls,), backend="warp"
+    )
+    jax_yd = model.forward_dynamics(jnp.array(0.0), y, (controls,), backend="jax")
+    # The augmented inertia is deliberately unregularized; the dense solve can
+    # amplify the term-level Warp/JAX rounding difference for slender links.
+    assert_allclose(warp_yd, jax_yd, rtol=5.0e-9, atol=2.0e-10)
+
+
 def _rebuild_with_actuators(model, actuators):
     """Reconstruct one benchmark model with an alternate static layout."""
 
@@ -147,6 +194,7 @@ def _rebuild_with_actuators(model, actuators):
         structure=structure,
         actuators=actuators,
         backend="jax",
+        base_pose=model.fixed_base_pose,
     )
 
 
@@ -188,6 +236,7 @@ def _build_with_quadrature(family: str, count: int):
         structure=structure_type(num_gauss_points=count),
         actuators=actuator,
         backend="jax",
+        base_pose=base.fixed_base_pose,
     )
 
 

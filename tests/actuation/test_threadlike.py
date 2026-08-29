@@ -39,7 +39,6 @@ from soromox.systems.pcs import PlanarPCSStructure
 
 def _spatial_pcs(*, actuators=None, passive_elements=()):
     body = pcs_params(
-        base_pose=spatial_base_pose(),
         length=jnp.array([0.1]),
         radius=jnp.array([0.02]),
         density=jnp.array([1000.0]),
@@ -51,6 +50,7 @@ def _spatial_pcs(*, actuators=None, passive_elements=()):
     return PCS(
         body,
         PCSStructure(num_gauss_points=5),
+        base_pose=spatial_base_pose(),
         actuators=actuators,
         passive_elements=passive_elements,
     )
@@ -58,7 +58,6 @@ def _spatial_pcs(*, actuators=None, passive_elements=()):
 
 def _planar_pcs(*, actuators=None, passive_elements=()):
     body = planar_pcs_params(
-        base_pose=planar_base_pose(),
         length=jnp.array([0.1]),
         radius=jnp.array([0.02]),
         density=jnp.array([1000.0]),
@@ -70,6 +69,7 @@ def _planar_pcs(*, actuators=None, passive_elements=()):
     return PlanarPCS(
         body,
         PlanarPCSStructure(num_gauss_points=5),
+        base_pose=planar_base_pose(),
         actuators=actuators,
         passive_elements=passive_elements,
     )
@@ -554,7 +554,6 @@ def test_tendon_reference_fixture_preserves_generalized_force():
         end_segment_index=(1, 0),
     )
     body = pcs_params(
-        base_pose=spatial_base_pose(),
         length=jnp.array([0.1, 0.1]),
         radius=jnp.array([0.02, 0.02]),
         density=jnp.array([1000.0, 1000.0]),
@@ -566,6 +565,7 @@ def test_tendon_reference_fixture_preserves_generalized_force():
     robot = PCS(
         body,
         PCSStructure(num_gauss_points=5),
+        base_pose=spatial_base_pose(),
         actuators=ThreadlikeActuator.tendons(routing),
     )
     q = jnp.zeros(robot.num_dofs)

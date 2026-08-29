@@ -2,7 +2,6 @@ __all__ = ["PotentialCancellationRegulator"]
 
 from typing import Any
 
-import jax.numpy as jnp
 from jax import Array
 
 from soromox.control.actuation_space.pid_controller import PIDController
@@ -125,11 +124,8 @@ class PotentialCancellationRegulator(PIDController):
             control_state_dot: None (this term is stateless).
         """
         y = system_state.y
-        asd = self.actuation_space_dynamics
+        asd, q, _ = self._controller_dynamics_and_state(y)
         n_a = asd.n_actuated
-
-        # Get current configuration
-        q, _ = jnp.split(y, 2)
 
         # Compute gravitational force at current configuration in actuation space
         G_y = asd.gravitational_force(q)

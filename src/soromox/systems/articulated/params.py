@@ -9,21 +9,16 @@ import numpy as np
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.systems.params import (
-    BaseArticulatedSoftRobotParams,
-    validate_quaternion_base_pose,
-)
+from soromox.systems.params import BaseArticulatedSoftRobotParams
 
 
 class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
     """Dynamic parameters for spatial articulated soft robots.
 
     Per-joint screw axes and transforms define the dynamic link geometry used by
-    the articulated model. The number of joints is fixed by array shapes.
-    ``base_pose`` uses scalar-first quaternion SE(3) coordinates
-    ``[qw, qx, qy, qz, x, y, z]`` with nonzero finite quaternion norm. Omitting
-    ``base_pose`` and ``gravity`` selects upright mounting and negative-z Earth
-    gravity.
+    the articulated model. The number of joints is fixed by array shapes. Fixed
+    mounting belongs to the constructed model and floating pose belongs to
+    runtime configuration state.
     """
 
     is_planar: ClassVar[bool] = False
@@ -49,9 +44,7 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
         joint_damping: Array,
         joint_rest_configuration: Array,
         radius: Array,
-        base_pose: Array | None = None,
     ) -> None:
-        self.base_pose = self._resolve_base_pose(base_pose)
         self.gravity = self._resolve_gravity(gravity)
         self.mass = jnp.asarray(mass)
         self.joint_stiffness = jnp.asarray(joint_stiffness)
@@ -91,14 +84,9 @@ class ArticulatedSoftRobotParams(BaseArticulatedSoftRobotParams):
                 raise ValueError(
                     f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
-        if jnp.asarray(self.base_pose).shape != (7,):
-            raise ValueError(
-                f"base_pose must have shape (7,), got {self.base_pose.shape}."
-            )
 
     def validate_values(self) -> None:
         """Validate eager articulated-system parameter values."""
-        validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
 
 
 class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
@@ -128,10 +116,8 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
         joint_rest_configuration: Array,
         radius: Array,
         joint_armature: Array,
-        base_pose: Array | None = None,
     ) -> None:
         super().__init__(
-            base_pose=base_pose,
             joint_screw=joint_screw,
             parent_to_joint_transform=parent_to_joint_transform,
             tip_position=tip_position,
@@ -157,9 +143,6 @@ class McKibbenActuatedUMArmParams(ArticulatedSoftRobotParams):
             cls._normalize_cached_base_frame(parent_to_joint_transform, tip_position)
             armature_key = "joint_armature" if "joint_armature" in data else "armature"
             return cls(
-                base_pose=jnp.array(
-                    [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64
-                ),
                 joint_screw=jnp.asarray(data["joint_screw"]),
                 parent_to_joint_transform=jnp.asarray(parent_to_joint_transform),
                 tip_position=jnp.asarray(tip_position),

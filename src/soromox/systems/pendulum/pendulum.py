@@ -98,13 +98,18 @@ class Pendulum(SoftRobot):
         *,
         actuators: Actuator | tuple[Actuator, ...] | None = None,
         passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
+        base_pose: Array | None = None,
+        floating_base: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize the pendulum system with typed parameters."""
         if not isinstance(params, PendulumParams):
             raise TypeError("params must be a PendulumParams instance.")
         params.validate()
-        super().__init__(base_pose=params.base_pose, **kwargs)
+        resolved_base_pose = None if floating_base else base_pose
+        super().__init__(
+            base_pose=resolved_base_pose, floating_base=floating_base, **kwargs
+        )
         self.params = params
 
         # Basic parameter extraction
@@ -122,7 +127,8 @@ class Pendulum(SoftRobot):
         assert g.shape[0] == 2, "Gravity vector must be length 2"
 
         self.num_links = int(n_q)
-        self.num_dofs = self.num_links
+        self.num_internal_dofs = self.num_links
+        self.num_dofs = self.num_velocities
 
         # set parameters
         self.m = m
@@ -180,7 +186,6 @@ class Pendulum(SoftRobot):
         return eqx.tree_at(
             lambda x: (
                 x.params,
-                x.base_pose,
                 x.m,
                 x.I,
                 x.L,
@@ -194,7 +199,6 @@ class Pendulum(SoftRobot):
             self,
             (
                 params,
-                jnp.asarray(params.base_pose),
                 jnp.asarray(params.mass),
                 jnp.asarray(params.moment_inertia),
                 jnp.asarray(params.length),
@@ -222,7 +226,6 @@ class Pendulum(SoftRobot):
             "joint_damping",
             "joint_rest_configuration",
             "radius",
-            "base_pose",
             "gravity",
         )
         for name in shape_locked_fields:
@@ -249,12 +252,20 @@ class Pendulum(SoftRobot):
         Returns:
             Array: Cumulative angles θ_i = Σ_{k=0..i} q[k], shape (N,) [rad]
         """
-        base_theta = jnp.asarray(self.base_pose[0], dtype=q.dtype)
+        base_theta = jnp.asarray(self._kinematic_base_pose[0], dtype=q.dtype)
         return base_theta + jnp.cumsum(q)  # (n,)
 
     def _base_xy(self, dtype: jnp.dtype) -> Array:
-        """Return the planar base translation stored in ``base_pose``."""
-        return jnp.asarray(self.base_pose[1:3], dtype=dtype)
+        """Return the translation consumed by the internal recurrence.
+
+        Args:
+            dtype: Output floating-point dtype.
+
+        Returns:
+            Fixed mounting translation or identity translation for a floating
+            robot's relative recurrence.
+        """
+        return jnp.asarray(self._kinematic_base_pose[1:3], dtype=dtype)
 
     def _directions(self, q: Array) -> Array:
         """
@@ -341,6 +352,12 @@ class Pendulum(SoftRobot):
                    - theta: Orientation angle at each joint (rad)
                    - px, py: Cartesian positions of each joint (m)
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            relative = self._fixed_evaluation_view().forward_kinematics_joints(
+                q_internal
+            )
+            return self._compose_runtime_base_poses(q, relative)
         p_joints = self._joint_positions(q)  # (N,2)
         theta = self._cumulative_angles(q)  # (N,)
         chi_joints = jnp.concatenate([theta[:, None], p_joints], axis=-1)
@@ -357,6 +374,10 @@ class Pendulum(SoftRobot):
         Returns:
             chi_tips (Array): Link tip poses [θ, p_x, p_y] of shape (N, 3).
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            relative = self._fixed_evaluation_view().forward_kinematics_tips(q_internal)
+            return self._compose_runtime_base_poses(q, relative)
         p_tips = self._tip_positions(q)  # (N,2)
         theta = self._cumulative_angles(q)  # (N,)
         chi_tips = jnp.concatenate([theta[:, None], p_tips], axis=-1)
@@ -373,6 +394,10 @@ class Pendulum(SoftRobot):
         Returns:
             chi_coms (Array): COM poses [θ, p_x, p_y] of shape (N, 3).
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            relative = self._fixed_evaluation_view().forward_kinematics_coms(q_internal)
+            return self._compose_runtime_base_poses(q, relative)
         p_coms = self._com_positions(q)  # (N,2)
         theta = self._cumulative_angles(q)  # (N,)
         chi_coms = jnp.concatenate([theta[:, None], p_coms], axis=-1)
@@ -768,6 +793,105 @@ class Pendulum(SoftRobot):
     # Standardized dynamics interface
     # -------------------------------
     @eqx.filter_jit
+    def _assemble_floating_dynamics_terms(
+        self, q: Array, v: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble floating pendulum dynamics from one COM kinematics pass.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            v: Total generalized velocity with shape ``(num_velocities,)``.
+
+        Returns:
+            Tuple ``(M, Cv, G)`` in total generalized velocities.
+        """
+        _, q_internal = self.split_configuration(q)
+        base_velocity, qd_internal = self.split_velocity(v)
+        assert base_velocity is not None
+        relative_positions = self._com_positions(q_internal)
+        linear_jacobians_internal = self._linear_jacobian_coms(q_internal)
+        angular_jacobians_internal = self._angular_jacobians()
+        linear_jacobians_tips = self._linear_jacobian_tips(q_internal)
+        linear_jacobians_joints = jnp.zeros_like(linear_jacobians_tips)
+        linear_jacobians_joints = linear_jacobians_joints.at[1:].set(
+            linear_jacobians_tips[:-1]
+        )
+        relative_com_velocities = jnp.einsum(
+            "nij,j->ni", linear_jacobians_internal, qd_internal
+        )
+        relative_joint_velocities = jnp.einsum(
+            "nij,j->ni", linear_jacobians_joints, qd_internal
+        )
+        relative_velocity_differences = (
+            relative_com_velocities[:, None, :] - relative_joint_velocities[None, :, :]
+        )
+        mask = jnp.tril(jnp.ones((self.num_links, self.num_links), dtype=q.dtype))
+        linear_jacobian_dot_internal = jnp.stack(
+            [
+                -relative_velocity_differences[..., 1] * mask,
+                relative_velocity_differences[..., 0] * mask,
+            ],
+            axis=1,
+        )
+        relative_bias = jnp.einsum(
+            "nij,j->ni", linear_jacobian_dot_internal, qd_internal
+        )
+
+        transform = self.base_transform_from_configuration(q)
+        rotation = transform[:2, :2]
+        rotated_positions = jnp.einsum("ij,nj->ni", rotation, relative_positions)
+        rotated_internal_jacobians = jnp.einsum(
+            "ij,njk->nik", rotation, linear_jacobians_internal
+        )
+        base_linear_jacobians = jnp.zeros((self.num_links, 2, 3), dtype=q.dtype)
+        base_linear_jacobians = base_linear_jacobians.at[:, 0, 0].set(
+            -rotated_positions[:, 1]
+        )
+        base_linear_jacobians = base_linear_jacobians.at[:, 1, 0].set(
+            rotated_positions[:, 0]
+        )
+        base_linear_jacobians = base_linear_jacobians.at[:, 0, 1].set(1.0)
+        base_linear_jacobians = base_linear_jacobians.at[:, 1, 2].set(1.0)
+        linear_jacobians = jnp.concatenate(
+            [base_linear_jacobians, rotated_internal_jacobians], axis=-1
+        )
+        angular_jacobians = jnp.concatenate(
+            [
+                jnp.broadcast_to(
+                    jnp.array([1.0, 0.0, 0.0], dtype=q.dtype),
+                    (self.num_links, 3),
+                ),
+                angular_jacobians_internal,
+            ],
+            axis=-1,
+        )
+
+        omega = base_velocity[0]
+        rotation_generator = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=q.dtype)
+        rotated_relative_velocities = jnp.einsum(
+            "ij,nj->ni", rotation, relative_com_velocities
+        )
+        linear_bias = (
+            -(omega**2) * rotated_positions
+            + 2.0
+            * omega
+            * jnp.einsum("ij,nj->ni", rotation_generator, rotated_relative_velocities)
+            + jnp.einsum("ij,nj->ni", rotation, relative_bias)
+        )
+        inertia = jnp.einsum(
+            "n,nai,naj->ij", self.m, linear_jacobians, linear_jacobians
+        ) + jnp.einsum("n,ni,nj->ij", self.I, angular_jacobians, angular_jacobians)
+        coriolis_velocity = jnp.einsum(
+            "n,nai,na->i", self.m, linear_jacobians, linear_bias
+        )
+        gravity_force = -jnp.einsum(
+            "nij,ni->j", linear_jacobians, self.m[:, None] * self.g
+        )
+        return inertia, coriolis_velocity, gravity_force
+
+    @eqx.filter_jit
     def inertia_matrix(self, q: Array) -> Array:
         """
         Compute the generalized mass (inertia) matrix using Jacobian formulation.
@@ -781,6 +905,9 @@ class Pendulum(SoftRobot):
         Returns:
             B (Array): Generalized mass matrix, shape (N, N) [kg⋅m²]
         """
+        if self.floating_base:
+            zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
+            return self._assemble_floating_dynamics_terms(q, zeros)[0]
         Jv = self._linear_jacobian_coms(q)  # (n,2,n)
         Jw = self._angular_jacobians()  # (n,n)
         # B = Σ ( m_i Jv_i^T Jv_i + I_i Jw_i^T Jw_i )
@@ -811,6 +938,8 @@ class Pendulum(SoftRobot):
         Returns:
             C (Array): Coriolis/centrifugal matrix, shape (N, N)
         """
+        if self.floating_base:
+            return self._floating_coriolis_matrix(q, qd)
         N = self.num_links
         # Linear Jacobians at COMs and at joints (proximal ends)
         Jv = self._linear_jacobian_coms(q)  # (N, 2, N) for COMs
@@ -870,6 +999,11 @@ class Pendulum(SoftRobot):
         Returns:
             K (Array): Stiffness matrix, shape (N, N) [N⋅m/rad]
         """
+        if self.floating_base:
+            return jnp.pad(
+                self.K,
+                ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+            )
         return self.K
 
     @eqx.filter_jit
@@ -883,6 +1017,11 @@ class Pendulum(SoftRobot):
         Returns:
             tau_el (Array): Elastic force vector τ_el = K @ q, shape (N,) [N⋅m]
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self.K @ (q_internal - self.q_ref_k)
+            internal = internal + self.passive_elastic_force(q_internal)
+            return jnp.pad(internal, (self.num_base_velocities, 0))
         tau_el = self.K @ (q - self.q_ref_k) + self.passive_elastic_force(q)
         return tau_el
 
@@ -897,6 +1036,13 @@ class Pendulum(SoftRobot):
         Returns:
             Array: Damping matrix, shape (N, N) [N⋅m⋅s/rad]
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self.D + self.passive_damping_matrix(q_internal)
+            return jnp.pad(
+                internal,
+                ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+            )
         return self.D + self.passive_damping_matrix(q)
 
     @eqx.filter_jit
@@ -926,6 +1072,8 @@ class Pendulum(SoftRobot):
                    qd: joint velocities [rad/s]
                    qdd: joint accelerations [rad/s²]
         """
+        if self.floating_base:
+            return SoftRobot.forward_dynamics(self, t, y, actuation_args)
         q, qd = jnp.split(y, 2)
 
         if actuation_args is None:
@@ -976,6 +1124,23 @@ class Pendulum(SoftRobot):
         # U_G = -Σ_i m_i * g^T @ p_com_i
         U_g = -jnp.sum(self.m * jnp.dot(p_coms, self.g))
         return U_g
+
+    @eqx.filter_jit
+    def _floating_gravitational_energy(self, q: Array) -> Array:
+        """
+        Compute absolute floating-base gravitational potential energy.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+
+        Returns:
+            Absolute gravitational potential energy as a scalar.
+        """
+        _, q_internal = self.split_configuration(q)
+        return self._floating_gravitational_energy_from_points(
+            q, self._com_positions(q_internal), self.m
+        )
 
     @eqx.filter_jit
     def _elastic_energy(self, q: Array) -> Array:

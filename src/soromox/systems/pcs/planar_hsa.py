@@ -10,6 +10,7 @@ from jax import numpy as jnp
 from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.execution import (
     DEFAULT_PLANAR_PCS_BLOCK_DIM,
+    ExecutionBackend,
     PCSBackendParams,
 )
 from soromox.systems.pcs.params import PlanarHSAParams
@@ -138,6 +139,9 @@ class PlanarHSA(PlanarPCS):
         self,
         params: PlanarHSAParams,
         structure: PlanarHSAStructure | None = None,
+        *,
+        base_pose: Array | None = None,
+        floating_base: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize a numerical planar HSA model.
@@ -167,7 +171,11 @@ class PlanarHSA(PlanarPCS):
         # HSA has a distinct physical parameter schema, so initialize the
         # common SoftRobot fields directly instead of fabricating PCS params.
         SoftRobot.__init__(
-            self, eps=structure.eps, base_pose=params.base_pose, **kwargs
+            self,
+            eps=structure.eps,
+            base_pose=(None if floating_base else base_pose),
+            floating_base=floating_base,
+            **kwargs,
         )
         self.params = params
         self.backend = "jax"
@@ -183,12 +191,11 @@ class PlanarHSA(PlanarPCS):
         self.num_rods_per_segment = n_rods
         self.consider_underactuation = bool(structure.consider_underactuation)
         self.consider_hysteresis = bool(structure.consider_hysteresis)
-        self.num_dofs = n_strains
+        self.num_internal_dofs = n_strains
         self.num_actuators = (
             n_segments * n_rods if self.consider_underactuation else n_strains
         )
 
-        self.base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
         self.g = jnp.concatenate(
             [
                 jnp.zeros((1,), dtype=jnp.float64),
@@ -223,7 +230,8 @@ class PlanarHSA(PlanarPCS):
         self.B_xi_unscaled = build_active_dof_basis(selector)
         self.B_xi = self.B_xi_unscaled
         self.num_active_strains = jnp.sum(selector)
-        self.num_dofs = int(self.num_active_strains.item())
+        self.num_internal_dofs = int(self.num_active_strains.item())
+        self.num_dofs = self.num_velocities
         active_dofs_per_segment = jnp.sum(selector.reshape(n_segments, 3), axis=1)
         self._segment_dof_ends = tuple(
             int(value) for value in jnp.cumsum(active_dofs_per_segment).tolist()
@@ -423,7 +431,9 @@ class PlanarHSA(PlanarPCS):
         else:
             self.num_hysteresis = 0
             self.hysteresis_basis = jnp.zeros((self.num_strains, 0), dtype=jnp.float64)
-            self.hysteresis_alpha = jnp.zeros((self.num_dofs,), dtype=jnp.float64)
+            self.hysteresis_alpha = jnp.zeros(
+                (self.num_internal_dofs,), dtype=jnp.float64
+            )
             self.hysteresis_A = jnp.zeros((1,), dtype=jnp.float64)
             self.hysteresis_n = jnp.zeros((1,), dtype=jnp.float64)
             self.hysteresis_beta = jnp.zeros((1,), dtype=jnp.float64)
@@ -462,7 +472,6 @@ class PlanarHSA(PlanarPCS):
 
         values = {
             "params": params,
-            "base_pose": jnp.asarray(params.base_pose, dtype=jnp.float64),
             "g": jnp.concatenate(
                 [
                     jnp.zeros((1,), dtype=jnp.float64),
@@ -633,7 +642,9 @@ class PlanarHSA(PlanarPCS):
         subsequent segments.
         """
         xi = xi.reshape(self.num_segments, 3)
-        g0 = poses.planar_pose_to_transform(jnp.asarray(self.base_pose, dtype=xi.dtype))
+        g0 = poses.planar_pose_to_transform(
+            jnp.asarray(self._kinematic_base_pose, dtype=xi.dtype)
+        )
 
         def scan_body(g_prev: Array, i: Array) -> tuple[Array, tuple[Array, Array]]:
             # The established HSA geometry places proximal-cap lengths along
@@ -780,7 +791,9 @@ class PlanarHSA(PlanarPCS):
         """Propagate poses and Jacobians without time-derivative terms."""
         xi = xi.reshape(self.num_segments, 3)
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
-        g0 = poses.planar_pose_to_transform(jnp.asarray(self.base_pose, dtype=xi.dtype))
+        g0 = poses.planar_pose_to_transform(
+            jnp.asarray(self._kinematic_base_pose, dtype=xi.dtype)
+        )
 
         def scan_body(
             carry: tuple[Array, Array], i: Array
@@ -1004,7 +1017,9 @@ class PlanarHSA(PlanarPCS):
         xi = xi.reshape(self.num_segments, 3)
         xid = xid.reshape(self.num_segments, 3)
         zeros = jnp.zeros((self.num_segments, 3, 3), dtype=xi.dtype)
-        g0 = poses.planar_pose_to_transform(jnp.asarray(self.base_pose, dtype=xi.dtype))
+        g0 = poses.planar_pose_to_transform(
+            jnp.asarray(self._kinematic_base_pose, dtype=xi.dtype)
+        )
 
         def scan_body(
             carry: tuple[Array, Array, Array], i: Array
@@ -1530,6 +1545,14 @@ class PlanarHSA(PlanarPCS):
         returns the Coriolis matrix; otherwise it returns its product with the
         current generalized velocity.
         """
+        if self.floating_base:
+            if full or return_matrix:
+                raise ValueError(
+                    "Full-strain and matrix-valued Coriolis assembly are internal "
+                    "fixed-base HSA operations."
+                )
+            return self._assemble_floating_dynamics_terms_impl(q, qd)
+
         (
             Ws,
             g_rods,
@@ -1610,6 +1633,145 @@ class PlanarHSA(PlanarPCS):
             G_rods + G_cogs + G_payload,
         )
 
+    def _assemble_floating_dynamics_terms_impl(
+        self, q: Array, v: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble floating HSA dynamics from one mass-property propagation.
+
+        Rod, platform, and payload contractions are accumulated separately so
+        their already-computed kinematics are neither concatenated nor
+        differentiated a second time.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            v: Total generalized velocity with shape ``(num_velocities,)``.
+
+        Returns:
+            Tuple ``(M, Cv, G)`` in total generalized velocities.
+        """
+        q = self.normalize_configuration(q)
+        _, q_internal = self.split_configuration(q)
+        _, qd_internal = self.split_velocity(v)
+        (
+            weights,
+            rod_transforms,
+            rod_jacobians_internal,
+            rod_jacobian_dot_velocity_internal,
+            rod_mass_matrices,
+            cog_transforms,
+            cog_jacobians_internal,
+            cog_jacobian_dot_velocity_internal,
+            masses,
+            inertias,
+            payload_jacobian_internal,
+            payload_jacobian_dot_velocity_internal,
+            payload_transform,
+            payload_mass_matrix,
+        ) = self._mass_properties_kinematics(
+            q_internal, qd_internal, convective_only_jd=True
+        )
+        rod_jacobian_dot_velocity_internal = jnp.einsum(
+            "sqrad,d->sqra",
+            rod_jacobian_dot_velocity_internal,
+            qd_internal,
+        )
+        cog_jacobian_dot_velocity_internal = jnp.einsum(
+            "sad,d->sa",
+            cog_jacobian_dot_velocity_internal,
+            qd_internal,
+        )
+        payload_jacobian_dot_velocity_internal = (
+            payload_jacobian_dot_velocity_internal @ qd_internal
+        )
+
+        rod_jacobians, rod_jacobian_dot_velocity, rod_velocities, rod_gravity = (
+            self._augment_floating_body_kinematics(
+                q,
+                v,
+                rod_transforms,
+                rod_jacobians_internal,
+                rod_jacobian_dot_velocity_internal,
+            )
+        )
+        cog_jacobians, cog_jacobian_dot_velocity, cog_velocities, cog_gravity = (
+            self._augment_floating_body_kinematics(
+                q,
+                v,
+                cog_transforms,
+                cog_jacobians_internal,
+                cog_jacobian_dot_velocity_internal,
+            )
+        )
+        (
+            payload_jacobian,
+            payload_jacobian_dot_velocity,
+            payload_velocity,
+            payload_gravity,
+        ) = self._augment_floating_body_kinematics(
+            q,
+            v,
+            payload_transform[None],
+            payload_jacobian_internal[None],
+            payload_jacobian_dot_velocity_internal[None],
+        )
+        payload_jacobian = payload_jacobian[0]
+        payload_jacobian_dot_velocity = payload_jacobian_dot_velocity[0]
+        payload_velocity = payload_velocity[0]
+        payload_gravity = payload_gravity[0]
+
+        rod_momentum = jnp.einsum("srab,sqrb->sqra", rod_mass_matrices, rod_velocities)
+        rod_wrench = jnp.einsum(
+            "srab,sqrb->sqra", rod_mass_matrices, rod_jacobian_dot_velocity
+        ) + vmap(vmap(vmap(se2.coadjoint_action)))(rod_velocities, rod_momentum)
+        rod_gravity_wrench = jnp.einsum(
+            "srab,sqrb->sqra", rod_mass_matrices, rod_gravity
+        )
+        inertia_rods = jnp.einsum(
+            "sq,sqrad,srab,sqrbe->de",
+            weights,
+            rod_jacobians,
+            rod_mass_matrices,
+            rod_jacobians,
+        )
+        coriolis_rods = jnp.einsum(
+            "sq,sqrad,sqra->d", weights, rod_jacobians, rod_wrench
+        )
+        gravity_rods = -jnp.einsum(
+            "sq,sqrad,sqra->d", weights, rod_jacobians, rod_gravity_wrench
+        )
+
+        cog_mass_matrices = jnp.zeros((*masses.shape, 3, 3), dtype=q.dtype)
+        cog_mass_matrices = cog_mass_matrices.at[:, 0, 0].set(inertias)
+        cog_mass_matrices = cog_mass_matrices.at[:, 1, 1].set(masses)
+        cog_mass_matrices = cog_mass_matrices.at[:, 2, 2].set(masses)
+        cog_momentum = jnp.einsum("sab,sb->sa", cog_mass_matrices, cog_velocities)
+        cog_wrench = jnp.einsum(
+            "sab,sb->sa", cog_mass_matrices, cog_jacobian_dot_velocity
+        ) + vmap(se2.coadjoint_action)(cog_velocities, cog_momentum)
+        cog_gravity_wrench = jnp.einsum("sab,sb->sa", cog_mass_matrices, cog_gravity)
+        inertia_cogs = jnp.einsum(
+            "sad,sab,sbe->de", cog_jacobians, cog_mass_matrices, cog_jacobians
+        )
+        coriolis_cogs = jnp.einsum("sad,sa->d", cog_jacobians, cog_wrench)
+        gravity_cogs = -jnp.einsum("sad,sa->d", cog_jacobians, cog_gravity_wrench)
+
+        payload_momentum = payload_mass_matrix @ payload_velocity
+        payload_wrench = (
+            payload_mass_matrix @ payload_jacobian_dot_velocity
+            + se2.coadjoint_action(payload_velocity, payload_momentum)
+        )
+        payload_gravity_wrench = payload_mass_matrix @ payload_gravity
+        inertia_payload = payload_jacobian.T @ payload_mass_matrix @ payload_jacobian
+        coriolis_payload = payload_jacobian.T @ payload_wrench
+        gravity_payload = -payload_jacobian.T @ payload_gravity_wrench
+        return (
+            inertia_rods + inertia_cogs + inertia_payload,
+            coriolis_rods + coriolis_cogs + coriolis_payload,
+            gravity_rods + gravity_cogs + gravity_payload,
+        )
+
     def _gravitational_energy_full_from_xi(self, xi: Array) -> Array:
         """Compute gravitational potential energy from full virtual strains."""
         gravity = self.g[1:]
@@ -1617,7 +1779,7 @@ class PlanarHSA(PlanarPCS):
         # the constant energy offset caused by a translated base. Forces are
         # unaffected, but preserving that offset convention keeps energy
         # outputs compatible with the previous model.
-        base_translation = self.base_pose[1:]
+        base_translation = self._kinematic_base_pose[1:]
         s_points, weights = self._quadrature()
 
         def segment_energy(i: Array) -> Array:
@@ -1663,6 +1825,79 @@ class PlanarHSA(PlanarPCS):
     def _gravitational_energy(self, q: Array) -> Array:
         """Return gravitational potential energy for active coordinates."""
         return self._gravitational_energy_full_from_xi(self.strain(q))
+
+    @eqx.filter_jit
+    def _floating_gravitational_energy(self, q: Array) -> Array:
+        """
+        Compute absolute floating-base HSA gravitational potential energy.
+
+        The implementation contracts native rod densities and discrete platform
+        masses with positions directly. It does not evaluate Jacobians or build
+        spatial inertia matrices.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+
+        Returns:
+            Absolute gravitational potential energy as a scalar.
+        """
+        _, q_internal = self.split_configuration(q)
+        xi = self.strain(q_internal)
+        points, weights = self._quadrature()
+        base_transform = self.base_transform_from_configuration(q)
+        rotation = base_transform[:2, :2]
+        translation = base_transform[:2, 2]
+        gravity = self.g[-2:]
+
+        def world_position(relative_position: Array) -> Array:
+            return rotation @ relative_position + translation
+
+        def segment_energy(segment_index: Array) -> Array:
+            def rod_energy(rod_index: Array) -> Array:
+                area = jnp.pi * (
+                    self.rod_outer_radius[segment_index, rod_index] ** 2
+                    - self.rod_inner_radius[segment_index, rod_index] ** 2
+                )
+                poses = vmap(
+                    lambda point: self._forward_rod_from_xi(xi, point, rod_index)
+                )(points[segment_index])
+                positions = vmap(world_position)(poses[:, 1:])
+                weighted_mass = (
+                    weights[segment_index]
+                    * self.rod_density[segment_index, rod_index]
+                    * area
+                )
+                return -jnp.sum(weighted_mass * (positions @ gravity))
+
+            rods = jnp.sum(
+                vmap(rod_energy)(jnp.arange(self.num_rods_per_segment, dtype=jnp.int32))
+            )
+            mass, _, relative_cog = self._platform_mass_properties(segment_index)
+            tip = self._forward_backbone_from_xi(xi, self.L_cum[segment_index + 1])
+            cosine, sine = jnp.cos(tip[0]), jnp.sin(tip[0])
+            cog = tip[1:] + jnp.array(
+                [
+                    cosine * relative_cog[0] - sine * relative_cog[1],
+                    sine * relative_cog[0] + cosine * relative_cog[1],
+                ]
+            )
+            return rods - mass * (world_position(cog) @ gravity)
+
+        energy = jnp.sum(
+            vmap(segment_energy)(jnp.arange(self.num_segments, dtype=jnp.int32))
+        )
+        end_effector = self._forward_end_effector_from_xi(xi)
+        cosine, sine = jnp.cos(end_effector[0]), jnp.sin(end_effector[0])
+        payload_cog = end_effector[1:] + jnp.array(
+            [
+                cosine * self.platform_center_of_gravity[0]
+                - sine * self.platform_center_of_gravity[1],
+                sine * self.platform_center_of_gravity[0]
+                + cosine * self.platform_center_of_gravity[1],
+            ]
+        )
+        return energy - self.platform_mass * (world_position(payload_cog) @ gravity)
 
     def _assemble_gravity_force(self, q: Array, *, full: bool = False) -> Array:
         """Assemble gravity from pose/Jacobian data only."""
@@ -1724,13 +1959,16 @@ class PlanarHSA(PlanarPCS):
         Returns:
             Inertia matrix with shape ``(num_dofs, num_dofs)``.
         """
+        if self.floating_base:
+            zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
+            return self._assemble_dynamics_terms(q, zeros)[0]
         return self._assemble_dynamics_terms(
-            q, jnp.zeros((self.num_dofs,), dtype=q.dtype)
+            q, jnp.zeros((self.num_internal_dofs,), dtype=q.dtype)
         )[0]
 
     def _inertia_derivative_matrix(self, q: Array) -> Array:
         """Compute ``dB/dq`` from the analytical Jacobian derivatives."""
-        directions = jnp.eye(self.num_dofs, dtype=q.dtype)
+        directions = jnp.eye(self.num_internal_dofs, dtype=q.dtype)
         geometry = self._integration_geometry_full(q)
         (
             Ws,
@@ -1800,6 +2038,8 @@ class PlanarHSA(PlanarPCS):
         Returns:
             Coriolis matrix with shape ``(num_dofs, num_dofs)``.
         """
+        if self.floating_base:
+            return self._floating_coriolis_matrix(q, qd)
         dB = self._inertia_derivative_matrix(q)
         return 0.5 * jnp.einsum(
             "abk,k->ab",
@@ -1841,6 +2081,11 @@ class PlanarHSA(PlanarPCS):
 
     def stiffness_matrix(self) -> Array:
         """Return the cached active-coordinate elastic stiffness matrix."""
+        if self.floating_base:
+            return jnp.pad(
+                self.K_active,
+                ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+            )
         return self.K_active
 
     def _stiffness_full_vector(self, q: Array) -> Array:
@@ -1856,6 +2101,10 @@ class PlanarHSA(PlanarPCS):
         Returns:
             Elastic generalized force with shape ``(num_dofs,)``.
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self.B_xi.T @ self._stiffness_full_vector(q_internal)
+            return jnp.pad(internal, (self.num_base_velocities, 0))
         return self.B_xi.T @ self._stiffness_full_vector(q)
 
     def _elastic_energy(self, q: Array) -> Array:
@@ -1886,6 +2135,11 @@ class PlanarHSA(PlanarPCS):
         Returns:
             Damping matrix with shape ``(num_dofs, num_dofs)``.
         """
+        if self.floating_base:
+            return jnp.pad(
+                self.D_active,
+                ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+            )
         del q
         return self.D_active
 
@@ -1961,9 +2215,16 @@ class PlanarHSA(PlanarPCS):
             Generalized actuation force with shape ``(num_dofs,)``.
         """
         del qd
+        q_internal = q
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
         if not self.consider_underactuation:
-            return jnp.asarray(phi)
-        return self.B_xi.T @ self._actuation_full_matrix(q, phi)
+            internal = jnp.asarray(phi)
+        else:
+            internal = self.B_xi.T @ self._actuation_full_matrix(q_internal, phi)
+        if self.floating_base:
+            return jnp.pad(internal, (self.num_base_velocities, 0))
+        return internal
 
     def hysteresis_force(self, q: Array, z: Array) -> Array:
         """Return the generalized force contributed by hysteresis state ``z``.
@@ -1979,17 +2240,32 @@ class PlanarHSA(PlanarPCS):
         del q
         return self.B_xi.T @ self.K_full @ (self.hysteresis_basis @ z)
 
-    def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
+    def dynamics_terms(
+        self,
+        q: Array,
+        qd: Array,
+        *,
+        backend: ExecutionBackend | None = None,
+    ) -> tuple[Array, Array, Array]:
         """Return inertia, convective, and gravitational dynamics terms.
 
         Args:
             q: Active generalized coordinates with shape ``(num_dofs,)``.
             qd: Generalized velocities with shape ``(num_dofs,)``.
+            backend: Optional backend override. PlanarHSA currently supports
+                JAX execution only.
 
         Returns:
             A tuple ``(B, Cqd, G)`` with shapes ``(num_dofs, num_dofs)``,
             ``(num_dofs,)``, and ``(num_dofs,)`` respectively.
+
+        Raises:
+            NotImplementedError: If Warp execution is requested.
         """
+        if backend not in (None, "auto", "jax"):
+            raise NotImplementedError("PlanarHSA dynamics support JAX execution only.")
+        if self.floating_base:
+            return self._assemble_dynamics_terms(q, qd)
         return self._assemble_dynamics_terms(q, qd, convective_only_jd=True)
 
     @eqx.filter_jit
@@ -2026,41 +2302,43 @@ class PlanarHSA(PlanarPCS):
             raise ValueError("actuation_args must be a tuple of length 1 or 2.")
         if u is None:
             u = jnp.zeros((self.num_actuators,), dtype=y.dtype)
+        q, qd, z = self.split_state(y)
+        _, q_internal = self.split_configuration(q)
+        _, qd_internal = self.split_velocity(qd)
         if tau_ext is None:
-            tau_ext = jnp.zeros((self.num_dofs,), dtype=y.dtype)
+            tau_ext = jnp.zeros((self.num_velocities,), dtype=y.dtype)
         if self.consider_hysteresis:
-            q, qd, z = jnp.split(y, [self.num_dofs, 2 * self.num_dofs])
             hysteresis_basis_active = self.B_xi.T @ self.hysteresis_basis
-            zd = (hysteresis_basis_active.T @ qd) * (
+            zd = (hysteresis_basis_active.T @ qd_internal) * (
                 self.hysteresis_A
                 - jnp.abs(z) ** self.hysteresis_n
                 * (
                     self.hysteresis_gamma
                     + self.hysteresis_beta
-                    * jnp.sign((hysteresis_basis_active.T @ qd) * z)
+                    * jnp.sign((hysteresis_basis_active.T @ qd_internal) * z)
                 )
             )
         else:
-            q, qd = jnp.split(y, [self.num_dofs])
             z = jnp.zeros((0,), dtype=y.dtype)
             zd = z
 
         tau_u = self.actuation_force(q, u, qd=qd)
         if self.consider_hysteresis:
-            tau_el_full = self._stiffness_full_vector(q)
+            tau_el_full = self._stiffness_full_vector(q_internal)
             tau_hyst_full = self.K_full @ (self.hysteresis_basis @ z)
-            tau_el = self.B_xi.T @ (
+            tau_el_internal = self.B_xi.T @ (
                 self.hysteresis_alpha * tau_el_full
                 + (1.0 - self.hysteresis_alpha) * tau_hyst_full
+            )
+            tau_el = (
+                jnp.pad(tau_el_internal, (self.num_base_velocities, 0))
+                if self.floating_base
+                else tau_el_internal
             )
         else:
             tau_el = self.elastic_force(q)
         B, Cqd, G = self.dynamics_terms(q, qd)
-        qdd = jnp.linalg.solve(
+        qdd = self._solve_inertia(
             B, tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
         )
-        return (
-            jnp.concatenate((qd, qdd, zd))
-            if self.consider_hysteresis
-            else jnp.concatenate((qd, qdd))
-        )
+        return jnp.concatenate((self.configuration_derivative(q, qd), qdd, zd))

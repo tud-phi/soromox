@@ -34,12 +34,12 @@ def _create_robot():
     return PlanarHSA(
         params=typed_params,
         structure=PlanarHSAStructure(),
+        base_pose=jnp.zeros((3,), dtype=jnp.float64),
     )
 
 
 def _updated_typed_params():
     return typed_params.replace(
-        base_pose=typed_params.base_pose.at[1].set(0.05),
         gravity=typed_params.gravity.at[1].set(-9.7),
         length=1.01 * typed_params.length,
         rod_density=1.02 * typed_params.rod_density,
@@ -51,7 +51,7 @@ def _updated_typed_params():
 def _parameter_runtime_summary(robot):
     return jnp.concatenate(
         [
-            robot.base_pose,
+            robot.fixed_base_pose,
             robot.g,
             robot.L,
             robot.rod_density.reshape(-1),
@@ -221,7 +221,10 @@ def test_planar_hsa_npz_uses_environment_defaults_when_fields_are_absent(tmp_pat
 
     params = PlanarHSAParams.from_npz(path)
 
-    assert jnp.allclose(params.base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
+    robot = PlanarHSA(params=params, structure=PlanarHSAStructure())
+    assert jnp.allclose(
+        robot.fixed_base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0])
+    )
     assert jnp.allclose(params.gravity, jnp.array([0.0, -9.81]))
 
 

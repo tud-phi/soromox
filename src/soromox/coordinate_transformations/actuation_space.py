@@ -72,6 +72,7 @@ class ActuationSpaceDynamics(eqx.Module):
     """
 
     robot: SoftRobot
+    system_robot: SoftRobot | None
     H_unactuated: Array  # (n_unactuated, num_dofs), maps q to unactuated coords
     n_actuated: int = eqx.field(static=True)
     n_unactuated: int = eqx.field(static=True)
@@ -100,7 +101,8 @@ class ActuationSpaceDynamics(eqx.Module):
             ValueError: If H_unactuated has incorrect shape.
             ValueError: If the robot does not have the required attributes.
         """
-        self.robot = robot
+        self.system_robot = robot if robot.floating_base else None
+        self.robot = robot._fixed_evaluation_view()
 
         # Get dimensions from robot
         num_dofs = robot.num_dofs

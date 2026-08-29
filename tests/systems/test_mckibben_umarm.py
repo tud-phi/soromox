@@ -28,6 +28,7 @@ from soromox.systems import (
     McKibbenActuatedUMArmParams,
     PCSStructure,
 )
+from soromox.utils.geometry import poses
 
 ASSET_PARAMS_PATH = (
     Path(__file__).resolve().parents[2]
@@ -47,6 +48,7 @@ def make_zero_actuator_robot() -> McKibbenActuatedUMArm:
     return McKibbenActuatedUMArm(
         params,
         actuator=ArticulatedMcKibbenActuator.empty(),
+        base_pose=poses.spatial_mounting_pose("horizontal"),
     )
 
 
@@ -200,7 +202,9 @@ def test_example_build_robot_uses_z_down_base_pose() -> None:
     proximal_direction = first_physical_tip - base_position
     proximal_direction = proximal_direction / np.linalg.norm(proximal_direction)
 
-    assert_allclose(robot.base_pose, UMARM_Z_DOWN_BASE_POSE, rtol=0.0, atol=1e-12)
+    assert_allclose(
+        robot.fixed_base_pose, UMARM_Z_DOWN_BASE_POSE, rtol=0.0, atol=1e-12
+    )
     assert_allclose(base_position, np.array([0.0, 0.0, 1.2]), atol=1e-12)
     assert_allclose(proximal_direction, np.array([0.0, 0.0, -1.0]), atol=1e-12)
 
@@ -354,7 +358,6 @@ def test_mckibben_optional_qd_power_jit_and_independent_updates() -> None:
 
 def _updated_umarm_parameter_pair(robot):
     body = robot.params.replace(
-        base_pose=robot.params.base_pose.at[4].set(0.05),
         gravity=robot.params.gravity.at[2].set(-9.7),
         mass=1.01 * robot.params.mass,
         joint_armature=robot.params.joint_armature + 1.0e-5,
@@ -377,7 +380,7 @@ def _umarm_parameter_summary(robot):
     transmission = robot.actuators[0].params.transmission
     return jnp.concatenate(
         [
-            robot.base_pose,
+            robot.fixed_base_pose,
             robot.g,
             robot.m,
             robot.joint_armature,

@@ -19,6 +19,9 @@ class GVSOperandSource(Protocol):
     """
 
     num_segments: int
+    floating_base: bool
+    num_internal_dofs: int
+    num_velocities: int
     num_dofs: int
     max_dof: int
     max_num_integration_points: int
@@ -43,6 +46,7 @@ class GVSOperandSource(Protocol):
     inertia_upper_columns: Array
     inner_weighted_mass_diagonals: Array
     gravity_base: Array
+    g: Array
     g0: Array
     integration_points: Array
     segment_end_positions: Array
@@ -139,6 +143,8 @@ class GVSOperands(eqx.Module):
             numerical preprocessing or array copy is performed here.
         """
 
+        if model.floating_base:
+            raise ValueError("Fixed GVS Warp operands require a fixed-base model.")
         return cls(
             num_segments=model.num_segments,
             num_dofs=model.num_dofs,
@@ -164,6 +170,88 @@ class GVSOperands(eqx.Module):
             inertia_upper_columns=model.inertia_upper_columns,
             weighted_mass_diagonals=model.inner_weighted_mass_diagonals,
             gravity_base=model.gravity_base,
+        )
+
+
+class GVSFloatingOperands(eqx.Module):
+    """Runtime data for a statically augmented floating GVS Warp pipeline.
+
+    Local joint and link operands are shared with :class:`GVSOperands`.
+    Separate static internal and total dimensions keep runtime base state out
+    of the fixed persistent kernel and allocate augmented workspaces only for
+    floating models.
+    """
+
+    num_segments: int = eqx.field(static=True)
+    num_internal_dofs: int = eqx.field(static=True)
+    num_velocities: int = eqx.field(static=True)
+    max_dof: int = eqx.field(static=True)
+    num_cells: int = eqx.field(static=True)
+    num_quadrature: int = eqx.field(static=True)
+    block_dim: int = eqx.field(static=True)
+    joint_basis: Array
+    joint_reference: Array
+    joint_local_to_global: Array
+    joint_global_to_local: Array
+    link_local_to_global: Array
+    link_global_to_local: Array
+    active_dofs_per_segment: Array
+    link_basis_z1_values: Array
+    link_basis_z2_values: Array
+    link_basis_rows: Array
+    link_reference_z1: Array
+    link_reference_z2: Array
+    segment_lengths: Array
+    cell_widths: Array
+    inertia_upper_rows: Array
+    inertia_upper_columns: Array
+    weighted_mass_diagonals: Array
+    gravity_world: Array
+
+    @classmethod
+    def from_model(
+        cls, model: GVSOperandSource, *, block_dim: int
+    ) -> GVSFloatingOperands:
+        """Build floating operands over a precomputed GVS model.
+
+        Args:
+            model: Floating GVS model satisfying :class:`GVSOperandSource`.
+            block_dim: Cooperative threads per chain block, or one on CPU.
+
+        Returns:
+            Operand bundle referencing existing model arrays without copies.
+
+        Raises:
+            ValueError: If ``model`` is fixed-base.
+        """
+        if not model.floating_base:
+            raise ValueError("Floating GVS Warp operands require a floating model.")
+        return cls(
+            num_segments=model.num_segments,
+            num_internal_dofs=model.num_internal_dofs,
+            num_velocities=model.num_velocities,
+            max_dof=model.max_dof,
+            num_cells=model.max_num_integration_points - 1,
+            num_quadrature=model.max_num_integration_points - 2,
+            block_dim=block_dim,
+            joint_basis=model.B_joint,
+            joint_reference=model.xi_ref_joint,
+            joint_local_to_global=model.joint_local_to_global,
+            joint_global_to_local=model.joint_global_to_local,
+            link_local_to_global=model.link_local_to_global,
+            link_global_to_local=model.link_global_to_local,
+            active_dofs_per_segment=model.active_dofs_per_segment,
+            link_basis_z1_values=model.scaled_B_Z1_values,
+            link_basis_z2_values=model.scaled_B_Z2_values,
+            link_basis_rows=model.link_basis_rows,
+            link_reference_z1=model.xi_ref_Z1,
+            link_reference_z2=model.xi_ref_Z2,
+            segment_lengths=model.segment_lengths,
+            cell_widths=model.cell_widths,
+            inertia_upper_rows=model.inertia_upper_rows,
+            inertia_upper_columns=model.inertia_upper_columns,
+            weighted_mass_diagonals=model.inner_weighted_mass_diagonals,
+            gravity_world=model.g,
         )
 
 
@@ -290,6 +378,40 @@ class GVSPipelineShapes:
         }
 
 
+@dataclass(frozen=True)
+class GVSFloatingPipelineShapes(GVSPipelineShapes):
+    """Allocation contract for augmented floating GVS workspaces."""
+
+    @classmethod
+    def from_operands(
+        cls, operands: GVSFloatingOperands, *, batch_size: int
+    ) -> GVSFloatingPipelineShapes:
+        """Construct augmented shapes using the total velocity dimension.
+
+        Args:
+            operands: Floating runtime operand bundle.
+            batch_size: Positive number of independent environments.
+
+        Returns:
+            Immutable floating GVS allocation contract.
+
+        Raises:
+            TypeError: If ``batch_size`` is not an integer or is a boolean.
+            ValueError: If ``batch_size`` is not positive.
+        """
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int):
+            raise TypeError("batch_size must be an integer.")
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive.")
+        return cls(
+            batch_size=batch_size,
+            num_segments=operands.num_segments,
+            num_dofs=operands.num_velocities,
+            max_dof=operands.max_dof,
+            num_cells=operands.num_cells,
+        )
+
+
 class GVSKinematicsOperands(eqx.Module):
     """Runtime model data required by public GVS kinematics launchers.
 
@@ -403,6 +525,43 @@ class GVSKinematicsOperands(eqx.Module):
         )
 
 
+class GVSFloatingKinematicsOperands(eqx.Module):
+    """Floating GVS kinematics specialization over relative operands."""
+
+    num_base_coordinates: int = eqx.field(static=True)
+    num_base_velocities: int = eqx.field(static=True)
+    num_velocities: int = eqx.field(static=True)
+    relative: GVSKinematicsOperands
+
+    @classmethod
+    def from_model(
+        cls, model: GVSOperandSource, *, block_dim: int
+    ) -> GVSFloatingKinematicsOperands:
+        """Build identity-mounted relative operands for a floating GVS model.
+
+        Args:
+            model: Floating GVS model.
+            block_dim: Cooperative lanes per environment, or one on Warp CPU.
+
+        Returns:
+            Floating specialization referencing the model's existing arrays.
+
+        Raises:
+            ValueError: If the supplied model is fixed-base.
+        """
+        if not model.floating_base:
+            raise ValueError("Floating GVS kinematics operands require a floating model.")
+        relative_model = model._fixed_evaluation_view()
+        return cls(
+            num_base_coordinates=7,
+            num_base_velocities=6,
+            num_velocities=model.num_velocities,
+            relative=GVSKinematicsOperands.from_model(
+                relative_model, block_dim=block_dim
+            ),
+        )
+
+
 @dataclass(frozen=True)
 class GVSKinematicsShapes:
     """Allocation contract for fused GVS pose/Jacobian execution.
@@ -499,9 +658,12 @@ class GVSKinematicsShapes:
 
 
 __all__ = [
+    "GVSFloatingKinematicsOperands",
     "GVSKinematicsOperands",
     "GVSKinematicsShapes",
     "GVSOperandSource",
+    "GVSFloatingOperands",
+    "GVSFloatingPipelineShapes",
     "GVSOperands",
     "GVSPipelineShapes",
 ]

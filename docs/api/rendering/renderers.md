@@ -24,7 +24,7 @@ BaseSoftRobotRenderer (abstract base)
 | API | Shared behavior | Availability |
 | --- | --- | --- |
 | `BaseSoftRobotRenderer` | Backbone sampling, cached forward kinematics, batched layouts, color resolution, and the common rendering interface | All renderers |
-| Robot base | The robot's `base_pose` and `base_transform` place and orient the rendered robot in the world frame | All renderers |
+| Robot base | `fixed_base_pose` mounts fixed robots; floating renderers follow the base coordinates in each runtime configuration | All renderers |
 | Base plate | `base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
 | Ground plane | `show_ground_plane` and `ground_plane_size` configure a base-aligned reference plane; its colors come from `RendererColorConfig` | Matplotlib, Open3D, and Viser |
 

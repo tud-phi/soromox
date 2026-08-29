@@ -49,6 +49,9 @@ specifications are described in
 [Continuum Robot Components](continuum-components.md). Practical immutable
 replacement and gradient-based identification examples are in
 [Parameters, Updates, and Optimization](../../user-guide/parameters-and-optimization.md).
+State layouts, pose and velocity conventions, and the Newton conversion boundary
+for optional moving bases are documented in
+[Floating-base Systems](../../user-guide/floating-base-systems.md).
 
 ### SystemState
 
@@ -121,6 +124,5 @@ started.
 | Capability | Motivation |
 |------------|------------|
 | `PlanarGVS` | Provide a faster planar setting for prototyping controllers and algorithms that use higher-order geometric shape parametrizations before moving to full spatial GVS models. |
-| Floating-base functionality across all systems | Support robots whose base pose is part of the system state, rather than assuming a fixed base. |
 | Kinematic trees, particularly for GVS | Extend beyond serial kinematic chains to support branched soft robot architectures. |
 | Closed-chain kinematics, particularly for GVS | Enable modeling of closed-loop mechanisms and parallel soft robots. |

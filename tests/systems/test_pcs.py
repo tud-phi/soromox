@@ -40,7 +40,6 @@ def make_pcs(
     if xi_ref is None:
         xi_ref = jnp.tile(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments)
     params = pcs_params(
-        base_pose=spatial_base_pose(),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),
@@ -53,6 +52,7 @@ def make_pcs(
 
     model = PCS(
         params=params,
+        base_pose=spatial_base_pose(),
         structure=PCSStructure(
             num_gauss_points=num_gauss_points,
             strain_selector=strain_selector,
@@ -65,7 +65,6 @@ def make_pcs(
 
 def _updated_pcs_params(params):
     return params.replace(
-        base_pose=params.base_pose.at[4].set(0.15),
         gravity=params.gravity.at[2].set(-9.7),
         link=params.link.replace(
             length=params.link.length + 0.01,
@@ -79,7 +78,7 @@ def _updated_pcs_params(params):
 def _pcs_parameter_summary(model):
     return jnp.concatenate(
         [
-            model.base_pose,
+            model.fixed_base_pose,
             model.g,
             model.L,
             model.rho,
@@ -222,7 +221,6 @@ def test_constant_strain_call():
     xi_ref = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0])
 
     params = pcs_params(
-        base_pose=spatial_base_pose(),
         length=L,
         radius=jnp.array([2e-2]),
         density=1000 * jnp.ones((1,)),
@@ -235,6 +233,7 @@ def test_constant_strain_call():
 
     robot = PCS(
         params=params,
+        base_pose=spatial_base_pose(),
         structure=PCSStructure(num_gauss_points=5, strain_selector=strain_selector),
     )
 
@@ -325,8 +324,8 @@ def test_constant_strain_call():
 
     # test energies
     print("\nTesting energies... ------------------------")
-    robot = robot.update_params(
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+    robot = robot.with_fixed_base_pose(
+        jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
     )
     q = jnp.zeros((6,))
     qd = jnp.zeros((6,))

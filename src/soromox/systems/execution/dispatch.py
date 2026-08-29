@@ -103,6 +103,39 @@ def _explicit_backend(
     return model.backend if requested is None else requested
 
 
+def uses_warp_kinematics(
+    model: KinematicsModel,
+    backend: ExecutionBackend | None,
+    capabilities: KinematicsCapabilities,
+    *,
+    warp_supported: bool,
+) -> bool:
+    """Return whether a kinematics request resolves to Warp execution.
+
+    This static routing helper lets floating public methods retain their
+    specialized JAX recurrence while sending Warp requests through the
+    augmented runtime-base executor.
+
+    Args:
+        model: Continuum model supplying backend preference and dimensions.
+        backend: Optional per-call override.
+        capabilities: Family kinematics capability declaration.
+        warp_supported: Whether the concrete model class has a Warp executor.
+
+    Returns:
+        ``True`` exactly when backend policy selects Warp.
+    """
+    return (
+        _select_backend(
+            model,
+            backend,
+            capabilities,
+            warp_supported=warp_supported,
+        )
+        == "warp"
+    )
+
+
 def dispatch_actuation_matrix(
     model: ActuationModel,
     q: Array,
@@ -205,9 +238,8 @@ def dispatch_fused_dynamics_actuation_force(
     JAX actuation for custom transmissions or effort laws.
     """
 
-    if (
-        not capabilities.fused_threadlike_force_enabled
-        or not supports_linear_threadlike_force(model)
+    if not capabilities.fused_threadlike_force_enabled or not (
+        supports_linear_threadlike_force(model)
     ):
         return None
     selected = _select_backend(
@@ -241,9 +273,10 @@ def dispatch_dynamics_terms(
 
     Args:
         model: System implementing the neutral :class:`DynamicsModel` contract.
-        q: Generalized coordinates with shape ``(num_dofs,)`` or
-            ``(batch_size, num_dofs)``.
-        qd: Generalized velocities with the same shape and dtype as ``q``.
+        q: Generalized coordinates with shape ``(num_coordinates,)`` or
+            ``(batch_size, num_coordinates)``.
+        qd: Generalized velocities with shape ``(num_velocities,)`` or
+            ``(batch_size, num_velocities)`` and the same dtype as ``q``.
         backend: Optional per-call backend override. ``None`` uses the model's
             configured backend.
         capabilities: Static support declared for the system family.
@@ -256,8 +289,8 @@ def dispatch_dynamics_terms(
         dimension as the inputs.
 
     Raises:
-        ValueError: If either state has an invalid shape, their shapes differ,
-            or the backend name is invalid.
+        ValueError: If either state has an invalid shape, their leading batch
+            dimensions differ, or the backend name is invalid.
         NotImplementedError: If Warp is explicitly requested for an unsupported
             device or model instance.
         ImportError: If Warp is selected but the optional dependency is absent.
@@ -267,13 +300,17 @@ def dispatch_dynamics_terms(
 
     q = jnp.asarray(q)
     qd = jnp.asarray(qd)
-    if q.ndim not in (1, 2) or q.shape[-1:] != (model.num_dofs,):
+    if q.ndim not in (1, 2) or q.shape[-1:] != (model.num_coordinates,):
         raise ValueError(
-            "q must have shape (num_dofs,) or (batch_size, num_dofs); "
-            f"expected (..., {model.num_dofs}), got {q.shape}."
+            "q must have shape (num_coordinates,) or "
+            "(batch_size, num_coordinates); "
+            f"expected (..., {model.num_coordinates}), got {q.shape}."
         )
-    if qd.shape != q.shape:
-        raise ValueError(f"qd must have shape {q.shape}, got {qd.shape}.")
+    expected_velocity_shape = (*q.shape[:-1], model.num_velocities)
+    if qd.shape != expected_velocity_shape:
+        raise ValueError(
+            f"qd must have shape {expected_velocity_shape}, got {qd.shape}."
+        )
 
     selected = _select_backend(
         model,
@@ -363,8 +400,10 @@ def dispatch_kinematics(
 
     q = jnp.asarray(q)
     s = jnp.asarray(s)
-    if q.shape != (model.num_dofs,):
-        raise ValueError(f"q must have shape ({model.num_dofs},), got {q.shape}.")
+    if q.shape != (model.num_coordinates,):
+        raise ValueError(
+            f"q must have shape ({model.num_coordinates},), got {q.shape}."
+        )
     if s.ndim != 0:
         raise ValueError(f"s must be scalar, got shape {s.shape}.")
 
@@ -423,8 +462,10 @@ def dispatch_kinematics_abscissa_batched(
 
     q = jnp.asarray(q)
     s = jnp.asarray(s)
-    if q.shape != (model.num_dofs,):
-        raise ValueError(f"q must have shape ({model.num_dofs},), got {q.shape}.")
+    if q.shape != (model.num_coordinates,):
+        raise ValueError(
+            f"q must have shape ({model.num_coordinates},), got {q.shape}."
+        )
     if s.ndim != 1:
         raise ValueError(f"s must have shape (num_samples,), got {s.shape}.")
 
@@ -449,4 +490,5 @@ __all__ = [
     "dispatch_dynamics_terms",
     "dispatch_kinematics",
     "dispatch_kinematics_abscissa_batched",
+    "uses_warp_kinematics",
 ]

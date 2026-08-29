@@ -5,6 +5,7 @@ from typing import Any
 
 import equinox as eqx
 from jax import Array
+from jax import numpy as jnp
 
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.systems.soft_robot import SoftRobot
@@ -26,6 +27,23 @@ class BaseController(eqx.Module, ABC):
 
     robot: SoftRobot
     reference_trajectory: ReferenceTrajectory
+
+    def _controller_model_and_state(self, y: Array) -> tuple[SoftRobot, Array, Array]:
+        """Return the evaluation model and configuration-space state.
+
+        Args:
+            y: Complete system state. Soft robots use their explicit state
+                parser; legacy controller test doubles may provide ``[q, qd]``.
+
+        Returns:
+            A tuple containing the fixed evaluation model, configuration, and
+            velocity used by controller equations.
+        """
+        parser = getattr(self.robot, "controller_model_and_state", None)
+        if parser is not None:
+            return parser(y)
+        q, qd = jnp.split(y, 2)
+        return self.robot, q, qd
 
     @staticmethod
     def _apply_gain(gain: Array, x: Array) -> Array:

@@ -7,7 +7,16 @@ import jax.numpy as jnp
 from jax import Array
 
 from soromox.systems.execution.types import KinematicsOperation, KinematicsResult
+from soromox.systems.execution.warp.common.floating_kinematics import (
+    planar_floating_jacobian_composition,
+    planar_floating_kinematics_composition,
+    planar_floating_pose_composition,
+    spatial_floating_jacobian_composition,
+    spatial_floating_kinematics_composition,
+    spatial_floating_pose_composition,
+)
 from soromox.systems.execution.warp.pcs.operands import (
+    PCSFloatingKinematicsOperands,
     PCSKinematicsOperands,
     PCSKinematicsShapes,
 )
@@ -26,7 +35,7 @@ from soromox.systems.execution.warp.pcs.spatial_kinematics import (
 
 
 def execute_kinematics(
-    operands: PCSKinematicsOperands,
+    operands: PCSKinematicsOperands | PCSFloatingKinematicsOperands,
     q: Array,
     s: Array,
     operation: KinematicsOperation,
@@ -43,6 +52,69 @@ def execute_kinematics(
         Poses, Jacobians, or their tuple with canonical ``(E, N, ...)``
         leading dimensions.
     """
+
+    if isinstance(operands, PCSFloatingKinematicsOperands):
+        base_pose = q[:, : operands.num_base_coordinates]
+        q_internal = q[:, operands.num_base_coordinates :]
+        relative_operation: KinematicsOperation = (
+            "pose" if operation == "pose" else "both"
+        )
+        relative = execute_kinematics(
+            operands.relative, q_internal, s, relative_operation
+        )
+        if operation == "pose":
+            relative_pose = relative
+            pose_shape = (
+                (q.shape[0], s.shape[1], 3)
+                if operands.is_planar
+                else (q.shape[0], s.shape[1], 4, 4)
+            )
+            callable_ = (
+                planar_floating_pose_composition
+                if operands.is_planar
+                else spatial_floating_pose_composition
+            )
+            return callable_(
+                base_pose,
+                relative_pose,
+                output_dims={"poses": pose_shape},
+            )[-1]
+        relative_pose, internal_jacobian = relative
+        jacobian_shape = (
+            q.shape[0],
+            s.shape[1],
+            3 if operands.is_planar else 6,
+            operands.num_velocities,
+        )
+        if operation == "jacobian":
+            callable_ = (
+                planar_floating_jacobian_composition
+                if operands.is_planar
+                else spatial_floating_jacobian_composition
+            )
+            return callable_(
+                base_pose,
+                relative_pose,
+                internal_jacobian,
+                output_dims={"jacobians": jacobian_shape},
+            )[-1]
+        pose_shape = (
+            (q.shape[0], s.shape[1], 3)
+            if operands.is_planar
+            else (q.shape[0], s.shape[1], 4, 4)
+        )
+        callable_ = (
+            planar_floating_kinematics_composition
+            if operands.is_planar
+            else spatial_floating_kinematics_composition
+        )
+        outputs = callable_(
+            base_pose,
+            relative_pose,
+            internal_jacobian,
+            output_dims={"poses": pose_shape, "jacobians": jacobian_shape},
+        )
+        return outputs[-2], outputs[-1]
 
     shapes = PCSKinematicsShapes.from_operands(
         operands,

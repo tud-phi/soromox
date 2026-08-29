@@ -101,7 +101,7 @@ def test_regulation_tracking_robot_is_horizontal_and_gravity_loaded():
     gravity_force = robot.gravitational_force(jnp.zeros((num_dofs,)))
 
     assert_allclose(
-        robot.base_pose,
+        robot.fixed_base_pose,
         jnp.array(
             configuration_space_comparison_simulation.HORIZONTAL_BASE_POSE,
         ),

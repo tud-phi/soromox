@@ -160,7 +160,7 @@ class MixedStateFeedbackTracker(PIDController):
         y = system_state.y
 
         # Get current configuration and velocity
-        q, qd = jnp.split(y, 2)
+        robot, q, qd = self._controller_model_and_state(y)
 
         # Get desired trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None
@@ -171,16 +171,16 @@ class MixedStateFeedbackTracker(PIDController):
         qdd_des = self.reference_trajectory.xdd_des_fn(t)
 
         # Compute dynamics matrices at CURRENT state (q, qd)
-        B = self.robot.inertia_matrix(q)
+        B = robot.inertia_matrix(q)
         # Coriolis matrix at current configuration and CURRENT velocity
-        C = self.robot.coriolis_matrix(q, qd)
+        C = robot.coriolis_matrix(q, qd)
         # Gravitational force at current configuration
-        G = self.robot.gravitational_force(q)
+        G = robot.gravitational_force(q)
         # Damping matrix at current configuration
-        D = self.robot.damping_matrix(q)
+        D = robot.damping_matrix(q)
 
         # Elastic force at DESIRED configuration
-        tau_el_des = self.robot.elastic_force(q_des)
+        tau_el_des = robot.elastic_force(q_des)
 
         # Compute the model-based torque
         # Inertial, Coriolis, and damping use current matrices with desired velocity/acceleration
@@ -188,7 +188,7 @@ class MixedStateFeedbackTracker(PIDController):
         tau_model = B @ qdd_des + C @ qd_des + G + tau_el_des + D @ qd_des
 
         # Get the actuation matrix at current configuration
-        A = self.robot.actuation_matrix(q)
+        A = robot.actuation_matrix(q)
 
         # Compute actuator input using inverse (or pseudo-inverse) of actuation matrix
         if A.shape[0] == A.shape[1]:

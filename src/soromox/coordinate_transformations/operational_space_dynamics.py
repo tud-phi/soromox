@@ -97,6 +97,7 @@ class OperationalSpaceDynamics(eqx.Module):
     """
 
     robot: SoftRobot
+    system_robot: SoftRobot | None
     s_ps: Array  # Points along the backbone, shape (N,)
     task_selector: Array  # Boolean selector for which velocity axes are active
     B_task: Array  # Task selection basis matrix for velocity and acceleration space
@@ -172,7 +173,8 @@ class OperationalSpaceDynamics(eqx.Module):
             ValueError: If task_selector has incompatible shape.
             ValueError: If rotation components are partially selected (3D robots only).
         """
-        self.robot = robot
+        self.system_robot = robot if robot.floating_base else None
+        self.robot = robot._fixed_evaluation_view()
         self.s_ps = jnp.atleast_1d(jnp.asarray(s_ps))
         self.rotation_representation = rotation_representation
 

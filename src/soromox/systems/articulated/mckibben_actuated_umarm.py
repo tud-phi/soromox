@@ -24,6 +24,7 @@ from soromox.actuation.core import PassiveElement
 from soromox.actuation.mckibben import ArticulatedMcKibbenActuator
 from soromox.systems.articulated.articulated_soft_robot import ArticulatedSoftRobot
 from soromox.systems.articulated.params import McKibbenActuatedUMArmParams
+from soromox.utils.geometry import poses
 
 
 class McKibbenActuatedUMArm(ArticulatedSoftRobot):
@@ -107,6 +108,8 @@ class McKibbenActuatedUMArm(ArticulatedSoftRobot):
         Returns:
             A UMArm with the cached body and McKibben actuator installed.
         """
+        if not kwargs.get("floating_base", False):
+            kwargs.setdefault("base_pose", poses.spatial_mounting_pose("horizontal"))
         return cls(
             McKibbenActuatedUMArmParams.from_cached_npz(path),
             actuator=ArticulatedMcKibbenActuator.from_cached_npz(path),

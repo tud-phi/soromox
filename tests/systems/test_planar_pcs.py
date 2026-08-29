@@ -53,7 +53,6 @@ def make_planar_pcs(
         ).flatten()
     )
     params = planar_pcs_params(
-        base_pose=planar_base_pose(th0),
         length=segment_lengths,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=rho,
@@ -66,6 +65,7 @@ def make_planar_pcs(
 
     model = PlanarPCS(
         params=params,
+        base_pose=planar_base_pose(th0),
         structure=PlanarPCSStructure(
             num_gauss_points=num_gauss_points,
             strain_selector=strain_selector,
@@ -78,7 +78,6 @@ def make_planar_pcs(
 
 def _updated_planar_pcs_params(params):
     return params.replace(
-        base_pose=params.base_pose.at[1].set(0.15),
         gravity=params.gravity.at[1].set(-9.7),
         link=params.link.replace(
             length=params.link.length + 0.01,
@@ -92,7 +91,7 @@ def _updated_planar_pcs_params(params):
 def _planar_pcs_parameter_summary(model):
     return jnp.concatenate(
         [
-            model.base_pose,
+            model.fixed_base_pose,
             model.g,
             model.L,
             model.rho,
@@ -226,10 +225,10 @@ def _stable_planar_pose_step_reference(chi: Array, xi: Array, arc_len: Array) ->
     )
 
 
-def constant_strain_inverse_kinematics_fn(params, xi_ref, chi, s) -> Array:
+def constant_strain_inverse_kinematics_fn(base_pose, xi_ref, chi, s) -> Array:
     # split the chi vector into x, y, and th0
     th, px, py = chi
-    th0 = params.base_pose[0].item()
+    th0 = base_pose[0].item()
     print("th0 = ", th0)
     xi = (
         (th - th0)

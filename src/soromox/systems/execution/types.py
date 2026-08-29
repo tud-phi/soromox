@@ -32,6 +32,8 @@ class DynamicsModel(Protocol):
 
     backend: ExecutionBackend
     num_dofs: int
+    num_coordinates: int
+    num_velocities: int
 
     def _assemble_dynamics_terms(self, q: Array, qd: Array) -> DynamicsTerms:
         """Assemble differentiable dynamics terms with the JAX implementation.
@@ -62,6 +64,19 @@ class ForwardDynamicsModel(DynamicsModel, Protocol):
     """
 
     num_actuators: int
+    num_coordinates: int
+    num_velocities: int
+    num_auxiliary_states: int
+
+    def split_state(self, y: Array) -> tuple[Array, Array, Array]:
+        """Split a state into configuration, velocity, and auxiliary blocks."""
+
+        ...
+
+    def configuration_derivative(self, q: Array, qd: Array) -> Array:
+        """Map generalized velocity to the derivative of configuration storage."""
+
+        ...
 
     def dynamics_terms(
         self,
@@ -192,6 +207,8 @@ class KinematicsModel(Protocol):
 
     backend: ExecutionBackend
     num_dofs: int
+    num_coordinates: int
+    floating_base: bool
     is_planar: bool
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
@@ -199,8 +216,20 @@ class KinematicsModel(Protocol):
 
         ...
 
+    def _reference_forward_kinematics(self, q: Array, s: Array) -> Array:
+        """Return fixed or floating differentiable JAX pose kinematics."""
+
+        ...
+
     def _forward_kinematics_abscissa_batched(self, q: Array, s: Array) -> Array:
         """Return poses from the model's specialized spatial JAX traversal."""
+
+        ...
+
+    def _reference_forward_kinematics_abscissa_batched(
+        self, q: Array, s: Array
+    ) -> Array:
+        """Return fixed or floating differentiable JAX pose batches."""
 
         ...
 
@@ -220,8 +249,20 @@ class KinematicsModel(Protocol):
 
         ...
 
+    def _reference_inertial_jacobian(self, q: Array, s: Array) -> Array:
+        """Return a fixed or augmented differentiable JAX Jacobian."""
+
+        ...
+
     def _jacobian_inertialframe_abscissa_batched(self, q: Array, s: Array) -> Array:
         """Return Jacobians from the specialized spatial JAX traversal."""
+
+        ...
+
+    def _reference_inertial_jacobian_abscissa_batched(
+        self, q: Array, s: Array
+    ) -> Array:
+        """Return fixed or augmented differentiable JAX Jacobian batches."""
 
         ...
 

@@ -2,7 +2,6 @@ __all__ = ["GravityCancellationRegulator"]
 
 from typing import Any
 
-import jax.numpy as jnp
 from jax import Array
 
 from soromox.control.actuation_space.pid_controller import PIDController
@@ -147,11 +146,8 @@ class GravityCancellationRegulator(PIDController):
         """
         t = system_state.t
         y = system_state.y
-        asd = self.actuation_space_dynamics
+        asd, q, _ = self._controller_dynamics_and_state(y)
         n_a = asd.n_actuated
-
-        # Get current configuration
-        q, _ = jnp.split(y, 2)
 
         # Get desired configuration from the configuration-space reference trajectory
         ref_config = self.reference_trajectory_config_space

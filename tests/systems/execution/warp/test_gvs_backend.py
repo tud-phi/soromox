@@ -182,6 +182,7 @@ def test_gvs_backend_params_override_reaches_warp_launches(
         structure=base.structure,
         backend="warp",
         backend_params=GVSBackendParams(warp_block_dim=192),
+        base_pose=base.fixed_base_pose,
     )
     q = jnp.linspace(-0.018, 0.023, model.num_dofs, dtype=jnp.float64)
     qd = jnp.linspace(0.11, -0.09, model.num_dofs, dtype=jnp.float64)

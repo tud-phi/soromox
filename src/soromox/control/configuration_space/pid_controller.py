@@ -143,7 +143,7 @@ class PIDController(ClosedFormModelBasedController):
         y = system_state.y
 
         # Split state into configuration and velocity
-        q, qd = jnp.split(y, 2)
+        robot, q, qd = self._controller_model_and_state(y)
 
         # Get reference trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None
@@ -166,7 +166,7 @@ class PIDController(ClosedFormModelBasedController):
         tau, integral_error_dot = self.pid_control(e, ed, integral_error)
 
         # Get the actuation matrix and compute actuator input
-        A = self.robot.actuation_matrix(q)
+        A = robot.actuation_matrix(q)
         u_feedback = A.T @ tau
 
         # Build control state derivative

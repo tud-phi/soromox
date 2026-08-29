@@ -6,6 +6,11 @@ import jax.numpy as jnp
 from jax import Array
 
 from soromox.systems.execution.types import KinematicsOperation, KinematicsResult
+from soromox.systems.execution.warp.common.floating_kinematics import (
+    spatial_floating_jacobian_composition,
+    spatial_floating_kinematics_composition,
+    spatial_floating_pose_composition,
+)
 from soromox.systems.execution.warp.common.joint_terms import _evaluate_joint_terms
 from soromox.systems.execution.warp.gvs.executor import (
     _cell_terms,
@@ -17,6 +22,7 @@ from soromox.systems.execution.warp.gvs.kinematics import (
     gvs_kinematics,
 )
 from soromox.systems.execution.warp.gvs.operands import (
+    GVSFloatingKinematicsOperands,
     GVSKinematicsOperands,
     GVSKinematicsShapes,
 )
@@ -54,7 +60,7 @@ def _full_local_kinematics(
 
 
 def execute_kinematics(
-    operands: GVSKinematicsOperands,
+    operands: GVSKinematicsOperands | GVSFloatingKinematicsOperands,
     q: Array,
     s: Array,
     operation: KinematicsOperation,
@@ -71,6 +77,44 @@ def execute_kinematics(
         Poses, Jacobians, or their tuple with canonical ``(E, N, ...)``
         leading dimensions.
     """
+
+    if isinstance(operands, GVSFloatingKinematicsOperands):
+        base_pose = q[:, : operands.num_base_coordinates]
+        q_internal = q[:, operands.num_base_coordinates :]
+        relative_operation: KinematicsOperation = (
+            "pose" if operation == "pose" else "both"
+        )
+        relative = execute_kinematics(
+            operands.relative, q_internal, s, relative_operation
+        )
+        pose_shape = (q.shape[0], s.shape[1], 4, 4)
+        if operation == "pose":
+            return spatial_floating_pose_composition(
+                base_pose,
+                relative,
+                output_dims={"poses": pose_shape},
+            )[-1]
+        relative_pose, internal_jacobian = relative
+        jacobian_shape = (
+            q.shape[0],
+            s.shape[1],
+            SPATIAL_DIM,
+            operands.num_velocities,
+        )
+        if operation == "jacobian":
+            return spatial_floating_jacobian_composition(
+                base_pose,
+                relative_pose,
+                internal_jacobian,
+                output_dims={"jacobians": jacobian_shape},
+            )[-1]
+        outputs = spatial_floating_kinematics_composition(
+            base_pose,
+            relative_pose,
+            internal_jacobian,
+            output_dims={"poses": pose_shape, "jacobians": jacobian_shape},
+        )
+        return outputs[-2], outputs[-1]
 
     q_link = _gather_local(q, operands.link_local_to_global)
     batch_size = q.shape[0]

@@ -105,10 +105,10 @@ class MyPlanarParams(BaseSoftRobotParams):
 
 Use `False` for SE(3) systems. This mirrors the `SoftRobot.is_planar` property
 and lets the base class materialize
-the upright pose and negative-vertical Earth gravity when those keyword inputs
-are omitted, and provides inherited `.horizontal(...)`, `.upright(...)`, and
-`.hanging(...)` constructors. Do not infer the convention from an input array
-shape. Explicit `base_pose` and `gravity` values continue to override defaults.
+negative-vertical Earth gravity when `gravity` is omitted. Mounting belongs to
+the robot rather than the physical parameter tree; use the shared planar or
+spatial pose utilities when resolving a constructor's `base_pose`. Do not infer
+the convention from an input array shape.
 
 ### Step-by-Step: Implementing a New System
 

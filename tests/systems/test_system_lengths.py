@@ -8,9 +8,7 @@ from system_param_builders import (
     articulated_params,
     pcs_params,
     pendulum_params,
-    planar_base_pose,
     planar_pcs_params,
-    spatial_base_pose,
 )
 
 from soromox.actuation import (
@@ -43,7 +41,6 @@ jax.config.update("jax_enable_x64", True)
 def _pcs_params(length):
     num_segments = len(length)
     return pcs_params(
-        base_pose=spatial_base_pose(),
         length=jnp.asarray(length, dtype=jnp.float64),
         radius=0.02 * jnp.ones((num_segments,), dtype=jnp.float64),
         density=1000.0 * jnp.ones((num_segments,), dtype=jnp.float64),
@@ -57,7 +54,6 @@ def _pcs_params(length):
 def _planar_pcs_params(length):
     num_segments = len(length)
     return planar_pcs_params(
-        base_pose=planar_base_pose(),
         length=jnp.asarray(length, dtype=jnp.float64),
         radius=0.02 * jnp.ones((num_segments,), dtype=jnp.float64),
         density=1000.0 * jnp.ones((num_segments,), dtype=jnp.float64),

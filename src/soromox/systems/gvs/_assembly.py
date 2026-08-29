@@ -258,12 +258,15 @@ def assign_gvs_runtime_arrays(
     active_selector = jnp.concatenate(strain_selector, axis=0)
     _set_model_field(model, "active_dof_map", build_active_dof_basis(active_selector))
     _set_model_field(
-        model, "num_dofs", int(jnp.sum(dofs_per_segment, axis=(0, 1), dtype=int))
+        model,
+        "num_internal_dofs",
+        int(jnp.sum(dofs_per_segment, axis=(0, 1), dtype=int)),
     )
+    _set_model_field(model, "num_dofs", model.num_velocities)
     _set_model_field(
         model, "num_padded_dofs", int(jnp.array(n_segments * 2 * max_dof, dtype=int))
     )
-    _set_model_field(model, "num_actuators", model.num_dofs)
+    _set_model_field(model, "num_actuators", model.num_internal_dofs)
     _set_model_field(model, "g", jnp.concatenate([jnp.zeros(3), jnp.array(g)]))
     _set_model_field(
         model,
@@ -276,5 +279,4 @@ def assign_gvs_runtime_arrays(
     else:
         p0_arr = jnp.asarray(p0, dtype=jnp.float64)
     validate_quaternion_base_pose("p0", p0_arr, (7,))
-    _set_model_field(model, "base_pose", p0_arr)
     _set_model_field(model, "g0", poses.quaternion_pose_to_transform(p0_arr))

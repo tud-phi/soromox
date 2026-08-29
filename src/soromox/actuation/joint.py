@@ -293,14 +293,14 @@ class ArticulatedTendonActuator(Actuator):
         _validate_articulated_tendon_host(robot)
         _validate_tendon_routing_structure(
             self.params.transmission.routing_matrix,
-            robot.num_dofs,
+            robot.num_internal_dofs,
             "routing_matrix",
         )
 
     def validate_values_for_robot(self, robot) -> None:
         _validate_tendon_routing_values(
             self.params.transmission.routing_matrix,
-            robot.num_dofs,
+            robot.num_internal_dofs,
             "routing_matrix",
         )
 

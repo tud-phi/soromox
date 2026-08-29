@@ -194,7 +194,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         y = system_state.y
 
         # Get current configuration and velocity
-        q, qd = jnp.split(y, 2)
+        robot, q, qd = self._controller_model_and_state(y)
 
         # Get desired trajectory at current time
         assert self.reference_trajectory.xdd_des_fn is not None
@@ -202,16 +202,16 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
 
         # Compute the coupled dynamics terms at the current state. The returned
         # Coriolis term is already contracted with the supplied velocity.
-        M, Cqd, G = self.robot.dynamics_terms(q, qd)
-        tau_el = self.robot.elastic_force(q)
-        D = self.robot.damping_matrix(q)
+        M, Cqd, G = robot.dynamics_terms(q, qd)
+        tau_el = robot.elastic_force(q)
+        D = robot.damping_matrix(q)
 
         # Compute the inverse dynamics: cancel all forces and apply desired acceleration
         # tau = M(q) @ qdd_des + C(q, qd) @ qd + G(q) + tau_el(q) + D(q) @ qd
         tau_model = M @ qdd_des + Cqd + G + tau_el + D @ qd
 
         # Get the actuation matrix at current configuration
-        A = self.robot.actuation_matrix(q)
+        A = robot.actuation_matrix(q)
 
         # Compute actuator input using inverse (or pseudo-inverse for overactuation)
         if self._actuation_scenario == ActuationScenario.OVERACTUATION:
@@ -253,7 +253,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         y = system_state.y
 
         # Split state into configuration and velocity
-        q, qd = jnp.split(y, 2)
+        robot, q, qd = self._controller_model_and_state(y)
 
         # Get reference trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None
@@ -276,13 +276,13 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         qdd_fb, integral_error_dot = self.pid_control(e, ed, integral_error)
 
         # Get inertia matrix at current configuration
-        M = self.robot.inertia_matrix(q)
+        M = robot.inertia_matrix(q)
 
         # Compute feedback torque: tau_fb = M(q) @ qdd_fb
         tau_fb = M @ qdd_fb
 
         # Get the actuation matrix and compute actuator input
-        A = self.robot.actuation_matrix(q)
+        A = robot.actuation_matrix(q)
         if self._actuation_scenario == ActuationScenario.OVERACTUATION:
             u_feedback = jnp.linalg.pinv(A) @ tau_fb
         else:

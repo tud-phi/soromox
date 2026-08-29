@@ -29,6 +29,7 @@ from soromox.systems.execution import (
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
+    uses_warp_kinematics,
 )
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData
@@ -292,6 +293,8 @@ class GVS(SoftRobot):
         num_dynamics_prefix_buckets: int = _DEFAULT_NUM_DYNAMICS_PREFIX_BUCKETS,
         backend: ExecutionBackend = "auto",
         backend_params: GVSBackendParams | None = None,
+        base_pose: Array | None = None,
+        floating_base: bool = False,
         **kwargs: Any,
     ) -> None:
         """Initialize a GVS robot from typed parameters and static structure.
@@ -348,7 +351,10 @@ class GVS(SoftRobot):
         ):
             raise TypeError("backend_params must be a GVSBackendParams instance.")
         structure = _resolve_structure(params, structure)
-        super().__init__(base_pose=params.base_pose, **kwargs)
+        resolved_base_pose = None if floating_base else base_pose
+        super().__init__(
+            base_pose=resolved_base_pose, floating_base=floating_base, **kwargs
+        )
         self.params = params
         self.structure = structure
         self.num_dynamics_prefix_buckets = num_dynamics_prefix_buckets
@@ -363,11 +369,11 @@ class GVS(SoftRobot):
             max_dof=structure.max_dof,
             max_num_gauss_points=structure.max_num_gauss_points,
             g=params.gravity,
-            p0=params.base_pose,
+            p0=self._kinematic_base_pose,
         )
         if backend_params is None:
             backend_params = GVSBackendParams(
-                warp_block_dim=default_gvs_block_dim(self.num_dofs)
+                warp_block_dim=default_gvs_block_dim(self.num_internal_dofs)
             )
         self.backend_params = backend_params
         self._configure_actuation(actuators, passive_elements)
@@ -378,7 +384,6 @@ class GVS(SoftRobot):
         segments: list[GVSSegment] | tuple[GVSSegment, ...],
         *,
         gravity: Array | None = None,
-        base_pose: Array | None = None,
         max_dof: int | None = None,
         max_num_gauss_points: int | None = None,
         scale_rotational_basis_by_length: bool = False,
@@ -391,15 +396,13 @@ class GVS(SoftRobot):
         family, basis family, quadrature count, and cross-section family remain
         static in ``GVSStructure``. Numeric link, joint, and reference-strain
         values are copied into ``GVSParams``.
-        Omitted ``base_pose`` and ``gravity`` use the standard upright spatial
-        mounting and negative-z Earth gravity.
+        Gravity is physical model data. Fixed mounting is supplied separately
+        when constructing :class:`GVS`.
 
         Args:
             segments: Non-empty sequence of joint-link-basis segment
                 specifications.
             gravity: Optional world-frame gravity vector with shape ``(3,)``.
-            base_pose: Optional base translation and unit quaternion with shape
-                ``(7,)``.
             max_dof: Optional common padded dimension for every link and joint
                 generalized matrix. The required maximum is inferred when
                 omitted.
@@ -420,7 +423,6 @@ class GVS(SoftRobot):
         return params_and_structure_from_segments(
             segments,
             gravity=gravity,
-            base_pose=base_pose,
             max_dof=max_dof,
             max_num_gauss_points=max_num_gauss_points,
             scale_rotational_basis_by_length=scale_rotational_basis_by_length,
@@ -476,7 +478,6 @@ class GVS(SoftRobot):
         params, structure = cls.params_from_segments(
             segments,
             gravity=gravity,
-            base_pose=base_pose,
             max_dof=max_dof,
             max_num_gauss_points=max_num_gauss_points,
             scale_rotational_basis_by_length=scale_rotational_basis_by_length,
@@ -485,6 +486,7 @@ class GVS(SoftRobot):
             params=params,
             structure=structure,
             num_dynamics_prefix_buckets=num_dynamics_prefix_buckets,
+            base_pose=base_pose,
             **kwargs,
         )
 
@@ -939,7 +941,9 @@ class GVS(SoftRobot):
         gather_indices = start_indices[..., None] + jnp.arange(self.max_dof)
         gather_mask = jnp.arange(self.max_dof) < self.dofs_per_segment[..., None]
         local_to_global = jnp.where(gather_mask, gather_indices, -1).astype(jnp.int32)
-        global_columns = jnp.arange(self.num_dofs, dtype=jnp.int32)[None, None, :]
+        global_columns = jnp.arange(self.num_internal_dofs, dtype=jnp.int32)[
+            None, None, :
+        ]
         local_columns = jnp.arange(self.max_dof, dtype=jnp.int32)[None, :, None]
 
         def invert_local_map(local_map: Array) -> Array:
@@ -961,7 +965,7 @@ class GVS(SoftRobot):
             self,
             "active_dof_map_blocks",
             self.active_dof_map.reshape(
-                self.num_segments, 2, self.max_dof, self.num_dofs
+                self.num_segments, 2, self.max_dof, self.num_internal_dofs
             ),
         )
         inner_integration_weights = (
@@ -992,11 +996,14 @@ class GVS(SoftRobot):
             inner_integration_weights[..., None] * inner_mass_diagonals,
         )
         object.__setattr__(self, "gravity_base", se3.adjoint_inverse(self.g0) @ self.g)
+        assembly_dimension = (
+            self.num_velocities if self.floating_base else self.num_internal_dofs
+        )
         upper_rows = tuple(
-            row for column in range(self.num_dofs) for row in range(column + 1)
+            row for column in range(assembly_dimension) for row in range(column + 1)
         )
         upper_columns = tuple(
-            column for column in range(self.num_dofs) for _ in range(column + 1)
+            column for column in range(assembly_dimension) for _ in range(column + 1)
         )
         object.__setattr__(
             self, "inertia_upper_rows", jnp.asarray(upper_rows, dtype=jnp.int32)
@@ -1230,10 +1237,6 @@ class GVS(SoftRobot):
         gravity = jnp.asarray(params.gravity, dtype=jnp.float64)
         if gravity.shape != (3,):
             raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
-        base_pose = jnp.asarray(params.base_pose, dtype=jnp.float64)
-        if base_pose.shape != (7,):
-            raise ValueError(f"base_pose must have shape (7,), got {base_pose.shape}.")
-
         updated_self = eqx.tree_at(
             lambda model: (
                 model.params,
@@ -1251,7 +1254,6 @@ class GVS(SoftRobot):
                 model.xi_ref_Z1,
                 model.xi_ref_Z2,
                 model.joint_stiffness,
-                model.base_pose,
                 model.g0,
                 model.g,
             ),
@@ -1264,8 +1266,7 @@ class GVS(SoftRobot):
                 xi_ref_Z1,
                 xi_ref_Z2,
                 joint_stiffness,
-                base_pose,
-                poses.quaternion_pose_to_transform(base_pose),
+                poses.quaternion_pose_to_transform(self._kinematic_base_pose),
                 jnp.concatenate([jnp.zeros(3, dtype=gravity.dtype), gravity]),
             ),
         )
@@ -1343,7 +1344,7 @@ class GVS(SoftRobot):
 
         Args:
             **updates: Fields of :class:`GVSParams` to replace, typically
-                ``link``, ``joint``, ``gravity``, or ``base_pose``.
+                ``link``, ``joint``, or ``gravity``.
 
         Returns:
             A new validated GVS model containing the replacements.
@@ -2123,11 +2124,11 @@ class GVS(SoftRobot):
         Args:
             g: Homogeneous SE(3) pose at the Jacobian evaluation point, shape
                 ``(4, 4)``.
-            J_body: Body-frame Jacobian, shape ``(6, self.num_dofs)``.
+            J_body: Body-frame Jacobian, shape ``(6, self.num_internal_dofs)``.
 
         Returns:
             J_inertial: Inertial-frame Jacobian, shape
-            ``(6, self.num_dofs)``.
+            ``(6, self.num_internal_dofs)``.
         """
         return self._rotation_adjoint_from_pose(g) @ J_body
 
@@ -2143,15 +2144,15 @@ class GVS(SoftRobot):
         Args:
             g: Homogeneous SE(3) pose at the Jacobian evaluation point, shape
                 ``(4, 4)``.
-            J_body: Body-frame Jacobian, shape ``(6, self.num_dofs)``.
+            J_body: Body-frame Jacobian, shape ``(6, self.num_internal_dofs)``.
             Jd_body: Body-frame Jacobian time derivative, shape
-                ``(6, self.num_dofs)``.
+                ``(6, self.num_internal_dofs)``.
             qd: Active generalized velocities, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
 
         Returns:
             Tuple ``(J_inertial, Jd_inertial)`` where both arrays have shape
-            ``(6, self.num_dofs)``.
+            ``(6, self.num_internal_dofs)``.
         """
         Ad_g = self._rotation_adjoint_from_pose(g)
         eta_body = J_body @ qd
@@ -2188,13 +2189,13 @@ class GVS(SoftRobot):
         Args:
             weight: Length-scaled quadrature weight, shape ``()``.
             J: Body-frame Jacobian at the quadrature node, shape
-                ``(6, self.num_dofs)``.
+                ``(6, self.num_internal_dofs)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
 
         Returns:
             B_ij: Inertia contribution ``weight * J.T @ M @ J``, shape
-            ``(self.num_dofs, self.num_dofs)``.
+            ``(self.num_internal_dofs, self.num_internal_dofs)``.
         """
         return weight * (J.T @ M @ J)
 
@@ -2207,17 +2208,17 @@ class GVS(SoftRobot):
         Args:
             weight: Length-scaled quadrature weight, shape ``()``.
             J: Body-frame Jacobian at the quadrature node, shape
-                ``(6, self.num_dofs)``.
+                ``(6, self.num_internal_dofs)``.
             Jd: Body-frame Jacobian time derivative at the quadrature node, shape
-                ``(6, self.num_dofs)``.
+                ``(6, self.num_internal_dofs)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
             qd: Active generalized velocities, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
 
         Returns:
             C_ij: Coriolis matrix contribution, shape
-            ``(self.num_dofs, self.num_dofs)``.
+            ``(self.num_internal_dofs, self.num_internal_dofs)``.
         """
         eta = J @ qd
         return weight * (J.T @ (M @ Jd + se3.coadjoint(eta) @ M @ J))
@@ -2235,17 +2236,17 @@ class GVS(SoftRobot):
         Args:
             weight: Length-scaled quadrature weight, shape ``()``.
             J: Body-frame Jacobian at the quadrature node, shape
-                ``(6, self.num_dofs)``.
+                ``(6, self.num_internal_dofs)``.
             Jd_qd: Contracted body-frame Jacobian time derivative at the
                 quadrature node, shape ``(6,)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
             qd: Active generalized velocities, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
 
         Returns:
             Cqd_ij: Convective force contribution, shape
-            ``(self.num_dofs,)``.
+            ``(self.num_internal_dofs,)``.
         """
         eta = J @ qd
         return weight * (J.T @ (M @ Jd_qd + se3.coadjoint(eta) @ M @ eta))
@@ -2258,13 +2259,13 @@ class GVS(SoftRobot):
             weight: Length-scaled quadrature weight, shape ``()``.
             g: Homogeneous SE(3) pose at the quadrature node, shape ``(4, 4)``.
             J: Body-frame Jacobian at the quadrature node, shape
-                ``(6, self.num_dofs)``.
+                ``(6, self.num_internal_dofs)``.
             M: Local spatial mass matrix at the quadrature node, shape
                 ``(6, 6)``.
 
         Returns:
             G_ij: Generalized gravity contribution, shape
-            ``(self.num_dofs,)``.
+            ``(self.num_internal_dofs,)``.
         """
         return -weight * J.T @ M @ se3.adjoint_inverse(g) @ self.g
 
@@ -2447,6 +2448,28 @@ class GVS(SoftRobot):
             Homogeneous transform with shape ``(4, 4)``.
         """
 
+        if self.floating_base:
+            if uses_warp_kinematics(
+                self,
+                backend,
+                GVS_KINEMATICS,
+                warp_supported=type(self) is GVS,
+            ):
+                return dispatch_kinematics(
+                    self,
+                    q,
+                    s,
+                    operation="pose",
+                    backend=backend,
+                    capabilities=GVS_KINEMATICS,
+                    warp_supported=True,
+                )
+            base_transform = self.base_transform_from_configuration(q)
+            _, q_internal = self.split_configuration(q)
+            relative_pose = self._fixed_evaluation_view().forward_kinematics(
+                q_internal, s, backend=backend
+            )
+            return base_transform @ relative_pose
         return dispatch_kinematics(
             self,
             q,
@@ -2477,6 +2500,30 @@ class GVS(SoftRobot):
             Homogeneous transforms with shape ``(N, 4, 4)``.
         """
 
+        if self.floating_base:
+            if uses_warp_kinematics(
+                self,
+                backend,
+                GVS_KINEMATICS,
+                warp_supported=type(self) is GVS,
+            ):
+                return dispatch_kinematics_abscissa_batched(
+                    self,
+                    q,
+                    s_ps,
+                    operation="pose",
+                    backend=backend,
+                    capabilities=GVS_KINEMATICS,
+                    warp_supported=True,
+                )
+            base_transform = self.base_transform_from_configuration(q)
+            _, q_internal = self.split_configuration(q)
+            relative_poses = (
+                self._fixed_evaluation_view().forward_kinematics_abscissa_batched(
+                    q_internal, s_ps, backend=backend
+                )
+            )
+            return jnp.einsum("ij,njk->nik", base_transform, relative_poses)
         return dispatch_kinematics_abscissa_batched(
             self,
             q,
@@ -2818,6 +2865,13 @@ class GVS(SoftRobot):
             g_tips (Array): forward kinematics at each link tip, shape
                 (num_segments, 4, 4).
         """
+        if self.floating_base:
+            base_transform = self.base_transform_from_configuration(q)
+            _, q_internal = self.split_configuration(q)
+            relative_tips = self._fixed_evaluation_view().forward_kinematics_tips(
+                q_internal
+            )
+            return jnp.einsum("ij,njk->nik", base_transform, relative_tips)
         q_gathered = self._min_size_gathered(q)
         return self._forward_kinematics_gauss(q_gathered)[:, -1]
 
@@ -3764,6 +3818,32 @@ class GVS(SoftRobot):
             Inertial Jacobian with shape ``(6, D)``.
         """
 
+        if self.floating_base:
+            if uses_warp_kinematics(
+                self,
+                backend,
+                GVS_KINEMATICS,
+                warp_supported=type(self) is GVS,
+            ):
+                return dispatch_kinematics(
+                    self,
+                    q,
+                    s,
+                    operation="jacobian",
+                    backend=backend,
+                    capabilities=GVS_KINEMATICS,
+                    warp_supported=True,
+                )
+            _, q_internal = self.split_configuration(q)
+            relative_pose, jacobian_internal = (
+                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe(
+                    q_internal, s, backend=backend
+                )
+            )
+            return self._floating_jacobians_from_relative_inertial(
+                q, relative_pose, jacobian_internal
+            )
+
         return dispatch_kinematics(
             self,
             q,
@@ -3793,6 +3873,32 @@ class GVS(SoftRobot):
         Returns:
             Inertial-frame Jacobians with shape ``(N, 6, D)``.
         """
+
+        if self.floating_base:
+            if uses_warp_kinematics(
+                self,
+                backend,
+                GVS_KINEMATICS,
+                warp_supported=type(self) is GVS,
+            ):
+                return dispatch_kinematics_abscissa_batched(
+                    self,
+                    q,
+                    s_ps,
+                    operation="jacobian",
+                    backend=backend,
+                    capabilities=GVS_KINEMATICS,
+                    warp_supported=True,
+                )
+            _, q_internal = self.split_configuration(q)
+            relative_poses, jacobians_internal = (
+                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+                    q_internal, s_ps, backend=backend
+                )
+            )
+            return self._floating_jacobians_from_relative_inertial(
+                q, relative_poses, jacobians_internal
+            )
 
         return dispatch_kinematics_abscissa_batched(
             self,
@@ -3825,6 +3931,36 @@ class GVS(SoftRobot):
             ``(6, D)``.
         """
 
+        if self.floating_base:
+            if uses_warp_kinematics(
+                self,
+                backend,
+                GVS_KINEMATICS,
+                warp_supported=type(self) is GVS,
+            ):
+                return dispatch_kinematics(
+                    self,
+                    q,
+                    s,
+                    operation="both",
+                    backend=backend,
+                    capabilities=GVS_KINEMATICS,
+                    warp_supported=True,
+                )
+            base_transform = self.base_transform_from_configuration(q)
+            _, q_internal = self.split_configuration(q)
+            relative_pose, jacobian_internal = (
+                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe(
+                    q_internal, s, backend=backend
+                )
+            )
+            return (
+                base_transform @ relative_pose,
+                self._floating_jacobians_from_relative_inertial(
+                    q, relative_pose, jacobian_internal
+                ),
+            )
+
         return dispatch_kinematics(
             self,
             q,
@@ -3855,6 +3991,36 @@ class GVS(SoftRobot):
             Poses with shape ``(N, 4, 4)`` and inertial Jacobians with shape
             ``(N, 6, D)``.
         """
+
+        if self.floating_base:
+            if uses_warp_kinematics(
+                self,
+                backend,
+                GVS_KINEMATICS,
+                warp_supported=type(self) is GVS,
+            ):
+                return dispatch_kinematics_abscissa_batched(
+                    self,
+                    q,
+                    s_ps,
+                    operation="both",
+                    backend=backend,
+                    capabilities=GVS_KINEMATICS,
+                    warp_supported=True,
+                )
+            base_transform = self.base_transform_from_configuration(q)
+            _, q_internal = self.split_configuration(q)
+            relative_poses, jacobians_internal = (
+                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+                    q_internal, s_ps, backend=backend
+                )
+            )
+            return (
+                jnp.einsum("ij,njk->nik", base_transform, relative_poses),
+                self._floating_jacobians_from_relative_inertial(
+                    q, relative_poses, jacobians_internal
+                ),
+            )
 
         return dispatch_kinematics_abscissa_batched(
             self,
@@ -3941,6 +4107,18 @@ class GVS(SoftRobot):
             J_tips (Array): inertial-frame Jacobians at each link tip, shape
                 (num_segments, 6, num_dofs).
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            fixed_view = self._fixed_evaluation_view()
+            q_gathered = fixed_view._min_size_gathered(q_internal)
+            relative_tips = fixed_view._forward_kinematics_gauss(q_gathered)[:, -1]
+            jacobians_internal = (
+                fixed_view._jacobian_gauss(q_gathered)[:, -1]
+                @ fixed_view.active_dof_map
+            )
+            return self._floating_inertial_jacobians(
+                q, relative_tips, jacobians_internal
+            )
         q_gathered = self._min_size_gathered(q)
         J_local_tips = self._jacobian_gauss(q_gathered)[:, -1] @ self.active_dof_map
         g_tips = self.forward_kinematics_tips(q)
@@ -3984,6 +4162,18 @@ class GVS(SoftRobot):
             J_global (Array): inertial-frame Jacobians with shape
                 ``(N, 6, num_active_strains)``.
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            fixed_view = self._fixed_evaluation_view()
+            relative_poses = fixed_view._forward_kinematics_abscissa_batched(
+                q_internal, s_ps
+            )
+            jacobians_internal = fixed_view.jacobian_bodyframe_abscissa_batched(
+                q_internal, s_ps
+            )
+            return self._floating_inertial_jacobians(
+                q, relative_poses, jacobians_internal
+            )
         return self._jacobian_inertialframe_abscissa_batched(q, s_ps)
 
     @eqx.filter_jit
@@ -4549,6 +4739,13 @@ class GVS(SoftRobot):
             Tuple[Array, Array]: inertial-frame Jacobians and time derivatives.
             Each array has shape ``(N, 6, num_active_strains)``.
         """
+        if self.floating_base:
+            qdot = self.configuration_derivative(q, qd)
+            return jax.jvp(
+                lambda q_value: self.jacobian_abscissa_batched(q_value, s_ps),
+                (q,),
+                (qdot,),
+            )
         return self.jacobian_and_time_derivative_inertialframe_abscissa_batched(
             q, qd, s_ps
         )
@@ -4563,7 +4760,7 @@ class GVS(SoftRobot):
 
         Returns:
             selector_blocks: Active selectors with shape
-            ``(self.num_segments, 2, self.max_dof, self.num_dofs)``.
+            ``(self.num_segments, 2, self.max_dof, self.num_internal_dofs)``.
             Axis 1 is ``0`` for joint coordinates and ``1`` for link coordinates.
         """
         return self.active_dof_map_blocks
@@ -4605,7 +4802,7 @@ class GVS(SoftRobot):
 
         Args:
             q: Active generalized coordinates, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
 
         Returns:
             Tuple ``(weights, g_quads, J_quads)``. ``weights`` contains
@@ -4614,7 +4811,7 @@ class GVS(SoftRobot):
             poses at those nodes with shape
             ``(self.num_segments, self.max_num_integration_points - 2, 4, 4)``. ``J_quads``
             contains active-coordinate body-frame Jacobians with shape
-            ``(self.num_segments, self.max_num_integration_points - 2, 6, self.num_dofs)``.
+            ``(self.num_segments, self.max_num_integration_points - 2, 6, self.num_internal_dofs)``.
         """
         q_gathered = self._min_size_gathered(q)
         selector_blocks = self._active_selector_blocks()
@@ -4681,7 +4878,7 @@ class GVS(SoftRobot):
                 J_link_nodes[: self.max_num_integration_points - 2],
             )
 
-        J_init = jnp.zeros((6, self.num_dofs), dtype=self.active_dof_map.dtype)
+        J_init = jnp.zeros((6, self.num_internal_dofs), dtype=self.active_dof_map.dtype)
         (_, _), (g_quads, J_quads) = lax.scan(
             body_segment_i, (self.g0, J_init), jnp.arange(self.num_segments)
         )
@@ -4699,8 +4896,8 @@ class GVS(SoftRobot):
         for active strain components only.
 
         Args:
-            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
-            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            q: Active generalized coordinates, shape ``(self.num_internal_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_internal_dofs,)``.
 
         Returns:
             Tuple ``(g_quads, J_quads, Jd_quads)``. ``g_quads`` contains SE(3)
@@ -4709,7 +4906,7 @@ class GVS(SoftRobot):
             ``J_quads`` contains body-frame Jacobians in active generalized
             coordinates with shape
             ``(self.num_segments, self.max_num_integration_points - 2, 6,
-            self.num_dofs)``.
+            self.num_internal_dofs)``.
             ``Jd_quads`` contains their time derivatives with the same shape as
             ``J_quads``.
         """
@@ -4733,9 +4930,9 @@ class GVS(SoftRobot):
 
         Args:
             q: Active generalized coordinates, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
             qd: Active generalized velocities, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
             convective_only_jd: If true, return ``Jd @ qd`` directly instead
                 of the complete Jacobian time derivative.
 
@@ -4745,7 +4942,7 @@ class GVS(SoftRobot):
             shape ``(self.num_segments, self.max_num_integration_points - 2, 4, 4)``;
             ``J_quads`` has shape
             ``(self.num_segments, self.max_num_integration_points - 2, 6,
-            self.num_dofs)``. ``Jd_quads`` has the same shape in the full path;
+            self.num_internal_dofs)``. ``Jd_quads`` has the same shape in the full path;
             in the convective path it instead has shape
             ``(self.num_segments, self.max_num_integration_points - 2, 6)``.
         """
@@ -4886,12 +5083,12 @@ class GVS(SoftRobot):
                 Jd_or_Jd_qd_link_nodes[: self.max_num_integration_points - 2],
             )
 
-        J_init = jnp.zeros((6, self.num_dofs), dtype=self.active_dof_map.dtype)
+        J_init = jnp.zeros((6, self.num_internal_dofs), dtype=self.active_dof_map.dtype)
         if convective_only_jd:
             Jd_or_Jd_qd_init = jnp.zeros((6,), dtype=self.active_dof_map.dtype)
         else:
             Jd_or_Jd_qd_init = jnp.zeros(
-                (6, self.num_dofs), dtype=self.active_dof_map.dtype
+                (6, self.num_internal_dofs), dtype=self.active_dof_map.dtype
             )
         eta_init = jnp.zeros((6,), dtype=self.active_dof_map.dtype)
         (_, _, _, _), (g_quads, J_quads, Jd_or_Jd_qd_quads) = lax.scan(
@@ -4957,9 +5154,15 @@ class GVS(SoftRobot):
             capabilities=GVS_DYNAMICS,
         )
 
-    @eqx.filter_jit
-    def _assemble_dynamics_terms(
-        self, q: Array, qd: Array
+    def _assemble_dynamics_terms_impl(
+        self,
+        q: Array,
+        qd: Array,
+        *,
+        base_jacobian: Array | None = None,
+        base_jacobian_dot_velocity: Array | None = None,
+        base_velocity: Array | None = None,
+        base_gravity: Array | None = None,
     ) -> tuple[Array, Array, Array]:
         """
         Assemble forward-dynamics terms with fixed-shape segment recurrences.
@@ -4981,18 +5184,21 @@ class GVS(SoftRobot):
 
         Args:
             q: Active generalized coordinates, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
             qd: Active generalized velocities, shape
-                ``(self.num_dofs,)``.
+                ``(self.num_internal_dofs,)``.
 
         Returns:
             Tuple ``(B, Cqd, G)``. ``B`` is the active inertia matrix with shape
-            ``(self.num_dofs, self.num_dofs)``. ``Cqd`` is the
-            active convective force vector with shape ``(self.num_dofs,)``.
+            ``(self.num_internal_dofs, self.num_internal_dofs)``. ``Cqd`` is the
+            active convective force vector with shape ``(self.num_internal_dofs,)``.
             ``G`` is the active generalized gravity vector with shape
-            ``(self.num_dofs,)``.
+            ``(self.num_internal_dofs,)``.
         """
         dtype = q.dtype
+        floating = base_jacobian is not None
+        base_width = self.num_base_velocities if floating else 0
+        num_velocities = self.num_internal_dofs + base_width
         q_blocks = self._min_size_gathered(q)
         qd_blocks = self._min_size_gathered(qd)
         segment_indices = jnp.arange(self.num_segments)
@@ -5067,13 +5273,32 @@ class GVS(SoftRobot):
         tip_cell_terms = jax.tree.map(lambda value: value[:, -1], cell_terms)
         mass_diagonals = jnp.diagonal(self.inner_mass_matrices, axis1=-2, axis2=-1)
 
-        jacobian_initial = jnp.zeros((6, self.num_dofs), dtype=dtype)
+        jacobian_initial = (
+            jnp.zeros((6, self.num_internal_dofs), dtype=dtype)
+            if base_jacobian is None
+            else base_jacobian
+        )
         spatial_vector_initial = jnp.zeros((6,), dtype=dtype)
-        gravity_initial = se3.adjoint_inverse(self.g0) @ self.g
-        inertia_initial = jnp.zeros((self.num_dofs, self.num_dofs), dtype=dtype)
-        generalized_vector_initial = jnp.zeros((self.num_dofs,), dtype=dtype)
+        jacobian_dot_velocity_initial = (
+            spatial_vector_initial
+            if base_jacobian_dot_velocity is None
+            else base_jacobian_dot_velocity
+        )
+        velocity_initial = (
+            spatial_vector_initial if base_velocity is None else base_velocity
+        )
+        gravity_initial = (
+            se3.adjoint_inverse(self.g0) @ self.g
+            if base_gravity is None
+            else base_gravity
+        )
+        inertia_initial = jnp.zeros((num_velocities, num_velocities), dtype=dtype)
+        generalized_vector_initial = jnp.zeros((num_velocities,), dtype=dtype)
         prefix_bucket_widths, segment_bucket_indices = _equal_count_prefix_buckets(
             self.active_dof_prefixes, self.num_dynamics_prefix_buckets
+        )
+        prefix_bucket_widths = tuple(
+            base_width + width for width in prefix_bucket_widths
         )
         segment_bucket_indices_array = jnp.asarray(segment_bucket_indices)
 
@@ -5105,7 +5330,7 @@ class GVS(SoftRobot):
                 gravity_prefix = -jacobians_flat.T @ (
                     weights[:, None] * gravity_wrenches
                 ).reshape(flattened_row_count)
-                vector_padding = (0, self.num_dofs - bucket_width)
+                vector_padding = (0, num_velocities - bucket_width)
                 matrix_padding = (vector_padding, vector_padding)
                 return (
                     jnp.pad(inertia_prefix, matrix_padding),
@@ -5122,8 +5347,12 @@ class GVS(SoftRobot):
         def insert_local_basis(
             local_basis: Array, segment_index: Array, block_index: int
         ) -> Array:
-            indices = jnp.minimum(
-                self.gather_indices[segment_index, block_index], self.num_dofs - 1
+            internal_indices = jnp.minimum(
+                self.gather_indices[segment_index, block_index],
+                self.num_internal_dofs - 1,
+            )
+            indices = (
+                base_width + internal_indices if floating else internal_indices
             )
             masked_basis = (
                 local_basis * self.gather_mask[segment_index, block_index][None, :]
@@ -5285,8 +5514,8 @@ class GVS(SoftRobot):
             body_segment,
             (
                 jacobian_initial,
-                spatial_vector_initial,
-                spatial_vector_initial,
+                jacobian_dot_velocity_initial,
+                velocity_initial,
                 gravity_initial,
                 inertia_initial,
                 generalized_vector_initial,
@@ -5300,6 +5529,45 @@ class GVS(SoftRobot):
             ),
         )
         return inertia, coriolis_qd, gravity_force
+
+    @eqx.filter_jit
+    def _assemble_dynamics_terms(
+        self, q: Array, qd: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble statically specialized fixed- or floating-base GVS dynamics.
+
+        Args:
+            q: Internal generalized coordinates with shape
+                ``(num_internal_dofs,)``.
+            qd: Internal generalized velocities with shape
+                ``(num_internal_dofs,)``.
+
+        Returns:
+            Tuple ``(M, Cv, G)`` in internal generalized coordinates.
+        """
+        if self.floating_base:
+            q = self.normalize_configuration(q)
+            _, q_internal = self.split_configuration(q)
+            _, qd_internal = self.split_velocity(qd)
+            (
+                base_jacobian,
+                base_jacobian_dot_velocity,
+                base_velocity,
+                base_gravity,
+            ) = self._floating_base_body_kinematics(q, qd)
+            base_jacobian = jnp.pad(
+                base_jacobian, ((0, 0), (0, self.num_internal_dofs))
+            )
+            return self._assemble_dynamics_terms_impl(
+                q_internal,
+                qd_internal,
+                base_jacobian=base_jacobian,
+                base_jacobian_dot_velocity=base_jacobian_dot_velocity,
+                base_velocity=base_velocity,
+                base_gravity=base_gravity,
+            )
+        return self._assemble_dynamics_terms_impl(q, qd)
 
     # ===========================================
     # Dynamical matrices computation
@@ -5391,6 +5659,9 @@ class GVS(SoftRobot):
         Returns:
             B (Array): Inertia matrix, shape (num_dofs, num_dofs)
         """
+        if self.floating_base:
+            zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
+            return self._assemble_dynamics_terms(q, zeros)[0]
         weights, _, J_quads = self._integration_pose_jacobians(q)
         Ms_inner = self._inner_mass_matrices()
 
@@ -5415,6 +5686,8 @@ class GVS(SoftRobot):
         Returns:
             C (Array): Coriolis matrix, shape (num_dofs, num_dofs)
         """
+        if self.floating_base:
+            return self._floating_coriolis_matrix(q, qd)
         weights, _, J_quads, Jd_quads = self._integration_kinematics(q, qd)
         Ms_inner = self._inner_mass_matrices()
 
@@ -5555,6 +5828,11 @@ class GVS(SoftRobot):
         Returns:
             K (Array): Stiffness matrix, shape (num_dofs, num_dofs)
         """
+        if self.floating_base:
+            return jnp.pad(
+                self.K,
+                ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+            )
         return self.K
 
     @eqx.filter_jit
@@ -5568,6 +5846,10 @@ class GVS(SoftRobot):
         Returns:
             tau_el (Array): Elastic force of shape (num_dofs,).
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self.K @ q_internal + self.passive_elastic_force(q_internal)
+            return jnp.pad(internal, (self.num_base_velocities, 0))
         return self.K @ q + self.passive_elastic_force(q)
 
     @eqx.filter_jit
@@ -5591,6 +5873,13 @@ class GVS(SoftRobot):
         Returns:
             D (Array): Damping matrix, shape (num_dofs, num_dofs)
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self.D_active + self.passive_damping_matrix(q_internal)
+            return jnp.pad(
+                internal,
+                ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+            )
         return self.D_active + self.passive_damping_matrix(q)
 
     def _elastic_energy(self, q: Array) -> Array:
@@ -5642,11 +5931,45 @@ class GVS(SoftRobot):
 
         return jnp.sum(vmap(U_G_i)(jnp.arange(self.num_segments)))
 
+    @eqx.filter_jit
+    def _floating_gravitational_energy(self, q: Array) -> Array:
+        """
+        Compute absolute floating-base gravitational potential energy.
+
+        This follows the position-only Gauss recurrence and contracts cached
+        scalar mass densities directly. No Jacobians or spatial inertia
+        matrices are assembled.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+
+        Returns:
+            Absolute gravitational potential energy as a scalar.
+        """
+        _, q_internal = self.split_configuration(q)
+        relative_poses = self._forward_kinematics_gauss(
+            self._min_size_gathered(q_internal)
+        )[:, 1 : self.max_num_integration_points - 1]
+        relative_positions = relative_poses[..., :3, 3]
+        weighted_masses = (
+            self.inner_integration_weights * self.inner_mass_diagonals[..., 3]
+        )
+        return self._floating_gravitational_energy_from_points(
+            q, relative_positions, weighted_masses
+        )
+
     def actuation_matrix(
         self, q: Array, *, backend: ExecutionBackend | None = None
     ) -> Array:
         """Return the actuator matrix through the selected execution backend."""
 
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self._fixed_evaluation_view().actuation_matrix(
+                q_internal, backend=backend
+            )
+            return jnp.pad(internal, ((self.num_base_velocities, 0), (0, 0)))
         return dispatch_actuation_matrix(
             self, q, backend=backend, capabilities=GVS_ACTUATION
         )
@@ -5661,6 +5984,15 @@ class GVS(SoftRobot):
     ) -> Array:
         """Return generalized actuator force through the selected backend."""
 
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            qd_internal = None
+            if qd is not None:
+                _, qd_internal = self.split_velocity(qd)
+            internal = self._fixed_evaluation_view().actuation_force(
+                q_internal, u, qd_internal, backend=backend
+            )
+            return jnp.pad(internal, (self.num_base_velocities, 0))
         return dispatch_actuation_force(
             self, q, u, qd, backend=backend, capabilities=GVS_ACTUATION
         )
@@ -5697,7 +6029,7 @@ class GVS(SoftRobot):
         params = routing.params
         count = params.num_paths
         if count == 0:
-            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+            return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         q_gathered = self._min_size_gathered(q)
 
         def segment_matrix(segment_index: Array) -> Array:
@@ -5830,7 +6162,7 @@ class GVS(SoftRobot):
             t: Current integration time. GVS dynamics are autonomous, so the
                 value is accepted for solver compatibility but is not otherwise
                 used.
-            y: State vector ``[q, qd]`` with shape ``(2 * self.num_dofs,)``.
+            y: State ``[q, v, auxiliary]`` with shape ``(state_size,)``.
             actuation_args: Optional tuple containing the actuation input ``u``
                 and, optionally, an external generalized force ``tau_ext``. A
                 one-element tuple is interpreted as ``(u,)`` and a two-element

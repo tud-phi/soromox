@@ -1,4 +1,7 @@
 __all__ = [
+    "mounting_pose",
+    "planar_mounting_pose",
+    "spatial_mounting_pose",
     "planar_pose_to_transform",
     "planar_pose_from_transform",
     "quaternion_pose_to_transform",
@@ -10,6 +13,77 @@ from jax import Array, lax
 from soromox.utils.lie_algebra import so2
 
 from .rotations import quaternion_to_rotation_matrix
+
+
+def planar_mounting_pose(
+    mounting: str = "upright", position: Array | None = None
+) -> Array:
+    """Return a named planar mounting pose in ``[theta, x, y]`` order.
+
+    Args:
+        mounting: ``"horizontal"``, ``"upright"``, or ``"hanging"``.
+        position: Optional finite translation with shape ``(2,)``.
+
+    Returns:
+        Planar pose with shape ``(3,)``.
+
+    Raises:
+        ValueError: If the mounting name or position is invalid.
+    """
+    angles = {"horizontal": 0.0, "upright": jnp.pi / 2, "hanging": -jnp.pi / 2}
+    if mounting not in angles:
+        raise ValueError("mounting must be 'horizontal', 'upright', or 'hanging'.")
+    p = jnp.zeros((2,)) if position is None else jnp.asarray(position)
+    if p.shape != (2,) or not bool(jnp.isfinite(p).all()):
+        raise ValueError("position must be a finite array with shape (2,).")
+    return jnp.concatenate([jnp.asarray([angles[mounting]], dtype=p.dtype), p])
+
+
+def spatial_mounting_pose(
+    mounting: str = "upright", position: Array | None = None
+) -> Array:
+    """Return a named scalar-first quaternion and position mounting pose.
+
+    Args:
+        mounting: ``"horizontal"``, ``"upright"``, or ``"hanging"``.
+        position: Optional finite translation with shape ``(3,)``.
+
+    Returns:
+        Spatial pose ``[qw, qx, qy, qz, x, y, z]`` with shape ``(7,)``.
+
+    Raises:
+        ValueError: If the mounting name or position is invalid.
+    """
+    sqrt_half = jnp.sqrt(jnp.asarray(0.5))
+    quaternions = {
+        "horizontal": jnp.asarray([1.0, 0.0, 0.0, 0.0]),
+        "upright": jnp.asarray([sqrt_half, 0.0, -sqrt_half, 0.0]),
+        "hanging": jnp.asarray([sqrt_half, 0.0, sqrt_half, 0.0]),
+    }
+    if mounting not in quaternions:
+        raise ValueError("mounting must be 'horizontal', 'upright', or 'hanging'.")
+    p = jnp.zeros((3,)) if position is None else jnp.asarray(position)
+    if p.shape != (3,) or not bool(jnp.isfinite(p).all()):
+        raise ValueError("position must be a finite array with shape (3,).")
+    return jnp.concatenate([quaternions[mounting].astype(p.dtype), p])
+
+
+def mounting_pose(
+    mounting: str = "upright", *, planar: bool, position: Array | None = None
+) -> Array:
+    """Return a named planar or spatial mounting pose.
+
+    Args:
+        mounting: ``"horizontal"``, ``"upright"``, or ``"hanging"``.
+        planar: Whether to return planar rather than spatial coordinates.
+        position: Optional translation with dimension selected by ``planar``.
+
+    Returns:
+        Planar pose with shape ``(3,)`` or spatial pose with shape ``(7,)``.
+    """
+    if planar:
+        return planar_mounting_pose(mounting, position)
+    return spatial_mounting_pose(mounting, position)
 
 
 def planar_pose_to_transform(pose: Array) -> Array:

@@ -13,6 +13,12 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Added optional floating-base configurations and dynamics across all system
+  families, with runtime planar or quaternion base poses, unequal configuration
+  and velocity dimensions, world-frame base velocities and wrenches, JAX
+  support for every model, and specialized Warp execution for `GVS`, `PCS`,
+  and `PlanarPCS`; see
+  [Floating-base systems](../user-guide/floating-base-systems.md).
 - Added fused Warp forward-kinematics and inertial-Jacobian execution for
   `GVS`, `PCS`, and `PlanarPCS`, including spatial, environment, and combined
   batches through the explicit `*_abscissa_batched` methods and `jax.vmap`.

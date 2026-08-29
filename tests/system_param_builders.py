@@ -37,13 +37,10 @@ def pcs_params(
     shear_modulus: Array,
     damping_matrix: Array,
     gravity: Array,
-    base_pose: Array | None = None,
     reference_strain: Array | None = None,
 ) -> PCSParams:
     length = jnp.asarray(length)
     num_segments = length.shape[0]
-    if base_pose is None:
-        base_pose = spatial_base_pose()
     if reference_strain is None:
         reference_strain = jnp.tile(
             jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0]), num_segments
@@ -78,7 +75,6 @@ def pcs_params(
         raise ValueError("PCS cross-link damping coupling is no longer supported.")
     return PCSParams(
         gravity=jnp.asarray(gravity),
-        base_pose=jnp.asarray(base_pose),
         link=ContinuumLinkParams(
             length=length,
             density=jnp.asarray(density),
@@ -99,15 +95,12 @@ def planar_pcs_params(
     shear_modulus: Array,
     damping_matrix: Array,
     gravity: Array,
-    base_pose: Array | None = None,
     reference_strain: Array | None = None,
 ) -> PlanarPCSParams:
     length = jnp.asarray(length)
     num_segments = length.shape[0]
     if reference_strain is None:
         reference_strain = jnp.tile(jnp.array([0.0, 1.0, 0.0]), num_segments)
-    if base_pose is None:
-        base_pose = planar_base_pose(jnp.pi / 2)
     radius = jnp.asarray(radius)
     young_modulus = jnp.asarray(young_modulus)
     shear_modulus = jnp.asarray(shear_modulus)
@@ -130,7 +123,6 @@ def planar_pcs_params(
         raise ValueError("PCS cross-link damping coupling is no longer supported.")
     return PlanarPCSParams(
         gravity=jnp.asarray(gravity),
-        base_pose=jnp.asarray(base_pose),
         link=ContinuumLinkParams(
             length=length,
             density=jnp.asarray(density),
@@ -153,7 +145,6 @@ def pendulum_params(
     joint_damping: Array | None = None,
     joint_rest_configuration: Array | None = None,
     radius: Array | None = None,
-    base_pose: Array | None = None,
 ) -> PendulumParams:
     mass = jnp.asarray(mass)
     n = mass.shape[0]
@@ -165,10 +156,7 @@ def pendulum_params(
         joint_rest_configuration = jnp.zeros((n,))
     if radius is None:
         radius = 0.05 * jnp.asarray(length)
-    if base_pose is None:
-        base_pose = planar_base_pose()
     return PendulumParams(
-        base_pose=jnp.asarray(base_pose),
         mass=mass,
         moment_inertia=jnp.asarray(moment_inertia),
         length=jnp.asarray(length),
@@ -194,7 +182,6 @@ def articulated_params(
     joint_damping: Array | None = None,
     joint_rest_configuration: Array | None = None,
     radius: Array | None = None,
-    base_pose: Array | None = None,
 ) -> ArticulatedSoftRobotParams:
     joint_screw = jnp.asarray(joint_screw)
     n = joint_screw.shape[0]
@@ -208,10 +195,7 @@ def articulated_params(
         joint_rest_configuration = jnp.zeros((n,))
     if radius is None:
         radius = 0.05 * jnp.linalg.norm(jnp.asarray(tip_position), axis=1)
-    if base_pose is None:
-        base_pose = spatial_base_pose()
     return ArticulatedSoftRobotParams(
-        base_pose=jnp.asarray(base_pose),
         joint_screw=joint_screw,
         parent_to_joint_transform=jnp.asarray(parent_to_joint_transform),
         tip_position=jnp.asarray(tip_position),
@@ -230,7 +214,6 @@ def gvs_params_from_segments(
     segments,
     *,
     gravity: Array,
-    base_pose: Array | None = None,
     max_dof: int | None = None,
     max_num_gauss_points: int | None = None,
     scale_rotational_basis_by_length: bool = False,
@@ -238,7 +221,6 @@ def gvs_params_from_segments(
     return GVS.params_from_segments(
         segments,
         gravity=gravity,
-        base_pose=base_pose,
         max_dof=max_dof,
         max_num_gauss_points=max_num_gauss_points,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
@@ -248,7 +230,6 @@ def gvs_params_from_segments(
 def planar_hsa_params_from_legacy(params: dict) -> PlanarHSAParams:
     hysteresis = params.get("hysteresis", {})
     return PlanarHSAParams(
-        base_pose=jnp.array([jnp.asarray(params["th0"]), 0.0, 0.0]),
         length=jnp.asarray(params["L"]),
         proximal_cap_length=jnp.asarray(params["lpc"]),
         distal_cap_length=jnp.asarray(params["ldc"]),

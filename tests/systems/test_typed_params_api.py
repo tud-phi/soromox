@@ -10,9 +10,7 @@ from system_param_builders import (
     articulated_params,
     pcs_params,
     pendulum_params,
-    planar_base_pose,
     planar_pcs_params,
-    spatial_base_pose,
 )
 
 from soromox.actuation import (
@@ -24,6 +22,7 @@ from soromox.systems import (
     PCSParams,
     Pendulum,
     PendulumParams,
+    PlanarPCS,
     PlanarPCSParams,
 )
 from soromox.systems.params import BaseSystemParams
@@ -154,7 +153,6 @@ def _planar_pcs_params(num_segments: int = 2):
         shear_modulus=1e5 * jnp.ones((num_segments,), dtype=jnp.float64),
         gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
         damping_matrix=jnp.eye(3 * num_segments, dtype=jnp.float64),
-        base_pose=planar_base_pose(),
     )
 
 
@@ -207,7 +205,7 @@ def _constructor_kwargs_without_environment(params):
     return {
         field.name: getattr(params, field.name)
         for field in fields(params)
-        if field.name not in {"base_pose", "gravity"}
+        if field.name != "gravity"
     }
 
 
@@ -223,40 +221,36 @@ def _articulated_params():
 
 
 @pytest.mark.parametrize(
-    ("params_type", "source", "expected_pose", "expected_gravity"),
+    ("params_type", "source", "expected_gravity"),
     [
         (
             PlanarPCSParams,
             _planar_pcs_params,
-            jnp.array([jnp.pi / 2, 0.0, 0.0]),
             jnp.array([0.0, -9.81]),
         ),
         (
             PendulumParams,
             _pendulum_params,
-            jnp.array([jnp.pi / 2, 0.0, 0.0]),
             jnp.array([0.0, -9.81]),
         ),
         (
             PCSParams,
             _pcs_params,
-            jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
             jnp.array([0.0, 0.0, -9.81]),
         ),
         (
             ArticulatedSoftRobotParams,
             _articulated_params,
-            jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
             jnp.array([0.0, 0.0, -9.81]),
         ),
     ],
 )
 def test_soft_robot_params_materialize_upright_environment_defaults(
-    params_type, source, expected_pose, expected_gravity
+    params_type, source, expected_gravity
 ):
     params = params_type(**_constructor_kwargs_without_environment(source()))
 
-    assert_allclose(params.base_pose, expected_pose)
+    assert not hasattr(params, "base_pose")
     assert_allclose(params.gravity, expected_gravity)
 
 
@@ -271,19 +265,15 @@ def test_soft_robot_params_materialize_upright_environment_defaults(
 def test_planar_mounting_constructors_map_local_x_to_world_direction(
     mounting, expected_direction
 ):
-    params = getattr(PlanarPCSParams, mounting)(
-        **_constructor_kwargs_without_environment(_planar_pcs_params()),
-        base_position=jnp.array([1.0, 2.0]),
-    )
-    transform = poses.planar_pose_to_transform(params.base_pose)
+    pose = poses.planar_mounting_pose(mounting, jnp.array([1.0, 2.0]))
+    transform = poses.planar_pose_to_transform(pose)
 
     assert_allclose(
         transform[:2, :2] @ jnp.array([1.0, 0.0]),
         expected_direction,
         atol=1e-12,
     )
-    assert_allclose(params.base_pose[1:], jnp.array([1.0, 2.0]))
-    assert_allclose(params.gravity, jnp.array([0.0, -9.81]))
+    assert_allclose(pose[1:], jnp.array([1.0, 2.0]))
 
 
 @pytest.mark.parametrize(
@@ -297,19 +287,15 @@ def test_planar_mounting_constructors_map_local_x_to_world_direction(
 def test_spatial_mounting_constructors_map_local_x_to_world_direction(
     mounting, expected_direction
 ):
-    params = getattr(PCSParams, mounting)(
-        **_constructor_kwargs_without_environment(_pcs_params()),
-        base_position=jnp.array([1.0, 2.0, 3.0]),
-    )
-    transform = poses.quaternion_pose_to_transform(params.base_pose)
+    pose = poses.spatial_mounting_pose(mounting, jnp.array([1.0, 2.0, 3.0]))
+    transform = poses.quaternion_pose_to_transform(pose)
 
     assert_allclose(
         transform[:3, :3] @ jnp.array([1.0, 0.0, 0.0]),
         expected_direction,
         atol=1e-12,
     )
-    assert_allclose(params.base_pose[4:], jnp.array([1.0, 2.0, 3.0]))
-    assert_allclose(params.gravity, jnp.array([0.0, 0.0, -9.81]))
+    assert_allclose(pose[4:], jnp.array([1.0, 2.0, 3.0]))
 
 
 def test_environment_defaults_can_be_overridden_and_restored():
@@ -317,28 +303,21 @@ def test_environment_defaults_can_be_overridden_and_restored():
     custom_gravity = jnp.array([1.0, -2.0])
     params = PlanarPCSParams(
         **_constructor_kwargs_without_environment(_planar_pcs_params()),
-        base_pose=custom_pose,
         gravity=custom_gravity,
     )
-    assert_allclose(params.base_pose, custom_pose)
+    assert not hasattr(params, "base_pose")
     assert_allclose(params.gravity, custom_gravity)
 
-    restored = params.replace(base_pose=None, gravity=None)
-    assert_allclose(restored.base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
+    restored = params.replace(gravity=None)
     assert_allclose(restored.gravity, jnp.array([0.0, -9.81]))
 
-    robot = Pendulum(params=_pendulum_params())
-    updated_robot = robot.update_params(base_pose=None, gravity=None)
-    assert_allclose(updated_robot.params.base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
+    robot = Pendulum(params=_pendulum_params(), base_pose=custom_pose)
+    updated_robot = robot.update_params(gravity=None)
+    assert_allclose(updated_robot.fixed_base_pose, custom_pose)
     assert_allclose(updated_robot.params.gravity, jnp.array([0.0, -9.81]))
 
-
-def test_named_mounting_rejects_competing_base_pose():
-    with pytest.raises(TypeError, match="does not accept base_pose"):
-        PlanarPCSParams.upright(
-            **_constructor_kwargs_without_environment(_planar_pcs_params()),
-            base_pose=jnp.zeros(3),
-        )
+    with pytest.raises(KeyError, match="base_pose"):
+        robot.update_params(base_pose=jnp.zeros(3))
 
 
 def test_params_are_pytrees_and_replace_is_immutable():
@@ -389,7 +368,7 @@ def test_canonical_link_damping_updates_without_material_duplication():
     assert not hasattr(updated.params, "damping_matrix")
 
 
-def test_planar_pcs_params_validate_base_pose_shape():
+def test_planar_robot_validates_fixed_base_pose_shape():
     params = planar_pcs_params(
         length=jnp.array([0.1], dtype=jnp.float64),
         radius=jnp.array([0.02], dtype=jnp.float64),
@@ -398,17 +377,17 @@ def test_planar_pcs_params_validate_base_pose_shape():
         shear_modulus=jnp.array([1e5], dtype=jnp.float64),
         damping_matrix=jnp.eye(3, dtype=jnp.float64),
         gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
-        base_pose=jnp.array([0.0], dtype=jnp.float64),
     )
 
     with pytest.raises(ValueError, match="base_pose"):
-        params.validate()
+        PlanarPCS(params=params, base_pose=jnp.array([0.0], dtype=jnp.float64))
 
 
 def test_spatial_params_validate_base_pose_quaternion_norm():
     with pytest.raises(ValueError, match="quaternion"):
-        _pcs_params().replace(
-            base_pose=jnp.array([0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0], dtype=jnp.float64)
+        PCS(
+            params=_pcs_params(),
+            base_pose=jnp.array([0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0], dtype=jnp.float64),
         )
 
 
@@ -421,10 +400,12 @@ def test_planar_params_validate_base_pose_finite_values():
         shear_modulus=jnp.array([1e5], dtype=jnp.float64),
         damping_matrix=jnp.eye(3, dtype=jnp.float64),
         gravity=jnp.array([0.0, -9.81], dtype=jnp.float64),
-        base_pose=jnp.array([jnp.nan, 1.0, 2.0], dtype=jnp.float64),
     )
     with pytest.raises(ValueError, match="finite"):
-        planar.validate()
+        PlanarPCS(
+            params=planar,
+            base_pose=jnp.array([jnp.nan, 1.0, 2.0], dtype=jnp.float64),
+        )
 
 
 def test_articulated_tendon_impedance_stores_per_tendon_mechanics():
@@ -451,11 +432,9 @@ def test_removed_plural_typed_param_names_fail():
             segment_lengths=jnp.array([0.1], dtype=jnp.float64),
             link=valid_pcs_params.link,
             gravity=valid_pcs_params.gravity,
-            base_pose=valid_pcs_params.base_pose,
         )
 
     pendulum_kwargs = {
-        "base_pose": planar_base_pose(),
         "mass": jnp.array([1.0], dtype=jnp.float64),
         "moment_inertia": jnp.array([0.1], dtype=jnp.float64),
         "gravity": jnp.array([0.0, -9.81], dtype=jnp.float64),
@@ -486,7 +465,6 @@ def test_removed_plural_typed_param_names_fail():
         )
 
     articulated_kwargs = {
-        "base_pose": spatial_base_pose(),
         "parent_to_joint_transform": jnp.eye(4, dtype=jnp.float64)[None, :, :],
         "tip_position": jnp.array([[0.5, 0.0, 0.0]], dtype=jnp.float64),
         "center_of_mass_position": jnp.array([[0.25, 0.0, 0.0]], dtype=jnp.float64),

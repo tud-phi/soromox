@@ -17,8 +17,6 @@ from soromox.systems.components import ContinuumLinkParams
 from soromox.systems.params import (
     BaseContinuumSoftRobotParams,
     BaseSoftRobotParams,
-    validate_planar_base_pose,
-    validate_quaternion_base_pose,
 )
 
 
@@ -60,12 +58,8 @@ class PCSParams(BaseContinuumSoftRobotParams):
     ``stiffness`` and ``damping`` fields are canonical generalized matrices with
     shape ``(num_links, 6, 6)``. Isotropic Young, shear, and material-damping
     values are separate construction or optimization variables and can be mapped
-    into these matrices explicitly.
-    ``base_pose`` is the scalar-first quaternion SE(3) base pose vector
-    ``[qw, qx, qy, qz, x, y, z]`` used to initialize the base transform. The
-    quaternion is normalized before use and must have nonzero finite norm.
-    Omitting ``base_pose`` and ``gravity`` selects upright spatial mounting and
-    negative-z Earth gravity.
+    into these matrices explicitly. Fixed mounting belongs to the constructed
+    model and floating pose belongs to runtime configuration state.
     """
 
     is_planar: ClassVar[bool] = False
@@ -80,16 +74,13 @@ class PCSParams(BaseContinuumSoftRobotParams):
 
         Raises:
             ValueError: If link fields, reference strain, canonical matrices,
-                cross-section coefficients, gravity, or base pose have invalid
-                shapes.
+                cross-section coefficients, or gravity have invalid shapes.
         """
         _validate_continuum_structure(self, strain_dim=6, gravity_dim=3)
-        _require_shape("base_pose", self.base_pose, (7,))
 
     def validate_values(self) -> None:
         """Validate eager spatial PCS parameter values."""
         self.link.validate_values()
-        validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
 
 
 class PlanarPCSParams(BaseContinuumSoftRobotParams):
@@ -97,14 +88,10 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
 
     The leading axis of fields in ``link`` indexes planar constant-strain
     segments. Its canonical generalized stiffness and damping matrices have
-    shape ``(num_links, 3, 3)``. ``base_pose`` stores the planar pose
-    ``[theta, x, y]`` with shape
-    ``(3,)``. ``theta`` is a right-handed angle in radians about the
-    out-of-plane z-axis, and ``x``/``y`` are direct translations in the parent
-    frame. Isotropic material parameters are mapped explicitly into canonical
-    link matrices rather than duplicated in this runtime parameter tree.
-    Omitting ``base_pose`` and ``gravity`` selects upright planar
-    mounting and negative-y Earth gravity.
+    shape ``(num_links, 3, 3)``. Isotropic material parameters are mapped
+    explicitly into canonical link matrices rather than duplicated in this
+    runtime parameter tree. Fixed mounting belongs to the constructed model and
+    floating pose belongs to runtime configuration state.
     """
 
     is_planar: ClassVar[bool] = True
@@ -119,16 +106,13 @@ class PlanarPCSParams(BaseContinuumSoftRobotParams):
 
         Raises:
             ValueError: If link fields, reference strain, canonical matrices,
-                cross-section coefficients, gravity, or base pose have invalid
-                shapes.
+                cross-section coefficients, or gravity have invalid shapes.
         """
         _validate_continuum_structure(self, strain_dim=3, gravity_dim=2)
-        _require_shape("base_pose", self.base_pose, (3,))
 
     def validate_values(self) -> None:
         """Validate eager planar PCS parameter values."""
         self.link.validate_values()
-        validate_planar_base_pose("base_pose", self.base_pose)
 
 
 class ISupportParams(PCSParams):
@@ -275,12 +259,9 @@ class PlanarHSAParams(BaseSoftRobotParams):
     Field names denote one segment/platform quantity; leading axes store the
     batched values. Arrays store length, rod geometry, reference strain
     components, platform/cap dimensions, end-effector offset, and optional
-    hysteresis coefficients used by the numerical HSA model. ``base_pose``
-    stores the planar pose ``[theta, x, y]`` with shape ``(3,)``. ``theta`` is
-    a right-handed angle in radians about the out-of-plane z-axis, and
-    ``x``/``y`` are direct translations in the parent frame. Omitting
-    ``base_pose`` and ``gravity`` selects upright mounting and negative-y Earth
-    gravity.
+    hysteresis coefficients used by the numerical HSA model. Fixed mounting
+    belongs to the constructed model and floating pose belongs to runtime
+    configuration state.
     """
 
     is_planar: ClassVar[bool] = True
@@ -417,7 +398,6 @@ class PlanarHSAParams(BaseSoftRobotParams):
                 raise ValueError(
                     f"{name} must have shape {expected_shape}, got {value.shape}."
                 )
-        _require_shape("base_pose", self.base_pose, (3,))
 
         hysteresis_basis = jnp.asarray(self.hysteresis_basis)
         if hysteresis_basis.size == 0:
@@ -448,4 +428,3 @@ class PlanarHSAParams(BaseSoftRobotParams):
 
     def validate_values(self) -> None:
         """Validate eager planar HSA parameter values."""
-        validate_planar_base_pose("base_pose", self.base_pose)

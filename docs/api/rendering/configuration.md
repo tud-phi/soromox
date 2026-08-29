@@ -50,10 +50,11 @@ also use the explicit camera distance.
 
 ## Robot Base and Ground Plane
 
-All renderers obtain the robot origin and orientation from the model's
-`base_pose` and `base_transform`. This keeps the rendered backbone, base, and
-reference geometry in the same world frame without a renderer-specific pose
-override.
+All renderers obtain the robot origin and orientation from
+`fixed_base_pose` for fixed robots and from the leading base coordinates in
+each floating runtime configuration. This keeps the rendered backbone, base,
+and reference geometry in the same world frame without a renderer-specific
+pose override.
 
 | Setting | Purpose | Availability |
 | --- | --- | --- |

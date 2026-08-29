@@ -40,6 +40,8 @@ from soromox.systems.execution.warp.gvs.actuation.operands import (
     GVSThreadlikeOperands,
 )
 from soromox.systems.execution.warp.gvs.operands import (
+    GVSFloatingKinematicsOperands,
+    GVSFloatingOperands,
     GVSKinematicsOperands,
     GVSOperands,
 )
@@ -47,6 +49,8 @@ from soromox.systems.execution.warp.pcs.actuation.operands import (
     PCSThreadlikeOperands,
 )
 from soromox.systems.execution.warp.pcs.operands import (
+    PCSFloatingKinematicsOperands,
+    PCSFloatingOperands,
     PCSKinematicsOperands,
     PCSOperands,
 )
@@ -356,7 +360,11 @@ def _execute_gvs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTer
 
     _validate_batch(q, qd, "GVS")
     block_dim = _gvs_model_block_dim(model)
-    operands = GVSOperands.from_model(model, block_dim=block_dim)
+    operands = (
+        GVSFloatingOperands.from_model(model, block_dim=block_dim)
+        if model.floating_base
+        else GVSOperands.from_model(model, block_dim=block_dim)
+    )
     return execute_dynamics_terms("gvs", operands, q, qd)
 
 
@@ -374,7 +382,12 @@ def _execute_pcs_batch(model: DynamicsModel, q: Array, qd: Array) -> DynamicsTer
     """
 
     _validate_batch(q, qd, "PCS")
-    return execute_dynamics_terms("pcs", PCSOperands.from_model(model), q, qd)
+    operands = (
+        PCSFloatingOperands.from_model(model)
+        if model.floating_base
+        else PCSOperands.from_model(model)
+    )
+    return execute_dynamics_terms("pcs", operands, q, qd)
 
 
 @eqx.filter_jit
@@ -388,11 +401,20 @@ def _execute_gvs_dynamics_actuation_batch(
 
     _validate_batch(q, qd, "GVS")
     _validate_actuation_batch(q, controls, "GVS")
-    dynamics = GVSOperands.from_model(
-        model,
-        block_dim=_gvs_model_block_dim(model),
+    floating = model.floating_base
+    dynamics = (
+        GVSFloatingOperands.from_model(
+            model,
+            block_dim=_gvs_model_block_dim(model),
+        )
+        if floating
+        else GVSOperands.from_model(
+            model,
+            block_dim=_gvs_model_block_dim(model),
+        )
     )
-    actuation = GVSThreadlikeOperands.from_model(model)
+    actuation_model = model._fixed_evaluation_view() if floating else model
+    actuation = GVSThreadlikeOperands.from_model(actuation_model)
     return execute_dynamics_and_threadlike_actuation_force(
         "gvs", dynamics, actuation, q, qd, controls
     )
@@ -409,10 +431,17 @@ def _execute_pcs_dynamics_actuation_batch(
 
     _validate_batch(q, qd, "PCS")
     _validate_actuation_batch(q, controls, "PCS")
+    floating = model.floating_base
+    dynamics = (
+        PCSFloatingOperands.from_model(model)
+        if floating
+        else PCSOperands.from_model(model)
+    )
+    actuation_model = model._fixed_evaluation_view() if floating else model
     return execute_dynamics_and_threadlike_actuation_force(
         "pcs",
-        PCSOperands.from_model(model),
-        PCSThreadlikeOperands.from_model(model),
+        dynamics,
+        PCSThreadlikeOperands.from_model(actuation_model),
         q,
         qd,
         controls,
@@ -511,9 +540,11 @@ def _execute_gvs_kinematics_batch(
     """
 
     _validate_kinematics_batch(q, s, "GVS")
-    operands = GVSKinematicsOperands.from_model(
-        model,
-        block_dim=_gvs_model_block_dim(model),
+    block_dim = _gvs_model_block_dim(model)
+    operands = (
+        GVSFloatingKinematicsOperands.from_model(model, block_dim=block_dim)
+        if model.floating_base
+        else GVSKinematicsOperands.from_model(model, block_dim=block_dim)
     )
     return execute_kinematics("gvs", operands, q, s, operation)
 
@@ -538,9 +569,12 @@ def _execute_pcs_kinematics_batch(
     """
 
     _validate_kinematics_batch(q, s, "PCS")
-    return execute_kinematics(
-        "pcs", PCSKinematicsOperands.from_model(model), q, s, operation
+    operands = (
+        PCSFloatingKinematicsOperands.from_model(model)
+        if model.floating_base
+        else PCSKinematicsOperands.from_model(model)
     )
+    return execute_kinematics("pcs", operands, q, s, operation)
 
 
 def _call_gvs_kinematics_batch(

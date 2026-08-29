@@ -142,7 +142,7 @@ class PotentialCompensationRegulator(PIDController):
             control_state_dot: None (this term is stateless).
         """
         t = system_state.t
-        asd = self.actuation_space_dynamics
+        asd, _, _ = self._controller_dynamics_and_state(system_state.y)
         n_a = asd.n_actuated
 
         # Get desired configuration from the configuration-space reference trajectory

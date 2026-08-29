@@ -9,7 +9,7 @@ __all__ = [
 ]
 
 from dataclasses import fields
-from typing import Any, ClassVar, Literal, final
+from typing import Any, ClassVar, final
 
 import equinox as eqx
 from jax import Array, core, ensure_compile_time_eval, tree_util
@@ -209,25 +209,16 @@ class BaseSystemParams(eqx.Module):
 class BaseSoftRobotParams(BaseSystemParams):
     """Common dynamic parameters for soft robot systems.
 
-    ``base_pose`` and ``gravity`` are optional keyword-only constructor inputs.
-    When omitted, the robot points upright and standard Earth gravity acts in
-    the negative vertical world direction. Planar robots use
-    ``base_pose = [theta, x, y]`` with 2D gravity, where ``theta`` is a
-    right-handed angle in radians about the out-of-plane z-axis. Spatial robots use
-    ``base_pose = [qw, qx, qy, qz, x, y, z]`` with 3D gravity. Spatial
-    quaternions are scalar-first Hamilton quaternions, normalized before
-    transform construction, and must have nonzero finite norm. Use
-    :meth:`horizontal`, :meth:`upright`, or :meth:`hanging` for explicit common
-    mounting configurations.
+    Physical parameter trees contain gravity but deliberately do not contain a
+    mounting or initial floating pose. Fixed mounting is model state and
+    floating pose is runtime configuration state.
     """
 
     is_planar: ClassVar[bool | None] = None
 
-    base_pose: Array | None = eqx.field(default=None, kw_only=True)
     gravity: Array | None = eqx.field(default=None, kw_only=True)
 
     def __check_init__(self) -> None:
-        object.__setattr__(self, "base_pose", self._resolve_base_pose(self.base_pose))
         object.__setattr__(self, "gravity", self._resolve_gravity(self.gravity))
 
     @classmethod
@@ -237,48 +228,10 @@ class BaseSoftRobotParams(BaseSystemParams):
         return cls.is_planar
 
     @classmethod
-    def _mounting_base_pose(
-        cls,
-        mounting: Literal["horizontal", "upright", "hanging"],
-        base_position: Array | None = None,
-    ) -> Array:
-        is_planar = cls._require_planarity()
-        position_dimension = 2 if is_planar else 3
-        if base_position is None:
-            position = jnp.zeros(position_dimension)
-        else:
-            position = _validate_finite_array(
-                "base_position", base_position, (position_dimension,)
-            )
-            position = jnp.asarray(position)
-
-        if is_planar:
-            angles = {
-                "horizontal": 0.0,
-                "upright": jnp.pi / 2,
-                "hanging": -jnp.pi / 2,
-            }
-            return jnp.concatenate([jnp.asarray([angles[mounting]]), position])
-
-        sqrt_half = jnp.sqrt(jnp.asarray(0.5))
-        quaternions = {
-            "horizontal": jnp.asarray([1.0, 0.0, 0.0, 0.0]),
-            "upright": jnp.asarray([sqrt_half, 0.0, -sqrt_half, 0.0]),
-            "hanging": jnp.asarray([sqrt_half, 0.0, sqrt_half, 0.0]),
-        }
-        return jnp.concatenate([quaternions[mounting], position])
-
-    @classmethod
     def _default_gravity(cls) -> Array:
         if cls._require_planarity():
             return jnp.asarray([0.0, -DEFAULT_GRAVITY_MAGNITUDE])
         return jnp.asarray([0.0, 0.0, -DEFAULT_GRAVITY_MAGNITUDE])
-
-    @classmethod
-    def _resolve_base_pose(cls, base_pose: Array | None) -> Array:
-        if base_pose is None:
-            return cls._mounting_base_pose("upright")
-        return jnp.asarray(base_pose)
 
     @classmethod
     def _resolve_gravity(cls, gravity: Array | None) -> Array:
@@ -286,94 +239,7 @@ class BaseSoftRobotParams(BaseSystemParams):
             return cls._default_gravity()
         return jnp.asarray(gravity)
 
-    @classmethod
-    def _from_mounting(
-        cls,
-        mounting: Literal["horizontal", "upright", "hanging"],
-        *,
-        base_position: Array | None = None,
-        **kwargs: Any,
-    ) -> "BaseSoftRobotParams":
-        if "base_pose" in kwargs:
-            raise TypeError(
-                f"{cls.__name__}.{mounting}() does not accept base_pose; "
-                "use base_position or the ordinary constructor instead."
-            )
-        return cls(base_pose=cls._mounting_base_pose(mounting, base_position), **kwargs)
-
-    @classmethod
-    def horizontal(
-        cls, *, base_position: Array | None = None, **kwargs: Any
-    ) -> "BaseSoftRobotParams":
-        """Construct parameters with the backbone pointing along world +x.
-
-        Args:
-            base_position: Optional base translation with shape ``(2,)`` for a
-                planar model or ``(3,)`` for a spatial model.
-            **kwargs: Remaining arguments forwarded to the concrete parameter
-                class constructor. ``base_pose`` is not accepted.
-
-        Returns:
-            A concrete parameter object in the horizontal mounting.
-
-        Raises:
-            TypeError: If the concrete class has not declared its planarity or
-                ``base_pose`` is supplied.
-            ValueError: If ``base_position`` has an invalid shape or value.
-        """
-        return cls._from_mounting("horizontal", base_position=base_position, **kwargs)
-
-    @classmethod
-    def upright(
-        cls, *, base_position: Array | None = None, **kwargs: Any
-    ) -> "BaseSoftRobotParams":
-        """Construct parameters pointing along world +y or +z.
-
-        Planar models point along world +y; spatial models point along world +z.
-
-        Args:
-            base_position: Optional base translation with shape ``(2,)`` for a
-                planar model or ``(3,)`` for a spatial model.
-            **kwargs: Remaining arguments forwarded to the concrete parameter
-                class constructor. ``base_pose`` is not accepted.
-
-        Returns:
-            A concrete parameter object in the upright mounting.
-
-        Raises:
-            TypeError: If the concrete class has not declared its planarity or
-                ``base_pose`` is supplied.
-            ValueError: If ``base_position`` has an invalid shape or value.
-        """
-        return cls._from_mounting("upright", base_position=base_position, **kwargs)
-
-    @classmethod
-    def hanging(
-        cls, *, base_position: Array | None = None, **kwargs: Any
-    ) -> "BaseSoftRobotParams":
-        """Construct parameters pointing along world -y or -z.
-
-        Planar models point along world -y; spatial models point along world -z.
-
-        Args:
-            base_position: Optional base translation with shape ``(2,)`` for a
-                planar model or ``(3,)`` for a spatial model.
-            **kwargs: Remaining arguments forwarded to the concrete parameter
-                class constructor. ``base_pose`` is not accepted.
-
-        Returns:
-            A concrete parameter object in the hanging mounting.
-
-        Raises:
-            TypeError: If the concrete class has not declared its planarity or
-                ``base_pose`` is supplied.
-            ValueError: If ``base_position`` has an invalid shape or value.
-        """
-        return cls._from_mounting("hanging", base_position=base_position, **kwargs)
-
     def _normalize_replacement(self, name: str, value: Any) -> Any:
-        if name == "base_pose":
-            return type(self)._resolve_base_pose(value)
         if name == "gravity":
             return type(self)._resolve_gravity(value)
         return value

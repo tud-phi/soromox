@@ -1080,11 +1080,25 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             elev = np.degrees(np.arctan2(view_vec[2], r_xy))
             ax.view_init(elev=elev, azim=azim)
         else:
-            ax.set_xlim(-width_m / 2, width_m / 2)
-            if center_origin:
-                ax.set_ylim(-width_m / 2, width_m / 2)
+            follows_runtime_base = bool(
+                getattr(self.robot, "floating_base", False)
+                and scene_center is not None
+            )
+            if follows_runtime_base:
+                center = np.asarray(scene_center, dtype=np.float64)
+                content_extent = (
+                    float(scene_extent) if scene_extent is not None else width_m
+                )
+                plot_extent = max(1.15 * self.L_max, 1.1 * content_extent)
+                half_extent = 0.5 * plot_extent
+                ax.set_xlim(center[0] - half_extent, center[0] + half_extent)
+                ax.set_ylim(center[1] - half_extent, center[1] + half_extent)
             else:
-                ax.set_ylim(0, width_m)
+                ax.set_xlim(-width_m / 2, width_m / 2)
+                if center_origin:
+                    ax.set_ylim(-width_m / 2, width_m / 2)
+                else:
+                    ax.set_ylim(0, width_m)
             ax.set_xlabel("X [m]")
             ax.set_ylabel("Y [m]")
             ax.set_aspect("equal")

@@ -126,19 +126,16 @@ class SynergisticController(PIDController):
         """
         y = system_state.y
 
-        # Extract configuration and velocity
-        q, _ = jnp.split(y, 2)
-
-        # Get operational space dynamics instance and quantities
-        osd = self.operational_space_dynamics
+        osd, q, _ = self._controller_dynamics_and_state(y)
+        robot = osd.robot
         J = osd.jacobian(q)
 
         # Compute PID output
         tau_pid, control_state_dot = self.error_based_feedback_term(system_state)
 
         # Compute configuration-space quantities
-        A = self.robot.actuation_matrix(q)
-        M_inv = jnp.linalg.inv(self.robot.inertia_matrix(q))
+        A = robot.actuation_matrix(q)
+        M_inv = jnp.linalg.inv(robot.inertia_matrix(q))
 
         # Dynamically-consisted synergistic projector
         P_AM = jnp.linalg.inv(J @ M_inv @ A) @ J @ M_inv

@@ -2,10 +2,13 @@ __all__ = [
     "SoftRobot",
 ]
 
+import copy
 from abc import abstractmethod
 from typing import Any, Self
 
 import equinox as eqx
+import jax
+import numpy as np
 from jax import Array, grad, jacfwd, jvp, lax, vmap
 from jax import numpy as jnp
 from jax.scipy.linalg import cho_solve
@@ -23,6 +26,8 @@ from soromox.systems.params import (
     validate_quaternion_base_pose,
 )
 from soromox.utils.geometry import poses
+from soromox.utils.geometry.rotations import quaternion_multiply
+from soromox.utils.lie_algebra import se2, se3, so3
 
 
 class SoftRobot(DynamicalSystem):
@@ -50,20 +55,12 @@ class SoftRobot(DynamicalSystem):
     :meth:`precompute` hook.
 
     Attributes:
-        num_dofs (int): Number of degrees of freedom (configuration variables).
+        num_dofs: Compatibility alias for the generalized-velocity dimension.
         num_actuators (int): Number of actuators.
         global_eps (float): Global epsilon for numerical computations.
-        base_pose (Array): Base frame pose coordinates for the robot. Planar
-            robots use shape ``(3,)`` with coordinates ``[theta, x, y]``,
-            where ``theta`` is a right-handed angle in radians about the
-            out-of-plane z-axis. Spatial robots use shape ``(7,)`` with
-            coordinates ``[qw, qx, qy, qz, x, y, z]``. Spatial quaternions are
-            scalar-first Hamilton quaternions, normalized before use, and
-            represent the base-frame orientation; translations are inserted
-            directly. Configured spatial quaternions must have nonzero finite
-            norm. When omitted, the base pose is upright: the backbone points
-            along world +y for planar robots and world +z for spatial robots.
-            In an explicit zero-rotation pose, the backbone is aligned with +x.
+        floating_base: Whether configuration and velocity contain runtime base
+            state.
+        fixed_base_pose: Fixed mounting pose, or ``None`` for floating models.
         num_gauss_points (int | Array | None): Requested nonzero
             Gauss-Legendre quadrature point count. May be scalar for systems
             with a uniform grid or an array for systems with per-segment grids.
@@ -78,7 +75,10 @@ class SoftRobot(DynamicalSystem):
 
     # global epsilon for numerical computations
     global_eps: float  # Global epsilon for numerical computations
-    base_pose: Array
+    floating_base: bool = eqx.field(static=True)
+    num_internal_dofs: int = eqx.field(static=True)
+    num_dofs: int = eqx.field(static=True)
+    fixed_base_pose: Array | None
     num_gauss_points: int | Array | None
     num_integration_points: int | Array | None
     integration_points: Array | None
@@ -99,6 +99,7 @@ class SoftRobot(DynamicalSystem):
         self,
         eps: float | None = None,
         base_pose: Array | None = None,
+        floating_base: bool = False,
         **kwargs: Any,
     ):
         """Initialize the SoftRobot.
@@ -113,25 +114,40 @@ class SoftRobot(DynamicalSystem):
                 normalized before use, and must have nonzero finite norm. If
                 omitted, the upright pose is used: the backbone points along
                 world +y for planar robots and world +z for spatial robots.
+            floating_base: Whether the base pose and velocity are runtime state.
+                Floating robots reject ``base_pose`` because their initial pose
+                must be supplied to :meth:`pack_configuration`.
             **kwargs: Additional keyword arguments (unused, kept for API compatibility).
         """
         # Note: We don't call super().__init__() here because Equinox modules
         # work like dataclasses - fields are set directly rather than through
         # parent __init__ calls. Child classes must set num_dofs and num_actuators.
-        if base_pose is None:
-            if self.is_planar:
-                base_pose = jnp.array([jnp.pi / 2, 0.0, 0.0], dtype=jnp.float64)
-            else:
-                sqrt_half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float64))
-                base_pose = jnp.array(
-                    [sqrt_half, 0.0, -sqrt_half, 0.0, 0.0, 0.0, 0.0],
-                    dtype=jnp.float64,
-                )
-        if self.is_planar:
-            validate_planar_base_pose("base_pose", base_pose)
+        if not isinstance(floating_base, bool):
+            raise TypeError("floating_base must be a bool.")
+        if floating_base and base_pose is not None:
+            raise ValueError(
+                "base_pose configures a fixed mounting and cannot be supplied "
+                "when floating_base=True; pass the initial pose to "
+                "pack_configuration instead."
+            )
+        self.floating_base = floating_base
+        if floating_base:
+            self.fixed_base_pose = None
         else:
-            validate_quaternion_base_pose("base_pose", base_pose, (7,))
-        self.base_pose = jnp.asarray(base_pose, dtype=jnp.float64)
+            resolved_pose = (
+                (
+                    poses.planar_mounting_pose("upright")
+                    if self.is_planar
+                    else poses.spatial_mounting_pose("upright")
+                )
+                if base_pose is None
+                else jnp.asarray(base_pose)
+            )
+            if self.is_planar:
+                validate_planar_base_pose("base_pose", resolved_pose)
+            else:
+                validate_quaternion_base_pose("base_pose", resolved_pose, (7,))
+            self.fixed_base_pose = jnp.asarray(resolved_pose, dtype=jnp.float64)
         self.num_gauss_points = None
         self.num_integration_points = None
         self.integration_points = None
@@ -142,6 +158,458 @@ class SoftRobot(DynamicalSystem):
             self.global_eps = eps
         else:
             self.global_eps = 1e1 * float(jnp.finfo(jnp.float64).eps)
+
+    @property
+    def num_base_coordinates(self) -> int:
+        """Return the configuration-storage dimension of the base.
+
+        Returns:
+            Zero for fixed robots, three for planar floating robots, and seven
+            for spatial floating robots.
+        """
+        return (3 if self.is_planar else 7) if self.floating_base else 0
+
+    @property
+    def num_base_velocities(self) -> int:
+        """Return the generalized-velocity dimension of the base.
+
+        Returns:
+            Zero for fixed robots, three for planar floating robots, and six
+            for spatial floating robots.
+        """
+        return (3 if self.is_planar else 6) if self.floating_base else 0
+
+    @property
+    def num_coordinates(self) -> int:
+        """Return the total configuration dimension.
+
+        Returns:
+            ``nq``, including runtime base coordinates when enabled.
+        """
+        return self.num_base_coordinates + self.num_internal_dofs
+
+    @property
+    def num_velocities(self) -> int:
+        """Return the total generalized-velocity dimension.
+
+        Returns:
+            ``nv``, including runtime base velocities when enabled.
+        """
+        return self.num_base_velocities + self.num_internal_dofs
+
+    @property
+    def num_auxiliary_states(self) -> int:
+        """Return the number of trailing first-order auxiliary states.
+
+        Returns:
+            The hysteresis-state dimension, or zero for systems without
+            auxiliary dynamics.
+        """
+        return int(getattr(self, "num_hysteresis", 0))
+
+    @property
+    def state_size(self) -> int:
+        """Return the flattened first-order state dimension.
+
+        Returns:
+            ``num_coordinates + num_velocities + num_auxiliary_states``.
+        """
+        return self.num_coordinates + self.num_velocities + self.num_auxiliary_states
+
+    @property
+    def _identity_base_pose(self) -> Array:
+        """Return the identity pose for mounting-independent recurrences.
+
+        Returns:
+            Planar ``[theta, x, y]`` or spatial scalar-first quaternion and
+            position coordinates.
+        """
+        if self.is_planar:
+            return jnp.zeros((3,), dtype=jnp.float64)
+        return jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+    @property
+    def _kinematic_base_pose(self) -> Array:
+        """Return the pose consumed by internal model recurrences.
+
+        Returns:
+            The fixed mounting for fixed robots and identity for floating
+            robots, whose runtime base is composed by an outer adapter.
+        """
+        if self.floating_base:
+            return self._identity_base_pose
+        assert self.fixed_base_pose is not None
+        return self.fixed_base_pose
+
+    def _check_trailing_dimension(self, name: str, value: Array, size: int) -> Array:
+        """Convert an input to an array and validate its trailing dimension.
+
+        Args:
+            name: User-facing input name for validation errors.
+            value: Scalar or batched input to validate.
+            size: Required trailing-axis size.
+
+        Returns:
+            The input converted to a JAX array.
+
+        Raises:
+            ValueError: If the input is scalar or has the wrong trailing size.
+        """
+        array = jnp.asarray(value)
+        if array.ndim == 0 or array.shape[-1] != size:
+            raise ValueError(
+                f"{name} must have trailing dimension {size}, got {array.shape}."
+            )
+        return array
+
+    @staticmethod
+    def _broadcast_leading(*arrays: Array) -> tuple[Array, ...]:
+        """Broadcast arrays over every axis except their trailing feature axis.
+
+        Args:
+            *arrays: Arrays whose leading shapes must be broadcast-compatible.
+
+        Returns:
+            Arrays with a common leading shape and unchanged trailing sizes.
+        """
+        leading = jnp.broadcast_shapes(*(array.shape[:-1] for array in arrays))
+        return tuple(
+            jnp.broadcast_to(array, (*leading, array.shape[-1])) for array in arrays
+        )
+
+    def pack_configuration(
+        self, q_internal: Array, *, base_pose: Array | None = None
+    ) -> Array:
+        """Pack internal coordinates and a runtime base pose.
+
+        Args:
+            q_internal: Internal coordinates with trailing dimension
+                ``num_internal_dofs``.
+            base_pose: Required runtime pose for floating robots. Fixed robots
+                reject this argument.
+
+        Returns:
+            Total configuration with trailing dimension ``num_coordinates``.
+
+        Raises:
+            ValueError: If a required base pose is missing, a fixed robot is
+                given a runtime pose, or a trailing dimension is invalid.
+        """
+        q_internal = self._check_trailing_dimension(
+            "q_internal", q_internal, self.num_internal_dofs
+        )
+        if not self.floating_base:
+            if base_pose is not None:
+                raise ValueError("base_pose is only valid for a floating-base robot.")
+            return q_internal
+        if base_pose is None:
+            raise ValueError("base_pose is required for a floating-base robot.")
+        base_pose = self._check_trailing_dimension(
+            "base_pose", base_pose, self.num_base_coordinates
+        )
+        base_pose, q_internal = self._broadcast_leading(base_pose, q_internal)
+        return self.normalize_configuration(
+            jnp.concatenate([base_pose, q_internal], -1)
+        )
+
+    def split_configuration(self, q: Array) -> tuple[Array | None, Array]:
+        """Split total configuration into base and internal coordinates.
+
+        Args:
+            q: Configuration with trailing dimension ``num_coordinates``.
+
+        Returns:
+            ``(q_base, q_internal)``. ``q_base`` is ``None`` for fixed robots.
+        """
+        q = self._check_trailing_dimension("q", q, self.num_coordinates)
+        if not self.floating_base:
+            return None, q
+        return q[..., : self.num_base_coordinates], q[..., self.num_base_coordinates :]
+
+    def pack_velocity(
+        self, qd_internal: Array, *, base_velocity: Array | None = None
+    ) -> Array:
+        """Pack internal and floating-base generalized velocities.
+
+        Args:
+            qd_internal: Internal generalized velocity with trailing dimension
+                ``num_internal_dofs``.
+            base_velocity: Optional world-frame base velocity. Omission uses
+                zero for floating robots; fixed robots reject this argument.
+
+        Returns:
+            Total generalized velocity with trailing dimension
+            ``num_velocities``.
+
+        Raises:
+            ValueError: If a fixed robot is given a base velocity or a trailing
+                dimension is invalid.
+        """
+        qd_internal = self._check_trailing_dimension(
+            "qd_internal", qd_internal, self.num_internal_dofs
+        )
+        if not self.floating_base:
+            if base_velocity is not None:
+                raise ValueError(
+                    "base_velocity is only valid for a floating-base robot."
+                )
+            return qd_internal
+        if base_velocity is None:
+            base_velocity = jnp.zeros(
+                (*qd_internal.shape[:-1], self.num_base_velocities),
+                dtype=qd_internal.dtype,
+            )
+        base_velocity = self._check_trailing_dimension(
+            "base_velocity", base_velocity, self.num_base_velocities
+        )
+        base_velocity, qd_internal = self._broadcast_leading(base_velocity, qd_internal)
+        return jnp.concatenate([base_velocity, qd_internal], -1)
+
+    def split_velocity(self, v: Array) -> tuple[Array | None, Array]:
+        """Split total velocity into base and internal components.
+
+        Args:
+            v: Generalized velocity with trailing dimension ``num_velocities``.
+
+        Returns:
+            ``(v_base, qd_internal)``. ``v_base`` is ``None`` for fixed robots.
+        """
+        v = self._check_trailing_dimension("v", v, self.num_velocities)
+        if not self.floating_base:
+            return None, v
+        return v[..., : self.num_base_velocities], v[..., self.num_base_velocities :]
+
+    def pack_state(
+        self, q: Array, v: Array, auxiliary_state: Array | None = None
+    ) -> Array:
+        """Pack configuration, velocity, and optional auxiliary state.
+
+        Args:
+            q: Configuration with trailing dimension ``num_coordinates``.
+            v: Velocity with trailing dimension ``num_velocities``.
+            auxiliary_state: Optional state with trailing dimension
+                ``num_auxiliary_states``. Omission uses zeros.
+
+        Returns:
+            State ``[q, v, auxiliary]`` with broadcast leading axes and trailing
+            dimension ``state_size``.
+        """
+        q = self._check_trailing_dimension("q", q, self.num_coordinates)
+        v = self._check_trailing_dimension("v", v, self.num_velocities)
+        if auxiliary_state is None:
+            auxiliary_state = jnp.zeros(
+                (*q.shape[:-1], self.num_auxiliary_states), dtype=q.dtype
+            )
+        auxiliary_state = self._check_trailing_dimension(
+            "auxiliary_state", auxiliary_state, self.num_auxiliary_states
+        )
+        q, v, auxiliary_state = self._broadcast_leading(q, v, auxiliary_state)
+        return jnp.concatenate([q, v, auxiliary_state], axis=-1)
+
+    def split_state(self, y: Array) -> tuple[Array, Array, Array]:
+        """Split a state with unequal configuration and velocity dimensions.
+
+        Args:
+            y: State with trailing dimension ``state_size``.
+
+        Returns:
+            ``(q, v, auxiliary_state)`` with preserved leading axes.
+        """
+        y = self._check_trailing_dimension("y", y, self.state_size)
+        q_end = self.num_coordinates
+        v_end = q_end + self.num_velocities
+        return y[..., :q_end], y[..., q_end:v_end], y[..., v_end:]
+
+    def normalize_configuration(self, q: Array) -> Array:
+        """Normalize a floating spatial quaternion without changing hemisphere.
+
+        Args:
+            q: Configuration with trailing dimension ``num_coordinates``.
+
+        Returns:
+            The unchanged input for fixed or planar robots, or a configuration
+            whose leading scalar-first quaternion has unit norm.
+
+        Raises:
+            ValueError: If a concrete spatial quaternion is zero or non-finite.
+        """
+        q = self._check_trailing_dimension("q", q, self.num_coordinates)
+        if not self.floating_base or self.is_planar:
+            return q
+        quaternion = q[..., :4]
+        norm_sq = jnp.sum(quaternion * quaternion, axis=-1, keepdims=True)
+        if not isinstance(norm_sq, jax.core.Tracer):
+            concrete_norm_sq = np.asarray(norm_sq)
+            if not np.all(np.isfinite(concrete_norm_sq)):
+                raise ValueError("The floating-base quaternion must be finite.")
+            if np.any(concrete_norm_sq == 0.0):
+                raise ValueError("The floating-base quaternion must have nonzero norm.")
+        regular = jnp.isfinite(norm_sq) & (norm_sq > 0.0)
+        safe_norm_sq = jnp.where(regular, norm_sq, jnp.ones_like(norm_sq))
+        normalized = quaternion / jnp.sqrt(safe_norm_sq)
+        identity = jnp.zeros_like(quaternion).at[..., 0].set(1.0)
+        normalized = jnp.where(regular, normalized, identity)
+        return jnp.concatenate([normalized, q[..., 4:]], axis=-1)
+
+    def _project_rollout_state(self, y: Array) -> Array:
+        """Normalize constrained configuration storage in rollout states.
+
+        Fixed and planar systems return the original state without additional
+        array operations. Spatial floating systems normalize the leading
+        scalar-first quaternion while preserving velocity and auxiliary state.
+
+        Args:
+            y: State with trailing dimension ``state_size``.
+
+        Returns:
+            State with a unit floating-base quaternion when applicable.
+        """
+        if not self.floating_base or self.is_planar:
+            return y
+        q, v, auxiliary_state = self.split_state(y)
+        return self.pack_state(self.normalize_configuration(q), v, auxiliary_state)
+
+    def configuration_derivative(self, q: Array, v: Array) -> Array:
+        """Map generalized velocity to the derivative of stored coordinates.
+
+        Args:
+            q: Configuration with trailing dimension ``num_coordinates``.
+            v: Velocity with trailing dimension ``num_velocities``.
+
+        Returns:
+            ``qdot`` with trailing dimension ``num_coordinates``. Spatial base
+            angular velocity is world-frame and left-multiplies the quaternion.
+        """
+        q = self._check_trailing_dimension("q", q, self.num_coordinates)
+        v = self._check_trailing_dimension("v", v, self.num_velocities)
+        q, v = self._broadcast_leading(q, v)
+        if not self.floating_base:
+            return v
+        v_base, qd_internal = self.split_velocity(v)
+        assert v_base is not None
+        if self.is_planar:
+            return jnp.concatenate([v_base, qd_internal], axis=-1)
+        omega_quaternion = jnp.concatenate(
+            [jnp.zeros_like(v_base[..., :1]), v_base[..., :3]], axis=-1
+        )
+        quaternion_dot = 0.5 * quaternion_multiply(omega_quaternion, q[..., :4])
+        return jnp.concatenate([quaternion_dot, v_base[..., 3:6], qd_internal], axis=-1)
+
+    def retract_configuration(self, q: Array, delta_v: Array) -> Array:
+        """Retract a velocity-space increment onto configuration space.
+
+        Args:
+            q: Configuration with trailing dimension ``num_coordinates``.
+            delta_v: Tangent increment with trailing dimension
+                ``num_velocities``.
+
+        Returns:
+            Updated configuration. Spatial rotation increments left-multiply
+            the scalar-first quaternion and the result is normalized.
+        """
+        q = self._check_trailing_dimension("q", q, self.num_coordinates)
+        delta_v = self._check_trailing_dimension(
+            "delta_v", delta_v, self.num_velocities
+        )
+        q, delta_v = self._broadcast_leading(q, delta_v)
+        if not self.floating_base:
+            return q + delta_v
+        delta_base, delta_internal = self.split_velocity(delta_v)
+        assert delta_base is not None
+        if self.is_planar:
+            return q + jnp.concatenate([delta_base, delta_internal], axis=-1)
+        rotation = delta_base[..., :3]
+        angle = jnp.linalg.norm(rotation, axis=-1, keepdims=True)
+        half = 0.5 * angle
+        safe_angle = jnp.where(angle > 0.0, angle, jnp.ones_like(angle))
+        scale = jnp.where(
+            angle > 1e-8,
+            jnp.sin(half) / safe_angle,
+            0.5 - angle * angle / 48.0,
+        )
+        increment = jnp.concatenate([jnp.cos(half), scale * rotation], axis=-1)
+        quaternion = quaternion_multiply(increment, q[..., :4])
+        result = jnp.concatenate(
+            [
+                quaternion,
+                q[..., 4:7] + delta_base[..., 3:6],
+                q[..., 7:] + delta_internal,
+            ],
+            axis=-1,
+        )
+        return self.normalize_configuration(result)
+
+    def base_transform_from_configuration(self, q: Array) -> Array:
+        """Convert the runtime or fixed base pose to homogeneous transforms.
+
+        Args:
+            q: Total configuration for floating robots or internal
+                configuration for fixed robots.
+
+        Returns:
+            A planar ``(..., 3, 3)`` or spatial ``(..., 4, 4)`` transform.
+        """
+        if self.floating_base:
+            base_pose, _ = self.split_configuration(q)
+            assert base_pose is not None
+        else:
+            self._check_trailing_dimension("q", q, self.num_coordinates)
+            assert self.fixed_base_pose is not None
+            base_pose = self.fixed_base_pose
+        converter = (
+            poses.planar_pose_to_transform
+            if self.is_planar
+            else poses.quaternion_pose_to_transform
+        )
+        if base_pose.ndim == 1:
+            return converter(base_pose)
+        flat = base_pose.reshape((-1, base_pose.shape[-1]))
+        transforms = vmap(converter)(flat)
+        return transforms.reshape((*base_pose.shape[:-1], *transforms.shape[-2:]))
+
+    def with_fixed_base_pose(self, pose: Array) -> Self:
+        """Return a fixed robot with a different mounting pose.
+
+        Args:
+            pose: Planar pose with shape ``(3,)`` or spatial scalar-first
+                quaternion pose with shape ``(7,)``.
+
+        Returns:
+            A functionally updated robot with mounting-dependent caches refreshed.
+
+        Raises:
+            ValueError: If the robot is floating or the pose is invalid.
+        """
+        if self.floating_base:
+            raise ValueError("A floating-base robot has no fixed base pose.")
+        pose = jnp.asarray(pose, dtype=jnp.float64)
+        expected_shape = (3,) if self.is_planar else (7,)
+        if pose.shape != expected_shape:
+            raise ValueError(
+                f"pose must have shape {expected_shape}, got {pose.shape}."
+            )
+        if not isinstance(pose, jax.core.Tracer):
+            if self.is_planar:
+                validate_planar_base_pose("pose", pose)
+            else:
+                validate_quaternion_base_pose("pose", pose, (7,))
+        updated = eqx.tree_at(lambda robot: robot.fixed_base_pose, self, pose)
+        transform = (
+            poses.planar_pose_to_transform(pose)
+            if self.is_planar
+            else poses.quaternion_pose_to_transform(pose)
+        )
+        if hasattr(updated, "g0"):
+            updated = eqx.tree_at(lambda robot: robot.g0, updated, transform)
+        if hasattr(updated, "gravity_base") and updated.gravity_base is not None:
+            adjoint_inverse = (
+                se2.adjoint_inverse if self.is_planar else se3.adjoint_inverse
+            )
+            gravity_base = adjoint_inverse(transform) @ updated.g
+            updated = eqx.tree_at(
+                lambda robot: robot.gravity_base, updated, gravity_base
+            )
+        return updated
 
     def precompute(self) -> None:
         """Optionally initialize state-independent cached quantities.
@@ -155,14 +623,72 @@ class SoftRobot(DynamicalSystem):
         """
         return None
 
+    def _fixed_evaluation_view(self, base_pose: Array | None = None) -> Self:
+        """Return a fixed evaluation view without rebuilding model parameters.
+
+        Args:
+            base_pose: Mounting for the returned view. Floating robots use
+                identity when omitted. Fixed robots return themselves when it
+                is omitted.
+
+        Returns:
+            A shallow fixed-base model view with internal dimensions and
+            mounting-dependent transforms refreshed.
+        """
+        if not self.floating_base:
+            if base_pose is None:
+                return self
+            return self.with_fixed_base_pose(base_pose)
+        pose = self._identity_base_pose if base_pose is None else jnp.asarray(base_pose)
+        view = copy.copy(self)
+        object.__setattr__(view, "floating_base", False)
+        object.__setattr__(view, "fixed_base_pose", pose)
+        object.__setattr__(view, "num_dofs", self.num_internal_dofs)
+        transform = (
+            poses.planar_pose_to_transform(pose)
+            if self.is_planar
+            else poses.quaternion_pose_to_transform(pose)
+        )
+        if hasattr(view, "g0"):
+            object.__setattr__(view, "g0", transform)
+        if hasattr(view, "gravity_base") and view.gravity_base is not None:
+            adjoint_inverse = (
+                se2.adjoint_inverse if self.is_planar else se3.adjoint_inverse
+            )
+            object.__setattr__(
+                view, "gravity_base", adjoint_inverse(transform) @ view.g
+            )
+        return view
+
+    def controller_model_and_state(self, y: Array) -> tuple[Self, Array, Array]:
+        """Return the fixed model view and internal state used by controllers.
+
+        Model-based floating controllers account for the current base pose in
+        kinematics and gravity. They intentionally ignore base velocity,
+        acceleration, reaction motion, and floating/internal dynamic coupling.
+
+        Args:
+            y: Complete state with trailing dimension ``state_size``.
+
+        Returns:
+            ``(model, q_internal, qd_internal)``. For floating robots ``model``
+            is mounted at the runtime pose; for fixed robots it is ``self``.
+        """
+        q, v, _ = self.split_state(y)
+        base_pose, q_internal = self.split_configuration(q)
+        _, qd_internal = self.split_velocity(v)
+        return self._fixed_evaluation_view(base_pose), q_internal, qd_internal
+
     def _configure_actuation(
         self,
         actuators: Actuator | tuple[Actuator, ...] | None,
         passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
     ) -> None:
         """Install immutable actuator/passive components after DOFs are known."""
+        if not hasattr(self, "num_internal_dofs"):
+            object.__setattr__(self, "num_internal_dofs", self.num_dofs)
         if actuators is None:
-            normalized_actuators = (IdentityActuator(self.num_dofs),)
+            normalized_actuators = (IdentityActuator(self.num_internal_dofs),)
         elif isinstance(actuators, Actuator):
             normalized_actuators = (actuators,)
         else:
@@ -253,16 +779,17 @@ class SoftRobot(DynamicalSystem):
 
     @property
     def base_transform(self) -> Array:
-        """Return the homogeneous transform represented by ``base_pose``.
+        """Return the homogeneous transform of the fixed/internal base pose.
 
         Planar robots consume ``[theta, x, y]`` and return an SE(2) matrix with
         shape ``(3, 3)``. Spatial robots consume
         ``[qw, qx, qy, qz, x, y, z]`` and return an SE(3) matrix with shape
         ``(4, 4)``. Spatial quaternions are scalar-first Hamilton quaternions.
         """
+        pose = self._kinematic_base_pose
         if self.is_planar:
-            return poses.planar_pose_to_transform(jnp.asarray(self.base_pose))
-        return poses.quaternion_pose_to_transform(jnp.asarray(self.base_pose))
+            return poses.planar_pose_to_transform(jnp.asarray(pose))
+        return poses.quaternion_pose_to_transform(jnp.asarray(pose))
 
     @abstractmethod
     def cross_section_geometry(self, q: Array, s: Array) -> tuple[Array, Array]:
@@ -299,9 +826,130 @@ class SoftRobot(DynamicalSystem):
                 - For 3D robots (PCS): SE(3) transformation matrix, shape (4, 4)
                 - For planar robots (PlanarPCS, Pendulum): [theta, x, y], shape (3,)
         """
+        if self.floating_base:
+            return self._floating_forward_kinematics(q, s)
         if custom_jvp_enabled():
             return SoftRobot._forward_kinematics_custom_jvp(self, q, s)
         return self._forward_kinematics(q, s)
+
+    def _floating_forward_kinematics(self, q: Array, s: Array) -> Array:
+        """Compose relative model kinematics with the runtime base pose.
+
+        Args:
+            q: Total floating configuration with shape ``(num_coordinates,)``.
+            s: Scalar evaluation abscissa.
+
+        Returns:
+            Absolute planar pose or spatial homogeneous transform at ``s``.
+        """
+        base_pose, q_internal = self.split_configuration(q)
+        assert base_pose is not None
+        relative_pose = self._forward_kinematics(q_internal, s)
+        base_transform = self.base_transform_from_configuration(q)
+        if self.is_planar:
+            relative_transform = self._homogeneous_pose(relative_pose)
+            return poses.planar_pose_from_transform(
+                base_transform @ relative_transform, self.global_eps
+            )
+        return base_transform @ relative_pose
+
+    def _reference_forward_kinematics(self, q: Array, s: Array) -> Array:
+        """Evaluate one pose through the differentiable JAX implementation.
+
+        Args:
+            q: Fixed internal or floating total configuration.
+            s: Scalar evaluation abscissa.
+
+        Returns:
+            The absolute model pose at ``s``.
+        """
+        if self.floating_base:
+            return self._floating_forward_kinematics(q, s)
+        return self._forward_kinematics(q, s)
+
+    def _reference_inertial_jacobian(self, q: Array, s: Array) -> Array:
+        """Evaluate one inertial Jacobian through differentiable JAX code.
+
+        Args:
+            q: Fixed internal or floating total configuration.
+            s: Scalar evaluation abscissa.
+
+        Returns:
+            The fixed or augmented inertial-frame Jacobian at ``s``.
+        """
+        if not self.floating_base:
+            return self._jacobian_inertialframe(q, s)
+        _, q_internal = self.split_configuration(q)
+        relative_pose = self._forward_kinematics(q_internal, s)
+        relative_transform = self._homogeneous_pose(relative_pose)
+        jacobian_internal = self._jacobian_inertialframe(q_internal, s)
+        return self._floating_jacobians_from_relative_inertial(
+            q, relative_transform, jacobian_internal
+        )
+
+    def _reference_forward_kinematics_abscissa_batched(
+        self, q: Array, s: Array
+    ) -> Array:
+        """Evaluate a pose batch through the differentiable JAX traversal.
+
+        Args:
+            q: Fixed internal or floating total configuration.
+            s: One-dimensional batch of evaluation abscissae.
+
+        Returns:
+            Absolute poses with a leading abscissa axis.
+        """
+        if not self.floating_base:
+            return self._forward_kinematics_abscissa_batched(q, s)
+        _, q_internal = self.split_configuration(q)
+        relative_poses = self._forward_kinematics_abscissa_batched(q_internal, s)
+        return self._compose_runtime_base_poses(q, relative_poses)
+
+    def _reference_inertial_jacobian_abscissa_batched(
+        self, q: Array, s: Array
+    ) -> Array:
+        """Evaluate an inertial-Jacobian batch through JAX.
+
+        Args:
+            q: Fixed internal or floating total configuration.
+            s: One-dimensional batch of evaluation abscissae.
+
+        Returns:
+            Fixed or augmented Jacobians with a leading abscissa axis.
+        """
+        if not self.floating_base:
+            return self._jacobian_inertialframe_abscissa_batched(q, s)
+        _, q_internal = self.split_configuration(q)
+        relative_poses = self._forward_kinematics_abscissa_batched(q_internal, s)
+        relative_transforms = vmap(self._homogeneous_pose)(relative_poses)
+        jacobians_internal = self._jacobian_inertialframe_abscissa_batched(
+            q_internal, s
+        )
+        return self._floating_jacobians_from_relative_inertial(
+            q, relative_transforms, jacobians_internal
+        )
+
+    def _compose_runtime_base_poses(self, q: Array, relative_poses: Array) -> Array:
+        """Left-compose the runtime base with batched relative poses.
+
+        Args:
+            q: Total floating configuration with shape ``(num_coordinates,)``.
+            relative_poses: Relative planar poses or spatial transforms with one
+                leading sample axis.
+
+        Returns:
+            Absolute poses with the same sample axis and pose representation.
+        """
+        base_transform = self.base_transform_from_configuration(q)
+        if self.is_planar:
+            relative_transforms = vmap(poses.planar_pose_to_transform)(relative_poses)
+            absolute = jnp.einsum("ab,nbc->nac", base_transform, relative_transforms)
+            return vmap(
+                lambda transform: poses.planar_pose_from_transform(
+                    transform, self.global_eps
+                )
+            )(absolute)
+        return jnp.einsum("ab,nbc->nac", base_transform, relative_poses)
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
         """
@@ -345,18 +993,22 @@ class SoftRobot(DynamicalSystem):
         and did not show enough benchmark benefit to justify the maintenance
         cost.
         """
+        forward_kinematics = self._reference_forward_kinematics
         if qd is not None:
             if sd is None:
-                return jvp(lambda q_: self._forward_kinematics(q_, s), (q,), (qd,))
+                return jvp(lambda q_: forward_kinematics(q_, s), (q,), (qd,))
             return jvp(
-                lambda q_, s_: self._forward_kinematics(q_, s_),
+                lambda q_, s_: forward_kinematics(q_, s_),
                 (q, s),
                 (qd, sd),
             )
 
         if sd is None:
-            pose = self._forward_kinematics(q, s)
+            pose = forward_kinematics(q, s)
             return pose, jnp.zeros_like(pose)
+
+        if self.floating_base:
+            return jvp(lambda s_: forward_kinematics(q, s_), (s,), (sd,))
 
         pose, poses = self.forward_kinematics_and_arc_length_derivative(q, s)
         return pose, poses * sd
@@ -453,9 +1105,55 @@ class SoftRobot(DynamicalSystem):
                 - For 3D robots (PCS): 6 (angular velocity + linear velocity)
                 - For planar robots (PlanarPCS, Pendulum): 3 (omega_z, v_x, v_y)
         """
+        if self.floating_base:
+            return self._floating_jacobian(q, s)
         if custom_jvp_enabled():
             return SoftRobot._jacobian_custom_jvp(self, q, s)
         return self._jacobian(q, s)
+
+    def _floating_jacobian(self, q: Array, s: Array) -> Array:
+        """Assemble a world-frame Jacobian for total velocity.
+
+        Args:
+            q: Total floating configuration with shape ``(num_coordinates,)``.
+            s: Scalar evaluation abscissa.
+
+        Returns:
+            Jacobian with shape ``(spatial_dimension, num_velocities)`` and
+            world-frame angular-first velocity convention.
+        """
+        base_pose, q_internal = self.split_configuration(q)
+        assert base_pose is not None
+        relative_pose = self._forward_kinematics(q_internal, s)
+        J_internal_relative = self._jacobian(q_internal, s)
+        base_transform = self.base_transform_from_configuration(q)
+        if self.is_planar:
+            relative_transform = self._homogeneous_pose(relative_pose)
+            world_transform = base_transform @ relative_transform
+            R_base = base_transform[:2, :2]
+            J_internal = jnp.concatenate(
+                [J_internal_relative[:1], R_base @ J_internal_relative[1:]], axis=0
+            )
+            r = world_transform[:2, 2] - base_pose[1:3]
+            J_base = jnp.array(
+                [[1.0, 0.0, 0.0], [-r[1], 1.0, 0.0], [r[0], 0.0, 1.0]],
+                dtype=q.dtype,
+            )
+        else:
+            world_transform = base_transform @ relative_pose
+            R_base = base_transform[:3, :3]
+            J_internal = jnp.concatenate(
+                [R_base @ J_internal_relative[:3], R_base @ J_internal_relative[3:]],
+                axis=0,
+            )
+            r = world_transform[:3, 3] - base_pose[4:7]
+            J_base = jnp.block(
+                [
+                    [jnp.eye(3, dtype=q.dtype), jnp.zeros((3, 3), dtype=q.dtype)],
+                    [-so3.skew(r), jnp.eye(3, dtype=q.dtype)],
+                ]
+            )
+        return jnp.concatenate([J_base, J_internal], axis=1)
 
     def _jacobian(self, q: Array, s: Array) -> Array:
         """
@@ -605,6 +1303,9 @@ class SoftRobot(DynamicalSystem):
             J: Jacobian matrix of shape (n_pose_dim, num_dofs).
             Jd: Time derivative of the Jacobian, shape (n_pose_dim, num_dofs).
         """
+        if self.floating_base:
+            qdot = self.configuration_derivative(q, qd)
+            return jvp(lambda q_: self._floating_jacobian(q_, s), (q,), (qdot,))
         return self._jacobian_and_time_derivative(q, qd, s)
 
     def _jacobian_and_time_derivative(
@@ -734,6 +1435,449 @@ class SoftRobot(DynamicalSystem):
         J_ps = J_flat.reshape(*leading_shape, *J_flat.shape[1:])
         Jd_ps = Jd_flat.reshape(*leading_shape, *Jd_flat.shape[1:])
         return g_ps, J_ps, Jd_ps
+
+    def _floating_base_body_kinematics(
+        self, q: Array, v: Array
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Initialize a floating-base body-frame recurrence.
+
+        The returned Jacobian maps the world-frame velocity at the base origin
+        into the base frame. The convective vector is the exact contraction of
+        its configuration derivative with the current base velocity. Concrete
+        systems propagate these four values through their existing local
+        recurrences and accumulate inertial terms immediately.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            v: Total floating-base generalized velocity with shape
+                ``(num_velocities,)``.
+
+        Returns:
+            Tuple ``(J_base, Jd_v_base, velocity_base, gravity_base)`` expressed
+            in the runtime base frame.
+        """
+        base_velocity, _ = self.split_velocity(v)
+        assert base_velocity is not None
+        transform = self.base_transform_from_configuration(q)
+        jacobian = self._floating_base_body_jacobian(q)
+        if self.is_planar:
+            rotation_transpose = transform[:2, :2].T
+            velocity = jacobian @ base_velocity
+            rotation_generator = jnp.array([[0.0, -1.0], [1.0, 0.0]], dtype=q.dtype)
+            jacobian_dot_velocity = jnp.concatenate(
+                [
+                    jnp.zeros((1,), dtype=q.dtype),
+                    -velocity[0] * rotation_generator @ velocity[1:],
+                ]
+            )
+            gravity = jnp.concatenate(
+                [
+                    jnp.zeros((1,), dtype=q.dtype),
+                    rotation_transpose @ jnp.asarray(self.g[-2:], dtype=q.dtype),
+                ]
+            )
+        else:
+            rotation_transpose = transform[:3, :3].T
+            velocity = jacobian @ base_velocity
+            jacobian_dot_velocity = jnp.concatenate(
+                [
+                    jnp.zeros((3,), dtype=q.dtype),
+                    -jnp.cross(velocity[:3], velocity[3:]),
+                ]
+            )
+            gravity = jnp.concatenate(
+                [
+                    jnp.zeros((3,), dtype=q.dtype),
+                    rotation_transpose @ jnp.asarray(self.g[-3:], dtype=q.dtype),
+                ]
+            )
+        return jacobian, jacobian_dot_velocity, velocity, gravity
+
+    def _floating_base_body_jacobian(self, q: Array) -> Array:
+        """
+        Return the root body Jacobian for world-frame base velocity.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+
+        Returns:
+            Root body Jacobian with shape ``(3, 3)`` for planar systems or
+            ``(6, 6)`` for spatial systems.
+        """
+        transform = self.base_transform_from_configuration(q)
+        if self.is_planar:
+            jacobian = jnp.zeros((3, 3), dtype=q.dtype)
+            jacobian = jacobian.at[0, 0].set(1.0)
+            return jacobian.at[1:, 1:].set(transform[:2, :2].T)
+
+        rotation_transpose = transform[:3, :3].T
+        jacobian = jnp.zeros((6, 6), dtype=q.dtype)
+        jacobian = jacobian.at[:3, :3].set(rotation_transpose)
+        return jacobian.at[3:, 3:].set(rotation_transpose)
+
+    def _floating_inertial_jacobians(
+        self,
+        q: Array,
+        relative_transforms: Array,
+        jacobians_internal: Array,
+    ) -> Array:
+        """
+        Add base columns and rotate body Jacobians into the inertial frame.
+
+        The relative transforms and internal body Jacobians are intended to be
+        outputs of a system's existing fused batched recurrence. No kinematic
+        quantity is recomputed by this adapter.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            relative_transforms: Base-relative transforms with arbitrary
+                leading dimensions.
+            jacobians_internal: Internal body Jacobians with matching leading
+                dimensions.
+
+        Returns:
+            Inertial-frame total Jacobians with matching leading dimensions and
+            ``num_velocities`` columns.
+        """
+        spatial_dimension = 3 if self.is_planar else 6
+        transform_dimension = 3 if self.is_planar else 4
+        leading_shape = relative_transforms.shape[:-2]
+        transforms_flat = relative_transforms.reshape(
+            -1, transform_dimension, transform_dimension
+        )
+        jacobians_internal_flat = jacobians_internal.reshape(
+            -1, spatial_dimension, self.num_internal_dofs
+        )
+        adjoint_inverse = se2.adjoint_inverse if self.is_planar else se3.adjoint_inverse
+        relative_adjoint_inverses = vmap(adjoint_inverse)(transforms_flat)
+        jacobian_base = self._floating_base_body_jacobian(q)
+        jacobians_base = jnp.einsum(
+            "nij,jk->nik", relative_adjoint_inverses, jacobian_base
+        )
+        jacobians_body = jnp.concatenate(
+            [jacobians_base, jacobians_internal_flat], axis=-1
+        )
+
+        base_transform = self.base_transform_from_configuration(q)
+        world_transforms = jnp.einsum("ij,njk->nik", base_transform, transforms_flat)
+        if self.is_planar:
+            rotations = world_transforms[:, :2, :2]
+            rotation_actions = jnp.zeros(
+                (world_transforms.shape[0], 3, 3), dtype=q.dtype
+            )
+            rotation_actions = rotation_actions.at[:, 0, 0].set(1.0)
+            rotation_actions = rotation_actions.at[:, 1:, 1:].set(rotations)
+        else:
+            rotations = world_transforms[:, :3, :3]
+            rotation_actions = jnp.zeros(
+                (world_transforms.shape[0], 6, 6), dtype=q.dtype
+            )
+            rotation_actions = rotation_actions.at[:, :3, :3].set(rotations)
+            rotation_actions = rotation_actions.at[:, 3:, 3:].set(rotations)
+        jacobians_world = jnp.einsum("nij,njk->nik", rotation_actions, jacobians_body)
+        return jacobians_world.reshape(
+            *leading_shape, spatial_dimension, self.num_velocities
+        )
+
+    def _floating_jacobians_from_relative_inertial(
+        self,
+        q: Array,
+        relative_transforms: Array,
+        jacobians_internal: Array,
+    ) -> Array:
+        """
+        Augment base-relative inertial Jacobians with floating-base columns.
+
+        This adapter is used after a fixed-base JAX or Warp recurrence has
+        already rotated the internal Jacobian columns into the base coordinate
+        frame. It rotates those columns into the world frame and constructs the
+        base columns without repeating the relative kinematic recurrence.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            relative_transforms: Base-relative transforms with arbitrary
+                leading dimensions.
+            jacobians_internal: Base-frame inertial Jacobians with matching
+                leading dimensions and ``num_internal_dofs`` columns.
+
+        Returns:
+            World-frame Jacobians with matching leading dimensions and
+            ``num_velocities`` columns.
+        """
+        spatial_dimension = 3 if self.is_planar else 6
+        transform_dimension = 3 if self.is_planar else 4
+        leading_shape = relative_transforms.shape[:-2]
+        transforms_flat = relative_transforms.reshape(
+            -1, transform_dimension, transform_dimension
+        )
+        jacobians_internal_flat = jacobians_internal.reshape(
+            -1, spatial_dimension, self.num_internal_dofs
+        )
+
+        adjoint_inverse = se2.adjoint_inverse if self.is_planar else se3.adjoint_inverse
+        relative_adjoint_inverses = vmap(adjoint_inverse)(transforms_flat)
+        root_jacobian = self._floating_base_body_jacobian(q)
+        jacobians_base_body = jnp.einsum(
+            "nij,jk->nik", relative_adjoint_inverses, root_jacobian
+        )
+
+        base_transform = self.base_transform_from_configuration(q)
+        base_rotation = (
+            base_transform[:2, :2] if self.is_planar else base_transform[:3, :3]
+        )
+        world_transforms = jnp.einsum("ij,njk->nik", base_transform, transforms_flat)
+        if self.is_planar:
+            base_rotation_action = jnp.zeros((3, 3), dtype=q.dtype)
+            base_rotation_action = base_rotation_action.at[0, 0].set(1.0)
+            base_rotation_action = base_rotation_action.at[1:, 1:].set(base_rotation)
+            world_rotation_actions = jnp.zeros(
+                (world_transforms.shape[0], 3, 3), dtype=q.dtype
+            )
+            world_rotation_actions = world_rotation_actions.at[:, 0, 0].set(1.0)
+            world_rotation_actions = world_rotation_actions.at[:, 1:, 1:].set(
+                world_transforms[:, :2, :2]
+            )
+        else:
+            base_rotation_action = jnp.zeros((6, 6), dtype=q.dtype)
+            base_rotation_action = base_rotation_action.at[:3, :3].set(base_rotation)
+            base_rotation_action = base_rotation_action.at[3:, 3:].set(base_rotation)
+            world_rotation_actions = jnp.zeros(
+                (world_transforms.shape[0], 6, 6), dtype=q.dtype
+            )
+            world_rotation_actions = world_rotation_actions.at[:, :3, :3].set(
+                world_transforms[:, :3, :3]
+            )
+            world_rotation_actions = world_rotation_actions.at[:, 3:, 3:].set(
+                world_transforms[:, :3, :3]
+            )
+
+        jacobians_base_world = jnp.einsum(
+            "nij,njk->nik", world_rotation_actions, jacobians_base_body
+        )
+        jacobians_internal_world = jnp.einsum(
+            "ij,njk->nik", base_rotation_action, jacobians_internal_flat
+        )
+        jacobians_world = jnp.concatenate(
+            [jacobians_base_world, jacobians_internal_world], axis=-1
+        )
+        return jacobians_world.reshape(
+            *leading_shape, spatial_dimension, self.num_velocities
+        )
+
+    def _floating_world_positions(self, q: Array, relative_positions: Array) -> Array:
+        """
+        Transform base-relative points into the inertial frame.
+
+        This helper deliberately accepts positions rather than poses or spatial
+        inertias so gravitational energy does not construct unused Jacobians or
+        matrices.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            relative_positions: Base-relative points with trailing dimension two
+                for planar systems or three for spatial systems.
+
+        Returns:
+            Inertial-frame points with the same leading dimensions as
+            ``relative_positions``.
+        """
+        transform = self.base_transform_from_configuration(q)
+        linear_dimension = 2 if self.is_planar else 3
+        rotation = transform[:linear_dimension, :linear_dimension]
+        translation = transform[:linear_dimension, linear_dimension]
+        return jnp.einsum("ij,...j->...i", rotation, relative_positions) + translation
+
+    def _floating_gravitational_energy_from_points(
+        self, q: Array, relative_positions: Array, masses: Array
+    ) -> Array:
+        """
+        Compute floating-base gravitational energy from point masses.
+
+        Quadrature weights must already be folded into ``masses``. This direct
+        contraction is intended for system-specific energy paths and never
+        constructs Jacobians or spatial inertia matrices.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            relative_positions: Base-relative mass locations with trailing
+                dimension two or three.
+            masses: Scalar masses broadcastable to the leading point axes.
+
+        Returns:
+            Absolute gravitational potential energy as a scalar.
+        """
+        positions = self._floating_world_positions(q, relative_positions)
+        linear_dimension = positions.shape[-1]
+        gravity = jnp.asarray(self.g[-linear_dimension:], dtype=q.dtype)
+        return -jnp.sum(masses * (positions @ gravity))
+
+    def _augment_floating_body_kinematics(
+        self,
+        q: Array,
+        v: Array,
+        relative_transforms: Array,
+        jacobians_internal: Array,
+        jacobian_dot_velocity_internal: Array,
+    ) -> tuple[Array, Array, Array, Array]:
+        """
+        Add floating-base columns to existing body-frame kinematics.
+
+        This helper consumes quantities already produced by a system's fused
+        recurrence. It performs no kinematic propagation and is therefore
+        suitable for discrete mass terms such as HSA platforms and payloads.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            v: Total generalized velocity with shape ``(num_velocities,)``.
+            relative_transforms: Base-relative body transforms with arbitrary
+                leading dimensions.
+            jacobians_internal: Body Jacobians with the same leading dimensions
+                and trailing shape
+                ``(spatial_dimension, num_internal_dofs)``.
+            jacobian_dot_velocity_internal: Internal convective contractions
+                with trailing shape ``(spatial_dimension,)``.
+
+        Returns:
+            Tuple ``(J, Jd_v, velocity, gravity)`` with the original leading
+            dimensions and total generalized-velocity columns.
+        """
+        _, qd_internal = self.split_velocity(v)
+        spatial_dimension = 3 if self.is_planar else 6
+        transform_dimension = 3 if self.is_planar else 4
+        leading_shape = relative_transforms.shape[:-2]
+        transforms_flat = relative_transforms.reshape(
+            -1, transform_dimension, transform_dimension
+        )
+        jacobians_internal_flat = jacobians_internal.reshape(
+            -1, spatial_dimension, self.num_internal_dofs
+        )
+        jacobian_dot_velocity_internal_flat = jacobian_dot_velocity_internal.reshape(
+            -1, spatial_dimension
+        )
+        (
+            jacobian_base,
+            jacobian_dot_velocity_base,
+            velocity_base,
+            gravity_base,
+        ) = self._floating_base_body_kinematics(q, v)
+        adjoint_inverse_function = (
+            se2.adjoint_inverse if self.is_planar else se3.adjoint_inverse
+        )
+        if self.is_planar:
+
+            def small_adjoint_action(left: Array, right: Array) -> Array:
+                return se2.small_adjoint(left) @ right
+        else:
+            small_adjoint_action = se3.small_adjoint_action
+        adjoint_inverses = vmap(adjoint_inverse_function)(transforms_flat)
+        jacobians_base = jnp.einsum("nij,jk->nik", adjoint_inverses, jacobian_base)
+        velocities_base = jnp.einsum("nij,j->ni", adjoint_inverses, velocity_base)
+        velocities_internal = jnp.einsum(
+            "nij,j->ni", jacobians_internal_flat, qd_internal
+        )
+        jacobian_dot_velocity_base_samples = jnp.einsum(
+            "nij,j->ni", adjoint_inverses, jacobian_dot_velocity_base
+        ) - vmap(small_adjoint_action)(velocities_internal, velocities_base)
+        jacobians = jnp.concatenate([jacobians_base, jacobians_internal_flat], axis=-1)
+        jacobian_dot_velocity = (
+            jacobian_dot_velocity_base_samples + jacobian_dot_velocity_internal_flat
+        )
+        velocities = velocities_base + velocities_internal
+        gravity = jnp.einsum("nij,j->ni", adjoint_inverses, gravity_base)
+        return (
+            jacobians.reshape(*leading_shape, spatial_dimension, self.num_velocities),
+            jacobian_dot_velocity.reshape(*leading_shape, spatial_dimension),
+            velocities.reshape(*leading_shape, spatial_dimension),
+            gravity.reshape(*leading_shape, spatial_dimension),
+        )
+
+    def _assemble_floating_dynamics_terms(
+        self, q: Array, v: Array
+    ) -> tuple[Array, Array, Array]:
+        """
+        Assemble statically specialized floating-base dynamics terms.
+
+        Concrete systems must reuse their fused local recurrence and accumulate
+        the augmented system without invoking a generic sample/JVP pipeline.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            v: Total generalized velocity with shape ``(num_velocities,)``.
+
+        Returns:
+            Tuple ``(M, Cv, G)`` in total generalized velocities.
+
+        Raises:
+            NotImplementedError: If floating-base dynamics have not been
+                implemented by the concrete system.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement fused floating-base dynamics."
+        )
+
+    def _floating_gravitational_energy(self, q: Array) -> Array:
+        """
+        Compute absolute floating-base gravitational potential energy.
+
+        Concrete systems must implement a direct position/mass contraction and
+        must not route this operation through augmented dynamics assembly.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+
+        Returns:
+            Absolute gravitational potential energy as a scalar.
+
+        Raises:
+            NotImplementedError: If the concrete system does not implement a
+                direct floating-base energy path.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement floating-base gravitational "
+            "energy."
+        )
+
+    def _floating_internal_inertia_addition(self, q_internal: Array) -> Array:
+        """
+        Return non-body inertia attached directly to internal coordinates.
+
+        Args:
+            q_internal: Internal generalized coordinates with shape
+                ``(num_internal_dofs,)``.
+
+        Returns:
+            Internal inertia addition with shape
+            ``(num_internal_dofs, num_internal_dofs)``.
+        """
+        return jnp.zeros(
+            (self.num_internal_dofs, self.num_internal_dofs), dtype=q_internal.dtype
+        )
+
+    def _floating_coriolis_matrix(self, q: Array, v: Array) -> Array:
+        """
+        Return a matrix realization satisfying ``C(q, v) @ v == Cv``.
+
+        Args:
+            q: Total floating-base configuration with shape
+                ``(num_coordinates,)``.
+            v: Total generalized velocity with shape ``(num_velocities,)``.
+
+        Returns:
+            Coriolis matrix with shape ``(num_velocities, num_velocities)``.
+        """
+        return 0.5 * jacfwd(
+            lambda velocity: self._assemble_floating_dynamics_terms(q, velocity)[1]
+        )(v)
 
     # -----------------------------------------
     # Kinematics implementation helpers
@@ -987,6 +2131,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             G: Gravitational force of shape (num_dofs,).
         """
+        if self.floating_base:
+            zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
+            return self._assemble_floating_dynamics_terms(q, zeros)[2]
         return self._gravitational_force(q)
 
     def potential_force(self, q: Array) -> Array:
@@ -1038,6 +2185,9 @@ class SoftRobot(DynamicalSystem):
             y_a: Actuator coordinates of shape ``(num_actuators,)``. An
                 unactuated robot returns an empty array.
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            return self._fixed_evaluation_view().actuator_coordinates(q_internal)
         if not self.actuators:
             return jnp.zeros((0,), dtype=q.dtype)
         return jnp.concatenate(
@@ -1061,6 +2211,12 @@ class SoftRobot(DynamicalSystem):
                 ``(num_actuators,)``. An unactuated robot returns an empty
                 array.
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            _, qd_internal = self.split_velocity(qd)
+            return self._fixed_evaluation_view().actuator_velocities(
+                q_internal, qd_internal
+            )
         if not self.actuators:
             return jnp.zeros((0,), dtype=q.dtype)
         return jnp.concatenate(
@@ -1069,6 +2225,11 @@ class SoftRobot(DynamicalSystem):
 
     def _actuation_matrix(self, q: Array) -> Array:
         """Return the protected differentiable JAX transmission matrix."""
+
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            internal = self._fixed_evaluation_view()._actuation_matrix(q_internal)
+            return jnp.pad(internal, ((self.num_base_velocities, 0), (0, 0)))
 
         if not self.actuators:
             return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
@@ -1140,6 +2301,22 @@ class SoftRobot(DynamicalSystem):
             ValueError: If ``u`` or ``actuation_matrix`` has an incompatible
                 shape.
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            qd_internal = None
+            if qd is not None:
+                _, qd_internal = self.split_velocity(qd)
+            internal_matrix = (
+                None
+                if actuation_matrix is None
+                else actuation_matrix[self.num_base_velocities :]
+            )
+            return self._fixed_evaluation_view().actuator_efforts(
+                q_internal,
+                u,
+                qd=qd_internal,
+                actuation_matrix=internal_matrix,
+            )
         u = jnp.asarray(u)
         if u.shape != (self.num_actuators,):
             raise ValueError(
@@ -1239,6 +2416,22 @@ class SoftRobot(DynamicalSystem):
                 ``(num_dofs,)``. A robot without passive elements returns
                 zeros.
         """
+        if self.floating_base:
+            # Internal callers may already have extracted the material coordinates.
+            total_input = q.shape[-1] == self.num_coordinates
+            q_internal = (
+                self.split_configuration(q)[1]
+                if total_input
+                else self._check_trailing_dimension(
+                    "q_internal", q, self.num_internal_dofs
+                )
+            )
+            internal = self._fixed_evaluation_view().passive_elastic_force(q_internal)
+            return (
+                jnp.pad(internal, (self.num_base_velocities, 0))
+                if total_input
+                else internal
+            )
         force = jnp.zeros((self.num_dofs,), dtype=q.dtype)
         for element in self.passive_elements:
             force = force + element.elastic_force(self, q)
@@ -1260,6 +2453,24 @@ class SoftRobot(DynamicalSystem):
                 ``(num_dofs, num_dofs)``. A robot without passive elements
                 returns zeros.
         """
+        if self.floating_base:
+            total_input = q.shape[-1] == self.num_coordinates
+            q_internal = (
+                self.split_configuration(q)[1]
+                if total_input
+                else self._check_trailing_dimension(
+                    "q_internal", q, self.num_internal_dofs
+                )
+            )
+            internal = self._fixed_evaluation_view().passive_damping_matrix(q_internal)
+            return (
+                jnp.pad(
+                    internal,
+                    ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
+                )
+                if total_input
+                else internal
+            )
         matrix = jnp.zeros((self.num_dofs, self.num_dofs), dtype=q.dtype)
         for element in self.passive_elements:
             matrix = matrix + element.damping_matrix(self, q)
@@ -1280,6 +2491,16 @@ class SoftRobot(DynamicalSystem):
             U_passive: Scalar passive elastic energy. A robot without passive
                 elements returns zero.
         """
+        if self.floating_base:
+            total_input = q.shape[-1] == self.num_coordinates
+            q_internal = (
+                self.split_configuration(q)[1]
+                if total_input
+                else self._check_trailing_dimension(
+                    "q_internal", q, self.num_internal_dofs
+                )
+            )
+            return self._fixed_evaluation_view().passive_elastic_energy(q_internal)
         energy = jnp.zeros((), dtype=q.dtype)
         for element in self.passive_elements:
             energy = energy + element.elastic_energy(self, q)
@@ -1302,7 +2523,7 @@ class SoftRobot(DynamicalSystem):
         Returns:
             T: Kinetic energy (scalar).
         """
-        if custom_jvp_enabled():
+        if custom_jvp_enabled() and not self.floating_base:
             return SoftRobot._kinetic_energy_custom_jvp(self, q, qd)
         return self._kinetic_energy(q, qd)
 
@@ -1406,6 +2627,8 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U_g: Gravitational potential energy (scalar).
         """
+        if self.floating_base:
+            return self._floating_gravitational_energy(q)
         if custom_jvp_enabled():
             return SoftRobot._gravitational_energy_custom_jvp(self, q)
         return self._gravitational_energy(q)
@@ -1454,6 +2677,9 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U_el: Elastic potential energy (scalar).
         """
+        if self.floating_base:
+            _, q_internal = self.split_configuration(q)
+            return self._elastic_energy(q_internal)
         if custom_jvp_enabled():
             return SoftRobot._elastic_energy_custom_jvp(self, q)
         return self._elastic_energy(q)
@@ -1501,6 +2727,8 @@ class SoftRobot(DynamicalSystem):
         Returns:
             U: Total potential energy (scalar).
         """
+        if self.floating_base:
+            return self.gravitational_energy(q) + self.elastic_energy(q)
         if custom_jvp_enabled():
             return SoftRobot._potential_energy_custom_jvp(self, q)
         return self._potential_energy(q)
@@ -1550,6 +2778,8 @@ class SoftRobot(DynamicalSystem):
         Returns:
             E: Total energy (scalar).
         """
+        if self.floating_base:
+            return self.kinetic_energy(q, qd) + self.potential_energy(q)
         if custom_jvp_enabled():
             return SoftRobot._total_energy_custom_jvp(self, q, qd)
         return self._total_energy(q, qd)
@@ -1611,6 +2841,8 @@ class SoftRobot(DynamicalSystem):
         force APIs separately. Overrides must keep ``M`` and ``Cqd``
         energy-consistent with ``inertia_matrix`` and ``coriolis_matrix``.
         """
+        if self.floating_base:
+            return self._assemble_floating_dynamics_terms(q, qd)
         M = self.inertia_matrix(q)
         Cqd = self.coriolis_matrix(q, qd) @ qd
         G = self.gravitational_force(q)
@@ -1663,17 +2895,18 @@ class SoftRobot(DynamicalSystem):
 
         Args:
             t: Current time (scalar).
-            y: State vector containing [q, qd], shape (2 * num_dofs,).
+            y: State ``[q, v, auxiliary]`` with shape ``(state_size,)``.
             actuation_args: Optional tuple containing actuation inputs:
                 - (u,): Control input u
                 - (u, tau_ext): Control input u and external forces tau_ext
 
         Returns:
-            yd: State derivative [qd, qdd], shape (2 * num_dofs,).
+            State derivative ``[qdot, vdot, auxiliary_dot]`` with shape
+            ``(state_size,)``.
         """
         del t
 
-        q, qd = jnp.split(y, 2)
+        q, qd, auxiliary_state = self.split_state(y)
 
         if actuation_args is None:
             u, tau_ext = None, None
@@ -1688,7 +2921,7 @@ class SoftRobot(DynamicalSystem):
         if u is None:
             u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
         if tau_ext is None:
-            tau_ext = jnp.zeros_like(q)
+            tau_ext = jnp.zeros_like(qd)
 
         M, Cqd, G = self.dynamics_terms(q, qd)
         K = self.elastic_force(q)
@@ -1698,4 +2931,6 @@ class SoftRobot(DynamicalSystem):
         rhs = tau_u + tau_ext - Cqd - G - K - D @ qd
         qdd = self._solve_inertia(M, rhs)
 
-        return jnp.concatenate([qd, qdd])
+        qdot = self.configuration_derivative(q, qd)
+        auxiliary_dot = jnp.zeros_like(auxiliary_state)
+        return jnp.concatenate([qdot, qdd, auxiliary_dot])

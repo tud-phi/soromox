@@ -6,7 +6,6 @@ jax.config.update("jax_enable_x64", True)
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
-from system_param_builders import spatial_base_pose
 
 from soromox.actuation import ThreadlikeActuator
 from soromox.rendering import MatplotlibRenderer
@@ -44,7 +43,6 @@ def make_isupport_params(num_segments=1):
         )
     )
     return ISupportParams(
-        base_pose=spatial_base_pose(),
         gravity=jnp.array([0.0, 0.0, -9.81]),
         link=ContinuumLinkParams(
             length=length,
@@ -105,7 +103,6 @@ def expected_isupport_segment_actuation(
 
 def updated_isupport_params(params):
     return params.replace(
-        base_pose=params.base_pose.at[4].set(0.05),
         gravity=params.gravity.at[2].set(-9.7),
         link=params.link.replace(
             length=1.02 * params.link.length,
@@ -123,7 +120,7 @@ def isupport_runtime_summary(robot):
     actuator = robot.actuators[0]
     return jnp.concatenate(
         [
-            robot.base_pose,
+            robot.fixed_base_pose,
             robot.g,
             robot.L,
             robot.rho,

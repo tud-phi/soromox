@@ -130,23 +130,23 @@ class PotentialCompensationRegulator(PIDController):
         y = system_state.y
 
         # Get current configuration
-        q, _ = jnp.split(y, 2)
+        robot, q, _ = self._controller_model_and_state(y)
 
         # Get desired configuration at current time
         assert self.reference_trajectory.x_des_fn is not None
         q_des = self.reference_trajectory.x_des_fn(t)
 
         # Compute gravitational force at desired configuration
-        tau_gravity = self.robot.gravitational_force(q_des)
+        tau_gravity = robot.gravitational_force(q_des)
 
         # Compute elastic force at desired configuration
-        tau_elastic = self.robot.elastic_force(q_des)
+        tau_elastic = robot.elastic_force(q_des)
 
         # Total generalized torque for potential compensation
         tau_model = tau_gravity + tau_elastic
 
         # Get the actuation matrix at current configuration
-        A = self.robot.actuation_matrix(q)
+        A = robot.actuation_matrix(q)
 
         # Compute actuator input using inverse (or pseudo-inverse) of actuation matrix
         # Use standard inverse if A is square, otherwise use pseudo-inverse

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 import jax.numpy as jnp
 
 from soromox.systems.components import ContinuumLinkParams, JointParams
-from soromox.systems.params import BaseSoftRobotParams, validate_quaternion_base_pose
+from soromox.systems.params import BaseSoftRobotParams
 
 if TYPE_CHECKING:
     from soromox.systems.gvs.structures import GVSStructure
@@ -25,7 +25,6 @@ class GVSParams(BaseSoftRobotParams):
         joint: Batched joint stiffness and damping matrices using the same
             padded generalized-coordinate dimension as ``link``.
         gravity: Gravity vector with shape ``(3,)`` in the world frame.
-        base_pose: Base translation and unit quaternion with shape ``(7,)``.
     """
 
     is_planar: ClassVar[bool] = False
@@ -42,7 +41,7 @@ class GVSParams(BaseSoftRobotParams):
         Raises:
             ValueError: If a component shape is invalid, link and joint batch
                 shapes disagree, reference strains do not have six components,
-                or the gravity and base-pose arrays have invalid shapes.
+                or the gravity array has an invalid shape.
         """
         self.link.validate_structure()
         self.joint.validate_structure()
@@ -61,16 +60,11 @@ class GVSParams(BaseSoftRobotParams):
         gravity = jnp.asarray(self.gravity)
         if gravity.shape != (3,):
             raise ValueError(f"gravity must have shape (3,), got {gravity.shape}.")
-        if jnp.asarray(self.base_pose).shape != (7,):
-            raise ValueError(
-                f"base_pose must have shape (7,), got {self.base_pose.shape}."
-            )
 
     def validate_values(self) -> None:
-        """Validate eager GVS component and base-pose values."""
+        """Validate eager GVS component values."""
         self.link.validate_values()
         self.joint.validate_values()
-        validate_quaternion_base_pose("base_pose", self.base_pose, (7,))
 
     def validate_structure_compatibility(self, structure: GVSStructure) -> None:
         """Validate dynamic array shapes against a static padded GVS layout.

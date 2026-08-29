@@ -6,14 +6,18 @@ import jax.numpy as jnp
 from jax import Array
 
 from soromox.systems.execution.warp.pcs.operands import (
+    PCSFloatingOperands,
+    PCSFloatingPipelineShapes,
     PCSOperands,
     PCSPipelineShapes,
 )
 from soromox.systems.execution.warp.pcs.planar_kernels import (
+    planar_floating_persistent_chain,
     planar_local_operators,
     planar_persistent_chain,
 )
 from soromox.systems.execution.warp.pcs.spatial_kernels import (
+    spatial_floating_persistent_chain,
     spatial_local_operators,
     spatial_persistent_chain,
 )
@@ -65,7 +69,7 @@ def _planar_dynamics_terms(
 
 
 def execute_dynamics_terms(
-    operands: PCSOperands,
+    operands: PCSOperands | PCSFloatingOperands,
     q: Array,
     qd: Array,
 ) -> tuple[Array, Array, Array]:
@@ -89,6 +93,8 @@ def execute_dynamics_terms(
         ``(batch_size, num_dofs)``, and ``(batch_size, num_dofs)``.
     """
 
+    if isinstance(operands, PCSFloatingOperands):
+        return execute_floating_dynamics_terms(operands, q, qd)
     if operands.is_planar:
         return _planar_dynamics_terms(operands, q, qd)
     batch_size = q.shape[0]
@@ -121,4 +127,89 @@ def execute_dynamics_terms(
     return outputs[-3], outputs[-2], outputs[-1]
 
 
-__all__ = ["execute_dynamics_terms"]
+def execute_floating_dynamics_terms(
+    operands: PCSFloatingOperands,
+    q: Array,
+    velocity: Array,
+) -> tuple[Array, Array, Array]:
+    """Execute a statically augmented floating PCS Warp pipeline.
+
+    Args:
+        operands: Floating PlanarPCS or PCS runtime operands.
+        q: Batched total configurations with shape
+            ``(batch_size, num_coordinates)``.
+        velocity: Batched total generalized velocities with shape
+            ``(batch_size, num_velocities)``.
+
+    Returns:
+        Batched augmented inertia, convective-force, and gravity-force terms.
+
+    """
+    if operands.is_planar:
+        num_segments = operands.num_segments
+        shapes = PCSFloatingPipelineShapes.from_operands(
+            operands, batch_size=q.shape[0]
+        )
+        q_internal = q[:, 3:]
+        velocity_internal = velocity[:, 3:]
+        operators = planar_local_operators(
+            q_internal,
+            velocity_internal,
+            operands.active_strain_indices,
+            operands.active_strain_scales,
+            operands.reference_strain.reshape(num_segments, 3),
+            operands.local_points,
+            jnp.asarray([operands.global_eps, operands.tangent_eps], dtype=jnp.float64),
+            output_dims=shapes.operator_outputs(),
+        )
+        outputs = planar_floating_persistent_chain(
+            *operators,
+            operands.active_strain_indices,
+            operands.active_strain_scales,
+            operands.active_dof_ends,
+            q[:, :3],
+            velocity,
+            operands.inertia_upper_rows,
+            operands.inertia_upper_columns,
+            operands.weighted_mass_diagonals.reshape(
+                num_segments * operands.num_gauss_points, 3
+            ),
+            operands.gravity_world,
+            operands.block_dim,
+            output_dims=shapes.chain_outputs(),
+        )
+        return outputs[-3], outputs[-2], outputs[-1]
+    batch_size = q.shape[0]
+    num_segments = operands.num_segments
+    shapes = PCSFloatingPipelineShapes.from_operands(operands, batch_size=batch_size)
+    q_internal = q[:, 7:]
+    velocity_internal = velocity[:, 6:]
+    operators = spatial_local_operators(
+        q_internal,
+        velocity_internal,
+        operands.active_strain_indices,
+        operands.active_strain_scales,
+        operands.reference_strain.reshape(num_segments, 6),
+        operands.local_points,
+        output_dims=shapes.operator_outputs(),
+    )
+    outputs = spatial_floating_persistent_chain(
+        *operators,
+        operands.active_strain_indices,
+        operands.active_strain_scales,
+        operands.active_dof_ends,
+        q[:, :7],
+        velocity,
+        operands.inertia_upper_rows,
+        operands.inertia_upper_columns,
+        operands.weighted_mass_diagonals.reshape(
+            num_segments * operands.num_gauss_points, 6
+        ),
+        operands.gravity_world,
+        operands.block_dim,
+        output_dims=shapes.chain_outputs(),
+    )
+    return outputs[-3], outputs[-2], outputs[-1]
+
+
+__all__ = ["execute_dynamics_terms", "execute_floating_dynamics_terms"]

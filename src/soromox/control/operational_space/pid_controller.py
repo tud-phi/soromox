@@ -72,7 +72,10 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
                 be sized for the actuated coordinates (n_o x n_o or n_o).
         """
         self.operational_space_dynamics = operational_space_dynamics
-        self.robot = operational_space_dynamics.robot
+        self.robot = (
+            getattr(operational_space_dynamics, "system_robot", None)
+            or operational_space_dynamics.robot
+        )
         self.pid_control = pid_control
         self.reference_trajectory = reference_trajectory
 
@@ -100,11 +103,7 @@ class PIDController(OperationalSpaceBaseController, ClosedFormModelBasedControll
         t = system_state.t
         y = system_state.y
 
-        # Get operational space dynamics instance and robot
-        osd = self.operational_space_dynamics
-
-        # Split state into configuration and velocity
-        q, qd = jnp.split(y, 2)
+        osd, q, qd = self._controller_dynamics_and_state(y)
 
         # Get reference trajectory at current time
         # IMPORTANT: The reference trajectory should provide FULL poses (all points,

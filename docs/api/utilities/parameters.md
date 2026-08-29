@@ -88,7 +88,6 @@ or `(num_links,)`.
 | `stiffness` | Canonical per-link or per-joint generalized stiffness matrices |
 | `damping` | Canonical per-link or per-joint generalized damping matrices |
 | `gravity` | Gravity vector |
-| `base_pose` | Base configuration as scalar-first quaternion pose |
 | `reference_strain` | Reference strain vector |
 | `joint_rest_configuration` | Joint coordinates where elastic joint force is zero |
 
@@ -100,10 +99,12 @@ guide for optimization examples.
 
 ## World Frame, Mounting, and Gravity Defaults
 
-Soft-robot parameter objects use an upright mounting and Earth gravity when
-`base_pose` or `gravity` is omitted. Vertical is world y for planar systems and
-world z for spatial systems. Gravity is always expressed in the inertial/world
-frame; changing the base mounting does not rotate the gravity vector.
+Soft-robot parameter objects use Earth gravity when `gravity` is omitted.
+Mounting is not a physical parameter: fixed robots resolve it from the
+constructor's `base_pose`, while floating robots receive it in the runtime
+configuration. Vertical is world y for planar systems and world z for spatial
+systems. Gravity is always expressed in the inertial/world frame; changing the
+base mounting does not rotate the gravity vector.
 
 | Mounting constructor | Planar backbone | Spatial backbone | Default gravity |
 |----------------------|-----------------|------------------|-----------------|
@@ -119,42 +120,49 @@ The exact default values are:
 - Planar poses use `[theta, x, y]`. Spatial poses use scalar-first Hamilton
   quaternions in `[qw, qx, qy, qz, x, y, z]` order.
 
-Omitting both fields selects the defaults. For example, the factory below
-constructs an upright PlanarPCS under Earth gravity:
+Omitting both the robot constructor's `base_pose` and the parameter tree's
+`gravity` selects the defaults. For example, the factory below constructs an
+upright PlanarPCS under Earth gravity:
 
 ```python
 robot = PlanarPCS.from_links(planar_links)
 ```
 
-Use the inherited mounting constructors to make another common mounting
-explicit when constructing a param tree directly. `base_position` translates
-the mounting without changing its orientation:
+Use the shared pose utilities to make another common fixed mounting explicit:
 
 ```python
-horizontal = PlanarPCSParams.horizontal(link=planar_link_params)
-upright = PlanarPCSParams.upright(
-    link=planar_link_params, base_position=jnp.array([0.2, 0.1])
+from soromox.utils.geometry import poses
+
+horizontal = PlanarPCS.from_links(
+    planar_links, base_pose=poses.planar_mounting_pose("horizontal")
 )
-hanging = PCSParams.hanging(
-    link=spatial_link_params, base_position=jnp.array([0.0, 0.0, 0.5])
+upright = PlanarPCS.from_links(
+    planar_links,
+    base_pose=poses.planar_mounting_pose("upright", jnp.array([0.2, 0.1])),
+)
+hanging = PCS.from_links(
+    links,
+    base_pose=poses.spatial_mounting_pose(
+        "hanging", jnp.array([0.0, 0.0, 0.5])
+    ),
 )
 ```
 
 Pass an explicit vector for custom or zero gravity. Pass an explicit
-`base_pose` through the ordinary constructor for arbitrary orientations:
+`base_pose` to the robot constructor for arbitrary fixed orientations:
 
 ```python
-zero_gravity = PCSParams(link=spatial_link_params, gravity=jnp.zeros(3))
-custom = PlanarPCSParams(
-    link=planar_link_params,
+zero_gravity = PCS.from_links(links, gravity=jnp.zeros(3))
+custom = PlanarPCS.from_links(
+    planar_links,
     gravity=jnp.array([1.0, -9.7]),
     base_pose=jnp.array([0.3, 0.2, 0.1]),
 )
 ```
 
-Calling `replace(base_pose=None)` or `replace(gravity=None)` restores the
-dimension-appropriate default. The former identity fallback is available as
-`.horizontal(...)` or by passing an explicit identity pose.
+Calling `replace(gravity=None)` restores dimension-appropriate Earth gravity.
+Use `robot.with_fixed_base_pose(...)` to change an existing fixed mounting;
+floating robots reject that operation.
 
 ## Threadlike Actuation Parameters
 

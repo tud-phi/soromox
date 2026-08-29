@@ -38,7 +38,6 @@ NUM_RANDOM_SAMPLES = 5
 def _updated_gvs_params(robot: GVS):
     params = robot.params
     return params.replace(
-        base_pose=params.base_pose.at[4].set(0.05),
         gravity=params.gravity.at[2].set(-9.7),
         link=params.link.replace(
             length=1.02 * params.link.length,
@@ -63,7 +62,7 @@ def _updated_gvs_params(robot: GVS):
 def _gvs_runtime_summary(robot: GVS):
     return jnp.concatenate(
         [
-            robot.base_pose,
+            robot.fixed_base_pose,
             robot.g,
             robot.segment_lengths,
             robot.mass_matrices.reshape(-1),
@@ -132,10 +131,12 @@ def build_matched_gvs_pcs(
     g = jnp.array([0.0, 0.0, -9.81])
 
     # initialize the GVS model
-    gvs_params, gvs_structure = gvs_params_from_segments(
-        segments, gravity=g, base_pose=spatial_base_pose()
+    gvs_params, gvs_structure = gvs_params_from_segments(segments, gravity=g)
+    robot_gvs = GVS(
+        params=gvs_params,
+        structure=gvs_structure,
+        base_pose=spatial_base_pose(),
     )
-    robot_gvs = GVS(params=gvs_params, structure=gvs_structure)
 
     # PCS definition through the same shared link specifications. This exercises
     # the common isotropic-material mapping rather than an explicit matrix path.
@@ -188,7 +189,7 @@ def test_gvs_compiled_partial_base_pose_updates_match_eager_forces():
     q = jnp.linspace(-0.02, 0.02, robot.num_dofs)
     sqrt_half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float64))
     base_poses = (
-        robot.params.base_pose,
+        robot.fixed_base_pose,
         jnp.array([sqrt_half, 0.0, sqrt_half, 0.0, 0.01, -0.02, 0.03]),
     )
     trace_count = {"value": 0}
@@ -196,11 +197,11 @@ def test_gvs_compiled_partial_base_pose_updates_match_eager_forces():
     @eqx.filter_jit
     def compiled_force(base_pose, configuration):
         trace_count["value"] += 1
-        return robot.update_params(base_pose=base_pose).potential_force(configuration)
+        return robot.with_fixed_base_pose(base_pose).potential_force(configuration)
 
     actual = tuple(compiled_force(base_pose, q) for base_pose in base_poses)
     expected = tuple(
-        robot.update_params(base_pose=base_pose).potential_force(q)
+        robot.with_fixed_base_pose(base_pose).potential_force(q)
         for base_pose in base_poses
     )
 
@@ -229,9 +230,9 @@ def test_gvs_compiled_partial_update_rejects_base_pose_shape_change():
 
     @eqx.filter_jit
     def compiled_base_pose(base_pose):
-        return robot.update_params(base_pose=base_pose).base_pose
+        return robot.with_fixed_base_pose(base_pose).fixed_base_pose
 
-    with pytest.raises(ValueError, match="base_pose must have shape"):
+    with pytest.raises(ValueError, match="pose must have shape"):
         compiled_base_pose(jnp.ones((6,), dtype=jnp.float64))
 
 
@@ -317,10 +318,11 @@ def test_params_from_segments_uses_spatial_environment_defaults():
         num_gauss_points=5,
     )
 
-    params, _ = GVS.params_from_segments([segment])
+    params, structure = GVS.params_from_segments([segment])
+    robot = GVS(params=params, structure=structure)
 
     assert_allclose(
-        params.base_pose,
+        robot.fixed_base_pose,
         jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
     )
     assert_allclose(params.gravity, jnp.array([0.0, 0.0, -9.81]))
@@ -528,11 +530,10 @@ def build_constant_strain_gvs(
     params, structure = gvs_params_from_segments(
         segments,
         gravity=jnp.array([0.0, 0.0, -9.81]),
-        base_pose=spatial_base_pose(),
         max_dof=max_dof,
         scale_rotational_basis_by_length=scale_rotational_basis_by_length,
     )
-    return GVS(params=params, structure=structure)
+    return GVS(params=params, structure=structure, base_pose=spatial_base_pose())
 
 
 def test_gvs_dynamics_prefix_bucket_count_is_configurable() -> None:
@@ -541,11 +542,13 @@ def test_gvs_dynamics_prefix_bucket_count_is_configurable() -> None:
         params=default.params,
         structure=default.structure,
         num_dynamics_prefix_buckets=1,
+        base_pose=default.fixed_base_pose,
     )
     many_buckets = GVS(
         params=default.params,
         structure=default.structure,
         num_dynamics_prefix_buckets=16,
+        base_pose=default.fixed_base_pose,
     )
     q = jnp.linspace(-0.02, 0.02, default.num_dofs)
     qd = jnp.linspace(0.03, -0.03, default.num_dofs)
@@ -591,6 +594,7 @@ def test_gvs_backend_params_default_and_override() -> None:
         params=default.params,
         structure=default.structure,
         backend_params=GVSBackendParams(warp_block_dim=192),
+        base_pose=default.fixed_base_pose,
     )
 
     assert default.backend_params.warp_block_dim == 128
@@ -656,10 +660,9 @@ def test_gvs_segment_factories_match_explicit_constructor() -> None:
     params, structure = GVS.params_from_segments(
         segments,
         gravity=gravity,
-        base_pose=spatial_base_pose(),
         max_dof=6,
     )
-    explicit = GVS(params=params, structure=structure)
+    explicit = GVS(params=params, structure=structure, base_pose=spatial_base_pose())
     factory = GVS.from_segments(
         segments,
         gravity=gravity,

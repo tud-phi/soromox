@@ -102,7 +102,14 @@ class BaseSoftRobotRenderer(ABC):
         if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
             raise ValueError("ground_plane_size must be positive when provided")
         self._is_planar = bool(robot.is_planar)
-        self.base_pose = jnp.asarray(robot.base_pose)
+        floating_base = bool(getattr(robot, "floating_base", False))
+        initial_base_pose = (
+            robot._identity_base_pose
+            if floating_base
+            else getattr(robot, "fixed_base_pose", getattr(robot, "base_pose", None))
+        )
+        assert initial_base_pose is not None
+        self.base_pose = jnp.asarray(initial_base_pose)
         self.base_transform = jnp.asarray(robot.base_transform)
 
         self._color_cache: dict[tuple[int, int, int], ResolvedBackboneColors] = {}
@@ -312,6 +319,13 @@ class BaseSoftRobotRenderer(ABC):
 
     def compute_backbone_poses(self, q: Array) -> Array:
         """Compute full FK poses at the configured backbone sample points."""
+        if bool(getattr(self.robot, "floating_base", False)):
+            base_pose, _ = self.robot.split_configuration(q)
+            assert base_pose is not None
+            self.base_pose = jnp.asarray(base_pose)
+            self.base_transform = jnp.asarray(
+                self.robot.base_transform_from_configuration(q)
+            )
         s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
         return self.robot.forward_kinematics_abscissa_batched(q, s_ps)
 

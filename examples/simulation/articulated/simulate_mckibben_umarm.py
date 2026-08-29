@@ -42,7 +42,7 @@ def build_robot(params_path: Path | None = None) -> McKibbenActuatedUMArm:
     """Build the UMArm from repo-local or explicit cached parameters."""
     source_path = _repo_params_path() if params_path is None else params_path
     robot = McKibbenActuatedUMArm.from_cached_parameters(source_path)
-    return robot.update_params(base_pose=UMARM_Z_DOWN_BASE_POSE)
+    return robot.with_fixed_base_pose(UMARM_Z_DOWN_BASE_POSE)
 
 
 def pressure_input(robot: McKibbenActuatedUMArm) -> jax.Array:

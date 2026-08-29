@@ -2,6 +2,9 @@ __all__ = ["ActuationSpaceBaseController"]
 
 from abc import ABC
 
+import equinox as eqx
+from jax import Array
+
 from soromox.control.base_controller import BaseController
 from soromox.control.reference_trajectory import ReferenceTrajectory
 from soromox.coordinate_transformations.actuation_space import ActuationSpaceDynamics
@@ -124,3 +127,22 @@ class ActuationSpaceBaseController(BaseController, ABC):
 
     actuation_space_dynamics: ActuationSpaceDynamics
     reference_trajectory_config_space: ReferenceTrajectory | None
+
+    def _controller_dynamics_and_state(
+        self, y: Array
+    ) -> tuple[ActuationSpaceDynamics, Array, Array]:
+        """Return current-pose fixed dynamics and internal controller state.
+
+        Args:
+            y: Complete system state with trailing dimension
+                ``robot.state_size``.
+
+        Returns:
+            A tuple containing an actuation-space dynamics view mounted at the
+            current base pose, internal coordinates, and internal velocities.
+        """
+        robot, q_internal, qd_internal = super()._controller_model_and_state(y)
+        dynamics = self.actuation_space_dynamics
+        if dynamics.robot is not robot:
+            dynamics = eqx.tree_at(lambda value: value.robot, dynamics, robot)
+        return dynamics, q_internal, qd_internal

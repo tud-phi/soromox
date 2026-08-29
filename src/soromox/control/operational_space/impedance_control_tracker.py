@@ -165,7 +165,10 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         """
         self.operational_space_dynamics = operational_space_dynamics
         self.reference_trajectory = reference_trajectory
-        self.robot = operational_space_dynamics.robot
+        self.robot = (
+            getattr(operational_space_dynamics, "system_robot", None)
+            or operational_space_dynamics.robot
+        )
 
         # Convert gains to arrays
         n_op = operational_space_dynamics.n_operational_space
@@ -255,11 +258,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         t = system_state.t
         y = system_state.y
 
-        # Extract configuration and velocity
-        q, qd = jnp.split(y, 2)
-
-        # Get operational space dynamics instance and robot
-        osd = self.operational_space_dynamics
+        osd, q, qd = self._controller_dynamics_and_state(y)
         # Get reference trajectory at current time
         # IMPORTANT: The reference trajectory should provide FULL poses (all points,
         # all dimensions), not task-selected pose components. Some components may be ignored
@@ -288,9 +287,10 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         xd = J @ qd  # Task-selected velocity
 
         # Configuration-space forces
-        tau_el = self.robot.elastic_force(q)  # Elastic force
-        D_config = self.robot.damping_matrix(q)  # Damping matrix
-        G = self.robot.gravitational_force(q)  # Gravitational force
+        robot = osd.robot
+        tau_el = robot.elastic_force(q)  # Elastic force
+        D_config = robot.damping_matrix(q)  # Damping matrix
+        G = robot.gravitational_force(q)  # Gravitational force
 
         # ===== Compute control torque components =====
 
@@ -352,7 +352,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         )
 
         # Get the actuation matrix and compute actuator input
-        A = self.robot.actuation_matrix(q)
+        A = robot.actuation_matrix(q)
         u_control = jnp.linalg.inv(A) @ tau_control
 
         return u_control, None

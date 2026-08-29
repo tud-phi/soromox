@@ -345,7 +345,6 @@ def _expand_isupport_layout(
         )
 
     expanded_params = ISupportParams(
-        base_pose=params.base_pose,
         gravity=params.gravity,
         link=ContinuumLinkParams(
             length=jnp.stack(expanded_lengths),
@@ -514,12 +513,6 @@ class ISupport(PCS):
         Args:
             params: Dynamic parameters for the spatial I-SUPPORT PCS model.
                 Expected fields:
-                - ``base_pose``: Array of shape ``(7,)``.
-                    Scalar-first quaternion pose
-                    ``[qw, qx, qy, qz, x0, y0, z0]`` in the inertial frame.
-                    The quaternion represents the base orientation and the
-                    translation is inserted directly into the homogeneous
-                    transform.
                 - ``length``: Array of shape ``(num_segments,)``.
                     Length of each segment [m].
                 - ``radius``: Array of shape ``(num_segments,)``.

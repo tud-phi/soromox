@@ -209,7 +209,6 @@ def params_and_structure_from_segments(
     segments: list[GVSSegment] | tuple[GVSSegment, ...],
     *,
     gravity: Array | None = None,
-    base_pose: Array | None = None,
     max_dof: int | None = None,
     max_num_gauss_points: int | None = None,
     scale_rotational_basis_by_length: bool = False,
@@ -225,8 +224,6 @@ def params_and_structure_from_segments(
         segments: Non-empty sequence of segment construction specifications.
         gravity: Optional world-frame gravity vector with shape ``(3,)``.
             Defaults to ``[0, 0, 9.81]``.
-        base_pose: Optional base translation and quaternion with shape ``(7,)``.
-            Defaults to the origin with an identity quaternion.
         max_dof: Optional common padded generalized-coordinate dimension. When
             omitted, the largest joint or link DOF among the segments is used.
         max_num_gauss_points: Optional common quadrature padding size. When
@@ -340,7 +337,6 @@ def params_and_structure_from_segments(
             )
         )
     params = GVSParams(
-        base_pose=base_pose,
         gravity=gravity,
         link=ContinuumLinkParams(
             length=jnp.asarray([segment.link.length for segment in input_segments]),

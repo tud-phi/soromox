@@ -198,12 +198,13 @@ Each robot system expects a typed Equinox PyTree params object. Numeric fields a
 JAX arrays, so same-shape updates can flow through `jit`, `grad`, and `vmap`
 without changing the compiled structure.
 
-When omitted, `base_pose` mounts the robot upright (+y planar, +z spatial) and
-`gravity` uses Earth gravity in the negative vertical world direction. Gravity
-is an inertial-frame vector and is not rotated with the base. Use the inherited
-`.horizontal(...)`, `.upright(...)`, and `.hanging(...)` parameter constructors
-for the three standard mountings. Explicit arrays remain available for custom
-poses, gravity directions, and zero-gravity models. See
+When omitted, the robot constructor's `base_pose` mounts a fixed robot upright
+(+y planar, +z spatial), and `gravity` uses Earth gravity in the negative
+vertical world direction. Gravity is an inertial-frame vector and is not
+rotated with the base. Use `poses.planar_mounting_pose(...)` or
+`poses.spatial_mounting_pose(...)` for named horizontal, upright, and hanging
+mountings. Explicit arrays remain available for custom poses, gravity
+directions, and zero-gravity models. See
 [Parameters](../api/utilities/parameters.md#world-frame-mounting-and-gravity-defaults)
 for exact vectors and quaternions.
 

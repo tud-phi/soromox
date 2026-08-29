@@ -595,14 +595,14 @@ def quaternion_multiply(q1: Array, q2: Array) -> Array:
     That is, q1 * q2 represents rotating by q2 first, then by q1.
 
     Args:
-        q1: First quaternion with shape ``(4,)`` in scalar-first Hamilton
+        q1: First quaternion with trailing shape ``(..., 4)`` in scalar-first Hamilton
             ``[qw, qx, qy, qz]`` order.
-        q2: Second quaternion with shape ``(4,)`` in scalar-first Hamilton
+        q2: Second quaternion with trailing shape ``(..., 4)`` in scalar-first Hamilton
             ``[qw, qx, qy, qz]`` order.
 
     Returns:
-        q: Product quaternion with shape ``(4,)`` in ``[qw, qx, qy, qz]``
-            order.
+        q: Product quaternion with broadcast leading dimensions and trailing
+            shape ``(4,)`` in ``[qw, qx, qy, qz]`` order.
 
     Example:
         ```python
@@ -614,16 +614,19 @@ def quaternion_multiply(q1: Array, q2: Array) -> Array:
         q = quaternion_multiply(q1, q2)  # approximately q2
         ```
     """
-    w1, x1, y1, z1 = q1[0], q1[1], q1[2], q1[3]
-    w2, x2, y2, z2 = q2[0], q2[1], q2[2], q2[3]
-
-    return jnp.array(
+    left = jnp.asarray(q1)
+    right = jnp.asarray(q2)
+    scalar_left, vector_left = left[..., :1], left[..., 1:]
+    scalar_right, vector_right = right[..., :1], right[..., 1:]
+    return jnp.concatenate(
         [
-            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        ]
+            scalar_left * scalar_right
+            - jnp.sum(vector_left * vector_right, axis=-1, keepdims=True),
+            scalar_left * vector_right
+            + scalar_right * vector_left
+            + jnp.cross(vector_left, vector_right),
+        ],
+        axis=-1,
     )
 
 

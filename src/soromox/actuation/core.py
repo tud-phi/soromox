@@ -346,10 +346,11 @@ class IdentityActuator(Actuator):
         return self._metadata
 
     def validate_structure_for_robot(self, robot: SoftRobot) -> None:
-        if self.num_channels != robot.num_dofs:
+        if self.num_channels != robot.num_internal_dofs:
             raise ValueError(
                 "IdentityActuator must have one channel per robot degree of "
-                f"freedom; expected {robot.num_dofs}, got {self.num_channels}."
+                "freedom; expected "
+                f"{robot.num_internal_dofs}, got {self.num_channels}."
             )
 
     def with_params(self, params: BaseSystemParams) -> IdentityActuator:

@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import numpy as onp
 import pytest
 from numpy.testing import assert_allclose
-from system_param_builders import pendulum_params
+from system_param_builders import pendulum_params, planar_base_pose
 
 from soromox.actuation import ArticulatedTendonActuator
 from soromox.systems import Pendulum
@@ -35,18 +35,19 @@ def make_pendulum(N: int = 2):
         center_of_mass_length=Lc,
         gravity=jnp.array([0.0, -9.81]),
     )
-    return Pendulum(params)
+    return Pendulum(params, base_pose=planar_base_pose())
 
 
 def _parameter_summary(model):
-    return jnp.concatenate([model.base_pose, model.g, model.m, model.K.reshape(-1)])
+    return jnp.concatenate(
+        [model.fixed_base_pose, model.g, model.m, model.K.reshape(-1)]
+    )
 
 
 def test_parameter_updates_refresh_eager_runtime_arrays_immutably():
     robot = make_pendulum(2)
     params = robot.params
     updated_params = params.replace(
-        base_pose=params.base_pose.at[1].set(0.15),
         gravity=params.gravity.at[1].set(-9.7),
         mass=params.mass + 0.1,
         joint_stiffness=params.joint_stiffness + 0.2 * jnp.eye(2),
@@ -63,7 +64,6 @@ def test_same_structure_parameter_updates_compile_once():
     robot = make_pendulum(2)
     params = robot.params
     updated_params = params.replace(
-        base_pose=params.base_pose.at[1].set(0.15),
         gravity=params.gravity.at[1].set(-9.7),
         mass=params.mass + 0.1,
         joint_stiffness=params.joint_stiffness + 0.2 * jnp.eye(2),
