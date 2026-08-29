@@ -2,7 +2,8 @@
 
 The `soromox.systems.execution` package defines the backend names and optional
 tuning parameters used by supported system classes. The user-facing workflow is
-described in [Execution Backends](../../user-guide/execution-backends.md).
+described in
+[Execution Devices and Backends](../../user-guide/execution-devices-and-backends.md).
 
 !!! note "Use the system methods in normal applications"
     Most users should not call classes or functions in this package directly.

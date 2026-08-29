@@ -1,10 +1,17 @@
-# Execution Backends
+# Execution Devices and Backends
 
-For most applications, leave `backend="auto"` unchanged. A supported model then
-uses the accelerated Warp kinematics and dynamics implementations on a GPU and
-the JAX/XLA implementations on CPU, while retaining the same system methods and
-numerical outputs. Set the option explicitly only when comparing implementations,
-reproducing a benchmark, or requiring a particular execution path.
+SoRoMoX execution is governed by two connected but separate choices:
+
+| Layer | Choices | Controls |
+|---|---|---|
+| **Device** | CPU or GPU | Where arrays and compiled computations run; selected through the JAX installation, runtime configuration, and array placement |
+| **Backend** | `"auto"`, `"jax"`, or `"warp"` | Which implementation supported system methods use on that device |
+
+The backend setting does not select a device or transfer arrays between devices.
+For most applications, configure JAX for the intended CPU or GPU and leave
+`backend="auto"` unchanged. A supported model then uses JAX/XLA on CPU and the
+accelerated Warp kinematics and dynamics implementations on GPU, while retaining
+the same system methods and numerical outputs.
 
 ```python
 from soromox.systems import LinkSpec, PlanarPCS
@@ -25,9 +32,39 @@ robot = PlanarPCS.from_links(
 )
 ```
 
-The setting affects selected continuum-system kinematics and dynamics operations.
+## Choosing an execution device
 
-## Choosing a backend
+SoRoMoX follows JAX's active default device. Inspect the available devices and
+the device used by automatic backend selection with:
+
+```python
+import jax
+
+print(jax.devices())
+print(jax.default_backend())  # "cpu" or "gpu"
+```
+
+Construct input arrays on the intended device and keep them there across
+repeated calls. Moving states or results between host and GPU inside a loop can
+outweigh the accelerator benefit, particularly for short evaluations.
+
+Install SoRoMoX together with the CUDA 13 and Warp dependencies using:
+
+```bash
+pip install "soromox[cuda13]"
+```
+
+If JAX already has working GPU support, add only Warp with:
+
+```bash
+pip install "soromox[warp]"
+```
+
+## Choosing an execution backend
+
+The backend affects selected continuum-system kinematics and dynamics
+operations. Set it explicitly when comparing implementations, reproducing a
+benchmark, or requiring a particular execution path.
 
 The `backend` constructor argument accepts three values:
 
@@ -38,17 +75,19 @@ The `backend` constructor argument accepts three values:
 | `"warp"` | Requests the Warp implementation where the system, quadrature rule, and device support it. |
 
 Automatic selection has no batch-size, model-order, or GPU-model crossover.
-This keeps behavior predictable across devices. If a GPU environment does not
-have the optional Warp dependency installed, either install it or construct the
-model with `backend="jax"`.
+This keeps behavior predictable across devices. On a GPU, unsupported methods
+and model layouts fall back to JAX under `"auto"`. If the optional Warp
+dependency is unavailable, install it or construct the model with
+`backend="jax"`.
+
+!!! note "Backend configuration is static"
+    Choose the model backend during construction. It is part of the model's
+    compiled structure, so changing it creates a different compilation rather
+    than a runtime branch inside every dynamics call.
+
+## Choosing a device and backend for performance
 
 !!! tip "Practical device and backend guidance"
-    Treat the device and execution backend as separate choices. CPU versus GPU
-    determines where JAX executes; `backend="jax"` does not by itself select a
-    CPU. The `backend` setting selects the implementation for supported methods,
-    and `"auto"` uses JAX on CPU and Warp for supported methods on GPU without
-    moving arrays between devices or measuring a runtime crossover.
-
     - **One environment:** CPU with JAX is usually the best starting point for
       compact systems and short calls because it avoids GPU launch, dispatch,
       and transfer overhead. This is not universal: an expensive GVS model,
@@ -67,31 +106,14 @@ model with `backend="jax"`.
       universal GPU winner: short or unsupported operations, some topologies,
       and differentiation continue to favor or require JAX.
 
-    The crossover depends on the exact robot structure, active coordinates,
-    segment and quadrature counts, requested operations, batch shape, and
-    compilation reuse. It also depends on CPU and GPU architecture—especially
-    FP64 throughput and memory bandwidth—available RAM and VRAM, host/device
-    transfer costs, and software versions. More parallel work is a useful trend,
-    not a guarantee of monotonic speedup. Benchmark the complete JIT-compiled
-    application after warmup, including any transfers and synchronization,
-    before fixing a production device/backend policy.
-
-Install SoRoMoX together with the CUDA 13 and Warp dependencies using:
-
-```bash
-pip install "soromox[cuda13]"
-```
-
-If JAX already has working GPU support, add only Warp with:
-
-```bash
-pip install "soromox[warp]"
-```
-
-!!! note "Backend configuration is static"
-    Choose the model backend during construction. It is part of the model's
-    compiled structure, so changing it creates a different compilation rather
-    than a runtime branch inside every dynamics call.
+    Benchmark your specific application before choosing a production device and
+    backend. Compare the practical combinations—CPU JAX, GPU JAX, and GPU
+    `"auto"`/Warp—using the actual robot structure, quadrature, operations, and
+    batch shapes after warmup. Include host/device transfers and synchronization,
+    and verify that peak memory use fits the available RAM or VRAM. Choose the
+    combination that provides the best end-to-end performance for your use case
+    while satisfying its differentiation and backend-support requirements;
+    crossover points from another model or machine may not apply.
 
 ## Supported systems and methods
 
@@ -264,7 +286,7 @@ mode through a rollout. The returned derivatives therefore retain the existing
 JAX semantics; gradients are not computed by differentiating the current
 forward-only Warp kernels.
 
-## Performance settings
+## Warp launch settings
 
 The default block sizes are portable choices rather than GPU-specific tuning
 heuristics:
@@ -296,6 +318,13 @@ gvs_robot = GVS.from_segments(
 Changing this value affects compilation and may improve or reduce performance
 depending on topology, batch size, and GPU architecture. Benchmark the complete
 application rather than selecting a block size from occupancy alone.
+
+## Benchmarking devices and backends
+
+Compare CPU JAX, GPU JAX, and GPU `"auto"`/Warp with the exact model, batch
+shape, and operation mix used by the application. Record compilation separately
+from warmed execution, and include transfers when they are part of the real
+workflow.
 
 For reliable GPU measurements:
 

@@ -178,8 +178,9 @@ kinematics and dynamics. The choice follows normal calls to
 `forward_kinematics()`, `dynamics_terms()`, `forward_dynamics()`, and the
 corresponding batched methods. A direct query can be compared with
 `robot.dynamics_terms(q, qd, backend="jax")` without rebuilding the model. See
-[Execution Backends](execution-backends.md) for the supported systems,
-automatic-selection rules, differentiation behavior, and performance settings.
+[Execution Devices and Backends](execution-devices-and-backends.md) for the
+supported systems, automatic-selection rules, differentiation behavior, and
+performance settings.
 
 **Key Benefits:**
 

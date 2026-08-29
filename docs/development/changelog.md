@@ -20,8 +20,8 @@ and include benchmark baseline and measurement context for performance claims.
   including automatic GPU selection, JAX-routed differentiation, typed
   `GVSBackendParams` and `PCSBackendParams` launch configuration, and reusable
   Warp-native execution APIs; see
-  [Execution Backends](../user-guide/execution-backends.md) and
-  [PR #177](https://github.com/tud-phi/soromox/pull/177).
+  [Execution Devices and Backends](../user-guide/execution-devices-and-backends.md)
+  and [PR #177](https://github.com/tud-phi/soromox/pull/177).
 - Added public allocation-free, CUDA-graph-capturable Warp kernels, operand
   bundles, output-shape contracts, and fused direct-effort launchers for
   built-in linear threadlike actuation in `PlanarPCS`, `PCS`, and `GVS`.
@@ -97,9 +97,11 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Documentation
 
-- Added an [Execution Backends](../user-guide/execution-backends.md) guide, a
-  backend-selection example in the Quick Start, and API reference pages for
-  execution configuration and the reusable GVS and PCS Warp interfaces.
+- Added an
+  [Execution Devices and Backends](../user-guide/execution-devices-and-backends.md)
+  guide, a backend-selection example in the Quick Start, and API reference
+  pages for execution configuration and the reusable GVS and PCS Warp
+  interfaces.
 
 ### Contributors
 

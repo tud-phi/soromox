@@ -61,7 +61,7 @@ nav:
   - Installation: installation.md
   - User Guide:
     - Quick Start: user-guide/quick-start.md
-    - Execution Backends: user-guide/execution-backends.md
+    - Execution Devices and Backends: user-guide/execution-devices-and-backends.md
     - Parameters and Optimization: user-guide/parameters-and-optimization.md
     - Examples: user-guide/examples.md
   - API Reference:
