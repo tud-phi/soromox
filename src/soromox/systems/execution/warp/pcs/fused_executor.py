@@ -10,11 +10,13 @@ from soromox.systems.execution.warp.pcs.actuation.operands import (
     PCSThreadlikeOperands,
     PCSThreadlikeShapes,
 )
+from soromox.systems.execution.warp.pcs.floating_fused import (
+    planar_floating_dynamics_and_threadlike_actuation_force,
+    spatial_floating_dynamics_and_threadlike_actuation_force,
+)
 from soromox.systems.execution.warp.pcs.fused import (
     planar_dynamics_and_threadlike_actuation_force,
-    planar_floating_dynamics_and_threadlike_actuation_force,
     spatial_dynamics_and_threadlike_actuation_force,
-    spatial_floating_dynamics_and_threadlike_actuation_force,
 )
 from soromox.systems.execution.warp.pcs.operands import (
     PCSFloatingOperands,

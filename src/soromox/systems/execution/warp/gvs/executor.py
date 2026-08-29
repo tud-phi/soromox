@@ -7,9 +7,9 @@ from jax import Array
 
 from soromox.systems.execution.warp.common.joint_terms import _evaluate_joint_terms
 from soromox.systems.execution.warp.gvs.cell import scalable_cell_terms
-from soromox.systems.execution.warp.gvs.chain import (
+from soromox.systems.execution.warp.gvs.chain import scalable_persistent_chain
+from soromox.systems.execution.warp.gvs.floating_chain import (
     scalable_floating_persistent_chain,
-    scalable_persistent_chain,
 )
 from soromox.systems.execution.warp.gvs.operands import (
     GVSFloatingOperands,

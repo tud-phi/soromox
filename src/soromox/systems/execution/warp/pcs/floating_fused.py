@@ -1,19 +1,11 @@
 # ruff: noqa: I001, UP018
-"""Allocation-free fused PCS dynamics and threadlike-force execution.
-
-The dimension-specialized public launchers compose the existing local
-operators, persistent chain, and linear-threadlike direct-effort launches
-behind one Warp callable. They introduce no duplicate numerical kernels and
-retain caller ownership of every workspace and result.
-"""
+"""Allocation-free floating PCS dynamics and threadlike-force execution."""
 
 from __future__ import annotations
 
 import warp as wp
 
 from soromox.systems.execution.warp.pcs.actuation.cooperative import (
-    PCS_THREADLIKE_PATH_POINT_MAX_PATHS,
-    PCS_THREADLIKE_SERIAL_MAX_PATHS,
     launch_planar_threadlike_force_path,
     launch_planar_threadlike_force_path_point,
     launch_spatial_threadlike_force_path,
@@ -23,33 +15,28 @@ from soromox.systems.execution.warp.pcs.actuation.threadlike import (
     launch_planar_threadlike_actuation_force,
     launch_spatial_threadlike_actuation_force,
 )
+from soromox.systems.execution.warp.common.floating_base import launch_prepend_zeros
+from soromox.systems.execution.warp.pcs.fused import _select_force_launcher
+from soromox.systems.execution.warp.pcs.planar_floating_kernels import (
+    launch_planar_floating_persistent_chain,
+)
 from soromox.systems.execution.warp.pcs.planar_kernels import (
     launch_planar_local_operators,
-    launch_planar_persistent_chain,
+)
+from soromox.systems.execution.warp.pcs.spatial_floating_kernels import (
+    launch_spatial_floating_persistent_chain,
 )
 from soromox.systems.execution.warp.pcs.spatial_kernels import (
     launch_spatial_local_operators,
-    launch_spatial_persistent_chain,
 )
 
 wp.set_module_options({"enable_backward": False})
 
-
-def _select_force_launcher(q, routing_intercepts, serial, path_point, path):
-    """Select a topology using only the static path layout and device."""
-    if (
-        not q.device.is_cuda
-        or routing_intercepts.shape[0] <= PCS_THREADLIKE_SERIAL_MAX_PATHS
-    ):
-        return serial
-    if routing_intercepts.shape[0] <= PCS_THREADLIKE_PATH_POINT_MAX_PATHS:
-        return path_point
-    return path
-
-
-def launch_planar_dynamics_and_threadlike_actuation_force(
-    q: wp.array2d[wp.float64],
-    qd: wp.array2d[wp.float64],
+def launch_planar_floating_dynamics_and_threadlike_actuation_force(
+    q_internal: wp.array2d[wp.float64],
+    qd_internal: wp.array2d[wp.float64],
+    base_pose: wp.array2d[wp.float64],
+    velocity: wp.array2d[wp.float64],
     controls: wp.array2d[wp.float64],
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
@@ -59,7 +46,7 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
     inertia_upper_rows: wp.array[wp.int32],
     inertia_upper_columns: wp.array[wp.int32],
     weighted_masses: wp.array2d[wp.float64],
-    gravity_base: wp.array[wp.float64],
+    gravity_world: wp.array[wp.float64],
     block_dim: int,
     physical_points: wp.array2d[wp.float64],
     physical_weights: wp.array2d[wp.float64],
@@ -82,27 +69,17 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
     inertia: wp.array3d[wp.float64],
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
+    actuation_internal: wp.array2d[wp.float64],
     actuation_force: wp.array2d[wp.float64],
 ):
-    """Enqueue the complete PlanarPCS dynamics and direct-effort sequence.
-
-    Returns:
-        None. Four local-operator outputs, nine chain outputs, and the final
-        ``(E, D)`` actuator force are written without allocation or
-        synchronization.
-
-    Raises:
-        NotImplementedError: If ``q`` is not stored on a CUDA device.
-    """
-
-    if not q.device.is_cuda:
+    """Enqueue augmented PlanarPCS dynamics and internal direct effort."""
+    if not q_internal.device.is_cuda:
         raise NotImplementedError(
-            "Fused PlanarPCS Warp dynamics and actuation require CUDA."
+            "Fused floating PlanarPCS Warp dynamics and actuation require CUDA."
         )
-
     launch_planar_local_operators(
-        q,
-        qd,
+        q_internal,
+        qd_internal,
         active_indices,
         active_scales,
         reference_strain,
@@ -113,7 +90,7 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
         local_velocity,
         transported_tangent_dot_velocity,
     )
-    launch_planar_persistent_chain(
+    launch_planar_floating_persistent_chain(
         adjoint_inverse,
         transported_tangent,
         local_velocity,
@@ -121,11 +98,12 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
         active_indices,
         active_scales,
         active_dof_ends,
-        qd,
+        base_pose,
+        velocity,
         inertia_upper_rows,
         inertia_upper_columns,
         weighted_masses,
-        gravity_base,
+        gravity_world,
         block_dim,
         jacobian_first,
         derivative_first,
@@ -138,14 +116,14 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
         gravity_force,
     )
     force_launcher = _select_force_launcher(
-        q,
+        q_internal,
         routing_intercepts,
         launch_planar_threadlike_actuation_force,
         launch_planar_threadlike_force_path_point,
         launch_planar_threadlike_force_path,
     )
     force_launcher(
-        q,
+        q_internal,
         controls,
         active_indices,
         active_scales,
@@ -158,13 +136,15 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
         path_end_segments,
         coordinate_scales,
         epsilons,
-        actuation_force,
+        actuation_internal,
     )
+    launch_prepend_zeros(actuation_internal, 3, actuation_force)
 
-
-def launch_spatial_dynamics_and_threadlike_actuation_force(
-    q: wp.array2d[wp.float64],
-    qd: wp.array2d[wp.float64],
+def launch_spatial_floating_dynamics_and_threadlike_actuation_force(
+    q_internal: wp.array2d[wp.float64],
+    qd_internal: wp.array2d[wp.float64],
+    base_pose: wp.array2d[wp.float64],
+    velocity: wp.array2d[wp.float64],
     controls: wp.array2d[wp.float64],
     active_indices: wp.array2d[wp.int32],
     active_scales: wp.array2d[wp.float64],
@@ -174,7 +154,7 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
     inertia_upper_rows: wp.array[wp.int32],
     inertia_upper_columns: wp.array[wp.int32],
     weighted_masses: wp.array2d[wp.float64],
-    gravity_base: wp.array[wp.float64],
+    gravity_world: wp.array[wp.float64],
     block_dim: int,
     physical_points: wp.array2d[wp.float64],
     physical_weights: wp.array2d[wp.float64],
@@ -199,25 +179,17 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
     inertia: wp.array3d[wp.float64],
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
+    actuation_internal: wp.array2d[wp.float64],
     actuation_force: wp.array2d[wp.float64],
 ):
-    """Enqueue the complete spatial PCS dynamics and direct-effort sequence.
-
-    Returns:
-        None. Four local-operator outputs, eleven chain outputs, and the final
-        ``(E, D)`` actuator force are written without allocation or
-        synchronization.
-
-    Raises:
-        NotImplementedError: If ``q`` is not stored on a CUDA device.
-    """
-
-    if not q.device.is_cuda:
-        raise NotImplementedError("Fused PCS Warp dynamics and actuation require CUDA.")
-
+    """Enqueue augmented spatial PCS dynamics and internal direct effort."""
+    if not q_internal.device.is_cuda:
+        raise NotImplementedError(
+            "Fused floating PCS Warp dynamics and actuation require CUDA."
+        )
     launch_spatial_local_operators(
-        q,
-        qd,
+        q_internal,
+        qd_internal,
         active_indices,
         active_scales,
         reference_strain,
@@ -227,7 +199,7 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
         local_velocity,
         transported_tangent_dot_velocity,
     )
-    launch_spatial_persistent_chain(
+    launch_spatial_floating_persistent_chain(
         adjoint_inverse,
         transported_tangent,
         local_velocity,
@@ -235,11 +207,12 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
         active_indices,
         active_scales,
         active_dof_ends,
-        qd,
+        base_pose,
+        velocity,
         inertia_upper_rows,
         inertia_upper_columns,
         weighted_masses,
-        gravity_base,
+        gravity_world,
         block_dim,
         jacobian_first,
         derivative_first,
@@ -254,14 +227,14 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
         gravity_force,
     )
     force_launcher = _select_force_launcher(
-        q,
+        q_internal,
         routing_intercepts,
         launch_spatial_threadlike_actuation_force,
         launch_spatial_threadlike_force_path_point,
         launch_spatial_threadlike_force_path,
     )
     force_launcher(
-        q,
+        q_internal,
         controls,
         active_indices,
         active_scales,
@@ -274,23 +247,21 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
         path_end_segments,
         coordinate_scales,
         epsilons,
-        actuation_force,
+        actuation_internal,
     )
+    launch_prepend_zeros(actuation_internal, 6, actuation_force)
 
-
-planar_dynamics_and_threadlike_actuation_force = wp.jax_callable(
-    launch_planar_dynamics_and_threadlike_actuation_force,
-    num_outputs=14,
-)
-spatial_dynamics_and_threadlike_actuation_force = wp.jax_callable(
-    launch_spatial_dynamics_and_threadlike_actuation_force,
-    num_outputs=16,
+planar_floating_dynamics_and_threadlike_actuation_force = wp.jax_callable(
+    launch_planar_floating_dynamics_and_threadlike_actuation_force,
+    num_outputs=15,
 )
 
+spatial_floating_dynamics_and_threadlike_actuation_force = wp.jax_callable(
+    launch_spatial_floating_dynamics_and_threadlike_actuation_force,
+    num_outputs=17,
+)
 
 __all__ = [
-    "launch_planar_dynamics_and_threadlike_actuation_force",
-    "launch_spatial_dynamics_and_threadlike_actuation_force",
-    "planar_dynamics_and_threadlike_actuation_force",
-    "spatial_dynamics_and_threadlike_actuation_force",
+    "launch_planar_floating_dynamics_and_threadlike_actuation_force",
+    "launch_spatial_floating_dynamics_and_threadlike_actuation_force",
 ]

@@ -1,11 +1,5 @@
 # ruff: noqa: I001, UP018
-"""Allocation-free fused GVS dynamics and threadlike-force execution.
-
-The public launcher composes the existing persistent dynamics chain and
-threadlike direct-effort launch sequence behind one Warp callable. It introduces
-no alternative numerical kernels: callers retain ownership of every workspace
-and output, and the fixed sequence remains CUDA-graph-capturable.
-"""
+"""Allocation-free floating GVS dynamics and threadlike-force execution."""
 
 from __future__ import annotations
 
@@ -14,12 +8,14 @@ import warp as wp
 from soromox.systems.execution.warp.gvs.actuation.threadlike import (
     launch_gvs_threadlike_actuation_force,
 )
-from soromox.systems.execution.warp.gvs.chain import launch_persistent_chain
+from soromox.systems.execution.warp.common.floating_base import launch_prepend_zeros
+from soromox.systems.execution.warp.gvs.floating_chain import (
+    launch_floating_persistent_chain,
+)
 
 wp.set_module_options({"enable_backward": False})
 
-
-def launch_gvs_dynamics_and_threadlike_actuation_force(
+def launch_gvs_floating_dynamics_and_threadlike_actuation_force(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
     joint_tangent: wp.array2d[wp.float64],
@@ -32,16 +28,17 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
     cell_tangent_velocity_dot: wp.array2d[wp.float64],
     link_global_to_local: wp.array2d[wp.int32],
     active_dofs: wp.array[wp.int32],
-    qd: wp.array2d[wp.float64],
+    base_pose: wp.array2d[wp.float64],
+    velocity: wp.array2d[wp.float64],
     inertia_upper_rows: wp.array[wp.int32],
     inertia_upper_columns: wp.array[wp.int32],
     weighted_masses: wp.array2d[wp.float64],
-    gravity_base: wp.array[wp.float64],
+    gravity_world: wp.array[wp.float64],
     num_cells: wp.array[wp.int32],
     num_quadrature: wp.array[wp.int32],
     lanes_per_block: wp.array[wp.int32],
     block_dim: int,
-    q: wp.array2d[wp.float64],
+    q_internal: wp.array2d[wp.float64],
     controls: wp.array2d[wp.float64],
     link_local_to_global: wp.array2d[wp.int32],
     link_basis: wp.array4d[wp.float64],
@@ -66,21 +63,20 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
     coriolis_qd: wp.array2d[wp.float64],
     gravity_force: wp.array2d[wp.float64],
     strain_workspace: wp.array4d[wp.float64],
+    actuation_internal: wp.array2d[wp.float64],
     actuation_force: wp.array2d[wp.float64],
 ):
-    """Enqueue GVS chain assembly followed by threadlike direct effort.
+    """Enqueue augmented GVS dynamics and internal direct effort.
 
-    All arrays follow the public GVS dynamics and threadlike operand/shape
-    contracts. The first eleven outputs are the persistent-chain workspaces and
-    results, followed by ``strain_workspace`` with shape ``(E, S, Q, 6)`` and
-    ``actuation_force`` with shape ``(E, D)``.
+    The fixed local joint, cell, and threadlike kernels are reused unchanged.
+    Only the persistent root recurrence and the final output prefix are
+    floating-specific.
 
     Returns:
-        None. The caller-owned buffers are updated without allocation,
-        synchronization, JAX calls, or device transfers.
+        None. Caller-owned augmented dynamics and actuator-force buffers are
+        updated without JAX-side padding or device transfers.
     """
-
-    launch_persistent_chain(
+    launch_floating_persistent_chain(
         joint_adjoint,
         joint_adjoint_dot,
         joint_tangent,
@@ -93,11 +89,12 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
         cell_tangent_velocity_dot,
         link_global_to_local,
         active_dofs,
-        qd,
+        base_pose,
+        velocity,
         inertia_upper_rows,
         inertia_upper_columns,
         weighted_masses,
-        gravity_base,
+        gravity_world,
         num_cells,
         num_quadrature,
         lanes_per_block,
@@ -115,7 +112,7 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
         gravity_force,
     )
     launch_gvs_threadlike_actuation_force(
-        q,
+        q_internal,
         controls,
         link_local_to_global,
         link_global_to_local,
@@ -130,17 +127,13 @@ def launch_gvs_dynamics_and_threadlike_actuation_force(
         coordinate_scales,
         epsilons,
         strain_workspace,
-        actuation_force,
+        actuation_internal,
     )
+    launch_prepend_zeros(actuation_internal, 6, actuation_force)
 
-
-gvs_dynamics_and_threadlike_actuation_force = wp.jax_callable(
-    launch_gvs_dynamics_and_threadlike_actuation_force,
-    num_outputs=13,
+gvs_floating_dynamics_and_threadlike_actuation_force = wp.jax_callable(
+    launch_gvs_floating_dynamics_and_threadlike_actuation_force,
+    num_outputs=14,
 )
 
-
-__all__ = [
-    "gvs_dynamics_and_threadlike_actuation_force",
-    "launch_gvs_dynamics_and_threadlike_actuation_force",
-]
+__all__ = ["launch_gvs_floating_dynamics_and_threadlike_actuation_force"]

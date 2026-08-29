@@ -500,3 +500,40 @@ def test_floating_pcs_warp_kinematics_matches_jax(
         assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)
     for actual, expected in zip(warp_tangent, jax_tangent, strict=True):
         assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)
+
+
+@pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs])
+def test_floating_pcs_warp_dynamics_matches_jax_on_cuda(
+    factory, monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setenv(
+        "WARP_CACHE_PATH", str(tmp_path / f"floating-dynamics-{factory.__name__}")
+    )
+    wp = pytest.importorskip("warp")
+    if not wp.is_cuda_available():
+        pytest.skip("Floating PCS Warp dynamics require CUDA.")
+
+    robot = factory()
+    base_pose = (
+        jnp.array([0.96, 0.1, -0.2, 0.15, 0.3, -0.2, 0.4])
+        if not robot.is_planar
+        else jnp.array([0.4, 0.3, -0.2])
+    )
+    q = robot.pack_configuration(
+        jnp.linspace(-0.02, 0.03, robot.num_internal_dofs), base_pose=base_pose
+    )
+    v = robot.pack_velocity(
+        jnp.linspace(0.04, -0.03, robot.num_internal_dofs),
+        base_velocity=jnp.linspace(-0.1, 0.2, robot.num_base_velocities),
+    )
+
+    q_batch = jnp.stack([q, robot.retract_configuration(q, 0.01 * v)])
+    v_batch = jnp.stack([v, 0.8 * v])
+    warp_result = jax.vmap(
+        lambda q_, v_: robot.dynamics_terms(q_, v_, backend="warp")
+    )(q_batch, v_batch)
+    jax_result = jax.vmap(
+        lambda q_, v_: robot.dynamics_terms(q_, v_, backend="jax")
+    )(q_batch, v_batch)
+    for actual, expected in zip(warp_result, jax_result, strict=True):
+        assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)

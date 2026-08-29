@@ -11,13 +11,17 @@ from soromox.systems.execution.warp.pcs.operands import (
     PCSOperands,
     PCSPipelineShapes,
 )
-from soromox.systems.execution.warp.pcs.planar_kernels import (
+from soromox.systems.execution.warp.pcs.planar_floating_kernels import (
     planar_floating_persistent_chain,
+)
+from soromox.systems.execution.warp.pcs.planar_kernels import (
     planar_local_operators,
     planar_persistent_chain,
 )
-from soromox.systems.execution.warp.pcs.spatial_kernels import (
+from soromox.systems.execution.warp.pcs.spatial_floating_kernels import (
     spatial_floating_persistent_chain,
+)
+from soromox.systems.execution.warp.pcs.spatial_kernels import (
     spatial_local_operators,
     spatial_persistent_chain,
 )

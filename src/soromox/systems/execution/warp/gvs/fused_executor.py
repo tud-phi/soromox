@@ -12,9 +12,11 @@ from soromox.systems.execution.warp.gvs.actuation.operands import (
     GVSThreadlikeShapes,
 )
 from soromox.systems.execution.warp.gvs.executor import _cell_terms, _gather_local
+from soromox.systems.execution.warp.gvs.floating_fused import (
+    gvs_floating_dynamics_and_threadlike_actuation_force,
+)
 from soromox.systems.execution.warp.gvs.fused import (
     gvs_dynamics_and_threadlike_actuation_force,
-    gvs_floating_dynamics_and_threadlike_actuation_force,
 )
 from soromox.systems.execution.warp.gvs.operands import (
     GVSFloatingOperands,

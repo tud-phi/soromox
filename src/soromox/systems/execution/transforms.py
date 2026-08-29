@@ -778,6 +778,8 @@ def _assemble_forward_dynamics(
     )
     qdd = model._solve_inertia(inertia, rhs)
     qdot = model.configuration_derivative(q, qd)
+    if model.num_auxiliary_states == 0:
+        return jnp.concatenate([qdot, qdd])
     auxiliary_dot = jnp.zeros_like(auxiliary_state)
     return jnp.concatenate([qdot, qdd, auxiliary_dot])
 

@@ -2932,5 +2932,7 @@ class SoftRobot(DynamicalSystem):
         qdd = self._solve_inertia(M, rhs)
 
         qdot = self.configuration_derivative(q, qd)
+        if self.num_auxiliary_states == 0:
+            return jnp.concatenate([qdot, qdd])
         auxiliary_dot = jnp.zeros_like(auxiliary_state)
         return jnp.concatenate([qdot, qdd, auxiliary_dot])
