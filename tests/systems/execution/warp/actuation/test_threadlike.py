@@ -644,6 +644,29 @@ def test_public_gate_uses_only_benchmark_qualified_warp_paths(family: str) -> No
         model.actuation_force(q, controls, backend="warp")
 
 
+def test_pcs_explicit_warp_matrix_uses_warp_on_cpu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Execute the CPU-capable PCS matrix instead of silently using JAX."""
+
+    model = _build_system("pcs", 2, 4)
+    q = jnp.linspace(-0.02, 0.03, model.num_dofs)
+
+    def fake_evaluator(model_, q_):
+        return jnp.full((model_.num_dofs, model_.num_actuators), 7.0, dtype=q_.dtype)
+
+    monkeypatch.setattr(
+        "soromox.systems.execution.dispatch.get_actuation_evaluator",
+        lambda _family, _operation: fake_evaluator,
+    )
+    monkeypatch.setattr(
+        "soromox.systems.execution.dispatch.jax.default_backend",
+        lambda: "cpu",
+    )
+
+    assert_allclose(model.actuation_matrix(q, backend="warp"), 7.0)
+
+
 def test_warp_actuation_vmap_consolidates_one_batch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

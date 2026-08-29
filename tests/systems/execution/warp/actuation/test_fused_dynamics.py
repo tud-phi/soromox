@@ -117,24 +117,32 @@ def test_cooperative_pcs_force_topologies_match_jax(
     assert_allclose(actual, expected, rtol=3e-9, atol=3e-10)
 
 
-@pytest.mark.parametrize("family", ["pcs", "gvs"])
+@pytest.mark.parametrize(
+    ("family", "device"),
+    [("pcs", "gpu"), ("gvs", "gpu"), ("gvs", "cpu")],
+)
 def test_gvs_and_pcs_enable_fused_system_dispatch(
     family: str,
+    device: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Activate system-level fusion for both production Warp families."""
+    """Activate fusion on every device supported by each Warp family."""
 
     model = _build_system(family, 2, 4)
     q = jnp.linspace(-0.02, 0.03, model.num_dofs)
     qd = jnp.linspace(0.12, -0.08, model.num_dofs)
     controls = jnp.linspace(-0.4, 0.7, model.num_actuators)
-    observed_batches: list[tuple[int, ...]] = []
 
     def fake_batch(model_, q_, qd_, controls_):
-        observed_batches.append(q_.shape)
-        dynamics = jax.vmap(model_._assemble_dynamics_terms)(q_, qd_)
-        force = jax.vmap(model_._actuation_force)(q_, controls_, qd_)
-        return *dynamics, force
+        del qd_, controls_
+        batch_size = q_.shape[0]
+        marker = jnp.asarray(batch_size, dtype=q_.dtype)
+        return (
+            jnp.full((batch_size, model_.num_dofs, model_.num_dofs), marker),
+            jnp.full((batch_size, model_.num_dofs), marker + 1.0),
+            jnp.full((batch_size, model_.num_dofs), marker + 2.0),
+            jnp.full((batch_size, model_.num_dofs), marker + 3.0),
+        )
 
     monkeypatch.setattr(
         loader,
@@ -143,7 +151,7 @@ def test_gvs_and_pcs_enable_fused_system_dispatch(
     )
     monkeypatch.setattr(
         "soromox.systems.execution.dispatch.jax.default_backend",
-        lambda: "gpu",
+        lambda: device,
     )
 
     result = dispatch_fused_dynamics_actuation_force(
@@ -156,7 +164,8 @@ def test_gvs_and_pcs_enable_fused_system_dispatch(
     )
 
     assert result is not None
-    assert observed_batches == [(1, model.num_dofs)]
+    for term, marker in zip(result, (1.0, 2.0, 3.0, 4.0), strict=True):
+        assert_allclose(term, marker)
 
 
 def test_fused_gvs_vmap_uses_one_canonical_batch(

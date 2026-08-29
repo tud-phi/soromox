@@ -59,7 +59,7 @@ def _select_backend(
     Raises:
         ValueError: If the requested or configured backend name is invalid.
         NotImplementedError: If Warp was requested explicitly for an unsupported
-            quadrature rule or model instance.
+            device, quadrature rule, or model instance.
     """
 
     configured = model.backend if requested is None else requested
@@ -68,14 +68,19 @@ def _select_backend(
             f"backend must be one of 'auto', 'jax', or 'warp', got {requested!r}."
         )
 
+    device = jax.default_backend()
     selected: ExecutionBackend = configured
     if selected == "auto":
-        selected = "warp" if jax.default_backend() == "gpu" else "jax"
-    if (
-        selected == "warp"
-        and jax.default_backend() != "gpu"
-        and not capabilities.warp_cpu_supported
-    ):
+        selected = "warp" if device == "gpu" else "jax"
+    warp_device_supported = device == "gpu" or (
+        device == "cpu" and capabilities.warp_cpu_supported
+    )
+    if selected == "warp" and not warp_device_supported:
+        if configured == "warp":
+            raise NotImplementedError(
+                f"The Warp {capabilities.family_name} executor is not supported "
+                f"on the active {device.upper()} device."
+            )
         selected = "jax"
     if model.num_dofs == 0:
         selected = "jax"
@@ -215,7 +220,6 @@ def dispatch_fused_dynamics_actuation_force(
 
     if (
         not capabilities.fused_threadlike_force_enabled
-        or jax.default_backend() != "gpu"
         or not supports_linear_threadlike_force(model)
     ):
         return None

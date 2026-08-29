@@ -11,6 +11,7 @@ from numpy.testing import assert_allclose
 
 from soromox.systems.execution import (
     GVS_DYNAMICS,
+    PCS_DYNAMICS,
     PCS_KINEMATICS,
     DynamicsCapabilities,
     ExecutionBackend,
@@ -315,6 +316,54 @@ def test_explicit_warp_reports_unsupported_configuration(
             capabilities=GVS_DYNAMICS,
             warp_supported=False,
         )
+
+
+@pytest.mark.parametrize("device", ["cpu", "tpu"])
+def test_explicit_warp_reports_unsupported_device(
+    device: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Never silently replace an explicit CUDA-only Warp request with JAX."""
+
+    monkeypatch.setattr(
+        "soromox.systems.execution.dispatch.jax.default_backend",
+        lambda: device,
+    )
+    model = _probe(backend="warp")
+    state = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
+
+    with pytest.raises(NotImplementedError, match=f"active {device.upper()} device"):
+        dispatch_dynamics_terms(
+            model,
+            state,
+            state,
+            backend=None,
+            capabilities=PCS_DYNAMICS,
+        )
+
+
+def test_auto_falls_back_for_unsupported_cpu_device(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep CPU fallback exclusive to automatic backend selection."""
+
+    monkeypatch.setattr(
+        "soromox.systems.execution.dispatch.jax.default_backend",
+        lambda: "cpu",
+    )
+    model = _probe(backend="auto")
+    state = jnp.linspace(-0.1, 0.1, model.num_dofs, dtype=jnp.float64)
+    expected = model._assemble_dynamics_terms(state, state)
+    actual = dispatch_dynamics_terms(
+        model,
+        state,
+        state,
+        backend=None,
+        capabilities=PCS_DYNAMICS,
+    )
+
+    for actual_term, expected_term in zip(actual, expected, strict=True):
+        assert_allclose(actual_term, expected_term)
 
 
 def test_auto_falls_back_for_unsupported_configuration(

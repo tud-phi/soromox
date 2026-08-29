@@ -72,13 +72,31 @@ The `backend` constructor argument accepts three values:
 |---|---|
 | `"auto"` | Uses Warp for supported primal kinematics and dynamics on a GPU and JAX/XLA otherwise. This is the default. |
 | `"jax"` | Always uses the reference JAX/XLA implementation. |
-| `"warp"` | Requests the Warp implementation where the system, quadrature rule, and device support it. |
+| `"warp"` | Requires the Warp implementation for the requested operation on the active device. An unsupported device, system, or quadrature rule raises an error. |
 
 Automatic selection has no batch-size, model-order, or GPU-model crossover.
 This keeps behavior predictable across devices. On a GPU, unsupported methods
 and model layouts fall back to JAX under `"auto"`. If the optional Warp
 dependency is unavailable, install it or construct the model with
 `backend="jax"`.
+
+!!! important "Only `auto` falls back between backends"
+    An explicit `backend="warp"` request never silently replaces a requested
+    Warp kinematics or dynamics operation with JAX because its device, system,
+    or quadrature is unsupported. It either uses Warp or reports why that
+    operation is unavailable. Composite forward dynamics still uses documented
+    JAX-only components such as constitutive forces, the inertia solve, and
+    ineligible actuation laws; differentiation also follows the JAX path.
+
+| Active device | `backend="auto"` | `backend="jax"` | `backend="warp"` |
+|---|---|---|---|
+| CPU | JAX | JAX | Warp for CPU-supported operations; otherwise an error |
+| GPU | Warp for supported operations, JAX otherwise | JAX | Warp for supported operations; otherwise an error |
+
+CPU Warp support is operation-specific. GVS kinematics and dynamics support
+Warp CPU execution, as do PlanarPCS and PCS kinematics and the spatial PCS
+actuation matrix. PlanarPCS and PCS Warp dynamics require a GPU. The support
+table below gives the complete family-level distinction.
 
 !!! note "Backend configuration is static"
     Choose the model backend during construction. It is part of the model's
@@ -97,7 +115,8 @@ dependency is unavailable, install it or construct the model with
     - **Small and moderate batches:** CPU with JAX often remains competitive.
       GPU execution becomes more attractive as the model, quadrature, sampled
       abscissae, or operation becomes more expensive. Compare CPU JAX, GPU JAX,
-      and GPU Warp for the actual workload when this regime matters.
+      and GPU Warp for the actual workload when this regime matters. For GVS
+      and CPU-supported Warp kinematics, include CPU Warp in that comparison.
     - **Large batches and parallel rollouts:** a GPU is usually the strongest
       starting point when the working set fits in VRAM and states remain on the
       device. For supported forward-only primal kinematics and dynamics, GPU
@@ -107,26 +126,28 @@ dependency is unavailable, install it or construct the model with
       and differentiation continue to favor or require JAX.
 
     Benchmark your specific application before choosing a production device and
-    backend. Compare the practical combinations—CPU JAX, GPU JAX, and GPU
-    Warp—using the actual robot structure, quadrature, operations, and batch
-    shapes after warmup. Include host/device transfers and synchronization, and
-    verify that peak memory use fits the available RAM or VRAM. Choose the
-    combination that provides the best end-to-end performance for your use case
-    while satisfying its differentiation and backend-support requirements;
-    crossover points from another model or machine may not apply.
+    backend. Compare the practical combinations—CPU JAX, CPU Warp where
+    supported, GPU JAX, and GPU Warp—using the actual robot structure,
+    quadrature, operations, and batch shapes after warmup. Include host/device
+    transfers and synchronization, and verify that peak memory use fits the
+    available RAM or VRAM. Choose the combination that provides the best
+    end-to-end performance for your use case while satisfying its
+    differentiation and backend-support requirements; crossover points from
+    another model or machine may not apply.
 
 ## Supported systems and methods
 
-| System | Warp support | Requirements |
-|---|---|---|
-| `PlanarPCS` | Kinematics and dynamics on GPU; Warp-native linear-threadlike integration; explicit Warp kinematics is also available on CPU | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
-| `PCS` | Kinematics and dynamics on GPU; Warp-native linear-threadlike integration; explicit Warp kinematics is also available on CPU | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
-| `GVS` | Kinematics and dynamics on GPU; Warp-native linear-threadlike integration; explicit Warp execution is also available on CPU | FP64 arrays |
+| System | Warp on CPU | Warp on GPU | Requirements |
+|---|---|---|---|
+| `PlanarPCS` | Kinematics and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
+| `PCS` | Kinematics, system-level threadlike actuation matrices, and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, system-level threadlike actuation matrices, and low-level linear-threadlike integration | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
+| `GVS` | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Warp requires FP64 arrays |
 
 Other systems, including `PlanarHSA`, continue to use JAX/XLA. For PCS models
 with a quadrature rule other than five Gauss points, `"auto"` falls back to
-JAX. Explicitly requesting `"warp"` for such a model raises an error instead of
-silently changing its quadrature.
+JAX. Explicitly requesting `"warp"` for an unsupported device, system, method,
+or quadrature rule raises an error instead of silently changing the backend or
+quadrature.
 
 The selected dynamics backend is used by:
 
@@ -168,9 +189,11 @@ unsupported system-level operation explains how to access the low-level
 Warp-native API. Passive threadlike impedance and actuator path coordinates
 also remain JAX operations.
 
-When Warp dynamics is selected, `GVS`, `PCS`, and `PlanarPCS` forward dynamics
-combine eligible built-in linear threadlike actuation with the dynamics
-evaluation. Other actuation layouts continue to evaluate actuation with JAX.
+When Warp dynamics is selected, eligible built-in linear threadlike actuation
+is fused with the dynamics evaluation. This fused path supports GVS on CPU and
+GPU, and PlanarPCS and PCS on GPU. Because `"auto"` selects JAX on CPU, CPU GVS
+fusion is used only when Warp is selected explicitly. Other actuation layouts
+use Warp dynamics and evaluate actuation with JAX.
 
 ## Model-level and per-call selection
 

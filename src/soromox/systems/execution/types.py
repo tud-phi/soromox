@@ -288,8 +288,8 @@ class DynamicsCapabilities:
         family_name: Human-readable family name used in validation errors.
         warp_executor: Lazy-loader key for the family's Warp implementation.
         warp_cpu_supported: Whether the Warp executor may run when JAX's default
-            backend is CPU. When false, automatic and explicit selection fall
-            back to JAX on CPU.
+            backend is CPU. When false, automatic selection falls back to JAX
+            and an explicit Warp request raises an error on CPU.
         required_num_gauss_points: Exact quadrature size required by Warp, or
             ``None`` when the executor is shape-generic in quadrature count.
         fused_threadlike_force_enabled: Whether eligible linear-threadlike

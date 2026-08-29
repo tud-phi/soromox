@@ -19,6 +19,7 @@ PCS_ACTUATION = ActuationCapabilities(
     warp_executor="pcs",
     matrix_enabled=True,
     force_enabled=False,
+    warp_cpu_supported=True,
 )
 GVS_ACTUATION = ActuationCapabilities(
     family_name="GVS",
