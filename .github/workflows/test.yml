@@ -51,7 +51,20 @@ jobs:
             -m "not memory_intensive"
 
       - name: Run GVS system tests
-        run: python -m pytest tests/systems/test_gvs.py -m "not memory_intensive"
+        run: |
+          # Bound the JAX/XLA executable memory retained by each Python process.
+          mapfile -t gvs_tests < <(
+            python -m pytest tests/systems/test_gvs.py \
+              -m "not memory_intensive" \
+              --collect-only -q | sed -n '/^tests\/systems\/test_gvs.py::/p'
+          )
+          if (( ${#gvs_tests[@]} == 0 )); then
+            echo "No GVS tests were collected." >&2
+            exit 1
+          fi
+          for ((start = 0; start < ${#gvs_tests[@]}; start += 20)); do
+            python -m pytest "${gvs_tests[@]:start:20}"
+          done
 
       - name: Run PCS system tests
         run: python -m pytest tests/systems/test_pcs.py -m "not memory_intensive"
@@ -106,7 +119,20 @@ jobs:
             -m "not memory_intensive"
 
       - name: Run GVS system tests
-        run: python -m pytest tests/systems/test_gvs.py -m "not memory_intensive"
+        run: |
+          # Bound the JAX/XLA executable memory retained by each Python process.
+          mapfile -t gvs_tests < <(
+            python -m pytest tests/systems/test_gvs.py \
+              -m "not memory_intensive" \
+              --collect-only -q | sed -n '/^tests\/systems\/test_gvs.py::/p'
+          )
+          if (( ${#gvs_tests[@]} == 0 )); then
+            echo "No GVS tests were collected." >&2
+            exit 1
+          fi
+          for ((start = 0; start < ${#gvs_tests[@]}; start += 20)); do
+            python -m pytest "${gvs_tests[@]:start:20}"
+          done
 
       - name: Run PCS system tests
         run: python -m pytest tests/systems/test_pcs.py -m "not memory_intensive"
