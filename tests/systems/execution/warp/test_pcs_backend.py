@@ -1,4 +1,4 @@
-"""JAX/Warp equivalence tests for five-point spatial PCS dynamics."""
+"""JAX/Warp equivalence tests for runtime-shaped spatial PCS dynamics."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import Any
 
 import jax
 import pytest
+from numpy.testing import assert_allclose
 
 from soromox.systems.execution.warp.pcs.operands import (
     PCSKinematicsOperands,
@@ -34,7 +35,7 @@ def test_pcs_operands_are_views_over_precomputed_model_data(
     assert operands.is_planar is False
     assert operands.num_segments == model.num_segments
     assert operands.num_dofs == model.num_dofs
-    assert operands.num_gauss_points == 5
+    assert operands.num_gauss_points == model.num_gauss_points
     assert operands.block_dim == model.backend_params.warp_block_dim
     assert operands.active_strain_indices is model.active_strain_indices
     assert operands.reference_strain is model.xi_ref
@@ -52,7 +53,7 @@ def test_spatial_pcs_pipeline_shapes_cover_workspace_and_results(
 
     assert shapes.spatial_dim == 6
     assert shapes.operator_outputs()["adjoint_inverse"] == (
-        3 * model.num_segments * 6 * 6,
+        3 * model.num_segments * (model.num_gauss_points + 1) * 6,
         6,
     )
     assert shapes.chain_outputs()["velocity_first"] == (3 * 6, 1)
@@ -131,3 +132,31 @@ def test_pcs_public_dynamics_apis_match_jax_on_gpu(
     q, qd, y = state_batch(jax_model)
 
     assert_backend_equivalence(jax_model, warp_model, q, qd, y)
+
+
+@pytest.mark.parametrize("num_gauss_points", [1, 3, 7, 9])
+def test_spatial_pcs_runtime_quadrature_counts_match_jax_on_gpu(
+    num_gauss_points: int,
+    make_pcs_model: Callable[..., Any],
+    state_batch: Callable[[Any], tuple[Any, Any, Any]],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """Match public Warp dynamics for arbitrary positive quadrature counts."""
+
+    if jax.default_backend() != "gpu":
+        pytest.skip("PCS Warp equivalence requires a JAX GPU backend.")
+    pytest.importorskip("warp")
+    monkeypatch.setenv(
+        "WARP_CACHE_PATH",
+        str(tmp_path / f"pcs-quadrature-{num_gauss_points}"),
+    )
+    jax_model = make_pcs_model("jax", num_gauss_points=num_gauss_points)
+    warp_model = make_pcs_model("warp", num_gauss_points=num_gauss_points)
+    q, qd, _y = state_batch(jax_model)
+
+    expected = jax.vmap(jax_model._assemble_dynamics_terms)(q, qd)
+    actual = warp_model.dynamics_terms(q, qd)
+
+    for actual_term, expected_term in zip(actual, expected, strict=True):
+        assert_allclose(actual_term, expected_term, rtol=2e-8, atol=2e-10)

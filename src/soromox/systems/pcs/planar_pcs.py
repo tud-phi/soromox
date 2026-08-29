@@ -729,11 +729,11 @@ class PlanarPCS(SoftRobot):
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
         """Build compact state-independent planar dynamics operands.
 
-        The arrays encode the active strain selection, the five-point
-        quadrature grid, diagonal mass action, packed inertia layout, and base-
-        frame gravity. They are cached on the model and shared by the JAX and
-        Warp dynamics implementations, so backend execution does not repeat
-        this structural preprocessing.
+        The arrays encode the active strain selection, quadrature grid,
+        diagonal mass action, packed inertia layout, and base-frame gravity.
+        They are cached on the model and shared by the JAX and Warp dynamics
+        implementations, so backend execution does not repeat this structural
+        preprocessing.
 
         Args:
             M_segments: Local planar spatial-inertia matrices with shape
@@ -3413,11 +3413,11 @@ class PlanarPCS(SoftRobot):
         """Assemble planar PCS dynamics terms for one or many environments.
 
         ``backend=None`` uses the model's configured :attr:`backend`. Warp is
-        selected only for forward-only GPU execution with exactly five Gauss
-        points; CPU execution, other quadrature counts, and all forward- or
-        reverse-mode differentiation use the JAX implementation. Applying
-        :func:`jax.vmap` to scalar calls invokes one batch-shaped Warp pipeline
-        rather than mapping independent batch-one launches.
+        selected for forward-only GPU execution with any positive quadrature
+        count; CPU execution and all forward- or reverse-mode differentiation
+        use the JAX implementation. Applying :func:`jax.vmap` to scalar calls
+        invokes one batch-shaped Warp pipeline rather than mapping independent
+        batch-one launches.
 
         The Warp implementation uses FP64 SE(2) constant-strain operators and
         one persistent cooperative chain block per environment. Its generated
@@ -3440,8 +3440,6 @@ class PlanarPCS(SoftRobot):
         Raises:
             ValueError: If the backend or input shapes are invalid, or a Warp
                 batch is empty.
-            NotImplementedError: If Warp is explicitly requested with a
-                quadrature rule other than five Gauss points.
             TypeError: If Warp is selected for non-FP64 states.
             ImportError: If Warp is selected but ``warp-lang`` is unavailable.
         """

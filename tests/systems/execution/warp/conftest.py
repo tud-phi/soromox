@@ -24,7 +24,7 @@ from soromox.systems.execution import ExecutionBackend
 
 jax.config.update("jax_enable_x64", True)
 
-ModelFactory = Callable[[ExecutionBackend], Any]
+ModelFactory = Callable[..., Any]
 
 
 def _spatial_link(length: float) -> LinkSpec:
@@ -97,7 +97,7 @@ def make_gvs_model() -> ModelFactory:
 
 @pytest.fixture
 def make_pcs_model() -> ModelFactory:
-    """Return a factory for five-point spatial PCS models."""
+    """Return a factory for spatial PCS models."""
 
     links = (_spatial_link(0.12), _spatial_link(0.09))
     selector = jnp.tile(
@@ -105,14 +105,14 @@ def make_pcs_model() -> ModelFactory:
         2,
     )
 
-    def make(backend: ExecutionBackend) -> PCS:
+    def make(backend: ExecutionBackend, *, num_gauss_points: int = 5) -> PCS:
         """Build a spatial PCS model with identical parameters for one backend."""
 
         return PCS.from_links(
             links,
             gravity=jnp.asarray([0.2, -0.1, -9.81], dtype=jnp.float64),
             structure=PCSStructure(
-                num_gauss_points=5,
+                num_gauss_points=num_gauss_points,
                 strain_selector=selector,
                 scale_rotational_basis_by_length=True,
             ),
@@ -124,7 +124,7 @@ def make_pcs_model() -> ModelFactory:
 
 @pytest.fixture
 def make_planar_pcs_model() -> ModelFactory:
-    """Return a factory for five-point planar PCS models."""
+    """Return a factory for planar PCS models."""
 
     links = (_planar_link(0.12), _planar_link(0.09))
     selector = jnp.tile(
@@ -132,14 +132,14 @@ def make_planar_pcs_model() -> ModelFactory:
         2,
     )
 
-    def make(backend: ExecutionBackend) -> PlanarPCS:
+    def make(backend: ExecutionBackend, *, num_gauss_points: int = 5) -> PlanarPCS:
         """Build a planar PCS model with identical parameters for one backend."""
 
         return PlanarPCS.from_links(
             links,
             gravity=jnp.asarray([0.2, -9.81], dtype=jnp.float64),
             structure=PlanarPCSStructure(
-                num_gauss_points=5,
+                num_gauss_points=num_gauss_points,
                 strain_selector=selector,
                 scale_rotational_basis_by_length=True,
             ),

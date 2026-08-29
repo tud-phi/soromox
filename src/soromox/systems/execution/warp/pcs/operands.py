@@ -60,8 +60,7 @@ class PCSOperands(eqx.Module):
             spatial PCS (SE(3)).
         num_segments: Number of serial constant-strain segments.
         num_dofs: Number of active generalized coordinates.
-        num_gauss_points: Quadrature points per segment. Production Warp
-            execution currently requires five.
+        num_gauss_points: Quadrature points per segment.
         block_dim: Cooperative lanes per persistent chain block.
         active_strain_indices: Active-coordinate index of every full strain
             component, with negative entries for inactive components.

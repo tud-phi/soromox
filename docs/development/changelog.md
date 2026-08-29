@@ -17,9 +17,9 @@ and include benchmark baseline and measurement context for performance claims.
   `GVS`, `PCS`, and `PlanarPCS`, including spatial, environment, and combined
   batches through the explicit `*_abscissa_batched` methods and `jax.vmap`.
 - Added optional Warp dynamics backends for `GVS`, `PCS`, and `PlanarPCS`,
-  including automatic GPU selection, JAX-routed differentiation, typed
-  `GVSBackendParams` and `PCSBackendParams` launch configuration, and reusable
-  Warp-native execution APIs; see
+  including automatic GPU selection, arbitrary positive PCS quadrature counts,
+  JAX-routed differentiation, typed `GVSBackendParams` and `PCSBackendParams`
+  launch configuration, and reusable Warp-native execution APIs; see
   [Execution Devices and Backends](../user-guide/execution-devices-and-backends.md)
   and [PR #177](https://github.com/tud-phi/soromox/pull/177).
 - Added public allocation-free, CUDA-graph-capturable Warp kernels, operand

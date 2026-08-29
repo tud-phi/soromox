@@ -25,7 +25,7 @@ def _planar_dynamics_terms(
     """Execute the staged constant-strain SE(2) dynamics pipeline.
 
     Args:
-        operands: Five-point planar PCS runtime operands.
+        operands: PlanarPCS runtime operands.
         q: FP64 active coordinates with shape ``(batch_size, num_dofs)``.
         qd: FP64 active velocities with the same shape as ``q``.
 
@@ -69,7 +69,7 @@ def execute_dynamics_terms(
     q: Array,
     qd: Array,
 ) -> tuple[Array, Array, Array]:
-    """Execute the planar or spatial five-point PCS Warp pipeline.
+    """Execute the planar or spatial runtime-shaped PCS Warp pipeline.
 
     Both variants evaluate independent local constant-strain operators in a
     first launch. A persistent block per environment then advances the serial

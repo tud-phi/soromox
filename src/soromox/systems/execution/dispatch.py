@@ -59,7 +59,7 @@ def _select_backend(
     Raises:
         ValueError: If the requested or configured backend name is invalid.
         NotImplementedError: If Warp was requested explicitly for an unsupported
-            device, quadrature rule, or model instance.
+            device or model instance.
     """
 
     configured = model.backend if requested is None else requested
@@ -85,19 +85,6 @@ def _select_backend(
     if model.num_dofs == 0:
         selected = "jax"
 
-    required_points = getattr(capabilities, "required_num_gauss_points", None)
-    actual_points = getattr(model, "num_gauss_points", None)
-    if (
-        selected == "warp"
-        and required_points is not None
-        and actual_points != required_points
-    ):
-        if configured == "warp":
-            raise NotImplementedError(
-                f"The Warp {capabilities.family_name} executor "
-                f"requires exactly {required_points} Gauss points."
-            )
-        selected = "jax"
     if selected == "warp" and not warp_supported:
         if configured == "warp":
             raise NotImplementedError(
@@ -272,7 +259,7 @@ def dispatch_dynamics_terms(
         ValueError: If either state has an invalid shape, their shapes differ,
             or the backend name is invalid.
         NotImplementedError: If Warp is explicitly requested for an unsupported
-            quadrature rule or model instance.
+            device or model instance.
         ImportError: If Warp is selected but the optional dependency is absent.
         TypeError: If the selected Warp executor does not support the state
             dtype.

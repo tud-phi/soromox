@@ -75,7 +75,13 @@ def _routing(num_segments: int, num_paths: int, *, planar: bool) -> ThreadlikeRo
     )
 
 
-def _build_system(family: str, num_segments: int, num_paths: int):
+def _build_system(
+    family: str,
+    num_segments: int,
+    num_paths: int,
+    *,
+    num_gauss_points: int = 5,
+):
     """Construct a small fully actuated continuum model for executor tests."""
 
     planar = family == "planar_pcs"
@@ -85,7 +91,7 @@ def _build_system(family: str, num_segments: int, num_paths: int):
     if family == "planar_pcs":
         return PlanarPCS.from_links(
             [_link(planar=True, length=0.12) for _ in range(num_segments)],
-            structure=PlanarPCSStructure(num_gauss_points=5),
+            structure=PlanarPCSStructure(num_gauss_points=num_gauss_points),
             gravity=jnp.asarray([0.0, 9.81]),
             actuators=actuator,
             backend="jax",
@@ -93,7 +99,7 @@ def _build_system(family: str, num_segments: int, num_paths: int):
     if family == "pcs":
         return PCS.from_links(
             [_link(planar=False, length=0.1) for _ in range(num_segments)],
-            structure=PCSStructure(num_gauss_points=5),
+            structure=PCSStructure(num_gauss_points=num_gauss_points),
             gravity=jnp.asarray([0.0, 0.0, -9.81]),
             actuators=actuator,
             backend="jax",
@@ -108,7 +114,7 @@ def _build_system(family: str, num_segments: int, num_paths: int):
                     strain_selector=[1, 1, 1, 1, 1, 1],
                     basis_order=[0, 0, 0, 0, 0, 0],
                 ),
-                num_gauss_points=5,
+                num_gauss_points=num_gauss_points,
             )
             for _ in range(num_segments)
         ]

@@ -89,7 +89,7 @@ def execute_dynamics_terms(
     General-joint and spatially varying cell operators are evaluated in
     parallel first. One persistent cooperative block per environment then walks
     the serial segment chain, retains recurrence state on chip, accumulates the
-    five-point quadrature contributions, and writes only the final inertia,
+    quadrature contributions, and writes only the final inertia,
     convective-force, and gravity-force terms.
 
     Args:

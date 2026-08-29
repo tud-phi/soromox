@@ -26,19 +26,38 @@ from soromox.systems.execution.warp.pcs.operands import PCSOperands
 from .test_threadlike import _build_system
 
 
-@pytest.mark.parametrize("family", ["planar_pcs", "pcs", "gvs"])
+@pytest.mark.parametrize(
+    ("family", "num_gauss_points"),
+    [
+        *(
+            (family, count)
+            for family in ("planar_pcs", "pcs")
+            for count in (1, 3, 5, 7, 9)
+        ),
+        ("gvs", 5),
+    ],
+)
 def test_fused_dynamics_actuation_executors_match_jax(
     family: str,
+    num_gauss_points: int,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
-    """Match all four terms produced by each public fused Warp executor."""
+    """Match runtime-shaped dynamics and actuation from each fused executor."""
 
     pytest.importorskip("warp")
     if family != "gvs" and jax.default_backend() != "gpu":
         pytest.skip("Fused PlanarPCS and PCS Warp dynamics require CUDA.")
-    monkeypatch.setenv("WARP_CACHE_PATH", str(tmp_path / f"{family}-fused"))
-    model = _build_system(family, 2, 16)
+    monkeypatch.setenv(
+        "WARP_CACHE_PATH",
+        str(tmp_path / f"{family}-{num_gauss_points}-fused"),
+    )
+    model = _build_system(
+        family,
+        2,
+        16,
+        num_gauss_points=num_gauss_points,
+    )
     q = jnp.stack(
         (
             jnp.linspace(-0.025, 0.018, model.num_dofs),

@@ -72,21 +72,13 @@ The `backend` constructor argument accepts three values:
 |---|---|
 | `"auto"` | Uses Warp for supported primal kinematics and dynamics on a GPU and JAX/XLA otherwise. This is the default. |
 | `"jax"` | Always uses the reference JAX/XLA implementation. |
-| `"warp"` | Requires the Warp implementation for the requested operation on the active device. An unsupported device, system, or quadrature rule raises an error. |
+| `"warp"` | Requires the Warp implementation for the requested operation on the active device. An unsupported device, system, or method raises an error. |
 
 Automatic selection has no batch-size, model-order, or GPU-model crossover.
 This keeps behavior predictable across devices. On a GPU, unsupported methods
 and model layouts fall back to JAX under `"auto"`. If the optional Warp
 dependency is unavailable, install it or construct the model with
 `backend="jax"`.
-
-!!! important "Only `auto` falls back between backends"
-    An explicit `backend="warp"` request never silently replaces a requested
-    Warp kinematics or dynamics operation with JAX because its device, system,
-    or quadrature is unsupported. It either uses Warp or reports why that
-    operation is unavailable. Composite forward dynamics still uses documented
-    JAX-only components such as constitutive forces, the inertia solve, and
-    ineligible actuation laws; differentiation also follows the JAX path.
 
 | Active device | `backend="auto"` | `backend="jax"` | `backend="warp"` |
 |---|---|---|---|
@@ -139,15 +131,13 @@ table below gives the complete family-level distinction.
 
 | System | Warp on CPU | Warp on GPU | Requirements |
 |---|---|---|---|
-| `PlanarPCS` | Kinematics and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
-| `PCS` | Kinematics, system-level threadlike actuation matrices, and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, system-level threadlike actuation matrices, and low-level linear-threadlike integration | Dynamics requires exactly five Gauss points; Warp requires FP64 arrays |
+| `PlanarPCS` | Kinematics and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Warp requires FP64 arrays |
+| `PCS` | Kinematics, system-level threadlike actuation matrices, and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, system-level threadlike actuation matrices, and low-level linear-threadlike integration | Warp requires FP64 arrays |
 | `GVS` | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Kinematics, dynamics, eligible fused forward dynamics, and low-level linear-threadlike integration | Warp requires FP64 arrays |
 
-Other systems, including `PlanarHSA`, continue to use JAX/XLA. For PCS models
-with a quadrature rule other than five Gauss points, `"auto"` falls back to
-JAX. Explicitly requesting `"warp"` for an unsupported device, system, method,
-or quadrature rule raises an error instead of silently changing the backend or
-quadrature.
+Other systems, including `PlanarHSA`, continue to use JAX/XLA. Explicitly
+requesting `"warp"` for an unsupported device, system, or method raises an
+error.
 
 The selected dynamics backend is used by:
 

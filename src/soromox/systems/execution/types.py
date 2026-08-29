@@ -290,8 +290,6 @@ class DynamicsCapabilities:
         warp_cpu_supported: Whether the Warp executor may run when JAX's default
             backend is CPU. When false, automatic selection falls back to JAX
             and an explicit Warp request raises an error on CPU.
-        required_num_gauss_points: Exact quadrature size required by Warp, or
-            ``None`` when the executor is shape-generic in quadrature count.
         fused_threadlike_force_enabled: Whether eligible linear-threadlike
             forward dynamics may combine dynamics and direct-effort actuation
             in one family executor invocation.
@@ -300,7 +298,6 @@ class DynamicsCapabilities:
     family_name: str
     warp_executor: WarpExecutorKey
     warp_cpu_supported: bool = False
-    required_num_gauss_points: int | None = None
     fused_threadlike_force_enabled: bool = False
 
 

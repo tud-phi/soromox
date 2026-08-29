@@ -1,5 +1,5 @@
 # ruff: noqa: I001, UP018
-"""Five-point, runtime-shaped spatial PCS dynamics kernels."""
+"""Runtime-shaped spatial PCS dynamics kernels."""
 
 from __future__ import annotations
 

@@ -13,7 +13,6 @@ from soromox.systems.execution import (
     GVS_DYNAMICS,
     PCS_DYNAMICS,
     PCS_KINEMATICS,
-    DynamicsCapabilities,
     ExecutionBackend,
     dispatch_dynamics_terms,
     dispatch_kinematics,
@@ -391,31 +390,45 @@ def test_auto_falls_back_for_unsupported_configuration(
         assert_allclose(actual_term, expected_term)
 
 
-def test_required_quadrature_is_checked_before_executor_loading(
+@pytest.mark.parametrize("gauss_points", [1, 3, 5, 7, 9])
+@pytest.mark.parametrize("configured_backend", ["auto", "warp"])
+def test_pcs_dispatch_accepts_runtime_quadrature_counts(
+    configured_backend: ExecutionBackend,
+    gauss_points: int,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Report the five-point PCS restriction without importing Warp."""
+    """Route every positive PCS quadrature count through the Warp executor."""
+
+    from soromox.systems.execution.warp import loader
 
     monkeypatch.setattr(
         "soromox.systems.execution.dispatch.jax.default_backend",
         lambda: "gpu",
     )
-    capabilities = DynamicsCapabilities(
-        family_name="test PCS",
-        warp_executor="pcs",
-        required_num_gauss_points=5,
-    )
-    model = _probe(backend="warp", gauss_points=3)
+    model = _probe(backend=configured_backend, gauss_points=gauss_points)
     state = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
 
-    with pytest.raises(NotImplementedError, match="exactly 5 Gauss points"):
-        dispatch_dynamics_terms(
-            model,
-            state,
-            state,
-            backend=None,
-            capabilities=capabilities,
+    def fake_batch(model_, q, qd):
+        del qd
+        batch_size = q.shape[0]
+        marker = jnp.asarray(model_.num_gauss_points, dtype=q.dtype)
+        return (
+            jnp.full((batch_size, model_.num_dofs, model_.num_dofs), marker),
+            jnp.full((batch_size, model_.num_dofs), marker),
+            jnp.full((batch_size, model_.num_dofs), marker),
         )
+
+    monkeypatch.setattr(loader, "_execute_pcs_batch", fake_batch)
+    actual = dispatch_dynamics_terms(
+        model,
+        state,
+        state,
+        backend=None,
+        capabilities=PCS_DYNAMICS,
+    )
+
+    for term in actual:
+        assert_allclose(term, gauss_points)
 
 
 def test_kinematics_jax_spatial_vmap_uses_specialized_model_path() -> None:
