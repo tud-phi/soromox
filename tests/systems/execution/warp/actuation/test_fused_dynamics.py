@@ -35,6 +35,8 @@ def test_fused_dynamics_actuation_executors_match_jax(
     """Match all four terms produced by each public fused Warp executor."""
 
     pytest.importorskip("warp")
+    if family != "gvs" and jax.default_backend() != "gpu":
+        pytest.skip("Fused PlanarPCS and PCS Warp dynamics require CUDA.")
     monkeypatch.setenv("WARP_CACHE_PATH", str(tmp_path / f"{family}-fused"))
     model = _build_system(family, 2, 16)
     q = jnp.stack(

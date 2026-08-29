@@ -90,7 +90,15 @@ def launch_planar_dynamics_and_threadlike_actuation_force(
         None. Four local-operator outputs, nine chain outputs, and the final
         ``(E, D)`` actuator force are written without allocation or
         synchronization.
+
+    Raises:
+        NotImplementedError: If ``q`` is not stored on a CUDA device.
     """
+
+    if not q.device.is_cuda:
+        raise NotImplementedError(
+            "Fused PlanarPCS Warp dynamics and actuation require CUDA."
+        )
 
     launch_planar_local_operators(
         q,
@@ -199,7 +207,13 @@ def launch_spatial_dynamics_and_threadlike_actuation_force(
         None. Four local-operator outputs, eleven chain outputs, and the final
         ``(E, D)`` actuator force are written without allocation or
         synchronization.
+
+    Raises:
+        NotImplementedError: If ``q`` is not stored on a CUDA device.
     """
+
+    if not q.device.is_cuda:
+        raise NotImplementedError("Fused PCS Warp dynamics and actuation require CUDA.")
 
     launch_spatial_local_operators(
         q,
