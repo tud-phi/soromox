@@ -537,6 +537,17 @@ def test_coadjoint_action_se3_matches_matrix_product():
     assert_allclose(result, se3.coadjoint(xi) @ dual, rtol=RTOL, atol=ATOL)
 
 
+def test_coadjoint_bar_se3_matches_twist_jacobian():
+    xi = jnp.array([0.3, -0.5, 0.7, 1.1, -1.3, 1.7])
+    dual = jnp.array([-0.2, 0.4, -0.6, 0.8, -1.0, 1.2])
+
+    result = se3.coadjoint_bar(dual)
+    expected = jax.jacfwd(lambda xi_: se3.coadjoint_action(xi_, dual))(xi)
+
+    assert_allclose(result, expected, rtol=RTOL, atol=ATOL)
+    assert_allclose(result @ xi, se3.coadjoint_action(xi, dual), rtol=RTOL, atol=ATOL)
+
+
 def test_small_adjoint_action_se3_matches_matrix_product():
     xi = jnp.array([0.2, -0.4, 0.7, 1.1, -0.3, 0.5])
     eta = jnp.array([-0.6, 0.8, 0.1, -0.2, 0.9, 0.4])

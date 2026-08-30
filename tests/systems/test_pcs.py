@@ -895,8 +895,10 @@ def test_jacobian_and_time_derivative_bodyframe_abscissa_batched_matches_pointwi
     s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = model.jacobian_and_time_derivative_bodyframe_abscissa_batched(
-            q, qd, s_points
+        J_batch, Jd_batch = (
+            model.jacobian_and_time_derivative_bodyframe_abscissa_batched(
+                q, qd, s_points
+            )
         )
 
         for idx, s_val in enumerate(s_points):
@@ -949,8 +951,10 @@ def test_jacobian_and_time_derivative_inertialframe_abscissa_batched_matches_poi
     s_points = jnp.asarray(sample_arc_lengths(model), dtype=jnp.float64)
 
     for q, qd in ((zero_cfg, zero_vel), (q_random, qd_random)):
-        J_batch, Jd_batch = model.jacobian_and_time_derivative_inertialframe_abscissa_batched(
-            q, qd, s_points
+        J_batch, Jd_batch = (
+            model.jacobian_and_time_derivative_inertialframe_abscissa_batched(
+                q, qd, s_points
+            )
         )
 
         for idx, s_val in enumerate(s_points):
@@ -1346,6 +1350,70 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         yd_expected = jnp.concatenate([qd, qdd_expected])
 
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
+
+
+def test_inverse_dynamics_jacobian_passes_match_autodiff() -> None:
+    selector_per_segment = jnp.array(
+        [False, False, True, True, False, False],
+        dtype=bool,
+    )
+    model, _ = make_pcs(
+        num_segments=2,
+        num_gauss_points=2,
+        strain_selector=jnp.tile(selector_per_segment, 2),
+    )
+
+    key_q, key_qd, key_qdd, key_tau = jax.random.split(
+        jax.random.PRNGKey(7134),
+        4,
+    )
+    q = random_q(model, key_q, scale=0.08)
+    qd = random_q(model, key_qd, scale=0.06)
+    qdd = random_q(model, key_qdd, scale=0.1)
+    tau_ext = random_q(model, key_tau, scale=0.01)
+
+    def inverse_dynamics_force(q_: Array, qd_: Array, qdd_: Array) -> Array:
+        inertia, coriolis_qd, gravity = model.dynamics_terms(q_, qd_)
+        return inertia @ qdd_ + coriolis_qd + gravity
+
+    dID_dq, dID_dqd, dID_dqdd, _, _, _, _ = model.inverse_dynamics_backward_pass(
+        q, qd, qdd
+    )
+    expected_dID_dq = jacfwd(lambda q_: inverse_dynamics_force(q_, qd, qdd))(q)
+    expected_dID_dqd = jacfwd(lambda qd_: inverse_dynamics_force(q, qd_, qdd))(qd)
+    expected_dID_dqdd = jacfwd(lambda qdd_: inverse_dynamics_force(q, qd, qdd_))(qdd)
+
+    assert_allclose(dID_dq, expected_dID_dq, rtol=RTOL, atol=ATOL)
+    assert_allclose(dID_dqd, expected_dID_dqd, rtol=RTOL, atol=ATOL)
+    assert_allclose(dID_dqdd, expected_dID_dqdd, rtol=RTOL, atol=ATOL)
+
+    zero_q = jnp.zeros_like(q)
+    zero_results = model.inverse_dynamics_backward_pass(zero_q, qd, qdd)
+    zero_expected_dID_dq = jacfwd(lambda q_: inverse_dynamics_force(q_, qd, qdd))(
+        zero_q
+    )
+    zero_expected_dID_dqd = jacfwd(
+        lambda qd_: inverse_dynamics_force(zero_q, qd_, qdd)
+    )(qd)
+    assert_allclose(zero_results[0], zero_expected_dID_dq, rtol=RTOL, atol=ATOL)
+    assert_allclose(zero_results[1], zero_expected_dID_dqd, rtol=RTOL, atol=ATOL)
+
+    u = jnp.zeros((model.num_actuators,), dtype=q.dtype)
+    y = jnp.concatenate([q, qd])
+    state_jacobian = model.forward_dynamics_state_jacobian(
+        jnp.array(0.0),
+        y,
+        (u, tau_ext),
+    )
+    expected_state_jacobian = jacfwd(
+        lambda y_: model._forward_dynamics(0.0, y_, (u, tau_ext))
+    )(y)
+    assert_allclose(
+        state_jacobian,
+        expected_state_jacobian,
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
 
 @pytest.mark.parametrize("num_segments", [1, 3])
@@ -1871,7 +1939,9 @@ def test_strain_basis_consistency_jacobians_and_time_derivatives(num_segments: i
     Jb_batch_small, Jbd_batch_small = reduced._J_Jd_local_abscissa_batched(
         q_small, qd_small, s_points
     )
-    Jb_batch_full, Jbd_batch_full = full._J_Jd_local_abscissa_batched(q_full, qd_full, s_points)
+    Jb_batch_full, Jbd_batch_full = full._J_Jd_local_abscissa_batched(
+        q_full, qd_full, s_points
+    )
     assert Jb_batch_small.shape == (s_points.shape[0], 6, n_full_strains)
     assert Jbd_batch_small.shape == (s_points.shape[0], 6, n_full_strains)
     assert Jb_batch_full.shape == (s_points.shape[0], 6, n_full_strains)

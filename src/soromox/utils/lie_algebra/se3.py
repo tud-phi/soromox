@@ -5,6 +5,7 @@ __all__ = [
     "small_adjoint",
     "small_adjoint_action",
     "coadjoint",
+    "coadjoint_bar",
     "adjoint",
     "adjoint_inverse",
     "left_jacobian",
@@ -715,6 +716,31 @@ def coadjoint(xi: Array) -> Array:
         angular-first dual vectors.
     """
     return -small_adjoint(xi).T
+
+
+def coadjoint_bar(dual: Array) -> Array:
+    r"""Return the twist Jacobian of the coadjoint action on ``dual``.
+
+    For a fixed spatial dual vector ``dual``, this matrix satisfies
+
+    .. math::
+
+        \operatorname{coadjoint}(\xi)\,dual
+        = \operatorname{coadjoint\_bar}(dual)\,\xi.
+
+    Args:
+        dual: Spatial dual vector with shape ``(6,)`` or ``(6, 1)`` in
+            ``[moment, force]`` order.
+
+    Returns:
+        Array with shape ``(6, 6)`` mapping an angular-first twist to the
+        corresponding coadjoint action on ``dual``.
+    """
+    dual = jnp.asarray(dual).reshape(-1)
+    moment_hat = so3.skew(dual[:3])
+    force_hat = so3.skew(dual[3:])
+    zero = jnp.zeros((3, 3), dtype=dual.dtype)
+    return -jnp.block([[moment_hat, force_hat], [force_hat, zero]])
 
 
 def coadjoint_action(xi: Array, dual: Array) -> Array:
