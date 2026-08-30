@@ -156,13 +156,10 @@ python examples/simulation/pcs/simulate_planar_hsa.py
 
 GVS robots use flexible strain basis functions for advanced continuum robot modeling.
 
-#### GVS Robots
+#### Basic GVS Robots
 ```bash
 # Basic GVS simulation
 python examples/simulation/gvs/simulate_gvs.py
-
-# Tendon-actuated GVS
-python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
 ```
 
 **What you'll learn:**
@@ -171,6 +168,60 @@ python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
 - Advanced continuum robot dynamics
 
 **Key concepts:** GVS modeling, basis functions, advanced kinematics
+
+#### Soft Inverted Pendulums
+
+```bash
+# Fixed-base autonomous pendulum with low stiffness (k = 1)
+python examples/simulation/gvs/simulate_soft_inverted_pendulum.py
+
+# The paper's medium-stiffness case (k = 4)
+python examples/simulation/gvs/simulate_soft_inverted_pendulum.py --stiffness 4
+
+# The same affine-curvature link clamped to a passive translating cart
+python examples/simulation/gvs/simulate_soft_cart_pendulum.py
+```
+
+Both examples use the affine curvature
+`kappa_z(s) = theta_0 + theta_1 s`, physical parameters, generalized
+stiffness and damping matrices, pure-tip-torque map, and initial soft
+configuration from [Della Santina (2020)](https://doi.org/10.1109/CDC42340.2020.9303976).
+The GVS implementation distributes the reported 1 kg mass uniformly along a
+square `0.1 m x 0.1 m` link instead of reproducing the paper's
+tip-concentrated inertia.
+
+The cart example is conceptually based on
+[Ajithkumar (2023)](https://doi.org/10.13016/dspace/7jir-df1p), but deliberately
+clamps the soft link directly to the passive prismatic cart coordinate: it has
+no intervening revolute joint and does not implement the thesis controllers.
+The two models therefore share exactly the same soft-link structure and
+parameters; the cart model adds only its translational coordinate and mass.
+
+Each script saves a summary figure and launches an interactive Viser motion
+rendering by default. The cart renderer synchronizes the soft backbone with a
+moving cart body, wheels, and rail. Use `--record-viser` to capture one playback
+or `--no-viser --no-show` for headless execution. The fixed and cart scripts use
+ports 8080 and 8081 by default, respectively, and accept `--viser-port` overrides.
+
+**What you'll learn:**
+- Affine-curvature GVS construction with two bending coordinates
+- Exact generalized constitutive and tip-torque mappings
+- Passive underactuation through a prismatic cart joint
+- Interactive trajectory playback and recording with Viser
+
+**Key concepts:** Affine curvature, soft inverted pendulum, passive cart, Viser
+
+#### Tendon-Actuated GVS Robot
+
+```bash
+python examples/simulation/gvs/simulate_tendon_actuated_gvs.py
+```
+
+**What you'll learn:**
+- Routing tendon actuation through a variable-strain continuum model
+- Simulating and rendering an actuated GVS robot
+
+**Key concepts:** GVS modeling, tendon actuation, continuum routing
 
 ---
 
