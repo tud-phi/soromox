@@ -8,6 +8,7 @@ from numpy.testing import assert_allclose
 from examples.simulation.gvs.soft_pendulums import (
     AFFINE_CURVATURE_MATRIX,
     SoftInvertedPendulumConfig,
+    SoftLinkStiffnessMode,
     SoftSwingUpPendulumConfig,
     cart_pole_hanging_configuration,
     cart_pole_upright_configuration,
@@ -59,6 +60,46 @@ def test_original_sip_parameters_and_tip_torque_are_retained(sip_config):
     assert_allclose(sip_config.stiffness, AFFINE_CURVATURE_MATRIX)
     assert_allclose(sip_initial_configuration(), [np.pi / 4.0, -np.pi / 4.0])
     assert_allclose(sip_tip_torque_generalized_force(2.0), [2.0, 1.0])
+
+
+def test_explicit_and_material_derived_soft_link_stiffness_modes():
+    explicit = SoftInvertedPendulumConfig(
+        stiffness_mode=SoftLinkStiffnessMode.EXPLICIT_AFFINE
+    )
+    material = SoftInvertedPendulumConfig(stiffness_mode="material_derived")
+    expected_material_coefficient = (
+        material.material_young_modulus
+        * np.pi
+        * material.material_bending_radius**4
+        / (4.0 * material.length)
+    )
+
+    assert explicit.stiffness_mode is SoftLinkStiffnessMode.EXPLICIT_AFFINE
+    assert material.stiffness_mode is SoftLinkStiffnessMode.MATERIAL_DERIVED
+    assert_allclose(explicit.effective_stiffness_coefficient, 1.0)
+    assert_allclose(material.effective_stiffness_coefficient, 0.636172545123155)
+    assert_allclose(
+        material.effective_stiffness_coefficient, expected_material_coefficient
+    )
+    assert_allclose(
+        material.stiffness,
+        expected_material_coefficient * AFFINE_CURVATURE_MATRIX,
+    )
+
+    explicit_cart = make_soft_cart_pole(explicit)
+    material_cart = make_soft_cart_pole(material)
+    assert_allclose(explicit_cart.K[2:, 2:], explicit.stiffness)
+    assert_allclose(material_cart.K[2:, 2:], material.stiffness)
+    assert_allclose(material_cart.params.link.length, explicit_cart.params.link.length)
+    assert_allclose(
+        material_cart.params.link.density, explicit_cart.params.link.density
+    )
+    assert_allclose(material_cart.D_active, explicit_cart.D_active)
+
+
+def test_soft_link_stiffness_mode_rejects_unknown_value():
+    with pytest.raises(ValueError, match="stiffness_mode"):
+        SoftInvertedPendulumConfig(stiffness_mode="unknown")
 
 
 def test_coordinate_order_topology_axes_and_length_scaling(models):

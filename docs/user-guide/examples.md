@@ -181,6 +181,9 @@ python examples/simulation/gvs/simulate_r_soft_inverted_pendulum.py
 # Force-actuated cart with a passive revolute pole hinge
 python examples/simulation/gvs/simulate_soft_cart_pole.py
 
+# The same Cart-Pole with stiffness derived from E, radius, and link length
+python examples/simulation/gvs/simulate_soft_cart_pole.py --stiffness-mode material_derived
+
 # First-joint-torque-actuated two-link Pendubot
 python examples/simulation/gvs/simulate_soft_pendubot.py
 
@@ -203,6 +206,13 @@ upward. This differs by an angle offset from the convention in
 [Caradonna et al. (2026)](https://arxiv.org/abs/2602.03435):
 `theta_model = theta_paper - pi`. Its finite rigid cart/pivot link has exposed
 assumed length, radius, and mass parameters.
+
+The SIP, R-SIP, and Cart-Pole support `explicit_affine` and
+`material_derived` soft-link stiffness modes. The backward-compatible explicit
+mode uses `K = k H`. The material mode uses `K = E I/L H` with
+`I = pi r^4/4`; its defaults are `E = 1 MPa` and `r = 0.03 m`, giving
+`E I/L = 0.6362 N m`. Only stiffness changes between modes: soft-link mass,
+inertial geometry, and damping remain the SIP defaults.
 
 The Pendubot and Furuta use the 2026 paper's cylindrical soft-link properties
 (`L = 1 m`, `R = 0.03 m`, `rho = 1000 kg/m^3`, `E = 1 MPa`, and

@@ -39,6 +39,8 @@ and include benchmark baseline and measurement context for performance claims.
   world-down gravity, and aligned Section Vf rendering with zero gravity.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
+- Added selectable `explicit_affine` and `material_derived` stiffness modes to
+  the SIP, R-SIP, and Soft Cart-Pole configuration.
 
 ### Performance
 

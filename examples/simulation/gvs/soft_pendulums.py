@@ -28,6 +28,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import jax
@@ -51,15 +52,29 @@ AFFINE_CURVATURE_MATRIX = jnp.array([[1.0, 0.5], [0.5, 1.0 / 3.0]])
 REFERENCE_STRAIN = [0.0, 0.0, 0.0, 1.0, 0.0, 0.0]
 
 
+class SoftLinkStiffnessMode(StrEnum):
+    """Method used to construct the affine soft-link stiffness matrix."""
+
+    EXPLICIT_AFFINE = "explicit_affine"
+    MATERIAL_DERIVED = "material_derived"
+
+
 @dataclass(frozen=True)
 class SoftInvertedPendulumConfig:
     """Parameters shared by the SIP, R-SIP, and Soft Cart-Pole.
 
-    The soft-link defaults use the affine-curvature SIP stiffness, damping,
-    geometry, and total mass. SoRoMoX distributes that mass along the link
-    rather than concentrating it at the tip. ``r_sip_joint_damping`` follows
-    the R-SIP study and ``cart_hinge_damping`` follows the Soft Swing-up study.
-    The cart-body geometry is an explicit SoRoMoX modeling assumption: a short
+    ``explicit_affine`` directly uses ``stiffness_coefficient * H`` as in the
+    original SIP example. ``material_derived`` uses ``E I / L * H``, where
+    ``I = pi r^4 / 4`` is calculated from ``material_bending_radius``. Its
+    defaults reproduce the bending stiffness implied by the 2026 paper's
+    ``E = 1 MPa``, ``r = 0.03 m`` circular link. The mode changes stiffness
+    only: the existing distributed mass, square inertial geometry, and damping
+    remain unchanged.
+
+    SoRoMoX distributes the reported SIP mass along the link rather than
+    concentrating it at the tip. ``r_sip_joint_damping`` follows the R-SIP
+    study and ``cart_hinge_damping`` follows the Soft Swing-up study. The
+    cart-body geometry is an explicit SoRoMoX modeling assumption: a short
     rigid cylindrical GVS link carries ``cart_mass`` and places the passive
     hinge at its tip.
 
@@ -82,7 +97,10 @@ class SoftInvertedPendulumConfig:
     link_mass: float = 1.0
     gravity: float = 9.81
     damping_coefficient: float = 0.1
+    stiffness_mode: SoftLinkStiffnessMode = SoftLinkStiffnessMode.EXPLICIT_AFFINE
     stiffness_coefficient: float = 1.0
+    material_young_modulus: float = 1.0e6
+    material_bending_radius: float = 0.03
     r_sip_joint_damping: float = 0.5
     cart_hinge_damping: float = 0.05
     cart_mass: float = 1.0
@@ -91,12 +109,21 @@ class SoftInvertedPendulumConfig:
     num_gauss_points: int = 5
 
     def __post_init__(self) -> None:
+        try:
+            stiffness_mode = SoftLinkStiffnessMode(self.stiffness_mode)
+        except (TypeError, ValueError) as error:
+            choices = ", ".join(mode.value for mode in SoftLinkStiffnessMode)
+            raise ValueError(f"stiffness_mode must be one of: {choices}.") from error
+        object.__setattr__(self, "stiffness_mode", stiffness_mode)
+
         positive = {
             "length": self.length,
             "thickness": self.thickness,
             "link_mass": self.link_mass,
             "gravity": self.gravity,
             "stiffness_coefficient": self.stiffness_coefficient,
+            "material_young_modulus": self.material_young_modulus,
+            "material_bending_radius": self.material_bending_radius,
             "cart_mass": self.cart_mass,
             "cart_body_length": self.cart_body_length,
             "cart_body_radius": self.cart_body_radius,
@@ -128,8 +155,22 @@ class SoftInvertedPendulumConfig:
 
     @property
     def stiffness(self) -> Array:
-        """Generalized affine-curvature stiffness ``k H``."""
-        return self.stiffness_coefficient * AFFINE_CURVATURE_MATRIX
+        """Generalized affine-curvature stiffness for the selected mode."""
+        return self.effective_stiffness_coefficient * AFFINE_CURVATURE_MATRIX
+
+    @property
+    def material_second_moment_area(self) -> float:
+        """Circular-section second moment of area ``pi r^4 / 4`` in ``m^4``."""
+        return np.pi * self.material_bending_radius**4 / 4.0
+
+    @property
+    def effective_stiffness_coefficient(self) -> float:
+        """Coefficient multiplying the affine curvature matrix ``H``."""
+        if self.stiffness_mode is SoftLinkStiffnessMode.EXPLICIT_AFFINE:
+            return self.stiffness_coefficient
+        return (
+            self.material_young_modulus * self.material_second_moment_area / self.length
+        )
 
     @property
     def damping(self) -> Array:
@@ -604,6 +645,7 @@ def save_summary_figure(
 
 __all__ = [
     "AFFINE_CURVATURE_MATRIX",
+    "SoftLinkStiffnessMode",
     "SoftSwingUpPendulumConfig",
     "SoftInvertedPendulumConfig",
     "cart_pole_hanging_configuration",

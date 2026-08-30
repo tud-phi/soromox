@@ -7,6 +7,7 @@ from pathlib import Path
 
 from soft_pendulums import (
     SoftInvertedPendulumConfig,
+    SoftLinkStiffnessMode,
     cart_pole_upright_configuration,
     make_soft_cart_pole,
     save_summary_figure,
@@ -20,7 +21,30 @@ VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stiffness", type=float, default=1.0)
+    parser.add_argument(
+        "--stiffness-mode",
+        choices=tuple(mode.value for mode in SoftLinkStiffnessMode),
+        default=SoftLinkStiffnessMode.EXPLICIT_AFFINE.value,
+        help="Construct stiffness explicitly or derive it from E, radius, and L.",
+    )
+    parser.add_argument(
+        "--stiffness",
+        type=float,
+        default=1.0,
+        help="Coefficient k used by the explicit_affine mode.",
+    )
+    parser.add_argument(
+        "--material-young-modulus",
+        type=float,
+        default=1.0e6,
+        help="Young's modulus used by the material_derived mode in Pa.",
+    )
+    parser.add_argument(
+        "--material-radius",
+        type=float,
+        default=0.03,
+        help="Circular bending radius used by the material_derived mode in m.",
+    )
     parser.add_argument("--cart-mass", type=float, default=1.0)
     parser.add_argument("--force", type=float, default=0.0)
     parser.add_argument("--initial-angle", type=float, default=0.15)
@@ -39,7 +63,10 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     config = SoftInvertedPendulumConfig(
+        stiffness_mode=SoftLinkStiffnessMode(args.stiffness_mode),
         stiffness_coefficient=args.stiffness,
+        material_young_modulus=args.material_young_modulus,
+        material_bending_radius=args.material_radius,
         cart_mass=args.cart_mass,
     )
     robot = make_soft_cart_pole(config)
