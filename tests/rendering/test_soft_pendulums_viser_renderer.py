@@ -1,4 +1,4 @@
-"""Tests for Viser motion rendering of the soft cart pendulum."""
+"""Tests for Viser motion rendering of the Soft Cart-Pole."""
 
 from contextlib import contextmanager
 
@@ -6,12 +6,12 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
-from examples.simulation.gvs.soft_inverted_pendulum import (
+from examples.simulation.gvs.soft_pendulums import (
     SoftInvertedPendulumConfig,
-    make_cart_pendulum,
+    make_soft_cart_pole,
 )
-from examples.simulation.gvs.soft_inverted_pendulum_viser_renderer import (
-    SoftCartPendulumViserRenderer,
+from examples.simulation.gvs.soft_pendulums_viser_renderer import (
+    SoftCartPoleViserRenderer,
 )
 from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
@@ -55,9 +55,9 @@ class _Server:
 
 
 def test_cart_renderer_tracks_sequence_and_moves_all_cart_geometry(monkeypatch):
-    robot = make_cart_pendulum(SoftInvertedPendulumConfig())
-    renderer = SoftCartPendulumViserRenderer(robot, auto_start=False)
-    q_ts = jnp.array([[0.0, 0.1, -0.1], [0.4, 0.2, -0.1]])
+    robot = make_soft_cart_pole(SoftInvertedPendulumConfig())
+    renderer = SoftCartPoleViserRenderer(robot, auto_start=False)
+    q_ts = jnp.array([[0.0, 0.1, 0.0, -0.1], [0.4, 0.2, 0.0, -0.1]])
 
     monkeypatch.setattr(ViserRenderer, "render_sequence", lambda *args, **kwargs: None)
     renderer.render_sequence(jnp.array([0.0, 0.1]), q_ts)
@@ -84,7 +84,7 @@ def test_cart_renderer_tracks_sequence_and_moves_all_cart_geometry(monkeypatch):
 
 
 def test_cart_renderer_rejects_non_scalar_cart_trajectory():
-    robot = make_cart_pendulum(SoftInvertedPendulumConfig())
-    renderer = SoftCartPendulumViserRenderer(robot, auto_start=False)
+    robot = make_soft_cart_pole(SoftInvertedPendulumConfig())
+    renderer = SoftCartPoleViserRenderer(robot, auto_start=False)
     with pytest.raises(ValueError, match="shape"):
         renderer.render_sequence(jnp.array([0.0]), jnp.zeros((1, 2)))

@@ -57,6 +57,7 @@ rendering is evaluated. Incompatible combinations raise a descriptive
 | Component | Compatible hosts | Contract |
 | --- | --- | --- |
 | `IdentityActuator` | Every `SoftRobot` | One channel per generalized coordinate |
+| `AffineJointActuator` | Every `SoftRobot` | Signed direct effort through a constant affine map with one matrix column per generalized coordinate |
 | `AffineJointTransmission` | `PCS`, `PlanarPCS`, `GVS`, `Pendulum`, `ArticulatedSoftRobot`, or any host with a matching generalized-coordinate dimension | One matrix column per generalized coordinate |
 | `ArticulatedTendonActuator`, `ArticulatedTendonImpedance` | `Pendulum`, `ArticulatedSoftRobot`, and hosts explicitly exposing serial articulated routing | Joint-index routing with no skipped joints and full row rank |
 | Threadlike actuator and impedance presets | `PCS`, `PlanarPCS`, `GVS`, and continuum hosts implementing the threadlike integration hooks | Material-frame path geometry plus continuum segment topology |
@@ -67,6 +68,12 @@ routing matrix: `routing_matrix.shape[1] == robot.num_internal_dofs`. It can the
 map GVS, PCS, or articulated generalized coordinates. The articulated-tendon
 preset adds serial-joint routing constraints and rejects PCS/GVS hosts, while
 threadlike presets require continuum path-integration support.
+
+`AffineJointActuator` pairs that transmission with `DirectEffort`. For routing
+matrix `R`, it applies `tau = R.T @ u`, allowing signed direct joint torques,
+prismatic forces, selected generalized efforts, or fixed linear combinations.
+Its optional lower and upper bounds are metadata for downstream controllers and
+optimizers; inputs are not clipped inside the actuator.
 
 The common robot interface is:
 

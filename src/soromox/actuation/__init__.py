@@ -11,6 +11,8 @@ from .core import (
     Transmission,
 )
 from .joint import (
+    AffineJointActuator,
+    AffineJointActuatorParams,
     AffineJointTransmission,
     AffineJointTransmissionParams,
     ArticulatedTendonActuator,
@@ -42,6 +44,8 @@ __all__ = [
     "Actuator",
     "ActuatorKind",
     "ActuatorMetadata",
+    "AffineJointActuator",
+    "AffineJointActuatorParams",
     "AffineJointTransmission",
     "AffineJointTransmissionParams",
     "ArticulatedTendonActuator",

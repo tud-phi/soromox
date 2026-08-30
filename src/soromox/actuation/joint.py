@@ -158,6 +158,182 @@ class AffineJointTransmission(Transmission):
         return self.with_params(self.params.replace(**updates))
 
 
+class AffineJointActuatorParams(BaseSystemParams):
+    """Parameters for signed direct effort through an affine coordinate map.
+
+    ``transmission`` defines actuator work coordinates
+    ``y_a = R @ (q - q_ref) + y_a0``. The corresponding moment matrix is
+    ``A = R.T``. ``lower_bounds`` and ``upper_bounds`` are ordered channel
+    metadata for controllers, trajectory optimization, and user interfaces;
+    they do not modify or clip controls passed to the actuator.
+
+    Attributes:
+        transmission: Affine generalized-coordinate transmission with one row
+            per actuator channel and one column per robot coordinate.
+        lower_bounds: Descriptive lower control bound for every channel.
+        upper_bounds: Descriptive upper control bound for every channel.
+    """
+
+    transmission: AffineJointTransmissionParams
+    lower_bounds: Array
+    upper_bounds: Array
+
+    def __check_init__(self) -> None:
+        self.validate_for_update()
+
+    def validate_structure(self) -> None:
+        self.transmission.validate_structure()
+        count = self.transmission.num_channels
+        for name in ("lower_bounds", "upper_bounds"):
+            value = jnp.asarray(getattr(self, name))
+            if value.shape != (count,):
+                raise ValueError(f"{name} must have shape ({count},).")
+
+    def validate_values(self) -> None:
+        self.transmission.validate_values()
+        if not bool(jnp.all(self.lower_bounds <= self.upper_bounds)):
+            raise ValueError("lower_bounds must not exceed upper_bounds.")
+
+
+class AffineJointActuator(Actuator):
+    """Apply signed controls through a constant affine coordinate map.
+
+    The actuator combines :class:`AffineJointTransmission` with
+    :class:`DirectEffort`. For a routing matrix ``R``, reference configuration
+    ``q_ref``, and coordinate offset ``y_a0``, its work-conjugate actuator
+    coordinates and velocities are
+
+    ``y_a = R @ (q - q_ref) + y_a0`` and ``yd_a = R @ qd``.
+
+    A user control is interpreted directly as the signed effort conjugate to
+    ``y_a``. The generalized force is therefore ``tau = R.T @ control`` and
+    satisfies the power identity ``qd.T @ tau = yd_a.T @ control``. This makes
+    the class suitable for direct joint torques, prismatic forces, selected
+    generalized-coordinate efforts, or fixed linear combinations of them. It
+    imposes no tendon-specific positivity, serial-routing, or host restrictions.
+
+    Input bounds are exposed through :attr:`metadata` for downstream consumers.
+    They are intentionally not enforced inside :meth:`efforts`; controls outside
+    those bounds still produce the corresponding linear generalized force.
+    """
+
+    _params: AffineJointActuatorParams
+    _transmission: AffineJointTransmission
+    _effort_model: DirectEffort
+    _metadata: ActuatorMetadata
+    name: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        params: AffineJointActuatorParams,
+        labels: tuple[str, ...] | None = None,
+        units: str | tuple[str, ...] = "generalized effort",
+        name: str = "affine_joint_actuator",
+    ) -> None:
+        if not isinstance(params, AffineJointActuatorParams):
+            raise TypeError("params must be AffineJointActuatorParams.")
+        params.validate_for_update()
+        count = params.transmission.num_channels
+        if labels is None:
+            labels = tuple(f"joint_effort_{index}" for index in range(count))
+        if len(labels) != count:
+            raise ValueError("labels must contain one entry per actuator channel.")
+        self._params = params
+        self._transmission = AffineJointTransmission(params.transmission)
+        self._effort_model = DirectEffort()
+        self._metadata = ActuatorMetadata(
+            labels=labels,
+            units=units,
+            kind="generic",
+            lower_bounds=params.lower_bounds,
+            upper_bounds=params.upper_bounds,
+        )
+        self.name = name
+
+    @classmethod
+    def from_routing(
+        cls,
+        routing_matrix: Array,
+        *,
+        reference_configuration: Array | None = None,
+        coordinate_offset: Array | float = 0.0,
+        lower_bounds: Array | float | None = None,
+        upper_bounds: Array | float | None = None,
+        labels: tuple[str, ...] | None = None,
+        units: str | tuple[str, ...] = "generalized effort",
+        name: str = "affine_joint_actuator",
+    ) -> AffineJointActuator:
+        """Construct signed direct actuation from an affine routing matrix.
+
+        Bounds are exposed through :class:`ActuatorMetadata` and are not
+        enforced by clipping. Omitting either bound makes it infinite.
+        """
+        matrix = jnp.asarray(routing_matrix)
+        if matrix.ndim != 2:
+            raise ValueError("routing_matrix must be two-dimensional.")
+        count, num_dofs = matrix.shape
+        if reference_configuration is None:
+            reference_configuration = jnp.zeros((num_dofs,), dtype=matrix.dtype)
+        if lower_bounds is None:
+            lower_bounds = -jnp.inf
+        if upper_bounds is None:
+            upper_bounds = jnp.inf
+        transmission = AffineJointTransmissionParams(
+            routing_matrix=matrix,
+            reference_configuration=jnp.asarray(reference_configuration),
+            coordinate_offset=_channel_array(
+                coordinate_offset, count, "coordinate_offset"
+            ),
+        )
+        return cls(
+            params=AffineJointActuatorParams(
+                transmission=transmission,
+                lower_bounds=_channel_array(lower_bounds, count, "lower_bounds"),
+                upper_bounds=_channel_array(upper_bounds, count, "upper_bounds"),
+            ),
+            labels=labels,
+            units=units,
+            name=name,
+        )
+
+    @property
+    def params(self) -> AffineJointActuatorParams:
+        return self._params
+
+    @property
+    def transmission(self) -> AffineJointTransmission:
+        return self._transmission
+
+    @property
+    def effort_model(self) -> DirectEffort:
+        return self._effort_model
+
+    @property
+    def metadata(self) -> ActuatorMetadata:
+        return self._metadata
+
+    def validate_structure_for_robot(self, robot) -> None:
+        matrix = jnp.asarray(self.params.transmission.routing_matrix)
+        if matrix.shape[1] != robot.num_dofs:
+            raise ValueError(
+                "routing_matrix must have one column per degree of freedom; "
+                f"expected {robot.num_dofs}, got {matrix.shape[1]}."
+            )
+
+    def with_params(self, params: BaseSystemParams) -> AffineJointActuator:
+        if not isinstance(params, AffineJointActuatorParams):
+            raise TypeError("params must be AffineJointActuatorParams.")
+        self.params.transmission.assert_same_topology(params.transmission)
+        params.validate_for_update()
+        return AffineJointActuator(
+            params=params,
+            labels=self.metadata.labels,
+            units=self.metadata.units,
+            name=self.name,
+        )
+
+
 class ArticulatedTendonActuatorParams(BaseSystemParams):
     """Physical parameters for direct-effort articulated tendons."""
 
@@ -461,6 +637,8 @@ class ArticulatedTendonImpedance(PassiveElement):
 
 
 __all__ = [
+    "AffineJointActuator",
+    "AffineJointActuatorParams",
     "AffineJointTransmission",
     "AffineJointTransmissionParams",
     "ArticulatedTendonActuator",

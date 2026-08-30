@@ -15,13 +15,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from soft_inverted_pendulum import (
+from soft_pendulums import (
     SoftInvertedPendulumConfig,
     make_fixed_pendulum,
     save_summary_figure,
     simulate_open_loop,
+    sip_initial_configuration,
+    sip_tip_torque_generalized_force,
 )
-from soft_inverted_pendulum_viser_renderer import render_motion
+from soft_pendulums_viser_renderer import render_motion
 
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
@@ -74,8 +76,8 @@ def main() -> None:
     robot = make_fixed_pendulum(config)
     trajectory = simulate_open_loop(
         robot,
-        cart=False,
-        tip_torque=args.tip_torque,
+        initial_configuration=sip_initial_configuration(),
+        external_force=sip_tip_torque_generalized_force(args.tip_torque),
         t1=args.t1,
         solver_dt=args.solver_dt,
         save_dt=args.save_dt,
@@ -88,7 +90,7 @@ def main() -> None:
         robot,
         trajectory,
         figure_path,
-        cart=False,
+        coordinate_labels=("a0", "a1"),
         show=not args.no_show,
     )
     print(f"Summary figure saved to {figure_path}")
@@ -106,6 +108,7 @@ def main() -> None:
             robot,
             trajectory,
             cart=False,
+            robot_name="Soft Inverted Pendulum",
             port=args.viser_port,
             record_path=record_path,
         )

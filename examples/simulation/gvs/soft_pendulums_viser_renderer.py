@@ -1,13 +1,13 @@
-"""Viser motion rendering for the soft inverted-pendulum examples.
+"""Viser motion rendering for the rigid-soft pendulum examples.
 
 References:
     Della Santina, C. (2020). The soft inverted pendulum with affine
     curvature. 2020 59th IEEE Conference on Decision and Control (CDC),
     4135-4142. https://doi.org/10.1109/CDC42340.2020.9303976
 
-    Ajithkumar, A. (2023). Control and stabilization of soft inverted
-    pendulum on a cart. Master's thesis, University of Maryland, College Park.
-    https://doi.org/10.13016/dspace/7jir-df1p
+    Caradonna, D. et al. (2026). Soft Swing-up: Benchmarking Model-Based
+    Optimal Control for Rigid-Soft Underactuated Systems.
+    https://arxiv.org/abs/2602.03435
 """
 
 from __future__ import annotations
@@ -22,18 +22,18 @@ from soromox.rendering import CameraConfig, ViserRenderer
 from soromox.systems import GVS, SystemState
 
 if __package__:
-    from .soft_inverted_pendulum import split_pendulum_state
+    from .soft_pendulums import split_state
 else:
-    from soft_inverted_pendulum import split_pendulum_state
+    from soft_pendulums import split_state
 
 
-class SoftCartPendulumViserRenderer(ViserRenderer):
+class SoftCartPoleViserRenderer(ViserRenderer):
     """Viser renderer adding a moving cart, wheels, and rail to GVS motion.
 
     References:
-        Ajithkumar, A. (2023). Control and stabilization of soft inverted
-        pendulum on a cart. Master's thesis, University of Maryland, College
-        Park. https://doi.org/10.13016/dspace/7jir-df1p
+        Caradonna, D. et al. (2026). Soft Swing-up: Benchmarking Model-Based
+        Optimal Control for Rigid-Soft Underactuated Systems.
+        https://arxiv.org/abs/2602.03435
     """
 
     _cart_positions: np.ndarray
@@ -52,8 +52,8 @@ class SoftCartPendulumViserRenderer(ViserRenderer):
 
         Args:
             ts: Trajectory time stamps with shape ``(num_frames,)``.
-            q_ts: Configurations with shape ``(num_frames, 3)`` and ordering
-                ``[x_cart, theta_0, theta_1]``.
+            q_ts: Configurations with shape ``(num_frames, 4)`` and ordering
+                ``[d, theta, a0, a1]``.
             **kwargs: Additional arguments forwarded to
                 :meth:`ViserRenderer.render_sequence`.
 
@@ -61,8 +61,8 @@ class SoftCartPendulumViserRenderer(ViserRenderer):
             ValueError: If ``q_ts`` does not contain one scalar cart trajectory.
         """
         configurations = np.asarray(q_ts)
-        if configurations.ndim != 2 or configurations.shape[1] != 3:
-            raise ValueError("q_ts must have shape (num_frames, 3).")
+        if configurations.ndim != 2 or configurations.shape[1] != 4:
+            raise ValueError("q_ts must have shape (num_frames, 4).")
         self._cart_positions = configurations[:, 0]
         super().render_sequence(ts, q_ts, **kwargs)
 
@@ -75,20 +75,20 @@ class SoftCartPendulumViserRenderer(ViserRenderer):
         rail_length = max(1.2, cart_max - cart_min + 0.8)
         rail_center = 0.5 * (cart_min + cart_max)
         rail = self._server.scene.add_box(
-            name="/soft_cart_pendulum/rail",
+            name="/soft_cart_pole/rail",
             dimensions=(0.035, rail_length, 0.025),
             position=(0.0, rail_center, -0.175),
             color=(90, 90, 90),
         )
         self._cart_handle = self._server.scene.add_box(
-            name="/soft_cart_pendulum/cart",
+            name="/soft_cart_pole/cart",
             dimensions=(0.18, 0.30, 0.12),
             position=(0.0, float(self._cart_positions[0]), -0.06),
             color=(55, 118, 171),
         )
         self._wheel_handles = [
             self._server.scene.add_icosphere(
-                name=f"/soft_cart_pendulum/wheel_{index}",
+                name=f"/soft_cart_pole/wheel_{index}",
                 radius=0.055,
                 position=(0.0, float(self._cart_positions[0] + offset), -0.135),
                 color=(35, 35, 35),
@@ -122,21 +122,23 @@ def render_motion(
     trajectory: SystemState,
     *,
     cart: bool,
+    robot_name: str,
     port: int,
     record_path: Path | None = None,
 ) -> None:
     """Render an interactive Viser animation and optionally record it.
 
     Args:
-        robot: Fixed or cart soft inverted-pendulum model.
+        robot: Rigid-soft pendulum model.
         trajectory: Simulated trajectory.
         cart: Whether to render the moving cart geometry.
+        robot_name: Human-readable renderer title.
         port: Local Viser server port.
         record_path: Optional MP4 output. Recording requires a connected Viser
             browser client.
     """
-    q_ts, _ = split_pendulum_state(trajectory.y, cart=cart)
-    renderer_type = SoftCartPendulumViserRenderer if cart else ViserRenderer
+    q_ts, _ = split_state(trajectory.y, robot.num_dofs)
+    renderer_type = SoftCartPoleViserRenderer if cart else ViserRenderer
     renderer = renderer_type(
         robot,
         num_points=100,
@@ -160,8 +162,8 @@ def render_motion(
         stop_when_recording_done=record_path is not None,
         camera_config=camera,
         plot_configurations=True,
-        robot_name="Soft cart pendulum" if cart else "Soft inverted pendulum",
+        robot_name=robot_name,
     )
 
 
-__all__ = ["SoftCartPendulumViserRenderer", "render_motion"]
+__all__ = ["SoftCartPoleViserRenderer", "render_motion"]
