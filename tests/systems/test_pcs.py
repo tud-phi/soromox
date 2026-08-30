@@ -7,7 +7,8 @@ from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from system_param_builders import pcs_params, spatial_base_pose
 
-from soromox.systems import PCS, CrossSectionGeometry, PCSBackendParams, PCSStructure
+from soromox.execution import PCSBackendParams
+from soromox.systems import PCS, CrossSectionGeometry, PCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra import se3
 from soromox.utils.tolerance import Tolerance

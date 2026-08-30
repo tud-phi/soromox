@@ -15,12 +15,12 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
+from soromox.execution import ExecutionBackend
 from soromox.systems import (
     GVS,
     PCS,
     ArticulatedSoftRobot,
     ArticulatedSoftRobotParams,
-    ExecutionBackend,
     GVSSegment,
     JointSpec,
     LinkSpec,

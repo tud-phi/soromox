@@ -10,11 +10,11 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
+from soromox.execution import GVSBackendParams
 from soromox.systems import (
     GVS,
     PCS,
     CrossSectionGeometry,
-    GVSBackendParams,
     GVSSegment,
     IsotropicMaterialParams,
     JointSpec,

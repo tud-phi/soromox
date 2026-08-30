@@ -168,7 +168,7 @@ Coriolis/centrifugal, and gravity terms together, call `dynamics_terms`.
 Built-in linear threadlike layouts have public Warp-native operands, FP64
 kernels, and allocation-free launchers for actuation matrices `(E, D, A)` and
 fused direct-effort forces `(E, D)`. These low-level APIs are always available
-from `soromox.systems.execution.warp.pcs` and `.gvs` for Newton and other
+from `soromox.execution.warp.pcs` and `.gvs` for Newton and other
 Warp-native integrations. They support multiple ordered threadlike actuator
 groups and every built-in modality.
 
@@ -313,7 +313,8 @@ Advanced users can provide a multiple of 32 from 32 through 1024 when the model
 is constructed:
 
 ```python
-from soromox.systems import GVS, PCS, GVSBackendParams, PCSBackendParams
+from soromox.execution import GVSBackendParams, PCSBackendParams
+from soromox.systems import GVS, PCS
 
 robot = PCS.from_links(
     links,
@@ -358,7 +359,7 @@ programs for the same static model and input shapes.
 
 Most users should stay with the system methods described above. Integrators
 that need caller-owned Warp buffers or CUDA-graph-capturable mechanics can use
-the public family namespaces under `soromox.systems.execution.warp`. Those
+the public family namespaces under `soromox.execution.warp`. Those
 lower-level interfaces have stricter buffer, dtype, and launch-order contracts
 and are intended for integration packages rather than ordinary simulation
 scripts.

@@ -31,7 +31,7 @@ Each operation is a single write-complete CUDA-graph-capturable launch.
 Segment, environment, path, active-DOF, and quadrature counts are
 runtime-shaped.
 
-::: soromox.systems.execution.warp.pcs
+::: soromox.execution.warp.pcs
     options:
       show_root_heading: true
       show_source: false

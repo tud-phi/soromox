@@ -7,12 +7,12 @@ import equinox as eqx
 from jax import Array, lax, vmap
 from jax import numpy as jnp
 
-from soromox.systems.components import CrossSectionGeometry
-from soromox.systems.execution import (
+from soromox.execution import (
     DEFAULT_PLANAR_PCS_BLOCK_DIM,
     ExecutionBackend,
     PCSBackendParams,
 )
+from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.pcs.params import PlanarHSAParams
 from soromox.systems.pcs.planar_pcs import PlanarPCS
 from soromox.systems.pcs.structures import PlanarHSAStructure

@@ -4,7 +4,7 @@
     Keep each system's defaults unless application-level profiling demonstrates
     that a different Warp block size is beneficial on the target hardware.
 
-::: soromox.systems.execution.config
+::: soromox.execution.config
     options:
       show_root_heading: true
       show_source: false

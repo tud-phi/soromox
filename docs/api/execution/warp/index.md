@@ -1,6 +1,6 @@
 # Warp Integration
 
-The `soromox.systems.execution.warp` namespace contains allocation-free,
+The `soromox.execution.warp` namespace contains allocation-free,
 Warp-native building blocks for integrations that need to embed SoRoMoX
 mechanics in a larger Warp or Newton solver.
 
@@ -15,7 +15,7 @@ The public child namespaces are:
 - [GVS Warp API](gvs.md)
 - [PCS Warp API](pcs.md)
 
-::: soromox.systems.execution.warp
+::: soromox.execution.warp
     options:
       show_root_heading: true
       show_source: false

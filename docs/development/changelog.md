@@ -25,7 +25,8 @@ and include benchmark baseline and measurement context for performance claims.
 - Added optional Warp dynamics backends for `GVS`, `PCS`, and `PlanarPCS`,
   including automatic GPU selection, arbitrary positive PCS quadrature counts,
   JAX-routed differentiation, typed `GVSBackendParams` and `PCSBackendParams`
-  launch configuration, and reusable Warp-native execution APIs; see
+  launch configuration, and reusable Warp-native execution APIs under the
+  top-level `soromox.execution` namespace; see
   [Execution Devices and Backends](../user-guide/execution-devices-and-backends.md)
   and [PR #177](https://github.com/tud-phi/soromox/pull/177).
 - Added public allocation-free, CUDA-graph-capturable Warp kernels, operand

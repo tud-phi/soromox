@@ -1,6 +1,6 @@
 # Execution Backends
 
-The `soromox.systems.execution` package defines the backend names and optional
+The `soromox.execution` package defines the backend names and optional
 tuning parameters used by supported system classes. The user-facing workflow is
 described in
 [Execution Devices and Backends](../../user-guide/execution-devices-and-backends.md).
@@ -19,7 +19,8 @@ described in
 backend-specific keywords to each system constructor.
 
 ```python
-from soromox.systems import PCS, PCSBackendParams
+from soromox.execution import PCSBackendParams
+from soromox.systems import PCS
 
 robot = PCS.from_links(
     links,
@@ -28,7 +29,7 @@ robot = PCS.from_links(
 )
 ```
 
-::: soromox.systems.execution
+::: soromox.execution
     options:
       show_root_heading: true
       show_source: false
@@ -44,13 +45,13 @@ robot = PCS.from_links(
 
 ## Child modules
 
-- [`soromox.systems.execution.config`](configuration.md) defines stable typed
+- [`soromox.execution.config`](configuration.md) defines stable typed
   configuration.
-- [`soromox.systems.execution.warp`](warp/index.md) describes the optional Warp-native
+- [`soromox.execution.warp`](warp/index.md) describes the optional Warp-native
   integration surface.
-- [`soromox.systems.execution.warp.gvs`](warp/gvs.md) exposes reusable GVS
+- [`soromox.execution.warp.gvs`](warp/gvs.md) exposes reusable GVS
   operands, kernels, and launch functions.
-- [`soromox.systems.execution.warp.pcs`](warp/pcs.md) exposes reusable PCS
+- [`soromox.execution.warp.pcs`](warp/pcs.md) exposes reusable PCS
   operands, kernels, and launch functions.
 
 Backend dispatch, transformation rules, lazy loading, and family executors are

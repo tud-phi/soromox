@@ -11,12 +11,7 @@ from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
 )
-from soromox.systems.components import (
-    ContinuumLinkParams,
-    CrossSectionGeometry,
-    IsotropicMaterialParams,
-)
-from soromox.systems.execution import (
+from soromox.execution import (
     GVS_ACTUATION,
     GVS_DYNAMICS,
     GVS_KINEMATICS,
@@ -29,6 +24,11 @@ from soromox.systems.execution import (
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
+)
+from soromox.systems.components import (
+    ContinuumLinkParams,
+    CrossSectionGeometry,
+    IsotropicMaterialParams,
 )
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData

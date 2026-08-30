@@ -19,11 +19,6 @@ from soromox.systems.components import (
     shear_modulus_from_poisson_ratio,
 )
 from soromox.systems.dynamical_system import DynamicalSystem
-from soromox.systems.execution import (
-    ExecutionBackend,
-    GVSBackendParams,
-    PCSBackendParams,
-)
 from soromox.systems.gvs.params import GVSParams
 from soromox.systems.gvs.structures import (
     GVSJointStructure,
@@ -74,9 +69,6 @@ __all__ = [
     "DEFAULT_GRAVITY_MAGNITUDE",
     "DynamicalSystem",
     "EnvironmentState",
-    "ExecutionBackend",
-    "GVSBackendParams",
-    "PCSBackendParams",
     "SoftRobot",
     "CrossSectionGeometry",
     "CrossSectionParams",

@@ -36,7 +36,7 @@ segment, link-DOF, quadrature, and path dimensions remain runtime-shaped. The
 normalization test is exactly
 `norm > global_eps`; a collapsed tangent contributes zero, matching JAX.
 
-::: soromox.systems.execution.warp.gvs
+::: soromox.execution.warp.gvs
     options:
       show_root_heading: true
       show_source: false

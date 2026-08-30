@@ -12,14 +12,7 @@ from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
 )
-from soromox.systems.components import (
-    ContinuumLinkParams,
-    CrossSectionGeometry,
-    CrossSectionParams,
-    IsotropicMaterialParams,
-    LinkSpec,
-)
-from soromox.systems.execution import (
+from soromox.execution import (
     DEFAULT_PLANAR_PCS_BLOCK_DIM,
     PCS_DYNAMICS,
     PCS_KINEMATICS,
@@ -32,6 +25,13 @@ from soromox.systems.execution import (
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
+)
+from soromox.systems.components import (
+    ContinuumLinkParams,
+    CrossSectionGeometry,
+    CrossSectionParams,
+    IsotropicMaterialParams,
+    LinkSpec,
 )
 from soromox.systems.pcs.params import PlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure

@@ -7,9 +7,9 @@ from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from system_param_builders import planar_base_pose, planar_pcs_params
 
+from soromox.execution import PCSBackendParams
 from soromox.systems import (
     CrossSectionGeometry,
-    PCSBackendParams,
     PlanarPCS,
     PlanarPCSStructure,
 )
