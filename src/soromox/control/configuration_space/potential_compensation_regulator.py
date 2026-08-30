@@ -130,7 +130,7 @@ class PotentialCompensationRegulator(PIDController):
         y = system_state.y
 
         # Get current configuration
-        robot, q, _ = self._controller_model_and_state(y)
+        robot, q, _ = self._controller_robot_and_state(y)
 
         # Get desired configuration at current time
         assert self.reference_trajectory.x_des_fn is not None

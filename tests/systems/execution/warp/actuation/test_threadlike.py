@@ -159,15 +159,11 @@ def test_floating_gvs_fused_dynamics_and_threadlike_force_matches_jax(
         model.actuation_force(q, controls, qd=velocity, backend="jax"),
     )
     for actual_term, expected_term in zip(actual, expected, strict=True):
-        assert_allclose(
-            actual_term[0], expected_term, rtol=2.0e-10, atol=2.0e-11
-        )
+        assert_allclose(actual_term[0], expected_term, rtol=2.0e-10, atol=2.0e-11)
     assert_allclose(actual[-1][0, : model.num_base_velocities], 0.0, atol=0.0)
 
     y = model.pack_state(q, velocity)
-    warp_yd = model.forward_dynamics(
-        jnp.array(0.0), y, (controls,), backend="warp"
-    )
+    warp_yd = model.forward_dynamics(jnp.array(0.0), y, (controls,), backend="warp")
     jax_yd = model.forward_dynamics(jnp.array(0.0), y, (controls,), backend="jax")
     # The augmented inertia is deliberately unregularized; the dense solve can
     # amplify the term-level Warp/JAX rounding difference for slender links.
@@ -277,9 +273,9 @@ def test_low_level_threadlike_executors_match_jax_on_cpu_and_cuda(
     key = "gvs" if family == "gvs" else "pcs"
     q = jnp.stack(
         [
-            jnp.linspace(-0.03, 0.02, model.num_dofs),
-            jnp.linspace(0.01, -0.025, model.num_dofs),
-            jnp.linspace(0.005, 0.031, model.num_dofs),
+            jnp.linspace(-0.03, 0.02, model.num_internal_dofs),
+            jnp.linspace(0.01, -0.025, model.num_internal_dofs),
+            jnp.linspace(0.005, 0.031, model.num_internal_dofs),
         ]
     )
     controls = jnp.reshape(
@@ -298,7 +294,7 @@ def test_low_level_threadlike_executors_match_jax_on_cpu_and_cuda(
     assert_allclose(force, expected_force, rtol=2e-10, atol=2e-11)
     assert_allclose(force, jnp.einsum("eda,ea->ed", matrix, controls))
 
-    qd = jnp.linspace(-0.4, 0.3, model.num_dofs)
+    qd = jnp.linspace(-0.4, 0.3, model.num_internal_dofs)
     assert_allclose(
         qd @ matrix[0] @ controls[0],
         qd @ force[0],
@@ -327,8 +323,8 @@ def test_caller_owned_launchers_match_jax(
     model = _build_system(family, 2, 4)
     q = jnp.stack(
         (
-            jnp.linspace(-0.03, 0.02, model.num_dofs),
-            jnp.linspace(0.01, -0.025, model.num_dofs),
+            jnp.linspace(-0.03, 0.02, model.num_internal_dofs),
+            jnp.linspace(0.01, -0.025, model.num_internal_dofs),
         )
     )
     controls = jnp.reshape(
@@ -470,8 +466,8 @@ def test_gvs_joint_only_coordinates_are_written_as_zeros(
     model = _build_joint_gvs()
     q = jnp.stack(
         (
-            jnp.linspace(-0.03, 0.02, model.num_dofs),
-            jnp.linspace(0.015, -0.01, model.num_dofs),
+            jnp.linspace(-0.03, 0.02, model.num_internal_dofs),
+            jnp.linspace(0.015, -0.01, model.num_internal_dofs),
         )
     )
     controls = jnp.reshape(
@@ -529,8 +525,8 @@ def test_ordered_groups_modalities_and_segment_spans(
     )
     q = jnp.stack(
         [
-            jnp.linspace(-0.025, 0.015, model.num_dofs),
-            jnp.linspace(0.02, -0.01, model.num_dofs),
+            jnp.linspace(-0.025, 0.015, model.num_internal_dofs),
+            jnp.linspace(0.02, -0.01, model.num_internal_dofs),
         ]
     )
     controls = jnp.array([[1.0, -0.3, 0.7, 2.0], [-0.2, 0.9, 1.1, -0.4]])
@@ -569,7 +565,7 @@ def test_collapsed_tangents_emit_exact_zeros(
     model = model.update_link_params(
         reference_strain=jnp.zeros_like(model.params.link.reference_strain)
     )
-    q = jnp.zeros((2, model.num_dofs), dtype=jnp.float64)
+    q = jnp.zeros((2, model.num_internal_dofs), dtype=jnp.float64)
     key = "gvs" if family == "gvs" else "pcs"
     operands = (
         GVSThreadlikeOperands.from_model(model)
@@ -600,8 +596,8 @@ def test_runtime_quadrature_counts_match_jax(
     model = _build_with_quadrature(family, quadrature)
     q = jnp.stack(
         [
-            jnp.linspace(-0.02, 0.03, model.num_dofs),
-            jnp.linspace(0.015, -0.01, model.num_dofs),
+            jnp.linspace(-0.02, 0.03, model.num_internal_dofs),
+            jnp.linspace(0.015, -0.01, model.num_internal_dofs),
         ]
     )
     key = "gvs" if family == "gvs" else "pcs"
@@ -630,16 +626,16 @@ def test_threadlike_operand_and_shape_contracts(family: str) -> None:
         shapes = GVSThreadlikeShapes.from_operands(operands, batch_size=7)
         assert operands.link_basis.shape[:3] == (2, 5, 6)
         assert operands.link_local_to_global.shape[0] == 2
-        assert operands.link_global_to_local.shape == (2, model.num_dofs)
+        assert operands.link_global_to_local.shape == (2, model.num_internal_dofs)
         assert operands.physical_points.shape == (2, 5)
         assert shapes.strain_workspace() == (7, 2, 5, 6)
         assert shapes.matrix_outputs() == {
             "strain_workspace": (7, 2, 5, 6),
-            "output": (7, model.num_dofs, 4),
+            "output": (7, model.num_internal_dofs, 4),
         }
         assert shapes.force_outputs() == {
             "strain_workspace": (7, 2, 5, 6),
-            "output": (7, model.num_dofs),
+            "output": (7, model.num_internal_dofs),
         }
     else:
         operands = PCSThreadlikeOperands.from_model(model)
@@ -651,8 +647,8 @@ def test_threadlike_operand_and_shape_contracts(family: str) -> None:
     assert operands.routing.intercepts.shape == (4, 3)
     assert operands.routing.slopes.shape == (4, 3)
     assert operands.routing.coordinate_scales.shape == (4,)
-    assert shapes.matrix_output() == (7, model.num_dofs, 4)
-    assert shapes.force_output() == (7, model.num_dofs)
+    assert shapes.matrix_output() == (7, model.num_internal_dofs, 4)
+    assert shapes.force_output() == (7, model.num_internal_dofs)
 
 
 @pytest.mark.parametrize("factory", [PCSThreadlikeShapes, GVSThreadlikeShapes])
@@ -676,7 +672,7 @@ def test_public_gate_uses_only_benchmark_qualified_warp_paths(family: str) -> No
     """Enable PCS matrices while retaining JAX for the five failed gates."""
 
     model = _build_system(family, 2, 4)
-    q = jnp.linspace(-0.02, 0.03, model.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, model.num_internal_dofs)
     controls = jnp.linspace(0.4, 1.0, model.num_actuators)
     assert_allclose(
         model.actuation_matrix(q, backend="auto"), model._actuation_matrix(q)
@@ -705,10 +701,12 @@ def test_pcs_explicit_warp_matrix_uses_warp_on_cpu(
     """Execute the CPU-capable PCS matrix instead of silently using JAX."""
 
     model = _build_system("pcs", 2, 4)
-    q = jnp.linspace(-0.02, 0.03, model.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, model.num_internal_dofs)
 
     def fake_evaluator(model_, q_):
-        return jnp.full((model_.num_dofs, model_.num_actuators), 7.0, dtype=q_.dtype)
+        return jnp.full(
+            (model_.num_internal_dofs, model_.num_actuators), 7.0, dtype=q_.dtype
+        )
 
     monkeypatch.setattr(
         "soromox.systems.execution.dispatch.get_actuation_evaluator",
@@ -728,20 +726,21 @@ def test_warp_actuation_vmap_consolidates_one_batch(
     """Map environments into one canonical PCS executor invocation."""
 
     model = _build_system("pcs", 2, 4)
-    q = jnp.zeros((5, model.num_dofs), dtype=jnp.float64)
+    q = jnp.zeros((5, model.num_internal_dofs), dtype=jnp.float64)
     calls: list[tuple[int, ...]] = []
 
     def fake_batch(model_, q_):
         calls.append(q_.shape)
         return jnp.zeros(
-            (q_.shape[0], model_.num_dofs, model_.num_actuators), dtype=q_.dtype
+            (q_.shape[0], model_.num_internal_dofs, model_.num_actuators),
+            dtype=q_.dtype,
         )
 
     monkeypatch.setattr(loader, "_execute_pcs_actuation_matrix_batch", fake_batch)
     evaluator = loader.get_actuation_evaluator("pcs", "matrix")
     result = jax.vmap(evaluator, in_axes=(None, 0))(model, q)
-    assert result.shape == (5, model.num_dofs, model.num_actuators)
-    assert calls[-1] == (5, model.num_dofs)
+    assert result.shape == (5, model.num_internal_dofs, model.num_actuators)
+    assert calls[-1] == (5, model.num_internal_dofs)
 
 
 def test_warp_force_vmap_consolidates_shared_and_mapped_inputs(
@@ -750,14 +749,14 @@ def test_warp_force_vmap_consolidates_shared_and_mapped_inputs(
     """Broadcast shared configurations or controls into one fused launch."""
 
     model = _build_system("pcs", 2, 4)
-    q = jnp.zeros((5, model.num_dofs), dtype=jnp.float64)
+    q = jnp.zeros((5, model.num_internal_dofs), dtype=jnp.float64)
     controls = jnp.ones((5, model.num_actuators), dtype=jnp.float64)
     qd = jnp.zeros_like(q)
     calls: list[tuple[tuple[int, ...], tuple[int, ...]]] = []
 
     def fake_batch(model_, q_, controls_):
         calls.append((q_.shape, controls_.shape))
-        return jnp.zeros((q_.shape[0], model_.num_dofs), dtype=q_.dtype)
+        return jnp.zeros((q_.shape[0], model_.num_internal_dofs), dtype=q_.dtype)
 
     monkeypatch.setattr(loader, "_execute_pcs_actuation_force_batch", fake_batch)
     evaluator = loader.get_actuation_evaluator("pcs", "force")
@@ -765,18 +764,18 @@ def test_warp_force_vmap_consolidates_shared_and_mapped_inputs(
     mapped_q = jax.vmap(evaluator, in_axes=(None, 0, None, 0))(
         model, q, controls[0], qd
     )
-    assert mapped_q.shape == (5, model.num_dofs)
+    assert mapped_q.shape == (5, model.num_internal_dofs)
     assert calls[-1] == (
-        (5, model.num_dofs),
+        (5, model.num_internal_dofs),
         (5, model.num_actuators),
     )
 
     mapped_controls = jax.vmap(evaluator, in_axes=(None, None, 0, None))(
         model, q[0], controls, qd[0]
     )
-    assert mapped_controls.shape == (5, model.num_dofs)
+    assert mapped_controls.shape == (5, model.num_internal_dofs)
     assert calls[-1] == (
-        (5, model.num_dofs),
+        (5, model.num_internal_dofs),
         (5, model.num_actuators),
     )
 
@@ -786,9 +785,9 @@ def test_public_actuation_autodiff_uses_jax(family: str) -> None:
     """Preserve JVP, forward/reverse Jacobians, and control gradients."""
 
     model = _build_system(family, 2, 4)
-    q = jnp.linspace(-0.02, 0.03, model.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, model.num_internal_dofs)
     u = jnp.linspace(0.4, 1.0, model.num_actuators)
-    direction = jnp.linspace(0.1, -0.2, model.num_dofs)
+    direction = jnp.linspace(0.1, -0.2, model.num_internal_dofs)
 
     def matrix(q_):
         return model.actuation_matrix(q_, backend="jax")

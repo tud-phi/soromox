@@ -50,8 +50,8 @@ def assert_kinematics_backend_equivalence(model: Any) -> None:
 
     q = jnp.stack(
         (
-            jnp.linspace(-0.025, 0.031, model.num_dofs, dtype=jnp.float64),
-            jnp.linspace(0.019, -0.017, model.num_dofs, dtype=jnp.float64),
+            jnp.linspace(-0.025, 0.031, model.num_internal_dofs, dtype=jnp.float64),
+            jnp.linspace(0.019, -0.017, model.num_internal_dofs, dtype=jnp.float64),
         )
     )
     samples = _sample_coordinates(model)
@@ -141,12 +141,12 @@ def assert_inertial_jacobian_finite_difference(model: Any) -> None:
         None.
     """
 
-    q = jnp.linspace(-0.022, 0.028, model.num_dofs, dtype=jnp.float64)
+    q = jnp.linspace(-0.022, 0.028, model.num_internal_dofs, dtype=jnp.float64)
     s = _sample_coordinates(model)[1]
     step = 2e-6
     columns = []
     pose = model.forward_kinematics(q, s, backend="warp")
-    for column in range(model.num_dofs):
+    for column in range(model.num_internal_dofs):
         direction = jnp.zeros_like(q).at[column].set(step)
         pose_plus = model.forward_kinematics(q + direction, s, backend="warp")
         pose_minus = model.forward_kinematics(q - direction, s, backend="warp")
@@ -176,8 +176,8 @@ def assert_warp_derivatives_use_jax(model: Any) -> None:
         None.
     """
 
-    q = jnp.linspace(-0.018, 0.021, model.num_dofs, dtype=jnp.float64)
-    tangent = jnp.linspace(0.011, -0.009, model.num_dofs, dtype=jnp.float64)
+    q = jnp.linspace(-0.018, 0.021, model.num_internal_dofs, dtype=jnp.float64)
+    tangent = jnp.linspace(0.011, -0.009, model.num_internal_dofs, dtype=jnp.float64)
     s = _sample_coordinates(model)[1]
     for method_name in (
         "forward_kinematics",

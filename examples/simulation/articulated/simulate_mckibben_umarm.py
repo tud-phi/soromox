@@ -61,7 +61,7 @@ def simulate(
     save_dt: float = 0.02,
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array]:
     """Roll out the UMArm with a constant pressure input."""
-    q0 = jnp.zeros((robot.num_dofs,))
+    q0 = jnp.zeros((robot.num_coordinates,))
     q0 = q0.at[0].set(0.25)
     q0 = q0.at[4].set(-0.20)
     qd0 = jnp.zeros_like(q0)

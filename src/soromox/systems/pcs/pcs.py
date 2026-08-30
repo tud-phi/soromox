@@ -418,7 +418,6 @@ class PCS(SoftRobot):
 
         self.num_active_strains = jnp.sum(strain_selector)
         self.num_internal_dofs = int(self.num_active_strains.item())
-        self.num_dofs = self.num_velocities
         active_dofs_per_segment = jnp.sum(
             strain_selector.reshape(self.num_segments, 6), axis=1
         )
@@ -989,7 +988,7 @@ class PCS(SoftRobot):
                 )
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
-            relative_pose = self._fixed_evaluation_view().forward_kinematics(
+            relative_pose = self._fixed_base_robot_at_pose().forward_kinematics(
                 q_internal, s, backend=backend
             )
             return base_transform @ relative_pose
@@ -1042,7 +1041,7 @@ class PCS(SoftRobot):
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
             relative_poses = (
-                self._fixed_evaluation_view().forward_kinematics_abscissa_batched(
+                self._fixed_base_robot_at_pose().forward_kinematics_abscissa_batched(
                     q_internal, s_ps, backend=backend
                 )
             )
@@ -1162,7 +1161,7 @@ class PCS(SoftRobot):
         if self.floating_base:
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
-            relative_tips = self._fixed_evaluation_view().forward_kinematics_tips(
+            relative_tips = self._fixed_base_robot_at_pose().forward_kinematics_tips(
                 q_internal
             )
             return jnp.einsum("ij,njk->nik", base_transform, relative_tips)
@@ -2006,7 +2005,7 @@ class PCS(SoftRobot):
                 )
             _, q_internal = self.split_configuration(q)
             relative_pose, jacobian_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
                     q_internal, s, backend=backend
                 )
             )
@@ -2062,7 +2061,7 @@ class PCS(SoftRobot):
                 )
             _, q_internal = self.split_configuration(q)
             relative_poses, jacobians_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
                     q_internal, s_ps, backend=backend
                 )
             )
@@ -2120,7 +2119,7 @@ class PCS(SoftRobot):
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
             relative_pose, jacobian_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
                     q_internal, s, backend=backend
                 )
             )
@@ -2181,7 +2180,7 @@ class PCS(SoftRobot):
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
             relative_poses, jacobians_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
                     q_internal, s_ps, backend=backend
                 )
             )
@@ -2303,10 +2302,10 @@ class PCS(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            fixed_view = self._fixed_evaluation_view()
-            relative_tips = fixed_view.forward_kinematics_tips(q_internal)
+            fixed_base_robot = self._fixed_base_robot_at_pose()
+            relative_tips = fixed_base_robot.forward_kinematics_tips(q_internal)
             jacobians_internal = jnp.einsum(
-                "ijk,kl->ijl", fixed_view._J_local_tips(q_internal), self.B_xi
+                "ijk,kl->ijl", fixed_base_robot._J_local_tips(q_internal), self.B_xi
             )
             return self._floating_inertial_jacobians(
                 q, relative_tips, jacobians_internal
@@ -2718,11 +2717,13 @@ class PCS(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            fixed_view = self._fixed_evaluation_view()
-            relative_poses = fixed_view._forward_kinematics_abscissa_batched(
+            fixed_base_robot = self._fixed_base_robot_at_pose()
+            relative_poses = fixed_base_robot._forward_kinematics_abscissa_batched(
                 q_internal, s_ps
             )
-            jacobians_internal = fixed_view._J_local_abscissa_batched(q_internal, s_ps)
+            jacobians_internal = fixed_base_robot._J_local_abscissa_batched(
+                q_internal, s_ps
+            )
             return self._floating_inertial_jacobians(
                 q, relative_poses, jacobians_internal
             )
@@ -3221,7 +3222,7 @@ class PCS(SoftRobot):
 
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            internal = self._fixed_evaluation_view().actuation_matrix(
+            internal = self._fixed_base_robot_at_pose().actuation_matrix(
                 q_internal, backend=backend
             )
             return jnp.pad(internal, ((self.num_base_velocities, 0), (0, 0)))
@@ -3244,7 +3245,7 @@ class PCS(SoftRobot):
             qd_internal = None
             if qd is not None:
                 _, qd_internal = self.split_velocity(qd)
-            internal = self._fixed_evaluation_view().actuation_force(
+            internal = self._fixed_base_robot_at_pose().actuation_force(
                 q_internal, u, qd_internal, backend=backend
             )
             return jnp.pad(internal, (self.num_base_velocities, 0))
@@ -3474,7 +3475,7 @@ class PCS(SoftRobot):
             self.L_cum[1:],
         )
         relative_poses = (
-            self._fixed_evaluation_view()._forward_kinematics_abscissa_batched(
+            self._fixed_base_robot_at_pose()._forward_kinematics_abscissa_batched(
                 q_internal, points.reshape(-1)
             )
         )
@@ -3793,10 +3794,12 @@ class PCS(SoftRobot):
         if not self.floating_base:
             xi = self.strain(q).reshape(self.num_segments, 6)
             xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
-            B_xi_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
-            prepared_adjoint_powers = vmap(
-                constant_strain_se3._prepare_adjoint_powers
-            )(xi, xid)
+            B_xi_segments = self.B_xi.reshape(
+                self.num_segments, 6, self.num_internal_dofs
+            )
+            prepared_adjoint_powers = vmap(constant_strain_se3._prepare_adjoint_powers)(
+                xi, xid
+            )
 
             Xs_inner, Ws_inner = vmap(
                 scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
@@ -3808,19 +3811,15 @@ class PCS(SoftRobot):
             )
             s_local = Xs_inner - self.L_cum[:-1, None]
 
-            J_tips, Jd_qd_tips, Ad_inv_tips = (
-                self._active_J_Jd_local_tips_from_strain(
-                    xi,
-                    xid,
-                    prepared_adjoint_powers,
-                    B_xi_segments,
-                    qd,
-                    convective_only_jd=True,
-                )
+            J_tips, Jd_qd_tips, Ad_inv_tips = self._active_J_Jd_local_tips_from_strain(
+                xi,
+                xid,
+                prepared_adjoint_powers,
+                B_xi_segments,
+                qd,
+                convective_only_jd=True,
             )
-            J_bases = jnp.concatenate(
-                [jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0
-            )
+            J_bases = jnp.concatenate([jnp.zeros_like(J_tips[:1]), J_tips[:-1]], axis=0)
             Jd_qd_bases = jnp.concatenate(
                 [jnp.zeros_like(Jd_qd_tips[:1]), Jd_qd_tips[:-1]], axis=0
             )
@@ -3833,15 +3832,11 @@ class PCS(SoftRobot):
                 gravity_tip = Ad_inv_tip @ gravity_base
                 return gravity_tip, gravity_base
 
-            _, gravity_bases = lax.scan(
-                scan_gravity, gravity_base_initial, Ad_inv_tips
-            )
+            _, gravity_bases = lax.scan(scan_gravity, gravity_base_initial, Ad_inv_tips)
 
             def segment_kinematics(
                 xid_i: Array,
-                prepared_adjoint_powers_i: (
-                    constant_strain_se3._PreparedAdjointPowers
-                ),
+                prepared_adjoint_powers_i: (constant_strain_se3._PreparedAdjointPowers),
                 B_xi_i: Array,
                 gravity_base_i: Array,
                 J_base_i: Array,
@@ -3866,9 +3861,7 @@ class PCS(SoftRobot):
                     eta = Ad_inv_T @ xid_i
                     Jd_qd_next = (
                         Ad_inv @ Jd_qd_base_i
-                        - se3.small_adjoint_action(
-                            eta, Ad_inv @ (J_base_i @ qd)
-                        )
+                        - se3.small_adjoint_action(eta, Ad_inv @ (J_base_i @ qd))
                         + Ad_inv @ (Td @ xid_i)
                     )
                     gravity_local = Ad_inv @ gravity_base_i
@@ -3887,38 +3880,23 @@ class PCS(SoftRobot):
             )
             return Ws_inner, gravity_ps, J_ps, Jd_qd_ps
 
-        if self.floating_base:
-            q = self.normalize_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            _, qd_internal = self.split_velocity(qd)
-            (
-                jacobian_base,
-                jacobian_dot_velocity_initial,
-                _,
-                gravity_base_initial,
-            ) = self._floating_base_body_kinematics(q, qd)
-            jacobian_initial = jnp.pad(
-                jacobian_base, ((0, 0), (0, self.num_internal_dofs))
-            )
-            velocity_coordinates = qd
-        else:
-            q_internal = q
-            qd_internal = qd
-            jacobian_initial = jnp.zeros((6, self.num_internal_dofs), dtype=q.dtype)
-            jacobian_dot_velocity_initial = jnp.zeros((6,), dtype=q.dtype)
-            gravity_base_initial = se3.adjoint_inverse(self.g0) @ self.g
-            velocity_coordinates = qd
+        q = self.normalize_configuration(q)
+        _, q_internal = self.split_configuration(q)
+        _, qd_internal = self.split_velocity(qd)
+        (
+            jacobian_base,
+            jacobian_dot_velocity_initial,
+            _,
+            gravity_base_initial,
+        ) = self._floating_base_body_kinematics(q, qd)
+        jacobian_initial = jnp.pad(jacobian_base, ((0, 0), (0, self.num_internal_dofs)))
 
         xi = self.strain(q_internal).reshape(self.num_segments, 6)
         xid = (self.B_xi @ qd_internal).reshape(self.num_segments, 6)
         basis_internal = self.B_xi.reshape(self.num_segments, 6, self.num_internal_dofs)
-        B_xi_segments = (
-            jnp.pad(
-                basis_internal,
-                ((0, 0), (0, 0), (self.num_base_velocities, 0)),
-            )
-            if self.floating_base
-            else basis_internal
+        B_xi_segments = jnp.pad(
+            basis_internal,
+            ((0, 0), (0, 0), (self.num_base_velocities, 0)),
         )
         prepared_adjoint_powers = vmap(constant_strain_se3._prepare_adjoint_powers)(
             xi, xid
@@ -3939,12 +3917,10 @@ class PCS(SoftRobot):
             xid,
             prepared_adjoint_powers,
             B_xi_segments,
-            velocity_coordinates,
+            qd,
             convective_only_jd=True,
-            jacobian_initial=(jacobian_initial if self.floating_base else None),
-            jacobian_dot_velocity_initial=(
-                jacobian_dot_velocity_initial if self.floating_base else None
-            ),
+            jacobian_initial=jacobian_initial,
+            jacobian_dot_velocity_initial=jacobian_dot_velocity_initial,
         )
         J_bases = jnp.concatenate([jacobian_initial[None], J_tips[:-1]], axis=0)
         Jd_qd_bases = jnp.concatenate(
@@ -3984,9 +3960,7 @@ class PCS(SoftRobot):
                 eta = Ad_inv_T @ xid_i
                 Jd_qd_next = (
                     Ad_inv @ Jd_qd_base_i
-                    - se3.small_adjoint_action(
-                        eta, Ad_inv @ (J_base_i @ velocity_coordinates)
-                    )
+                    - se3.small_adjoint_action(eta, Ad_inv @ (J_base_i @ qd))
                     + Ad_inv @ (Td @ xid_i)
                 )
                 gravity_local = Ad_inv @ gravity_base_i

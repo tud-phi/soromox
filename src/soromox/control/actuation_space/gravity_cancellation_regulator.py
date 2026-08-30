@@ -146,7 +146,9 @@ class GravityCancellationRegulator(PIDController):
         """
         t = system_state.t
         y = system_state.y
-        asd, q, _ = self._controller_dynamics_and_state(y)
+        asd, q, _ = self._controller_dynamics_and_state(
+            y, self.actuation_space_dynamics
+        )
         n_a = asd.n_actuated
 
         # Get desired configuration from the configuration-space reference trajectory

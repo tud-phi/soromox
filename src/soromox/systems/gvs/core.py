@@ -194,9 +194,6 @@ class GVS(SoftRobot):
     )  # Maximum number of integration points for one link of the robot
     num_gauss_points: Array
 
-    num_dofs: int = eqx.field(
-        static=True
-    )  # Total number of DOFs for the robot = sum(dofs_per_segment)
     num_padded_dofs: int = eqx.field(
         static=True
     )  # Total number of DOFs for the robot, considering the maximum DOFs per link: num_segments * 2 * max_dof
@@ -2466,7 +2463,7 @@ class GVS(SoftRobot):
                 )
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
-            relative_pose = self._fixed_evaluation_view().forward_kinematics(
+            relative_pose = self._fixed_base_robot_at_pose().forward_kinematics(
                 q_internal, s, backend=backend
             )
             return base_transform @ relative_pose
@@ -2519,7 +2516,7 @@ class GVS(SoftRobot):
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
             relative_poses = (
-                self._fixed_evaluation_view().forward_kinematics_abscissa_batched(
+                self._fixed_base_robot_at_pose().forward_kinematics_abscissa_batched(
                     q_internal, s_ps, backend=backend
                 )
             )
@@ -2868,7 +2865,7 @@ class GVS(SoftRobot):
         if self.floating_base:
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
-            relative_tips = self._fixed_evaluation_view().forward_kinematics_tips(
+            relative_tips = self._fixed_base_robot_at_pose().forward_kinematics_tips(
                 q_internal
             )
             return jnp.einsum("ij,njk->nik", base_transform, relative_tips)
@@ -3836,7 +3833,7 @@ class GVS(SoftRobot):
                 )
             _, q_internal = self.split_configuration(q)
             relative_pose, jacobian_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
                     q_internal, s, backend=backend
                 )
             )
@@ -3892,7 +3889,7 @@ class GVS(SoftRobot):
                 )
             _, q_internal = self.split_configuration(q)
             relative_poses, jacobians_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
                     q_internal, s_ps, backend=backend
                 )
             )
@@ -3950,7 +3947,7 @@ class GVS(SoftRobot):
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
             relative_pose, jacobian_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
                     q_internal, s, backend=backend
                 )
             )
@@ -4011,7 +4008,7 @@ class GVS(SoftRobot):
             base_transform = self.base_transform_from_configuration(q)
             _, q_internal = self.split_configuration(q)
             relative_poses, jacobians_internal = (
-                self._fixed_evaluation_view().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
                     q_internal, s_ps, backend=backend
                 )
             )
@@ -4109,12 +4106,14 @@ class GVS(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            fixed_view = self._fixed_evaluation_view()
-            q_gathered = fixed_view._min_size_gathered(q_internal)
-            relative_tips = fixed_view._forward_kinematics_gauss(q_gathered)[:, -1]
+            fixed_base_robot = self._fixed_base_robot_at_pose()
+            q_gathered = fixed_base_robot._min_size_gathered(q_internal)
+            relative_tips = fixed_base_robot._forward_kinematics_gauss(q_gathered)[
+                :, -1
+            ]
             jacobians_internal = (
-                fixed_view._jacobian_gauss(q_gathered)[:, -1]
-                @ fixed_view.active_dof_map
+                fixed_base_robot._jacobian_gauss(q_gathered)[:, -1]
+                @ fixed_base_robot.active_dof_map
             )
             return self._floating_inertial_jacobians(
                 q, relative_tips, jacobians_internal
@@ -4164,11 +4163,11 @@ class GVS(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            fixed_view = self._fixed_evaluation_view()
-            relative_poses = fixed_view._forward_kinematics_abscissa_batched(
+            fixed_base_robot = self._fixed_base_robot_at_pose()
+            relative_poses = fixed_base_robot._forward_kinematics_abscissa_batched(
                 q_internal, s_ps
             )
-            jacobians_internal = fixed_view.jacobian_bodyframe_abscissa_batched(
+            jacobians_internal = fixed_base_robot.jacobian_bodyframe_abscissa_batched(
                 q_internal, s_ps
             )
             return self._floating_inertial_jacobians(
@@ -5351,9 +5350,7 @@ class GVS(SoftRobot):
                 self.gather_indices[segment_index, block_index],
                 self.num_internal_dofs - 1,
             )
-            indices = (
-                base_width + internal_indices if floating else internal_indices
-            )
+            indices = base_width + internal_indices if floating else internal_indices
             masked_basis = (
                 local_basis * self.gather_mask[segment_index, block_index][None, :]
             )
@@ -5966,7 +5963,7 @@ class GVS(SoftRobot):
 
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            internal = self._fixed_evaluation_view().actuation_matrix(
+            internal = self._fixed_base_robot_at_pose().actuation_matrix(
                 q_internal, backend=backend
             )
             return jnp.pad(internal, ((self.num_base_velocities, 0), (0, 0)))
@@ -5989,7 +5986,7 @@ class GVS(SoftRobot):
             qd_internal = None
             if qd is not None:
                 _, qd_internal = self.split_velocity(qd)
-            internal = self._fixed_evaluation_view().actuation_force(
+            internal = self._fixed_base_robot_at_pose().actuation_force(
                 q_internal, u, qd_internal, backend=backend
             )
             return jnp.pad(internal, (self.num_base_velocities, 0))

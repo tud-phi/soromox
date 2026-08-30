@@ -49,8 +49,8 @@ specifications are described in
 [Continuum Robot Components](continuum-components.md). Practical immutable
 replacement and gradient-based identification examples are in
 [Parameters, Updates, and Optimization](../../user-guide/parameters-and-optimization.md).
-State layouts, pose and velocity conventions, and the Newton conversion boundary
-for optional moving bases are documented in
+State layouts and pose and velocity conventions for optional moving bases are
+documented in
 [Floating-base Systems](../../user-guide/floating-base-systems.md).
 
 ### SystemState

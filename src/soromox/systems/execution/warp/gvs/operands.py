@@ -147,7 +147,7 @@ class GVSOperands(eqx.Module):
             raise ValueError("Fixed GVS Warp operands require a fixed-base model.")
         return cls(
             num_segments=model.num_segments,
-            num_dofs=model.num_dofs,
+            num_dofs=model.num_internal_dofs,
             max_dof=model.max_dof,
             num_cells=model.max_num_integration_points - 1,
             num_quadrature=model.max_num_integration_points - 2,
@@ -495,7 +495,7 @@ class GVSKinematicsOperands(eqx.Module):
 
         return cls(
             num_segments=model.num_segments,
-            num_dofs=model.num_dofs,
+            num_dofs=model.num_internal_dofs,
             max_dof=model.max_dof,
             num_cells=model.max_num_integration_points - 1,
             block_dim=block_dim,
@@ -550,8 +550,10 @@ class GVSFloatingKinematicsOperands(eqx.Module):
             ValueError: If the supplied model is fixed-base.
         """
         if not model.floating_base:
-            raise ValueError("Floating GVS kinematics operands require a floating model.")
-        relative_model = model._fixed_evaluation_view()
+            raise ValueError(
+                "Floating GVS kinematics operands require a floating model."
+            )
+        relative_model = model._fixed_base_robot_at_pose()
         return cls(
             num_base_coordinates=7,
             num_base_velocities=6,

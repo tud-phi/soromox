@@ -240,7 +240,7 @@ def test_layout_has_no_visual_only_interfaces_without_rigid_segments():
 
 def test_chambers_follow_model_angles_ellipse_and_bellows():
     renderer = _renderer(_make_robot(connectors=True))
-    q = jnp.zeros((renderer.robot.num_dofs,))
+    q = jnp.zeros((renderer.robot.num_internal_dofs,))
     curves, _ = _curves_and_frames(renderer, q)
     poses = renderer._sample_world_poses(q[None, :], curves)[0]
     spec = renderer._pneumatic_specs[0]
@@ -327,7 +327,7 @@ def test_build_and_update_preserve_custom_handle_identity():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    q = jnp.zeros((renderer.robot.num_dofs,))
+    q = jnp.zeros((renderer.robot.num_internal_dofs,))
     curves, frames = _curves_and_frames(renderer, q)
     renderer._current_geometry_q = q[None, :]
 
@@ -360,7 +360,7 @@ def test_sequence_frame_uses_one_atomic_transaction_for_custom_geometry():
     renderer = _renderer(_make_robot(connectors=True), show_ground_plane=False)
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    q_ts = jnp.zeros((1, 2, renderer.robot.num_dofs))
+    q_ts = jnp.zeros((1, 2, renderer.robot.num_internal_dofs))
     offsets = jnp.zeros((1, 3))
     renderer._current_geometry_q = q_ts[:, 0]
     curves, frames = _curves_and_frames(renderer, q_ts[:, 0], offsets)
@@ -388,7 +388,7 @@ def test_pressure_labels_and_colors_update_in_place():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    q = jnp.zeros((renderer.robot.num_dofs,))
+    q = jnp.zeros((renderer.robot.num_internal_dofs,))
     curves, frames = _curves_and_frames(renderer, q)
     renderer._current_geometry_q = q[None, :]
     renderer._current_pressures = np.array([[2.0e4, 1.5e5, 3.0e5, np.nan, 0.0, 4.0e5]])
@@ -441,7 +441,7 @@ def test_geometry_without_pressures_uses_default_chamber_style():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    q = jnp.zeros((renderer.robot.num_dofs,))
+    q = jnp.zeros((renderer.robot.num_internal_dofs,))
     curves, frames = _curves_and_frames(renderer, q)
     renderer._current_geometry_q = q[None, :]
 
@@ -461,7 +461,7 @@ def test_geometry_without_pressures_uses_default_chamber_style():
 
 def test_render_frame_forces_labels_only_when_pressures_are_supplied(monkeypatch):
     renderer = _renderer(_make_robot(connectors=True))
-    q = jnp.zeros((renderer.robot.num_dofs,))
+    q = jnp.zeros((renderer.robot.num_internal_dofs,))
     captured = []
 
     def fake_render_frame(self, q, **kwargs):
@@ -497,7 +497,7 @@ def test_batched_geometry_applies_base_offsets():
     renderer = _renderer(_make_robot(connectors=True))
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
-    q = jnp.zeros((2, renderer.robot.num_dofs))
+    q = jnp.zeros((2, renderer.robot.num_internal_dofs))
     offsets = jnp.array([[0.0, 0.0, 0.0], [0.4, -0.2, 0.1]])
     curves, frames = _curves_and_frames(renderer, q, offsets)
     renderer._current_geometry_q = q
@@ -523,13 +523,13 @@ def test_live_controller_updates_custom_geometry_in_place():
     renderer._server = _FakeServer()
     renderer._scene_handles = SceneHandles()
     controller = ISupportLiveModeController(renderer)
-    q = np.zeros((renderer.robot.num_dofs,))
+    q = np.zeros((renderer.robot.num_internal_dofs,))
 
     controller._process_state(q)
     first_handle = renderer._robot_visual_handles[0].chamber_handles[0]
     controller._process_state(q + 0.01)
 
-    assert renderer._current_geometry_q.shape == (1, renderer.robot.num_dofs)
+    assert renderer._current_geometry_q.shape == (1, renderer.robot.num_internal_dofs)
     assert renderer._robot_visual_handles[0].chamber_handles[0] is first_handle
     assert renderer._server.atomic_calls == 1
 
@@ -540,7 +540,7 @@ def test_live_controller_pushes_pressures_with_state():
     renderer._scene_handles = SceneHandles()
     controller = ISupportLiveModeController(renderer)
     controller.start()
-    q = np.zeros((renderer.robot.num_dofs,))
+    q = np.zeros((renderer.robot.num_internal_dofs,))
     pressures = np.arange(renderer.robot.num_actuators) * 1.0e5
 
     controller.push_state_with_pressures(q, pressures)
@@ -555,7 +555,7 @@ def test_live_controller_pushes_pressures_with_state():
 
 def test_sequence_frame_selects_matching_pressures(monkeypatch):
     renderer = _renderer(_make_robot(connectors=True))
-    q_ts = jnp.zeros((3, renderer.robot.num_dofs))
+    q_ts = jnp.zeros((3, renderer.robot.num_internal_dofs))
     pressure_ts = np.arange(18, dtype=float).reshape(3, 6) * 1.0e4
 
     def fake_render_sequence(self, ts, q_ts, **kwargs):

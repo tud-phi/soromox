@@ -117,7 +117,9 @@ if __name__ == "__main__":
     )
     ts = trajectory.t
     q_ts, qd_ts, _ = jnp.split(
-        trajectory.y, [robot.num_dofs, 2 * robot.num_dofs], axis=1
+        trajectory.y,
+        [robot.num_coordinates, robot.num_coordinates + robot.num_velocities],
+        axis=1,
     )
 
     # create video

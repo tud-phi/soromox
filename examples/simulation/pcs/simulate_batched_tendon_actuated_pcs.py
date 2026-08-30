@@ -80,10 +80,10 @@ def build_robot() -> PCS:
 
 def simulate_batched(robot: PCS, num_robots: int, rng_key: jax.Array):
     """Roll out multiple trajectories with vmap and random constant tendon tensions."""
-    q0 = jnp.zeros((num_robots, robot.num_dofs))
+    q0 = jnp.zeros((num_robots, robot.num_coordinates))
     # # sample different configurations per robot in the batch
     # q0 = q0 + jax.random.uniform(
-    #     rng_key, (num_robots, robot.num_dofs), minval=-0.2, maxval=0.2
+    #     rng_key, (num_robots, robot.num_coordinates), minval=-0.2, maxval=0.2
     # )
     print("q0 batch:\n", q0)
 

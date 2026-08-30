@@ -188,7 +188,7 @@ def random_configuration(robot, key=None):
     """Generate a small random configuration for a robot."""
     if key is None:
         key = jax.random.PRNGKey(0)
-    return 0.1 * jax.random.normal(key, shape=(robot.num_dofs,))
+    return 0.1 * jax.random.normal(key, shape=(robot.num_internal_dofs,))
 
 
 # -----------------------
@@ -205,7 +205,7 @@ class TestActuationSpaceDynamicsInit:
         asd = ActuationSpaceDynamics(robot)
 
         assert asd.n_actuated == robot.num_actuators
-        assert asd.n_unactuated == robot.num_dofs - robot.num_actuators
+        assert asd.n_unactuated == robot.num_internal_dofs - robot.num_actuators
         assert asd.n_actuated == 3
         assert asd.n_unactuated == 0
 
@@ -215,7 +215,7 @@ class TestActuationSpaceDynamicsInit:
         asd = ActuationSpaceDynamics(robot)
 
         assert asd.n_actuated == robot.num_actuators
-        assert asd.n_unactuated == robot.num_dofs - robot.num_actuators
+        assert asd.n_unactuated == robot.num_internal_dofs - robot.num_actuators
         assert asd.n_actuated == 2
         assert asd.n_unactuated == 1
 
@@ -294,7 +294,7 @@ class TestCoordinateTransformations:
         y_a = asd.actuated_coordinates(q)
         y_u = asd.unactuated_coordinates(q)
 
-        assert y.shape == (robot.num_dofs,)
+        assert y.shape == (robot.num_internal_dofs,)
         assert_allclose(y[: asd.n_actuated], y_a, rtol=1e-10)
         assert_allclose(y[asd.n_actuated :], y_u, rtol=1e-10)
 
@@ -338,7 +338,7 @@ class TestJacobians:
         q = jnp.array([0.1, 0.2, 0.3])
         J = asd.jacobian(q)
 
-        assert J.shape == (robot.num_dofs, robot.num_dofs)
+        assert J.shape == (robot.num_internal_dofs, robot.num_internal_dofs)
 
     def test_jacobian_is_invertible(self, underactuated_pendulum):
         """Test that full Jacobian is invertible."""
@@ -350,7 +350,7 @@ class TestJacobians:
         J_inv = asd.jacobian_inverse(q)
 
         # J @ J_inv should be identity
-        assert_allclose(J @ J_inv, jnp.eye(robot.num_dofs), atol=1e-10)
+        assert_allclose(J @ J_inv, jnp.eye(robot.num_internal_dofs), atol=1e-10)
 
     def test_jacobian_stacks_correctly(self, underactuated_pendulum):
         """Test that jacobian stacks actuated and unactuated Jacobians."""
@@ -413,7 +413,7 @@ class TestDynamicsMatrices:
         qd = jnp.array([0.01, 0.02, 0.03])
         eta_y = asd.coriolis_matrix(q, qd)
 
-        assert eta_y.shape == (robot.num_dofs, robot.num_dofs)
+        assert eta_y.shape == (robot.num_internal_dofs, robot.num_internal_dofs)
 
     def test_damping_matrix_transformation(self, underactuated_pendulum):
         """Test that D_y = J^{-T} @ D @ J^{-1}."""
@@ -486,7 +486,7 @@ class TestForces:
         tau_pot_y = asd.potential_force(q)
         expected = asd.gravitational_force(q) + asd.elastic_force(q)
 
-        assert tau_pot_y.shape == (robot.num_dofs,)
+        assert tau_pot_y.shape == (robot.num_internal_dofs,)
         assert_allclose(tau_pot_y, expected, rtol=1e-10)
 
 
@@ -507,7 +507,7 @@ class TestActuationMatrix:
         A_y = asd.actuation_matrix(q)
 
         # For fully actuated: A_y = I
-        assert_allclose(A_y, jnp.eye(robot.num_dofs), rtol=1e-10)
+        assert_allclose(A_y, jnp.eye(robot.num_internal_dofs), rtol=1e-10)
 
     def test_actuation_matrix_structure_underactuated(self, underactuated_pendulum):
         """Test actuation matrix structure for underactuated system."""
@@ -535,7 +535,7 @@ class TestActuationMatrix:
         q = jnp.array([0.1, 0.2, 0.3])
         A_y = asd.actuation_matrix(q)
 
-        assert A_y.shape == (robot.num_dofs, robot.num_actuators)
+        assert A_y.shape == (robot.num_internal_dofs, robot.num_actuators)
 
 
 # -----------------------
@@ -826,8 +826,8 @@ class TestActuationSpaceDynamicsSystemIndependent:
         asd = ActuationSpaceDynamics(robot)
 
         assert asd.n_actuated == robot.num_actuators
-        assert asd.n_unactuated == robot.num_dofs - robot.num_actuators
-        assert asd.n_actuated + asd.n_unactuated == robot.num_dofs
+        assert asd.n_unactuated == robot.num_internal_dofs - robot.num_actuators
+        assert asd.n_actuated + asd.n_unactuated == robot.num_internal_dofs
 
     def test_dynamics_terms_match_individual_methods(self, robot):
         """Fused dynamics agree for articulated and nonlinear PCS mappings."""
@@ -845,7 +845,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
         """Test that H_unactuated has correct shape."""
         asd = ActuationSpaceDynamics(robot)
 
-        expected_shape = (asd.n_unactuated, robot.num_dofs)
+        expected_shape = (asd.n_unactuated, robot.num_internal_dofs)
         assert asd.H_unactuated.shape == expected_shape
 
     # -----------------------
@@ -899,7 +899,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
         y_a = asd.actuated_coordinates(q)
         y_u = asd.unactuated_coordinates(q)
 
-        assert y.shape == (robot.num_dofs,)
+        assert y.shape == (robot.num_internal_dofs,)
         assert_allclose(y[: asd.n_actuated], y_a, rtol=1e-10)
         assert_allclose(y[asd.n_actuated :], y_u, rtol=1e-10)
 
@@ -914,7 +914,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         J = asd.jacobian(q)
 
-        assert J.shape == (robot.num_dofs, robot.num_dofs)
+        assert J.shape == (robot.num_internal_dofs, robot.num_internal_dofs)
 
     def test_jacobian_is_invertible(self, robot):
         """Test that full Jacobian is invertible."""
@@ -925,7 +925,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
         J_inv = asd.jacobian_inverse(q)
 
         # J @ J_inv should be identity
-        assert_allclose(J @ J_inv, jnp.eye(robot.num_dofs), atol=1e-8)
+        assert_allclose(J @ J_inv, jnp.eye(robot.num_internal_dofs), atol=1e-8)
 
     def test_jacobian_actuated_shape(self, robot):
         """Test jacobian_actuated has correct shape."""
@@ -934,7 +934,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         J_a = asd.jacobian_actuated(q)
 
-        assert J_a.shape == (asd.n_actuated, robot.num_dofs)
+        assert J_a.shape == (asd.n_actuated, robot.num_internal_dofs)
 
     def test_jacobian_actuated_equals_actuation_matrix_transpose(self, robot):
         """Test that jacobian_actuated equals A_at^T."""
@@ -1001,7 +1001,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         eta_y = asd.coriolis_matrix(q, qd)
 
-        assert eta_y.shape == (robot.num_dofs, robot.num_dofs)
+        assert eta_y.shape == (robot.num_internal_dofs, robot.num_internal_dofs)
 
     def test_damping_matrix_transformation_formula(self, robot):
         """Test that D_y = J^{-T} @ D @ J^{-1}."""
@@ -1067,7 +1067,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         A_y = asd.actuation_matrix(q)
 
-        assert A_y.shape == (robot.num_dofs, robot.num_actuators)
+        assert A_y.shape == (robot.num_internal_dofs, robot.num_actuators)
 
     def test_actuation_matrix_structure(self, robot):
         """Test actuation matrix structure [[I], [0]]."""
@@ -1093,7 +1093,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         A_y = asd.actuation_matrix(q)
 
-        assert_allclose(A_y, jnp.eye(robot.num_dofs), rtol=1e-10)
+        assert_allclose(A_y, jnp.eye(robot.num_internal_dofs), rtol=1e-10)
 
     # -----------------------
     # Reference trajectory conversion tests
@@ -1102,7 +1102,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
     def test_convert_trajectory_position(self, robot):
         """Test position conversion for reference trajectory."""
         asd = ActuationSpaceDynamics(robot)
-        n_dof = robot.num_dofs
+        n_dof = robot.num_internal_dofs
 
         # Create a simple configuration-space trajectory
         ts = jnp.linspace(0.0, 1.0, 10)
@@ -1128,7 +1128,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
     def test_convert_trajectory_velocity(self, robot):
         """Test velocity conversion for reference trajectory."""
         asd = ActuationSpaceDynamics(robot)
-        n_dof = robot.num_dofs
+        n_dof = robot.num_internal_dofs
 
         ts = jnp.linspace(0.0, 1.0, 10)
         x_des_ts = jnp.outer(ts, 0.1 * jnp.ones(n_dof))
@@ -1160,7 +1160,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
         (like PCS with threadlike actuation) where Jd ≠ 0.
         """
         asd = ActuationSpaceDynamics(robot)
-        n_dof = robot.num_dofs
+        n_dof = robot.num_internal_dofs
 
         # Create trajectory with non-zero velocity and acceleration
         # to test the Jd @ qd term
@@ -1210,7 +1210,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
     def test_convert_trajectory_function_based(self, robot):
         """Test function-based reference trajectory conversion."""
         asd = ActuationSpaceDynamics(robot)
-        n_dof = robot.num_dofs
+        n_dof = robot.num_internal_dofs
 
         def q_des_fn(t):
             return t * 0.1 * jnp.ones(n_dof)
@@ -1260,7 +1260,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
         asd = ActuationSpaceDynamics(robot)
         q = random_configuration(robot)
         qd = random_configuration(robot, key=jax.random.PRNGKey(1))
-        n_dof = robot.num_dofs
+        n_dof = robot.num_internal_dofs
 
         M_y = asd.inertia_matrix(q)
         eta_y = asd.coriolis_matrix(q, qd)

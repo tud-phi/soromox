@@ -157,7 +157,7 @@ def test_end_effector_kinematics(seed: int = 0):
 def test_inverse_kinematics_is_reverse_mode_finite_when_straight():
     """Cover the analytic straight branch where ``cos(theta) - 1`` is zero."""
     robot = _create_robot()
-    q = jnp.zeros(robot.num_dofs)
+    q = jnp.zeros(robot.num_internal_dofs)
     chiee = robot.forward_kinematics_end_effector(q)
 
     recovered = robot.inverse_kinematics(chiee)
@@ -222,9 +222,7 @@ def test_planar_hsa_npz_uses_environment_defaults_when_fields_are_absent(tmp_pat
     params = PlanarHSAParams.from_npz(path)
 
     robot = PlanarHSA(params=params, structure=PlanarHSAStructure())
-    assert jnp.allclose(
-        robot.fixed_base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0])
-    )
+    assert jnp.allclose(robot.fixed_base_pose, jnp.array([jnp.pi / 2, 0.0, 0.0]))
     assert jnp.allclose(params.gravity, jnp.array([0.0, -9.81]))
 
 

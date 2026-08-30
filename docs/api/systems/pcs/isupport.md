@@ -119,7 +119,7 @@ robot = ISupport(
     ),
 )
 
-q = jnp.zeros(robot.num_dofs)
+q = jnp.zeros(robot.num_coordinates)
 
 # Pressure actuation (3 chambers per pneumatic segment)
 u = jnp.array([2.0e4, 0.0, 0.0])

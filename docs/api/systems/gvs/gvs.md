@@ -58,7 +58,7 @@ robot = GVS.from_segments(
     [segment],
     max_dof=4,
 )
-q = jnp.zeros(robot.num_dofs)
+q = jnp.zeros(robot.num_coordinates)
 base_transform = robot.forward_kinematics(q, s=robot.segment_end_positions[-1])
 ```
 
@@ -90,7 +90,7 @@ After construction, GVS exposes canonical runtime arrays:
 - `segment_lengths`, `segment_end_positions`
 - `num_gauss_points`, `num_integration_points`
 - `integration_points`, `integration_weights`
-- `dofs_per_segment`, `num_dofs`, `num_padded_dofs`, `active_dof_map`
+- `dofs_per_segment`, `num_internal_dofs`, `num_padded_dofs`, `active_dof_map`
 - `B_joint`, `B_Xs`, `B_Z1`, `B_Z2`
 - `xi_ref_joint`, `xi_ref_Xs`, `xi_ref_Z1`, `xi_ref_Z2`
 - per-quadrature `mass_matrices`

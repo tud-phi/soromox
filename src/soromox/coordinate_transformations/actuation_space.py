@@ -42,7 +42,12 @@ class ActuationSpaceDynamics(eqx.Module):
     expansion using QR decomposition to find a set of linearly independent coordinates.
 
     Attributes:
-        robot: The soft robot and its installed actuator models.
+        robot: The complete soft-robot system supplied at construction. For a
+            floating system, this retains the runtime base coordinates.
+        fixed_base_robot: Fixed-base copy used for internal-coordinate dynamics.
+            For floating systems, controllers remount this copy at the current
+            runtime base pose. It deliberately excludes base motion and
+            floating/internal dynamic coupling.
         H_unactuated: Matrix of shape (num_dofs - num_actuators, num_dofs) that maps
             configurations to unactuated coordinates. If None, computed via basis expansion.
         n_actuated: Number of actuated coordinates (equals num_actuators).
@@ -72,7 +77,7 @@ class ActuationSpaceDynamics(eqx.Module):
     """
 
     robot: SoftRobot
-    system_robot: SoftRobot | None
+    fixed_base_robot: SoftRobot
     H_unactuated: Array  # (n_unactuated, num_dofs), maps q to unactuated coords
     n_actuated: int = eqx.field(static=True)
     n_unactuated: int = eqx.field(static=True)
@@ -91,8 +96,9 @@ class ActuationSpaceDynamics(eqx.Module):
 
         Args:
             robot: A soft robot implementing the SoftRobot interface.
-                Must have `num_actuators`, `num_dofs`, `actuation_matrix`, and
-                `actuator_coordinates` attributes/methods.
+                Must have `num_actuators`, `num_internal_dofs`,
+                `actuation_matrix`, and `actuator_coordinates`
+                attributes/methods.
             H_unactuated: Optional matrix of shape (num_dofs - num_actuators, num_dofs) that
                 maps configurations to unactuated coordinates. If None, the unactuated
                 coordinate mapping is computed via basis expansion using QR decomposition.
@@ -101,11 +107,11 @@ class ActuationSpaceDynamics(eqx.Module):
             ValueError: If H_unactuated has incorrect shape.
             ValueError: If the robot does not have the required attributes.
         """
-        self.system_robot = robot if robot.floating_base else None
-        self.robot = robot._fixed_evaluation_view()
+        self.robot = robot
+        self.fixed_base_robot = robot._fixed_base_robot_at_pose()
 
         # Get dimensions from robot
-        num_dofs = robot.num_dofs
+        num_dofs = self.fixed_base_robot.num_internal_dofs
         num_actuators = robot.num_actuators
         n_unactuated = num_dofs - num_actuators
 
@@ -120,7 +126,7 @@ class ActuationSpaceDynamics(eqx.Module):
         # Get the actuation matrix at a reference configuration for basis expansion
         # A_at has shape (num_dofs, num_actuators)
         q_ref = jnp.zeros(num_dofs)
-        A_at = robot.actuation_matrix(q_ref)
+        A_at = self.fixed_base_robot.actuation_matrix(q_ref)
         rank = int(jnp.linalg.matrix_rank(A_at))
         if rank != num_actuators:
             raise ValueError(
@@ -204,7 +210,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             y_a: Actuated coordinates of shape (n_actuated,).
         """
-        return self.robot.actuator_coordinates(q)
+        return self.fixed_base_robot.actuator_coordinates(q)
 
     @eqx.filter_jit
     def unactuated_coordinates(self, q: Array) -> Array:
@@ -262,7 +268,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             J_a: Jacobian of shape (n_actuated, num_dofs).
         """
-        A_at = self.robot.actuation_matrix(q)
+        A_at = self.fixed_base_robot.actuation_matrix(q)
         return A_at.T
 
     @eqx.filter_jit
@@ -333,7 +339,7 @@ class ActuationSpaceDynamics(eqx.Module):
             J_bar: Dynamically-consistent pseudo-inverse of shape (num_dofs, num_dofs).
         """
         J = self.jacobian(q)
-        M = self.robot.inertia_matrix(q)
+        M = self.fixed_base_robot.inertia_matrix(q)
         M_inv = jnp.linalg.inv(M)
 
         # For square J: Lambda = (J @ M^{-1} @ J^T)^{-1}
@@ -367,7 +373,7 @@ class ActuationSpaceDynamics(eqx.Module):
             M_y: Actuation space inertia matrix of shape (num_dofs, num_dofs).
         """
         J_inv = self.jacobian_inverse(q)
-        M = self.robot.inertia_matrix(q)
+        M = self.fixed_base_robot.inertia_matrix(q)
 
         # M_y = J^{-T} @ M @ J^{-1}
         M_y = J_inv.T @ M @ J_inv
@@ -397,9 +403,9 @@ class ActuationSpaceDynamics(eqx.Module):
         """
         J = self.jacobian(q)
         J_inv = jnp.linalg.inv(J)
-        M = self.robot.inertia_matrix(q)
+        M = self.fixed_base_robot.inertia_matrix(q)
         M_inv = jnp.linalg.inv(M)
-        C = self.robot.coriolis_matrix(q, qd)
+        C = self.fixed_base_robot.coriolis_matrix(q, qd)
 
         # Actuation space inertia
         M_y = J_inv.T @ M @ J_inv
@@ -447,7 +453,7 @@ class ActuationSpaceDynamics(eqx.Module):
             D_y: Actuation space damping matrix of shape (num_dofs, num_dofs).
         """
         J_inv = self.jacobian_inverse(q)
-        D = self.robot.damping_matrix(q)
+        D = self.fixed_base_robot.damping_matrix(q)
 
         # D_y = J^{-T} @ D @ J^{-1}
         D_y = J_inv.T @ D @ J_inv
@@ -474,7 +480,7 @@ class ActuationSpaceDynamics(eqx.Module):
             tau_d_y: Actuation space damping force of shape (num_dofs,).
         """
         J_inv = self.jacobian_inverse(q)
-        D = self.robot.damping_matrix(q)
+        D = self.fixed_base_robot.damping_matrix(q)
 
         return J_inv.T @ D @ qd
 
@@ -495,7 +501,7 @@ class ActuationSpaceDynamics(eqx.Module):
             tau_el_y: Actuation space elastic force of shape (num_dofs,).
         """
         J_inv = self.jacobian_inverse(q)
-        tau_el = self.robot.elastic_force(q)
+        tau_el = self.fixed_base_robot.elastic_force(q)
 
         return J_inv.T @ tau_el
 
@@ -516,7 +522,7 @@ class ActuationSpaceDynamics(eqx.Module):
             G_y: Actuation space gravitational force of shape (num_dofs,).
         """
         J_inv = self.jacobian_inverse(q)
-        G = self.robot.gravitational_force(q)
+        G = self.fixed_base_robot.gravitational_force(q)
 
         return J_inv.T @ G
 
@@ -556,7 +562,7 @@ class ActuationSpaceDynamics(eqx.Module):
         """
         J_inv = self.jacobian_inverse(q)
         J_inv_T = J_inv.T
-        M, Cqd, G = self.robot.dynamics_terms(q, qd)
+        M, Cqd, G = self.fixed_base_robot.dynamics_terms(q, qd)
 
         # For yd = J @ qd, the existing actuation-space Coriolis definition
         # contracts to J^{-T} @ (C @ qd). Reusing the robot's contracted term
@@ -588,8 +594,8 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             A_y: Actuation matrix in actuation space of shape (num_dofs, num_actuators).
         """
-        num_dofs = self.robot.num_dofs
-        num_actuators = self.robot.num_actuators
+        num_dofs = self.fixed_base_robot.num_internal_dofs
+        num_actuators = self.fixed_base_robot.num_actuators
 
         # Build the actuation matrix: [[I], [0]]
         A_y = jnp.vstack(

@@ -242,7 +242,7 @@ def test_pendulum_identity_unactuated_and_composed_construction():
         _body_params(), actuators=_actuator(), passive_elements=(_passive(),)
     )
 
-    assert identity.num_actuators == identity.num_dofs
+    assert identity.num_actuators == identity.num_internal_dofs
     assert unactuated.num_actuators == 0
     assert unactuated.actuation_matrix(jnp.zeros(3)).shape == (3, 0)
     assert composed.num_actuators == 2
@@ -354,15 +354,15 @@ def test_tendon_topology_validation_and_independent_parameter_updates():
 
 def test_generic_affine_map_accepts_pcs_coordinates_but_tendon_preset_rejects_pcs():
     robot = _spatial_pcs()
-    matrix = jnp.arange(robot.num_dofs, dtype=jnp.float64)[None, :] * 0.01
+    matrix = jnp.arange(robot.num_internal_dofs, dtype=jnp.float64)[None, :] * 0.01
     transmission = AffineJointTransmission(
         AffineJointTransmissionParams(
             routing_matrix=matrix,
-            reference_configuration=jnp.zeros((robot.num_dofs,)),
+            reference_configuration=jnp.zeros((robot.num_internal_dofs,)),
             coordinate_offset=jnp.array([0.2]),
         )
     )
-    q = jnp.linspace(-0.1, 0.2, robot.num_dofs)
+    q = jnp.linspace(-0.1, 0.2, robot.num_internal_dofs)
 
     assert_allclose(transmission.coordinates(robot, q), matrix @ q + jnp.array([0.2]))
     assert_allclose(transmission.moment_matrix(robot, q), matrix.T)
@@ -370,7 +370,7 @@ def test_generic_affine_map_accepts_pcs_coordinates_but_tendon_preset_rejects_pc
     with pytest.raises(TypeError, match="serial articulated host"):
         _spatial_pcs(
             actuators=ArticulatedTendonActuator.from_routing(
-                jnp.ones((1, robot.num_dofs))
+                jnp.ones((1, robot.num_internal_dofs))
             )
         )
 

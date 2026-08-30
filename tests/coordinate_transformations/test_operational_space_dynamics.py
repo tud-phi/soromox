@@ -153,20 +153,20 @@ class TestOperationalSpaceJacobian:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=pcs_robot, s_ps=s_ps)
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         J = op_space.jacobian(q)
 
-        assert J.shape == (6, pcs_robot.num_dofs)
+        assert J.shape == (6, pcs_robot.num_internal_dofs)
 
     def test_jacobian_shape_planar_pcs(self, planar_pcs_robot):
         """Test Jacobian shape for PlanarPCS robot with multiple points."""
         s_ps = jnp.array([0.1, 0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.zeros(planar_pcs_robot.num_dofs)
+        q = jnp.zeros(planar_pcs_robot.num_internal_dofs)
         J = op_space.jacobian(q)
 
-        assert J.shape == (6, planar_pcs_robot.num_dofs)
+        assert J.shape == (6, planar_pcs_robot.num_internal_dofs)
 
     def test_jacobian_task_selection(self, planar_pcs_robot):
         """Test that task selection correctly reduces Jacobian."""
@@ -176,10 +176,10 @@ class TestOperationalSpaceJacobian:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.zeros(planar_pcs_robot.num_dofs)
+        q = jnp.zeros(planar_pcs_robot.num_internal_dofs)
         J = op_space.jacobian(q)
 
-        assert J.shape == (2, planar_pcs_robot.num_dofs)
+        assert J.shape == (2, planar_pcs_robot.num_internal_dofs)
 
     def test_jacobian_and_time_derivative_shapes(self, pendulum_robot):
         """Test shapes of Jacobian and its derivative."""
@@ -191,8 +191,8 @@ class TestOperationalSpaceJacobian:
 
         J, Jd = op_space.jacobian_and_time_derivative(q, qd)
 
-        assert J.shape == (3, pendulum_robot.num_dofs)
-        assert Jd.shape == (3, pendulum_robot.num_dofs)
+        assert J.shape == (3, pendulum_robot.num_internal_dofs)
+        assert Jd.shape == (3, pendulum_robot.num_internal_dofs)
 
 
 # -----------------------
@@ -208,7 +208,7 @@ class TestDynamicallyConsistentPseudoinverse:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         J, J_bar = op_space.jacobian_and_dynamically_consistent_pseudoinverse(q)
 
         J_Jbar = J @ J_bar
@@ -237,10 +237,10 @@ class TestDynamicallyConsistentPseudoinverse:
             robot=pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         J_bar = op_space.dynamically_consistent_pseudoinverse(q)
 
-        assert J_bar.shape == (pcs_robot.num_dofs, 3)
+        assert J_bar.shape == (pcs_robot.num_internal_dofs, 3)
 
 
 # -----------------------
@@ -256,7 +256,7 @@ class TestOperationalSpaceInertia:
         s_ps = jnp.array([0.1, 0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         Lambda = op_space.inertia_matrix(q)
 
         assert_allclose(Lambda, Lambda.T, rtol=Tolerance.rtol(), atol=Tolerance.atol())
@@ -280,7 +280,7 @@ class TestOperationalSpaceInertia:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.zeros(planar_pcs_robot.num_dofs)
+        q = jnp.zeros(planar_pcs_robot.num_internal_dofs)
         Lambda = op_space.inertia_matrix(q)
 
         assert Lambda.shape == (2, 2)
@@ -299,8 +299,8 @@ class TestOperationalSpaceCoriolis:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
-        qd = jnp.linspace(0.1, -0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
+        qd = jnp.linspace(0.1, -0.1, planar_pcs_robot.num_internal_dofs)
         mu = op_space.coriolis_matrix(q, qd)
 
         assert mu.shape == (3, 3)
@@ -343,7 +343,7 @@ class TestOperationalSpaceForces:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         G_x = op_space.gravitational_force(q)
 
         assert G_x.shape == (3,)
@@ -420,8 +420,8 @@ class TestOperationalSpaceForces:
         op_space = OperationalSpaceDynamics(
             robot=pcs_robot, s_ps=jnp.atleast_1d(pcs_robot.length)
         )
-        q = jnp.linspace(-0.1, 0.1, pcs_robot.num_dofs)
-        qd = jnp.linspace(0.2, -0.2, pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, pcs_robot.num_internal_dofs)
+        qd = jnp.linspace(0.2, -0.2, pcs_robot.num_internal_dofs)
 
         Lambda, Cxd, G_x = op_space.dynamics_terms(q, qd)
 
@@ -461,10 +461,13 @@ class TestNullSpaceProjector:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.zeros(planar_pcs_robot.num_dofs)
+        q = jnp.zeros(planar_pcs_robot.num_internal_dofs)
         N = op_space.null_space_projector(q)
 
-        assert N.shape == (planar_pcs_robot.num_dofs, planar_pcs_robot.num_dofs)
+        assert N.shape == (
+            planar_pcs_robot.num_internal_dofs,
+            planar_pcs_robot.num_internal_dofs,
+        )
 
     def test_null_space_projector_idempotent(self, pendulum_robot):
         """Test that null space projector is idempotent (N @ N = N)."""
@@ -554,7 +557,7 @@ class TestRotationRepresentation:
         assert op_space.n_orientation_dim == 3
         assert not op_space.is_planar
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
         assert x.shape == (6,)
 
@@ -572,7 +575,7 @@ class TestRotationRepresentation:
         assert op_space.n_operational_space == 6  # Velocity space is always 6 for 3D
         assert op_space.n_pose_operational_space == 7  # Pose space with quaternion
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
         assert x.shape == (7,)  # Returns pose-space coordinates
 
@@ -594,7 +597,7 @@ class TestRotationRepresentation:
         assert op_space.n_operational_space == 6  # Velocity space is always 6 for 3D
         assert op_space.n_pose_operational_space == 9  # Pose space with 6D rotation
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
         assert x.shape == (9,)  # Returns pose-space coordinates
 
@@ -630,7 +633,7 @@ class TestRotationRepresentation:
         assert op_space_6d.n_pose_dim == 3
 
         # Coordinates should be identical
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         x_rv = op_space_rv.operational_space_coordinates(q)
         x_quat = op_space_quat.operational_space_coordinates(q)
         x_6d = op_space_6d.operational_space_coordinates(q)
@@ -652,7 +655,7 @@ class TestComputePoseError:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
 
         error = op_space.compute_pose_error(x, x)
@@ -754,7 +757,7 @@ class TestPoseErrorFor3DRobots:
             rotation_representation=RotationRepresentation.ROTATION_VECTOR,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
 
         error = op_space.compute_pose_error(x, x)
@@ -769,7 +772,7 @@ class TestPoseErrorFor3DRobots:
             rotation_representation=RotationRepresentation.QUATERNION,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
 
         error = op_space.compute_pose_error(x, x)
@@ -785,7 +788,7 @@ class TestPoseErrorFor3DRobots:
             rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_coordinates(q)
 
         error = op_space.compute_pose_error(x, x)
@@ -1121,7 +1124,7 @@ class TestPosesVsCoordinates:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1138,7 +1141,7 @@ class TestPosesVsCoordinates:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1162,7 +1165,7 @@ class TestPosesVsCoordinates:
             rotation_representation=RotationRepresentation.ROTATION_VECTOR,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1187,7 +1190,7 @@ class TestPosesVsCoordinates:
             rotation_representation=RotationRepresentation.QUATERNION,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1212,7 +1215,7 @@ class TestPosesVsCoordinates:
             rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1233,7 +1236,7 @@ class TestPosesVsCoordinates:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1263,7 +1266,7 @@ class TestPoseErrorVsTaskPoseError:
         s_ps = jnp.array([0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         x = op_space.operational_space_poses(q)
         x_des = x + jnp.array([0.1, 0.05, -0.03])
 
@@ -1282,7 +1285,7 @@ class TestPoseErrorVsTaskPoseError:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         x = op_space.operational_space_poses(q)
         x_des = x + jnp.array([0.1, 0.05, -0.03])
 
@@ -1308,7 +1311,7 @@ class TestPoseErrorVsTaskPoseError:
             rotation_representation=RotationRepresentation.ROTATION_VECTOR,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_poses(q)
         x_des = x + jnp.array([0.1, 0.05, -0.02, 0.03, 0.01, -0.01])
 
@@ -1336,7 +1339,7 @@ class TestPoseErrorVsTaskPoseError:
             rotation_representation=RotationRepresentation.ROTATION_VECTOR,
         )
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         x = op_space.operational_space_poses(q)
         x_des = x + jnp.array([0.1, 0.05, -0.02, 0.03, 0.01, -0.01])
 
@@ -1360,7 +1363,7 @@ class TestPoseErrorVsTaskPoseError:
             robot=planar_pcs_robot, s_ps=s_ps, task_selector=task_selector
         )
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         x = op_space.operational_space_poses(q)
         x_des = x + jnp.array([0.1, 0.05, -0.03, 0.2, 0.04, 0.01])
 
@@ -1387,7 +1390,9 @@ class TestPoseErrorVsTaskPoseError:
 
         # Try to pass task-selected coordinates instead of full poses
         wrong_shape = jnp.array([0.1, 0.2])  # 2D instead of 3D
-        x = op_space.operational_space_poses(jnp.zeros(planar_pcs_robot.num_dofs))
+        x = op_space.operational_space_poses(
+            jnp.zeros(planar_pcs_robot.num_internal_dofs)
+        )
 
         with pytest.raises(ValueError, match="must have shape"):
             op_space.compute_pose_error(wrong_shape, x)
@@ -1418,7 +1423,7 @@ class TestRotationRepresentationComprehensive:
         assert op_space.n_velocity_dim == 6
         assert op_space.n_angular_velocity_dim == 3
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
 
@@ -1439,7 +1444,7 @@ class TestRotationRepresentationComprehensive:
         assert op_space.n_velocity_dim == 6
         assert op_space.n_angular_velocity_dim == 3
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
 
@@ -1464,7 +1469,7 @@ class TestRotationRepresentationComprehensive:
         assert op_space.n_velocity_dim == 6
         assert op_space.n_angular_velocity_dim == 3
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
 
@@ -1491,14 +1496,16 @@ class TestRotationRepresentationComprehensive:
             rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
         )
 
-        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_internal_dofs)
 
         J_rv = op_rv.jacobian(q)
         J_quat = op_quat.jacobian(q)
         J_6d = op_6d.jacobian(q)
 
         # All should have the same shape and values (velocity space is independent of pose repr)
-        assert J_rv.shape == J_quat.shape == J_6d.shape == (6, pcs_robot.num_dofs)
+        assert (
+            J_rv.shape == J_quat.shape == J_6d.shape == (6, pcs_robot.num_internal_dofs)
+        )
         assert_allclose(J_rv, J_quat, atol=1e-10)
         assert_allclose(J_rv, J_6d, atol=1e-10)
 
@@ -1522,7 +1529,7 @@ class TestRotationRepresentationComprehensive:
             rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
         )
 
-        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_internal_dofs)
 
         Lambda_rv = op_rv.inertia_matrix(q)
         Lambda_quat = op_quat.inertia_matrix(q)
@@ -1546,7 +1553,7 @@ class TestRotationRepresentationComprehensive:
                 robot=pcs_robot, s_ps=s_ps, rotation_representation=rep
             )
 
-            q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+            q = jnp.linspace(-0.05, 0.05, pcs_robot.num_internal_dofs)
             x = op_space.operational_space_poses(q)
 
             error = op_space.compute_pose_error(x, x)
@@ -1572,7 +1579,7 @@ class TestRotationRepresentationComprehensive:
                 rotation_representation=rep,
             )
 
-            q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+            q = jnp.linspace(-0.05, 0.05, pcs_robot.num_internal_dofs)
             x = op_space.operational_space_poses(q)
 
             error = op_space.compute_task_pose_error(x, x)
@@ -1599,7 +1606,7 @@ class TestRotationRepresentationComprehensive:
             rotation_representation=RotationRepresentation.ROTATION_MATRIX_6D,
         )
 
-        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_dofs)
+        q = jnp.linspace(-0.05, 0.05, pcs_robot.num_internal_dofs)
 
         poses_rv = op_rv.operational_space_poses(q)
         poses_quat = op_quat.operational_space_poses(q)
@@ -1630,7 +1637,7 @@ class TestMultiplePoints:
         assert op_space.n_points == 2
         assert op_space.n_operational_space == 6  # 2 × 3
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1638,7 +1645,7 @@ class TestMultiplePoints:
 
         assert poses.shape == (6,)
         assert coords.shape == (6,)
-        assert J.shape == (6, planar_pcs_robot.num_dofs)
+        assert J.shape == (6, planar_pcs_robot.num_internal_dofs)
 
     def test_two_points_3d_full_selection(self, pcs_robot):
         """Test two points for 3D robot with full selection."""
@@ -1652,7 +1659,7 @@ class TestMultiplePoints:
         assert op_space.n_points == 2
         assert op_space.n_operational_space == 12  # 2 × 6
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1660,7 +1667,7 @@ class TestMultiplePoints:
 
         assert poses.shape == (12,)
         assert coords.shape == (12,)
-        assert J.shape == (12, pcs_robot.num_dofs)
+        assert J.shape == (12, pcs_robot.num_internal_dofs)
 
     def test_two_points_3d_quaternion(self, pcs_robot):
         """Test two points for 3D robot with quaternion representation."""
@@ -1675,7 +1682,7 @@ class TestMultiplePoints:
         assert op_space.n_operational_space == 12  # 2 × 6 (velocity space)
         assert op_space.n_pose_operational_space == 14  # 2 × 7 (pose space)
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1683,7 +1690,7 @@ class TestMultiplePoints:
 
         assert poses.shape == (14,)
         assert coords.shape == (14,)
-        assert J.shape == (12, pcs_robot.num_dofs)
+        assert J.shape == (12, pcs_robot.num_internal_dofs)
 
         # Check both quaternions are unit
         quat1 = poses[:4]
@@ -1710,7 +1717,7 @@ class TestMultiplePoints:
 
         assert op_space.n_operational_space == 9  # 3 + 6
 
-        q = jnp.zeros(pcs_robot.num_dofs)
+        q = jnp.zeros(pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1726,7 +1733,7 @@ class TestMultiplePoints:
         assert op_space.n_points == 3
         assert op_space.n_operational_space == 9  # 3 × 3
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
 
         poses = op_space.operational_space_poses(q)
         coords = op_space.operational_space_coordinates(q)
@@ -1739,7 +1746,7 @@ class TestMultiplePoints:
         s_ps = jnp.array([0.1, 0.2])
         op_space = OperationalSpaceDynamics(robot=planar_pcs_robot, s_ps=s_ps)
 
-        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_dofs)
+        q = jnp.linspace(-0.1, 0.1, planar_pcs_robot.num_internal_dofs)
         x = op_space.operational_space_poses(q)
         x_des = x + jnp.array([0.1, 0.05, -0.03, 0.2, 0.04, 0.01])
 

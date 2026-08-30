@@ -27,7 +27,8 @@ class _DispatchProbe(eqx.Module):
 
     scale: Array
     backend: ExecutionBackend = eqx.field(static=True)
-    num_dofs: int = eqx.field(static=True)
+    num_coordinates: int = eqx.field(static=True)
+    num_velocities: int = eqx.field(static=True)
     num_gauss_points: int = eqx.field(static=True, default=5)
 
     def _assemble_dynamics_terms(
@@ -35,7 +36,9 @@ class _DispatchProbe(eqx.Module):
     ) -> tuple[Array, Array, Array]:
         """Return differentiable terms with the production output shapes."""
 
-        inertia = self.scale * jnp.eye(self.num_dofs, dtype=q.dtype) + jnp.outer(q, q)
+        inertia = self.scale * jnp.eye(self.num_velocities, dtype=q.dtype) + jnp.outer(
+            q, q
+        )
         return inertia, self.scale * qd, q + self.scale
 
     def dynamics_terms(
@@ -64,7 +67,8 @@ def _probe(
     return _DispatchProbe(
         scale=jnp.asarray(2.0, dtype=jnp.float64),
         backend=backend,
-        num_dofs=3,
+        num_coordinates=3,
+        num_velocities=3,
         num_gauss_points=gauss_points,
     )
 
@@ -73,7 +77,9 @@ class _KinematicsProbe(eqx.Module):
     """Minimal planar model exposing scalar and specialized spatial paths."""
 
     backend: ExecutionBackend = eqx.field(static=True, default="jax")
-    num_dofs: int = eqx.field(static=True, default=3)
+    num_coordinates: int = eqx.field(static=True, default=3)
+    num_velocities: int = eqx.field(static=True, default=3)
+    floating_base: bool = eqx.field(static=True, default=False)
     is_planar: bool = eqx.field(static=True, default=True)
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
@@ -81,12 +87,24 @@ class _KinematicsProbe(eqx.Module):
 
         return jnp.stack((s + q[0], q[1], q[2]))
 
+    def _absolute_forward_kinematics(self, q: Array, s: Array) -> Array:
+        """Return the probe's differentiable JAX pose."""
+
+        return self._forward_kinematics(q, s)
+
     def _forward_kinematics_abscissa_batched(self, q: Array, s: Array) -> Array:
         """Return the same poses through the specialized spatial traversal."""
 
         return jnp.stack(
             (s + q[0], jnp.full_like(s, q[1]), jnp.full_like(s, q[2])), axis=-1
         )
+
+    def _absolute_forward_kinematics_abscissa_batched(
+        self, q: Array, s: Array
+    ) -> Array:
+        """Return the probe's differentiable JAX pose batch."""
+
+        return self._forward_kinematics_abscissa_batched(q, s)
 
     def _forward_kinematics_jvp(
         self,
@@ -105,15 +123,25 @@ class _KinematicsProbe(eqx.Module):
         """Return a scalar-path inertial Jacobian."""
 
         del s
-        return jnp.eye(3, self.num_dofs, dtype=q.dtype)
+        return jnp.eye(3, self.num_velocities, dtype=q.dtype)
+
+    def _absolute_inertial_jacobian(self, q: Array, s: Array) -> Array:
+        """Return the probe's differentiable JAX Jacobian."""
+
+        return self._jacobian_inertialframe(q, s)
 
     def _jacobian_inertialframe_abscissa_batched(self, q: Array, s: Array) -> Array:
         """Return inertial Jacobians through the specialized spatial path."""
 
         return jnp.broadcast_to(
             self._jacobian_inertialframe(q, s[0]),
-            (s.shape[0], 3, self.num_dofs),
+            (s.shape[0], 3, self.num_velocities),
         )
+
+    def _absolute_inertial_jacobian_abscissa_batched(self, q: Array, s: Array) -> Array:
+        """Return the probe's differentiable JAX Jacobian batch."""
+
+        return self._jacobian_inertialframe_abscissa_batched(q, s)
 
     def forward_kinematics(
         self,
@@ -212,7 +240,7 @@ def test_dispatch_rejects_unknown_backend() -> None:
     """Validate runtime strings even though the public type is a Literal."""
 
     model = _probe()
-    state = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
+    state = jnp.zeros((model.num_velocities,), dtype=jnp.float64)
     with pytest.raises(ValueError, match="backend must be one of"):
         model.dynamics_terms(state, state, backend="unknown")  # type: ignore[arg-type]
 
@@ -240,9 +268,9 @@ def test_direct_vmap_reaches_one_batched_warp_execution(
         )
         marker = jnp.asarray(batch_size, dtype=q.dtype)
         return (
-            jnp.full((batch_size, model.num_dofs, model.num_dofs), marker),
-            jnp.full((batch_size, model.num_dofs), marker + 1.0),
-            jnp.full((batch_size, model.num_dofs), marker + 2.0),
+            jnp.full((batch_size, model.num_velocities, model.num_velocities), marker),
+            jnp.full((batch_size, model.num_velocities), marker + 1.0),
+            jnp.full((batch_size, model.num_velocities), marker + 2.0),
         )
 
     monkeypatch.setattr(loader, "_execute_gvs_batch", fake_batch)
@@ -265,7 +293,7 @@ def test_explicit_batch_reaches_one_batched_warp_execution(
     from soromox.systems.execution.warp import loader
 
     model = _probe(backend="warp")
-    q = jnp.ones((5, model.num_dofs), dtype=jnp.float64)
+    q = jnp.ones((5, model.num_velocities), dtype=jnp.float64)
     observed_batches: list[int] = []
 
     def fake_batch(
@@ -278,9 +306,9 @@ def test_explicit_batch_reaches_one_batched_warp_execution(
             jnp.asarray(batch_size),
         )
         return (
-            jnp.zeros((batch_size, model.num_dofs, model.num_dofs)),
-            jnp.zeros((batch_size, model.num_dofs)),
-            jnp.zeros((batch_size, model.num_dofs)),
+            jnp.zeros((batch_size, model.num_velocities, model.num_velocities)),
+            jnp.zeros((batch_size, model.num_velocities)),
+            jnp.zeros((batch_size, model.num_velocities)),
         )
 
     monkeypatch.setattr(loader, "_execute_gvs_batch", fake_batch)
@@ -304,7 +332,7 @@ def test_explicit_warp_reports_unsupported_configuration(
         lambda: "gpu",
     )
     model = _probe(backend="warp")
-    state = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
+    state = jnp.zeros((model.num_velocities,), dtype=jnp.float64)
 
     with pytest.raises(NotImplementedError, match="not enabled"):
         dispatch_dynamics_terms(
@@ -329,7 +357,7 @@ def test_explicit_warp_reports_unsupported_device(
         lambda: device,
     )
     model = _probe(backend="warp")
-    state = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
+    state = jnp.zeros((model.num_velocities,), dtype=jnp.float64)
 
     with pytest.raises(NotImplementedError, match=f"active {device.upper()} device"):
         dispatch_dynamics_terms(
@@ -351,7 +379,7 @@ def test_auto_falls_back_for_unsupported_cpu_device(
         lambda: "cpu",
     )
     model = _probe(backend="auto")
-    state = jnp.linspace(-0.1, 0.1, model.num_dofs, dtype=jnp.float64)
+    state = jnp.linspace(-0.1, 0.1, model.num_velocities, dtype=jnp.float64)
     expected = model._assemble_dynamics_terms(state, state)
     actual = dispatch_dynamics_terms(
         model,
@@ -375,7 +403,7 @@ def test_auto_falls_back_for_unsupported_configuration(
         lambda: "gpu",
     )
     model = _probe(backend="auto")
-    state = jnp.linspace(-0.1, 0.1, model.num_dofs, dtype=jnp.float64)
+    state = jnp.linspace(-0.1, 0.1, model.num_velocities, dtype=jnp.float64)
     expected = model._assemble_dynamics_terms(state, state)
     actual = dispatch_dynamics_terms(
         model,
@@ -406,16 +434,18 @@ def test_pcs_dispatch_accepts_runtime_quadrature_counts(
         lambda: "gpu",
     )
     model = _probe(backend=configured_backend, gauss_points=gauss_points)
-    state = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
+    state = jnp.zeros((model.num_velocities,), dtype=jnp.float64)
 
     def fake_batch(model_, q, qd):
         del qd
         batch_size = q.shape[0]
         marker = jnp.asarray(model_.num_gauss_points, dtype=q.dtype)
         return (
-            jnp.full((batch_size, model_.num_dofs, model_.num_dofs), marker),
-            jnp.full((batch_size, model_.num_dofs), marker),
-            jnp.full((batch_size, model_.num_dofs), marker),
+            jnp.full(
+                (batch_size, model_.num_velocities, model_.num_velocities), marker
+            ),
+            jnp.full((batch_size, model_.num_velocities), marker),
+            jnp.full((batch_size, model_.num_velocities), marker),
         )
 
     monkeypatch.setattr(loader, "_execute_pcs_batch", fake_batch)
@@ -452,8 +482,8 @@ def test_kinematics_jax_spatial_vmap_uses_specialized_model_path() -> None:
             return jnp.full((s.shape[0], 3, 3), 11.0, dtype=jnp.float64)
 
     model = SpecializedProbe()
-    q = jnp.zeros((model.num_dofs,), dtype=jnp.float64)
-    q_batch = jnp.zeros((4, model.num_dofs), dtype=jnp.float64)
+    q = jnp.zeros((model.num_velocities,), dtype=jnp.float64)
+    q_batch = jnp.zeros((4, model.num_velocities), dtype=jnp.float64)
     s = jnp.linspace(0.0, 1.0, 5, dtype=jnp.float64)
 
     direct_pose = model.forward_kinematics_abscissa_batched(q, s)

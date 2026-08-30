@@ -115,7 +115,7 @@ class PCSOperands(eqx.Module):
         return cls(
             is_planar=model.is_planar,
             num_segments=model.num_segments,
-            num_dofs=model.num_dofs,
+            num_dofs=model.num_internal_dofs,
             num_gauss_points=model.num_gauss_points,
             block_dim=model.backend_params.warp_block_dim,
             active_strain_indices=model.active_strain_indices,
@@ -406,7 +406,7 @@ class PCSKinematicsOperands(eqx.Module):
         return cls(
             is_planar=model.is_planar,
             num_segments=model.num_segments,
-            num_dofs=model.num_dofs,
+            num_dofs=model.num_internal_dofs,
             block_dim=model.backend_params.warp_block_dim,
             active_strain_indices=model.active_strain_indices,
             active_strain_scales=model.active_strain_scales,
@@ -448,8 +448,10 @@ class PCSFloatingKinematicsOperands(eqx.Module):
             ValueError: If the supplied model is fixed-base.
         """
         if not model.floating_base:
-            raise ValueError("Floating PCS kinematics operands require a floating model.")
-        relative_model = model._fixed_evaluation_view()
+            raise ValueError(
+                "Floating PCS kinematics operands require a floating model."
+            )
+        relative_model = model._fixed_base_robot_at_pose()
         return cls(
             is_planar=model.is_planar,
             num_base_coordinates=3 if model.is_planar else 7,

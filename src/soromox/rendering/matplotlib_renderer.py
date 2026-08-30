@@ -1081,8 +1081,7 @@ class MatplotlibRenderer(BaseSoftRobotRenderer):
             ax.view_init(elev=elev, azim=azim)
         else:
             follows_runtime_base = bool(
-                getattr(self.robot, "floating_base", False)
-                and scene_center is not None
+                self.robot.floating_base and scene_center is not None
             )
             if follows_runtime_base:
                 center = np.asarray(scene_center, dtype=np.float64)

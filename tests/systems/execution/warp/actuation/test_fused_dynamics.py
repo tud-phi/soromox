@@ -60,14 +60,14 @@ def test_fused_dynamics_actuation_executors_match_jax(
     )
     q = jnp.stack(
         (
-            jnp.linspace(-0.025, 0.018, model.num_dofs),
-            jnp.linspace(0.021, -0.013, model.num_dofs),
+            jnp.linspace(-0.025, 0.018, model.num_internal_dofs),
+            jnp.linspace(0.021, -0.013, model.num_internal_dofs),
         )
     )
     qd = jnp.stack(
         (
-            jnp.linspace(-0.17, 0.23, model.num_dofs),
-            jnp.linspace(0.14, -0.19, model.num_dofs),
+            jnp.linspace(-0.17, 0.23, model.num_internal_dofs),
+            jnp.linspace(0.14, -0.19, model.num_internal_dofs),
         )
     )
     controls = jnp.reshape(
@@ -79,7 +79,7 @@ def test_fused_dynamics_actuation_executors_match_jax(
         dynamics = GVSOperands.from_model(
             model,
             block_dim=gvs_block_dim(
-                model.num_dofs,
+                model.num_internal_dofs,
                 gpu=jax.default_backend() == "gpu",
             ),
         )
@@ -122,8 +122,8 @@ def test_cooperative_pcs_force_topologies_match_jax(
     model = _build_system(family, 2, num_paths)
     q = jnp.stack(
         (
-            jnp.linspace(-0.021, 0.017, model.num_dofs),
-            jnp.linspace(0.013, -0.019, model.num_dofs),
+            jnp.linspace(-0.021, 0.017, model.num_internal_dofs),
+            jnp.linspace(0.013, -0.019, model.num_internal_dofs),
         )
     )
     controls = jnp.reshape(
@@ -148,8 +148,8 @@ def test_gvs_and_pcs_enable_fused_system_dispatch(
     """Activate fusion on every device supported by each Warp family."""
 
     model = _build_system(family, 2, 4)
-    q = jnp.linspace(-0.02, 0.03, model.num_dofs)
-    qd = jnp.linspace(0.12, -0.08, model.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, model.num_internal_dofs)
+    qd = jnp.linspace(0.12, -0.08, model.num_internal_dofs)
     controls = jnp.linspace(-0.4, 0.7, model.num_actuators)
 
     def fake_batch(model_, q_, qd_, controls_):
@@ -157,10 +157,12 @@ def test_gvs_and_pcs_enable_fused_system_dispatch(
         batch_size = q_.shape[0]
         marker = jnp.asarray(batch_size, dtype=q_.dtype)
         return (
-            jnp.full((batch_size, model_.num_dofs, model_.num_dofs), marker),
-            jnp.full((batch_size, model_.num_dofs), marker + 1.0),
-            jnp.full((batch_size, model_.num_dofs), marker + 2.0),
-            jnp.full((batch_size, model_.num_dofs), marker + 3.0),
+            jnp.full(
+                (batch_size, model_.num_internal_dofs, model_.num_internal_dofs), marker
+            ),
+            jnp.full((batch_size, model_.num_internal_dofs), marker + 1.0),
+            jnp.full((batch_size, model_.num_internal_dofs), marker + 2.0),
+            jnp.full((batch_size, model_.num_internal_dofs), marker + 3.0),
         )
 
     monkeypatch.setattr(
@@ -193,7 +195,7 @@ def test_fused_gvs_vmap_uses_one_canonical_batch(
     """Consolidate mapped GVS states and controls into one fused invocation."""
 
     model = _build_system("gvs", 2, 4)
-    q = jnp.zeros((5, model.num_dofs), dtype=jnp.float64)
+    q = jnp.zeros((5, model.num_internal_dofs), dtype=jnp.float64)
     qd = jnp.zeros_like(q)
     controls = jnp.zeros((5, model.num_actuators), dtype=jnp.float64)
     observed_batches: list[tuple[int, ...]] = []
@@ -203,10 +205,10 @@ def test_fused_gvs_vmap_uses_one_canonical_batch(
         observed_batches.append(q_.shape)
         batch_size = q_.shape[0]
         return (
-            jnp.zeros((batch_size, model_.num_dofs, model_.num_dofs)),
-            jnp.zeros((batch_size, model_.num_dofs)),
-            jnp.zeros((batch_size, model_.num_dofs)),
-            jnp.zeros((batch_size, model_.num_dofs)),
+            jnp.zeros((batch_size, model_.num_internal_dofs, model_.num_internal_dofs)),
+            jnp.zeros((batch_size, model_.num_internal_dofs)),
+            jnp.zeros((batch_size, model_.num_internal_dofs)),
+            jnp.zeros((batch_size, model_.num_internal_dofs)),
         )
 
     monkeypatch.setattr(loader, "_execute_gvs_dynamics_actuation_batch", fake_gvs_batch)
@@ -218,5 +220,5 @@ def test_fused_gvs_vmap_uses_one_canonical_batch(
         controls,
     )
 
-    assert result[0].shape == (5, model.num_dofs, model.num_dofs)
-    assert observed_batches[-1] == (5, model.num_dofs)
+    assert result[0].shape == (5, model.num_internal_dofs, model.num_internal_dofs)
+    assert observed_batches[-1] == (5, model.num_internal_dofs)

@@ -165,10 +165,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         """
         self.operational_space_dynamics = operational_space_dynamics
         self.reference_trajectory = reference_trajectory
-        self.robot = (
-            getattr(operational_space_dynamics, "system_robot", None)
-            or operational_space_dynamics.robot
-        )
+        self.robot = operational_space_dynamics.robot
 
         # Convert gains to arrays
         n_op = operational_space_dynamics.n_operational_space
@@ -211,7 +208,11 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         Raises:
             ValueError: If the actuation matrix is not square or not invertible.
         """
-        robot = self.operational_space_dynamics.robot
+        robot = getattr(
+            self.operational_space_dynamics,
+            "fixed_base_robot",
+            self.operational_space_dynamics.robot,
+        )
         scenario, shape, rank = analyze_actuation_matrix(robot)
         n_dof, n_actuators = shape
 
@@ -258,7 +259,9 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         t = system_state.t
         y = system_state.y
 
-        osd, q, qd = self._controller_dynamics_and_state(y)
+        osd, q, qd = self._controller_dynamics_and_state(
+            y, self.operational_space_dynamics
+        )
         # Get reference trajectory at current time
         # IMPORTANT: The reference trajectory should provide FULL poses (all points,
         # all dimensions), not task-selected pose components. Some components may be ignored
@@ -287,7 +290,7 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
         xd = J @ qd  # Task-selected velocity
 
         # Configuration-space forces
-        robot = osd.robot
+        robot = getattr(osd, "fixed_base_robot", osd.robot)
         tau_el = robot.elastic_force(q)  # Elastic force
         D_config = robot.damping_matrix(q)  # Damping matrix
         G = robot.gravitational_force(q)  # Gravitational force
@@ -353,6 +356,6 @@ class ImpedanceControlTracker(OperationalSpaceBaseController):
 
         # Get the actuation matrix and compute actuator input
         A = robot.actuation_matrix(q)
-        u_control = jnp.linalg.inv(A) @ tau_control
+        u_control = jnp.linalg.solve(A, tau_control)
 
         return u_control, None

@@ -320,7 +320,7 @@ def test_isupport_actuation_matrix_matches_per_segment_chamber_model():
         structure=make_pneumatic_isupport_structure(num_gauss_points=1),
     )
 
-    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
+    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_internal_dofs,)))
 
     assert actuation_matrix.shape == (6, robot.num_chambers_per_segment)
     assert jnp.allclose(
@@ -362,13 +362,13 @@ def test_isupport_uses_threadlike_pressure_chambers_and_resolves_area():
     )
     assert (
         robot.actuator_visual_layers(
-            jnp.zeros((robot.num_dofs,)), jnp.linspace(0.0, robot.length, 5)
+            jnp.zeros((robot.num_internal_dofs,)), jnp.linspace(0.0, robot.length, 5)
         )
         == ()
     )
     assert (
         MatplotlibRenderer(robot, num_points=5).compute_actuator_visual_layers(
-            jnp.zeros((robot.num_dofs,))
+            jnp.zeros((robot.num_internal_dofs,))
         )
         == ()
     )
@@ -495,7 +495,7 @@ def test_isupport_actuation_matrix_assembles_segments_block_diagonal():
         structure=make_pneumatic_isupport_structure(2, num_gauss_points=1),
     )
 
-    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
+    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_internal_dofs,)))
     num_chambers = robot.num_chambers_per_segment
     expected_segment_0 = expected_isupport_segment_actuation(
         params, 0, num_chambers=num_chambers
@@ -546,15 +546,15 @@ def test_isupport_actuation_matrix_projects_to_active_strains():
     )
 
     full_actuation_matrix = full_robot.actuation_matrix(
-        jnp.zeros((full_robot.num_dofs,))
+        jnp.zeros((full_robot.num_internal_dofs,))
     )
     reduced_actuation_matrix = reduced_robot.actuation_matrix(
-        jnp.zeros((reduced_robot.num_dofs,))
+        jnp.zeros((reduced_robot.num_internal_dofs,))
     )
 
     assert reduced_robot.num_actuators == full_robot.num_actuators
     assert reduced_actuation_matrix.shape == (
-        reduced_robot.num_dofs,
+        reduced_robot.num_internal_dofs,
         reduced_robot.num_actuators,
     )
     assert jnp.allclose(
@@ -640,7 +640,7 @@ def test_isupport_expands_arbitrary_physical_layout_and_pneumatic_subdivision():
     routing_params = robot.actuators[0].transmission.routing.params
     assert routing_params.start_segment_index == (1, 1, 1, 4, 4, 4)
     assert routing_params.end_segment_index == (2, 2, 2, 4, 4, 4)
-    assert robot.num_dofs == 18
+    assert robot.num_internal_dofs == 18
 
 
 def test_isupport_supports_adjacent_and_endpoint_pneumatic_segments():
@@ -663,7 +663,7 @@ def test_isupport_supports_adjacent_and_endpoint_pneumatic_segments():
     assert jnp.array_equal(
         robot.pcs_segment_to_pneumatic_segment, jnp.array([0, -1, -1, 1])
     )
-    assert robot.num_dofs == 12
+    assert robot.num_internal_dofs == 12
 
 
 def test_isupport_rigid_geometry_uses_filled_cylinders():
@@ -732,7 +732,7 @@ def test_isupport_actuation_groups_pressures_after_generalized_expansion():
             rigid_segment_selector=(True, False, True, False, True),
         ),
     )
-    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_dofs,)))
+    actuation_matrix = robot.actuation_matrix(jnp.zeros((robot.num_internal_dofs,)))
     metadata = robot.actuator_input_metadata[0]
     assert metadata.kind == "pneumatic"
     assert metadata.units == ("Pa",) * robot.num_actuators

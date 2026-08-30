@@ -126,7 +126,9 @@ class SynergisticController(PIDController):
         """
         y = system_state.y
 
-        osd, q, _ = self._controller_dynamics_and_state(y)
+        osd, q, _ = self._controller_dynamics_and_state(
+            y, self.operational_space_dynamics
+        )
         robot = osd.robot
         J = osd.jacobian(q)
 

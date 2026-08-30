@@ -166,7 +166,7 @@ complete parameter PyTree as a dynamic argument:
 ```python
 import equinox as eqx
 
-q = jnp.zeros(pcs.num_dofs)
+q = jnp.zeros(pcs.num_coordinates)
 
 @eqx.filter_jit
 def energy(params, configuration):
@@ -279,13 +279,13 @@ import jax
 
 robot = pcs.with_isotropic_material(material)
 target_stiffness = 1.05 * robot.stiffness_matrix()
-target_damping = 0.9 * robot.damping_matrix(jnp.zeros(robot.num_dofs))
+target_damping = 0.9 * robot.damping_matrix(jnp.zeros(robot.num_coordinates))
 
 def material_loss(candidate_material):
     candidate = robot.with_isotropic_material(candidate_material)
     stiffness_error = candidate.stiffness_matrix() - target_stiffness
     damping_error = (
-        candidate.damping_matrix(jnp.zeros(candidate.num_dofs))
+        candidate.damping_matrix(jnp.zeros(candidate.num_coordinates))
         - target_damping
     )
     return (

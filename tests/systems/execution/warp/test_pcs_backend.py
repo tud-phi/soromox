@@ -34,7 +34,7 @@ def test_pcs_operands_are_views_over_precomputed_model_data(
 
     assert operands.is_planar is False
     assert operands.num_segments == model.num_segments
-    assert operands.num_dofs == model.num_dofs
+    assert operands.num_dofs == model.num_internal_dofs
     assert operands.num_gauss_points == model.num_gauss_points
     assert operands.block_dim == model.backend_params.warp_block_dim
     assert operands.active_strain_indices is model.active_strain_indices
@@ -59,8 +59,8 @@ def test_spatial_pcs_pipeline_shapes_cover_workspace_and_results(
     assert shapes.chain_outputs()["velocity_first"] == (3 * 6, 1)
     assert shapes.chain_outputs()["inertia"] == (
         3,
-        model.num_dofs,
-        model.num_dofs,
+        model.num_internal_dofs,
+        model.num_internal_dofs,
     )
 
 
@@ -96,7 +96,7 @@ def test_spatial_pcs_kinematics_shapes_cover_reduced_and_fused_paths(
     }
     assert shapes.jacobian_workspace() == shapes.workspace()
     assert shapes.pose_output() == (3, 7, 4, 4)
-    assert shapes.jacobian_output() == (3, 7, 6, model.num_dofs)
+    assert shapes.jacobian_output() == (3, 7, 6, model.num_internal_dofs)
 
 
 def test_spatial_pcs_public_kinematics_match_jax_on_cpu_and_gpu(

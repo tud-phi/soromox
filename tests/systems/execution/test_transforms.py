@@ -23,13 +23,32 @@ class _TransformProbe(eqx.Module):
 
     scale: Array
     backend: ExecutionBackend = eqx.field(static=True, default="warp")
-    num_dofs: int = eqx.field(static=True, default=3)
+    num_coordinates: int = eqx.field(static=True, default=3)
+    num_velocities: int = eqx.field(static=True, default=3)
     num_actuators: int = eqx.field(static=True, default=0)
+    num_auxiliary_states: int = eqx.field(static=True, default=0)
+
+    def split_state(self, y: Array) -> tuple[Array, Array, Array]:
+        """Split the equal-size probe state using explicit dimensions."""
+
+        return (
+            y[: self.num_coordinates],
+            y[self.num_coordinates : self.num_coordinates + self.num_velocities],
+            y[self.num_coordinates + self.num_velocities :],
+        )
+
+    def configuration_derivative(self, q: Array, qd: Array) -> Array:
+        """Map probe velocities directly to coordinate derivatives."""
+
+        del q
+        return qd
 
     def _assemble_dynamics_terms(self, q: Array, qd: Array) -> DynamicsTerms:
         """Return nonlinear terms so both tangent paths are observable."""
 
-        inertia = self.scale * jnp.eye(self.num_dofs, dtype=q.dtype) + jnp.outer(q, q)
+        inertia = self.scale * jnp.eye(self.num_velocities, dtype=q.dtype) + jnp.outer(
+            q, q
+        )
         coriolis_qd = self.scale * q * qd
         gravity = jnp.sin(q) + self.scale
         return inertia, coriolis_qd, gravity
@@ -45,7 +64,7 @@ class _TransformProbe(eqx.Module):
 
         del qd
         factor = self.scale if backend == "jax" else 10.0 * self.scale
-        return jnp.eye(self.num_dofs), factor * jnp.sin(q), jnp.zeros_like(q)
+        return jnp.eye(self.num_velocities), factor * jnp.sin(q), jnp.zeros_like(q)
 
     def elastic_force(self, q: Array) -> Array:
         """Return zero elastic force for the execution probe."""
@@ -96,9 +115,9 @@ def test_dynamics_evaluator_uses_jax_for_forward_and_reverse_derivatives() -> No
         del qd
         batch_size = q.shape[0]
         return (
-            jnp.ones((batch_size, model.num_dofs, model.num_dofs)),
-            2.0 * jnp.ones((batch_size, model.num_dofs)),
-            3.0 * jnp.ones((batch_size, model.num_dofs)),
+            jnp.ones((batch_size, model.num_velocities, model.num_velocities)),
+            2.0 * jnp.ones((batch_size, model.num_velocities)),
+            3.0 * jnp.ones((batch_size, model.num_velocities)),
         )
 
     evaluate = make_dynamics_evaluator(execute_batch, family_name="test")
@@ -127,14 +146,14 @@ def test_forward_dynamics_boundary_routes_derivatives_to_jax() -> None:
 
     model = _TransformProbe(scale=jnp.asarray(2.0, dtype=jnp.float64))
     time = jnp.asarray(0.0, dtype=jnp.float64)
-    y = jnp.linspace(-0.3, 0.4, 2 * model.num_dofs, dtype=jnp.float64)
+    y = jnp.linspace(-0.3, 0.4, 2 * model.num_velocities, dtype=jnp.float64)
     tangent = jnp.linspace(0.5, -0.2, y.size, dtype=jnp.float64)
 
     primal = evaluate_forward_dynamics(model, time, y, None, None)
     expected_primal = jnp.concatenate(
         (
-            y[model.num_dofs :],
-            2.0 - 10.0 * model.scale * jnp.sin(y[: model.num_dofs]),
+            y[model.num_velocities :],
+            2.0 - 10.0 * model.scale * jnp.sin(y[: model.num_velocities]),
         )
     )
     assert_allclose(primal, expected_primal, rtol=0.0, atol=0.0)

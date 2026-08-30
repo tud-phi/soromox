@@ -117,7 +117,7 @@ class DynamicalSystem(eqx.Module):
             return tau_environment
         return base_tau_ext + tau_environment
 
-    def _project_rollout_state(self, y: Array) -> Array:
+    def project_state(self, y: Array) -> Array:
         """Project state storage onto the system configuration manifold.
 
         The generic implementation is an identity operation. Systems with a
@@ -140,7 +140,7 @@ class DynamicalSystem(eqx.Module):
         This is defined as a class method rather than an inline closure to avoid
         JAX/XLA compilation overhead associated with closures.
         """
-        y = self._project_rollout_state(ode_state.y)
+        y = self.project_state(ode_state.y)
         (
             base_u_val,
             base_tau_ext,
@@ -219,7 +219,7 @@ class DynamicalSystem(eqx.Module):
         track_control_state = zero_control_state_dot is not None
         track_environment_state = zero_environment_state_dot is not None
 
-        y = self._project_rollout_state(ode_state.y)
+        y = self.project_state(ode_state.y)
         system_state = SystemState(
             t=t,
             y=y,
@@ -327,7 +327,7 @@ class DynamicalSystem(eqx.Module):
         if base_u is None:
             base_u = jnp.zeros((self.num_actuators,))
 
-        y0 = self._project_rollout_state(initial_state.y)
+        y0 = self.project_state(initial_state.y)
         environment_state0 = initial_state.environment_state
         zero_environment_state_dot = self._zero_like_pytree(environment_state0)
 
@@ -364,7 +364,7 @@ class DynamicalSystem(eqx.Module):
         )
 
         ts = sol.ts
-        y_ts = self._project_rollout_state(sol.ys.y)
+        y_ts = self.project_state(sol.ys.y)
         environment_state_out = sol.ys.environment_state
 
         us = jnp.broadcast_to(base_u, (ts.shape[0], base_u.shape[0]))
@@ -433,7 +433,7 @@ class DynamicalSystem(eqx.Module):
         if base_u is None:
             base_u = jnp.zeros((self.num_actuators,))
 
-        y0 = self._project_rollout_state(initial_state.y)
+        y0 = self.project_state(initial_state.y)
 
         controller_state0 = initial_state.control_state
         track_control_state = controller_state0 is not None
@@ -480,7 +480,7 @@ class DynamicalSystem(eqx.Module):
         )
 
         ts = sol.ts
-        y_ts = self._project_rollout_state(sol.ys.y)
+        y_ts = self.project_state(sol.ys.y)
         controller_state_out = sol.ys.control_state
         environment_state_out = sol.ys.environment_state
 
@@ -650,7 +650,7 @@ class DynamicalSystem(eqx.Module):
             base_u = jnp.zeros((self.num_actuators,))
 
         rollout_state = _RolloutState(
-            y=self._project_rollout_state(initial_state.y),
+            y=self.project_state(initial_state.y),
             control_state=initial_state.control_state,
             environment_state=initial_state.environment_state,
         )
@@ -689,7 +689,7 @@ class DynamicalSystem(eqx.Module):
                 outputs: tuple of saved times, states, actuations, control states, and environment states.
             """
             state_in = _RolloutState(
-                y=self._project_rollout_state(carry.y),
+                y=self.project_state(carry.y),
                 control_state=carry.control_state,
                 environment_state=carry.environment_state,
             )
@@ -742,7 +742,7 @@ class DynamicalSystem(eqx.Module):
                 stepsize_controller=stepsize_controller,
                 max_steps=max_steps,
             )
-            y_out = self._project_rollout_state(sol.ys.y)
+            y_out = self.project_state(sol.ys.y)
             environment_state_out = sol.ys.environment_state
 
             ctrl_state_next = (

@@ -34,7 +34,7 @@ def test_planar_pcs_operands_select_planar_dimension_data(
 
     assert operands.is_planar is True
     assert operands.num_segments == model.num_segments
-    assert operands.num_dofs == model.num_dofs
+    assert operands.num_dofs == model.num_internal_dofs
     assert operands.num_gauss_points == model.num_gauss_points
     assert operands.block_dim == model.backend_params.warp_block_dim
     assert operands.active_strain_indices is model.active_strain_indices
@@ -59,8 +59,8 @@ def test_planar_pcs_pipeline_shapes_cover_workspace_and_results(
     assert "velocity_first" not in shapes.chain_outputs()
     assert shapes.chain_outputs()["inertia"] == (
         3,
-        model.num_dofs,
-        model.num_dofs,
+        model.num_internal_dofs,
+        model.num_internal_dofs,
     )
 
 
@@ -79,7 +79,7 @@ def test_planar_pcs_kinematics_shapes_cover_reduced_and_fused_paths(
     }
     assert shapes.jacobian_workspace() == shapes.workspace()
     assert shapes.pose_output() == (3, 7, 3)
-    assert shapes.jacobian_output() == (3, 7, 3, model.num_dofs)
+    assert shapes.jacobian_output() == (3, 7, 3, model.num_internal_dofs)
 
 
 def test_planar_pcs_public_kinematics_match_jax_on_cpu_and_gpu(

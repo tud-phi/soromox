@@ -29,19 +29,19 @@ import configuration_space_comparison_simulation  # noqa: E402
 
 
 def assert_identity_actuation(robot) -> None:
-    assert robot.num_actuators == robot.num_dofs
+    assert robot.num_actuators == robot.num_internal_dofs
     assert len(robot.actuators) == 1
     assert isinstance(robot.actuators[0], IdentityActuator)
     assert_allclose(
-        robot.actuation_matrix(jnp.zeros((robot.num_dofs,))),
-        jnp.eye(robot.num_dofs),
+        robot.actuation_matrix(jnp.zeros((robot.num_internal_dofs,))),
+        jnp.eye(robot.num_internal_dofs),
     )
 
 
 def test_configuration_space_comparison_uses_identity_actuation():
     robot, num_dofs, _ = configuration_space_comparison_simulation.create_robot()
 
-    assert num_dofs == robot.num_dofs
+    assert num_dofs == robot.num_internal_dofs
     assert_identity_actuation(robot)
 
 

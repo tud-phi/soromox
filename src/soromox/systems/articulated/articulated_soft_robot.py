@@ -158,7 +158,6 @@ class ArticulatedSoftRobot(SoftRobot):
 
         self.num_links = int(n)
         self.num_internal_dofs = self.num_links
-        self.num_dofs = self.num_velocities
 
         self.joint_screw = joint_screw
         self.g_parent_joint = g_parent_joint
@@ -421,7 +420,7 @@ class ArticulatedSoftRobot(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            relative = self._fixed_evaluation_view().forward_kinematics_joints(
+            relative = self._fixed_base_robot_at_pose().forward_kinematics_joints(
                 q_internal
             )
             return self._compose_runtime_base_poses(q, relative)
@@ -441,7 +440,9 @@ class ArticulatedSoftRobot(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            relative = self._fixed_evaluation_view().forward_kinematics_coms(q_internal)
+            relative = self._fixed_base_robot_at_pose().forward_kinematics_coms(
+                q_internal
+            )
             return self._compose_runtime_base_poses(q, relative)
         _, _, g_coms, _ = self._kinematic_frames(q)
         return g_coms
@@ -459,7 +460,9 @@ class ArticulatedSoftRobot(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            relative = self._fixed_evaluation_view().forward_kinematics_tips(q_internal)
+            relative = self._fixed_base_robot_at_pose().forward_kinematics_tips(
+                q_internal
+            )
             return self._compose_runtime_base_poses(q, relative)
         _, _, _, g_tips = self._kinematic_frames(q)
         return g_tips
@@ -503,11 +506,28 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             COM Jacobians, shape `(num_links, 6, num_links)`.
         """
-        g_joints, _, g_coms, _ = self._kinematic_frames(q)
-        screws = self._world_joint_screws_from_joint_frames(g_joints)
-        idxs = jnp.arange(self.num_links)
-        positions = g_coms[:, :3, 3]
-        return self._jacobian_for_points(screws, idxs, positions)
+        _, com_frames, screws = self._com_chain_kinematics(q)
+        return self._jacobian_for_points(
+            screws,
+            jnp.arange(self.num_links),
+            com_frames[:, :3, 3],
+        )
+
+    def _com_chain_kinematics(self, q: Array) -> tuple[Array, Array, Array]:
+        """Propagate relative link/COM frames and world joint screws once.
+
+        Args:
+            q: Internal joint coordinates with shape
+                ``(num_internal_dofs,)``.
+
+        Returns:
+            Link frames, COM frames, and world-frame joint screws. The fixed
+            and floating dynamics assemblers consume these same relative-chain
+            quantities and specialize their Jacobian/accumulator work.
+        """
+        joint_frames, link_frames, com_frames, _ = self._kinematic_frames(q)
+        screws = self._world_joint_screws_from_joint_frames(joint_frames)
+        return link_frames, com_frames, screws
 
     @eqx.filter_jit
     def jacobian_tips(self, q: Array) -> Array:
@@ -650,17 +670,13 @@ class ArticulatedSoftRobot(SoftRobot):
         q = self.normalize_configuration(q)
         _, q_internal = self.split_configuration(q)
         _, qd_internal = self.split_velocity(v)
-        joint_frames, _, com_frames, _ = self._kinematic_frames(q_internal)
-        screws = self._world_joint_screws_from_joint_frames(joint_frames)
-        screw_derivatives = self._world_joint_screw_derivatives(
-            screws, qd_internal
-        )
-        link_indices = jnp.arange(self.num_links)
+        _, com_frames, screws = self._com_chain_kinematics(q_internal)
+        screw_derivatives = self._world_joint_screw_derivatives(screws, qd_internal)
         jacobians_world, jacobian_derivatives_world = (
             self._jacobian_and_time_derivative_for_points_from_screws(
                 screws,
                 screw_derivatives,
-                link_indices,
+                jnp.arange(self.num_links),
                 com_frames[:, :3, 3],
                 qd_internal,
             )
@@ -724,19 +740,13 @@ class ArticulatedSoftRobot(SoftRobot):
         wrenches = jnp.einsum(
             "nij,nj->ni", spatial_inertias, jacobian_dot_velocity
         ) + vmap(se3.coadjoint_action)(velocities, momenta)
-        gravity_wrenches = jnp.einsum(
-            "nij,nj->ni", spatial_inertias, gravity
-        )
-        inertia = jnp.einsum(
-            "nia,nij,njb->ab", jacobians, spatial_inertias, jacobians
-        )
+        gravity_wrenches = jnp.einsum("nij,nj->ni", spatial_inertias, gravity)
+        inertia = jnp.einsum("nia,nij,njb->ab", jacobians, spatial_inertias, jacobians)
         inertia = inertia.at[
             self.num_base_velocities :, self.num_base_velocities :
         ].add(jnp.diag(self._joint_armature(q_internal)))
         coriolis_velocity = jnp.einsum("nij,ni->j", jacobians, wrenches)
-        gravity_force = -jnp.einsum(
-            "nij,ni->j", jacobians, gravity_wrenches
-        )
+        gravity_force = -jnp.einsum("nij,ni->j", jacobians, gravity_wrenches)
         return inertia, coriolis_velocity, gravity_force
 
     @eqx.filter_jit
@@ -753,11 +763,12 @@ class ArticulatedSoftRobot(SoftRobot):
         if self.floating_base:
             zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
             return self._assemble_floating_dynamics_terms(q, zeros)[0]
-        g_joints, g_links, g_coms, _ = self._kinematic_frames(q)
-        screws = self._world_joint_screws_from_joint_frames(g_joints)
-        idxs = jnp.arange(self.num_links)
-        positions = g_coms[:, :3, 3]
-        J_coms = self._jacobian_for_points(screws, idxs, positions)
+        g_links, g_coms, screws = self._com_chain_kinematics(q)
+        J_coms = self._jacobian_for_points(
+            screws,
+            jnp.arange(self.num_links),
+            g_coms[:, :3, 3],
+        )
         R_links = g_links[:, :3, :3]
         I_world = jnp.einsum("nij,njk,nlk->nil", R_links, self.I_com, R_links)
         Jw = J_coms[:, :3, :]
@@ -856,12 +867,12 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Elastic force vector, shape `(num_links,)`.
         """
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        internal = self.K @ (q_internal - self.q_ref_k)
+        internal = internal + self.passive_elastic_force(q_internal)
         if self.floating_base:
-            _, q_internal = self.split_configuration(q)
-            internal = self.K @ (q_internal - self.q_ref_k)
-            internal = internal + self.passive_elastic_force(q_internal)
             return jnp.pad(internal, (self.num_base_velocities, 0))
-        return self.K @ (q - self.q_ref_k) + self.passive_elastic_force(q)
+        return internal
 
     @eqx.filter_jit
     def _elastic_energy(self, q: Array) -> Array:
@@ -888,14 +899,14 @@ class ArticulatedSoftRobot(SoftRobot):
         Returns:
             Damping matrix, shape `(num_links, num_links)`.
         """
+        q_internal = self.split_configuration(q)[1] if self.floating_base else q
+        internal = self.D + self.passive_damping_matrix(q_internal)
         if self.floating_base:
-            _, q_internal = self.split_configuration(q)
-            internal = self.D + self.passive_damping_matrix(q_internal)
             return jnp.pad(
                 internal,
                 ((self.num_base_velocities, 0), (self.num_base_velocities, 0)),
             )
-        return self.D + self.passive_damping_matrix(q)
+        return internal
 
     def _joint_armature(self, q: Array) -> Array:
         """

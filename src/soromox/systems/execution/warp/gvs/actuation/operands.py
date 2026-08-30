@@ -73,7 +73,7 @@ class GVSThreadlikeOperands(eqx.Module):
         segment_starts = model.segment_end_positions[:-1]
         return cls(
             num_segments=model.num_segments,
-            num_dofs=model.num_dofs,
+            num_dofs=model.num_velocities,
             max_dof=model.max_dof,
             num_quadrature=model.max_num_integration_points - 2,
             routing=routing,

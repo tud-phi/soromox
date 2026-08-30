@@ -25,10 +25,6 @@ The base class for all dynamical systems. Key interface:
 from soromox.systems import DynamicalSystem
 
 class DynamicalSystem:
-    # Static attributes (set at creation, used for JIT compilation)
-    num_dofs: int       # Degrees of freedom
-    num_actuators: int  # Number of control inputs
-
     # Core methods
     def forward_dynamics(self, t, y, tau_ext, actuation_args):
         """Compute state derivatives yd = f(t, y, tau_ext, u)."""
@@ -51,6 +47,12 @@ Extends `DynamicalSystem` with soft robot-specific methods:
 from soromox.systems import SoftRobot
 
 class SoftRobot(DynamicalSystem):
+    # Explicit dimensions
+    num_internal_dofs: int
+    num_coordinates: int
+    num_velocities: int
+    num_actuators: int
+
     # Properties
     @property
     def length(self) -> float:
@@ -131,25 +133,18 @@ class MyCustomRobot(SoftRobot):
     # Array fields (dynamic parameters)
     L: jax.Array  # Segment lengths
 
-    def __init__(self, num_segments: int, L: jax.Array, ...):
+    def __init__(self, num_segments: int, L: jax.Array, floating_base=False, ...):
+        super().__init__(floating_base=floating_base)
         self.num_segments = num_segments
+        self.num_internal_dofs = num_segments * 3
         self.L = L
-        # Initialize other parameters...
+        # Initialize other parameters, then install actuator models.
+        self._configure_actuation(None)
 ```
 
 #### 3. Implement Required Properties
 
 ```python
-@property
-def num_dofs(self) -> int:
-    """Number of degrees of freedom."""
-    return self.num_segments * 3  # Example: 3 DOFs per segment
-
-@property
-def num_actuators(self) -> int:
-    """Number of control inputs."""
-    return self.num_segments * 2  # Example: 2 actuators per segment
-
 @property
 def length(self) -> float:
     """Total backbone length."""
@@ -161,6 +156,12 @@ def is_planar(self) -> bool:
     return True  # or False for 3D
 ```
 
+Set the static `num_internal_dofs` field during construction, then install
+actuators with `_configure_actuation(...)`; the base class derives
+`num_coordinates`, `num_velocities`, and `num_actuators`. Do not assume that
+configuration and velocity dimensions are equal: spatial floating systems use
+seven base coordinates and six base velocities.
+
 #### 4. Implement Kinematics
 
 Soft robots use arc-length parametrization for kinematics:
@@ -171,7 +172,7 @@ def forward_kinematics(self, q: jax.Array, s: float) -> jax.Array:
     Compute pose at arc length s along the backbone.
 
     Args:
-        q: Configuration vector (num_dofs,) - strains or joint angles
+        q: Configuration vector (num_coordinates,) - strains or joint angles
         s: Arc length along backbone [0, length]
 
     Returns:
@@ -191,7 +192,7 @@ def jacobian(self, q: jax.Array, s: float) -> jax.Array:
 
     Returns:
         Jacobian matrix J(q,s) mapping qd to spatial velocity
-        Shape: (3, num_dofs) for 2D or (6, num_dofs) for 3D
+        Shape: (3, num_velocities) for 2D or (6, num_velocities) for 3D
     """
     # Typically computed via automatic differentiation
     # or analytical derivation
@@ -233,7 +234,7 @@ def inertia_matrix(self, q: jax.Array) -> jax.Array:
     along the backbone using the mass density distribution.
 
     Returns:
-        M: Inertia matrix (num_dofs, num_dofs)
+        M: Inertia matrix (num_velocities, num_velocities)
     """
     # Example: Integrate using quadrature
     # M = sum over integration points of (m_i * J_i^T @ J_i)
@@ -248,7 +249,7 @@ def coriolis_matrix(self, q: jax.Array, qd: jax.Array) -> jax.Array:
     M_dot(q, qd) - 2 * C(q, qd) is skew-symmetric.
 
     Returns:
-        C: Coriolis matrix (num_dofs, num_dofs)
+        C: Coriolis matrix (num_velocities, num_velocities)
     """
     ...
 
@@ -260,7 +261,7 @@ def elastic_force(self, q: jax.Array) -> jax.Array:
     where K is the stiffness matrix.
 
     Returns:
-        tau_el: Elastic force vector (num_dofs,)
+        tau_el: Elastic force vector (num_velocities,)
     """
     ...
 
@@ -272,7 +273,7 @@ def gravitational_force(self, q: jax.Array) -> jax.Array:
     tau_g = integral of (J^T @ [0, 0, m*g])
 
     Returns:
-        tau_g: Gravitational force vector (num_dofs,)
+        tau_g: Gravitational force vector (num_velocities,)
     """
     ...
 
@@ -284,7 +285,7 @@ def damping_matrix(self, q: jax.Array) -> jax.Array:
     Often constant for simple models.
 
     Returns:
-        D: Damping matrix (num_dofs, num_dofs)
+        D: Damping matrix (num_velocities, num_velocities)
     """
     ...
 
@@ -296,22 +297,22 @@ def actuation_matrix(self, q: jax.Array) -> jax.Array:
     For pressure chambers: based on chamber geometry and pressure
 
     Returns:
-        A: Actuation matrix (num_dofs, num_actuators)
+        A: Actuation matrix (num_velocities, num_actuators)
     """
     ...
 
 def forward_dynamics(self, t, y, tau_ext, actuation_args):
     """
-    State derivatives for simulation: yd = [qd, qdd]
+    State derivatives for simulation: yd = [qdot, vdot]
 
     Implements the equation of motion for soft robots.
     """
-    q, qd = jnp.split(y, 2)
+    q, v, auxiliary = self.split_state(y)
     u = actuation_args.get("u", jnp.zeros(self.num_actuators))
 
     # Dynamic matrices
     M = self.inertia_matrix(q)
-    C = self.coriolis_matrix(q, qd)
+    C = self.coriolis_matrix(q, v)
     D = self.damping_matrix(q)
 
     # Forces
@@ -321,10 +322,12 @@ def forward_dynamics(self, t, y, tau_ext, actuation_args):
     tau_act = A @ u
 
     # Solve for acceleration: M qdd = tau_total
-    tau_total = tau_act + tau_ext - C @ qd - D @ qd - tau_el - tau_g
-    qdd = jnp.linalg.solve(M, tau_total)
+    tau_total = tau_act + tau_ext - C @ v - D @ v - tau_el - tau_g
+    vdot = jnp.linalg.solve(M, tau_total)
+    qdot = self.configuration_derivative(q, v)
+    auxiliary_dot = jnp.zeros_like(auxiliary)
 
-    return jnp.concatenate([qd, qdd])
+    return jnp.concatenate([qdot, vdot, auxiliary_dot])
 ```
 
 **Energy and control consistency:** `coriolis_matrix(q, qd)` must be consistent
@@ -1006,7 +1009,7 @@ def model_based_term(
     # Extract state
     t = system_state.t
     y = system_state.y
-    num_dofs = self.robot.num_dofs
+    num_dofs = self.robot.num_internal_dofs
     q, qd = y[:num_dofs], y[num_dofs:]
 
     # Get desired trajectory from reference
@@ -1036,7 +1039,7 @@ def error_based_feedback_term(
     # Extract state
     t = system_state.t
     y = system_state.y
-    num_dofs = self.robot.num_dofs
+    num_dofs = self.robot.num_internal_dofs
     q, qd = y[:num_dofs], y[num_dofs:]
 
     # Get desired trajectory
@@ -1090,7 +1093,7 @@ controller = MyCustomController(
 # Use in closed-loop simulation
 ts, ys = robot.rollout_closed_loop_to(
     ts=jnp.linspace(0, 5, 100),
-    y0=jnp.zeros(2 * robot.num_dofs),
+    y0=jnp.zeros(robot.state_size),
     controller=controller,
 )
 ```
@@ -1105,7 +1108,7 @@ Operate directly in joint/strain coordinates:
 class ConfigurationSpaceController(ClosedFormModelBasedController):
     def model_based_term(self, system_state: SystemState):
         # Extract state
-        num_dofs = self.robot.num_dofs
+        num_dofs = self.robot.num_internal_dofs
         q, qd = system_state.y[:num_dofs], system_state.y[num_dofs:]
 
         # Compute in configuration space
@@ -1127,7 +1130,7 @@ class OperationalSpaceController(ClosedFormModelBasedController):
 
     def model_based_term(self, system_state: SystemState):
         # Extract state
-        num_dofs = self.robot.num_dofs
+        num_dofs = self.robot.num_internal_dofs
         q, qd = system_state.y[:num_dofs], system_state.y[num_dofs:]
 
         # Get task-space state
@@ -1160,7 +1163,7 @@ Operate directly in the transmission's work coordinates:
 class ActuationSpaceController(ClosedFormModelBasedController):
     def model_based_term(self, system_state: SystemState):
         # Extract state
-        num_dofs = self.robot.num_dofs
+        num_dofs = self.robot.num_internal_dofs
         q = system_state.y[:num_dofs]
 
         # Coordinates follow the installed transmissions. For a tendon preset,

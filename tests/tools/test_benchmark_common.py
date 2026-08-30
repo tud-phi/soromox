@@ -46,7 +46,7 @@ def test_gvs_basis_order_registry_builds_current_system_api() -> None:
     system = build_system_with_gauss_points(config, size=0, gauss_points=5)
     context = config.build_context(system)
 
-    assert context["q"].shape == (system.num_dofs,)
+    assert context["q"].shape == (system.num_internal_dofs,)
     assert context["u"].shape == (system.num_actuators,)
 
 

@@ -351,7 +351,7 @@ def test_gvs_constructor_resolves_optional_structure_padding() -> None:
 
 def test_gvs_rectangular_geometry_uses_shared_dimension_order() -> None:
     robot = _gvs()
-    q = jnp.zeros(robot.num_dofs)
+    q = jnp.zeros(robot.num_internal_dofs)
     tag, dimensions = robot.cross_section_geometry(q, 0.25 * robot.segment_length[0])
     expected_height = 0.03 + 0.25 * (0.02 - 0.03)
 

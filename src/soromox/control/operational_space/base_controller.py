@@ -2,9 +2,6 @@ __all__ = ["OperationalSpaceBaseController"]
 
 from abc import ABC
 
-import equinox as eqx
-from jax import Array
-
 from soromox.control.base_controller import BaseController
 from soromox.coordinate_transformations.operational_space_dynamics import (
     OperationalSpaceDynamics,
@@ -46,23 +43,3 @@ class OperationalSpaceBaseController(BaseController, ABC):
     """
 
     operational_space_dynamics: OperationalSpaceDynamics
-
-    def _controller_dynamics_and_state(
-        self, y: Array
-    ) -> tuple[OperationalSpaceDynamics, Array, Array]:
-        """Return current-pose fixed dynamics and internal controller state.
-
-        Args:
-            y: Complete system state with trailing dimension
-                ``robot.state_size``.
-
-        Returns:
-            A tuple containing an operational-space dynamics view mounted at
-            the current base pose, internal coordinates, and internal
-            velocities.
-        """
-        robot, q_internal, qd_internal = super()._controller_model_and_state(y)
-        dynamics = self.operational_space_dynamics
-        if dynamics.robot is not robot:
-            dynamics = eqx.tree_at(lambda value: value.robot, dynamics, robot)
-        return dynamics, q_internal, qd_internal

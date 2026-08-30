@@ -320,7 +320,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
             self.params.group_shape[1]
         )
         return (
-            jnp.zeros((robot.num_dofs, self.num_channels), dtype=q.dtype)
+            jnp.zeros((robot.num_velocities, self.num_channels), dtype=q.dtype)
             .at[joint_pair[:, None], actuator_indices[None, :]]
             .set(local_block.T)
         )
@@ -328,7 +328,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
     def moment_matrix(self, robot, q: Array) -> Array:
         """Return the analytic pressure-to-generalized-force matrix ``A(q)``."""
         if self.num_channels == 0:
-            return jnp.zeros((robot.num_dofs, 0), dtype=q.dtype)
+            return jnp.zeros((robot.num_velocities, 0), dtype=q.dtype)
         indices = jnp.arange(self.params.num_groups)
         matrices = jax.vmap(lambda index: self._moment_matrix_group(robot, q, index))(
             indices

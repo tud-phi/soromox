@@ -116,7 +116,7 @@ def test_cached_params_shapes() -> None:
         assert "mckibben_reference_length" in data
         assert "mck_base_length" not in data
 
-    assert robot.num_dofs == 12
+    assert robot.num_internal_dofs == 12
     assert robot.num_actuators == 24
     assert robot.num_segments == 3
     assert params.joint_armature.shape == (12,)
@@ -132,8 +132,8 @@ def test_cached_params_shapes() -> None:
 
 def test_zero_actuator_umarm_exposes_empty_actuator_interface() -> None:
     robot = make_zero_actuator_robot()
-    q = jnp.linspace(-0.2, 0.2, robot.num_dofs)
-    qd = jnp.linspace(0.1, -0.1, robot.num_dofs)
+    q = jnp.linspace(-0.2, 0.2, robot.num_internal_dofs)
+    qd = jnp.linspace(0.1, -0.1, robot.num_internal_dofs)
     pressures = jnp.zeros((0,), dtype=q.dtype)
     y = jnp.concatenate([q, qd])
 
@@ -144,8 +144,10 @@ def test_zero_actuator_umarm_exposes_empty_actuator_interface() -> None:
     assert actuator.effective_lengths(q).shape == (0,)
     assert robot.actuator_coordinates(q).shape == (0,)
     assert actuator.axial_forces(q, pressures).shape == (0,)
-    assert robot.actuation_matrix(q).shape == (robot.num_dofs, 0)
-    assert_allclose(robot.actuation_force(q, pressures), jnp.zeros((robot.num_dofs,)))
+    assert robot.actuation_matrix(q).shape == (robot.num_internal_dofs, 0)
+    assert_allclose(
+        robot.actuation_force(q, pressures), jnp.zeros((robot.num_internal_dofs,))
+    )
     assert actuator_visual_layers(robot, q, jnp.linspace(0.0, 1.0, 3)) == ()
     assert robot.forward_dynamics(jnp.array(0.0), y, (pressures, None)).shape == y.shape
 
@@ -178,7 +180,7 @@ def test_mckibben_transmission_rejects_duplicate_joint_pair_indices() -> None:
 
 def test_cached_params_use_soromox_base_axis() -> None:
     robot = make_robot()
-    q = jnp.zeros((robot.num_dofs,))
+    q = jnp.zeros((robot.num_internal_dofs,))
     joint_frames = np.asarray(robot.forward_kinematics_joints(q))
     tip_frames = np.asarray(robot.forward_kinematics_tips(q))
 
@@ -193,7 +195,7 @@ def test_cached_params_use_soromox_base_axis() -> None:
 
 def test_example_build_robot_uses_z_down_base_pose() -> None:
     robot = build_example_robot()
-    q = jnp.zeros((robot.num_dofs,))
+    q = jnp.zeros((robot.num_internal_dofs,))
     joint_frames = np.asarray(robot.forward_kinematics_joints(q))
     tip_frames = np.asarray(robot.forward_kinematics_tips(q))
 
@@ -202,17 +204,15 @@ def test_example_build_robot_uses_z_down_base_pose() -> None:
     proximal_direction = first_physical_tip - base_position
     proximal_direction = proximal_direction / np.linalg.norm(proximal_direction)
 
-    assert_allclose(
-        robot.fixed_base_pose, UMARM_Z_DOWN_BASE_POSE, rtol=0.0, atol=1e-12
-    )
+    assert_allclose(robot.fixed_base_pose, UMARM_Z_DOWN_BASE_POSE, rtol=0.0, atol=1e-12)
     assert_allclose(base_position, np.array([0.0, 0.0, 1.2]), atol=1e-12)
     assert_allclose(proximal_direction, np.array([0.0, 0.0, -1.0]), atol=1e-12)
 
 
 def test_mckibben_dynamics_terms_are_finite() -> None:
     robot = make_robot()
-    q = jnp.linspace(-0.2, 0.2, robot.num_dofs)
-    qd = jnp.linspace(0.1, -0.1, robot.num_dofs)
+    q = jnp.linspace(-0.2, 0.2, robot.num_internal_dofs)
+    qd = jnp.linspace(0.1, -0.1, robot.num_internal_dofs)
     pressures = jnp.linspace(0.0, 8.0e4, robot.num_actuators)
     y = jnp.concatenate([q, qd])
 
@@ -227,7 +227,7 @@ def test_mckibben_dynamics_terms_are_finite() -> None:
     assert segments.shape == (robot.num_actuators, 2, 3)
     assert lengths.shape == (robot.num_actuators,)
     assert forces.shape == (robot.num_actuators,)
-    assert actuation.shape == (robot.num_dofs, robot.num_actuators)
+    assert actuation.shape == (robot.num_internal_dofs, robot.num_actuators)
     assert yd.shape == y.shape
     assert jnp.isfinite(segments).all()
     assert jnp.isfinite(lengths).all()
@@ -242,9 +242,9 @@ def test_mckibben_actuation_matrix_matches_potential_gradient() -> None:
     robot = make_robot()
     q_samples = jnp.stack(
         [
-            jnp.linspace(-0.2, 0.2, robot.num_dofs),
-            jnp.sin(jnp.linspace(0.0, 1.1, robot.num_dofs)) * 0.15,
-            jnp.cos(jnp.linspace(-0.7, 0.4, robot.num_dofs)) * -0.12,
+            jnp.linspace(-0.2, 0.2, robot.num_internal_dofs),
+            jnp.sin(jnp.linspace(0.0, 1.1, robot.num_internal_dofs)) * 0.15,
+            jnp.cos(jnp.linspace(-0.7, 0.4, robot.num_internal_dofs)) * -0.12,
         ]
     )
 
@@ -259,9 +259,9 @@ def test_mckibben_component_matches_legacy_geometry_and_constitutive_oracle() ->
     params = actuator.params.transmission
     q_samples = jnp.stack(
         [
-            jnp.zeros((robot.num_dofs,)),
-            jnp.linspace(-0.2, 0.2, robot.num_dofs),
-            0.17 * jnp.sin(jnp.arange(robot.num_dofs)),
+            jnp.zeros((robot.num_internal_dofs,)),
+            jnp.linspace(-0.2, 0.2, robot.num_internal_dofs),
+            0.17 * jnp.sin(jnp.arange(robot.num_internal_dofs)),
         ]
     )
 
@@ -312,8 +312,8 @@ def test_mckibben_component_matches_legacy_geometry_and_constitutive_oracle() ->
 
 def test_mckibben_optional_qd_power_jit_and_independent_updates() -> None:
     robot = make_robot()
-    q = jnp.linspace(-0.13, 0.16, robot.num_dofs)
-    qd = jnp.linspace(0.08, -0.05, robot.num_dofs)
+    q = jnp.linspace(-0.13, 0.16, robot.num_internal_dofs)
+    qd = jnp.linspace(0.08, -0.05, robot.num_internal_dofs)
     pressure = jnp.linspace(1.0e4, 7.0e4, robot.num_actuators)
 
     tau = robot.actuation_force(q, pressure)
@@ -447,7 +447,7 @@ def test_umarm_compiled_partial_actuator_update_matches_eager_metadata():
 
 def test_umarm_parameter_gradient_passes_through_compiled_updates():
     robot = make_robot()
-    q = jnp.linspace(-0.1, 0.1, robot.num_dofs)
+    q = jnp.linspace(-0.1, 0.1, robot.num_internal_dofs)
     actuator_params = robot.actuators[0].params
 
     @eqx.filter_jit
@@ -470,10 +470,10 @@ def test_mckibben_forward_dynamics_is_inherited_and_matches_dense_equation() -> 
     )
 
     robot = make_robot()
-    q = jnp.linspace(-0.12, 0.15, robot.num_dofs)
-    qd = jnp.linspace(0.05, -0.04, robot.num_dofs)
+    q = jnp.linspace(-0.12, 0.15, robot.num_internal_dofs)
+    qd = jnp.linspace(0.05, -0.04, robot.num_internal_dofs)
     pressures = jnp.linspace(0.0, 6.0e4, robot.num_actuators)
-    tau_ext = jnp.linspace(-0.02, 0.03, robot.num_dofs)
+    tau_ext = jnp.linspace(-0.02, 0.03, robot.num_internal_dofs)
     y = jnp.concatenate([q, qd])
 
     yd = robot.forward_dynamics(jnp.array(0.0), y, (pressures, tau_ext))
@@ -500,7 +500,7 @@ def test_umarm_viser_renderer_smoke() -> None:
 
     robot = make_robot()
     renderer = UMArmViserRenderer(robot, auto_start=False, open_browser=False)
-    q = jnp.zeros((robot.num_dofs,))
+    q = jnp.zeros((robot.num_internal_dofs,))
     layers = renderer.compute_actuator_visual_layers_batched(
         q[None, :], jnp.zeros((1, 3))
     )
@@ -570,12 +570,12 @@ def test_umarm_viser_live_mode_smoke() -> None:
     )
     controller = renderer.start_live_mode()
     try:
-        q = np.zeros((robot.num_dofs,))
+        q = np.zeros((robot.num_internal_dofs,))
         pressures = np.zeros((robot.num_actuators,))
         pressures[0] = 1.0e5
         controller.push_state_with_pressures(q, pressures)
         assert renderer._current_geometry_q is not None
-        assert renderer._current_geometry_q.shape == (1, robot.num_dofs)
+        assert renderer._current_geometry_q.shape == (1, robot.num_internal_dofs)
         assert renderer._scene_handles is not None
         assert len(renderer._scene_handles.base_plates) == 1
         assert len(renderer._scene_handles.actuator_lines) == 1
@@ -602,7 +602,7 @@ def test_umarm_viser_live_mode_smoke() -> None:
 
 def test_mckibben_actuator_segments_are_in_backbone_frame() -> None:
     robot = make_robot()
-    q = jnp.zeros((robot.num_dofs,))
+    q = jnp.zeros((robot.num_internal_dofs,))
     actuator_segments = np.asarray(robot.actuators[0].segments(robot, q))
     joint_positions = np.asarray(robot.forward_kinematics_joints(q))[:, :3, 3]
     tip_positions = np.asarray(robot.forward_kinematics_tips(q))[:, :3, 3]

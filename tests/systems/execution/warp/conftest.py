@@ -158,8 +158,8 @@ def state_batch() -> Callable[[Any], tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray
 
         q = jnp.stack(
             (
-                jnp.linspace(-0.018, 0.025, model.num_dofs, dtype=jnp.float64),
-                jnp.linspace(0.012, -0.016, model.num_dofs, dtype=jnp.float64),
+                jnp.linspace(-0.018, 0.025, model.num_internal_dofs, dtype=jnp.float64),
+                jnp.linspace(0.012, -0.016, model.num_internal_dofs, dtype=jnp.float64),
             )
         )
         qd = jnp.stack((0.35 * q[0], -0.45 * q[1]))

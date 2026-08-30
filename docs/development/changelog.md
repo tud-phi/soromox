@@ -11,6 +11,17 @@ and include benchmark baseline and measurement context for performance claims.
 
 ## [Unreleased]
 
+### Breaking changes
+
+- Replaced the ambiguous `SoftRobot.num_dofs` attribute with explicit
+  `num_internal_dofs`, `num_coordinates`, and `num_velocities` dimensions.
+  Code that allocates configurations, velocities, or internal controller state
+  must now select the corresponding dimension explicitly.
+- Removed mounting poses from physical parameter PyTrees. Constructors retain
+  the `base_pose` argument for fixed mounting, models expose the resolved value
+  as `fixed_base_pose`, and `with_fixed_base_pose(...)` updates a fixed
+  mounting independently of `with_params(...)` and `update_params(...)`.
+
 ### Added
 
 - Added optional floating-base configurations and dynamics across all system

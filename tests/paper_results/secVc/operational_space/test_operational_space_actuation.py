@@ -25,11 +25,11 @@ def test_operational_space_impedance_uses_identity_actuation():
         TaskSpaceTrajectoryConfig()
     )
 
-    assert problem.num_dofs == problem.robot.num_dofs
-    assert problem.robot.num_actuators == problem.robot.num_dofs
+    assert problem.num_internal_dofs == problem.robot.num_internal_dofs
+    assert problem.robot.num_actuators == problem.robot.num_internal_dofs
     assert len(problem.robot.actuators) == 1
     assert isinstance(problem.robot.actuators[0], IdentityActuator)
     assert_allclose(
-        problem.robot.actuation_matrix(jnp.zeros((problem.robot.num_dofs,))),
-        jnp.eye(problem.robot.num_dofs),
+        problem.robot.actuation_matrix(jnp.zeros((problem.robot.num_internal_dofs,))),
+        jnp.eye(problem.robot.num_internal_dofs),
     )

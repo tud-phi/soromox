@@ -120,7 +120,7 @@ def test_coordinate_gradient_is_finite(coincident: bool):
 def test_moment_matrix_gradient_is_finite(coincident: bool):
     """Exercise the public moment-matrix path through normalized directions."""
     transmission = make_transmission(coincident)
-    robot = SimpleNamespace(num_dofs=2)
+    robot = SimpleNamespace(num_velocities=2)
 
     jacobian = jax.jacrev(lambda q: transmission.moment_matrix(robot, q))(jnp.zeros(2))
 

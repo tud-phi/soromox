@@ -63,7 +63,7 @@ rendering is evaluated. Incompatible combinations raise a descriptive
 | `ArticulatedMcKibbenActuator` | Spatial articulated hosts implementing the kinematic-frame contract, including `McKibbenActuatedUMArm` | Grouped attachment geometry and valid joint-pair indices |
 
 Compatibility of an `AffineJointTransmission` depends only on the width of its
-routing matrix: `routing_matrix.shape[1] == robot.num_dofs`. It can therefore
+routing matrix: `routing_matrix.shape[1] == robot.num_internal_dofs`. It can therefore
 map GVS, PCS, or articulated generalized coordinates. The articulated-tendon
 preset adds serial-joint routing constraints and rejects PCS/GVS hosts, while
 threadlike presets require continuum path-integration support.

@@ -184,7 +184,7 @@ Test your installation with this quick verification script:
         material_damping_coefficient=318.0,
         reference_strain=[0.0, 1.0, 0.0],
     )])
-    robot.forward_kinematics(jnp.zeros(robot.num_dofs), s=0.1)
+    robot.forward_kinematics(jnp.zeros(robot.num_coordinates), s=0.1)
 
     print("🎉 SoRoMoX installation successful!")
     ```

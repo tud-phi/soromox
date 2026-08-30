@@ -128,7 +128,6 @@ class Pendulum(SoftRobot):
 
         self.num_links = int(n_q)
         self.num_internal_dofs = self.num_links
-        self.num_dofs = self.num_velocities
 
         # set parameters
         self.m = m
@@ -354,7 +353,7 @@ class Pendulum(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            relative = self._fixed_evaluation_view().forward_kinematics_joints(
+            relative = self._fixed_base_robot_at_pose().forward_kinematics_joints(
                 q_internal
             )
             return self._compose_runtime_base_poses(q, relative)
@@ -376,7 +375,9 @@ class Pendulum(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            relative = self._fixed_evaluation_view().forward_kinematics_tips(q_internal)
+            relative = self._fixed_base_robot_at_pose().forward_kinematics_tips(
+                q_internal
+            )
             return self._compose_runtime_base_poses(q, relative)
         p_tips = self._tip_positions(q)  # (N,2)
         theta = self._cumulative_angles(q)  # (N,)
@@ -396,7 +397,9 @@ class Pendulum(SoftRobot):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            relative = self._fixed_evaluation_view().forward_kinematics_coms(q_internal)
+            relative = self._fixed_base_robot_at_pose().forward_kinematics_coms(
+                q_internal
+            )
             return self._compose_runtime_base_poses(q, relative)
         p_coms = self._com_positions(q)  # (N,2)
         theta = self._cumulative_angles(q)  # (N,)

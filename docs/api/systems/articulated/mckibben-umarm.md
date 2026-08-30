@@ -30,7 +30,7 @@ from soromox.systems import McKibbenActuatedUMArm
 params_path = Path("assets/robot_parameters/mckibben_umarm/reference_parameters.npz")
 robot = McKibbenActuatedUMArm.from_cached_parameters(params_path)
 
-q = jnp.zeros(robot.num_dofs)
+q = jnp.zeros(robot.num_coordinates)
 p = jnp.zeros(robot.num_actuators)
 
 actuator = robot.actuators[0]

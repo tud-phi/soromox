@@ -413,7 +413,7 @@ def _execute_gvs_dynamics_actuation_batch(
             block_dim=_gvs_model_block_dim(model),
         )
     )
-    actuation_model = model._fixed_evaluation_view() if floating else model
+    actuation_model = model._fixed_base_robot_at_pose() if floating else model
     actuation = GVSThreadlikeOperands.from_model(actuation_model)
     return execute_dynamics_and_threadlike_actuation_force(
         "gvs", dynamics, actuation, q, qd, controls
@@ -437,7 +437,7 @@ def _execute_pcs_dynamics_actuation_batch(
         if floating
         else PCSOperands.from_model(model)
     )
-    actuation_model = model._fixed_evaluation_view() if floating else model
+    actuation_model = model._fixed_base_robot_at_pose() if floating else model
     return execute_dynamics_and_threadlike_actuation_force(
         "pcs",
         dynamics,

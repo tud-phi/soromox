@@ -231,7 +231,6 @@ class PlanarHSA(PlanarPCS):
         self.B_xi = self.B_xi_unscaled
         self.num_active_strains = jnp.sum(selector)
         self.num_internal_dofs = int(self.num_active_strains.item())
-        self.num_dofs = self.num_velocities
         active_dofs_per_segment = jnp.sum(selector.reshape(n_segments, 3), axis=1)
         self._segment_dof_ends = tuple(
             int(value) for value in jnp.cumsum(active_dofs_per_segment).tolist()

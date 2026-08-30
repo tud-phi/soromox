@@ -49,7 +49,7 @@ def assert_backend_equivalence(
 
     t = jnp.asarray(0.125, dtype=jnp.float64)
     u = jnp.zeros((jax_model.num_actuators,), dtype=jnp.float64)
-    tau_ext = jnp.linspace(-0.01, 0.015, jax_model.num_dofs, dtype=jnp.float64)
+    tau_ext = jnp.linspace(-0.01, 0.015, jax_model.num_internal_dofs, dtype=jnp.float64)
     actuation_args = (u, tau_ext)
     expected_forward = jax.vmap(
         jax_model.forward_dynamics,

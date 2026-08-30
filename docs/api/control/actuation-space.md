@@ -287,7 +287,7 @@ asd = ActuationSpaceDynamics(robot=robot)
 
 # Define reference trajectory in configuration space
 ts = jnp.linspace(0, 10, 1000)
-q_des_ts = jnp.zeros((len(ts), robot.num_dofs))
+q_des_ts = jnp.zeros((len(ts), robot.num_internal_dofs))
 # ... fill in desired trajectory ...
 
 ref_traj = ReferenceTrajectory(ts=ts, x_des_ts=q_des_ts)

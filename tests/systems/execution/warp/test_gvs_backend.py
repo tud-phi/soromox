@@ -82,7 +82,7 @@ def test_gvs_operands_are_views_over_precomputed_model_data(
     operands = GVSOperands.from_model(model, block_dim=128)
 
     assert operands.num_segments == model.num_segments
-    assert operands.num_dofs == model.num_dofs
+    assert operands.num_dofs == model.num_internal_dofs
     assert operands.num_cells == model.max_num_integration_points - 1
     assert operands.num_quadrature == model.max_num_integration_points - 2
     assert operands.block_dim == 128
@@ -109,10 +109,10 @@ def test_gvs_pipeline_shapes_cover_public_workspace_and_outputs(
     )
     assert shapes.chain_outputs()["inertia"] == (
         3,
-        model.num_dofs,
-        model.num_dofs,
+        model.num_internal_dofs,
+        model.num_internal_dofs,
     )
-    assert shapes.chain_outputs()["gravity_force"] == (3, model.num_dofs)
+    assert shapes.chain_outputs()["gravity_force"] == (3, model.num_internal_dofs)
 
 
 @pytest.mark.parametrize(
@@ -145,10 +145,10 @@ def test_gvs_kinematics_shapes_cover_reduced_and_fused_paths(
     assert shapes.pose_workspace() == {"node_pose": (node_count * 4, 4)}
     assert shapes.workspace() == {
         "node_pose": (node_count * 4, 4),
-        "node_jacobian": (node_count * 6, model.num_dofs),
+        "node_jacobian": (node_count * 6, model.num_internal_dofs),
     }
     assert shapes.pose_output() == (3, 7, 4, 4)
-    assert shapes.jacobian_output() == (3, 7, 6, model.num_dofs)
+    assert shapes.jacobian_output() == (3, 7, 6, model.num_internal_dofs)
 
 
 def test_gvs_public_kinematics_match_jax_on_cpu_and_gpu(
@@ -184,8 +184,8 @@ def test_gvs_backend_params_override_reaches_warp_launches(
         backend_params=GVSBackendParams(warp_block_dim=192),
         base_pose=base.fixed_base_pose,
     )
-    q = jnp.linspace(-0.018, 0.023, model.num_dofs, dtype=jnp.float64)
-    qd = jnp.linspace(0.11, -0.09, model.num_dofs, dtype=jnp.float64)
+    q = jnp.linspace(-0.018, 0.023, model.num_internal_dofs, dtype=jnp.float64)
+    qd = jnp.linspace(0.11, -0.09, model.num_internal_dofs, dtype=jnp.float64)
     for actual, expected in zip(
         model.dynamics_terms(q, qd, backend="warp"),
         model.dynamics_terms(q, qd, backend="jax"),
@@ -213,7 +213,7 @@ def test_gvs_warp_kinematics_supports_every_basis_family_and_high_order(
         "WARP_CACHE_PATH", str(tmp_path / "gvs-all-bases-kinematics-cache")
     )
     model = _all_basis_family_model()
-    q = jnp.linspace(-0.025, 0.031, model.num_dofs, dtype=jnp.float64)
+    q = jnp.linspace(-0.025, 0.031, model.num_internal_dofs, dtype=jnp.float64)
     boundaries = model.segment_end_positions
     interiors = boundaries[:-1] + 0.43 * model.segment_lengths
     samples = jnp.concatenate((boundaries[::-1], interiors, interiors[2:3]), axis=0)

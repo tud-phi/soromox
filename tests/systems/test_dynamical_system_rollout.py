@@ -110,7 +110,7 @@ def test_continuous_rollouts_are_jittable_with_explicit_save_times():
         )
         return open_loop, closed_loop
 
-    y0 = jnp.zeros((2 * robot.num_dofs,))
+    y0 = jnp.zeros((2 * robot.num_internal_dofs,))
     open_loop, closed_loop = jax.jit(run)(jnp.array(0.0), y0)
 
     assert jnp.array_equal(open_loop.t, save_ts)
@@ -148,7 +148,7 @@ def test_continuous_rollouts_are_vmappable_with_explicit_save_times():
     q0s = jnp.array([[0.0, 0.0], [0.1, -0.1], [-0.2, 0.05]])
     open_loop_ys, closed_loop_ys = jax.jit(jax.vmap(run))(t0s, q0s)
 
-    expected_shape = (q0s.shape[0], save_ts.shape[0], 2 * robot.num_dofs)
+    expected_shape = (q0s.shape[0], save_ts.shape[0], 2 * robot.num_internal_dofs)
     assert open_loop_ys.shape == expected_shape
     assert closed_loop_ys.shape == expected_shape
     assert jnp.all(jnp.isfinite(open_loop_ys))

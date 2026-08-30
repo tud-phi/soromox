@@ -25,6 +25,7 @@ from soromox.systems.params import (
     validate_planar_base_pose,
     validate_quaternion_base_pose,
 )
+from soromox.utils.array_math import broadcast_leading_axes
 from soromox.utils.geometry import poses
 from soromox.utils.geometry.rotations import quaternion_multiply
 from soromox.utils.lie_algebra import se2, se3, so3
@@ -55,7 +56,6 @@ class SoftRobot(DynamicalSystem):
     :meth:`precompute` hook.
 
     Attributes:
-        num_dofs: Compatibility alias for the generalized-velocity dimension.
         num_actuators (int): Number of actuators.
         global_eps (float): Global epsilon for numerical computations.
         floating_base: Whether configuration and velocity contain runtime base
@@ -77,7 +77,6 @@ class SoftRobot(DynamicalSystem):
     global_eps: float  # Global epsilon for numerical computations
     floating_base: bool = eqx.field(static=True)
     num_internal_dofs: int = eqx.field(static=True)
-    num_dofs: int = eqx.field(static=True)
     fixed_base_pose: Array | None
     num_gauss_points: int | Array | None
     num_integration_points: int | Array | None
@@ -121,7 +120,8 @@ class SoftRobot(DynamicalSystem):
         """
         # Note: We don't call super().__init__() here because Equinox modules
         # work like dataclasses - fields are set directly rather than through
-        # parent __init__ calls. Child classes must set num_dofs and num_actuators.
+        # parent __init__ calls. Child classes must set the dimensions and
+        # number of actuators before installing actuator models.
         if not isinstance(floating_base, bool):
             raise TypeError("floating_base must be a bool.")
         if floating_base and base_pose is not None:
@@ -262,21 +262,6 @@ class SoftRobot(DynamicalSystem):
             )
         return array
 
-    @staticmethod
-    def _broadcast_leading(*arrays: Array) -> tuple[Array, ...]:
-        """Broadcast arrays over every axis except their trailing feature axis.
-
-        Args:
-            *arrays: Arrays whose leading shapes must be broadcast-compatible.
-
-        Returns:
-            Arrays with a common leading shape and unchanged trailing sizes.
-        """
-        leading = jnp.broadcast_shapes(*(array.shape[:-1] for array in arrays))
-        return tuple(
-            jnp.broadcast_to(array, (*leading, array.shape[-1])) for array in arrays
-        )
-
     def pack_configuration(
         self, q_internal: Array, *, base_pose: Array | None = None
     ) -> Array:
@@ -307,7 +292,7 @@ class SoftRobot(DynamicalSystem):
         base_pose = self._check_trailing_dimension(
             "base_pose", base_pose, self.num_base_coordinates
         )
-        base_pose, q_internal = self._broadcast_leading(base_pose, q_internal)
+        base_pose, q_internal = broadcast_leading_axes(base_pose, q_internal)
         return self.normalize_configuration(
             jnp.concatenate([base_pose, q_internal], -1)
         )
@@ -362,7 +347,7 @@ class SoftRobot(DynamicalSystem):
         base_velocity = self._check_trailing_dimension(
             "base_velocity", base_velocity, self.num_base_velocities
         )
-        base_velocity, qd_internal = self._broadcast_leading(base_velocity, qd_internal)
+        base_velocity, qd_internal = broadcast_leading_axes(base_velocity, qd_internal)
         return jnp.concatenate([base_velocity, qd_internal], -1)
 
     def split_velocity(self, v: Array) -> tuple[Array | None, Array]:
@@ -403,7 +388,7 @@ class SoftRobot(DynamicalSystem):
         auxiliary_state = self._check_trailing_dimension(
             "auxiliary_state", auxiliary_state, self.num_auxiliary_states
         )
-        q, v, auxiliary_state = self._broadcast_leading(q, v, auxiliary_state)
+        q, v, auxiliary_state = broadcast_leading_axes(q, v, auxiliary_state)
         return jnp.concatenate([q, v, auxiliary_state], axis=-1)
 
     def split_state(self, y: Array) -> tuple[Array, Array, Array]:
@@ -451,8 +436,8 @@ class SoftRobot(DynamicalSystem):
         normalized = jnp.where(regular, normalized, identity)
         return jnp.concatenate([normalized, q[..., 4:]], axis=-1)
 
-    def _project_rollout_state(self, y: Array) -> Array:
-        """Normalize constrained configuration storage in rollout states.
+    def project_state(self, y: Array) -> Array:
+        """Project a state onto the robot's configuration manifold.
 
         Fixed and planar systems return the original state without additional
         array operations. Spatial floating systems normalize the leading
@@ -482,7 +467,7 @@ class SoftRobot(DynamicalSystem):
         """
         q = self._check_trailing_dimension("q", q, self.num_coordinates)
         v = self._check_trailing_dimension("v", v, self.num_velocities)
-        q, v = self._broadcast_leading(q, v)
+        q, v = broadcast_leading_axes(q, v)
         if not self.floating_base:
             return v
         v_base, qd_internal = self.split_velocity(v)
@@ -511,7 +496,7 @@ class SoftRobot(DynamicalSystem):
         delta_v = self._check_trailing_dimension(
             "delta_v", delta_v, self.num_velocities
         )
-        q, delta_v = self._broadcast_leading(q, delta_v)
+        q, delta_v = broadcast_leading_axes(q, delta_v)
         if not self.floating_base:
             return q + delta_v
         delta_base, delta_internal = self.split_velocity(delta_v)
@@ -623,61 +608,55 @@ class SoftRobot(DynamicalSystem):
         """
         return None
 
-    def _fixed_evaluation_view(self, base_pose: Array | None = None) -> Self:
-        """Return a fixed evaluation view without rebuilding model parameters.
+    def _fixed_base_robot_at_pose(self, base_pose: Array | None = None) -> Self:
+        """
+        Return a fixed-base copy mounted at the requested pose.
+
+        Floating systems store their base pose in the runtime configuration,
+        while existing internal-coordinate algorithms expect a statically
+        mounted robot. This method creates the latter without reconstructing
+        physical parameters or caches. The result deliberately excludes base
+        motion and floating/internal dynamic coupling, and is intended only for
+        coordinate transformations and controllers operating on internal
+        coordinates.
 
         Args:
-            base_pose: Mounting for the returned view. Floating robots use
+            base_pose: Mounting for the returned robot. Floating robots use
                 identity when omitted. Fixed robots return themselves when it
                 is omitted.
 
         Returns:
-            A shallow fixed-base model view with internal dimensions and
-            mounting-dependent transforms refreshed.
+            The original fixed robot when no change is required, or a shallow
+            fixed-base copy whose mounting-dependent transforms are refreshed.
         """
         if not self.floating_base:
             if base_pose is None:
                 return self
             return self.with_fixed_base_pose(base_pose)
         pose = self._identity_base_pose if base_pose is None else jnp.asarray(base_pose)
-        view = copy.copy(self)
-        object.__setattr__(view, "floating_base", False)
-        object.__setattr__(view, "fixed_base_pose", pose)
-        object.__setattr__(view, "num_dofs", self.num_internal_dofs)
+        fixed_robot = copy.copy(self)
+        object.__setattr__(fixed_robot, "floating_base", False)
+        object.__setattr__(fixed_robot, "fixed_base_pose", pose)
         transform = (
             poses.planar_pose_to_transform(pose)
             if self.is_planar
             else poses.quaternion_pose_to_transform(pose)
         )
-        if hasattr(view, "g0"):
-            object.__setattr__(view, "g0", transform)
-        if hasattr(view, "gravity_base") and view.gravity_base is not None:
+        if hasattr(fixed_robot, "g0"):
+            object.__setattr__(fixed_robot, "g0", transform)
+        if (
+            hasattr(fixed_robot, "gravity_base")
+            and fixed_robot.gravity_base is not None
+        ):
             adjoint_inverse = (
                 se2.adjoint_inverse if self.is_planar else se3.adjoint_inverse
             )
             object.__setattr__(
-                view, "gravity_base", adjoint_inverse(transform) @ view.g
+                fixed_robot,
+                "gravity_base",
+                adjoint_inverse(transform) @ fixed_robot.g,
             )
-        return view
-
-    def controller_model_and_state(self, y: Array) -> tuple[Self, Array, Array]:
-        """Return the fixed model view and internal state used by controllers.
-
-        Model-based floating controllers account for the current base pose in
-        kinematics and gravity. They intentionally ignore base velocity,
-        acceleration, reaction motion, and floating/internal dynamic coupling.
-
-        Args:
-            y: Complete state with trailing dimension ``state_size``.
-
-        Returns:
-            ``(model, q_internal, qd_internal)``. For floating robots ``model``
-            is mounted at the runtime pose; for fixed robots it is ``self``.
-        """
-        q, v, _ = self.split_state(y)
-        base_pose, q_internal = self.split_configuration(q)
-        _, qd_internal = self.split_velocity(v)
-        return self._fixed_evaluation_view(base_pose), q_internal, qd_internal
+        return fixed_robot
 
     def _configure_actuation(
         self,
@@ -685,8 +664,6 @@ class SoftRobot(DynamicalSystem):
         passive_elements: PassiveElement | tuple[PassiveElement, ...] | None = (),
     ) -> None:
         """Install immutable actuator/passive components after DOFs are known."""
-        if not hasattr(self, "num_internal_dofs"):
-            object.__setattr__(self, "num_internal_dofs", self.num_dofs)
         if actuators is None:
             normalized_actuators = (IdentityActuator(self.num_internal_dofs),)
         elif isinstance(actuators, Actuator):
@@ -815,7 +792,7 @@ class SoftRobot(DynamicalSystem):
         Compute the forward kinematics at a point s along the robot.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             s: Position parameter along the robot structure. The meaning depends
                 on the specific robot type:
                 - For continuum robots (PCS, PlanarPCS): arc-length in [0, L_total]
@@ -853,8 +830,14 @@ class SoftRobot(DynamicalSystem):
             )
         return base_transform @ relative_pose
 
-    def _reference_forward_kinematics(self, q: Array, s: Array) -> Array:
-        """Evaluate one pose through the differentiable JAX implementation.
+    def _absolute_forward_kinematics(self, q: Array, s: Array) -> Array:
+        """
+        Evaluate absolute forward kinematics.
+
+        System methods use JAX by convention. This semantic helper differs from
+        :meth:`_forward_kinematics` only by composing the runtime base when the
+        robot is floating. Accelerated backends also use it for derivative
+        substitution.
 
         Args:
             q: Fixed internal or floating total configuration.
@@ -867,8 +850,14 @@ class SoftRobot(DynamicalSystem):
             return self._floating_forward_kinematics(q, s)
         return self._forward_kinematics(q, s)
 
-    def _reference_inertial_jacobian(self, q: Array, s: Array) -> Array:
-        """Evaluate one inertial Jacobian through differentiable JAX code.
+    def _absolute_inertial_jacobian(self, q: Array, s: Array) -> Array:
+        """
+        Evaluate an absolute inertial-frame Jacobian.
+
+        Fixed models return their internal-coordinate Jacobian. Floating models
+        rotate those columns into the world frame and prepend the runtime base
+        columns. Accelerated backends also use this method for derivative
+        substitution.
 
         Args:
             q: Fixed internal or floating total configuration.
@@ -887,10 +876,11 @@ class SoftRobot(DynamicalSystem):
             q, relative_transform, jacobian_internal
         )
 
-    def _reference_forward_kinematics_abscissa_batched(
+    def _absolute_forward_kinematics_abscissa_batched(
         self, q: Array, s: Array
     ) -> Array:
-        """Evaluate a pose batch through the differentiable JAX traversal.
+        """
+        Evaluate absolute forward kinematics at multiple abscissae.
 
         Args:
             q: Fixed internal or floating total configuration.
@@ -905,10 +895,9 @@ class SoftRobot(DynamicalSystem):
         relative_poses = self._forward_kinematics_abscissa_batched(q_internal, s)
         return self._compose_runtime_base_poses(q, relative_poses)
 
-    def _reference_inertial_jacobian_abscissa_batched(
-        self, q: Array, s: Array
-    ) -> Array:
-        """Evaluate an inertial-Jacobian batch through JAX.
+    def _absolute_inertial_jacobian_abscissa_batched(self, q: Array, s: Array) -> Array:
+        """
+        Evaluate absolute inertial-frame Jacobians at multiple abscissae.
 
         Args:
             q: Fixed internal or floating total configuration.
@@ -952,11 +941,24 @@ class SoftRobot(DynamicalSystem):
         return jnp.einsum("ab,nbc->nac", base_transform, relative_poses)
 
     def _forward_kinematics(self, q: Array, s: Array) -> Array:
-        """
-        Protected primal forward-kinematics hook for custom autodiff wrappers.
+        """Evaluate model-relative forward kinematics at one abscissa.
 
-        Subclasses that inherit the public SoftRobot forward_kinematics method
-        should override this hook.
+        Concrete systems override this protected hook with their specialized
+        internal-coordinate recurrence. Public methods compose a runtime base
+        separately when floating-base state is enabled.
+
+        Args:
+            q: Internal generalized coordinates with shape
+                ``(num_internal_dofs,)``.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            A planar pose vector or spatial homogeneous transform relative to
+            the model's kinematic base.
+
+        Raises:
+            NotImplementedError: If a concrete system does not implement the
+                kinematic recurrence.
         """
         raise NotImplementedError(
             f"{type(self).__name__} must implement _forward_kinematics."
@@ -993,7 +995,7 @@ class SoftRobot(DynamicalSystem):
         and did not show enough benchmark benefit to justify the maintenance
         cost.
         """
-        forward_kinematics = self._reference_forward_kinematics
+        forward_kinematics = self._absolute_forward_kinematics
         if qd is not None:
             if sd is None:
                 return jvp(lambda q_: forward_kinematics(q_, s), (q,), (qd,))
@@ -1018,7 +1020,7 @@ class SoftRobot(DynamicalSystem):
         Compute the forward kinematics at all segment or link tips.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
             chi_tips: Poses at the robot tips. The shape and meaning depend on
@@ -1037,7 +1039,7 @@ class SoftRobot(DynamicalSystem):
         Subclasses may override this for more efficient batch computation.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             s_ps: Array of position parameters, shape (N,).
 
         Returns:
@@ -1096,11 +1098,11 @@ class SoftRobot(DynamicalSystem):
         (Cartesian/task space) velocities at point s.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             s: Position parameter along the robot structure.
 
         Returns:
-            J: Jacobian matrix of shape (n_pose_dim, num_dofs), where n_pose_dim
+            J: Jacobian matrix of shape (n_pose_dim, num_velocities), where n_pose_dim
                 depends on the robot type:
                 - For 3D robots (PCS): 6 (angular velocity + linear velocity)
                 - For planar robots (PlanarPCS, Pendulum): 3 (omega_z, v_x, v_y)
@@ -1219,11 +1221,11 @@ class SoftRobot(DynamicalSystem):
         Compute inertial-frame Jacobians at all segment or link tips.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
             J_tips: Inertial-frame Jacobians at the robot tips, with shape
-                (num_tips, n_pose_dim, num_dofs).
+                (num_tips, n_pose_dim, num_velocities).
         """
         s_tips = jnp.cumsum(jnp.atleast_1d(jnp.asarray(self.segment_length)))
         return vmap(lambda s: self.jacobian(q, s))(s_tips)
@@ -1236,11 +1238,11 @@ class SoftRobot(DynamicalSystem):
         Subclasses may override this for more efficient batch computation.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             s_ps: Array of position parameters, shape (N,).
 
         Returns:
-            J_ps: Jacobians at all points, shape (N, n_pose_dim, num_dofs).
+            J_ps: Jacobians at all points, shape (N, n_pose_dim, num_velocities).
         """
         return vmap(lambda s: self.jacobian(q, s))(s_ps)
 
@@ -1275,7 +1277,7 @@ class SoftRobot(DynamicalSystem):
         Compute the Jacobian and its arc-length derivative at ``s``.
 
         Returns:
-            J: Jacobian matrix of shape (n_pose_dim, num_dofs).
+            J: Jacobian matrix of shape (n_pose_dim, num_velocities).
             Js: Arc-length derivative of the Jacobian with the same shape as ``J``.
         """
         return self._jacobian_and_arc_length_derivative(q, s)
@@ -1295,13 +1297,13 @@ class SoftRobot(DynamicalSystem):
         Compute the Jacobian and its time derivative at a point s along the robot.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
+            qd: Generalized velocities of shape (num_velocities,).
             s: Position parameter along the robot structure.
 
         Returns:
-            J: Jacobian matrix of shape (n_pose_dim, num_dofs).
-            Jd: Time derivative of the Jacobian, shape (n_pose_dim, num_dofs).
+            J: Jacobian matrix of shape (n_pose_dim, num_velocities).
+            Jd: Time derivative of the Jacobian, shape (n_pose_dim, num_velocities).
         """
         if self.floating_base:
             qdot = self.configuration_derivative(q, qd)
@@ -1330,13 +1332,13 @@ class SoftRobot(DynamicalSystem):
         Subclasses may override this for more efficient batch computation.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
+            qd: Generalized velocities of shape (num_velocities,).
             s_ps: Array of position parameters, shape (N,).
 
         Returns:
-            J_ps: Jacobians at all points, shape (N, n_pose_dim, num_dofs).
-            Jd_ps: Jacobian time derivatives at all points, shape (N, n_pose_dim, num_dofs).
+            J_ps: Jacobians at all points, shape (N, n_pose_dim, num_velocities).
+            Jd_ps: Jacobian time derivatives at all points, shape (N, n_pose_dim, num_velocities).
         """
         return vmap(lambda s: self.jacobian_and_time_derivative(q, qd, s))(s_ps)
 
@@ -2057,10 +2059,10 @@ class SoftRobot(DynamicalSystem):
         Compute the generalized inertia (mass) matrix.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
-            M: Inertia matrix of shape (num_dofs, num_dofs).
+            M: Inertia matrix of shape (num_velocities, num_velocities).
         """
         ...
 
@@ -2078,11 +2080,11 @@ class SoftRobot(DynamicalSystem):
         with the same inertia matrix.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
+            qd: Generalized velocities of shape (num_velocities,).
 
         Returns:
-            C: Coriolis matrix of shape (num_dofs, num_dofs).
+            C: Coriolis matrix of shape (num_velocities, num_velocities).
         """
         ...
 
@@ -2092,10 +2094,10 @@ class SoftRobot(DynamicalSystem):
         Compute the damping matrix.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
-            D: Damping matrix of shape (num_dofs, num_dofs).
+            D: Damping matrix of shape (num_velocities, num_velocities).
         """
         ...
 
@@ -2104,7 +2106,7 @@ class SoftRobot(DynamicalSystem):
         Compute the stiffness matrix of the robot.
 
         Returns:
-            K: Stiffness matrix of shape (num_dofs, num_dofs).
+            K: Stiffness matrix of shape (num_velocities, num_velocities).
         """
         ...
 
@@ -2114,10 +2116,10 @@ class SoftRobot(DynamicalSystem):
         Compute the elastic (stiffness) force.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
-            tau_el: Elastic force of shape (num_dofs,).
+            tau_el: Elastic force of shape (num_velocities,).
         """
         ...
 
@@ -2126,10 +2128,10 @@ class SoftRobot(DynamicalSystem):
         Compute the gravitational force.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
-            G: Gravitational force of shape (num_dofs,).
+            G: Gravitational force of shape (num_velocities,).
         """
         if self.floating_base:
             zeros = jnp.zeros((self.num_velocities,), dtype=q.dtype)
@@ -2143,10 +2145,10 @@ class SoftRobot(DynamicalSystem):
         This is the sum of gravitational and elastic forces.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
-            tau_pot: Potential force of shape (num_dofs,).
+            tau_pot: Potential force of shape (num_velocities,).
         """
         return self.gravitational_force(q) + self.elastic_force(q)
 
@@ -2161,10 +2163,10 @@ class SoftRobot(DynamicalSystem):
         custom-JVP energy wrapper.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
 
         Returns:
-            G: Gravitational generalized force of shape ``(num_dofs,)``.
+            G: Gravitational generalized force of shape ``(num_velocities,)``.
         """
         return grad(lambda q_: self._gravitational_energy(q_))(q)
 
@@ -2179,7 +2181,7 @@ class SoftRobot(DynamicalSystem):
         actuation.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
 
         Returns:
             y_a: Actuator coordinates of shape ``(num_actuators,)``. An
@@ -2187,7 +2189,7 @@ class SoftRobot(DynamicalSystem):
         """
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            return self._fixed_evaluation_view().actuator_coordinates(q_internal)
+            return self._fixed_base_robot_at_pose().actuator_coordinates(q_internal)
         if not self.actuators:
             return jnp.zeros((0,), dtype=q.dtype)
         return jnp.concatenate(
@@ -2203,8 +2205,8 @@ class SoftRobot(DynamicalSystem):
         transmission matrix.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
-            qd: Generalized velocities of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
+            qd: Generalized velocities of shape ``(num_velocities,)``.
 
         Returns:
             yd_a: Actuator-coordinate velocities of shape
@@ -2214,7 +2216,7 @@ class SoftRobot(DynamicalSystem):
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
             _, qd_internal = self.split_velocity(qd)
-            return self._fixed_evaluation_view().actuator_velocities(
+            return self._fixed_base_robot_at_pose().actuator_velocities(
                 q_internal, qd_internal
             )
         if not self.actuators:
@@ -2228,11 +2230,11 @@ class SoftRobot(DynamicalSystem):
 
         if self.floating_base:
             _, q_internal = self.split_configuration(q)
-            internal = self._fixed_evaluation_view()._actuation_matrix(q_internal)
+            internal = self._fixed_base_robot_at_pose()._actuation_matrix(q_internal)
             return jnp.pad(internal, ((self.num_base_velocities, 0), (0, 0)))
 
         if not self.actuators:
-            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+            return jnp.zeros((self.num_velocities, 0), dtype=q.dtype)
         return jnp.concatenate(
             tuple(
                 actuator.transmission.moment_matrix(self, q)
@@ -2255,13 +2257,13 @@ class SoftRobot(DynamicalSystem):
         with respect to the generalized coordinates.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             backend: Optional execution-backend override. The base
                 implementation supports JAX execution.
 
         Returns:
             A: Actuator transmission matrix of shape
-                (num_dofs, num_actuators).
+                (num_velocities, num_actuators).
         """
         if backend not in (None, "auto", "jax"):
             raise NotImplementedError(
@@ -2287,11 +2289,11 @@ class SoftRobot(DynamicalSystem):
         used.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             u: Actuator controls of shape (num_actuators,).
-            qd: Optional generalized velocities of shape (num_dofs,).
+            qd: Optional generalized velocities of shape (num_velocities,).
             actuation_matrix: Optional precomputed actuator transmission matrix
-                with shape ``(num_dofs, num_actuators)``. It is reused for
+                with shape ``(num_velocities, num_actuators)``. It is reused for
                 velocity-dependent effort laws.
 
         Returns:
@@ -2311,7 +2313,7 @@ class SoftRobot(DynamicalSystem):
                 if actuation_matrix is None
                 else actuation_matrix[self.num_base_velocities :]
             )
-            return self._fixed_evaluation_view().actuator_efforts(
+            return self._fixed_base_robot_at_pose().actuator_efforts(
                 q_internal,
                 u,
                 qd=qd_internal,
@@ -2323,12 +2325,12 @@ class SoftRobot(DynamicalSystem):
                 f"u must have shape ({self.num_actuators},), got {u.shape}."
             )
         if actuation_matrix is not None and actuation_matrix.shape != (
-            self.num_dofs,
+            self.num_velocities,
             self.num_actuators,
         ):
             raise ValueError(
                 "actuation_matrix must have shape "
-                f"({self.num_dofs}, {self.num_actuators}), got "
+                f"({self.num_velocities}, {self.num_actuators}), got "
                 f"{actuation_matrix.shape}."
             )
         if not self.actuators:
@@ -2382,14 +2384,14 @@ class SoftRobot(DynamicalSystem):
         ``tau_u = A(q) @ e``.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
             u: Actuator controls of shape (num_actuators,).
-            qd: Optional generalized velocities of shape (num_dofs,).
+            qd: Optional generalized velocities of shape (num_velocities,).
             backend: Optional execution-backend override. The base
                 implementation supports JAX execution.
 
         Returns:
-            tau_u: Generalized actuation force of shape (num_dofs,).
+            tau_u: Generalized actuation force of shape (num_velocities,).
 
         Raises:
             ValueError: If ``u`` does not have shape (num_actuators,).
@@ -2409,11 +2411,11 @@ class SoftRobot(DynamicalSystem):
         evaluating :meth:`elastic_force`.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
 
         Returns:
             tau_passive: Passive elastic generalized force of shape
-                ``(num_dofs,)``. A robot without passive elements returns
+                ``(num_velocities,)``. A robot without passive elements returns
                 zeros.
         """
         if self.floating_base:
@@ -2426,13 +2428,15 @@ class SoftRobot(DynamicalSystem):
                     "q_internal", q, self.num_internal_dofs
                 )
             )
-            internal = self._fixed_evaluation_view().passive_elastic_force(q_internal)
+            internal = self._fixed_base_robot_at_pose().passive_elastic_force(
+                q_internal
+            )
             return (
                 jnp.pad(internal, (self.num_base_velocities, 0))
                 if total_input
                 else internal
             )
-        force = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        force = jnp.zeros((self.num_velocities,), dtype=q.dtype)
         for element in self.passive_elements:
             force = force + element.elastic_force(self, q)
         return force
@@ -2446,11 +2450,11 @@ class SoftRobot(DynamicalSystem):
         evaluating :meth:`damping_matrix`.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
 
         Returns:
             D_passive: Passive damping matrix of shape
-                ``(num_dofs, num_dofs)``. A robot without passive elements
+                ``(num_velocities, num_velocities)``. A robot without passive elements
                 returns zeros.
         """
         if self.floating_base:
@@ -2462,7 +2466,9 @@ class SoftRobot(DynamicalSystem):
                     "q_internal", q, self.num_internal_dofs
                 )
             )
-            internal = self._fixed_evaluation_view().passive_damping_matrix(q_internal)
+            internal = self._fixed_base_robot_at_pose().passive_damping_matrix(
+                q_internal
+            )
             return (
                 jnp.pad(
                     internal,
@@ -2471,7 +2477,7 @@ class SoftRobot(DynamicalSystem):
                 if total_input
                 else internal
             )
-        matrix = jnp.zeros((self.num_dofs, self.num_dofs), dtype=q.dtype)
+        matrix = jnp.zeros((self.num_velocities, self.num_velocities), dtype=q.dtype)
         for element in self.passive_elements:
             matrix = matrix + element.damping_matrix(self, q)
         return matrix
@@ -2485,7 +2491,7 @@ class SoftRobot(DynamicalSystem):
         when evaluating elastic or potential energy.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
 
         Returns:
             U_passive: Scalar passive elastic energy. A robot without passive
@@ -2500,7 +2506,7 @@ class SoftRobot(DynamicalSystem):
                     "q_internal", q, self.num_internal_dofs
                 )
             )
-            return self._fixed_evaluation_view().passive_elastic_energy(q_internal)
+            return self._fixed_base_robot_at_pose().passive_elastic_energy(q_internal)
         energy = jnp.zeros((), dtype=q.dtype)
         for element in self.passive_elements:
             energy = energy + element.elastic_energy(self, q)
@@ -2517,8 +2523,8 @@ class SoftRobot(DynamicalSystem):
         Default implementation: T = 0.5 * qd^T * M(q) * qd
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
+            qd: Generalized velocities of shape (num_velocities,).
 
         Returns:
             T: Kinetic energy (scalar).
@@ -2622,7 +2628,7 @@ class SoftRobot(DynamicalSystem):
         Compute the gravitational potential energy of the system.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
             U_g: Gravitational potential energy (scalar).
@@ -2672,7 +2678,7 @@ class SoftRobot(DynamicalSystem):
         Default implementation: U_el = 0.5 * q^T * K * q
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
             U_el: Elastic potential energy (scalar).
@@ -2722,7 +2728,7 @@ class SoftRobot(DynamicalSystem):
         This is the sum of gravitational and elastic energy.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
 
         Returns:
             U: Total potential energy (scalar).
@@ -2772,8 +2778,8 @@ class SoftRobot(DynamicalSystem):
         This is the sum of kinetic and potential energy.
 
         Args:
-            q: Generalized coordinates of shape (num_dofs,).
-            qd: Generalized velocities of shape (num_dofs,).
+            q: Generalized coordinates of shape (num_coordinates,).
+            qd: Generalized velocities of shape (num_velocities,).
 
         Returns:
             E: Total energy (scalar).
@@ -2860,12 +2866,13 @@ class SoftRobot(DynamicalSystem):
 
         Args:
             inertia: Active-coordinate inertia matrix with shape
-                ``(self.num_dofs, self.num_dofs)``.
-            rhs: Generalized right-hand side with shape ``(self.num_dofs,)``.
+                ``(self.num_velocities, self.num_velocities)``.
+            rhs: Generalized right-hand side with shape
+                ``(self.num_velocities,)``.
 
         Returns:
             Acceleration vector satisfying ``inertia @ acceleration == rhs``,
-            with shape ``(self.num_dofs,)``.
+            with shape ``(self.num_velocities,)``.
         """
 
         def generic(matrix: Array, vector: Array) -> Array:

@@ -23,8 +23,9 @@ Named horizontal, upright, and hanging poses are available from
 
 The dimensions are available explicitly as `num_internal_dofs`,
 `num_base_coordinates`, `num_base_velocities`, `num_coordinates`,
-`num_velocities`, `num_auxiliary_states`, and `state_size`. `num_dofs` remains a
-compatibility alias for `num_velocities`.
+`num_velocities`, `num_auxiliary_states`, and `state_size`. Configuration and
+velocity dimensions are intentionally separate because a spatial quaternion
+adds seven stored base coordinates but only six base velocity coordinates.
 
 Spatial floating systems use
 
@@ -76,30 +77,3 @@ evaluate a temporary fixed model at the current runtime base pose, so kinematics
 and gravity use the current mounting. They intentionally ignore base velocity,
 acceleration, reaction motion, and floating/internal dynamic coupling, and they
 never actuate the base.
-
-## Newton conversion boundary
-
-SoRoMoX does not depend on Newton and does not provide a Newton adapter. A
-downstream coupling package should convert conventions at its boundary. Newton
-stores linear center-of-mass velocity before angular velocity, whereas SoRoMoX
-stores world-frame angular velocity followed by world-frame velocity at the base
-origin:
-
-```text
-SoRoMoX velocity: [omega_world, v_origin_world]
-Newton body_qd:   [v_COM_world, omega_world]
-
-v_COM = v_origin + omega x r_origin_to_COM
-```
-
-Wrenches likewise change ordering and moment reference:
-
-```text
-SoRoMoX wrench: [tau_origin, force]
-Newton wrench:  [force, tau_COM]
-
-tau_COM = tau_origin - r_origin_to_COM x force
-```
-
-Finally, convert SoRoMoX's quaternion-first scalar-first pose to Newton's
-position plus XYZW quaternion representation.

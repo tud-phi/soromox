@@ -22,7 +22,7 @@ class _PlanarDefaultRobot(SoftRobot):
 
     def __init__(self):
         super().__init__()
-        self.num_dofs = self._num_fixture_dofs
+        self.num_internal_dofs = self._num_fixture_dofs
         self.L = jnp.array([1.0, 2.0], dtype=jnp.float64)
         self.num_gauss_points = 1
         self.num_integration_points = 3

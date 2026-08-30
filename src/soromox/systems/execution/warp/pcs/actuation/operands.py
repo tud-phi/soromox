@@ -47,7 +47,7 @@ class PCSThreadlikeOperands(eqx.Module):
         return cls(
             is_planar=model.is_planar,
             num_segments=model.num_segments,
-            num_dofs=model.num_dofs,
+            num_dofs=model.num_velocities,
             num_quadrature=model.num_gauss_points,
             routing=routing,
             active_strain_indices=model.active_strain_indices,

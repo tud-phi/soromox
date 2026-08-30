@@ -30,7 +30,7 @@ def actuator_visual_layers(
 
     Args:
         robot: Soft robot containing the installed actuation components.
-        q: Generalized coordinates of shape ``(robot.num_dofs,)``.
+        q: Generalized coordinates of shape ``(robot.num_coordinates,)``.
         s_points: Backbone sample coordinates with shape ``(num_points,)``
             used for routed continuum geometry.
         actuator_inputs: Optional actuator inputs of shape

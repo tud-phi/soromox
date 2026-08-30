@@ -102,11 +102,9 @@ class BaseSoftRobotRenderer(ABC):
         if self.ground_plane_size is not None and self.ground_plane_size <= 0.0:
             raise ValueError("ground_plane_size must be positive when provided")
         self._is_planar = bool(robot.is_planar)
-        floating_base = bool(getattr(robot, "floating_base", False))
+        floating_base = robot.floating_base
         initial_base_pose = (
-            robot._identity_base_pose
-            if floating_base
-            else getattr(robot, "fixed_base_pose", getattr(robot, "base_pose", None))
+            robot._identity_base_pose if floating_base else robot.fixed_base_pose
         )
         assert initial_base_pose is not None
         self.base_pose = jnp.asarray(initial_base_pose)
@@ -319,7 +317,7 @@ class BaseSoftRobotRenderer(ABC):
 
     def compute_backbone_poses(self, q: Array) -> Array:
         """Compute full FK poses at the configured backbone sample points."""
-        if bool(getattr(self.robot, "floating_base", False)):
+        if self.robot.floating_base:
             base_pose, _ = self.robot.split_configuration(q)
             assert base_pose is not None
             self.base_pose = jnp.asarray(base_pose)

@@ -194,7 +194,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         y = system_state.y
 
         # Get current configuration and velocity
-        robot, q, qd = self._controller_model_and_state(y)
+        robot, q, qd = self._controller_robot_and_state(y)
 
         # Get desired trajectory at current time
         assert self.reference_trajectory.xdd_des_fn is not None
@@ -253,7 +253,7 @@ class ComputedTorqueTracker(ClosedFormModelBasedController):
         y = system_state.y
 
         # Split state into configuration and velocity
-        robot, q, qd = self._controller_model_and_state(y)
+        robot, q, qd = self._controller_robot_and_state(y)
 
         # Get reference trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None

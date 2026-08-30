@@ -1,5 +1,12 @@
 # ruff: noqa: I001, UP018
-"""Allocation-free floating GVS dynamics and threadlike-force execution."""
+"""Allocation-free floating GVS dynamics and threadlike-force execution.
+
+This entry graph remains separate from :mod:`gvs.fused` because Warp hashes
+and compiles all kernels reachable from a Python module. Combining them would
+change the fixed module artifact and compile augmented kernels for fixed-only
+users. The floating and fixed graphs still share local joint, cell, and
+threadlike kernels; this module owns only their augmented composition.
+"""
 
 from __future__ import annotations
 
@@ -14,6 +21,7 @@ from soromox.systems.execution.warp.gvs.floating_chain import (
 )
 
 wp.set_module_options({"enable_backward": False})
+
 
 def launch_gvs_floating_dynamics_and_threadlike_actuation_force(
     joint_adjoint: wp.array2d[wp.float64],
@@ -130,6 +138,7 @@ def launch_gvs_floating_dynamics_and_threadlike_actuation_force(
         actuation_internal,
     )
     launch_prepend_zeros(actuation_internal, 6, actuation_force)
+
 
 gvs_floating_dynamics_and_threadlike_actuation_force = wp.jax_callable(
     launch_gvs_floating_dynamics_and_threadlike_actuation_force,

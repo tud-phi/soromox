@@ -159,10 +159,10 @@ class PassiveElement(eqx.Module):
             self.validate_values_for_robot(robot)
 
     def elastic_force(self, robot: SoftRobot, q: Array) -> Array:
-        return jnp.zeros((robot.num_dofs,), dtype=q.dtype)
+        return jnp.zeros((robot.num_velocities,), dtype=q.dtype)
 
     def damping_matrix(self, robot: SoftRobot, q: Array) -> Array:
-        return jnp.zeros((robot.num_dofs, robot.num_dofs), dtype=q.dtype)
+        return jnp.zeros((robot.num_velocities, robot.num_velocities), dtype=q.dtype)
 
     def elastic_energy(self, robot: SoftRobot, q: Array) -> Array:
         del robot
@@ -215,14 +215,14 @@ class Actuator(eqx.Module):
 
         Args:
             robot: Soft robot on which the actuator is installed.
-            q: Generalized coordinates of shape ``(robot.num_dofs,)``.
+            q: Generalized coordinates of shape ``(robot.num_coordinates,)``.
             control: Controls for this actuator with shape
                 ``(self.num_channels,)``.
             qd: Optional generalized velocities of shape
-                ``(robot.num_dofs,)``. If omitted for a velocity-dependent
+                ``(robot.num_velocities,)``. If omitted for a velocity-dependent
                 effort model, zero generalized velocity is used.
             transmission_matrix: Optional precomputed transmission matrix with
-                shape ``(robot.num_dofs, self.num_channels)``.
+                shape ``(robot.num_velocities, self.num_channels)``.
 
         Returns:
             e: Work-conjugate actuator efforts with shape
@@ -232,12 +232,12 @@ class Actuator(eqx.Module):
             ValueError: If ``transmission_matrix`` has an incompatible shape.
         """
         if transmission_matrix is not None and transmission_matrix.shape != (
-            robot.num_dofs,
+            robot.num_velocities,
             self.num_channels,
         ):
             raise ValueError(
                 "transmission_matrix must have shape "
-                f"({robot.num_dofs}, {self.num_channels}), got "
+                f"({robot.num_velocities}, {self.num_channels}), got "
                 f"{transmission_matrix.shape}."
             )
 

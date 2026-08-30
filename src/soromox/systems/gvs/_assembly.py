@@ -262,7 +262,6 @@ def assign_gvs_runtime_arrays(
         "num_internal_dofs",
         int(jnp.sum(dofs_per_segment, axis=(0, 1), dtype=int)),
     )
-    _set_model_field(model, "num_dofs", model.num_velocities)
     _set_model_field(
         model, "num_padded_dofs", int(jnp.array(n_segments * 2 * max_dof, dtype=int))
     )

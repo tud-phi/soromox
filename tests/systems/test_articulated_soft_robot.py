@@ -174,7 +174,7 @@ def test_import_and_inheritance():
     robot = make_articulated_robot()
 
     assert isinstance(robot, SoftRobot)
-    assert robot.num_dofs == 2
+    assert robot.num_internal_dofs == 2
     assert robot.num_actuators == 2
     assert not robot.is_planar
 
@@ -397,8 +397,8 @@ def test_batched_kinematics_and_jacobian_match_pointwise_evaluation(num_links):
 @pytest.mark.parametrize("num_links", [2, 3])
 def test_forward_mode_automatic_differentiability_at_zero_configuration(num_links):
     robot = make_articulated_robot(num_links)
-    q = jnp.zeros((robot.num_dofs,), dtype=jnp.float64)
-    qd = jnp.zeros((robot.num_dofs,), dtype=jnp.float64)
+    q = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
+    qd = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
     u = jnp.zeros((robot.num_actuators,), dtype=jnp.float64)
     y = jnp.concatenate([q, qd])
     s = robot.total_length
@@ -448,8 +448,8 @@ def test_forward_mode_automatic_differentiability_at_zero_configuration(num_link
 
 def test_reverse_mode_automatic_differentiability_at_zero_configuration():
     robot = make_spatial_robot()
-    q = jnp.zeros((robot.num_dofs,), dtype=jnp.float64)
-    qd = jnp.zeros((robot.num_dofs,), dtype=jnp.float64)
+    q = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
+    qd = jnp.zeros((robot.num_internal_dofs,), dtype=jnp.float64)
     u = jnp.zeros((robot.num_actuators,), dtype=jnp.float64)
     y = jnp.concatenate([q, qd])
     s = robot.total_length

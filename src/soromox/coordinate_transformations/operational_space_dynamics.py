@@ -45,7 +45,12 @@ class OperationalSpaceDynamics(eqx.Module):
     where Lambda = (J @ M^{-1} @ J^T)^{-1} is the operational space inertia matrix.
 
     Attributes:
-        robot: The soft robot (e.g., PCS, PlanarPCS, Pendulum) to transform.
+        robot: The complete soft-robot system supplied at construction. For a
+            floating system, this retains the runtime base coordinates.
+        fixed_base_robot: Fixed-base copy used for internal-coordinate
+            operational-space dynamics. For floating systems, controllers
+            remount this copy at the current runtime base pose. It deliberately
+            excludes base motion and floating/internal dynamic coupling.
         s_ps: Array of shape (N,) specifying points along the backbone where the
             operational space is defined. Each value should be in [0, L_total].
         task_selector: Boolean array specifying which velocity axes are active. The shape
@@ -97,7 +102,7 @@ class OperationalSpaceDynamics(eqx.Module):
     """
 
     robot: SoftRobot
-    system_robot: SoftRobot | None
+    fixed_base_robot: SoftRobot
     s_ps: Array  # Points along the backbone, shape (N,)
     task_selector: Array  # Boolean selector for which velocity axes are active
     B_task: Array  # Task selection basis matrix for velocity and acceleration space
@@ -173,8 +178,8 @@ class OperationalSpaceDynamics(eqx.Module):
             ValueError: If task_selector has incompatible shape.
             ValueError: If rotation components are partially selected (3D robots only).
         """
-        self.system_robot = robot if robot.floating_base else None
-        self.robot = robot._fixed_evaluation_view()
+        self.robot = robot
+        self.fixed_base_robot = robot._fixed_base_robot_at_pose()
         self.s_ps = jnp.atleast_1d(jnp.asarray(s_ps))
         self.rotation_representation = rotation_representation
 
@@ -290,12 +295,12 @@ class OperationalSpaceDynamics(eqx.Module):
             n_rows: 6 for 3D robots (PCS), 3 for planar robots (PlanarPCS, Pendulum).
         """
         # Create a dummy configuration to evaluate the Jacobian
-        n_dof = self.robot.num_dofs
+        n_dof = self.fixed_base_robot.num_internal_dofs
         q_dummy = jnp.zeros(n_dof)
         s_dummy = self.s_ps[0]
 
         # Evaluate the Jacobian to get its shape
-        J = self.robot.jacobian(q_dummy, s_dummy)
+        J = self.fixed_base_robot.jacobian(q_dummy, s_dummy)
         return J.shape[0]
 
     def _compute_task_basis(self, task_selector: Array) -> Array:
@@ -467,11 +472,11 @@ class OperationalSpaceDynamics(eqx.Module):
             J_full: Stacked Jacobian of shape (n_points * n_velocity_dim, num_dofs).
         """
         # Use batched method from the robot
-        J_ps = self.robot.jacobian_abscissa_batched(q, self.s_ps)
+        J_ps = self.fixed_base_robot.jacobian_abscissa_batched(q, self.s_ps)
         # J_ps has shape (n_points, n_velocity_dim, num_dofs)
 
         # Stack to get (n_points * n_velocity_dim, num_dofs)
-        J_full = J_ps.reshape(-1, self.robot.num_dofs)
+        J_full = J_ps.reshape(-1, self.fixed_base_robot.num_internal_dofs)
 
         return J_full
 
@@ -493,14 +498,16 @@ class OperationalSpaceDynamics(eqx.Module):
             Jd_full: Stacked Jacobian time derivative of shape (n_points * n_velocity_dim, num_dofs).
         """
         # Use batched method from the robot
-        J_ps, Jd_ps = self.robot.jacobian_and_time_derivative_abscissa_batched(
-            q, qd, self.s_ps
+        J_ps, Jd_ps = (
+            self.fixed_base_robot.jacobian_and_time_derivative_abscissa_batched(
+                q, qd, self.s_ps
+            )
         )
         # J_ps, Jd_ps have shape (n_points, n_pose_dim, num_dofs)
 
         # Stack to get (n_points * n_pose_dim, num_dofs)
-        J_full = J_ps.reshape(-1, self.robot.num_dofs)
-        Jd_full = Jd_ps.reshape(-1, self.robot.num_dofs)
+        J_full = J_ps.reshape(-1, self.fixed_base_robot.num_internal_dofs)
+        Jd_full = Jd_ps.reshape(-1, self.fixed_base_robot.num_internal_dofs)
 
         return J_full, Jd_full
 
@@ -832,7 +839,9 @@ class OperationalSpaceDynamics(eqx.Module):
             compute_task_pose_error: Returns task-selected pose error.
         """
         # Compute forward kinematics at all points
-        fk_results = self.robot.forward_kinematics_abscissa_batched(q, self.s_ps)
+        fk_results = self.fixed_base_robot.forward_kinematics_abscissa_batched(
+            q, self.s_ps
+        )
 
         # Extract pose vectors from forward kinematics results
         poses = vmap(self._extract_pose_from_fk)(fk_results)
@@ -934,7 +943,7 @@ class OperationalSpaceDynamics(eqx.Module):
                 (num_dofs, n_operational_space).
         """
         J = self.jacobian(q)
-        M = self.robot.inertia_matrix(q)
+        M = self.fixed_base_robot.inertia_matrix(q)
         M_inv = jnp.linalg.inv(M)
 
         # Lambda = (J @ M^{-1} @ J^T)^{-1}
@@ -966,7 +975,7 @@ class OperationalSpaceDynamics(eqx.Module):
                 (num_dofs, n_operational_space).
         """
         J = self.jacobian(q)
-        M = self.robot.inertia_matrix(q)
+        M = self.fixed_base_robot.inertia_matrix(q)
         M_inv = jnp.linalg.inv(M)
 
         # Lambda = (J @ M^{-1} @ J^T)^{-1}
@@ -996,7 +1005,7 @@ class OperationalSpaceDynamics(eqx.Module):
             N: Null-space projector matrix of shape (num_dofs, num_dofs).
         """
         J, J_bar = self.jacobian_and_dynamically_consistent_pseudoinverse(q)
-        n_dof = self.robot.num_dofs
+        n_dof = self.fixed_base_robot.num_internal_dofs
         N = jnp.eye(n_dof) - J_bar @ J
         return N
 
@@ -1022,7 +1031,7 @@ class OperationalSpaceDynamics(eqx.Module):
                 (n_operational_space, n_operational_space).
         """
         J = self.jacobian(q)
-        M = self.robot.inertia_matrix(q)
+        M = self.fixed_base_robot.inertia_matrix(q)
         M_inv = jnp.linalg.inv(M)
 
         # Lambda = (J @ M^{-1} @ J^T)^{-1}
@@ -1056,8 +1065,8 @@ class OperationalSpaceDynamics(eqx.Module):
                 (n_operational_space, num_dofs) that connects the operational-space Coriolis forces with the configuration-space velocities.
         """
         J, Jd = self.jacobian_and_time_derivative(q, qd)
-        M = self.robot.inertia_matrix(q)
-        C = self.robot.coriolis_matrix(q, qd)
+        M = self.fixed_base_robot.inertia_matrix(q)
+        C = self.fixed_base_robot.coriolis_matrix(q, qd)
         M_inv = jnp.linalg.inv(M)
 
         # Compute Lambda
@@ -1144,7 +1153,7 @@ class OperationalSpaceDynamics(eqx.Module):
                 (n_operational_space, n_operational_space).
         """
         J_bar = self.dynamically_consistent_pseudoinverse(q)
-        D = self.robot.damping_matrix(q)
+        D = self.fixed_base_robot.damping_matrix(q)
 
         # D_x = J_bar^T @ D @ J_bar
         D_x = J_bar.T @ D @ J_bar
@@ -1173,7 +1182,7 @@ class OperationalSpaceDynamics(eqx.Module):
             f_d_x: Operational space damping force of shape (n_operational_space,).
         """
         J_bar = self.dynamically_consistent_pseudoinverse(q)
-        D = self.robot.damping_matrix(q)
+        D = self.fixed_base_robot.damping_matrix(q)
 
         # f_d_x = J_bar^T @ D @ qd
         f_d_x = J_bar.T @ D @ qd
@@ -1198,7 +1207,7 @@ class OperationalSpaceDynamics(eqx.Module):
             f_el_x: Operational space elastic force of shape (n_operational_space,).
         """
         J_bar = self.dynamically_consistent_pseudoinverse(q)
-        tau_el = self.robot.elastic_force(q)
+        tau_el = self.fixed_base_robot.elastic_force(q)
 
         # f_el_x = J_bar^T @ tau_el
         f_el_x = J_bar.T @ tau_el
@@ -1223,7 +1232,7 @@ class OperationalSpaceDynamics(eqx.Module):
             G_x: Operational space gravitational force of shape (n_operational_space,).
         """
         J_bar = self.dynamically_consistent_pseudoinverse(q)
-        G = self.robot.gravitational_force(q)
+        G = self.fixed_base_robot.gravitational_force(q)
 
         # G_x = J_bar^T @ G
         G_x = J_bar.T @ G
@@ -1269,7 +1278,7 @@ class OperationalSpaceDynamics(eqx.Module):
                 (n_operational_space,).
         """
         J, Jd = self.jacobian_and_time_derivative(q, qd)
-        M, Cqd, G = self.robot.dynamics_terms(q, qd)
+        M, Cqd, G = self.fixed_base_robot.dynamics_terms(q, qd)
 
         # Solve once for all M^{-1}-weighted quantities needed below. This
         # preserves the existing operational-space definitions while avoiding

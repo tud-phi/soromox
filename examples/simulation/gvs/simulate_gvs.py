@@ -92,13 +92,16 @@ if __name__ == "__main__":
 
     print(f"System initialized with {robot.num_segments} segments")
     print(f"max DOFs: {robot.max_dof}, max Gauss points: {robot.max_num_gauss_points}.")
-    print(f"Total DOFs: {robot.num_dofs} (chosen), {robot.num_padded_dofs} (real)")
+    print(
+        f"Total DOFs: {robot.num_internal_dofs} (chosen), "
+        f"{robot.num_padded_dofs} (real)"
+    )
 
     # =====================================================
     # Simulation upon time
     # =====================================================
     # Initial configuration
-    q0 = jnp.zeros(robot.num_dofs)
+    q0 = jnp.zeros(robot.num_coordinates)
     # Initial velocities
     qd0 = jnp.zeros_like(q0)
 

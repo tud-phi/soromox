@@ -1,5 +1,13 @@
 # ruff: noqa: I001, UP018
-"""Allocation-free floating PCS dynamics and threadlike-force execution."""
+"""Allocation-free floating PCS dynamics and threadlike-force execution.
+
+Floating entry points intentionally live outside :mod:`pcs.fused`. Warp hashes
+and compiles a complete Python module, so importing the augmented launch graph
+into the fixed module would change the fixed kernel artifact and compile
+floating kernels for fixed-only users. Both modules reuse the same local
+operators and threadlike launchers; only root initialization, augmented
+accumulation, and output-prefix handling remain specialized here.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +39,7 @@ from soromox.systems.execution.warp.pcs.spatial_kernels import (
 )
 
 wp.set_module_options({"enable_backward": False})
+
 
 def launch_planar_floating_dynamics_and_threadlike_actuation_force(
     q_internal: wp.array2d[wp.float64],
@@ -72,7 +81,15 @@ def launch_planar_floating_dynamics_and_threadlike_actuation_force(
     actuation_internal: wp.array2d[wp.float64],
     actuation_force: wp.array2d[wp.float64],
 ):
-    """Enqueue augmented PlanarPCS dynamics and internal direct effort."""
+    """Enqueue augmented PlanarPCS dynamics and internal direct effort.
+
+    Returns:
+        None. Caller-owned augmented dynamics and actuator-force buffers are
+        updated without JAX-side padding or device transfers.
+
+    Raises:
+        NotImplementedError: If the inputs are not stored on a CUDA device.
+    """
     if not q_internal.device.is_cuda:
         raise NotImplementedError(
             "Fused floating PlanarPCS Warp dynamics and actuation require CUDA."
@@ -140,6 +157,7 @@ def launch_planar_floating_dynamics_and_threadlike_actuation_force(
     )
     launch_prepend_zeros(actuation_internal, 3, actuation_force)
 
+
 def launch_spatial_floating_dynamics_and_threadlike_actuation_force(
     q_internal: wp.array2d[wp.float64],
     qd_internal: wp.array2d[wp.float64],
@@ -182,7 +200,15 @@ def launch_spatial_floating_dynamics_and_threadlike_actuation_force(
     actuation_internal: wp.array2d[wp.float64],
     actuation_force: wp.array2d[wp.float64],
 ):
-    """Enqueue augmented spatial PCS dynamics and internal direct effort."""
+    """Enqueue augmented spatial PCS dynamics and internal direct effort.
+
+    Returns:
+        None. Caller-owned augmented dynamics and actuator-force buffers are
+        updated without JAX-side padding or device transfers.
+
+    Raises:
+        NotImplementedError: If the inputs are not stored on a CUDA device.
+    """
     if not q_internal.device.is_cuda:
         raise NotImplementedError(
             "Fused floating PCS Warp dynamics and actuation require CUDA."
@@ -250,6 +276,7 @@ def launch_spatial_floating_dynamics_and_threadlike_actuation_force(
         actuation_internal,
     )
     launch_prepend_zeros(actuation_internal, 6, actuation_force)
+
 
 planar_floating_dynamics_and_threadlike_actuation_force = wp.jax_callable(
     launch_planar_floating_dynamics_and_threadlike_actuation_force,

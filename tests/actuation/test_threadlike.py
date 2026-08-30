@@ -311,13 +311,17 @@ def test_linear_routing_rejects_longitudinal_components(intercept, slope):
 
 def test_identity_unactuated_and_mixed_construction():
     identity = _spatial_pcs()
-    assert identity.num_actuators == identity.num_dofs
+    assert identity.num_actuators == identity.num_internal_dofs
     assert isinstance(identity.actuators[0].transmission, IdentityTransmission)
-    assert_allclose(identity.actuation_matrix(jnp.zeros(identity.num_dofs)), jnp.eye(6))
+    assert_allclose(
+        identity.actuation_matrix(jnp.zeros(identity.num_internal_dofs)), jnp.eye(6)
+    )
 
     unactuated = _spatial_pcs(actuators=())
     assert unactuated.num_actuators == 0
-    assert unactuated.actuation_matrix(jnp.zeros(unactuated.num_dofs)).shape == (6, 0)
+    assert unactuated.actuation_matrix(
+        jnp.zeros(unactuated.num_internal_dofs)
+    ).shape == (6, 0)
 
     routing = _routing(count=1)
     mixed = _spatial_pcs(
@@ -326,7 +330,7 @@ def test_identity_unactuated_and_mixed_construction():
             ThreadlikeActuator.push_rods(routing),
         )
     )
-    q = jnp.zeros(mixed.num_dofs)
+    q = jnp.zeros(mixed.num_internal_dofs)
     raw = mixed._threadlike_moment_matrix(q, routing)
     assert_allclose(mixed.actuation_matrix(q), jnp.concatenate((-raw, raw), axis=1))
     assert [metadata.kind for metadata in mixed.actuator_input_metadata] == [
@@ -361,8 +365,8 @@ def test_actuation_force_matches_matrix_times_effort(factory, configuration):
             )
         )
 
-    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
-    qd = jnp.linspace(0.04, -0.01, robot.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, robot.num_internal_dofs)
+    qd = jnp.linspace(0.04, -0.01, robot.num_internal_dofs)
     control = jnp.linspace(1.0, 2.0, robot.num_actuators)
 
     expected = robot.actuation_matrix(q) @ robot.actuator_efforts(q, control, qd=qd)
@@ -371,8 +375,8 @@ def test_actuation_force_matches_matrix_times_effort(factory, configuration):
 
 def test_direct_effort_skips_unused_threadlike_state(monkeypatch):
     robot = _spatial_pcs(actuators=ThreadlikeActuator.tendons(_routing()))
-    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
-    qd = jnp.linspace(0.04, -0.01, robot.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, robot.num_internal_dofs)
+    qd = jnp.linspace(0.04, -0.01, robot.num_internal_dofs)
     control = jnp.array([3.0, 4.0])
     expected_force = robot.actuation_matrix(q) @ control
     calls = {"moment_matrix": 0}
@@ -416,8 +420,8 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
         CoordinateVelocityEffort(),
     )
     robot = _spatial_pcs(actuators=actuator)
-    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
-    qd = jnp.linspace(0.04, -0.01, robot.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, robot.num_internal_dofs)
+    qd = jnp.linspace(0.04, -0.01, robot.num_internal_dofs)
     control = jnp.array([3.0, 4.0])
 
     matrix = robot.actuation_matrix(q)
@@ -448,14 +452,16 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
 def test_precomputed_transmission_matrices_require_compatible_shapes():
     actuator = ThreadlikeActuator.tendons(_routing())
     robot = _spatial_pcs(actuators=actuator)
-    q = jnp.zeros(robot.num_dofs)
+    q = jnp.zeros(robot.num_internal_dofs)
     control = jnp.ones(robot.num_actuators)
 
     with pytest.raises(ValueError, match="actuation_matrix must have shape"):
         robot.actuator_efforts(
             q,
             control,
-            actuation_matrix=jnp.zeros((robot.num_dofs, robot.num_actuators + 1)),
+            actuation_matrix=jnp.zeros(
+                (robot.num_internal_dofs, robot.num_actuators + 1)
+            ),
         )
 
     with pytest.raises(ValueError, match="transmission_matrix must have shape"):
@@ -463,7 +469,9 @@ def test_precomputed_transmission_matrices_require_compatible_shapes():
             robot,
             q,
             control,
-            transmission_matrix=jnp.zeros((robot.num_dofs, actuator.num_channels + 1)),
+            transmission_matrix=jnp.zeros(
+                (robot.num_internal_dofs, actuator.num_channels + 1)
+            ),
         )
 
 
@@ -471,7 +479,7 @@ def test_precomputed_transmission_matrices_require_compatible_shapes():
 def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
     actuator = ThreadlikeActuator.tendons(_routing())
     robot = factory(actuators=actuator)
-    q = jnp.linspace(-0.02, 0.03, robot.num_dofs)
+    q = jnp.linspace(-0.02, 0.03, robot.num_internal_dofs)
     jacobian = jax.jacrev(robot.actuator_coordinates)(q)
     assert_allclose(jacobian, robot.actuation_matrix(q).T, rtol=2e-7, atol=2e-9)
 
@@ -484,7 +492,7 @@ def test_collapsed_threadlike_tangent_has_finite_reverse_mode(factory, axial_ind
     """Cover normalization and path density at an exactly zero routing tangent."""
     actuator = ThreadlikeActuator.tendons(_routing(count=1))
     robot = factory(actuators=actuator)
-    q = jnp.zeros(robot.num_dofs).at[axial_index].set(-1.0)
+    q = jnp.zeros(robot.num_internal_dofs).at[axial_index].set(-1.0)
 
     coordinate_jacobian = jax.jacrev(robot.actuator_coordinates)(q)
     matrix_jacobian = jax.jacrev(robot.actuation_matrix)(q)
@@ -506,7 +514,7 @@ def test_custom_nonlinear_routing_uses_the_common_host_contract():
         derivative_fn=_sinusoidal_derivative,
     )
     robot = _spatial_pcs(actuators=ThreadlikeActuator.tendons(routing))
-    q = jnp.linspace(-0.01, 0.02, robot.num_dofs)
+    q = jnp.linspace(-0.01, 0.02, robot.num_internal_dofs)
     assert_allclose(
         jax.jacrev(robot.actuator_coordinates)(q),
         robot.actuation_matrix(q).T,
@@ -525,8 +533,8 @@ def test_modality_signs_pressure_work_pair_and_power():
             routing, effective_areas=jnp.array([2e-4])
         )
     )
-    q = jnp.linspace(-0.01, 0.02, tendon_robot.num_dofs)
-    qd = jnp.linspace(0.03, -0.02, tendon_robot.num_dofs)
+    q = jnp.linspace(-0.01, 0.02, tendon_robot.num_internal_dofs)
+    qd = jnp.linspace(0.03, -0.02, tendon_robot.num_internal_dofs)
     length = tendon_robot.actuators[0].path_lengths(tendon_robot, q)
 
     assert_allclose(tendon_robot.actuator_coordinates(q), -length)
@@ -568,7 +576,7 @@ def test_tendon_reference_fixture_preserves_generalized_force():
         base_pose=spatial_base_pose(),
         actuators=ThreadlikeActuator.tendons(routing),
     )
-    q = jnp.zeros(robot.num_dofs)
+    q = jnp.zeros(robot.num_internal_dofs)
 
     legacy_raw_matrix = jnp.zeros((12, 2))
     legacy_raw_matrix = legacy_raw_matrix.at[2, 0].set(-0.002)
@@ -622,7 +630,9 @@ def test_pcs_and_gvs_threadlike_transmissions_agree_for_constant_strain_basis():
 def test_passive_impedance_superposition_and_parameter_updates():
     routing = _routing(count=1)
     base = _spatial_pcs(actuators=())
-    rest_length = base._threadlike_path_lengths(jnp.zeros(base.num_dofs), routing)
+    rest_length = base._threadlike_path_lengths(
+        jnp.zeros(base.num_internal_dofs), routing
+    )
     impedance = ThreadlikeImpedance(
         routing=routing,
         stiffness=jnp.array([50.0]),
@@ -630,8 +640,8 @@ def test_passive_impedance_superposition_and_parameter_updates():
         rest_length=rest_length - 0.01,
     )
     robot = _spatial_pcs(actuators=(), passive_elements=(impedance,))
-    q = jnp.linspace(-0.01, 0.02, robot.num_dofs)
-    qd = jnp.linspace(0.02, -0.01, robot.num_dofs)
+    q = jnp.linspace(-0.01, 0.02, robot.num_internal_dofs)
+    qd = jnp.linspace(0.02, -0.01, robot.num_internal_dofs)
 
     path_jacobian = jax.jacrev(lambda q_: impedance.path_lengths(robot, q_))(q)
     assert_allclose(impedance.path_velocities(robot, q, qd), path_jacobian @ qd)
@@ -654,7 +664,7 @@ def test_passive_impedance_superposition_and_parameter_updates():
 def test_gvs_forward_dynamics_includes_passive_threadlike_damping():
     routing = _routing(count=1)
     base = _gvs(actuators=())
-    q = jnp.zeros((base.num_dofs,))
+    q = jnp.zeros((base.num_internal_dofs,))
     qd = jnp.array([0.4, -0.2, 0.3, -0.1])
     rest_length = base._threadlike_path_lengths(q, routing)
     impedance = ThreadlikeImpedance(
@@ -666,7 +676,7 @@ def test_gvs_forward_dynamics_includes_passive_threadlike_damping():
     robot = _gvs(actuators=(), passive_elements=(impedance,))
     y = jnp.concatenate((q, qd))
 
-    actual_qdd = robot.forward_dynamics(jnp.array(0.0), y)[robot.num_dofs :]
+    actual_qdd = robot.forward_dynamics(jnp.array(0.0), y)[robot.num_internal_dofs :]
     inertia, coriolis_force, gravity_force = robot.dynamics_terms(q, qd)
     expected_qdd = jnp.linalg.solve(
         inertia,
@@ -714,7 +724,7 @@ def test_actuator_nested_update_and_topology_rejection():
 def test_visual_layers_are_semantic_unstyled_and_carry_inputs():
     actuator = ThreadlikeActuator.muscles(_routing(count=2))
     robot = _spatial_pcs(actuators=actuator)
-    q = jnp.zeros(robot.num_dofs)
+    q = jnp.zeros(robot.num_internal_dofs)
     actuator_inputs = jnp.array([2.0, 3.0])
     layers = actuator_visual_layers(
         robot,

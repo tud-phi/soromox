@@ -27,11 +27,11 @@ class DynamicsModel(Protocol):
     Attributes:
         backend: Model-level execution preference used when a call does not
             supply an override.
-        num_dofs: Number of active generalized coordinates in the model.
+        num_coordinates: Number of stored configuration coordinates.
+        num_velocities: Number of generalized velocities.
     """
 
     backend: ExecutionBackend
-    num_dofs: int
     num_coordinates: int
     num_velocities: int
 
@@ -206,8 +206,8 @@ class KinematicsModel(Protocol):
     """Structural contract for accelerated continuum-system kinematics."""
 
     backend: ExecutionBackend
-    num_dofs: int
     num_coordinates: int
+    num_velocities: int
     floating_base: bool
     is_planar: bool
 
@@ -216,7 +216,7 @@ class KinematicsModel(Protocol):
 
         ...
 
-    def _reference_forward_kinematics(self, q: Array, s: Array) -> Array:
+    def _absolute_forward_kinematics(self, q: Array, s: Array) -> Array:
         """Return fixed or floating differentiable JAX pose kinematics."""
 
         ...
@@ -226,7 +226,7 @@ class KinematicsModel(Protocol):
 
         ...
 
-    def _reference_forward_kinematics_abscissa_batched(
+    def _absolute_forward_kinematics_abscissa_batched(
         self, q: Array, s: Array
     ) -> Array:
         """Return fixed or floating differentiable JAX pose batches."""
@@ -249,7 +249,7 @@ class KinematicsModel(Protocol):
 
         ...
 
-    def _reference_inertial_jacobian(self, q: Array, s: Array) -> Array:
+    def _absolute_inertial_jacobian(self, q: Array, s: Array) -> Array:
         """Return a fixed or augmented differentiable JAX Jacobian."""
 
         ...
@@ -259,9 +259,7 @@ class KinematicsModel(Protocol):
 
         ...
 
-    def _reference_inertial_jacobian_abscissa_batched(
-        self, q: Array, s: Array
-    ) -> Array:
+    def _absolute_inertial_jacobian_abscissa_batched(self, q: Array, s: Array) -> Array:
         """Return fixed or augmented differentiable JAX Jacobian batches."""
 
         ...
@@ -289,7 +287,8 @@ class ActuationModel(Protocol):
     """Structural contract for transform-aware actuation execution."""
 
     backend: ExecutionBackend
-    num_dofs: int
+    num_coordinates: int
+    num_velocities: int
     num_actuators: int
 
     def _actuation_matrix(self, q: Array) -> Array:

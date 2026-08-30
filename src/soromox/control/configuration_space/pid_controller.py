@@ -143,7 +143,7 @@ class PIDController(ClosedFormModelBasedController):
         y = system_state.y
 
         # Split state into configuration and velocity
-        robot, q, qd = self._controller_model_and_state(y)
+        robot, q, qd = self._controller_robot_and_state(y)
 
         # Get reference trajectory at current time
         assert self.reference_trajectory.x_des_fn is not None

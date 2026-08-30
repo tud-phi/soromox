@@ -1,5 +1,11 @@
 # ruff: noqa: I001, UP018
-"""Floating-base persistent whole-chain GVS dynamics kernel."""
+"""Floating-base persistent whole-chain GVS dynamics kernel.
+
+The augmented root and accumulator kernel remains separate from
+:mod:`gvs.chain` to preserve the fixed module's generated source, cache key,
+and compile graph. Local joint/cell operators and spatial primitives are shared
+below this entry-kernel boundary.
+"""
 
 from __future__ import annotations
 
@@ -21,6 +27,7 @@ from soromox.systems.execution.warp.common.storage import (
 wp.set_module_options({"enable_backward": False})
 
 SPATIAL_DIM = 6
+
 
 @wp.kernel(enable_backward=False)
 def floating_persistent_chain_kernel(
@@ -624,6 +631,7 @@ def floating_persistent_chain_kernel(
             cell += 1
         segment += 1
 
+
 def launch_floating_persistent_chain(
     joint_adjoint: wp.array2d[wp.float64],
     joint_adjoint_dot: wp.array2d[wp.float64],
@@ -740,6 +748,7 @@ def launch_floating_persistent_chain(
         ],
         block_dim=block_dim,
     )
+
 
 scalable_floating_persistent_chain = wp.jax_callable(
     launch_floating_persistent_chain, num_outputs=11

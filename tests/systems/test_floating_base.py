@@ -176,7 +176,7 @@ def test_continuum_floating_state_and_dynamics_contract(factory) -> None:
     assert q.shape == (robot.num_coordinates,)
     assert v.shape == (robot.num_velocities,)
     assert y.shape == (robot.state_size,)
-    assert robot.num_dofs == robot.num_velocities
+    assert not hasattr(robot, "num_dofs")
     assert robot.fixed_base_pose is None
 
     inertia, coriolis_velocity, gravity = robot.dynamics_terms(q, v, backend="jax")
@@ -186,9 +186,7 @@ def test_continuum_floating_state_and_dynamics_contract(factory) -> None:
     assert_allclose(inertia, inertia.T, rtol=1.0e-9, atol=1.0e-11)
 
     actuation_matrix = robot.actuation_matrix(q)
-    actuation_force = robot.actuation_force(
-        q, jnp.zeros((robot.num_actuators,)), qd=v
-    )
+    actuation_force = robot.actuation_force(q, jnp.zeros((robot.num_actuators,)), qd=v)
     elastic_force = robot.elastic_force(q)
     damping_matrix = robot.damping_matrix(q)
     num_base = robot.num_base_velocities
@@ -224,9 +222,7 @@ def test_articulated_floating_state_and_dynamics_contract(factory) -> None:
     assert_allclose(inertia, inertia.T, rtol=1.0e-9, atol=1.0e-11)
 
     actuation_matrix = robot.actuation_matrix(q)
-    actuation_force = robot.actuation_force(
-        q, jnp.zeros((robot.num_actuators,)), qd=v
-    )
+    actuation_force = robot.actuation_force(q, jnp.zeros((robot.num_actuators,)), qd=v)
     elastic_force = robot.elastic_force(q)
     damping_matrix = robot.damping_matrix(q)
     num_base = robot.num_base_velocities
@@ -279,6 +275,7 @@ def test_floating_gvs_warp_matches_jax_for_batch_and_jvp(
 
     def jax_terms(q_, v_):
         return robot.dynamics_terms(q_, v_, backend="jax")
+
     for actual, expected in zip(warp_terms(q, v), jax_terms(q, v), strict=True):
         assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)
 
@@ -307,11 +304,11 @@ def test_floating_gvs_warp_matches_jax_for_batch_and_jvp(
         assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)
 
     s = jnp.array(0.07)
-    warp_pose, warp_jacobian = (
-        robot.forward_kinematics_and_jacobian_inertialframe(q, s, backend="warp")
+    warp_pose, warp_jacobian = robot.forward_kinematics_and_jacobian_inertialframe(
+        q, s, backend="warp"
     )
-    jax_pose, jax_jacobian = (
-        robot.forward_kinematics_and_jacobian_inertialframe(q, s, backend="jax")
+    jax_pose, jax_jacobian = robot.forward_kinematics_and_jacobian_inertialframe(
+        q, s, backend="jax"
     )
     assert_allclose(warp_pose, jax_pose, rtol=2.0e-10, atol=2.0e-11)
     assert_allclose(warp_jacobian, jax_jacobian, rtol=2.0e-10, atol=2.0e-11)
@@ -352,7 +349,7 @@ def test_floating_gvs_warp_matches_jax_for_batch_and_jvp(
 
 def test_fixed_robot_rejects_runtime_base_state() -> None:
     floating = _planar_pcs()
-    fixed = floating._fixed_evaluation_view(jnp.array([0.1, 0.2, -0.3]))
+    fixed = floating._fixed_base_robot_at_pose(jnp.array([0.1, 0.2, -0.3]))
     q_internal = jnp.zeros(fixed.num_internal_dofs)
 
     with pytest.raises(ValueError, match="only valid for a floating-base robot"):
@@ -369,9 +366,7 @@ def test_floating_controller_matches_current_pose_fixed_view() -> None:
     qd_internal = jnp.linspace(0.04, -0.01, robot.num_internal_dofs)
     base_pose = jnp.array([0.3, 0.2, -0.1])
     q = robot.pack_configuration(q_internal, base_pose=base_pose)
-    v = robot.pack_velocity(
-        qd_internal, base_velocity=jnp.array([0.2, -0.1, 0.05])
-    )
+    v = robot.pack_velocity(qd_internal, base_velocity=jnp.array([0.2, -0.1, 0.05]))
     floating_state = SystemState(t=jnp.array(0.2), y=robot.pack_state(q, v))
     reference = ReferenceTrajectory(
         ts=jnp.array([0.0, 1.0]),
@@ -382,7 +377,7 @@ def test_floating_controller_matches_current_pose_fixed_view() -> None:
     gains = PIDControl(Kp=2.0, Ki=0.0, Kd=0.5)
     floating_controller = PIDController(robot, reference, gains)
 
-    fixed = robot._fixed_evaluation_view(base_pose)
+    fixed = robot._fixed_base_robot_at_pose(base_pose)
     fixed_controller = PIDController(fixed, reference, gains)
     fixed_state = SystemState(
         t=floating_state.t,
@@ -401,13 +396,11 @@ def test_spatial_rollout_projection_normalizes_only_base_quaternion() -> None:
         jnp.linspace(0.04, -0.01, robot.num_internal_dofs),
         base_velocity=jnp.linspace(-0.1, 0.2, robot.num_base_velocities),
     )
-    q = jnp.concatenate(
-        [jnp.array([1.8, 0.2, -0.1, 0.3, 0.1, -0.2, 0.4]), q_internal]
-    )
+    q = jnp.concatenate([jnp.array([1.8, 0.2, -0.1, 0.3, 0.1, -0.2, 0.4]), q_internal])
     auxiliary = jnp.zeros((robot.num_auxiliary_states,))
     y = robot.pack_state(q, v, auxiliary)
 
-    projected = robot._project_rollout_state(jnp.stack([y, y]))
+    projected = robot.project_state(jnp.stack([y, y]))
     projected_q, projected_v, projected_auxiliary = robot.split_state(projected)
     assert_allclose(jnp.linalg.norm(projected_q[..., :4], axis=-1), 1.0)
     assert_allclose(projected_q[..., 4:], jnp.stack([q[4:], q[4:]]))
@@ -467,15 +460,11 @@ def test_floating_pcs_warp_kinematics_matches_jax(
     )
     samples = jnp.linspace(0.0, float(robot.length), 5)
 
-    warp_result = (
-        robot.forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-            q, samples, backend="warp"
-        )
+    warp_result = robot.forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+        q, samples, backend="warp"
     )
-    jax_result = (
-        robot.forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-            q, samples, backend="jax"
-        )
+    jax_result = robot.forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
+        q, samples, backend="jax"
     )
     for actual, expected in zip(warp_result, jax_result, strict=True):
         assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)
@@ -529,11 +518,11 @@ def test_floating_pcs_warp_dynamics_matches_jax_on_cuda(
 
     q_batch = jnp.stack([q, robot.retract_configuration(q, 0.01 * v)])
     v_batch = jnp.stack([v, 0.8 * v])
-    warp_result = jax.vmap(
-        lambda q_, v_: robot.dynamics_terms(q_, v_, backend="warp")
-    )(q_batch, v_batch)
-    jax_result = jax.vmap(
-        lambda q_, v_: robot.dynamics_terms(q_, v_, backend="jax")
-    )(q_batch, v_batch)
+    warp_result = jax.vmap(lambda q_, v_: robot.dynamics_terms(q_, v_, backend="warp"))(
+        q_batch, v_batch
+    )
+    jax_result = jax.vmap(lambda q_, v_: robot.dynamics_terms(q_, v_, backend="jax"))(
+        q_batch, v_batch
+    )
     for actual, expected in zip(warp_result, jax_result, strict=True):
         assert_allclose(actual, expected, rtol=2.0e-10, atol=2.0e-11)

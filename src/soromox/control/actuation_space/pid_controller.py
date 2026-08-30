@@ -127,10 +127,7 @@ class PIDController(ActuationSpaceBaseController, ClosedFormModelBasedController
             PCS with configuration-dependent tendon routing).
         """
         self.actuation_space_dynamics = actuation_space_dynamics
-        self.robot = (
-            getattr(actuation_space_dynamics, "system_robot", None)
-            or actuation_space_dynamics.robot
-        )
+        self.robot = actuation_space_dynamics.robot
         self.pid_control = pid_control
 
         # Convert reference trajectory if needed, but also store the original
@@ -172,7 +169,9 @@ class PIDController(ActuationSpaceBaseController, ClosedFormModelBasedController
         """
         t = system_state.t
         y = system_state.y
-        asd, q, qd = self._controller_dynamics_and_state(y)
+        asd, q, qd = self._controller_dynamics_and_state(
+            y, self.actuation_space_dynamics
+        )
         n_a = asd.n_actuated
 
         # Transform current state to actuation space

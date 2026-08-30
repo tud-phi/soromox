@@ -136,7 +136,7 @@ def _evaluate_forward_kinematics_primal(
 ) -> Array:
     """Evaluate the scalar protected pose implementation."""
 
-    return model._reference_forward_kinematics(q, s)
+    return model._absolute_forward_kinematics(q, s)
 
 
 @_evaluate_forward_kinematics_primal.def_vmap
@@ -153,13 +153,13 @@ def _evaluate_forward_kinematics_vmap(
     if any(jax.tree.leaves(model_batched)):
         raise ValueError("Batching over kinematics model parameters is unsupported.")
     if not q_batched and not s_batched:
-        result = model._reference_forward_kinematics(q, s)
+        result = model._absolute_forward_kinematics(q, s)
     elif not q_batched and s_batched:
-        result = model._reference_forward_kinematics_abscissa_batched(q, s)
+        result = model._absolute_forward_kinematics_abscissa_batched(q, s)
     elif q_batched and not s_batched:
-        result = jax.vmap(model._reference_forward_kinematics, in_axes=(0, None))(q, s)
+        result = jax.vmap(model._absolute_forward_kinematics, in_axes=(0, None))(q, s)
     else:
-        result = jax.vmap(model._reference_forward_kinematics)(q, s)
+        result = jax.vmap(model._absolute_forward_kinematics)(q, s)
     return result, q_batched or s_batched
 
 
@@ -206,7 +206,7 @@ def _evaluate_inertial_jacobian_primal(
         The inertial-frame Jacobian at ``s``.
     """
 
-    return model._reference_inertial_jacobian(q, s)
+    return model._absolute_inertial_jacobian(q, s)
 
 
 @_evaluate_inertial_jacobian_primal.def_vmap
@@ -223,13 +223,13 @@ def _evaluate_inertial_jacobian_vmap(
     if any(jax.tree.leaves(model_batched)):
         raise ValueError("Batching over kinematics model parameters is unsupported.")
     if not q_batched and not s_batched:
-        result = model._reference_inertial_jacobian(q, s)
+        result = model._absolute_inertial_jacobian(q, s)
     elif not q_batched and s_batched:
-        result = model._reference_inertial_jacobian_abscissa_batched(q, s)
+        result = model._absolute_inertial_jacobian_abscissa_batched(q, s)
     elif q_batched and not s_batched:
-        result = jax.vmap(model._reference_inertial_jacobian, in_axes=(0, None))(q, s)
+        result = jax.vmap(model._absolute_inertial_jacobian, in_axes=(0, None))(q, s)
     else:
-        result = jax.vmap(model._reference_inertial_jacobian)(q, s)
+        result = jax.vmap(model._absolute_inertial_jacobian)(q, s)
     return result, q_batched or s_batched
 
 
@@ -248,27 +248,9 @@ def _evaluate_inertial_jacobian_jvp(
     """Differentiate the model's established scalar JAX Jacobian."""
 
     return eqx.filter_jvp(
-        lambda model, q, s: model._reference_inertial_jacobian(q, s),
+        lambda model, q, s: model._absolute_inertial_jacobian(q, s),
         primals,
         tangents,
-    )
-
-
-def _reference_kinematics(
-    model: KinematicsModel,
-    q: Array,
-    s: Array,
-    operation: KinematicsOperation,
-) -> KinematicsResult:
-    """Evaluate the requested differentiable scalar JAX kinematics result."""
-
-    if operation == "pose":
-        return evaluate_forward_kinematics(model, q, s)
-    if operation == "jacobian":
-        return evaluate_inertial_jacobian(model, q, s)
-    return (
-        evaluate_forward_kinematics(model, q, s),
-        evaluate_inertial_jacobian(model, q, s),
     )
 
 
@@ -333,13 +315,13 @@ def make_kinematics_evaluators(
             return model._forward_kinematics_jvp(q, s, qd, sd)
         if operation == "jacobian":
             return eqx.filter_jvp(
-                lambda model_, q_, s_: model_._reference_inertial_jacobian(q_, s_),
+                lambda model_, q_, s_: model_._absolute_inertial_jacobian(q_, s_),
                 primals,
                 tangents,
             )
         pose, pose_tangent = model._forward_kinematics_jvp(q, s, qd, sd)
         jacobian, jacobian_tangent = eqx.filter_jvp(
-            lambda model_, q_, s_: model_._reference_inertial_jacobian(q_, s_),
+            lambda model_, q_, s_: model_._absolute_inertial_jacobian(q_, s_),
             primals,
             tangents,
         )
@@ -388,12 +370,12 @@ def make_kinematics_evaluators(
             model_: KinematicsModel, q_: Array, s_: Array
         ) -> KinematicsResult:
             if operation == "pose":
-                return model_._reference_forward_kinematics_abscissa_batched(q_, s_)
+                return model_._absolute_forward_kinematics_abscissa_batched(q_, s_)
             if operation == "jacobian":
-                return model_._reference_inertial_jacobian_abscissa_batched(q_, s_)
+                return model_._absolute_inertial_jacobian_abscissa_batched(q_, s_)
             return (
-                model_._reference_forward_kinematics_abscissa_batched(q_, s_),
-                model_._reference_inertial_jacobian_abscissa_batched(q_, s_),
+                model_._absolute_forward_kinematics_abscissa_batched(q_, s_),
+                model_._absolute_inertial_jacobian_abscissa_batched(q_, s_),
             )
 
         return eqx.filter_jvp(jax_abscissa_batched, primals, tangents)

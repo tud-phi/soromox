@@ -1723,7 +1723,7 @@ def test_cached_constant_matrices_refresh_after_update_params_planar():
     assert_allclose(updated.D_active, expected_D, rtol=RTOL, atol=ATOL)
     assert_allclose(updated.stiffness_matrix(), expected_K, rtol=RTOL, atol=ATOL)
     assert_allclose(
-        updated.damping_matrix(jnp.zeros(updated.num_dofs)),
+        updated.damping_matrix(jnp.zeros(updated.num_internal_dofs)),
         expected_D,
         rtol=RTOL,
         atol=ATOL,
@@ -1932,8 +1932,12 @@ def test_rotational_strain_basis_length_scaling_matches_unscaled_coordinates_pla
         atol=ATOL,
     )
 
-    q_scaled = jnp.linspace(-0.04, 0.05, int(scaled.num_dofs), dtype=jnp.float64)
-    qd_scaled = jnp.linspace(0.02, -0.03, int(scaled.num_dofs), dtype=jnp.float64)
+    q_scaled = jnp.linspace(
+        -0.04, 0.05, int(scaled.num_internal_dofs), dtype=jnp.float64
+    )
+    qd_scaled = jnp.linspace(
+        0.02, -0.03, int(scaled.num_internal_dofs), dtype=jnp.float64
+    )
     q_unscaled = coordinate_map @ q_scaled
     qd_unscaled = coordinate_map @ qd_scaled
 

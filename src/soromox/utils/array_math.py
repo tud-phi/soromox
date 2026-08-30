@@ -1,6 +1,30 @@
-__all__ = ["blk_diag", "blk_concat"]
+__all__ = ["blk_diag", "blk_concat", "broadcast_leading_axes"]
 from jax import Array, lax
 from jax import numpy as jnp
+
+
+def broadcast_leading_axes(*arrays: Array) -> tuple[Array, ...]:
+    """Broadcast arrays while preserving each trailing feature dimension.
+
+    Args:
+        *arrays: Arrays whose leading shapes are broadcast-compatible. Every
+            input must have at least one axis; the final axis is treated as its
+            feature dimension and is not broadcast against the other inputs.
+
+    Returns:
+        Arrays with a common leading shape and their original trailing feature
+        dimensions.
+
+    Raises:
+        ValueError: If an input is scalar or the leading shapes cannot be
+            broadcast together.
+    """
+    if any(array.ndim == 0 for array in arrays):
+        raise ValueError("broadcast_leading_axes does not accept scalar arrays.")
+    leading_shape = jnp.broadcast_shapes(*(array.shape[:-1] for array in arrays))
+    return tuple(
+        jnp.broadcast_to(array, (*leading_shape, array.shape[-1])) for array in arrays
+    )
 
 
 def blk_diag(a: Array) -> Array:

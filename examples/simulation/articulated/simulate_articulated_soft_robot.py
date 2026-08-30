@@ -110,7 +110,7 @@ def plot_results(
     p_ee_ts = end_effector_positions(robot, q_ts)
 
     plt.figure()
-    for joint_idx in range(robot.num_dofs):
+    for joint_idx in range(robot.num_internal_dofs):
         plt.plot(ts, q_ts[:, joint_idx], label=f"q{joint_idx + 1} [rad]")
     plt.xlabel("Time [s]")
     plt.ylabel("Joint configuration")
