@@ -387,7 +387,7 @@ def get_gvs_basis_order_system_config() -> SystemConfig:
 
 
 def _gvs_context(system: GVS) -> MutableMapping[str, Array]:
-    dof = system.num_dofs
+    dof = system.num_internal_dofs
     q = jnp.linspace(-0.12, 0.12, dof)
     qd = jnp.linspace(0.16, -0.16, dof)
     ctx: MutableMapping[str, Array] = {

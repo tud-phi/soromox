@@ -103,39 +103,6 @@ def _explicit_backend(
     return model.backend if requested is None else requested
 
 
-def uses_warp_kinematics(
-    model: KinematicsModel,
-    backend: ExecutionBackend | None,
-    capabilities: KinematicsCapabilities,
-    *,
-    warp_supported: bool,
-) -> bool:
-    """Return whether a kinematics request resolves to Warp execution.
-
-    This static routing helper lets floating public methods retain their
-    specialized JAX recurrence while sending Warp requests through the
-    augmented runtime-base executor.
-
-    Args:
-        model: Continuum model supplying backend preference and dimensions.
-        backend: Optional per-call override.
-        capabilities: Family kinematics capability declaration.
-        warp_supported: Whether the concrete model class has a Warp executor.
-
-    Returns:
-        ``True`` exactly when backend policy selects Warp.
-    """
-    return (
-        _select_backend(
-            model,
-            backend,
-            capabilities,
-            warp_supported=warp_supported,
-        )
-        == "warp"
-    )
-
-
 def dispatch_actuation_matrix(
     model: ActuationModel,
     q: Array,
@@ -357,15 +324,15 @@ def _kinematics_abscissa_batched_result(
     s: Array,
     operation: KinematicsOperation,
 ) -> KinematicsResult:
-    """Evaluate a spatial batch with the model's specialized JAX traversal."""
+    """Evaluate an absolute spatial batch with the specialized JAX traversal."""
 
     if operation == "pose":
-        return model._forward_kinematics_abscissa_batched(q, s)
+        return model._absolute_forward_kinematics_abscissa_batched(q, s)
     if operation == "jacobian":
-        return model._jacobian_inertialframe_abscissa_batched(q, s)
+        return model._absolute_inertial_jacobian_abscissa_batched(q, s)
     return (
-        model._forward_kinematics_abscissa_batched(q, s),
-        model._jacobian_inertialframe_abscissa_batched(q, s),
+        model._absolute_forward_kinematics_abscissa_batched(q, s),
+        model._absolute_inertial_jacobian_abscissa_batched(q, s),
     )
 
 
@@ -495,5 +462,4 @@ __all__ = [
     "dispatch_dynamics_terms",
     "dispatch_kinematics",
     "dispatch_kinematics_abscissa_batched",
-    "uses_warp_kinematics",
 ]

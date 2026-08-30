@@ -14,12 +14,13 @@ from soromox.utils.geometry import poses
 
 class DummySpatialRobot:
     is_planar = False
+    floating_base = False
     length = jnp.array(1.0)
     segment_length = jnp.array([1.0])
 
     def __init__(self, base_pose: jnp.ndarray):
-        self.base_pose = jnp.asarray(base_pose)
-        self.base_transform = poses.quaternion_pose_to_transform(self.base_pose)
+        self.fixed_base_pose = jnp.asarray(base_pose)
+        self.base_transform = poses.quaternion_pose_to_transform(self.fixed_base_pose)
 
     def forward_kinematics_abscissa_batched(self, q, s_points):
         del q

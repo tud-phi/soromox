@@ -29,7 +29,6 @@ from soromox.systems.execution import (
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
-    uses_warp_kinematics,
 )
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
 from soromox.systems.gvs._runtime import SegmentRuntimeData
@@ -2445,28 +2444,6 @@ class GVS(SoftRobot):
             Homogeneous transform with shape ``(4, 4)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                GVS_KINEMATICS,
-                warp_supported=type(self) is GVS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="pose",
-                    backend=backend,
-                    capabilities=GVS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_pose = self._fixed_base_robot_at_pose().forward_kinematics(
-                q_internal, s, backend=backend
-            )
-            return base_transform @ relative_pose
         return dispatch_kinematics(
             self,
             q,
@@ -2497,30 +2474,6 @@ class GVS(SoftRobot):
             Homogeneous transforms with shape ``(N, 4, 4)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                GVS_KINEMATICS,
-                warp_supported=type(self) is GVS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="pose",
-                    backend=backend,
-                    capabilities=GVS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_poses = (
-                self._fixed_base_robot_at_pose().forward_kinematics_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return jnp.einsum("ij,njk->nik", base_transform, relative_poses)
         return dispatch_kinematics_abscissa_batched(
             self,
             q,
@@ -3815,32 +3768,6 @@ class GVS(SoftRobot):
             Inertial Jacobian with shape ``(6, D)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                GVS_KINEMATICS,
-                warp_supported=type(self) is GVS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="jacobian",
-                    backend=backend,
-                    capabilities=GVS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_pose, jacobian_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
-                    q_internal, s, backend=backend
-                )
-            )
-            return self._floating_jacobians_from_relative_inertial(
-                q, relative_pose, jacobian_internal
-            )
-
         return dispatch_kinematics(
             self,
             q,
@@ -3870,32 +3797,6 @@ class GVS(SoftRobot):
         Returns:
             Inertial-frame Jacobians with shape ``(N, 6, D)``.
         """
-
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                GVS_KINEMATICS,
-                warp_supported=type(self) is GVS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="jacobian",
-                    backend=backend,
-                    capabilities=GVS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_poses, jacobians_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return self._floating_jacobians_from_relative_inertial(
-                q, relative_poses, jacobians_internal
-            )
 
         return dispatch_kinematics_abscissa_batched(
             self,
@@ -3928,36 +3829,6 @@ class GVS(SoftRobot):
             ``(6, D)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                GVS_KINEMATICS,
-                warp_supported=type(self) is GVS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="both",
-                    backend=backend,
-                    capabilities=GVS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_pose, jacobian_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
-                    q_internal, s, backend=backend
-                )
-            )
-            return (
-                base_transform @ relative_pose,
-                self._floating_jacobians_from_relative_inertial(
-                    q, relative_pose, jacobian_internal
-                ),
-            )
-
         return dispatch_kinematics(
             self,
             q,
@@ -3988,36 +3859,6 @@ class GVS(SoftRobot):
             Poses with shape ``(N, 4, 4)`` and inertial Jacobians with shape
             ``(N, 6, D)``.
         """
-
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                GVS_KINEMATICS,
-                warp_supported=type(self) is GVS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="both",
-                    backend=backend,
-                    capabilities=GVS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_poses, jacobians_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return (
-                jnp.einsum("ij,njk->nik", base_transform, relative_poses),
-                self._floating_jacobians_from_relative_inertial(
-                    q, relative_poses, jacobians_internal
-                ),
-            )
 
         return dispatch_kinematics_abscissa_batched(
             self,

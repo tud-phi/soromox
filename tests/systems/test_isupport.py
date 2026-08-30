@@ -1,3 +1,5 @@
+"""Tests for the pressure-actuated I-SUPPORT system."""
+
 # ruff: noqa: E402
 import jax
 

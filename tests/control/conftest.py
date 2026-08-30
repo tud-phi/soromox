@@ -12,8 +12,7 @@ from soromox.control import ReferenceTrajectory
 class FakeRobot:
     def __init__(self, actuation_matrix):
         self._actuation_matrix = jnp.asarray(actuation_matrix, dtype=jnp.float64)
-        self.num_dofs = self._actuation_matrix.shape[0]
-        self.num_internal_dofs = self.num_dofs
+        self.num_internal_dofs = self._actuation_matrix.shape[0]
         self.num_actuators = self._actuation_matrix.shape[1]
 
     def actuation_matrix(self, q):
@@ -21,7 +20,6 @@ class FakeRobot:
 
 
 class BrokenActuationRobot:
-    num_dofs = 2
     num_internal_dofs = 2
     num_actuators = 2
 

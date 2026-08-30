@@ -32,7 +32,6 @@ from soromox.systems.execution import (
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
-    uses_warp_kinematics,
 )
 from soromox.systems.pcs.params import PCSParams
 from soromox.systems.pcs.structures import PCSStructure
@@ -970,28 +969,6 @@ class PCS(SoftRobot):
             Homogeneous transform with shape ``(4, 4)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PCS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="pose",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_pose = self._fixed_base_robot_at_pose().forward_kinematics(
-                q_internal, s, backend=backend
-            )
-            return base_transform @ relative_pose
         return dispatch_kinematics(
             self,
             q,
@@ -1022,30 +999,6 @@ class PCS(SoftRobot):
             Homogeneous transforms with shape ``(N, 4, 4)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PCS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="pose",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_poses = (
-                self._fixed_base_robot_at_pose().forward_kinematics_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return jnp.einsum("ij,njk->nik", base_transform, relative_poses)
         return dispatch_kinematics_abscissa_batched(
             self,
             q,
@@ -1987,32 +1940,6 @@ class PCS(SoftRobot):
             Inertial Jacobian with shape ``(6, D)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PCS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="jacobian",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_pose, jacobian_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
-                    q_internal, s, backend=backend
-                )
-            )
-            return self._floating_jacobians_from_relative_inertial(
-                q, relative_pose, jacobian_internal
-            )
-
         return dispatch_kinematics(
             self,
             q,
@@ -2042,32 +1969,6 @@ class PCS(SoftRobot):
         Returns:
             Inertial-frame Jacobians with shape ``(N, 6, D)``.
         """
-
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PCS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="jacobian",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_poses, jacobians_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return self._floating_jacobians_from_relative_inertial(
-                q, relative_poses, jacobians_internal
-            )
 
         return dispatch_kinematics_abscissa_batched(
             self,
@@ -2100,36 +2001,6 @@ class PCS(SoftRobot):
             ``(6, D)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PCS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="both",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_pose, jacobian_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
-                    q_internal, s, backend=backend
-                )
-            )
-            return (
-                base_transform @ relative_pose,
-                self._floating_jacobians_from_relative_inertial(
-                    q, relative_pose, jacobian_internal
-                ),
-            )
-
         return dispatch_kinematics(
             self,
             q,
@@ -2160,36 +2031,6 @@ class PCS(SoftRobot):
             Poses with shape ``(N, 4, 4)`` and inertial Jacobians with shape
             ``(N, 6, D)``.
         """
-
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PCS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="both",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            base_transform = self.base_transform_from_configuration(q)
-            _, q_internal = self.split_configuration(q)
-            relative_poses, jacobians_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return (
-                jnp.einsum("ij,njk->nik", base_transform, relative_poses),
-                self._floating_jacobians_from_relative_inertial(
-                    q, relative_poses, jacobians_internal
-                ),
-            )
 
         return dispatch_kinematics_abscissa_batched(
             self,

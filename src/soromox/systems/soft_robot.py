@@ -821,7 +821,8 @@ class SoftRobot(DynamicalSystem):
         """
         base_pose, q_internal = self.split_configuration(q)
         assert base_pose is not None
-        relative_pose = self._forward_kinematics(q_internal, s)
+        relative_robot = self._fixed_base_robot_at_pose()
+        relative_pose = relative_robot._forward_kinematics(q_internal, s)
         base_transform = self.base_transform_from_configuration(q)
         if self.is_planar:
             relative_transform = self._homogeneous_pose(relative_pose)
@@ -869,9 +870,10 @@ class SoftRobot(DynamicalSystem):
         if not self.floating_base:
             return self._jacobian_inertialframe(q, s)
         _, q_internal = self.split_configuration(q)
-        relative_pose = self._forward_kinematics(q_internal, s)
+        relative_robot = self._fixed_base_robot_at_pose()
+        relative_pose = relative_robot._forward_kinematics(q_internal, s)
         relative_transform = self._homogeneous_pose(relative_pose)
-        jacobian_internal = self._jacobian_inertialframe(q_internal, s)
+        jacobian_internal = relative_robot._jacobian_inertialframe(q_internal, s)
         return self._floating_jacobians_from_relative_inertial(
             q, relative_transform, jacobian_internal
         )
@@ -892,7 +894,10 @@ class SoftRobot(DynamicalSystem):
         if not self.floating_base:
             return self._forward_kinematics_abscissa_batched(q, s)
         _, q_internal = self.split_configuration(q)
-        relative_poses = self._forward_kinematics_abscissa_batched(q_internal, s)
+        relative_robot = self._fixed_base_robot_at_pose()
+        relative_poses = relative_robot._forward_kinematics_abscissa_batched(
+            q_internal, s
+        )
         return self._compose_runtime_base_poses(q, relative_poses)
 
     def _absolute_inertial_jacobian_abscissa_batched(self, q: Array, s: Array) -> Array:
@@ -909,10 +914,13 @@ class SoftRobot(DynamicalSystem):
         if not self.floating_base:
             return self._jacobian_inertialframe_abscissa_batched(q, s)
         _, q_internal = self.split_configuration(q)
-        relative_poses = self._forward_kinematics_abscissa_batched(q_internal, s)
-        relative_transforms = vmap(self._homogeneous_pose)(relative_poses)
-        jacobians_internal = self._jacobian_inertialframe_abscissa_batched(
+        relative_robot = self._fixed_base_robot_at_pose()
+        relative_poses = relative_robot._forward_kinematics_abscissa_batched(
             q_internal, s
+        )
+        relative_transforms = vmap(self._homogeneous_pose)(relative_poses)
+        jacobians_internal = (
+            relative_robot._jacobian_inertialframe_abscissa_batched(q_internal, s)
         )
         return self._floating_jacobians_from_relative_inertial(
             q, relative_transforms, jacobians_internal

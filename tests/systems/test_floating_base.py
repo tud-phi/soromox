@@ -3,7 +3,6 @@
 from pathlib import Path
 
 import jax
-import numpy as np
 import pytest
 from jax import jvp
 from jax import numpy as jnp
@@ -18,7 +17,6 @@ from system_param_builders import (
 from soromox.control.configuration_space.pid_controller import PIDController
 from soromox.control.pid_control import PIDControl
 from soromox.control.reference_trajectory import ReferenceTrajectory
-from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.systems import (
     GVS,
     PCS,
@@ -408,41 +406,8 @@ def test_spatial_rollout_projection_normalizes_only_base_quaternion() -> None:
     assert_allclose(projected_auxiliary, jnp.stack([auxiliary, auxiliary]))
 
 
-class _FloatingRendererProbe(BaseSoftRobotRenderer):
-    def render_frame(self, q):
-        return np.zeros((self.height, self.width, 3), dtype=np.uint8)
-
-    def render_sequence(self, ts, q_ts, playback_speed=1.0, record_path=None, **kwargs):
-        del ts, q_ts, playback_speed, record_path, kwargs
-
-    def show(self, q, **kwargs):
-        del q, kwargs
-
-
-@pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs])
-def test_renderer_follows_runtime_base_pose(factory) -> None:
-    robot = factory()
-    base_pose = (
-        jnp.array([0.96, 0.1, -0.2, 0.15, 0.3, -0.2, 0.4])
-        if not robot.is_planar
-        else jnp.array([0.4, 0.3, -0.2])
-    )
-    q = robot.pack_configuration(
-        jnp.zeros((robot.num_internal_dofs,)), base_pose=base_pose
-    )
-    renderer = _FloatingRendererProbe(robot, num_points=5)
-
-    poses = renderer.compute_backbone_poses(q)
-    expected_base = robot.base_transform_from_configuration(q)
-    assert_allclose(renderer.base_transform, expected_base)
-    if robot.is_planar:
-        assert_allclose(poses[0], robot.forward_kinematics(q, 0.0))
-    else:
-        assert_allclose(poses[0], expected_base, rtol=1.0e-10, atol=1.0e-11)
-
-
-@pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs])
-def test_floating_pcs_warp_kinematics_matches_jax(
+@pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs, _gvs])
+def test_floating_continuum_warp_kinematics_matches_jax(
     factory, monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:
     monkeypatch.setenv(

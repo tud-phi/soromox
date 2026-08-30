@@ -869,7 +869,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 gauss_points, integration_points = system_gauss_point_metadata(system)
                 print(
                     f"\n=== {system_name}: {system_cfg.size_label}="
-                    f"{segment_count}, dof={system.num_dofs}, "
+                    f"{segment_count}, dof={system.num_internal_dofs}, "
                     f"gauss_points={gauss_points}, s={float(ctx['s']):.6f} ==="
                 )
 
@@ -901,7 +901,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                 "custom_jvp": _strategy_custom_jvp_mode(strategy),
                                 "size_label": system_cfg.size_label,
                                 "segment_count": segment_count,
-                                "dof": int(system.num_dofs),
+                                "dof": int(system.num_internal_dofs),
                                 "gauss_points": gauss_points,
                                 "integration_points": integration_points,
                                 "compile_time_s": compile_time,

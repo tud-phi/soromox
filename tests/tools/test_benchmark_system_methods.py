@@ -42,6 +42,7 @@ def test_active_cpu_affinity_is_compact(monkeypatch: pytest.MonkeyPatch) -> None
         benchmark.os,
         "sched_getaffinity",
         lambda _pid: {0, 1, 2, 4, 7, 8},
+        raising=False,
     )
 
     assert benchmark._active_cpu_affinity() == "0-2;4;7-8"

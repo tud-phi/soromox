@@ -38,7 +38,6 @@ from soromox.systems.execution.dispatch import (
     dispatch_fused_dynamics_actuation_force,
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
-    uses_warp_kinematics,
 )
 from soromox.systems.execution.transforms import (
     evaluate_forward_dynamics,
@@ -112,7 +111,6 @@ __all__ = [
     "dispatch_fused_dynamics_actuation_force",
     "dispatch_kinematics",
     "dispatch_kinematics_abscissa_batched",
-    "uses_warp_kinematics",
     "default_gvs_block_dim",
     "evaluate_forward_dynamics",
     "evaluate_forward_kinematics",

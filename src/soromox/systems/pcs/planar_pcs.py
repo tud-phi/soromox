@@ -32,7 +32,6 @@ from soromox.systems.execution import (
     dispatch_kinematics,
     dispatch_kinematics_abscissa_batched,
     evaluate_forward_dynamics,
-    uses_warp_kinematics,
 )
 from soromox.systems.pcs.params import PlanarPCSParams
 from soromox.systems.pcs.structures import PlanarPCSStructure
@@ -950,27 +949,6 @@ class PlanarPCS(SoftRobot):
             Planar pose ``[theta, x, y]`` with shape ``(3,)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PlanarPCS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="pose",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_pose = self._fixed_base_robot_at_pose().forward_kinematics(
-                q_internal, s, backend=backend
-            )
-            return self._compose_runtime_base_poses(q, relative_pose[None])[0]
         return dispatch_kinematics(
             self,
             q,
@@ -1001,29 +979,6 @@ class PlanarPCS(SoftRobot):
             Planar poses with shape ``(N, 3)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PlanarPCS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="pose",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_poses = (
-                self._fixed_base_robot_at_pose().forward_kinematics_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            return self._compose_runtime_base_poses(q, relative_poses)
         return dispatch_kinematics_abscissa_batched(
             self,
             q,
@@ -1952,33 +1907,6 @@ class PlanarPCS(SoftRobot):
             Inertial Jacobian with shape ``(3, D)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PlanarPCS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="jacobian",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_pose, jacobian_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
-                    q_internal, s, backend=backend
-                )
-            )
-            relative_transform = poses.planar_pose_to_transform(relative_pose)
-            return self._floating_jacobians_from_relative_inertial(
-                q, relative_transform, jacobian_internal
-            )
-
         return dispatch_kinematics(
             self,
             q,
@@ -2008,33 +1936,6 @@ class PlanarPCS(SoftRobot):
         Returns:
             Inertial-frame Jacobians with shape ``(N, 3, D)``.
         """
-
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PlanarPCS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="jacobian",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_poses, jacobians_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            relative_transforms = vmap(poses.planar_pose_to_transform)(relative_poses)
-            return self._floating_jacobians_from_relative_inertial(
-                q, relative_transforms, jacobians_internal
-            )
 
         return dispatch_kinematics_abscissa_batched(
             self,
@@ -2067,36 +1968,6 @@ class PlanarPCS(SoftRobot):
             ``(3, D)``.
         """
 
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PlanarPCS,
-            ):
-                return dispatch_kinematics(
-                    self,
-                    q,
-                    s,
-                    operation="both",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_pose, jacobian_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe(
-                    q_internal, s, backend=backend
-                )
-            )
-            relative_transform = poses.planar_pose_to_transform(relative_pose)
-            return (
-                self._compose_runtime_base_poses(q, relative_pose[None])[0],
-                self._floating_jacobians_from_relative_inertial(
-                    q, relative_transform, jacobian_internal
-                ),
-            )
-
         return dispatch_kinematics(
             self,
             q,
@@ -2127,36 +1998,6 @@ class PlanarPCS(SoftRobot):
             Poses with shape ``(N, 3)`` and inertial Jacobians with shape
             ``(N, 3, D)``.
         """
-
-        if self.floating_base:
-            if uses_warp_kinematics(
-                self,
-                backend,
-                PCS_KINEMATICS,
-                warp_supported=type(self) is PlanarPCS,
-            ):
-                return dispatch_kinematics_abscissa_batched(
-                    self,
-                    q,
-                    s_ps,
-                    operation="both",
-                    backend=backend,
-                    capabilities=PCS_KINEMATICS,
-                    warp_supported=True,
-                )
-            _, q_internal = self.split_configuration(q)
-            relative_poses, jacobians_internal = (
-                self._fixed_base_robot_at_pose().forward_kinematics_and_jacobian_inertialframe_abscissa_batched(
-                    q_internal, s_ps, backend=backend
-                )
-            )
-            relative_transforms = vmap(poses.planar_pose_to_transform)(relative_poses)
-            return (
-                self._compose_runtime_base_poses(q, relative_poses),
-                self._floating_jacobians_from_relative_inertial(
-                    q, relative_transforms, jacobians_internal
-                ),
-            )
 
         return dispatch_kinematics_abscissa_batched(
             self,

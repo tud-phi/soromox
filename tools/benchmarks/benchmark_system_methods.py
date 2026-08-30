@@ -185,7 +185,7 @@ def _dense_forward_dynamics(
     if u is None:
         u = jnp.zeros((system.num_actuators,), dtype=y.dtype)
     if tau_ext is None:
-        tau_ext = jnp.zeros((system.num_dofs,), dtype=y.dtype)
+        tau_ext = jnp.zeros((system.num_velocities,), dtype=y.dtype)
 
     M = system.inertia_matrix(q)
     C = system.coriolis_matrix(q, qd)

@@ -61,9 +61,9 @@ nav:
   - Installation: installation.md
   - User Guide:
     - Quick Start: user-guide/quick-start.md
-    - Execution Devices and Backends: user-guide/execution-devices-and-backends.md
-    - Floating-base Systems: user-guide/floating-base-systems.md
     - Parameters and Optimization: user-guide/parameters-and-optimization.md
+    - Floating-base Systems: user-guide/floating-base-systems.md
+    - Execution Devices and Backends: user-guide/execution-devices-and-backends.md
     - Examples: user-guide/examples.md
   - API Reference:
       - Overview: api/overview.md

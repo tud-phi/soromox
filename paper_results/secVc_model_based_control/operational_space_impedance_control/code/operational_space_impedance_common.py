@@ -77,7 +77,7 @@ class PCSImpedanceProblem:
     params: PCSParams
     osd: OperationalSpaceDynamics
     q0: Array
-    num_dofs: int
+    num_internal_dofs: int
     total_length: float
     trajectory_config: TaskSpaceTrajectoryConfig
 
@@ -133,9 +133,9 @@ def build_problem(trajectory_config: TaskSpaceTrajectoryConfig) -> PCSImpedanceP
         gravity=jnp.array([0.0, 0.0, -9.81]),
     )
     params = robot.params
-    num_dofs = robot.num_active_strains
+    num_internal_dofs = robot.num_internal_dofs
     total_length = float(jnp.sum(segment_lengths))
-    q0 = jnp.zeros((num_dofs,))
+    q0 = jnp.zeros((num_internal_dofs,))
     osd = OperationalSpaceDynamics(
         robot=robot,
         s_ps=jnp.array([total_length]),
@@ -149,7 +149,7 @@ def build_problem(trajectory_config: TaskSpaceTrajectoryConfig) -> PCSImpedanceP
         params=params,
         osd=osd,
         q0=q0,
-        num_dofs=num_dofs,
+        num_internal_dofs=num_internal_dofs,
         total_length=total_length,
         trajectory_config=trajectory_config,
     )
@@ -159,7 +159,7 @@ def print_problem_summary(problem: PCSImpedanceProblem) -> None:
     """Print a concise setup summary."""
     config = problem.trajectory_config
     osd = problem.osd
-    print(f"Number of DOFs: {problem.num_dofs}")
+    print(f"Number of internal DOFs: {problem.num_internal_dofs}")
     print(f"Number of actuators: {problem.robot.num_actuators}")
     print(f"Total robot length: {problem.total_length:.3f} m")
     print(f"Tracking mode: {config.tracking}")
@@ -233,7 +233,7 @@ def run_impedance_simulation(
         print(f"Operational space stiffness K_x: {K_x}")
         print(f"Operational space damping D_x: {D_x}")
 
-    qd0 = jnp.zeros((problem.num_dofs,))
+    qd0 = jnp.zeros((problem.num_internal_dofs,))
     initial_state = SystemState(
         t=jnp.array(t0),
         y=jnp.concatenate([problem.q0, qd0]),
@@ -629,7 +629,7 @@ def _plot_configuration_results(
         sharex=True,
         constrained_layout=True,
     )
-    num_dofs_to_plot = min(problem.num_dofs, 6)
+    num_dofs_to_plot = min(problem.num_internal_dofs, 6)
 
     ax = axes[0]
     for i in range(num_dofs_to_plot):

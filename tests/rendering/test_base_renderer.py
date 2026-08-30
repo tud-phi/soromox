@@ -34,17 +34,18 @@ def test_actuator_styles_can_be_selected_by_semantic_kind():
 
 class DummyPlanarRobot:
     is_planar = True
+    floating_base = False
     length = jnp.array(1.0)
     segment_length = jnp.array([1.0])
 
     def __init__(self, base_pose: jnp.ndarray):
-        self.base_pose = jnp.asarray(base_pose)
-        self.base_transform = poses.planar_pose_to_transform(self.base_pose)
+        self.fixed_base_pose = jnp.asarray(base_pose)
+        self.base_transform = poses.planar_pose_to_transform(self.fixed_base_pose)
 
     def forward_kinematics_abscissa_batched(self, q, s_ps):
-        theta = self.base_pose[0]
+        theta = self.fixed_base_pose[0]
         direction = jnp.array([jnp.cos(theta), jnp.sin(theta)])
-        xy = self.base_pose[1:3] + s_ps[:, None] * direction
+        xy = self.fixed_base_pose[1:3] + s_ps[:, None] * direction
         theta_ps = jnp.full((s_ps.shape[0], 1), theta, dtype=s_ps.dtype)
         return jnp.concatenate([theta_ps, xy], axis=1)
 
@@ -57,12 +58,13 @@ class DummyPlanarRobot:
 
 class DummySpatialRobot:
     is_planar = False
+    floating_base = False
     length = jnp.array(1.0)
     segment_length = jnp.array([1.0])
 
     def __init__(self, base_pose: jnp.ndarray):
-        self.base_pose = jnp.asarray(base_pose)
-        self.base_transform = poses.quaternion_pose_to_transform(self.base_pose)
+        self.fixed_base_pose = jnp.asarray(base_pose)
+        self.base_transform = poses.quaternion_pose_to_transform(self.fixed_base_pose)
 
     def forward_kinematics_abscissa_batched(self, q, s_ps):
         transforms = jnp.repeat(self.base_transform[None, :, :], s_ps.shape[0], axis=0)

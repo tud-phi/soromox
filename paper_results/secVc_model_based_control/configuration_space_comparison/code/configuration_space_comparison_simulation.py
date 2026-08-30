@@ -258,17 +258,17 @@ def create_pid_control(
         raise ValueError("rotational_integral_error_scale must be positive.")
     if linear_integral_error_scale <= 0:
         raise ValueError("linear_integral_error_scale must be positive.")
-    if robot.num_dofs % 6 != 0:
+    if robot.num_internal_dofs % 6 != 0:
         raise ValueError(
             "Expected six PCS strain coordinates per segment, got "
-            f"{robot.num_dofs} DOFs."
+            f"{robot.num_internal_dofs} DOFs."
         )
     if q_normalization is None:
-        q_normalization = jnp.zeros((robot.num_dofs,))
-    if q_normalization.shape != (robot.num_dofs,):
+        q_normalization = jnp.zeros((robot.num_internal_dofs,))
+    if q_normalization.shape != (robot.num_internal_dofs,):
         raise ValueError(
             "q_normalization must have shape "
-            f"({robot.num_dofs},), got {q_normalization.shape}."
+            f"({robot.num_internal_dofs},), got {q_normalization.shape}."
         )
 
     inertia = robot.inertia_matrix(q_normalization)
@@ -286,7 +286,7 @@ def create_pid_control(
                 linear_integral_error_scale,
             ]
         ),
-        robot.num_dofs // 6,
+        robot.num_internal_dofs // 6,
     )
 
     print("Inertia-scaled generalized-force PID gains:")
@@ -333,24 +333,24 @@ def normalize_pid_control_for_computed_torque(
     the same generalized force as the PID feedback used by the other controllers.
     """
     if q_normalization is None:
-        q_normalization = jnp.zeros((robot.num_dofs,))
-    if q_normalization.shape != (robot.num_dofs,):
+        q_normalization = jnp.zeros((robot.num_internal_dofs,))
+    if q_normalization.shape != (robot.num_internal_dofs,):
         raise ValueError(
             "q_normalization must have shape "
-            f"({robot.num_dofs},), got {q_normalization.shape}."
+            f"({robot.num_internal_dofs},), got {q_normalization.shape}."
         )
 
     def gain_matrix(gain: jnp.ndarray) -> jnp.ndarray:
         if gain.ndim == 1:
             if gain.shape == (1,):
-                return gain[0] * jnp.eye(robot.num_dofs)
-            if gain.shape == (robot.num_dofs,):
+                return gain[0] * jnp.eye(robot.num_internal_dofs)
+            if gain.shape == (robot.num_internal_dofs,):
                 return jnp.diag(gain)
-        elif gain.shape == (robot.num_dofs, robot.num_dofs):
+        elif gain.shape == (robot.num_internal_dofs, robot.num_internal_dofs):
             return gain
         raise ValueError(
             "PID gains must be scalar, length-num_dofs vectors, or "
-            f"({robot.num_dofs}, {robot.num_dofs}) matrices."
+            f"({robot.num_internal_dofs}, {robot.num_internal_dofs}) matrices."
         )
 
     inertia = robot.inertia_matrix(q_normalization)

@@ -124,7 +124,6 @@ def _make_robot(*, connectors: bool = True) -> ISupport:
     ]
     params = ISupportParams(
         link=PCS.params_from_links(links).link,
-        base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, -9.81]),
         chamber_inner_radius=jnp.array([0.005, 0.005]),
         chamber_outer_radius=jnp.array([0.00779, 0.00779]),
@@ -136,6 +135,7 @@ def _make_robot(*, connectors: bool = True) -> ISupport:
     )
     return ISupport(
         params=params,
+        base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
         structure=ISupportStructure(
             num_gauss_points=1,
             pcs_segment_counts=(2, 1),

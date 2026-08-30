@@ -969,7 +969,7 @@ if __name__ == "__main__":
 
     M = measured_markers_batch.shape[1]
     na = u_batch.shape[0]
-    dof = int(robot.num_dofs)
+    dof = int(robot.num_internal_dofs)
     assert u_batch.shape == (na, M)
     assert measured_markers_batch.shape == (12, M)
 

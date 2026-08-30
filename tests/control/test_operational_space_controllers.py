@@ -65,7 +65,7 @@ def test_impedance_control_tracker_computes_operational_space_control(
     if feedback_linearization == "full":
         qd_coriolis = qd
     else:
-        null_space_projector = jnp.eye(robot.num_dofs) - J_bar @ J
+        null_space_projector = jnp.eye(robot.num_internal_dofs) - J_bar @ J
         qd_coriolis = null_space_projector @ qd
     tau_cancel_coriolis = J.T @ (osd.mu_x(q, qd) @ qd_coriolis)
     xdd_des = osd.B_task.T @ reference.xdd_des_fn(state.t)
