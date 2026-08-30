@@ -32,7 +32,6 @@ def make_planar_model(
         jnp.repeat(jnp.array([[1e0, 1e3, 1e3]]), num_segments, axis=0) * L[:, None]
     ).flatten()
     params = planar_pcs_params(
-        base_pose=planar_base_pose(),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),
@@ -42,7 +41,11 @@ def make_planar_model(
         damping_matrix=1e-3 * jnp.diag(diag_entries),
     )
 
-    return PlanarPCS(params=params, structure=PlanarPCSStructure(num_gauss_points=3))
+    return PlanarPCS(
+        params=params,
+        structure=PlanarPCSStructure(num_gauss_points=3),
+        base_pose=planar_base_pose(),
+    )
 
 
 def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) -> PCS:
@@ -53,7 +56,6 @@ def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) ->
         * L[:, None]
     ).flatten()
     params = pcs_params(
-        base_pose=spatial_base_pose(),
         length=L,
         radius=2e-2 * jnp.ones((num_segments,)),
         density=1070 * jnp.ones((num_segments,)),
@@ -63,7 +65,11 @@ def make_spatial_model(num_segments: int, total_length: float = TOTAL_LENGTH) ->
         damping_matrix=1e-3 * jnp.diag(diag_entries),
     )
 
-    return PCS(params=params, structure=PCSStructure(num_gauss_points=3))
+    return PCS(
+        params=params,
+        structure=PCSStructure(num_gauss_points=3),
+        base_pose=spatial_base_pose(),
+    )
 
 
 def planar_arc_lengths(model: PlanarPCS) -> list[float]:
