@@ -46,7 +46,7 @@ if __name__ == "__main__":
             for index in range(num_segments)
         ],
         base_pose=jnp.array(
-            [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
+            [0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]
         ),  # Initial position and orientation
         gravity=jnp.array([0.0, 0.0, 9.81]),  # Gravity vector [m/s^2]
     )

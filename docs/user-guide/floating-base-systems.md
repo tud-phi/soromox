@@ -30,11 +30,11 @@ adds seven stored base coordinates but only six base velocity coordinates.
 Spatial floating systems use
 
 ```text
-q = [qw, qx, qy, qz, px, py, pz, q_internal...]
+q = [qx, qy, qz, qw, px, py, pz, q_internal...]
 v = [wx, wy, wz, vx, vy, vz, qd_internal...]
 ```
 
-The quaternion is SoRoMoX's scalar-first Hamilton quaternion. Both angular and
+The quaternion is SoRoMoX's scalar-last Hamilton quaternion. Both angular and
 linear base velocity are expressed in the world frame; linear velocity is at
 the base-frame origin. Planar systems use
 
@@ -51,7 +51,7 @@ helpers preserve arbitrary broadcast-compatible leading batch axes.
 For spatial systems,
 
 ```text
-qdot_quaternion = 0.5 [0, omega_world] * q_quaternion
+qdot_quaternion = 0.5 [omega_world, 0] * q_quaternion
 pdot = v_origin_world
 ```
 

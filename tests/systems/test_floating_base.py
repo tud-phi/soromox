@@ -149,7 +149,7 @@ def test_continuum_floating_state_and_dynamics_contract(factory) -> None:
     robot = factory()
     spatial = not robot.is_planar
     base_pose = (
-        jnp.array([0.98, 0.1, -0.05, 0.12, 0.2, -0.1, 0.3])
+        jnp.array([0.1, -0.05, 0.12, 0.98, 0.2, -0.1, 0.3])
         if spatial
         else jnp.array([0.2, 0.3, -0.1])
     )
@@ -201,7 +201,7 @@ def test_articulated_floating_state_and_dynamics_contract(factory) -> None:
     robot = factory()
     spatial = not robot.is_planar
     base_pose = (
-        jnp.array([0.98, 0.1, -0.05, 0.12, 0.2, -0.1, 0.3])
+        jnp.array([0.1, -0.05, 0.12, 0.98, 0.2, -0.1, 0.3])
         if spatial
         else jnp.array([0.2, 0.3, -0.1])
     )
@@ -235,7 +235,7 @@ def test_spatial_quaternion_derivative_and_retraction_are_consistent() -> None:
     robot = _spatial_pcs()
     q = robot.pack_configuration(
         jnp.zeros(robot.num_internal_dofs),
-        base_pose=jnp.array([0.9, 0.2, -0.1, 0.3, 0.1, -0.2, 0.4]),
+        base_pose=jnp.array([0.2, -0.1, 0.3, 0.9, 0.1, -0.2, 0.4]),
     )
     v = robot.pack_velocity(
         jnp.linspace(-0.02, 0.03, robot.num_internal_dofs),
@@ -261,7 +261,7 @@ def test_floating_gvs_warp_matches_jax_for_batch_and_jvp(
     robot = _gvs()
     q = robot.pack_configuration(
         jnp.zeros(robot.num_internal_dofs),
-        base_pose=jnp.array([0.98, 0.1, -0.05, 0.12, 0.2, -0.1, 0.3]),
+        base_pose=jnp.array([0.1, -0.05, 0.12, 0.98, 0.2, -0.1, 0.3]),
     )
     v = robot.pack_velocity(
         jnp.linspace(-0.03, 0.04, robot.num_internal_dofs),
@@ -394,7 +394,7 @@ def test_spatial_rollout_projection_normalizes_only_base_quaternion() -> None:
         jnp.linspace(0.04, -0.01, robot.num_internal_dofs),
         base_velocity=jnp.linspace(-0.1, 0.2, robot.num_base_velocities),
     )
-    q = jnp.concatenate([jnp.array([1.8, 0.2, -0.1, 0.3, 0.1, -0.2, 0.4]), q_internal])
+    q = jnp.concatenate([jnp.array([0.2, -0.1, 0.3, 1.8, 0.1, -0.2, 0.4]), q_internal])
     auxiliary = jnp.zeros((robot.num_auxiliary_states,))
     y = robot.pack_state(q, v, auxiliary)
 
@@ -416,7 +416,7 @@ def test_floating_continuum_warp_kinematics_matches_jax(
     pytest.importorskip("warp")
     robot = factory()
     base_pose = (
-        jnp.array([0.96, 0.1, -0.2, 0.15, 0.3, -0.2, 0.4])
+        jnp.array([0.1, -0.2, 0.15, 0.96, 0.3, -0.2, 0.4])
         if not robot.is_planar
         else jnp.array([0.4, 0.3, -0.2])
     )
@@ -469,7 +469,7 @@ def test_floating_pcs_warp_dynamics_matches_jax_on_cuda(
 
     robot = factory()
     base_pose = (
-        jnp.array([0.96, 0.1, -0.2, 0.15, 0.3, -0.2, 0.4])
+        jnp.array([0.1, -0.2, 0.15, 0.96, 0.3, -0.2, 0.4])
         if not robot.is_planar
         else jnp.array([0.4, 0.3, -0.2])
     )

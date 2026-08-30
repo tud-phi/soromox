@@ -82,7 +82,7 @@ if __name__ == "__main__":
         for index in range(len(rigid_segment_selector))
     ]
     params = ISupportParams(
-        base_pose=jnp.array([0.5, 0.5, 0.5, -0.5, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, -9.81]),
         link=PCS.params_from_links(links).link,
         chamber_inner_radius=6.39 * 1e-3 * jnp.ones((num_pneumatic_segments,)),

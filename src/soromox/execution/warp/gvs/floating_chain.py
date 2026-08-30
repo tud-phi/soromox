@@ -83,7 +83,7 @@ def floating_persistent_chain_kernel(
         cell_tangent_velocity_dot: Cell tangent-derivative actions.
         global_to_local: Internal active-to-local link-coordinate map.
         active_dofs: Cumulative internal coordinate count by segment.
-        base_pose: Runtime scalar-first quaternion poses with shape ``(E, 7)``.
+        base_pose: Runtime scalar-last quaternion poses with shape ``(E, 7)``.
         velocity: Total angular-first generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Packed augmented upper-inertia column indices.
@@ -682,7 +682,7 @@ def launch_floating_persistent_chain(
         cell_tangent_velocity_dot: Cell tangent-derivative actions.
         global_to_local: Internal active-to-local link-coordinate map.
         active_dofs: Cumulative internal coordinate count by segment.
-        base_pose: Batched runtime scalar-first quaternion poses.
+        base_pose: Batched runtime scalar-last quaternion poses.
         velocity: Batched total generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Matching upper-inertia column indices.

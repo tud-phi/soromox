@@ -125,7 +125,7 @@ def test_spatial_normalization_validation_and_trace_safe_fallback() -> None:
     q_internal = jnp.zeros((robot.num_internal_dofs,))
     q = robot.pack_configuration(
         q_internal,
-        base_pose=jnp.array([2.0, -0.2, 0.1, 0.3, 0.4, -0.5, 0.6]),
+        base_pose=jnp.array([-0.2, 0.1, 0.3, 2.0, 0.4, -0.5, 0.6]),
     )
 
     assert_allclose(jnp.linalg.norm(q[:4]), 1.0)
@@ -136,14 +136,14 @@ def test_spatial_normalization_validation_and_trace_safe_fallback() -> None:
         robot.normalize_configuration(q.at[0].set(jnp.inf))
 
     traced = eqx.filter_jit(robot.normalize_configuration)(q.at[:4].set(0.0))
-    assert_allclose(traced[:4], jnp.array([1.0, 0.0, 0.0, 0.0]))
+    assert_allclose(traced[:4], jnp.array([0.0, 0.0, 0.0, 1.0]))
 
 
 def test_configuration_derivative_matches_retraction_tangent() -> None:
     robot = _spatial_robot(floating_base=True)
     q = robot.pack_configuration(
         jnp.linspace(-0.02, 0.03, robot.num_internal_dofs),
-        base_pose=jnp.array([0.9, 0.2, -0.1, 0.3, 0.1, -0.2, 0.4]),
+        base_pose=jnp.array([0.2, -0.1, 0.3, 0.9, 0.1, -0.2, 0.4]),
     )
     v = robot.pack_velocity(
         jnp.linspace(0.03, -0.02, robot.num_internal_dofs),
@@ -162,7 +162,7 @@ def test_configuration_derivative_matches_retraction_tangent() -> None:
 def test_fixed_mount_update_and_public_state_projection() -> None:
     floating = _spatial_robot(floating_base=True)
     q_internal = jnp.zeros((floating.num_internal_dofs,))
-    base_pose = jnp.array([1.0, 0.0, 0.0, 0.0, 0.2, -0.1, 0.3])
+    base_pose = jnp.array([0.0, 0.0, 0.0, 1.0, 0.2, -0.1, 0.3])
     q = floating.pack_configuration(q_internal, base_pose=base_pose)
     v = floating.pack_velocity(jnp.zeros((floating.num_internal_dofs,)))
     y = floating.pack_state(q.at[:4].multiply(1.8), v)

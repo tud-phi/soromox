@@ -22,7 +22,7 @@ def _embed_se2_transform(mat3):
 
 def _quaternion_z(theta):
     half = 0.5 * theta
-    return jnp.array([jnp.cos(half), 0.0, 0.0, jnp.sin(half)])
+    return jnp.array([0.0, 0.0, jnp.sin(half), jnp.cos(half)])
 
 
 def _assert_forward_and_reverse_mode_finite(fn, arg):

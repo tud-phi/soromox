@@ -61,13 +61,13 @@ def validate_quaternion_base_pose(
     *,
     min_norm: float = 1e-12,
 ) -> None:
-    """Validate a scalar-first quaternion base pose.
+    """Validate a scalar-last quaternion base pose.
 
     Args:
         name: Parameter name used in error messages.
-        value: Base pose array whose first four entries are a scalar-first
-            Hamilton quaternion in ``[qw, qx, qy, qz]`` order. Spatial systems
-            use shape ``(7,)`` with ``[qw, qx, qy, qz, x, y, z]``.
+        value: Base pose array whose first four entries are a scalar-last
+            Hamilton quaternion in ``[qx, qy, qz, qw]`` order. Spatial systems
+            use shape ``(7,)`` with ``[qx, qy, qz, qw, x, y, z]``.
         expected_shape: Required full pose shape, typically ``(7,)``.
         min_norm: Minimum allowed Euclidean norm for the quaternion component.
 

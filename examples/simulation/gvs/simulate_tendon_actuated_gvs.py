@@ -103,7 +103,7 @@ active_tendon_routing = ThreadlikeRouting.linear(
 )
 # attention: 0DEG -> Y+, 180DEG -> Y-, 90DEG -> Z+, 270DEG -> Z-
 
-p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
+p0 = jnp.array([0.0, jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0])
 
 # 2 link version
 segments = [

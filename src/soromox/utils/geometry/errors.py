@@ -99,16 +99,16 @@ def quaternion_geodesic_error(
 ) -> Array:
     """Compute the geodesic orientation error between two quaternions.
 
-    Quaternions use the scalar-first Hamilton convention
-    ``[qw, qx, qy, qz]``. The relative quaternion is
+    Quaternions use the scalar-last Hamilton convention
+    ``[qx, qy, qz, qw]``. The relative quaternion is
     ``q_desired * conjugate(q_current)`` and is flipped when needed so the
     scalar component is nonnegative. That resolves the antipodal ambiguity and
     returns the shortest-path rotation vector.
 
     Args:
-        q_current: Current quaternion with shape ``(4,)`` in scalar-first
+        q_current: Current quaternion with shape ``(4,)`` in scalar-last
             Hamilton order.
-        q_desired: Desired quaternion with shape ``(4,)`` in scalar-first
+        q_desired: Desired quaternion with shape ``(4,)`` in scalar-last
             Hamilton order.
         eps: Small nonnegative scalar threshold passed to quaternion-to-vector
             conversion.
@@ -119,5 +119,5 @@ def quaternion_geodesic_error(
     """
     q_current_inv = quaternion_conjugate(q_current)
     q_error = quaternion_multiply(q_desired, q_current_inv)
-    q_error = jnp.where(q_error[0] < 0.0, -q_error, q_error)
+    q_error = jnp.where(q_error[3] < 0.0, -q_error, q_error)
     return quaternion_to_rotation_vector(q_error, eps=eps)

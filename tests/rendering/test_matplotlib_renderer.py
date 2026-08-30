@@ -108,7 +108,7 @@ def test_ground_plane_arguments_follow_color_configuration():
 
 
 def test_3d_default_camera_uses_base_pose_orientation():
-    robot = DummySpatialRobot(jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]))
     renderer = MatplotlibRenderer(robot)
     axis = FakeMatplotlib3DAxis()
 
@@ -137,7 +137,7 @@ def test_3d_default_camera_uses_base_pose_orientation():
 
 
 def test_3d_camera_supports_matplotlib_without_focal_length_or_zoom_keywords():
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = MatplotlibRenderer(robot)
     axis = LegacyFakeMatplotlib3DAxis()
 
@@ -154,7 +154,7 @@ def test_3d_camera_supports_matplotlib_without_focal_length_or_zoom_keywords():
 
 
 def test_3d_camera_uses_shared_field_of_view():
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = MatplotlibRenderer(robot)
     axis = FakeMatplotlib3DAxis()
 
@@ -174,7 +174,7 @@ def test_3d_camera_uses_shared_field_of_view():
 
 
 def test_actuator_overlay_changes_rendered_frame():
-    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = MatplotlibRenderer(robot, width=240, height=180, num_points=8)
 
     without_actuators = renderer.render_frame(jnp.array([]), render_actuators=False)
@@ -185,7 +185,7 @@ def test_actuator_overlay_changes_rendered_frame():
 
 
 def test_ground_plane_changes_spatial_rendered_frame():
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     with_ground = MatplotlibRenderer(
         robot,
         width=240,

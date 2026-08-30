@@ -42,23 +42,23 @@ def planar_mounting_pose(
 def spatial_mounting_pose(
     mounting: str = "upright", position: Array | None = None
 ) -> Array:
-    """Return a named scalar-first quaternion and position mounting pose.
+    """Return a named scalar-last quaternion and position mounting pose.
 
     Args:
         mounting: ``"horizontal"``, ``"upright"``, or ``"hanging"``.
         position: Optional finite translation with shape ``(3,)``.
 
     Returns:
-        Spatial pose ``[qw, qx, qy, qz, x, y, z]`` with shape ``(7,)``.
+        Spatial pose ``[qx, qy, qz, qw, x, y, z]`` with shape ``(7,)``.
 
     Raises:
         ValueError: If the mounting name or position is invalid.
     """
     sqrt_half = jnp.sqrt(jnp.asarray(0.5))
     quaternions = {
-        "horizontal": jnp.asarray([1.0, 0.0, 0.0, 0.0]),
-        "upright": jnp.asarray([sqrt_half, 0.0, -sqrt_half, 0.0]),
-        "hanging": jnp.asarray([sqrt_half, 0.0, sqrt_half, 0.0]),
+        "horizontal": jnp.asarray([0.0, 0.0, 0.0, 1.0]),
+        "upright": jnp.asarray([0.0, -sqrt_half, 0.0, sqrt_half]),
+        "hanging": jnp.asarray([0.0, sqrt_half, 0.0, sqrt_half]),
     }
     if mounting not in quaternions:
         raise ValueError("mounting must be 'horizontal', 'upright', or 'hanging'.")
@@ -156,14 +156,14 @@ def quaternion_pose_to_transform(pose: Array) -> Array:
 
     This helper treats the final three entries as direct translation
     coordinates, not as Lie-algebra twist coordinates. The quaternion is
-    scalar-first and is normalized by ``quaternion_to_rotation_matrix`` before
+    scalar-last and is normalized by ``quaternion_to_rotation_matrix`` before
     constructing the rotation block. Use ``se3.exp`` when the input is an
     ``se(3)`` twist whose translational part must be integrated through the
     ``SE(3)`` left Jacobian.
 
     Args:
         pose: Spatial pose with shape ``(7,)`` or ``(7, 1)`` in
-            ``[qw, qx, qy, qz, x, y, z]`` order. The quaternion is scalar-first
+            ``[qx, qy, qz, qw, x, y, z]`` order. The quaternion is scalar-last
             and the translation ``[x, y, z]`` is inserted directly into the
             homogeneous transform.
 

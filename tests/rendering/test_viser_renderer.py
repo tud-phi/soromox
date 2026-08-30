@@ -251,7 +251,7 @@ class FakeViserPlaybackServer:
 def test_viser_camera_uses_shared_up_and_radian_fov():
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     client = FakeViserClient()
     server = FakeViserServer({"client": client})
@@ -278,7 +278,7 @@ def test_viser_camera_uses_shared_up_and_radian_fov():
 def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     client = FakeViserClient()
     renderer._server = FakeViserServer({"client": client})
@@ -305,7 +305,7 @@ def test_viser_camera_accepts_full_trajectory_curves_for_bounds():
 def test_viser_capture_rejects_missing_frame():
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     client = FakeViserClient()
     renderer._server = FakeViserServer({"client": client})
@@ -345,7 +345,7 @@ def test_viser_sequence_hooks_and_capture_reuse(monkeypatch, tmp_path):
         def close(self):
             self.closed = True
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = HookedRenderer(
         robot,
         width=4,
@@ -484,7 +484,7 @@ def test_viser_recording_captures_synchronized_batched_geometry_for_every_frame(
         def close(self):
             self.closed = True
 
-    robot = AnimatingActuatedRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = AnimatingActuatedRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = viser_module.ViserRenderer(
         robot,
         width=4,
@@ -615,7 +615,7 @@ def test_viser_snapshot_paths_are_validated_before_rendering(
 ):
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     renderer._server = FakeViserServer({})
 
@@ -631,7 +631,7 @@ def test_viser_snapshot_paths_are_validated_before_rendering(
 def test_viser_capture_timeout_is_explicit():
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     client = FakeViserClient()
     renderer._server = FakeViserServer({"client": client})
@@ -651,7 +651,7 @@ def test_viser_capture_timeout_is_explicit():
 def test_viser_discrete_backbone_batches_positions_colors_and_robot_radius():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False, backbone_style="discrete")
     server = FakeViserActuatorServer()
     renderer._server = server
@@ -695,7 +695,7 @@ def test_viser_batched_instance_colors_preserve_regular_handle_srgb_appearance()
 def test_viser_defaults_to_swept_backbone():
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
 
     assert renderer._backbone_style == "swept"
@@ -704,7 +704,7 @@ def test_viser_defaults_to_swept_backbone():
 def test_viser_ground_plane_uses_native_grid():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
         robot,
         auto_start=False,
@@ -726,7 +726,7 @@ def test_viser_ground_plane_uses_native_grid():
 def test_viser_automatic_ground_plane_covers_batched_base_layout():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     server = FakeViserActuatorServer()
     renderer._server = server
@@ -743,7 +743,7 @@ def test_viser_automatic_ground_plane_covers_batched_base_layout():
 def test_viser_swept_backbone_uses_material_frame_rings():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
         robot, auto_start=False, backbone_style="swept", cylinder_sections=8
     )
@@ -768,7 +768,7 @@ def test_viser_swept_backbone_uses_material_frame_rings():
 def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
         robot, auto_start=False, backbone_style="swept", cylinder_sections=8
     )
@@ -801,7 +801,7 @@ def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
 def test_viser_frame_update_uses_one_atomic_transaction():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
         robot,
         auto_start=False,
@@ -844,7 +844,7 @@ def test_viser_swept_batches_match_segment_geometry_across_animation_frames():
         _oriented_tube_segment_mesh,
     )
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
         robot,
         auto_start=False,
@@ -914,7 +914,7 @@ def test_viser_swept_batches_match_segment_geometry_across_animation_frames():
 def test_viser_default_camera_uses_backend_specific_distance():
     from soromox.rendering.viser_renderer import ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     client = FakeViserClient()
     renderer._server = FakeViserServer({"client": client})
@@ -933,7 +933,7 @@ def test_viser_default_camera_uses_backend_specific_distance():
 def test_viser_actuator_geometry_updates_existing_line_handles():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
-    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     renderer._server = FakeViserActuatorServer()
     renderer._scene_handles = SceneHandles()
@@ -964,7 +964,7 @@ def test_viser_actuator_geometry_updates_existing_line_handles():
 def test_viser_paused_frame_slider_seeks_rendered_frame():
     from soromox.rendering.viser_renderer import AnimationState, ViserRenderer
 
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(robot, auto_start=False)
     renderer._server = FakeViserPlaybackServer()
     renderer._animation_state = AnimationState(

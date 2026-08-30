@@ -64,7 +64,7 @@ def spatial_floating_persistent_chain_kernel(
         active_indices: Internal-coordinate index of each strain component.
         active_scales: Scale applied to each active strain component.
         active_dof_ends: Cumulative internal coordinate count by segment.
-        base_pose: Runtime scalar-first quaternion poses with shape ``(E, 7)``.
+        base_pose: Runtime scalar-last quaternion poses with shape ``(E, 7)``.
         velocity: Total angular-first generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Packed augmented upper-inertia column indices.
@@ -428,7 +428,7 @@ def launch_spatial_floating_persistent_chain(
         active_indices: Internal-coordinate index of each strain row.
         active_scales: Scale applied to each active strain row.
         active_dof_ends: Cumulative internal coordinate count by segment.
-        base_pose: Batched runtime scalar-first quaternion poses.
+        base_pose: Batched runtime scalar-last quaternion poses.
         velocity: Batched total generalized velocities.
         inertia_upper_rows: Packed augmented upper-inertia row indices.
         inertia_upper_columns: Matching upper-inertia column indices.

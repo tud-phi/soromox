@@ -78,7 +78,7 @@ def test_renderer_follows_runtime_base_pose(factory) -> None:
     """Follow the runtime base in both spatial and planar geometry paths."""
     robot = factory()
     base_pose = (
-        jnp.array([0.96, 0.1, -0.2, 0.15, 0.3, -0.2, 0.4])
+        jnp.array([0.1, -0.2, 0.15, 0.96, 0.3, -0.2, 0.4])
         if not robot.is_planar
         else jnp.array([0.4, 0.3, -0.2])
     )

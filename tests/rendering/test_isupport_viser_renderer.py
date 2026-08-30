@@ -135,7 +135,7 @@ def _make_robot(*, connectors: bool = True) -> ISupport:
     )
     return ISupport(
         params=params,
-        base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
         structure=ISupportStructure(
             num_gauss_points=1,
             pcs_segment_counts=(2, 1),

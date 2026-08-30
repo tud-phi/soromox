@@ -41,7 +41,7 @@ def _quaternion_rotation_transpose_entry(
     """Return one normalized quaternion rotation-transpose entry.
 
     Args:
-        base_pose: Batched scalar-first quaternion poses with shape ``(E, 7)``.
+        base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
         environment: Environment row in ``base_pose``.
         row: Requested matrix row.
         column: Requested matrix column.
@@ -51,10 +51,10 @@ def _quaternion_rotation_transpose_entry(
         transpose. A zero runtime quaternion follows the trace-safe JAX path
         and maps to identity.
     """
-    w = base_pose[environment, 0]
-    x = base_pose[environment, 1]
-    y = base_pose[environment, 2]
-    z = base_pose[environment, 3]
+    x = base_pose[environment, 0]
+    y = base_pose[environment, 1]
+    z = base_pose[environment, 2]
+    w = base_pose[environment, 3]
     norm_sq = w * w + x * x + y * y + z * z
     if norm_sq <= wp.float64(0.0):
         value = wp.float64(0.0)
@@ -96,7 +96,7 @@ def _spatial_root_jacobian_entry(
     """Return one root body-Jacobian entry for world-frame base velocity.
 
     Args:
-        base_pose: Batched scalar-first quaternion poses with shape ``(E, 7)``.
+        base_pose: Batched scalar-last quaternion poses with shape ``(E, 7)``.
         environment: Environment row in ``base_pose``.
         row: Requested spatial row.
         column: Requested base-velocity column.

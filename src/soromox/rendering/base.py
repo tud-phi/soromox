@@ -58,8 +58,8 @@ class BaseSoftRobotRenderer(ABC):
         color_config: Shared color configuration for renderers
         L_max: Total length of the robot backbone
         base_pose: Robot base pose coordinates. Planar robots use
-            ``[theta, x, y]``; spatial robots use scalar-first quaternion pose
-            ``[qw, qx, qy, qz, x, y, z]``.
+            ``[theta, x, y]``; spatial robots use scalar-last quaternion pose
+            ``[qx, qy, qz, qw, x, y, z]``.
         base_transform: Homogeneous base transform. Shape ``(3, 3)`` for
             planar robots and ``(4, 4)`` for spatial robots.
         show_ground_plane: Whether supported backends render a ground reference

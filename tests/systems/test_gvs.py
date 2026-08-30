@@ -190,7 +190,7 @@ def test_gvs_compiled_partial_base_pose_updates_match_eager_forces():
     sqrt_half = jnp.sqrt(jnp.asarray(0.5, dtype=jnp.float64))
     base_poses = (
         robot.fixed_base_pose,
-        jnp.array([sqrt_half, 0.0, sqrt_half, 0.0, 0.01, -0.02, 0.03]),
+        jnp.array([0.0, sqrt_half, 0.0, sqrt_half, 0.01, -0.02, 0.03]),
     )
     trace_count = {"value": 0}
 
@@ -323,7 +323,7 @@ def test_params_from_segments_uses_spatial_environment_defaults():
 
     assert_allclose(
         robot.fixed_base_pose,
-        jnp.array([jnp.sqrt(0.5), 0.0, -jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0]),
+        jnp.array([0.0, -jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0]),
     )
     assert_allclose(params.gravity, jnp.array([0.0, 0.0, -9.81]))
 

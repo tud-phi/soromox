@@ -326,7 +326,7 @@ def test_constant_strain_call():
     # test energies
     print("\nTesting energies... ------------------------")
     robot = robot.with_fixed_base_pose(
-        jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
     )
     q = jnp.zeros((6,))
     qd = jnp.zeros((6,))

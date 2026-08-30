@@ -108,8 +108,8 @@ class SoftRobot(DynamicalSystem):
                 If not provided, defaults to 10x machine epsilon for float64.
             base_pose: Optional base frame pose coordinates. Planar robots
                 expect shape ``(3,)`` with ``[theta, x, y]``. Spatial robots
-                expect shape ``(7,)`` with ``[qw, qx, qy, qz, x, y, z]``.
-                Spatial quaternions are scalar-first Hamilton quaternions,
+                expect shape ``(7,)`` with ``[qx, qy, qz, qw, x, y, z]``.
+                Spatial quaternions are scalar-last Hamilton quaternions,
                 normalized before use, and must have nonzero finite norm. If
                 omitted, the upright pose is used: the backbone points along
                 world +y for planar robots and world +z for spatial robots.
@@ -221,12 +221,12 @@ class SoftRobot(DynamicalSystem):
         """Return the identity pose for mounting-independent recurrences.
 
         Returns:
-            Planar ``[theta, x, y]`` or spatial scalar-first quaternion and
+            Planar ``[theta, x, y]`` or spatial scalar-last quaternion and
             position coordinates.
         """
         if self.is_planar:
             return jnp.zeros((3,), dtype=jnp.float64)
-        return jnp.asarray([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        return jnp.asarray([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
 
     @property
     def _kinematic_base_pose(self) -> Array:
@@ -413,7 +413,7 @@ class SoftRobot(DynamicalSystem):
 
         Returns:
             The unchanged input for fixed or planar robots, or a configuration
-            whose leading scalar-first quaternion has unit norm.
+            whose leading scalar-last quaternion has unit norm.
 
         Raises:
             ValueError: If a concrete spatial quaternion is zero or non-finite.
@@ -432,7 +432,7 @@ class SoftRobot(DynamicalSystem):
         regular = jnp.isfinite(norm_sq) & (norm_sq > 0.0)
         safe_norm_sq = jnp.where(regular, norm_sq, jnp.ones_like(norm_sq))
         normalized = quaternion / jnp.sqrt(safe_norm_sq)
-        identity = jnp.zeros_like(quaternion).at[..., 0].set(1.0)
+        identity = jnp.zeros_like(quaternion).at[..., 3].set(1.0)
         normalized = jnp.where(regular, normalized, identity)
         return jnp.concatenate([normalized, q[..., 4:]], axis=-1)
 
@@ -441,7 +441,7 @@ class SoftRobot(DynamicalSystem):
 
         Fixed and planar systems return the original state without additional
         array operations. Spatial floating systems normalize the leading
-        scalar-first quaternion while preserving velocity and auxiliary state.
+        scalar-last quaternion while preserving velocity and auxiliary state.
 
         Args:
             y: State with trailing dimension ``state_size``.
@@ -475,7 +475,7 @@ class SoftRobot(DynamicalSystem):
         if self.is_planar:
             return jnp.concatenate([v_base, qd_internal], axis=-1)
         omega_quaternion = jnp.concatenate(
-            [jnp.zeros_like(v_base[..., :1]), v_base[..., :3]], axis=-1
+            [v_base[..., :3], jnp.zeros_like(v_base[..., :1])], axis=-1
         )
         quaternion_dot = 0.5 * quaternion_multiply(omega_quaternion, q[..., :4])
         return jnp.concatenate([quaternion_dot, v_base[..., 3:6], qd_internal], axis=-1)
@@ -490,7 +490,7 @@ class SoftRobot(DynamicalSystem):
 
         Returns:
             Updated configuration. Spatial rotation increments left-multiply
-            the scalar-first quaternion and the result is normalized.
+            the scalar-last quaternion and the result is normalized.
         """
         q = self._check_trailing_dimension("q", q, self.num_coordinates)
         delta_v = self._check_trailing_dimension(
@@ -512,7 +512,7 @@ class SoftRobot(DynamicalSystem):
             jnp.sin(half) / safe_angle,
             0.5 - angle * angle / 48.0,
         )
-        increment = jnp.concatenate([jnp.cos(half), scale * rotation], axis=-1)
+        increment = jnp.concatenate([scale * rotation, jnp.cos(half)], axis=-1)
         quaternion = quaternion_multiply(increment, q[..., :4])
         result = jnp.concatenate(
             [
@@ -556,7 +556,7 @@ class SoftRobot(DynamicalSystem):
         """Return a fixed robot with a different mounting pose.
 
         Args:
-            pose: Planar pose with shape ``(3,)`` or spatial scalar-first
+            pose: Planar pose with shape ``(3,)`` or spatial scalar-last
                 quaternion pose with shape ``(7,)``.
 
         Returns:
@@ -760,8 +760,8 @@ class SoftRobot(DynamicalSystem):
 
         Planar robots consume ``[theta, x, y]`` and return an SE(2) matrix with
         shape ``(3, 3)``. Spatial robots consume
-        ``[qw, qx, qy, qz, x, y, z]`` and return an SE(3) matrix with shape
-        ``(4, 4)``. Spatial quaternions are scalar-first Hamilton quaternions.
+        ``[qx, qy, qz, qw, x, y, z]`` and return an SE(3) matrix with shape
+        ``(4, 4)``. Spatial quaternions are scalar-last Hamilton quaternions.
         """
         pose = self._kinematic_base_pose
         if self.is_planar:

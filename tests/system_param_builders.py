@@ -19,7 +19,7 @@ from soromox.systems import (
 def spatial_base_pose(
     x: float | Array = 0.0, y: float | Array = 0.0, z: float | Array = 0.0
 ) -> Array:
-    return jnp.array([1.0, 0.0, 0.0, 0.0, x, y, z])
+    return jnp.array([0.0, 0.0, 0.0, 1.0, x, y, z])
 
 
 def planar_base_pose(

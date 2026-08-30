@@ -51,8 +51,8 @@ def main(
     num_segments = 2
     rho = 1070 * jnp.ones((num_segments,))  # Volumetric density [kg/m^3]
 
-    # Define the initial scalar-first quaternion base pose.
-    p0 = jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0])
+    # Define the initial scalar-last quaternion base pose.
+    p0 = jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0])
 
     segment_lengths = 1e-1 * jnp.ones((num_segments,))
     material_damping_coefficient = 362.0

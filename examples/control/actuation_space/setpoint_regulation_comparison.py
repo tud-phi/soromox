@@ -82,7 +82,7 @@ def create_robot() -> tuple[PCS, int]:
             )
             for index in range(num_segments)
         ],
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, 9.81]),
     )
 

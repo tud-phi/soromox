@@ -8,10 +8,10 @@ rotations (θ ≈ π) correctly.
 All functions are JAX-compatible and can be used with jit, vmap, and grad.
 
 Quaternion Convention:
-    This module uses scalar-first Hamilton quaternions in ``[qw, qx, qy, qz]``
+    This module uses scalar-last Hamilton quaternions in ``[qx, qy, qz, qw]``
     order, where ``qw`` is the scalar part and ``[qx, qy, qz]`` is the vector
     part. A rotation by angle θ around unit axis n is represented as:
-        q = [cos(θ/2), sin(θ/2) * n_x, sin(θ/2) * n_y, sin(θ/2) * n_z]
+        q = [sin(θ/2) * n_x, sin(θ/2) * n_y, sin(θ/2) * n_z, cos(θ/2)]
 
 Rotation Representations:
     This module supports multiple rotation representations via the RotationRepresentation
@@ -137,10 +137,10 @@ def normalize_quaternion(
     quaternion: Array,
     eps: float | Array | None = None,
 ) -> Array:
-    """Normalize a scalar-first Hamilton quaternion.
+    """Normalize a scalar-last Hamilton quaternion.
 
     Args:
-        quaternion: Quaternion with shape ``(4,)`` in ``[qw, qx, qy, qz]``
+        quaternion: Quaternion with shape ``(4,)`` in ``[qx, qy, qz, qw]``
             order. ``qw`` is the scalar component and ``[qx, qy, qz]`` is the
             vector component.
         eps: Optional nonnegative norm threshold. If the quaternion norm is
@@ -148,16 +148,16 @@ def normalize_quaternion(
             Defaults to machine epsilon for the quaternion dtype.
 
     Returns:
-        Array: Unit quaternion with shape ``(4,)`` in ``[qw, qx, qy, qz]``
+        Array: Unit quaternion with shape ``(4,)`` in ``[qx, qy, qz, qw]``
         order. If the input norm is numerically smaller than ``eps``, the
-        identity quaternion ``[1, 0, 0, 0]`` is returned to avoid
+        identity quaternion ``[0, 0, 0, 1]`` is returned to avoid
         division-by-zero NaNs in traced computations. Parameter validators
         reject zero-norm configured poses.
     """
     dtype = jnp.result_type(quaternion, 1.0)
     q = jnp.asarray(quaternion, dtype=dtype).reshape(-1)
     eps_arr = eps_for_dtype(eps, q.dtype)
-    identity = jnp.array([1.0, 0.0, 0.0, 0.0], dtype=q.dtype)
+    identity = jnp.array([0.0, 0.0, 0.0, 1.0], dtype=q.dtype)
     norm_sq = jnp.dot(q, q)
     regular = norm_sq > eps_arr**2
     norm_sq_safe = jnp.where(regular, norm_sq, jnp.ones_like(norm_sq))
@@ -180,8 +180,8 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         eps: Small value to avoid division by zero. Default is 1e-10.
 
     Returns:
-        q: Unit quaternion with shape ``(4,)`` in scalar-first
-            ``[qw, qx, qy, qz]`` order.
+        q: Unit quaternion with shape ``(4,)`` in scalar-last
+            ``[qx, qy, qz, qw]`` order.
 
     Example:
         ```python
@@ -189,7 +189,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         from soromox.utils.geometry.rotations import rotation_matrix_to_quaternion
 
         R = jnp.eye(3)
-        q = rotation_matrix_to_quaternion(R)  # approximately [1, 0, 0, 0]
+        q = rotation_matrix_to_quaternion(R)  # approximately [0, 0, 0, 1]
         ```
 
     References:
@@ -205,10 +205,10 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
-                0.25 * s,
                 (R[2, 1] - R[1, 2]) / denom,
                 (R[0, 2] - R[2, 0]) / denom,
                 (R[1, 0] - R[0, 1]) / denom,
+                0.25 * s,
             ],
             dtype=R.dtype,
         )
@@ -218,10 +218,10 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
-                (R[2, 1] - R[1, 2]) / denom,
                 0.25 * s,
                 (R[0, 1] + R[1, 0]) / denom,
                 (R[0, 2] + R[2, 0]) / denom,
+                (R[2, 1] - R[1, 2]) / denom,
             ],
             dtype=R.dtype,
         )
@@ -231,10 +231,10 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
-                (R[0, 2] - R[2, 0]) / denom,
                 (R[0, 1] + R[1, 0]) / denom,
                 0.25 * s,
                 (R[1, 2] + R[2, 1]) / denom,
+                (R[0, 2] - R[2, 0]) / denom,
             ],
             dtype=R.dtype,
         )
@@ -244,10 +244,10 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
         denom = jnp.maximum(s, eps_arr)
         return jnp.array(
             [
-                (R[1, 0] - R[0, 1]) / denom,
                 (R[0, 2] + R[2, 0]) / denom,
                 (R[1, 2] + R[2, 1]) / denom,
                 0.25 * s,
+                (R[1, 0] - R[0, 1]) / denom,
             ],
             dtype=R.dtype,
         )
@@ -263,7 +263,7 @@ def rotation_matrix_to_quaternion(R: Array, eps: float = DEFAULT_ROTATION_EPS) -
     quat = lax.cond(trace > 0.0, _trace_branch, _diagonal_branch, operand=None)
 
     # Ensure canonical form with positive scalar part (qw >= 0)
-    quat = jnp.where(quat[0] < 0, -quat, quat)
+    quat = jnp.where(quat[3] < 0, -quat, quat)
 
     quat = normalize_quaternion(quat, eps=eps)
 
@@ -275,8 +275,8 @@ def quaternion_to_rotation_matrix(quat: Array) -> Array:
     Convert a unit quaternion to a rotation matrix.
 
     Args:
-        quat: Quaternion with shape ``(4,)`` in scalar-first Hamilton
-            ``[qw, qx, qy, qz]`` order. The quaternion is normalized before
+        quat: Quaternion with shape ``(4,)`` in scalar-last Hamilton
+            ``[qx, qy, qz, qw]`` order. The quaternion is normalized before
             constructing the matrix.
 
     Returns:
@@ -287,7 +287,7 @@ def quaternion_to_rotation_matrix(quat: Array) -> Array:
         import jax.numpy as jnp
         from soromox.utils.geometry.rotations import quaternion_to_rotation_matrix
 
-        q = jnp.array([1.0, 0.0, 0.0, 0.0])
+        q = jnp.array([0.0, 0.0, 0.0, 1.0])
         R = quaternion_to_rotation_matrix(q)  # approximately eye(3)
         ```
 
@@ -297,7 +297,7 @@ def quaternion_to_rotation_matrix(quat: Array) -> Array:
         validated separately and reject zero-norm quaternions.
     """
     quat = normalize_quaternion(quat)
-    w, x, y, z = quat[0], quat[1], quat[2], quat[3]
+    x, y, z, w = quat[0], quat[1], quat[2], quat[3]
 
     # Pre-compute squared terms
     x2, y2, z2, w2 = x * x, y * y, z * z, w * w
@@ -334,8 +334,8 @@ def quaternion_to_rotation_vector(
     unit axis n, the rotation vector is ω = θ * n.
 
     Args:
-        quat: Unit quaternion with shape ``(4,)`` in scalar-first Hamilton
-            ``[qw, qx, qy, qz]`` order.
+        quat: Unit quaternion with shape ``(4,)`` in scalar-last Hamilton
+            ``[qx, qy, qz, qw]`` order.
         eps: Small value to avoid division by zero. Default is 1e-10.
 
     Returns:
@@ -347,13 +347,13 @@ def quaternion_to_rotation_vector(
         from soromox.utils.geometry.rotations import quaternion_to_rotation_vector
 
         # 90-degree rotation around the z-axis
-        q = jnp.array([jnp.cos(jnp.pi / 4), 0, 0, jnp.sin(jnp.pi / 4)])
+        q = jnp.array([0, 0, jnp.sin(jnp.pi / 4), jnp.cos(jnp.pi / 4)])
         omega = quaternion_to_rotation_vector(q)  # approximately [0, 0, pi/2]
         ```
     """
     quat = normalize_quaternion(quat, eps=eps)
-    q_w = quat[0]
-    q_vec = quat[1:4]
+    q_w = quat[3]
+    q_vec = quat[:3]
     eps_arr = eps_for_dtype(eps, quat.dtype)
     q_vec_norm_sq = jnp.dot(q_vec, q_vec)
     regular = q_vec_norm_sq > eps_arr**2
@@ -387,8 +387,8 @@ def rotation_vector_to_quaternion(
         eps: Small value for numerical stability at small angles. Default is 1e-10.
 
     Returns:
-        q: Unit quaternion with shape ``(4,)`` in scalar-first Hamilton
-            ``[qw, qx, qy, qz]`` order.
+        q: Unit quaternion with shape ``(4,)`` in scalar-last Hamilton
+            ``[qx, qy, qz, qw]`` order.
 
     Example:
         ```python
@@ -398,7 +398,7 @@ def rotation_vector_to_quaternion(
         # 90-degree rotation around the z-axis
         omega = jnp.array([0.0, 0.0, jnp.pi / 2])
         q = rotation_vector_to_quaternion(omega)
-        # q is approximately [cos(pi/4), 0, 0, sin(pi/4)]
+        # q is approximately [0, 0, sin(pi/4), cos(pi/4)]
         ```
     """
     omega = jnp.asarray(omega).reshape(-1)
@@ -409,7 +409,7 @@ def rotation_vector_to_quaternion(
 
     def _small(_: None) -> Array:
         return jnp.array(
-            [1.0, 0.5 * omega[0], 0.5 * omega[1], 0.5 * omega[2]],
+            [0.5 * omega[0], 0.5 * omega[1], 0.5 * omega[2], 1.0],
             dtype=omega.dtype,
         )
 
@@ -417,7 +417,7 @@ def rotation_vector_to_quaternion(
         angle = jnp.sqrt(angle_sq_safe)
         half_angle = angle / 2.0
         q_vec = omega * (jnp.sin(half_angle) / angle)
-        return jnp.array([jnp.cos(half_angle), q_vec[0], q_vec[1], q_vec[2]])
+        return jnp.array([q_vec[0], q_vec[1], q_vec[2], jnp.cos(half_angle)])
 
     quat = lax.cond(regular, _general, _small, operand=None)
 
@@ -595,36 +595,36 @@ def quaternion_multiply(q1: Array, q2: Array) -> Array:
     That is, q1 * q2 represents rotating by q2 first, then by q1.
 
     Args:
-        q1: First quaternion with trailing shape ``(..., 4)`` in scalar-first Hamilton
-            ``[qw, qx, qy, qz]`` order.
-        q2: Second quaternion with trailing shape ``(..., 4)`` in scalar-first Hamilton
-            ``[qw, qx, qy, qz]`` order.
+        q1: First quaternion with trailing shape ``(..., 4)`` in scalar-last Hamilton
+            ``[qx, qy, qz, qw]`` order.
+        q2: Second quaternion with trailing shape ``(..., 4)`` in scalar-last Hamilton
+            ``[qx, qy, qz, qw]`` order.
 
     Returns:
         q: Product quaternion with broadcast leading dimensions and trailing
-            shape ``(4,)`` in ``[qw, qx, qy, qz]`` order.
+            shape ``(4,)`` in ``[qx, qy, qz, qw]`` order.
 
     Example:
         ```python
         import jax.numpy as jnp
         from soromox.utils.geometry.rotations import quaternion_multiply
 
-        q1 = jnp.array([1, 0, 0, 0])
-        q2 = jnp.array([jnp.cos(jnp.pi / 4), 0, 0, jnp.sin(jnp.pi / 4)])
+        q1 = jnp.array([0, 0, 0, 1])
+        q2 = jnp.array([0, 0, jnp.sin(jnp.pi / 4), jnp.cos(jnp.pi / 4)])
         q = quaternion_multiply(q1, q2)  # approximately q2
         ```
     """
     left = jnp.asarray(q1)
     right = jnp.asarray(q2)
-    scalar_left, vector_left = left[..., :1], left[..., 1:]
-    scalar_right, vector_right = right[..., :1], right[..., 1:]
+    vector_left, scalar_left = left[..., :3], left[..., 3:]
+    vector_right, scalar_right = right[..., :3], right[..., 3:]
     return jnp.concatenate(
         [
-            scalar_left * scalar_right
-            - jnp.sum(vector_left * vector_right, axis=-1, keepdims=True),
             scalar_left * vector_right
             + scalar_right * vector_left
             + jnp.cross(vector_left, vector_right),
+            scalar_left * scalar_right
+            - jnp.sum(vector_left * vector_right, axis=-1, keepdims=True),
         ],
         axis=-1,
     )
@@ -638,20 +638,21 @@ def quaternion_conjugate(q: Array) -> Array:
     the opposite rotation.
 
     Args:
-        q: Quaternion with shape ``(4,)`` in scalar-first Hamilton
-            ``[qw, qx, qy, qz]`` order.
+        q: Quaternion with shape ``(4,)`` in scalar-last Hamilton
+            ``[qx, qy, qz, qw]`` order.
 
     Returns:
         q_conj: Conjugate quaternion with shape ``(4,)`` and coordinates
-            ``[qw, -qx, -qy, -qz]``.
+            ``[-qx, -qy, -qz, qw]``.
 
     Example:
         ```python
         import jax.numpy as jnp
         from soromox.utils.geometry.rotations import quaternion_conjugate
 
-        q = jnp.array([jnp.cos(jnp.pi / 4), 0, 0, jnp.sin(jnp.pi / 4)])
+        q = jnp.array([0, 0, jnp.sin(jnp.pi / 4), jnp.cos(jnp.pi / 4)])
         q_conj = quaternion_conjugate(q)  # represents -90 degrees around z
         ```
     """
-    return jnp.array([q[0], -q[1], -q[2], -q[3]])
+    q = jnp.asarray(q)
+    return jnp.concatenate([-q[..., :3], q[..., 3:]], axis=-1)

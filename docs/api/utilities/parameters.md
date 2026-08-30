@@ -115,10 +115,10 @@ base mounting does not rotate the gravity vector.
 The exact default values are:
 
 - Planar upright pose: `[pi / 2, 0, 0]`; gravity: `[0, -9.81]` m/s².
-- Spatial upright pose: `[sqrt(0.5), 0, -sqrt(0.5), 0, 0, 0, 0]`;
+- Spatial upright pose: `[0, -sqrt(0.5), 0, sqrt(0.5), 0, 0, 0]`;
   gravity: `[0, 0, -9.81]` m/s².
-- Planar poses use `[theta, x, y]`. Spatial poses use scalar-first Hamilton
-  quaternions in `[qw, qx, qy, qz, x, y, z]` order.
+- Planar poses use `[theta, x, y]`. Spatial poses use scalar-last Hamilton
+  quaternions in `[qx, qy, qz, qw, x, y, z]` order.
 
 Omitting both the robot constructor's `base_pose` and the parameter tree's
 `gravity` selects the defaults. For example, the factory below constructs an

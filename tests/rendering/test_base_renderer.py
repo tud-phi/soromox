@@ -235,7 +235,7 @@ def test_renderer_exposes_base_pose_transform_and_axis():
 
 
 def test_renderer_centralizes_ground_plane_configuration():
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(
         robot,
         show_ground_plane=True,
@@ -248,7 +248,7 @@ def test_renderer_centralizes_ground_plane_configuration():
 
 
 def test_renderer_resolves_robot_scaled_ground_plane_size():
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot)
 
     assert renderer._resolve_ground_plane_size() == pytest.approx(1.35)
@@ -257,7 +257,7 @@ def test_renderer_resolves_robot_scaled_ground_plane_size():
 
 @pytest.mark.parametrize("ground_plane_size", [0.0, -0.1])
 def test_renderer_rejects_nonpositive_ground_plane_size(ground_plane_size):
-    robot = DummySpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
 
     with pytest.raises(ValueError, match="ground_plane_size must be positive"):
         DummyRenderer(robot, ground_plane_size=ground_plane_size)
@@ -277,7 +277,7 @@ def test_open3d_and_viser_ground_plane_arguments_follow_base_plate_arguments():
 
 
 def test_backbone_geometry_sampling_preserves_fk_material_frames():
-    robot = DummySpatialRobot(jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]))
+    robot = DummySpatialRobot(jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot)
 
     curves, frames = renderer.compute_backbone_curves_and_frames_batched(
@@ -372,7 +372,7 @@ def test_renderer_rejects_extra_explicit_base_offsets_by_default():
 
 
 def test_renderer_computes_actuator_visual_layers_single_and_batched():
-    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot, num_points=5)
 
     single = renderer.compute_actuator_visual_layers(jnp.array([]))
@@ -399,7 +399,7 @@ def test_renderer_computes_actuator_visual_layers_single_and_batched():
 
 def test_renderer_uses_batched_actuator_visual_fast_path():
     robot = DummyBatchedActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     )
     renderer = DummyRenderer(robot, num_points=5)
 
@@ -424,7 +424,7 @@ def test_renderer_uses_batched_actuator_visual_fast_path():
 
 
 def test_renderer_computes_trajectory_actuator_visual_layers():
-    robot = DummyActuatedSpatialRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    robot = DummyActuatedSpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = DummyRenderer(robot, num_points=4)
 
     layers = renderer.compute_actuator_visual_layers_trajectory(
@@ -443,7 +443,7 @@ def test_renderer_computes_trajectory_actuator_visual_layers():
 
 def test_renderer_uses_trajectory_actuator_visual_fast_path():
     robot = DummyTrajectoryActuatedSpatialRobot(
-        jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     )
     renderer = DummyRenderer(robot, num_points=4)
 

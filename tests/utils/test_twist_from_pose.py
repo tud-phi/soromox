@@ -230,9 +230,9 @@ class TestCreateTwistFromPoseFnQuaternion:
     def test_quaternion_constant_pose(self):
         """Constant quaternion pose should give zero angular velocity."""
 
-        # Unit quaternion for identity rotation: [1, 0, 0, 0]
+        # Unit quaternion for identity rotation: [0, 0, 0, 1]
         def pose_fn(t):
-            return jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])  # [quat, pos]
+            return jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])  # [quat, pos]
 
         twist_fn = twist_callable_from_pose_callable_factory(
             pose_fn=pose_fn,
@@ -253,7 +253,7 @@ class TestCreateTwistFromPoseFnQuaternion:
 
         def pose_fn(t):
             # Identity quaternion (constant), position moving
-            return jnp.array([1.0, 0.0, 0.0, 0.0, t * 0.1, 0.0, 0.0])
+            return jnp.array([0.0, 0.0, 0.0, 1.0, t * 0.1, 0.0, 0.0])
 
         twist_fn = twist_callable_from_pose_callable_factory(
             pose_fn=pose_fn,

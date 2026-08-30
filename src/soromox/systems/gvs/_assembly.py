@@ -274,7 +274,7 @@ def assign_gvs_runtime_arrays(
     )
 
     if p0 is None:
-        p0_arr = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
+        p0_arr = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], dtype=jnp.float64)
     else:
         p0_arr = jnp.asarray(p0, dtype=jnp.float64)
     validate_quaternion_base_pose("p0", p0_arr, (7,))

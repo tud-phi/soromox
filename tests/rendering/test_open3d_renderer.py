@@ -29,7 +29,7 @@ class _AnimatingSpatialRobot:
     is_planar = False
     length = jnp.array(1.0)
     segment_length = jnp.array([1.0])
-    base_pose = jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    base_pose = jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
     base_transform = jnp.eye(4)
 
     def forward_kinematics_abscissa_batched(self, q, s_points):

@@ -37,6 +37,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
+- Changed all SoRoMoX quaternion coordinates to the scalar-last Hamilton
+  convention `[qx, qy, qz, qw]`, including spatial base poses, operational-space
+  poses, floating-base state, and JAX and Warp execution. This is a breaking
+  change for code that constructs or indexes quaternions directly.
 - Made effort laws declare their transmission-state dependencies so
   `DirectEffort` skips unused actuator-coordinate and velocity evaluation, and
   generalized-force assembly evaluates each actuator moment matrix only once.

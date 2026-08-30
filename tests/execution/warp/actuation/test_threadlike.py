@@ -143,7 +143,7 @@ def test_floating_gvs_fused_dynamics_and_threadlike_force_matches_jax(
     )
     q = model.pack_configuration(
         jnp.linspace(-0.02, 0.03, model.num_internal_dofs),
-        base_pose=jnp.array([0.97, 0.1, -0.05, 0.16, 0.2, -0.1, 0.3]),
+        base_pose=jnp.array([0.1, -0.05, 0.16, 0.97, 0.2, -0.1, 0.3]),
     )
     velocity = model.pack_velocity(
         jnp.linspace(0.03, -0.02, model.num_internal_dofs),
