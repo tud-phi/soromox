@@ -125,6 +125,7 @@ def render_motion(
     robot_name: str,
     port: int,
     record_path: Path | None = None,
+    camera_config: CameraConfig | None = None,
 ) -> None:
     """Render an interactive Viser animation and optionally record it.
 
@@ -136,6 +137,8 @@ def render_motion(
         port: Local Viser server port.
         record_path: Optional MP4 output. Recording requires a connected Viser
             browser client.
+        camera_config: Optional model-specific camera configuration. The shared
+            side view is used when omitted.
     """
     q_ts, _ = split_state(trajectory.y, robot.num_dofs)
     renderer_type = SoftCartPoleViserRenderer if cart else ViserRenderer
@@ -146,12 +149,13 @@ def render_motion(
         port=port,
         open_browser=True,
     )
-    camera = CameraConfig(
-        position=(2.2, 0.0, 0.55),
-        look_at=(0.0, 0.0, 0.45),
-        up=(0.0, 0.0, 1.0),
-        fov=45.0,
-    )
+    if camera_config is None:
+        camera_config = CameraConfig(
+            position=(2.2, 0.0, 0.55),
+            look_at=(0.0, 0.0, 0.45),
+            up=(0.0, 0.0, 1.0),
+            fov=45.0,
+        )
     renderer.render_sequence(
         trajectory.t,
         q_ts,
@@ -160,7 +164,7 @@ def render_motion(
         loop=record_path is None,
         record_path=None if record_path is None else str(record_path),
         stop_when_recording_done=record_path is not None,
-        camera_config=camera,
+        camera_config=camera_config,
         plot_configurations=True,
         robot_name=robot_name,
     )

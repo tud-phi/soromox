@@ -14,6 +14,8 @@ from soft_pendulums import (
 )
 from soft_pendulums_viser_renderer import render_motion
 
+from soromox.rendering import CameraConfig
+
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 VIDEOS_DIR = Path(__file__).resolve().parent / "videos"
 
@@ -70,6 +72,12 @@ def main() -> None:
             robot_name="Soft Furuta Pendulum",
             port=args.viser_port,
             record_path=record_path,
+            camera_config=CameraConfig(
+                fov=45.0,
+                distance_factor=1.5,
+                position_offset=(0.9, -0.9, 0.6),
+                up=(0.0, 0.0, 1.0),
+            ),
         )
 
 

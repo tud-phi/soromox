@@ -6,6 +6,7 @@ import jax.numpy as jnp
 import pytest
 from numpy.testing import assert_allclose
 
+from examples.simulation.gvs import soft_pendulums_viser_renderer as renderer_module
 from examples.simulation.gvs.soft_pendulums import (
     SoftInvertedPendulumConfig,
     make_soft_cart_pole,
@@ -13,7 +14,9 @@ from examples.simulation.gvs.soft_pendulums import (
 from examples.simulation.gvs.soft_pendulums_viser_renderer import (
     SoftCartPoleViserRenderer,
 )
+from soromox.rendering import CameraConfig
 from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+from soromox.systems import SystemState
 
 
 class _GeometryHandle:
@@ -88,3 +91,41 @@ def test_cart_renderer_rejects_non_scalar_cart_trajectory():
     renderer = SoftCartPoleViserRenderer(robot, auto_start=False)
     with pytest.raises(ValueError, match="shape"):
         renderer.render_sequence(jnp.array([0.0]), jnp.zeros((1, 2)))
+
+
+def test_render_motion_forwards_model_specific_camera(monkeypatch):
+    captured = {}
+
+    class _Renderer:
+        def __init__(self, robot, **kwargs):
+            captured["robot"] = robot
+            captured["renderer_kwargs"] = kwargs
+
+        def render_sequence(self, ts, q_ts, **kwargs):
+            captured["ts"] = ts
+            captured["q_ts"] = q_ts
+            captured["sequence_kwargs"] = kwargs
+
+    monkeypatch.setattr(renderer_module, "ViserRenderer", _Renderer)
+    robot = make_soft_cart_pole(SoftInvertedPendulumConfig())
+    trajectory = SystemState(
+        t=jnp.array([0.0, 0.1]),
+        y=jnp.zeros((2, 2 * robot.num_dofs)),
+    )
+    camera = CameraConfig(
+        fov=45.0,
+        distance_factor=1.5,
+        position_offset=(0.9, -0.9, 0.6),
+    )
+
+    renderer_module.render_motion(
+        robot,
+        trajectory,
+        cart=False,
+        robot_name="test",
+        port=8084,
+        camera_config=camera,
+    )
+
+    assert captured["robot"] is robot
+    assert captured["sequence_kwargs"]["camera_config"] is camera
