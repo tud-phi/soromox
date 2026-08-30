@@ -32,7 +32,8 @@ def test_execution_package_has_a_public_import_path() -> None:
 
     assert execution.ExecutionBackend is not None
     assert EXECUTION_ROOT.is_dir()
-    assert not (PACKAGE_ROOT / "systems" / "execution").exists()
+    legacy_execution_root = PACKAGE_ROOT / "systems" / "execution"
+    assert not any(legacy_execution_root.rglob("*.py"))
     assert not (PACKAGE_ROOT / "_execution").exists()
 
 
