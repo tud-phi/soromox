@@ -168,7 +168,7 @@ coordinates = robot.actuator_coordinates(q)
 For tendons, `coordinates == -lengths`; for a pressure preset, coordinates are
 equivalent volumes. Without guide friction,
 `jax.jacrev(robot.actuator_coordinates)(q) == robot.actuation_matrix(q).T` up
-to quadrature tolerance. A nonzero friction coefficient breaks that identity by
+to quadrature tolerance. A lossy friction law breaks that identity by
 design, because the moment matrix then carries a transmission loss that path
 length does not; see [Guide friction](#guide-friction).
 
@@ -178,9 +178,21 @@ behavior is common, while each host keeps its native evaluation path.
 
 ## Guide friction
 
-By default a path transmits its effort undiminished along its whole route. Set
-`friction_coefficient` to model Coulomb friction against the guides the path
-runs through, following the force model of
+By default a path transmits its effort undiminished along its whole route. Pass
+a `friction=` law to model a transmission loss. The law is an object, so a new
+loss model needs no change to any host, and a third-party model needs no change
+to soromox.
+
+soromox ships three:
+
+| Law | Ratio | Hosts |
+|---|---|---|
+| `Frictionless` | \(1\) | all; the default |
+| `CapstanFriction` | \(e^{-\mu\Theta}\) | `PCS`, `PlanarPCS` |
+| `ExponentialLengthFriction` | \(e^{-ks}\) | all, including `GVS` |
+
+`CapstanFriction` models Coulomb friction against the guides a path runs
+through, following the force model of
 [Feliu-Talegon et al. (2025)](https://doi.org/10.1109/TMECH.2025.3550846). A
 tendon threaded through spacer disks loses tension at every contact, and the
 loss at each contact obeys the classical Capstan (Euler) law
@@ -203,10 +215,11 @@ contributes less than the proximal part:
 A_\mu(q) = B_\xi^\top \int_0^L \eta(q, s)\,\Phi(q, s)\,\mathrm{d}s
 \]
 
-\(\eta\) depends on the configuration only, so the actuation force stays linear
-in the effort and every controller keeps working. Since \(\eta \in (0, 1]\), the
-model can only ever remove effort, never add it, and a coefficient of zero
-reproduces the frictionless matrix exactly.
+Every law obeys the same two rules. \(\eta\) depends on the configuration only,
+never on the effort, so the actuation force stays linear in the effort and every
+controller keeps working; and \(\eta \in (0, 1]\), so a law can only ever remove
+effort, never add it. The lossless default reproduces the frictionless matrix
+exactly and is skipped entirely, at no cost.
 
 The wrap density reduces to \(\lvert\kappa\rvert\) identically in the plane, for
 any offset and any strain. Under torsion it recovers the helix curvature of an
@@ -217,27 +230,39 @@ robot = PCS.from_links(
     links,
     structure=PCSStructure(num_gauss_points=5),
     # a scalar shares one coefficient; pass shape (num_paths,) for per-path values
-    actuators=ThreadlikeActuator.tendons(routing, friction_coefficient=0.2),
+    actuators=ThreadlikeActuator.tendons(
+        routing, friction=CapstanFriction(coefficient=0.2)
+    ),
 )
 
 tau = robot.actuation_force(q, jnp.array([5.0, 0.0]))
 ```
 
-`PCS` and `PlanarPCS` implement the wrap-angle model. `GVS` strain varies along
-arc length, so its wrap angle is not piecewise linear; it rejects a nonzero
-coefficient during construction with a descriptive `TypeError`.
+`friction_coefficient=0.2` is kept as sugar for the same thing. Passing both it
+and `friction=` raises, because the two would silently disagree.
 
-### Identifying the coefficient
+A law declares what it needs, and a host refuses a law it cannot serve.
+`CapstanFriction` sets `requires_wrap_angle`, which `PCS` and `PlanarPCS`
+supply. `GVS` strain varies along arc length, so its wrap angle is not
+piecewise linear and it supplies none; it rejects a wrap-angle law during
+construction with a descriptive `TypeError`, at any coefficient including zero,
+because capability follows the law you install rather than the value you gave
+it. `ExponentialLengthFriction` reads only arc length, so it runs on `GVS` too.
 
-The coefficient is an ordinary dynamic leaf, so it is traceable and
+### Identifying a loss parameter
+
+Loss parameters are ordinary dynamic leaves, so they are traceable and
 differentiable under `jit`:
 
 ```python
 def with_friction(mu):
-    transmission = robot.actuators[0].params.transmission.replace(
-        friction_coefficient=mu
+    transmission = robot.actuators[0].params.transmission
+    return robot.update_actuator_params(
+        0,
+        transmission=transmission.replace(
+            friction=transmission.friction.replace(coefficient=mu)
+        ),
     )
-    return robot.update_actuator_params(0, transmission=transmission)
 
 
 @jax.jit
@@ -254,15 +279,64 @@ def loss(mu):
 value, grad = jax.value_and_grad(loss)(jnp.array(0.2))
 ```
 
-Zero is a valid optimizer start, but \(\mathrm{d}A/\mathrm{d}\mu\) vanishes
-wherever \(\Theta = 0\), so a perfectly straight pose carries no information
-about \(\mu\). Set `wrap_angle_smoothing` on the host structure to replace
+Swapping the law changes the parameter PyTree structure and so retraces, while
+replacing a value inside a law does not. Start identification from a lossy law
+at a zero parameter, `CapstanFriction(coefficient=0.0)`, rather than from
+`Frictionless()`. Zero is a valid optimizer start, but
+\(\mathrm{d}A/\mathrm{d}\mu\) vanishes wherever \(\Theta = 0\), so a perfectly
+straight pose carries no information about \(\mu\). Set `wrap_angle_smoothing` on the host structure to replace
 \(\lvert\kappa\rvert\) with \(\sqrt{\kappa^2 + \epsilon^2}\) if the fit can
 approach a straight configuration. It never under-estimates the wrap angle and
 over-estimates it by at most \(\epsilon L\), and it also removes the \(C^0\)
 kink at zero curvature.
 
-### What changes at a nonzero coefficient
+### Custom friction laws
+
+The hosts depend only on the law contract, not on the shipped models. A custom
+law supplies the parameters it needs, declares its requirements, and returns the
+surviving effort fraction per path:
+
+```python
+from soromox.actuation import ThreadlikeFriction
+
+
+class HyperbolicFriction(ThreadlikeFriction):
+    a: Array
+
+    def transmission_ratio(self, context):
+        return 1.0 / (1.0 + self.a * context.wrap_angle)
+
+
+actuator = ThreadlikeActuator.tendons(
+    routing, friction=HyperbolicFriction(a=jnp.asarray(0.5))
+)
+```
+
+The `context` is a `ThreadlikeQuadratureContext` describing the routed path at
+one quadrature node, batched over paths. Some of its fields mean the same thing
+on every host and some do not:
+
+| Field | Meaning | Portable |
+|---|---|---|
+| `arc_length` | backbone coordinate \(s\) | yes |
+| `segment_index` | segment containing the node | yes |
+| `offset`, `offset_derivative` | material-frame offset `(n, 3)` and its \(s\)-derivative | yes |
+| `tangent_norm` | routed-path stretch relative to the backbone | yes |
+| `active` | whether the node lies in each path's span | yes |
+| `unit_tangent` | normalized tangent, `(n, 2)` planar and `(n, 3)` spatial | no |
+| `strain` | `(n, 3)` planar and `(n, 6)` spatial | no |
+| `wrap_angle` | accumulated turn \(\Theta\), or `None` | only where supplied |
+
+A law reading only the portable fields runs unchanged on every host. A law
+reading `strain` or `unit_tangent` must document which host it targets.
+
+Set `requires_wrap_angle = False` if the law does not read `wrap_angle`, and the
+hosts will neither compute it nor refuse the law. Set `is_lossless = True` for a
+law that always returns one, and the hosts will skip it entirely. A law must
+keep its ratio in \((0, 1]\) and must not read the effort, which would make the
+actuation force nonlinear in the control.
+
+### What changes under a lossy law
 
 - `moment_matrix` is no longer the transpose of the length gradient, so
   `actuation_space` conversions that assume the identity do not apply.
@@ -305,7 +379,7 @@ robot = PCS(
 
 The passive element contributes to elastic force, damping, and elastic energy;
 it never consumes an active control channel. A passive path may also declare a
-`friction_coefficient`, in which case part of its spring force becomes
+`friction=` law, in which case part of its spring force becomes
 non-conservative and is applied through `actuation_force`; see
 [Guide friction](#guide-friction).
 
