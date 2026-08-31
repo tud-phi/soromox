@@ -8,6 +8,10 @@ from jax import Array, jvp, lax, vmap
 from jax import numpy as jnp
 
 from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.friction import (
+    ThreadlikeFriction,
+    ThreadlikeQuadratureContext,
+)
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
@@ -3101,7 +3105,7 @@ class PCS(SoftRobot):
             self, q, u, qd, backend=backend, capabilities=PCS_ACTUATION
         )
 
-    def _threadlike_local_basis(
+    def _threadlike_local_geometry(
         self,
         segment_index: Array,
         strain: Array,
@@ -3110,17 +3114,57 @@ class PCS(SoftRobot):
         path_params: BaseThreadlikeRoutingParams,
         start_segment_index: Array,
         end_segment_index: Array,
-    ) -> Array:
-        """Return one spatial routed-path length gradient density."""
+    ) -> ThreadlikeQuadratureContext:
+        """Return one spatial routed-path geometry at a quadrature node.
+
+        The routed tangent is ``v + omega x r + r'``, assembled here in
+        homogeneous coordinates.
+
+        Args:
+            segment_index: Index of the segment containing the node.
+            strain: Segment strain of shape ``(6,)``.
+            s: Backbone coordinate of the node.
+            routing: Routed-path family being integrated.
+            path_params: Parameters of the single path.
+            start_segment_index: First segment the path spans.
+            end_segment_index: Last segment the path spans.
+
+        Returns:
+            context: Node geometry for one path, consumed by
+                :meth:`_threadlike_local_basis` and by the installed
+                transmission-loss law.
+        """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
         )
-        offset = jnp.append(routing.offset(path_params, s), 1.0)
-        offset_derivative = jnp.append(routing.derivative(path_params, s), 1.0)
-        tangent_unnormalized = (offset_derivative + se3.hat(strain) @ offset)[:-1]
-        tangent = safe_normalize(tangent_unnormalized, eps=self.global_eps)
-        basis = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
-        return active * basis
+        offset = routing.offset(path_params, s)
+        offset_derivative = routing.derivative(path_params, s)
+        homogeneous_offset = jnp.append(offset, 1.0)
+        homogeneous_derivative = jnp.append(offset_derivative, 1.0)
+        tangent = (homogeneous_derivative + se3.hat(strain) @ homogeneous_offset)[:-1]
+        return ThreadlikeQuadratureContext(
+            arc_length=jnp.asarray(s),
+            segment_index=jnp.asarray(segment_index),
+            offset=offset,
+            offset_derivative=offset_derivative,
+            tangent_norm=safe_norm(tangent),
+            active=active,
+            unit_tangent=safe_normalize(tangent, eps=self.global_eps),
+            strain=strain,
+        )
+
+    def _threadlike_local_basis(self, context: ThreadlikeQuadratureContext) -> Array:
+        """Return one spatial routed-path length gradient density.
+
+        Args:
+            context: Node geometry from :meth:`_threadlike_local_geometry`.
+
+        Returns:
+            phi: Length-gradient density of shape ``(6,)``.
+        """
+        tangent = context.unit_tangent
+        basis = jnp.hstack([so3.skew(context.offset) @ tangent, tangent])
+        return context.active * basis
 
     def _threadlike_wrap_density(
         self, strains: Array, routing: ThreadlikeRouting
@@ -3189,21 +3233,21 @@ class PCS(SoftRobot):
         self,
         q: Array,
         routing: ThreadlikeRouting,
-        friction_coefficient: Array | None = None,
+        friction: ThreadlikeFriction | None = None,
     ) -> Array:
         """Integrate routed-length moment arms in the PCS strain basis.
 
-        When a ``friction_coefficient`` is supplied, the Capstan transmission
-        ratio ``exp(-mu * Theta(s))`` weights the local basis inside the
-        arc-length integral, because guide friction accumulates along the path
-        rather than scaling the applied effort. A zero coefficient reproduces
-        the frictionless matrix exactly.
+        When a lossy ``friction`` law is installed, its transmission ratio
+        weights the local basis inside the arc-length integral, because a
+        transmission loss accumulates along the path rather than scaling the
+        applied effort. A lossless law is skipped entirely and reproduces the
+        frictionless matrix exactly.
 
         Args:
             q: Generalized coordinates of shape ``(num_dofs,)``.
             routing: Routed-path family to integrate.
-            friction_coefficient: Optional Capstan coefficient, scalar or one
-                entry per path. ``None`` skips the weighting entirely.
+            friction: Optional transmission-loss law. ``None`` or any law whose
+                ``is_lossless`` is set skips the weighting entirely.
 
         Returns:
             A: Moment-arm matrix of shape ``(num_dofs, num_paths)``.
@@ -3214,9 +3258,9 @@ class PCS(SoftRobot):
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         strains = self.strain(q).reshape((self.num_segments, 6))
 
-        mu = None
-        if friction_coefficient is not None:
-            mu = jnp.broadcast_to(jnp.asarray(friction_coefficient), (count,))
+        lossy = friction is not None and not friction.is_lossless
+        wrap_density = None
+        if lossy and friction.requires_wrap_angle:
             wrap_density = self._threadlike_wrap_density(strains, routing)
 
         def segment_matrix(segment_index: Array) -> Array:
@@ -3228,10 +3272,10 @@ class PCS(SoftRobot):
             )
 
             def point_matrix(point_index: Array) -> Array:
-                basis = vmap(
-                    self._threadlike_local_basis,
+                context = vmap(
+                    self._threadlike_local_geometry,
                     in_axes=(None, None, None, None, 0, 0, 0),
-                    out_axes=1,
+                    out_axes=0,
                 )(
                     segment_index,
                     strains[segment_index],
@@ -3241,13 +3285,15 @@ class PCS(SoftRobot):
                     params.start_segment_index_array,
                     params.end_segment_index_array,
                 )
+                basis = vmap(self._threadlike_local_basis, out_axes=1)(context)
                 weighted = weights[point_index] * basis
-                if mu is None:
+                if not lossy:
                     return weighted
-                transmission_ratio = jnp.exp(
-                    -mu * self._threadlike_wrap_angle(wrap_density, points[point_index])
-                )
-                return weighted * transmission_ratio[None, :]
+                if wrap_density is not None:
+                    context = context.with_wrap_angle(
+                        self._threadlike_wrap_angle(wrap_density, points[point_index])
+                    )
+                return weighted * friction.transmission_ratio(context)[None, :]
 
             return jnp.sum(
                 vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0

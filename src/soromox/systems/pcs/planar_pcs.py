@@ -8,6 +8,10 @@ from jax import Array, jvp, lax, vmap
 from jax import numpy as jnp
 
 from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.friction import (
+    ThreadlikeFriction,
+    ThreadlikeQuadratureContext,
+)
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
@@ -2974,7 +2978,7 @@ class PlanarPCS(SoftRobot):
             capabilities=PLANAR_PCS_ACTUATION,
         )
 
-    def _threadlike_local_basis(
+    def _threadlike_local_geometry(
         self,
         segment_index: Array,
         strain: Array,
@@ -2983,8 +2987,8 @@ class PlanarPCS(SoftRobot):
         path_params: BaseThreadlikeRoutingParams,
         start_segment_index: Array,
         end_segment_index: Array,
-    ) -> Array:
-        """Return one planar routed-path length gradient density.
+    ) -> ThreadlikeQuadratureContext:
+        """Return one planar routed-path geometry at a quadrature node.
 
         The offset is measured along the local ``+y`` axis, so a path at
         positive offset lies on the inside of a positive-curvature bend and
@@ -2992,18 +2996,61 @@ class PlanarPCS(SoftRobot):
         ``p + d Rot(theta) e_y`` gives ``(sigma_x - d kappa)`` along the tangent
         and ``(sigma_y + d')`` along the normal, which is what the spatial host
         obtains from ``v + omega x r + r'``.
+
+        Args:
+            segment_index: Index of the segment containing the node.
+            strain: Segment strain of shape ``(3,)``.
+            s: Backbone coordinate of the node.
+            routing: Routed-path family being integrated.
+            path_params: Parameters of the single path.
+            start_segment_index: First segment the path spans.
+            end_segment_index: Last segment the path spans.
+
+        Returns:
+            context: Node geometry for one path, consumed by
+                :meth:`_threadlike_local_basis` and by the installed
+                transmission-loss law.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
         )
-        offset = routing.offset(path_params, s)[1]
-        offset_derivative = routing.derivative(path_params, s)[1]
-        axial = strain[1] - offset * strain[0]
-        shear = strain[2] + offset_derivative
+        offset = routing.offset(path_params, s)
+        offset_derivative = routing.derivative(path_params, s)
+        axial = strain[1] - offset[1] * strain[0]
+        shear = strain[2] + offset_derivative[1]
         norm = safe_norm(jnp.stack([axial, shear]))
-        axial_ratio = safe_divide(axial, norm, self.global_eps)
-        shear_ratio = safe_divide(shear, norm, self.global_eps)
-        return active * jnp.asarray([-offset * axial_ratio, axial_ratio, shear_ratio])
+        unit_tangent = jnp.stack(
+            [
+                safe_divide(axial, norm, self.global_eps),
+                safe_divide(shear, norm, self.global_eps),
+            ]
+        )
+        return ThreadlikeQuadratureContext(
+            arc_length=jnp.asarray(s),
+            segment_index=jnp.asarray(segment_index),
+            offset=offset,
+            offset_derivative=offset_derivative,
+            tangent_norm=norm,
+            active=active,
+            unit_tangent=unit_tangent,
+            strain=strain,
+        )
+
+    def _threadlike_local_basis(self, context: ThreadlikeQuadratureContext) -> Array:
+        """Return one planar routed-path length gradient density.
+
+        Args:
+            context: Node geometry from :meth:`_threadlike_local_geometry`.
+
+        Returns:
+            phi: Length-gradient density of shape ``(3,)``.
+        """
+        offset = context.offset[1]
+        axial_ratio = context.unit_tangent[0]
+        shear_ratio = context.unit_tangent[1]
+        return context.active * jnp.asarray(
+            [-offset * axial_ratio, axial_ratio, shear_ratio]
+        )
 
     def _threadlike_wrap_density(self, strains: Array) -> Array:
         """Return the Capstan wrap-angle density of each segment.
@@ -3049,21 +3096,21 @@ class PlanarPCS(SoftRobot):
         self,
         q: Array,
         routing: ThreadlikeRouting,
-        friction_coefficient: Array | None = None,
+        friction: ThreadlikeFriction | None = None,
     ) -> Array:
         """Integrate routed-length moment arms in the planar PCS basis.
 
-        When a ``friction_coefficient`` is supplied, the Capstan transmission
-        ratio ``exp(-mu * Theta(s))`` weights the local basis inside the
-        arc-length integral, because guide friction accumulates along the path
-        rather than scaling the applied effort. A zero coefficient reproduces
-        the frictionless matrix exactly.
+        When a lossy ``friction`` law is installed, its transmission ratio
+        weights the local basis inside the arc-length integral, because a
+        transmission loss accumulates along the path rather than scaling the
+        applied effort. A lossless law is skipped entirely and reproduces the
+        frictionless matrix exactly.
 
         Args:
             q: Generalized coordinates of shape ``(num_dofs,)``.
             routing: Routed-path family to integrate.
-            friction_coefficient: Optional Capstan coefficient, scalar or one
-                entry per path. ``None`` skips the weighting entirely.
+            friction: Optional transmission-loss law. ``None`` or any law whose
+                ``is_lossless`` is set skips the weighting entirely.
 
         Returns:
             A: Moment-arm matrix of shape ``(num_dofs, num_paths)``.
@@ -3074,9 +3121,9 @@ class PlanarPCS(SoftRobot):
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         strains = self.strain(q).reshape((self.num_segments, 3))
 
-        mu = None
-        if friction_coefficient is not None:
-            mu = jnp.broadcast_to(jnp.asarray(friction_coefficient), (count,))
+        lossy = friction is not None and not friction.is_lossless
+        wrap_density = None
+        if lossy and friction.requires_wrap_angle:
             wrap_density = self._threadlike_wrap_density(strains)
 
         def segment_matrix(segment_index: Array) -> Array:
@@ -3088,10 +3135,10 @@ class PlanarPCS(SoftRobot):
             )
 
             def point_matrix(point_index: Array) -> Array:
-                basis = vmap(
-                    self._threadlike_local_basis,
+                context = vmap(
+                    self._threadlike_local_geometry,
                     in_axes=(None, None, None, None, 0, 0, 0),
-                    out_axes=1,
+                    out_axes=0,
                 )(
                     segment_index,
                     strains[segment_index],
@@ -3101,13 +3148,22 @@ class PlanarPCS(SoftRobot):
                     params.start_segment_index_array,
                     params.end_segment_index_array,
                 )
+                basis = vmap(self._threadlike_local_basis, out_axes=1)(context)
                 weighted = weights[point_index] * basis
-                if mu is None:
+                if not lossy:
                     return weighted
-                transmission_ratio = jnp.exp(
-                    -mu * self._threadlike_wrap_angle(wrap_density, points[point_index])
-                )
-                return weighted * transmission_ratio[None, :]
+                if wrap_density is not None:
+                    # The planar wrap angle is path-independent, so broadcast it
+                    # to one entry per path before the law consumes it.
+                    context = context.with_wrap_angle(
+                        jnp.broadcast_to(
+                            self._threadlike_wrap_angle(
+                                wrap_density, points[point_index]
+                            ),
+                            (count,),
+                        )
+                    )
+                return weighted * friction.transmission_ratio(context)[None, :]
 
             return jnp.sum(
                 vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0
