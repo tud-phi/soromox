@@ -139,11 +139,15 @@ def _settle(robot, u, iterations=30):
     return q
 
 
-def _with_friction(robot, friction_coefficient):
-    transmission = robot.actuators[0].params.transmission.replace(
-        friction_coefficient=friction_coefficient
+def _with_friction(robot, coefficient):
+    """Return a copy of ``robot`` whose Capstan coefficient is ``coefficient``."""
+    transmission = robot.actuators[0].params.transmission
+    return robot.update_actuator_params(
+        0,
+        transmission=transmission.replace(
+            friction=transmission.friction.replace(coefficient=coefficient)
+        ),
     )
-    return robot.update_actuator_params(0, transmission=transmission)
 
 
 # ---------------------------------------------------------------------------

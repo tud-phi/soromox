@@ -7,6 +7,10 @@ import jax.numpy as jnp
 from jax import Array, lax, vmap
 
 from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.friction import (
+    ThreadlikeFriction,
+    ThreadlikeQuadratureContext,
+)
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
     ThreadlikeRouting,
@@ -5841,7 +5845,7 @@ class GVS(SoftRobot):
             self, q, u, qd, backend=backend, capabilities=GVS_ACTUATION
         )
 
-    def _threadlike_local_basis(
+    def _threadlike_local_geometry(
         self,
         routing: ThreadlikeRouting,
         path_params: BaseThreadlikeRoutingParams,
@@ -5851,8 +5855,15 @@ class GVS(SoftRobot):
         s: Array,
         segment_index: Array,
         point_index: Array,
-    ) -> Array:
-        """Return one spatial routed-path length gradient density."""
+    ) -> ThreadlikeQuadratureContext:
+        """Return one routed-path geometry at a GVS quadrature node.
+
+        Returns:
+            context: Node geometry for one path. ``wrap_angle`` is never
+                populated: GVS strain varies along the arc length, so the
+                accumulated turn is not piecewise linear and would need its own
+                cumulative quadrature.
+        """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
         )
@@ -5861,33 +5872,48 @@ class GVS(SoftRobot):
         if self.scale_rotational_basis_by_length:
             basis = basis.at[:3, :].divide(length)
         strain = basis @ q_link + self.xi_ref_Xs[segment_index, point_index]
-        offset = jnp.append(routing.offset(path_params, s), 1.0)
-        derivative = jnp.append(routing.derivative(path_params, s), 1.0)
-        tangent_unnormalized = (derivative + se3.hat(strain) @ offset)[:-1]
-        tangent = safe_normalize(tangent_unnormalized, eps=self.global_eps)
-        local = jnp.hstack([so3.skew(offset[:-1]) @ tangent, tangent])
-        return active * local
+        offset = routing.offset(path_params, s)
+        offset_derivative = routing.derivative(path_params, s)
+        homogeneous_offset = jnp.append(offset, 1.0)
+        homogeneous_derivative = jnp.append(offset_derivative, 1.0)
+        tangent = (homogeneous_derivative + se3.hat(strain) @ homogeneous_offset)[:-1]
+        return ThreadlikeQuadratureContext(
+            arc_length=jnp.asarray(s),
+            segment_index=jnp.asarray(segment_index),
+            offset=offset,
+            offset_derivative=offset_derivative,
+            tangent_norm=safe_norm(tangent),
+            active=active,
+            unit_tangent=safe_normalize(tangent, eps=self.global_eps),
+            strain=strain,
+        )
+
+    def _threadlike_local_basis(self, context: ThreadlikeQuadratureContext) -> Array:
+        """Return one routed-path length gradient density in the GVS basis."""
+        tangent = context.unit_tangent
+        local = jnp.hstack([so3.skew(context.offset) @ tangent, tangent])
+        return context.active * local
 
     def _threadlike_moment_matrix(
         self,
         q: Array,
         routing: ThreadlikeRouting,
-        friction_coefficient: Array | None = None,
+        friction: ThreadlikeFriction | None = None,
     ) -> Array:
-        """Integrate raw routed-length moment arms in the native GVS basis.
+        """Integrate routed-length moment arms in the native GVS basis.
 
         GVS strain varies along the arc length, so the Capstan wrap angle is
-        not piecewise linear and would need its own cumulative quadrature. The
-        wrap-angle model is therefore not implemented for this host and
-        ``friction_coefficient`` is ignored; installing a threadlike component
-        carrying a nonzero coefficient on a GVS robot is refused at
-        construction instead of being silently dropped.
+        not piecewise linear and would need its own cumulative quadrature. This
+        host therefore supplies no ``wrap_angle``, and a law requiring one is
+        refused at construction rather than silently dropped. Laws reading only
+        host-agnostic geometry, such as a length-based loss, are honoured here
+        exactly as on the PCS hosts.
         """
-        del friction_coefficient
         params = routing.params
         count = params.num_paths
         if count == 0:
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
+        lossy = friction is not None and not friction.is_lossless
         q_gathered = self._min_size_gathered(q)
 
         def segment_matrix(segment_index: Array) -> Array:
@@ -5900,10 +5926,10 @@ class GVS(SoftRobot):
                     self.segment_end_positions[segment_index]
                     + self.integration_points[segment_index, point_index] * length
                 )
-                local = vmap(
-                    self._threadlike_local_basis,
+                context = vmap(
+                    self._threadlike_local_geometry,
                     in_axes=(None, 0, 0, 0, None, None, None, None),
-                    out_axes=1,
+                    out_axes=0,
                 )(
                     routing,
                     params,
@@ -5914,6 +5940,9 @@ class GVS(SoftRobot):
                     segment_index,
                     point_index,
                 )
+                local = vmap(self._threadlike_local_basis, out_axes=1)(context)
+                if lossy:
+                    local = local * friction.transmission_ratio(context)[None, :]
                 basis = self.B_Xs[segment_index, point_index]
                 if self.scale_rotational_basis_by_length:
                     basis = basis.at[:3, :].divide(length)

@@ -16,7 +16,9 @@ from system_param_builders import (
 
 from soromox.actuation import (
     BaseThreadlikeRoutingParams,
+    CapstanFriction,
     EffortModel,
+    ExponentialLengthFriction,
     IdentityActuator,
     IdentityTransmission,
     ThreadlikeActuator,
@@ -412,11 +414,11 @@ def test_direct_effort_skips_unused_threadlike_state(monkeypatch):
     calls = {"moment_matrix": 0}
     original_moment_matrix = PCS._threadlike_moment_matrix
 
-    def counted_moment_matrix(self, q, routing, friction_coefficient=None):
+    def counted_moment_matrix(self, q, routing, friction=None):
         calls["moment_matrix"] += 1
         return original_moment_matrix(self, q, routing)
 
-    def unexpected_path_lengths(self, q, routing, friction_coefficient=None):
+    def unexpected_path_lengths(self, q, routing, friction=None):
         del self, q, routing
         raise AssertionError("DirectEffort must not evaluate actuator coordinates.")
 
@@ -464,11 +466,11 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
     original_moment_matrix = PCS._threadlike_moment_matrix
     original_path_lengths = PCS._threadlike_path_lengths
 
-    def counted_moment_matrix(self, q, routing, friction_coefficient=None):
+    def counted_moment_matrix(self, q, routing, friction=None):
         calls["moment_matrix"] += 1
         return original_moment_matrix(self, q, routing)
 
-    def counted_path_lengths(self, q, routing, friction_coefficient=None):
+    def counted_path_lengths(self, q, routing, friction=None):
         calls["path_lengths"] += 1
         return original_path_lengths(self, q, routing)
 
@@ -515,22 +517,22 @@ def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
 
 
 @pytest.mark.parametrize(
-    ("factory", "axial_index", "friction_coefficient"),
+    ("factory", "axial_index", "friction"),
     [
-        (_spatial_pcs, 3, 0.0),
-        (_spatial_pcs, 3, 0.7),
-        (_planar_pcs, 1, 0.0),
-        (_planar_pcs, 1, 0.7),
-        (_gvs, 3, 0.0),  # GVS refuses a nonzero coefficient at construction
+        (_spatial_pcs, 3, None),
+        (_spatial_pcs, 3, CapstanFriction(coefficient=0.7)),
+        (_planar_pcs, 1, None),
+        (_planar_pcs, 1, CapstanFriction(coefficient=0.7)),
+        # GVS supplies no wrap angle, so it hosts only wrap-angle-free laws.
+        (_gvs, 3, None),
+        (_gvs, 3, ExponentialLengthFriction(rate=3.0)),
     ],
 )
 def test_collapsed_threadlike_tangent_has_finite_reverse_mode(
-    factory, axial_index, friction_coefficient
+    factory, axial_index, friction
 ):
     """Cover normalization and path density at an exactly zero routing tangent."""
-    actuator = ThreadlikeActuator.tendons(
-        _routing(count=1), friction_coefficient=friction_coefficient
-    )
+    actuator = ThreadlikeActuator.tendons(_routing(count=1), friction=friction)
     robot = factory(actuators=actuator)
     q = jnp.zeros(robot.num_internal_dofs).at[axial_index].set(-1.0)
 

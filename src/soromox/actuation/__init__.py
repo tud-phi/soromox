@@ -10,6 +10,13 @@ from .core import (
     PassiveElement,
     Transmission,
 )
+from .friction import (
+    CapstanFriction,
+    ExponentialLengthFriction,
+    Frictionless,
+    ThreadlikeFriction,
+    ThreadlikeQuadratureContext,
+)
 from .joint import (
     AffineJointTransmission,
     AffineJointTransmissionParams,
@@ -58,8 +65,13 @@ __all__ = [
     "ArticulatedMcKibbenTransmission",
     "ArticulatedMcKibbenTransmissionParams",
     "BaseThreadlikeRoutingParams",
+    "CapstanFriction",
+    "ExponentialLengthFriction",
+    "Frictionless",
     "LinearThreadlikeRoutingParams",
     "PassiveElement",
+    "ThreadlikeFriction",
+    "ThreadlikeQuadratureContext",
     "ThreadlikeActuator",
     "ThreadlikeActuatorParams",
     "ThreadlikeImpedance",
