@@ -332,12 +332,18 @@ def check_step_response(robot, info, data, solver=None) -> bool:
     n_ch = robot.num_actuators
     act_target = np.zeros(n_ch)
     act_target[chamber] = F_const / chamber_area
-    # Two-knot step: 0 before t_step, act_target from t_step onward -- matches
-    # the MATLAB export exactly (see python_exporter_tip162219_ladder.m).
-    act_time = jnp.asarray([0.0, t_step, t_step + 1e-6, ref_t[-1]])
-    act_values = jnp.asarray(
-        np.stack([np.zeros(n_ch), np.zeros(n_ch), act_target, act_target], axis=1)
-    )
+    # MATLAB builds u_lag on its OWN T_lag grid (0:0.005:2.0, python_exporter_
+    # tip162219_ladder.m) and interpolates it with griddedInterpolant(...,
+    # 'linear') -- a genuine 5 ms-wide linear ramp into the step, not an
+    # instant jump. A synthetic near-instant 2-knot step here does NOT
+    # reproduce that (confirmed: uf(t) diverges by up to 0.85 N right at
+    # t_step, tip RMS 15.37 mm). Reuse ref_t (== MATLAB's T_lag) directly so
+    # jnp.interp sees the identical piecewise-linear input MATLAB solved
+    # with -- this is what actually matches the MATLAB export exactly.
+    act_time = jnp.asarray(ref_t)
+    act_values_np = np.zeros((n_ch, ref_t.size))
+    act_values_np[chamber, ref_t >= t_step] = act_target[chamber]
+    act_values = jnp.asarray(act_values_np)
 
     controller = RecordedInput(act_time=act_time, act_values=act_values, tau=jnp.asarray(tau))
     n_q = robot.num_active_strains
@@ -451,6 +457,7 @@ def build_robot(data):
         structure=ISupportStructure(
             pcs_segment_counts=(1,) * n_pneu,
             rigid_segment_selector=rigid_selector,
+            scale_rotational_basis_by_length=True,
         ),
     )
 

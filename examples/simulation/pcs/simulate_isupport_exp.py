@@ -303,6 +303,7 @@ def build_robot(data):
         structure=ISupportStructure(
             pcs_segment_counts=(1,) * n_pneu,
             rigid_segment_selector=rigid_selector,
+            scale_rotational_basis_by_length=True,
         ),
     )
 

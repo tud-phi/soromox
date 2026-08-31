@@ -90,6 +90,7 @@ if __name__ == "__main__":
         structure=ISupportStructure(
             pcs_segment_counts=pcs_segment_counts,
             rigid_segment_selector=rigid_segment_selector,
+            scale_rotational_basis_by_length=True,
         ),
     )
 
