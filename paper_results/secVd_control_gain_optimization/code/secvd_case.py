@@ -69,7 +69,8 @@ def build_sec_vd_robot() -> tuple[PCS, ThreadlikeRouting, float]:
     )
     robot = PCS.from_links(
         links,
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        # Scalar-last quaternion pose: [qx, qy, qz, qw, x, y, z].
+        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, 9.81]),
         actuators=ThreadlikeActuator.tendons(routing),
     )
