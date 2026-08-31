@@ -1,5 +1,5 @@
 # ruff: noqa: E402
-"""Capstan guide friction on threadlike transmissions."""
+"""Guide friction on threadlike transmissions, and the pluggable loss model."""
 
 import jax
 import pytest
@@ -7,6 +7,7 @@ import pytest
 jax.config.update("jax_enable_x64", True)
 
 import jax.numpy as jnp
+from jax import Array
 from numpy.testing import assert_allclose
 from system_param_builders import (
     pcs_params,
@@ -15,7 +16,15 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
-from soromox.actuation import ThreadlikeActuator, ThreadlikeImpedance, ThreadlikeRouting
+from soromox.actuation import (
+    CapstanFriction,
+    ExponentialLengthFriction,
+    Frictionless,
+    ThreadlikeActuator,
+    ThreadlikeFriction,
+    ThreadlikeImpedance,
+    ThreadlikeRouting,
+)
 from soromox.autodiff import custom_jvp_mode
 from soromox.systems import (
     GVS,
@@ -565,3 +574,204 @@ def test_gvs_rejects_nonzero_friction():
 
     with pytest.raises(TypeError, match="wrap-angle model"):
         _gvs(actuators=ThreadlikeActuator.tendons(routing, friction_coefficient=0.3))
+
+
+# ---------------------------------------------------------------------------
+# The pluggable transmission-loss model
+# ---------------------------------------------------------------------------
+
+
+class _HyperbolicFriction(ThreadlikeFriction):
+    """A law defined entirely outside soromox, to pin the extension point."""
+
+    a: Array
+
+    def transmission_ratio(self, context):
+        return 1.0 / (1.0 + self.a * context.wrap_angle)
+
+
+@pytest.mark.parametrize("factory", [_planar, _spatial])
+def test_default_is_lossless_and_bit_identical(factory):
+    """The shipped default delivers full effort and costs nothing."""
+    routing = _routing([0.02, -0.015])
+    q = jnp.linspace(-0.01, 0.04, factory().num_dofs)
+
+    default = factory(actuators=ThreadlikeActuator.tendons(routing))
+    explicit = factory(
+        actuators=ThreadlikeActuator.tendons(routing, friction=Frictionless())
+    )
+    assert Frictionless.is_lossless
+    assert not Frictionless.requires_wrap_angle
+    assert jnp.array_equal(default.actuation_matrix(q), explicit.actuation_matrix(q))
+    assert isinstance(default.actuators[0].params.transmission.friction, Frictionless)
+
+
+def test_capstan_object_matches_coefficient_sugar():
+    """The two spellings of a Capstan law must not diverge."""
+    routing = _routing([0.02])
+    q = jnp.array([6.0, 0.0, 0.0])
+
+    sugar = _planar(
+        actuators=ThreadlikeActuator.tendons(routing, friction_coefficient=0.4)
+    )
+    obj = _planar(
+        actuators=ThreadlikeActuator.tendons(
+            routing, friction=CapstanFriction(coefficient=0.4)
+        )
+    )
+    assert jnp.array_equal(sugar.actuation_matrix(q), obj.actuation_matrix(q))
+
+    with pytest.raises(ValueError, match="not both"):
+        ThreadlikeActuator.tendons(
+            routing, friction=CapstanFriction(coefficient=0.1), friction_coefficient=0.2
+        )
+    with pytest.raises(TypeError, match="ThreadlikeFriction"):
+        ThreadlikeActuator.tendons(routing, friction="capstan")
+
+
+@pytest.mark.parametrize("factory", [_planar, _spatial])
+def test_length_friction_matches_closed_form(factory):
+    """A per-length loss integrates to its own analytic mean over a segment."""
+    rate, length = 3.0, 0.1
+    routing = _routing([0.02])
+    q = jnp.zeros((factory().num_dofs,)).at[0].set(4.0)
+
+    frictionless = factory(actuators=ThreadlikeActuator.tendons(routing))
+    attenuated = factory(
+        actuators=ThreadlikeActuator.tendons(
+            routing, friction=ExponentialLengthFriction(rate=rate)
+        )
+    )
+    decay = rate * length
+    expected = (1.0 - jnp.exp(-decay)) / decay
+
+    reference = frictionless.actuation_matrix(q)
+    row = int(jnp.argmax(jnp.abs(reference[:, 0])))
+    assert_allclose(
+        attenuated.actuation_matrix(q)[row, 0],
+        expected * reference[row, 0],
+        rtol=1e-8,
+    )
+
+
+def test_length_friction_runs_on_gvs():
+    """GVS hosts a wrap-angle-free law, and still refuses a Capstan law."""
+    routing = _routing([0.02])
+    q = jnp.zeros((_gvs().num_dofs,)).at[0].set(3.0)
+
+    frictionless = _gvs(actuators=ThreadlikeActuator.tendons(routing))
+    attenuated = _gvs(
+        actuators=ThreadlikeActuator.tendons(
+            routing, friction=ExponentialLengthFriction(rate=4.0)
+        )
+    )
+    reference = jnp.abs(frictionless.actuation_matrix(q))
+    weighted = jnp.abs(attenuated.actuation_matrix(q))
+    assert jnp.all(weighted <= reference + 1e-15)
+    assert jnp.max(reference - weighted) > 1e-6
+
+    with pytest.raises(TypeError, match="wrap-angle model"):
+        _gvs(
+            actuators=ThreadlikeActuator.tendons(
+                routing, friction=CapstanFriction(coefficient=0.3)
+            )
+        )
+
+
+def test_custom_friction_model_needs_no_soromox_change():
+    """A third-party law installs through the public contract alone."""
+    routing = _routing([0.02])
+    q = jnp.array([6.0, 0.0, 0.0])
+
+    frictionless = _planar(actuators=ThreadlikeActuator.tendons(routing))
+    custom = _planar(
+        actuators=ThreadlikeActuator.tendons(
+            routing, friction=_HyperbolicFriction(a=jnp.asarray(0.5))
+        )
+    )
+    reference = frictionless.actuation_matrix(q)
+    weighted = custom.actuation_matrix(q)
+
+    assert jnp.all(jnp.abs(weighted) <= jnp.abs(reference) + 1e-15)
+    assert jnp.max(jnp.abs(reference - weighted)) > 1e-6
+    # The law is not Capstan, so it must not coincide with one.
+    capstan = _planar(
+        actuators=ThreadlikeActuator.tendons(
+            routing, friction=CapstanFriction(coefficient=0.5)
+        )
+    ).actuation_matrix(q)
+    assert jnp.max(jnp.abs(weighted - capstan)) > 1e-6
+
+
+def test_model_is_traceable_and_identifiable():
+    """Loss parameters stay differentiable leaves under jit, for any law."""
+    routing = _routing([0.02, -0.015])
+    q = jnp.array([4.0, 0.02, -0.01])
+    u = jnp.array([2.0, 1.0])
+
+    def loss_for(build, value):
+        # The robot is built once outside the trace; only the loss parameter is
+        # traced, which is how a law is identified in practice.
+        robot = _planar(
+            actuators=ThreadlikeActuator.tendons(routing, friction=build(value))
+        )
+
+        @jax.jit
+        def loss(parameter):
+            transmission = robot.actuators[0].params.transmission
+            identified = robot.update_actuator_params(
+                0, transmission=transmission.replace(friction=build(parameter))
+            )
+            return jnp.sum(identified.actuation_force(q, u) ** 2)
+
+        return jax.value_and_grad(loss)(jnp.asarray(value))
+
+    for build, value in (
+        (lambda p: CapstanFriction(coefficient=p), 0.3),
+        (lambda p: ExponentialLengthFriction(rate=p), 2.0),
+        (lambda p: _HyperbolicFriction(a=p), 0.4),
+    ):
+        magnitude, gradient = loss_for(build, value)
+        assert jnp.isfinite(magnitude) and jnp.isfinite(gradient)
+        assert jnp.abs(gradient) > 0.0
+
+
+def test_context_fields_agree_across_hosts():
+    """Host-agnostic context fields must match, so portable laws are portable."""
+    routing = _routing([0.02, -0.015])
+    planar = _planar(actuators=ThreadlikeActuator.tendons(routing))
+    spatial = _spatial(actuators=ThreadlikeActuator.tendons(routing))
+
+    curvature, axial, shear = 5.0, 0.02, -0.01
+    planar_strain = jnp.array([curvature, 1.0 + axial, shear])
+    spatial_strain = jnp.array([0.0, 0.0, curvature, 1.0 + axial, shear, 0.0])
+    arc_length = 0.06
+    path_routing = planar.actuators[0].transmission.routing
+
+    def geometry(robot, strain):
+        return jax.vmap(
+            robot._threadlike_local_geometry,
+            in_axes=(None, None, None, None, 0, 0, 0),
+            out_axes=0,
+        )(
+            jnp.asarray(0),
+            strain,
+            jnp.asarray(arc_length),
+            path_routing,
+            path_routing.params,
+            path_routing.params.start_segment_index_array,
+            path_routing.params.end_segment_index_array,
+        )
+
+    planar_context = geometry(planar, planar_strain)
+    spatial_context = geometry(spatial, spatial_strain)
+
+    for field in ("arc_length", "offset", "offset_derivative", "tangent_norm"):
+        assert_allclose(
+            getattr(planar_context, field),
+            getattr(spatial_context, field),
+            rtol=1e-9,
+            atol=1e-12,
+            err_msg=f"host-agnostic field {field} disagrees",
+        )
+    assert jnp.array_equal(planar_context.active, spatial_context.active)
