@@ -185,11 +185,25 @@ to soromox.
 
 soromox ships three:
 
-| Law | Ratio | Hosts |
-|---|---|---|
-| `Frictionless` | \(1\) | all; the default |
-| `CapstanFriction` | \(e^{-\mu\Theta}\) | `PCS`, `PlanarPCS` |
-| `ExponentialLengthFriction` | \(e^{-ks}\) | all, including `GVS` |
+| Law | Ratio | Parameter | Hosts |
+|---|---|---|---|
+| `Frictionless` | \(1\) | none | all; the default |
+| `CapstanFriction` | \(e^{-\mu\Theta}\) | \(\mu\), Coulomb coefficient | `PCS`, `PlanarPCS` |
+| `ExponentialLengthFriction` | \(e^{-ks}\) | \(k\), per metre | all, including `GVS` |
+
+Both lossy laws solve the same tension ODE
+\(\mathrm{d}T/\mathrm{d}s = -\lambda(s)T\), whose solution is
+\(\eta = e^{-\int\lambda\,\mathrm{d}s}\). They differ only in where the normal
+load pressing the path against its guide comes from. Under `CapstanFriction`
+it is curvature-induced, \(N = Tw\), giving \(\lambda = \mu w\). Under
+`ExponentialLengthFriction` it comes from a snug sheath gripping in proportion
+to tension, \(N = cT\), giving a constant \(\lambda = \mu c = k\), so loss
+accrues with distance travelled rather than with turning.
+
+That makes \(k\) phenomenological in a way \(\mu\) is not: it lumps the
+friction coefficient together with the radial grip, so it has to be fitted
+rather than looked up. It suits a tendon in a close-fitting sheath or lumen,
+and because it never reads the wrap angle it is the one law `GVS` can host.
 
 `CapstanFriction` models Coulomb friction against the guides a path runs
 through, following the force model of

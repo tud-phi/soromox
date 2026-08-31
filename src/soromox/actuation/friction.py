@@ -212,16 +212,28 @@ class CapstanFriction(ThreadlikeFriction):
 class ExponentialLengthFriction(ThreadlikeFriction):
     """Loss accumulating with routed-path length rather than with turning.
 
-    ``eta(q, s) = exp(-rate * s)`` models drag a path accrues per unit length,
-    such as a sheath, a seal, or a lumen, independently of how the path bends.
-    It reads no host-shaped field and needs no wrap angle, so unlike
-    :class:`CapstanFriction` it runs on every threadlike host, ``GVS``
-    included.
+    Both shipped laws solve the same tension ODE ``dT/ds = -lambda(s) T``,
+    whose solution is ``eta = exp(-integral lambda ds)``. They differ only in
+    where the normal load pressing the path against its guide comes from.
+    :class:`CapstanFriction` takes it from curvature, ``N = T w``, giving
+    ``lambda = mu w``. This law takes it from a snug sheath that grips in
+    proportion to tension, ``N = c T``, giving a constant ``lambda = mu c``
+    and
+
+    ``eta(q, s) = exp(-rate * s)``
+
+    so loss accrues with distance travelled rather than with turning. It suits
+    a tendon in a close-fitting sheath or lumen. It reads no host-shaped field
+    and needs no wrap angle, so unlike :class:`CapstanFriction` it runs on
+    every threadlike host, ``GVS`` included.
 
     Attributes:
-        rate: Loss per unit arc length, in inverse metres, either a scalar
-            shared by the family or shaped ``(num_paths,)``. Zero reproduces
-            the frictionless transmission exactly.
+        rate: Loss per unit arc length ``mu c``, in inverse metres, either a
+            scalar shared by the family or shaped ``(num_paths,)``. Unlike a
+            Coulomb coefficient it is phenomenological: it lumps the friction
+            coefficient together with the radial grip and has to be fitted
+            rather than looked up. Zero reproduces the frictionless
+            transmission exactly.
     """
 
     rate: Array = eqx.field(default_factory=lambda: jnp.zeros((), dtype=jnp.float64))
