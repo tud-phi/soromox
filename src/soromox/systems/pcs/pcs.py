@@ -4,12 +4,14 @@ __all__ = ["PCS"]
 from typing import Any, Self
 
 import equinox as eqx
-from jax import Array, jvp, lax, tree_util, vmap
+from jax import Array, lax, tree_util, vmap
 from jax import numpy as jnp
 
-from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.core import Actuator, IdentityActuator, PassiveElement
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
+    ThreadlikeActuator,
+    ThreadlikeImpedance,
     ThreadlikeRouting,
 )
 from soromox.autodiff import custom_jvp_enabled
@@ -33,7 +35,6 @@ from soromox.utils.integration import (
 )
 from soromox.utils.joint_motion_subspace import (
     joint_dSTF_dq,
-    joint_dSTF_dq_direction,
     joint_motion_subspace_with_derivatives,
 )
 from soromox.utils.lie_algebra import se3, so3
@@ -2734,6 +2735,173 @@ class PCS(SoftRobot):
         )
         return self.B_xi.T @ full_matrix
 
+    def _threadlike_local_basis_state_pushforward(
+        self,
+        segment_index: Array,
+        strain: Array,
+        strain_tangent: Array,
+        s: Array,
+        routing: ThreadlikeRouting,
+        path_params: BaseThreadlikeRoutingParams,
+        start_segment_index: Array,
+        end_segment_index: Array,
+    ) -> Array:
+        """Return the analytical state pushforward of one routing basis."""
+        active = (start_segment_index <= segment_index) & (
+            segment_index <= end_segment_index
+        )
+        offset = jnp.append(routing.offset(path_params, s), 1.0)
+        offset_derivative = jnp.append(routing.derivative(path_params, s), 1.0)
+        tangent_unnormalized = (offset_derivative + se3.hat(strain) @ offset)[:-1]
+        tangent_unnormalized_tangent = (se3.hat(strain_tangent) @ offset)[:-1]
+        tangent_norm = safe_norm(tangent_unnormalized)
+        tangent = safe_normalize(tangent_unnormalized, eps=self.global_eps)
+        tangent_tangent = safe_divide(
+            tangent_unnormalized_tangent
+            - tangent * (tangent @ tangent_unnormalized_tangent),
+            tangent_norm,
+            self.global_eps,
+        )
+        basis_tangent = jnp.hstack(
+            [so3.skew(offset[:-1]) @ tangent_tangent, tangent_tangent]
+        )
+        return active * basis_tangent
+
+    def _threadlike_moment_matrix_state_pushforward(
+        self,
+        q: Array,
+        q_tangent: Array,
+        routing: ThreadlikeRouting,
+    ) -> Array:
+        """Differentiate raw routed-length moment arms in one state direction."""
+        params = routing.params
+        count = params.num_paths
+        if count == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        strains = self.strain(q).reshape((self.num_segments, 6))
+        strain_tangents = (self.B_xi @ q_tangent).reshape((self.num_segments, 6))
+
+        def segment_matrix_tangent(segment_index: Array) -> Array:
+            points, weights = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[segment_index],
+                self.L_cum[segment_index + 1],
+            )
+
+            def point_matrix_tangent(point_index: Array) -> Array:
+                basis_tangent = vmap(
+                    self._threadlike_local_basis_state_pushforward,
+                    in_axes=(None, None, None, None, None, 0, 0, 0),
+                    out_axes=1,
+                )(
+                    segment_index,
+                    strains[segment_index],
+                    strain_tangents[segment_index],
+                    points[point_index],
+                    routing,
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return weights[point_index] * basis_tangent
+
+            return jnp.sum(
+                vmap(point_matrix_tangent)(
+                    jnp.arange(self.num_integration_points)
+                ),
+                axis=0,
+            )
+
+        full_matrix_tangent = vmap(segment_matrix_tangent)(
+            jnp.arange(self.num_segments)
+        ).reshape(self.num_strains, count)
+        return self.B_xi.T @ full_matrix_tangent
+
+    def _actuation_force_state_pushforward(
+        self,
+        q: Array,
+        u: Array,
+        q_tangent: Array,
+    ) -> Array:
+        """Return the analytical PCS actuation-force state pushforward."""
+        force_tangent = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        start = 0
+        for actuator in self.actuators:
+            stop = start + actuator.num_channels
+            if isinstance(actuator, IdentityActuator):
+                pass
+            elif isinstance(actuator, ThreadlikeActuator):
+                moment_matrix_tangent = (
+                    self._threadlike_moment_matrix_state_pushforward(
+                        q,
+                        q_tangent,
+                        actuator.transmission.routing,
+                    )
+                    * actuator.transmission.params.coordinate_scale[None, :]
+                )
+                force_tangent = (
+                    force_tangent + moment_matrix_tangent @ u[start:stop]
+                )
+            else:
+                raise NotImplementedError(
+                    "Analytical PCS state JVPs require an analytical actuator "
+                    f"pushforward; unsupported component: {type(actuator).__name__}."
+                )
+            start = stop
+        return force_tangent
+
+    def _passive_force_state_pushforward(
+        self,
+        q: Array,
+        qd: Array,
+        q_tangent: Array,
+        qd_tangent: Array,
+    ) -> Array:
+        """Return the analytical passive applied-force state pushforward."""
+        force_tangent = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        for element in self.passive_elements:
+            if not isinstance(element, ThreadlikeImpedance):
+                raise NotImplementedError(
+                    "Analytical PCS state JVPs require an analytical passive-force "
+                    f"pushforward; unsupported component: {type(element).__name__}."
+                )
+
+            moment_matrix = self._threadlike_moment_matrix(q, element.routing)
+            moment_matrix_tangent = (
+                self._threadlike_moment_matrix_state_pushforward(
+                    q,
+                    q_tangent,
+                    element.routing,
+                )
+            )
+            path_extension = (
+                self._threadlike_path_lengths(q, element.routing)
+                - element.params.rest_length
+            )
+            spring_effort = element.params.stiffness * path_extension
+            spring_effort_tangent = element.params.stiffness * (
+                moment_matrix.T @ q_tangent
+            )
+            elastic_force_tangent = (
+                moment_matrix_tangent @ spring_effort
+                + moment_matrix @ spring_effort_tangent
+            )
+
+            path_velocity = moment_matrix.T @ qd
+            path_velocity_tangent = (
+                moment_matrix_tangent.T @ qd + moment_matrix.T @ qd_tangent
+            )
+            damping_force_tangent = (
+                moment_matrix_tangent @ (element.params.damping * path_velocity)
+                + moment_matrix
+                @ (element.params.damping * path_velocity_tangent)
+            )
+            force_tangent = (
+                force_tangent - elastic_force_tangent - damping_force_tangent
+            )
+        return force_tangent
+
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
         """Integrate raw threadlike path lengths without signed work scaling."""
         params = routing.params
@@ -3385,19 +3553,25 @@ class PCS(SoftRobot):
         tangents: tuple[Any, Array | None, Array | None, tuple | None],
     ) -> tuple[Array, Array]:
         """
-        Evaluate a hybrid analytical/autodiff forward-dynamics JVP.
+        Evaluate the analytical PCS forward-dynamics state JVP.
 
-        The inertial, Coriolis, and gravity directions use the analytical
-        inverse-dynamics Jacobian passes. Actuator and passive-element force
-        directions remain under JAX autodiff so configuration-dependent
-        components retain their exact derivatives. Model-parameter directions
-        differentiate the force residual at fixed ``(q, qd, qdd)`` and use
-        ``dID/dqdd = M`` for the implicit acceleration solve; this avoids
-        differentiating through the forward-dynamics linear solve.
+        State directions use the segment-local analytical inverse-dynamics
+        recurrence and apply ``dID/dqdd = M`` through an implicit acceleration
+        solve instead of differentiating the Cholesky solve. PCS actuator and
+        passive-element state directions use explicit directional kernels as
+        well. Model-parameter directions are handled separately below because
+        they are outside the state-only analytical contract.
         """
         robot, t, y, actuation_args = primals
         robot_tangent, _, y_tangent, actuation_args_tangent = tangents
 
+        robot_has_tangent = any(
+            tangent is not None
+            for tangent in tree_util.tree_leaves(
+                robot_tangent,
+                is_leaf=lambda value: value is None,
+            )
+        )
         yd, mass_matrix = robot._forward_dynamics_with_inertia(t, y, actuation_args)
         q, qd = jnp.split(y, 2)
         _, qdd = jnp.split(yd, 2)
@@ -3446,39 +3620,16 @@ class PCS(SoftRobot):
             applied_force_tangent = (
                 -robot.K_active @ q_tangent - robot.D_active @ qd_tangent
             )
-
-            if robot.actuators:
-
-                def state_dependent_actuation_force(
-                    q_value: Array,
-                    qd_value: Array,
-                ) -> Array:
-                    return robot.actuation_force(q_value, u, qd=qd_value)
-
-                _, actuation_state_tangent = jvp(
-                    state_dependent_actuation_force,
-                    (q, qd),
-                    (q_tangent, qd_tangent),
+            applied_force_tangent = (
+                applied_force_tangent
+                + robot._actuation_force_state_pushforward(q, u, q_tangent)
+                + robot._passive_force_state_pushforward(
+                    q,
+                    qd,
+                    q_tangent,
+                    qd_tangent,
                 )
-                applied_force_tangent = applied_force_tangent + actuation_state_tangent
-
-            if robot.passive_elements:
-
-                def passive_force(
-                    q_value: Array,
-                    qd_value: Array,
-                ) -> Array:
-                    return (
-                        -robot.passive_elastic_force(q_value)
-                        - robot.passive_damping_matrix(q_value) @ qd_value
-                    )
-
-                _, passive_force_tangent = jvp(
-                    passive_force,
-                    (q, qd),
-                    (q_tangent, qd_tangent),
-                )
-                applied_force_tangent = applied_force_tangent + passive_force_tangent
+            )
         if u_has_tangent:
             applied_force_tangent = (
                 applied_force_tangent
@@ -3487,13 +3638,6 @@ class PCS(SoftRobot):
         if tau_ext_has_tangent:
             applied_force_tangent = applied_force_tangent + tau_ext_tangent
 
-        robot_has_tangent = any(
-            tangent is not None
-            for tangent in tree_util.tree_leaves(
-                robot_tangent,
-                is_leaf=lambda value: value is None,
-            )
-        )
         if robot_has_tangent:
 
             def dynamics_residual(robot_value: "PCS") -> Array:
@@ -3698,7 +3842,7 @@ class PCS(SoftRobot):
         qdd_local: Array,
         q_directions_local: Array,
         qd_directions_local: Array,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
         """Evaluate one interval using only its segment-local active DOFs."""
         num_directions = q_directions_local.shape[1]
         derivative_directions = jnp.concatenate(
@@ -3752,6 +3896,30 @@ class PCS(SoftRobot):
             detad_q_directions = (
                 dS_dq_qdd_local + dSd_dq_qd_local
             ) @ q_directions_local
+
+        xi = B_xi_local @ q_local + xi_ref_local
+        strain_directions = B_xi_local @ q_directions_local
+
+        def motion_subspace_direction(strain_direction: Array) -> Array:
+            prepared = constant_strain_se3._prepare_adjoint_powers(
+                xi,
+                strain_direction,
+            )
+            _, _, tangent_direction = constant_strain_se3._operators_from_prepared(
+                prepared,
+                H,
+                self.global_eps,
+                self.tangent_eps,
+            )
+            return tangent_direction @ B_xi_local
+
+        S_directions_local = vmap(
+            motion_subspace_direction,
+            in_axes=1,
+            out_axes=2,
+        )(strain_directions)
+
+        Adginv_local = se3.adjoint_inverse(g_local)
         eta_local = S_local @ qd_local
         etad_local = S_local @ qdd_local + Sd_local @ qd_local
         pose_directions_local = S_local @ q_directions_local
@@ -3760,8 +3928,9 @@ class PCS(SoftRobot):
             detad_q_directions + Sd_local @ qd_directions_local + deta_qd_directions
         )
         return (
-            g_local,
+            Adginv_local,
             S_local,
+            S_directions_local,
             eta_local,
             etad_local,
             pose_directions_local,
@@ -3969,6 +4138,7 @@ class PCS(SoftRobot):
         Array,
         Array,
         Array,
+        Array,
     ]:
         """Propagate primal kinematics and contracted state directions."""
         Xs_nodes, Ws_nodes = vmap(
@@ -4011,8 +4181,9 @@ class PCS(SoftRobot):
         )
 
         (
-            g_local,
+            Adginv,
             S,
+            S_directions,
             eta_local,
             etad_local,
             pose_directions_local,
@@ -4028,12 +4199,12 @@ class PCS(SoftRobot):
             q_directions_local_segments[segment_indices],
             qd_directions_local_segments[segment_indices],
         )
-        Adginv = vmap(se3.adjoint_inverse)(g_local)
         num_directions = q_directions.shape[1]
         zeros_6 = jnp.zeros((6,), dtype=q.dtype)
         zeros_6k = jnp.zeros((6, num_directions), dtype=q.dtype)
+        gravity_base_initial = se3.adjoint_inverse(self.g0) @ self.g
         carry_init = (
-            self.g0,
+            gravity_base_initial,
             zeros_6,
             zeros_6,
             zeros_6k,
@@ -4043,13 +4214,13 @@ class PCS(SoftRobot):
 
         def propagate_interval(
             carry: tuple[Array, Array, Array, Array, Array, Array],
-            local: tuple[Array, Array, Array, Array, Array, Array, Array],
+            local: tuple[Array, Array, Array, Array, Array, Array],
         ) -> tuple[
             tuple[Array, Array, Array, Array, Array, Array],
             tuple[Array, Array, Array, Array, Array, Array],
         ]:
             (
-                g_base,
+                gravity_base,
                 eta_base,
                 etad_base,
                 pose_directions_base,
@@ -4057,7 +4228,6 @@ class PCS(SoftRobot):
                 etad_directions_base,
             ) = carry
             (
-                g_local_i,
                 Adginv_i,
                 eta_local_i,
                 etad_local_i,
@@ -4088,7 +4258,7 @@ class PCS(SoftRobot):
                 )(eta_base, eta_directions_local_i)
             )
 
-            g_tip = g_base @ g_local_i
+            gravity_tip = Adginv_i @ gravity_base
             pose_directions_tip = Adginv_i @ (
                 pose_directions_base + pose_directions_local_i
             )
@@ -4112,7 +4282,7 @@ class PCS(SoftRobot):
             )
 
             carry_next = (
-                g_tip,
+                gravity_tip,
                 eta_tip,
                 etad_tip,
                 pose_directions_tip,
@@ -4121,35 +4291,54 @@ class PCS(SoftRobot):
             )
             return carry_next, carry_next
 
-        (
-            _,
+        interval_values = (
+            Adginv,
+            eta_local,
+            etad_local,
+            pose_directions_local,
+            eta_directions_local,
+            etad_directions_local,
+        )
+        num_intervals = segment_indices.shape[0]
+        if num_intervals <= 16:
+            carry = carry_init
+            outputs = []
+            for step_idx in range(num_intervals):
+                local_values = tree_util.tree_map(
+                    lambda value, step=step_idx: value[step],
+                    interval_values,
+                )
+                carry, output = propagate_interval(carry, local_values)
+                outputs.append(output)
             (
-                g,
+                gravity,
                 eta,
                 etad,
                 pose_directions,
                 eta_directions,
                 etad_directions,
-            ),
-        ) = lax.scan(
-            propagate_interval,
-            carry_init,
+            ) = tree_util.tree_map(lambda *values: jnp.stack(values), *outputs)
+        else:
             (
-                g_local,
-                Adginv,
-                eta_local,
-                etad_local,
-                pose_directions_local,
-                eta_directions_local,
-                etad_directions_local,
-            ),
-        )
+                _,
+                (
+                    gravity,
+                    eta,
+                    etad,
+                    pose_directions,
+                    eta_directions,
+                    etad_directions,
+                ),
+            ) = lax.scan(
+                propagate_interval,
+                carry_init,
+                interval_values,
+            )
 
         return (
             segment_indices,
-            H_flat,
             mass_weights,
-            g,
+            gravity,
             eta,
             etad,
             pose_directions,
@@ -4157,6 +4346,8 @@ class PCS(SoftRobot):
             etad_directions,
             Adginv,
             S,
+            S_directions,
+            pose_directions_local,
         )
 
     @eqx.filter_jit
@@ -4387,9 +4578,8 @@ class PCS(SoftRobot):
         """
         (
             segment_indices,
-            H_steps,
             mass_weights,
-            g,
+            gravity,
             eta,
             etad,
             pose_directions,
@@ -4397,6 +4587,8 @@ class PCS(SoftRobot):
             etad_directions,
             Adginv,
             S,
+            S_directions,
+            pose_directions_local,
         ) = self._inverse_dynamics_state_pushforward_forward_pass(
             q,
             qd,
@@ -4413,19 +4605,6 @@ class PCS(SoftRobot):
         )
         dof_indices, dof_mask = self._segment_local_dof_layout()
         dof_mask_values = dof_mask.astype(q.dtype)
-        B_xi_segments = self.B_xi.reshape(
-            self.num_segments,
-            6,
-            self.num_dofs,
-        )
-        B_xi_local_segments = vmap(
-            lambda basis, indices, mask: basis[:, indices] * mask[None, :]
-        )(B_xi_segments, dof_indices, dof_mask_values)
-        xi_ref_segments = self.xi_ref.reshape(self.num_segments, 6)
-        q_local_segments = q[dof_indices] * dof_mask_values
-        q_directions_local_segments = (
-            q_directions[dof_indices] * dof_mask_values[:, :, None]
-        )
 
         def propagate_interval_backward(
             carry: tuple[Array, Array, Array],
@@ -4437,7 +4616,7 @@ class PCS(SoftRobot):
             mass_diagonal = mass_weights[step_idx] * jnp.diagonal(
                 self.M_segments[segment_idx]
             )
-            g_i = g[step_idx]
+            gravity_i = gravity[step_idx]
             eta_i = eta[step_idx]
             etad_i = etad[step_idx]
             pose_directions_i = pose_directions[step_idx]
@@ -4445,16 +4624,16 @@ class PCS(SoftRobot):
             etad_directions_i = etad_directions[step_idx]
             Adginv_i = Adginv[step_idx]
             S_i = S[step_idx]
+            S_directions_i = S_directions[step_idx]
+            pose_directions_local_i = pose_directions_local[step_idx]
             dof_indices_i = dof_indices[segment_idx]
             dof_mask_i = dof_mask_values[segment_idx]
-            q_directions_local_i = q_directions_local_segments[segment_idx]
 
             def mass_action(value: Array) -> Array:
                 shape = (mass_diagonal.shape[0],) + (1,) * (value.ndim - 1)
                 return mass_diagonal.reshape(shape) * value
 
             M_eta = mass_action(eta_i)
-            gravity_i = se3.adjoint_inverse(g_i) @ self.g
             F_i = (
                 mass_action(etad_i)
                 + se3.coadjoint_action(eta_i, M_eta)
@@ -4486,21 +4665,16 @@ class PCS(SoftRobot):
             coAdg = Adginv_i.T
             F_res = coAdg @ F_res_tip
             dF_res = coAdg @ dF_res_tip
-            interval_pose_directions = S_i @ q_directions_local_i
             dF_res = dF_res + vmap(
                 se3.coadjoint_action,
                 in_axes=(1, None),
                 out_axes=1,
-            )(interval_pose_directions, F_res)
+            )(pose_directions_local_i, F_res)
 
-            dSTF_res = joint_dSTF_dq_direction(
-                H_steps[step_idx],
-                B_xi_local_segments[segment_idx],
-                xi_ref_segments[segment_idx],
-                q_local_segments[segment_idx],
+            dSTF_res = jnp.einsum(
+                "imk,i->mk",
+                S_directions_i,
                 F_res,
-                q_directions_local_i,
-                self.global_eps,
             )
             dID_local = (S_i.T @ dF_res + dSTF_res) * dof_mask_i[:, None]
             dID = dID.at[dof_indices_i].add(dID_local)
@@ -4513,11 +4687,20 @@ class PCS(SoftRobot):
             -1,
             dtype=jnp.int32,
         )
-        (_, _, dID), _ = lax.scan(
-            propagate_interval_backward,
-            (zeros_6, zeros_6k, zeros_nk),
-            reverse_indices,
-        )
+        backward_carry = (zeros_6, zeros_6k, zeros_nk)
+        if num_intervals <= 16:
+            for step_idx in range(num_intervals - 1, -1, -1):
+                backward_carry, _ = propagate_interval_backward(
+                    backward_carry,
+                    jnp.asarray(step_idx, dtype=jnp.int32),
+                )
+            _, _, dID = backward_carry
+        else:
+            (_, _, dID), _ = lax.scan(
+                propagate_interval_backward,
+                backward_carry,
+                reverse_indices,
+            )
         return dID
 
     @eqx.filter_jit

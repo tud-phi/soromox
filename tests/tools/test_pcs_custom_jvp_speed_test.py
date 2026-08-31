@@ -100,8 +100,16 @@ def test_custom_jvp_input_only_tangent_matches_direct_jax_autodiff() -> None:
     assert_allclose(candidate, reference, rtol=1.0e-5, atol=1.0e-8)
 
 
-def test_directional_jvp_matches_full_analytical_jacobian_matvec() -> None:
-    model = benchmark.build_model("threadlike", num_segments=2, gauss_points=5)
+@pytest.mark.parametrize("num_segments", [2, 16])
+def test_directional_jvp_matches_full_analytical_jacobian_matvec(
+    num_segments: int,
+) -> None:
+    """Cover short and scan-based analytical state-JVP recurrences."""
+    model = benchmark.build_model(
+        "threadlike",
+        num_segments=num_segments,
+        gauss_points=5,
+    )
     _, directional_fn, inputs = _build_workload(
         model,
         "state_jvp",
