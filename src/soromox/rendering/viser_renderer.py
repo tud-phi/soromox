@@ -200,23 +200,32 @@ def _oriented_tube_segment_mesh(
     p1: np.ndarray,
     frame0: np.ndarray,
     frame1: np.ndarray,
-    radius: float,
+    radius0: float,
+    radius1: float,
     sections: int,
     *,
     cap_end: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Return a tube segment whose endpoint rings use the FK material frames."""
     angles = np.linspace(0.0, 2.0 * np.pi, int(sections), endpoint=False)
-    local_offsets = np.stack(
+    local_offset0 = np.stack(
         [
             np.zeros_like(angles),
-            float(radius) * np.cos(angles),
-            float(radius) * np.sin(angles),
+            float(radius0) * np.cos(angles),
+            float(radius0) * np.sin(angles),
         ],
         axis=1,
     )
-    ring0 = np.asarray(p0) + local_offsets @ np.asarray(frame0).T
-    ring1 = np.asarray(p1) + local_offsets @ np.asarray(frame1).T
+    local_offset1 = np.stack(
+        [
+            np.zeros_like(angles),
+            float(radius1) * np.cos(angles),
+            float(radius1) * np.sin(angles),
+        ],
+        axis=1,
+    )
+    ring0 = np.asarray(p0) + local_offset0 @ np.asarray(frame0).T
+    ring1 = np.asarray(p1) + local_offset1 @ np.asarray(frame1).T
     vertex_groups = [ring0, ring1]
     if cap_end:
         vertex_groups.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
@@ -391,6 +400,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         # Get robot radius for sizing
         self._robot_radius = self._get_robot_radius()
+        self._robot_radii = self._get_robot_radii()
 
         # Server and scene state
         self._server: viser.ViserServer | None = None
@@ -416,6 +426,17 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 return float(np.mean(np.asarray(r)))
             return float(r)
         return 0.02  # Default radius
+
+    def _get_robot_radii(self):
+        """Get per-point robot radii for tapered visualization."""
+        try:
+            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            q_dummy = jnp.zeros(self.robot.num_dofs)
+            return jnp.array(
+                [self.robot.cross_section_geometry(q_dummy, s)[1][0] for s in s_ps]
+            )
+        except (AttributeError, NotImplementedError, TypeError, IndexError):
+            return jnp.full(self.num_points, self._robot_radius)
 
     @property
     def is_3d(self) -> bool:
@@ -654,7 +675,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
                             curve[pt_idx + 1],
                             robot_frames[pt_idx],
                             robot_frames[pt_idx + 1],
-                            self._robot_radius,
+                            self._robot_radii[pt_idx],
+                            self._robot_radii[pt_idx + 1],
                             self._cylinder_sections,
                             cap_end=pt_idx == num_points - 2,
                         )
@@ -720,7 +742,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
             name=f"/robots/robot_{robot_idx}/base_plate",
             mesh=self._make_cylinder_trimesh(
                 length=self._base_plate_thickness,
-                radius=self._robot_radius * self._base_plate_radius_scale,
+                radius=self._robot_radii[0] * self._base_plate_radius_scale,
                 color=base_plate_color,
                 direction=None,  # Already Z-aligned
             ),
@@ -997,7 +1019,8 @@ class ViserRenderer(BaseSoftRobotRenderer):
                                 curve[seg_idx + 1],
                                 robot_frames[seg_idx],
                                 robot_frames[seg_idx + 1],
-                                self._robot_radius,
+                                self._robot_radii[seg_idx],
+                                self._robot_radii[seg_idx + 1],
                                 self._cylinder_sections,
                                 cap_end=seg_idx == num_points - 2,
                             )

@@ -5964,6 +5964,7 @@ class GVS(SoftRobot):
 
         return jnp.sum(vmap(segment_lengths)(jnp.arange(self.num_segments)), axis=0)
 
+    @eqx.filter_jit
     def _threadlike_path_positions(
         self, q: Array, s: Array, routing: ThreadlikeRouting
     ) -> Array:
