@@ -78,8 +78,20 @@ def test_planar_pcs_kinematics_shapes_cover_reduced_and_fused_paths(
         "segment_pose": (3, model.num_segments + 1, 3),
     }
     assert shapes.jacobian_workspace() == shapes.workspace()
+    assert shapes.jvp_workspace() == {
+        "segment_strain": (3, model.num_segments, 3),
+        "segment_pose": (3, model.num_segments + 1, 3),
+        "segment_twist": (3, model.num_segments + 1, 3),
+    }
+    assert shapes.vjp_workspace() == {
+        "segment_strain": (3, model.num_segments, 3),
+        "segment_pose": (3, model.num_segments + 1, 3),
+        "segment_wrench": (3, model.num_segments + 1, 3),
+    }
     assert shapes.pose_output() == (3, 7, 3)
     assert shapes.jacobian_output() == (3, 7, 3, model.num_internal_dofs)
+    assert shapes.twist_output() == (3, 7, 3)
+    assert shapes.generalized_force_output() == (3, model.num_internal_dofs)
 
 
 def test_planar_pcs_public_kinematics_match_jax_on_cpu_and_gpu(

@@ -568,6 +568,42 @@ class PCSKinematicsShapes:
 
         return self.workspace()
 
+    def jvp_workspace(self) -> dict[str, tuple[int, ...]]:
+        """Return caller-owned workspace for one Jacobian direction.
+
+        Returns:
+            Segment strains, boundary poses, and one spatial-vector JVP per
+            environment and segment boundary.
+        """
+
+        workspace = self.pose_workspace()
+        return {
+            **workspace,
+            "segment_twist": (
+                self.batch_size,
+                self.num_segments + 1,
+                self.spatial_dim,
+            ),
+        }
+
+    def vjp_workspace(self) -> dict[str, tuple[int, ...]]:
+        """Return caller-owned workspace for a Jacobian-transpose product.
+
+        Returns:
+            Segment strains, boundary poses, and one spatial cotangent per
+            environment and segment boundary.
+        """
+
+        workspace = self.pose_workspace()
+        return {
+            **workspace,
+            "segment_wrench": (
+                self.batch_size,
+                self.num_segments + 1,
+                self.spatial_dim,
+            ),
+        }
+
     def pose_output(self) -> tuple[int, ...]:
         """Return the native PlanarPCS or PCS pose output shape.
 
@@ -591,6 +627,24 @@ class PCSKinematicsShapes:
             self.spatial_dim,
             self.num_dofs,
         )
+
+    def twist_output(self) -> tuple[int, ...]:
+        """Return the inertial-Jacobian JVP output shape.
+
+        Returns:
+            Shape ``(batch_size, num_samples, spatial_dim)``.
+        """
+
+        return self.batch_size, self.num_samples, self.spatial_dim
+
+    def generalized_force_output(self) -> tuple[int, ...]:
+        """Return the inertial-Jacobian VJP output shape.
+
+        Returns:
+            Shape ``(batch_size, num_dofs)``.
+        """
+
+        return self.batch_size, self.num_dofs
 
 
 __all__ = [

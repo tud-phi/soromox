@@ -410,3 +410,46 @@ def _adjoint_inverse_action(
             )
         result[row] = row_value
     return result
+
+
+@wp.func
+def _adjoint_inverse_transpose_action(
+    omega: wp.vec3d,
+    translation: wp.vec3d,
+    angle_sq: wp.float64,
+    forward: wp.vec3d,
+    value: Vec6d,
+) -> Vec6d:
+    """Apply a transposed inverse SE(3) adjoint without a matrix.
+
+    This is the cotangent counterpart of :func:`_adjoint_inverse_action` and
+    is shared by matrix-free spatial VJPs.
+
+    Args:
+        omega: Rotational exponential coordinate.
+        translation: Translation of the SE(3) transformation.
+        angle_sq: Squared norm of ``omega``.
+        forward: Stable exponential-map coefficients.
+        value: Spatial cotangent to transform.
+
+    Returns:
+        Transposed inverse-adjoint action on ``value``.
+    """
+
+    result = Vec6d()
+    for column in range(SPATIAL_DIM):
+        column_value = wp.float64(0.0)
+        for row in range(SPATIAL_DIM):
+            column_value += (
+                _adjoint_inverse_entry(
+                    omega,
+                    translation,
+                    angle_sq,
+                    forward,
+                    row,
+                    column,
+                )
+                * value[row]
+            )
+        result[column] = column_value
+    return result

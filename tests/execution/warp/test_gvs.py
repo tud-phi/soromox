@@ -147,8 +147,19 @@ def test_gvs_kinematics_shapes_cover_reduced_and_fused_paths(
         "node_pose": (node_count * 4, 4),
         "node_jacobian": (node_count * 6, model.num_internal_dofs),
     }
+    assert shapes.jvp_workspace() == {
+        "node_pose": (node_count * 4, 4),
+        "node_twist": (node_count, 6),
+    }
+    assert shapes.vjp_workspace() == {
+        "node_pose": (node_count * 4, 4),
+        "node_wrench": (node_count, 6),
+        "edge_wrench": (3, 6),
+    }
     assert shapes.pose_output() == (3, 7, 4, 4)
     assert shapes.jacobian_output() == (3, 7, 6, model.num_internal_dofs)
+    assert shapes.twist_output() == (3, 7, 6)
+    assert shapes.generalized_force_output() == (3, model.num_internal_dofs)
 
 
 def test_gvs_public_kinematics_match_jax_on_cpu_and_gpu(

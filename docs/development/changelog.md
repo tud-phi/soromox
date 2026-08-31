@@ -22,6 +22,10 @@ and include benchmark baseline and measurement context for performance claims.
 - Added fused Warp forward-kinematics and inertial-Jacobian execution for
   `GVS`, `PCS`, and `PlanarPCS`, including spatial, environment, and combined
   batches through the explicit `*_abscissa_batched` methods and `jax.vmap`.
+  Allocation-free matrix-free launchers additionally evaluate
+  `J(q, s) @ qd` and `sum_s J(q, s).T @ wrench_s` directly, reuse caller-owned
+  boundary-pose state, and compose planar or spatial floating-base products
+  without materializing sample Jacobians.
 - Added optional Warp dynamics backends for `GVS`, `PCS`, and `PlanarPCS`,
   including automatic GPU selection, arbitrary positive PCS quadrature counts,
   JAX-routed differentiation, typed `GVSBackendParams` and `PCSBackendParams`
@@ -61,7 +65,17 @@ and include benchmark baseline and measurement context for performance claims.
   two warmups, and the median of nine GPU or seven CPU synchronized repeats.
   An Nsight Systems trace of the large fused PCS case confirmed two Warp
   launches per call: approximately 69 microseconds for the cooperative
-  recurrence and 233 microseconds for sample evaluation.
+  recurrence and 233 microseconds for sample evaluation. Against materializing
+  and contracting dense Jacobians at 60 samples per environment, the new
+  matrix-free path improved CUDA JVP/VJP execution by 1.88–2.77×/1.59–1.89×
+  for four-segment, 48-DOF GVS; 1.77–4.01×/1.82–2.44× for eight-segment,
+  48-DOF PCS; and 3.45–3.80×/3.20–4.03× for eight-segment, 24-DOF PlanarPCS
+  across 1, 16, and 256 environments. Directional-specific workspace was
+  44×, 43×, and 21.5× smaller, respectively. On an Intel Core Ultra 9 285K,
+  GVS JVP/VJP improved 1.51–2.35×/1.19–1.38× and PCS improved
+  4.07–6.97×/3.06–5.03×. Directional measurements used Warp 1.16.0, five
+  warmups, and medians of seven runs with 20 synchronized iterations each;
+  see [PR #191](https://github.com/tud-phi/soromox/pull/191).
 - Accelerated batched FP64 continuum dynamics on an RTX 5090 with Warp. For
   four-segment models at batch 256, order-1 GVS dynamics terms improved 3.02×
   (2.224 to 0.735 ms) and forward dynamics 2.40× (2.482 to 1.034 ms), while

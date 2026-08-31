@@ -640,6 +640,34 @@ class GVSKinematicsShapes:
 
         return {"node_pose": self.workspace()["node_pose"]}
 
+    def jvp_workspace(self) -> dict[str, tuple[int, ...]]:
+        """Return caller-owned workspace for one Jacobian direction.
+
+        Returns:
+            Node poses and one six-vector node twist per environment and node.
+        """
+
+        node_count = self.batch_size * self.num_segments * (self.num_cells + 1)
+        return {
+            "node_pose": self.workspace()["node_pose"],
+            "node_twist": (node_count, 6),
+        }
+
+    def vjp_workspace(self) -> dict[str, tuple[int, ...]]:
+        """Return caller-owned workspace for a Jacobian-transpose product.
+
+        Returns:
+            Node poses, one six-vector cotangent per node, and one six-vector
+            cooperative edge scratch per environment.
+        """
+
+        node_count = self.batch_size * self.num_segments * (self.num_cells + 1)
+        return {
+            "node_pose": self.workspace()["node_pose"],
+            "node_wrench": (node_count, 6),
+            "edge_wrench": (self.batch_size, 6),
+        }
+
     def pose_output(self) -> tuple[int, ...]:
         """Return the native GVS pose output shape.
 
@@ -657,6 +685,24 @@ class GVSKinematicsShapes:
         """
 
         return self.batch_size, self.num_samples, 6, self.num_dofs
+
+    def twist_output(self) -> tuple[int, ...]:
+        """Return the inertial-Jacobian JVP output shape.
+
+        Returns:
+            Shape ``(batch_size, num_samples, 6)``.
+        """
+
+        return self.batch_size, self.num_samples, 6
+
+    def generalized_force_output(self) -> tuple[int, ...]:
+        """Return the inertial-Jacobian VJP output shape.
+
+        Returns:
+            Shape ``(batch_size, num_dofs)``.
+        """
+
+        return self.batch_size, self.num_dofs
 
 
 __all__ = [

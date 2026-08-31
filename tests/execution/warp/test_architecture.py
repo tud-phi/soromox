@@ -28,12 +28,17 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
         "cell_terms_kernel",
         "cooperative_joint_terms_kernel",
         "gvs_cooperative_node_states_kernel",
+        "gvs_cooperative_node_vjp_kernel",
         "gvs_dynamics_and_threadlike_actuation_force",
         "joint_terms_kernel",
         "gvs_jacobian_samples_kernel",
+        "gvs_node_pose_twist_kernel",
         "gvs_node_poses_kernel",
         "gvs_node_states_kernel",
+        "gvs_node_vjp_kernel",
         "gvs_pose_samples_kernel",
+        "gvs_pose_twist_samples_kernel",
+        "gvs_sample_vjp_kernel",
         "gvs_samples_kernel",
         "gvs_threadlike_force_kernel",
         "gvs_threadlike_force_block_kernel",
@@ -43,15 +48,19 @@ def test_gvs_public_names_are_discoverable_without_loading_warp() -> None:
         "launch_cooperative_joint_terms",
         "launch_joint_terms",
         "launch_forward_kinematics",
+        "launch_forward_kinematics_and_jvp",
         "launch_forward_kinematics_and_jacobians",
         "launch_floating_persistent_chain",
         "launch_gvs_forward_kinematics",
+        "launch_gvs_forward_kinematics_and_jvp",
         "launch_gvs_dynamics_and_threadlike_actuation_force",
         "launch_gvs_inertial_jacobians",
+        "launch_gvs_inertial_jacobian_vjp",
         "launch_gvs_kinematics",
         "launch_gvs_threadlike_actuation_force",
         "launch_gvs_threadlike_actuation_matrix",
         "launch_inertial_jacobians",
+        "launch_inertial_jacobian_vjp",
         "launch_persistent_chain",
         "persistent_chain_kernel",
         "prepare_gvs_threadlike_strain_kernel",
@@ -68,10 +77,15 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
         cell_terms_kernel,
         cooperative_joint_terms_kernel,
         gvs_cooperative_node_states_kernel,
+        gvs_cooperative_node_vjp_kernel,
         gvs_jacobian_samples_kernel,
+        gvs_node_pose_twist_kernel,
         gvs_node_poses_kernel,
         gvs_node_states_kernel,
+        gvs_node_vjp_kernel,
         gvs_pose_samples_kernel,
+        gvs_pose_twist_samples_kernel,
+        gvs_sample_vjp_kernel,
         gvs_samples_kernel,
         gvs_threadlike_force_block_kernel,
         gvs_threadlike_force_kernel,
@@ -81,11 +95,15 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
         launch_cooperative_joint_terms,
         launch_forward_kinematics,
         launch_forward_kinematics_and_jacobians,
+        launch_forward_kinematics_and_jvp,
         launch_gvs_forward_kinematics,
+        launch_gvs_forward_kinematics_and_jvp,
+        launch_gvs_inertial_jacobian_vjp,
         launch_gvs_inertial_jacobians,
         launch_gvs_kinematics,
         launch_gvs_threadlike_actuation_force,
         launch_gvs_threadlike_actuation_matrix,
+        launch_inertial_jacobian_vjp,
         launch_inertial_jacobians,
         launch_joint_terms,
         launch_persistent_chain,
@@ -95,11 +113,15 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
 
     launchers = (
         launch_forward_kinematics,
+        launch_forward_kinematics_and_jvp,
         launch_forward_kinematics_and_jacobians,
         launch_gvs_forward_kinematics,
+        launch_gvs_forward_kinematics_and_jvp,
+        launch_gvs_inertial_jacobian_vjp,
         launch_gvs_inertial_jacobians,
         launch_gvs_kinematics,
         launch_inertial_jacobians,
+        launch_inertial_jacobian_vjp,
         launch_joint_terms,
         launch_cooperative_joint_terms,
         launch_cell_terms,
@@ -109,10 +131,15 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
     )
     kernels = (
         gvs_cooperative_node_states_kernel,
+        gvs_cooperative_node_vjp_kernel,
         gvs_jacobian_samples_kernel,
+        gvs_node_pose_twist_kernel,
         gvs_node_poses_kernel,
         gvs_node_states_kernel,
+        gvs_node_vjp_kernel,
         gvs_pose_samples_kernel,
+        gvs_pose_twist_samples_kernel,
+        gvs_sample_vjp_kernel,
         gvs_samples_kernel,
         joint_terms_kernel,
         cooperative_joint_terms_kernel,
@@ -128,11 +155,16 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
         documentation = inspect.getdoc(launcher)
         assert documentation is not None
         assert "Args:" in documentation
+        assert "Returns:" in documentation
     assert launch_forward_kinematics is launch_gvs_forward_kinematics
+    assert launch_forward_kinematics_and_jvp is launch_gvs_forward_kinematics_and_jvp
     assert launch_inertial_jacobians is launch_gvs_inertial_jacobians
+    assert launch_inertial_jacobian_vjp is launch_gvs_inertial_jacobian_vjp
     assert launch_forward_kinematics_and_jacobians is launch_gvs_kinematics
     specialized = (
         launch_gvs_forward_kinematics,
+        launch_gvs_forward_kinematics_and_jvp,
+        launch_gvs_inertial_jacobian_vjp,
         launch_gvs_inertial_jacobians,
         launch_gvs_kinematics,
         launch_joint_terms,
@@ -142,9 +174,12 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
     )
     for launcher in specialized:
         assert len(inspect.signature(launcher).parameters) >= 10
-    for launcher in specialized[:3]:
-        parameters = tuple(inspect.signature(launcher).parameters)
-        assert parameters[:2] == ("q", "s")
+    assert tuple(inspect.signature(launch_gvs_forward_kinematics_and_jvp).parameters)[
+        :3
+    ] == ("q", "qd", "s")
+    assert tuple(inspect.signature(launch_gvs_inertial_jacobian_vjp).parameters)[
+        :3
+    ] == ("q", "s", "inertial_wrenches")
     assert tuple(inspect.signature(launch_gvs_forward_kinematics).parameters)[:5] == (
         "q",
         "s",
@@ -172,6 +207,17 @@ def test_public_gvs_launch_functions_have_documented_warp_contracts() -> None:
     )
     for kernel in kernels:
         assert kernel is not None
+    for kernel in (
+        gvs_cooperative_node_vjp_kernel,
+        gvs_node_pose_twist_kernel,
+        gvs_node_vjp_kernel,
+        gvs_pose_twist_samples_kernel,
+        gvs_sample_vjp_kernel,
+    ):
+        documentation = inspect.getdoc(kernel)
+        assert documentation is not None
+        assert "Args:" in documentation
+        assert "Returns:" in documentation
 
 
 def test_gvs_operand_contract_does_not_eagerly_load_kernel_modules() -> None:
@@ -220,10 +266,14 @@ def test_pcs_public_names_are_discoverable_without_loading_kernels() -> None:
         "PCSThreadlikeShapes",
         "launch_forward_kinematics",
         "launch_forward_kinematics_and_jacobians",
+        "launch_forward_kinematics_and_jvp",
+        "launch_inertial_jacobian_vjp",
         "launch_inertial_jacobians",
         "launch_planar_forward_kinematics",
+        "launch_planar_forward_kinematics_and_jvp",
         "launch_planar_dynamics_and_threadlike_actuation_force",
         "launch_planar_inertial_jacobians",
+        "launch_planar_inertial_jacobian_vjp",
         "launch_planar_kinematics",
         "launch_planar_floating_persistent_chain",
         "launch_planar_local_operators",
@@ -231,10 +281,12 @@ def test_pcs_public_names_are_discoverable_without_loading_kernels() -> None:
         "launch_planar_threadlike_actuation_force",
         "launch_planar_threadlike_actuation_matrix",
         "launch_spatial_forward_kinematics",
+        "launch_spatial_forward_kinematics_and_jvp",
         "launch_spatial_dynamics_and_threadlike_actuation_force",
         "launch_spatial_cooperative_inertial_jacobians",
         "launch_spatial_cooperative_kinematics",
         "launch_spatial_inertial_jacobians",
+        "launch_spatial_inertial_jacobian_vjp",
         "launch_spatial_kinematics",
         "launch_spatial_floating_persistent_chain",
         "launch_spatial_local_operators",
@@ -246,24 +298,33 @@ def test_pcs_public_names_are_discoverable_without_loading_kernels() -> None:
         "planar_local_operators_kernel",
         "planar_persistent_chain_kernel",
         "planar_pose_samples_kernel",
+        "planar_pose_twist_samples_kernel",
         "planar_pose_segment_states_kernel",
+        "planar_sample_vjp_kernel",
         "planar_pose_step",
         "planar_samples_kernel",
         "planar_segment_states_kernel",
+        "planar_segment_pose_twist_kernel",
+        "planar_segment_vjp_kernel",
         "planar_threadlike_force_kernel",
         "planar_threadlike_matrix_kernel",
         "planar_dynamics_and_threadlike_actuation_force",
         "spatial_jacobian_samples_kernel",
         "spatial_floating_persistent_chain_kernel",
+        "spatial_cooperative_segment_vjp_kernel",
         "spatial_cooperative_segment_states_kernel",
         "spatial_local_operators_kernel",
         "spatial_operator_entry",
         "spatial_persistent_chain_kernel",
         "spatial_pose_samples_kernel",
+        "spatial_pose_twist_samples_kernel",
         "spatial_pose_segment_states_kernel",
+        "spatial_sample_vjp_kernel",
         "spatial_pose_step_entry",
         "spatial_samples_kernel",
         "spatial_segment_states_kernel",
+        "spatial_segment_pose_twist_kernel",
+        "spatial_segment_vjp_kernel",
         "spatial_threadlike_force_kernel",
         "spatial_threadlike_matrix_kernel",
         "spatial_dynamics_and_threadlike_actuation_force",
@@ -281,8 +342,12 @@ def test_public_pcs_launch_functions_have_documented_warp_contracts() -> None:
     from soromox.execution.warp.pcs import (
         launch_forward_kinematics,
         launch_forward_kinematics_and_jacobians,
+        launch_forward_kinematics_and_jvp,
+        launch_inertial_jacobian_vjp,
         launch_inertial_jacobians,
         launch_planar_forward_kinematics,
+        launch_planar_forward_kinematics_and_jvp,
+        launch_planar_inertial_jacobian_vjp,
         launch_planar_inertial_jacobians,
         launch_planar_kinematics,
         launch_planar_local_operators,
@@ -290,6 +355,8 @@ def test_public_pcs_launch_functions_have_documented_warp_contracts() -> None:
         launch_spatial_cooperative_inertial_jacobians,
         launch_spatial_cooperative_kinematics,
         launch_spatial_forward_kinematics,
+        launch_spatial_forward_kinematics_and_jvp,
+        launch_spatial_inertial_jacobian_vjp,
         launch_spatial_inertial_jacobians,
         launch_spatial_kinematics,
         launch_spatial_local_operators,
@@ -299,31 +366,46 @@ def test_public_pcs_launch_functions_have_documented_warp_contracts() -> None:
         planar_persistent_chain_kernel,
         planar_pose_samples_kernel,
         planar_pose_segment_states_kernel,
+        planar_pose_twist_samples_kernel,
+        planar_sample_vjp_kernel,
         planar_samples_kernel,
+        planar_segment_pose_twist_kernel,
         planar_segment_states_kernel,
+        planar_segment_vjp_kernel,
         spatial_cooperative_segment_states_kernel,
+        spatial_cooperative_segment_vjp_kernel,
         spatial_jacobian_samples_kernel,
         spatial_local_operators_kernel,
         spatial_persistent_chain_kernel,
         spatial_pose_samples_kernel,
         spatial_pose_segment_states_kernel,
+        spatial_pose_twist_samples_kernel,
+        spatial_sample_vjp_kernel,
         spatial_samples_kernel,
+        spatial_segment_pose_twist_kernel,
         spatial_segment_states_kernel,
+        spatial_segment_vjp_kernel,
     )
 
     launchers = (
         launch_forward_kinematics,
         launch_forward_kinematics_and_jacobians,
+        launch_forward_kinematics_and_jvp,
+        launch_inertial_jacobian_vjp,
         launch_inertial_jacobians,
         launch_planar_forward_kinematics,
+        launch_planar_forward_kinematics_and_jvp,
         launch_planar_inertial_jacobians,
+        launch_planar_inertial_jacobian_vjp,
         launch_planar_kinematics,
         launch_planar_local_operators,
         launch_planar_persistent_chain,
         launch_spatial_forward_kinematics,
+        launch_spatial_forward_kinematics_and_jvp,
         launch_spatial_cooperative_inertial_jacobians,
         launch_spatial_cooperative_kinematics,
         launch_spatial_inertial_jacobians,
+        launch_spatial_inertial_jacobian_vjp,
         launch_spatial_kinematics,
         launch_spatial_local_operators,
         launch_spatial_persistent_chain,
@@ -333,26 +415,65 @@ def test_public_pcs_launch_functions_have_documented_warp_contracts() -> None:
         planar_local_operators_kernel,
         planar_persistent_chain_kernel,
         planar_pose_samples_kernel,
+        planar_pose_twist_samples_kernel,
         planar_pose_segment_states_kernel,
+        planar_sample_vjp_kernel,
         planar_samples_kernel,
+        planar_segment_pose_twist_kernel,
         planar_segment_states_kernel,
+        planar_segment_vjp_kernel,
         spatial_jacobian_samples_kernel,
         spatial_cooperative_segment_states_kernel,
         spatial_local_operators_kernel,
         spatial_persistent_chain_kernel,
         spatial_pose_samples_kernel,
+        spatial_pose_twist_samples_kernel,
         spatial_pose_segment_states_kernel,
+        spatial_sample_vjp_kernel,
         spatial_samples_kernel,
+        spatial_cooperative_segment_vjp_kernel,
+        spatial_segment_pose_twist_kernel,
         spatial_segment_states_kernel,
+        spatial_segment_vjp_kernel,
     )
     for launcher in launchers:
         documentation = inspect.getdoc(launcher)
         assert documentation is not None
         assert "Args:" in documentation
-    for launcher in launchers[:3]:
+        assert "Returns:" in documentation
+    for launcher in (
+        launch_forward_kinematics,
+        launch_forward_kinematics_and_jacobians,
+        launch_inertial_jacobians,
+    ):
         parameters = tuple(inspect.signature(launcher).parameters)
         assert parameters[:2] == ("q", "s")
-    specialized = launchers[3:]
+    assert tuple(inspect.signature(launch_forward_kinematics_and_jvp).parameters)[
+        :3
+    ] == ("q", "qd", "s")
+    assert tuple(inspect.signature(launch_inertial_jacobian_vjp).parameters)[:3] == (
+        "q",
+        "s",
+        "inertial_wrenches",
+    )
+    specialized = (
+        launch_planar_forward_kinematics,
+        launch_planar_forward_kinematics_and_jvp,
+        launch_planar_inertial_jacobians,
+        launch_planar_inertial_jacobian_vjp,
+        launch_planar_kinematics,
+        launch_planar_local_operators,
+        launch_planar_persistent_chain,
+        launch_spatial_forward_kinematics,
+        launch_spatial_forward_kinematics_and_jvp,
+        launch_spatial_cooperative_inertial_jacobians,
+        launch_spatial_cooperative_kinematics,
+        launch_spatial_inertial_jacobians,
+        launch_spatial_inertial_jacobian_vjp,
+        launch_spatial_kinematics,
+        launch_spatial_local_operators,
+        launch_spatial_persistent_chain,
+    )
     for launcher in specialized:
         assert len(inspect.signature(launcher).parameters) >= 10
     kinematics_launchers = (
@@ -377,8 +498,53 @@ def test_public_pcs_launch_functions_have_documented_warp_contracts() -> None:
     for launcher in kinematics_launchers:
         parameters = tuple(inspect.signature(launcher).parameters)
         assert parameters[:7] == kinematics_prefix
+    for launcher in (
+        launch_planar_forward_kinematics_and_jvp,
+        launch_spatial_forward_kinematics_and_jvp,
+    ):
+        parameters = tuple(inspect.signature(launcher).parameters)
+        assert parameters[:8] == (
+            "q",
+            "qd",
+            "s",
+            "active_indices",
+            "active_scales",
+            "reference_strain",
+            "segment_lengths",
+            "segment_starts",
+        )
+    for launcher in (
+        launch_planar_inertial_jacobian_vjp,
+        launch_spatial_inertial_jacobian_vjp,
+    ):
+        parameters = tuple(inspect.signature(launcher).parameters)
+        assert parameters[:8] == (
+            "q",
+            "s",
+            "inertial_wrenches",
+            "active_indices",
+            "active_scales",
+            "reference_strain",
+            "segment_lengths",
+            "segment_starts",
+        )
     for kernel in kernels:
         assert kernel is not None
+    for kernel in (
+        planar_pose_twist_samples_kernel,
+        planar_sample_vjp_kernel,
+        planar_segment_pose_twist_kernel,
+        planar_segment_vjp_kernel,
+        spatial_pose_twist_samples_kernel,
+        spatial_sample_vjp_kernel,
+        spatial_cooperative_segment_vjp_kernel,
+        spatial_segment_pose_twist_kernel,
+        spatial_segment_vjp_kernel,
+    ):
+        documentation = inspect.getdoc(kernel)
+        assert documentation is not None
+        assert "Args:" in documentation
+        assert "Returns:" in documentation
 
 
 def test_pcs_operand_contract_does_not_eagerly_load_kernel_modules() -> None:
