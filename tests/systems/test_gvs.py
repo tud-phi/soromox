@@ -1087,7 +1087,9 @@ def test_public_gvs_accessors_geometry_and_actuation_matrix() -> None:
         robot.radius_params[0, 1] - robot.radius_params[0, 0]
     )
     assert int(tag) == CrossSectionGeometry.CIRCULAR
-    assert_allclose(geom, jnp.array([expected_radius]), rtol=RTOL, atol=ATOL)
+    assert_allclose(
+        geom, jnp.array([expected_radius, expected_radius]), rtol=RTOL, atol=ATOL
+    )
 
     tag, geom = robot.cross_section_geometry(q, s_second)
     expected_width = robot.width_params[1, 0] + 0.25 * (
