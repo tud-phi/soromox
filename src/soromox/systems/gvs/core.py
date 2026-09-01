@@ -27,7 +27,6 @@ from soromox.execution import (
 )
 from soromox.systems.components import (
     ContinuumLinkParams,
-    CrossSectionGeometry,
     IsotropicMaterialParams,
 )
 from soromox.systems.gvs._assembly import assign_gvs_runtime_arrays
@@ -525,26 +524,29 @@ class GVS(SoftRobot):
         segment_idx, s_local = self.classify_segment(s)
         length_i = self.segment_lengths[segment_idx]
         x = safe_divide(s_local, length_i, self.global_eps)
-        cross_section_geometry_idx = self.cross_section_geometry_index[segment_idx]
-        cross_section_geometry_int = int(cross_section_geometry_idx)
-        if cross_section_geometry_int == CrossSectionGeometry.CIRCULAR:
+        tag = self.cross_section_geometry_index[segment_idx]
+
+        def circular(_):
             params = self.radius_params[segment_idx]
             radius = Link.interpolate_param(x, params[0], params[1])
-            tag = jnp.asarray(CrossSectionGeometry.CIRCULAR, dtype=jnp.int32)
-            return tag, jnp.array([radius])
-        if cross_section_geometry_int == CrossSectionGeometry.RECTANGULAR:
+            return jnp.array([radius, radius])
+
+        def rectangular(_):
             h_params = self.height_params[segment_idx]
             w_params = self.width_params[segment_idx]
             height = Link.interpolate_param(x, h_params[0], h_params[1])
             width = Link.interpolate_param(x, w_params[0], w_params[1])
-            tag = jnp.asarray(CrossSectionGeometry.RECTANGULAR, dtype=jnp.int32)
-            return tag, jnp.array([height, width])
-        a_params = self.semi_major_params[segment_idx]
-        b_params = self.semi_minor_params[segment_idx]
-        a_val = Link.interpolate_param(x, a_params[0], a_params[1])
-        b_val = Link.interpolate_param(x, b_params[0], b_params[1])
-        tag = jnp.asarray(CrossSectionGeometry.ELLIPTICAL, dtype=jnp.int32)
-        return tag, jnp.array([a_val, b_val])
+            return jnp.array([height, width])
+
+        def elliptical(_):
+            a_params = self.semi_major_params[segment_idx]
+            b_params = self.semi_minor_params[segment_idx]
+            a_val = Link.interpolate_param(x, a_params[0], a_params[1])
+            b_val = Link.interpolate_param(x, b_params[0], b_params[1])
+            return jnp.array([a_val, b_val])
+
+        dims = lax.switch(tag, [circular, rectangular, elliptical], None)
+        return tag.astype(jnp.int32), dims
 
     def _build_segment_i(
         self,
