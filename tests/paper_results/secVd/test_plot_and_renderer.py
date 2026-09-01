@@ -29,20 +29,46 @@ jax.config.update("jax_enable_x64", True)
 
 def test_plot_loss_accepts_single_start_without_band():
     figure, axis = matplotlib.pyplot.subplots()
-    plotter.plot_loss(axis, np.arange(5.0)[:, None], "A")
+    mask = np.ones((5, 1), dtype=bool)
+    plotter.plot_loss(axis, np.arange(5.0)[:, None], mask, "A")
     assert len(axis.lines) == 1
     assert len(axis.collections) == 0
     matplotlib.pyplot.close(figure)
 
 
+def test_plot_loss_bands_a_multi_start_run():
+    figure, axis = matplotlib.pyplot.subplots()
+    loss = np.stack([np.arange(5.0), np.arange(5.0) + 2.0], axis=1)
+    plotter.plot_loss(axis, loss, np.ones((5, 2), dtype=bool), "A")
+    assert len(axis.collections) == 1, "expected a min-max band across starts"
+    np.testing.assert_allclose(axis.lines[0].get_ydata(), np.arange(5.0))
+    matplotlib.pyplot.close(figure)
+
+
+def test_plot_loss_excludes_frozen_starts_from_the_band():
+    """A frozen start must drop out of the band, not appear as a gap."""
+    figure, axis = matplotlib.pyplot.subplots()
+    loss = np.stack([np.arange(5.0), np.full(5, np.nan)], axis=1)
+    mask = np.ones((5, 2), dtype=bool)
+    mask[:, 1] = False
+    plotter.plot_loss(axis, loss, mask, "A")
+    np.testing.assert_allclose(axis.lines[0].get_ydata(), np.arange(5.0))
+    matplotlib.pyplot.close(figure)
+
+
 def test_plotter_uses_synergistic_position_channels(monkeypatch):
     t = np.linspace(0, 1, 4)
-    common = {"history_loss": np.ones((5, 1)), "t_ts": t[None, :]}
+    common = {
+        "history_loss": np.ones((5, 1)),
+        "history_finite_mask": np.ones((5, 1), dtype=bool),
+        "best_batch": np.asarray(0),
+        "t_ts": t,
+    }
     collocated = {
         **common,
         "q_ts_init": np.zeros((1, 4, 6)),
         "q_ts_best": np.zeros((1, 4, 6)),
-        "q_des_ts": np.zeros((1, 4, 6)),
+        "q_des_ts": np.zeros((4, 6)),
     }
     synergy_pose = np.zeros((1, 4, 6))
     synergy_pose[..., :3] = 99.0
@@ -51,7 +77,7 @@ def test_plotter_uses_synergistic_position_channels(monkeypatch):
         **common,
         "x_ts_init": synergy_pose,
         "x_ts_best": synergy_pose,
-        "x_des_ts": synergy_pose,
+        "x_des_ts": synergy_pose[0],
     }
     monkeypatch.setattr(
         plotter,
@@ -117,10 +143,11 @@ def test_method_selection_and_overwrite(monkeypatch, tmp_path):
 def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path):
     timesteps = 5
     data = {
-        "t_ts": np.linspace(0, 1, timesteps)[None, :],
+        "t_ts": np.linspace(0, 1, timesteps),
         "q_ts_best": np.zeros((1, timesteps, 6)),
         "x_ts_best": np.zeros((1, timesteps, 6)),
-        "x_des_ts": np.zeros((1, timesteps, 6)),
+        "best_batch": np.asarray(0),
+        "x_des_ts": np.zeros((timesteps, 6)),
     }
     monkeypatch.setattr(renderer, "load_results", lambda *_args, **_kwargs: data)
     monkeypatch.setattr(renderer, "build_sec_vd_robot", lambda: (object(), None, 0.1))
@@ -187,12 +214,13 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
 
 def test_synergistic_trail_contains_only_time_varying_reference(monkeypatch, tmp_path):
     timesteps = 5
-    reference_pose = np.zeros((1, timesteps, 6))
-    reference_pose[0, :, 3] = np.linspace(0.0, 0.04, timesteps)
+    reference_pose = np.zeros((timesteps, 6))
+    reference_pose[:, 3] = np.linspace(0.0, 0.04, timesteps)
     data = {
-        "t_ts": np.linspace(0, 1, timesteps)[None, :],
+        "t_ts": np.linspace(0, 1, timesteps),
         "q_ts_best": np.zeros((1, timesteps, 6)),
         "x_ts_best": np.zeros((1, timesteps, 6)),
+        "best_batch": np.asarray(0),
         "x_des_ts": reference_pose,
     }
     monkeypatch.setattr(renderer, "load_results", lambda *_args, **_kwargs: data)
@@ -220,7 +248,7 @@ def test_synergistic_trail_contains_only_time_varying_reference(monkeypatch, tmp
         record_frame_timeout=3.0,
         renderer_factory=FakeRenderer,
     )
-    expected_reference = reference_pose[0, :, 3:6]
+    expected_reference = reference_pose[:, 3:6]
     np.testing.assert_allclose(captured["static_spheres_positions"], expected_reference)
     np.testing.assert_allclose(
         captured["static_spheres_colors"],
@@ -231,11 +259,12 @@ def test_synergistic_trail_contains_only_time_varying_reference(monkeypatch, tmp
 def test_collocated_render_receives_configuration_target(monkeypatch, tmp_path):
     timesteps = 5
     data = {
-        "t_ts": np.linspace(0, 1, timesteps)[None, :],
+        "t_ts": np.linspace(0, 1, timesteps),
         "q_ts_best": np.zeros((1, timesteps, 6)),
-        "q_des_ts": np.ones((1, timesteps, 6)),
+        "q_des_ts": np.ones((timesteps, 6)),
         "x_ts_best": np.zeros((1, timesteps, 6)),
-        "x_des_ts": np.zeros((1, timesteps, 6)),
+        "best_batch": np.asarray(0),
+        "x_des_ts": np.zeros((timesteps, 6)),
     }
     monkeypatch.setattr(renderer, "load_results", lambda *_args, **_kwargs: data)
     monkeypatch.setattr(renderer, "build_sec_vd_robot", lambda: (object(), None, 0.1))

@@ -242,16 +242,22 @@ def resample_trajectory(
 def validate_pose_consistency(
     robot, total_length: float, data: dict[str, np.ndarray]
 ) -> None:
-    """Ensure stored poses match FK from the authoritative configurations."""
-    stored = np.asarray(data["x_ts_best"])[0]
-    reconstructed = np.asarray(
-        end_effector_pose_trajectory(robot, data["q_ts_best"][0], total_length)
-    )
-    if not np.allclose(reconstructed, stored, rtol=1e-6, atol=1e-8):
-        maximum = float(np.max(np.abs(reconstructed - stored)))
-        raise ValueError(
-            f"Stored pose does not agree with q_ts_best FK (max error {maximum:.3e})"
+    """Ensure stored poses match FK from the authoritative configurations.
+
+    Every start is checked, not only the rendered one: a batched archive should
+    not be able to hide a corrupt start behind a healthy one.
+    """
+    stored = np.asarray(data["x_ts_best"])
+    for batch in range(stored.shape[0]):
+        reconstructed = np.asarray(
+            end_effector_pose_trajectory(robot, data["q_ts_best"][batch], total_length)
         )
+        if not np.allclose(reconstructed, stored[batch], rtol=1e-6, atol=1e-8):
+            maximum = float(np.max(np.abs(reconstructed - stored[batch])))
+            raise ValueError(
+                f"Stored pose for start {batch} does not agree with q_ts_best FK "
+                f"(max error {maximum:.3e})"
+            )
 
 
 def _color_config(num_points: int, *, opacity: float = 1.0) -> RendererColorConfig:
@@ -307,11 +313,16 @@ def render_method(
     data = load_results(data_dir / name, expected_method=name)
     robot, _routing, total_length = build_sec_vd_robot()
     validate_pose_consistency(robot, total_length, data)
+    # Each archive selects its own best start; see issue #128.
+    best_batch = int(data["best_batch"])
     t, q, pose = resample_trajectory(
-        data["t_ts"][0], data["q_ts_best"][0], data["x_ts_best"][0], fps
+        data["t_ts"],
+        data["q_ts_best"][best_batch],
+        data["x_ts_best"][best_batch],
+        fps,
     )
-    dense_t = np.asarray(data["t_ts"])[0]
-    dense_reference_pose = np.asarray(data["x_des_ts"])[0]
+    dense_t = np.asarray(data["t_ts"])
+    dense_reference_pose = np.asarray(data["x_des_ts"])
     reference_pose = np.column_stack(
         [np.interp(t, dense_t, dense_reference_pose[:, idx]) for idx in range(6)]
     )
@@ -319,7 +330,7 @@ def render_method(
     desired_positions = reference_pose[:, 3:6] if name == "synergistic" else None
     desired_q_ts = None
     if name == "collocated":
-        dense_q_des = np.asarray(data["q_des_ts"])[0]
+        dense_q_des = np.asarray(data["q_des_ts"])
         desired_q_ts = np.column_stack(
             [np.interp(t, dense_t, dense_q_des[:, idx]) for idx in range(q.shape[1])]
         )
