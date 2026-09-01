@@ -49,6 +49,7 @@ from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
+from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.soft_robot import SoftRobot
 
 # =============================================================================
@@ -417,14 +418,25 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if auto_start:
             self.start()
 
+    @staticmethod
+    def _effective_radius(geom_tag: int, dims: Array) -> float:
+        """Collapse a cross-section's dimensions into a single rendering radius."""
+        dims = np.asarray(dims, dtype=np.float64).reshape(-1)
+        if geom_tag == CrossSectionGeometry.CIRCULAR:
+            return float(dims[0])
+        if geom_tag == CrossSectionGeometry.RECTANGULAR:
+            return 0.5 * float(max(dims[0], dims[1]))
+        return float(max(dims[0], dims[1]))  # ELLIPTICAL
+
     def _get_robot_radii(self) -> Array:
-        """Get per-point robot radii for tapered visualization."""
+        """Get per-point effective robot radii for tapered visualization."""
         s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
         q_dummy = jnp.zeros(self.robot.num_dofs)
-        _, dims = jax.vmap(self.robot.cross_section_geometry, in_axes=(None, 0))(
-            q_dummy, s_ps
-        )
-        return dims[:, 0]
+        radii = [
+            self._effective_radius(*self.robot.cross_section_geometry(q_dummy, s))
+            for s in s_ps
+        ]
+        return jnp.array(radii)
 
     @property
     def is_3d(self) -> bool:
