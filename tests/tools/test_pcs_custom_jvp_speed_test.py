@@ -100,6 +100,33 @@ def test_custom_jvp_input_only_tangent_matches_direct_jax_autodiff() -> None:
     assert_allclose(candidate, reference, rtol=1.0e-5, atol=1.0e-8)
 
 
+@pytest.mark.parametrize("setup", ["full", "bending_extension"])
+def test_fused_dynamics_state_pushforward_matches_direct_jax_autodiff(
+    setup: str,
+) -> None:
+    model = benchmark.build_model(setup, num_segments=2, gauss_points=5)
+    benchmark_inputs = benchmark.build_inputs(model)
+    q, qd = jnp.split(benchmark_inputs.y, 2)
+    q_direction, qd_direction = jnp.split(benchmark_inputs.y_direction, 2)
+
+    expected_primal, expected_direction = jax.jvp(
+        model.dynamics_terms,
+        (q, qd),
+        (q_direction, qd_direction),
+    )
+    actual = model._dynamics_terms_with_state_pushforward(
+        q,
+        qd,
+        q_direction,
+        qd_direction,
+    )
+    actual_primal = actual[:3]
+    actual_direction = actual[3:]
+
+    _assert_trees_allclose(expected_primal, actual_primal)
+    _assert_trees_allclose(expected_direction, actual_direction)
+
+
 @pytest.mark.parametrize("num_segments", [2, 16])
 def test_directional_jvp_matches_full_analytical_jacobian_matvec(
     num_segments: int,
@@ -132,6 +159,26 @@ def test_directional_jvp_matches_full_analytical_jacobian_matvec(
 
     _assert_trees_allclose(directional, full_jacobian)
     _assert_trees_allclose(directional, autodiff_full_jacobian)
+
+
+def test_large_dense_directional_jvp_matches_direct_jax_autodiff() -> None:
+    """Cover the contracted inverse-dynamics route above the fused cutoff."""
+    model = benchmark.build_model("full", num_segments=16, gauss_points=5)
+    _, reference_fn, inputs = _build_workload(
+        model,
+        "state_jvp",
+        use_custom_jvp=False,
+    )
+    _, candidate_fn, _ = _build_workload(
+        model,
+        "state_jvp",
+        use_custom_jvp=True,
+    )
+
+    reference = reference_fn(*inputs)
+    candidate = candidate_fn(*inputs)
+
+    _assert_trees_allclose(reference, candidate)
 
 
 @pytest.mark.parametrize(
