@@ -190,7 +190,7 @@ class SecVdTrackingRenderer(ViserRenderer):
         curve = self._target_curves[idx]
         points = make_tube_wire_segments(
             curve,
-            radius=self._robot_radius * TARGET_WIREFRAME_RADIUS_SCALE,
+            radius=float(np.mean(self._robot_radii)) * TARGET_WIREFRAME_RADIUS_SCALE,
         )
         if self._target_wire_handle is None:
             self._target_wire_handle = self._server.scene.add_line_segments(

@@ -19,6 +19,7 @@ class DummySpatialRobot:
     floating_base = False
     length = jnp.array(1.0)
     segment_length = jnp.array([1.0])
+    num_dofs = 0
 
     def __init__(self, base_pose: jnp.ndarray):
         self.fixed_base_pose = jnp.asarray(base_pose)
@@ -673,7 +674,7 @@ def test_viser_discrete_backbone_batches_positions_colors_and_robot_radius():
     assert_allclose(handle.batched_positions, curves[0], atol=1e-12)
     assert_allclose(
         handle.batched_scales,
-        np.full(2, renderer._robot_radius),
+        renderer._robot_radii,
         atol=1e-12,
     )
     assert_array_equal(handle.batched_colors, np.full((2, 3), 255))
@@ -762,7 +763,7 @@ def test_viser_swept_backbone_uses_material_frame_rings():
 
     first_ring = server.scene.simple_meshes[0].vertices[:8]
     assert_allclose(first_ring[:, 0], 0.0, atol=1e-7)
-    assert np.ptp(first_ring[:, 1]) > renderer._robot_radius
+    assert np.ptp(first_ring[:, 1]) > renderer._robot_radii[0]
 
 
 def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
@@ -895,7 +896,8 @@ def test_viser_swept_batches_match_segment_geometry_across_animation_frames():
                     curves[0, frame_idx, segment_idx + 1],
                     frames[0, segment_idx],
                     frames[0, segment_idx + 1],
-                    renderer._robot_radius,
+                    renderer._robot_radii[segment_idx],
+                    renderer._robot_radii[segment_idx + 1],
                     renderer._cylinder_sections,
                     cap_end=segment_idx == curves.shape[2] - 2,
                 )

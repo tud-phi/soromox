@@ -398,8 +398,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._backbone_cast_shadow = backbone_cast_shadow
         self._sphere_cast_shadow = sphere_cast_shadow
 
-        # Get robot radius for sizing
-        self._robot_radius = self._get_robot_radius()
+        # Get robot radii for sizing
         self._robot_radii = self._get_robot_radii()
 
         # Server and scene state
@@ -418,25 +417,14 @@ class ViserRenderer(BaseSoftRobotRenderer):
         if auto_start:
             self.start()
 
-    def _get_robot_radius(self) -> float:
-        """Get representative robot radius for visualization."""
-        if hasattr(self.robot, "r"):
-            r = self.robot.r
-            if hasattr(r, "__iter__"):
-                return float(np.mean(np.asarray(r)))
-            return float(r)
-        return 0.02  # Default radius
-
-    def _get_robot_radii(self):
+    def _get_robot_radii(self) -> Array:
         """Get per-point robot radii for tapered visualization."""
-        try:
-            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-            q_dummy = jnp.zeros(self.robot.num_dofs)
-            return jnp.array(
-                [self.robot.cross_section_geometry(q_dummy, s)[1][0] for s in s_ps]
-            )
-        except (AttributeError, NotImplementedError, TypeError, IndexError):
-            return jnp.full(self.num_points, self._robot_radius)
+        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        q_dummy = jnp.zeros(self.robot.num_dofs)
+        _, dims = jax.vmap(self.robot.cross_section_geometry, in_axes=(None, 0))(
+            q_dummy, s_ps
+        )
+        return dims[:, 0]
 
     @property
     def is_3d(self) -> bool:
@@ -640,9 +628,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                         (num_points, 4),
                     ).copy(),
                     batched_positions=np.asarray(curve, dtype=np.float32),
-                    batched_scales=np.full(
-                        num_points, self._robot_radius, dtype=np.float32
-                    ),
+                    batched_scales=np.asarray(self._robot_radii, dtype=np.float32),
                     batched_colors=colors,
                     batched_opacities=opacities,
                     wireframe=self._wireframe,
