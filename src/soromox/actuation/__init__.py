@@ -11,11 +11,15 @@ from .core import (
     Transmission,
 )
 from .friction import (
-    CapstanFriction,
-    ExponentialLengthFriction,
-    Frictionless,
+    BaseThreadlikeFrictionParams,
+    CapstanFrictionParams,
+    ExponentialLengthFrictionParams,
+    FrictionlessParams,
     ThreadlikeFriction,
     ThreadlikeQuadratureContext,
+    capstan_transmission_ratio,
+    exponential_length_transmission_ratio,
+    frictionless_transmission_ratio,
 )
 from .joint import (
     AffineJointTransmission,
@@ -64,10 +68,11 @@ __all__ = [
     "ArticulatedMcKibbenActuatorParams",
     "ArticulatedMcKibbenTransmission",
     "ArticulatedMcKibbenTransmissionParams",
+    "BaseThreadlikeFrictionParams",
     "BaseThreadlikeRoutingParams",
-    "CapstanFriction",
-    "ExponentialLengthFriction",
-    "Frictionless",
+    "CapstanFrictionParams",
+    "ExponentialLengthFrictionParams",
+    "FrictionlessParams",
     "LinearThreadlikeRoutingParams",
     "PassiveElement",
     "ThreadlikeFriction",
@@ -80,6 +85,9 @@ __all__ = [
     "ThreadlikeTransmission",
     "ThreadlikeTransmissionParams",
     "Transmission",
+    "capstan_transmission_ratio",
+    "exponential_length_transmission_ratio",
+    "frictionless_transmission_ratio",
     "linear_threadlike_routing",
     "linear_threadlike_routing_derivative",
 ]

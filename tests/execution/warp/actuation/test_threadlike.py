@@ -8,8 +8,17 @@ import numpy as np
 import pytest
 from numpy.testing import assert_allclose
 
-from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.actuation import (
+    ThreadlikeActuator,
+    ThreadlikeFriction,
+    ThreadlikeImpedance,
+    ThreadlikeRouting,
+)
 from soromox.execution.warp import loader
+from soromox.execution.warp.actuation.threadlike import (
+    supports_linear_threadlike_force,
+    supports_linear_threadlike_matrix,
+)
 from soromox.execution.warp.gvs.actuation.operands import (
     GVSThreadlikeOperands,
     GVSThreadlikeShapes,
@@ -693,6 +702,56 @@ def test_public_gate_uses_only_benchmark_qualified_warp_paths(family: str) -> No
             model.actuation_matrix(q, backend="warp")
     with pytest.raises(NotImplementedError, match="low-level Warp-native"):
         model.actuation_force(q, controls, backend="warp")
+
+
+def test_warp_gate_rejects_unimplemented_active_friction() -> None:
+    """Keep frictional matrices and forces on the differentiable JAX path."""
+
+    base = _build_system("pcs", 2, 4)
+    actuator = ThreadlikeActuator.tendons(
+        _routing(2, 4, planar=False),
+        friction=ThreadlikeFriction.exponential_length(rate=2.0),
+    )
+    model = _rebuild_with_actuators(base, actuator)
+    q = jnp.zeros((model.num_coordinates,))
+    controls = jnp.ones((model.num_actuators,))
+
+    assert not supports_linear_threadlike_matrix(model)
+    assert not supports_linear_threadlike_force(model)
+    with pytest.raises(NotImplementedError, match="frictionless"):
+        model.actuation_matrix(q, backend="warp")
+    with pytest.raises(NotImplementedError, match="frictionless"):
+        model.actuation_force(q, controls, backend="warp")
+
+
+def test_warp_force_gate_rejects_nonconservative_passive_friction() -> None:
+    """Prevent fused Warp force evaluation from dropping passive friction."""
+
+    base = _build_system("pcs", 2, 4)
+    routing = _routing(2, 4, planar=False)
+
+    def rebuild(friction):
+        passive = ThreadlikeImpedance(
+            routing=routing,
+            stiffness=jnp.ones((4,)),
+            damping=jnp.ones((4,)),
+            rest_length=jnp.full((4,), 0.2),
+            friction=friction,
+        )
+        return PCS(
+            params=base.params,
+            structure=PCSStructure(num_gauss_points=base.num_gauss_points),
+            base_pose=base.fixed_base_pose,
+            actuators=base.actuators,
+            passive_elements=(passive,),
+            backend="jax",
+        )
+
+    conservative = rebuild(None)
+    nonconservative = rebuild(ThreadlikeFriction.exponential_length(rate=2.0))
+    assert supports_linear_threadlike_matrix(nonconservative)
+    assert supports_linear_threadlike_force(conservative)
+    assert not supports_linear_threadlike_force(nonconservative)
 
 
 def test_pcs_explicit_warp_matrix_uses_warp_on_cpu(

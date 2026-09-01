@@ -125,7 +125,6 @@ class PCS(SoftRobot):
     scale_rotational_basis_by_length: bool = eqx.field(static=True)
     backend: ExecutionBackend = eqx.field(static=True)
     backend_params: PCSBackendParams = eqx.field(static=True)
-    wrap_angle_smoothing: float = eqx.field(static=True, default=0.0)
 
     xi_ref: Array  # Reference configuration strain
     B_xi_unscaled: Array  # Unscaled strain basis matrix
@@ -364,12 +363,6 @@ class PCS(SoftRobot):
         self.scale_rotational_basis_by_length = bool(
             structure.scale_rotational_basis_by_length
         )
-        self.wrap_angle_smoothing = float(structure.wrap_angle_smoothing)
-        if self.wrap_angle_smoothing < 0.0:
-            raise ValueError(
-                "wrap_angle_smoothing must be non-negative, got "
-                f"{self.wrap_angle_smoothing}."
-            )
 
         # Number of segments
         num_segments = int(params.link.length.shape[0])
@@ -3117,9 +3110,6 @@ class PCS(SoftRobot):
     ) -> ThreadlikeQuadratureContext:
         """Return one spatial routed-path geometry at a quadrature node.
 
-        The routed tangent is ``v + omega x r + r'``, assembled here in
-        homogeneous coordinates.
-
         Args:
             segment_index: Index of the segment containing the node.
             strain: Segment strain of shape ``(6,)``.
@@ -3131,11 +3121,14 @@ class PCS(SoftRobot):
 
         Returns:
             context: Node geometry for one path, consumed by
-                :meth:`_threadlike_local_basis` and by the installed
-                transmission-loss law.
+                :meth:`_threadlike_local_length_gradient` and by the installed
+                friction model.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
+        )
+        path_abscissa = jnp.clip(
+            jnp.asarray(s) - self.L_cum[start_segment_index], 0.0, self.L_cum[-1]
         )
         offset = routing.offset(path_params, s)
         offset_derivative = routing.derivative(path_params, s)
@@ -3143,7 +3136,8 @@ class PCS(SoftRobot):
         homogeneous_derivative = jnp.append(offset_derivative, 1.0)
         tangent = (homogeneous_derivative + se3.hat(strain) @ homogeneous_offset)[:-1]
         return ThreadlikeQuadratureContext(
-            arc_length=jnp.asarray(s),
+            abscissa=jnp.asarray(s),
+            path_abscissa=path_abscissa,
             segment_index=jnp.asarray(segment_index),
             offset=offset,
             offset_derivative=offset_derivative,
@@ -3153,81 +3147,98 @@ class PCS(SoftRobot):
             strain=strain,
         )
 
-    def _threadlike_local_basis(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return one spatial routed-path length gradient density.
+    def _threadlike_local_length_gradient(
+        self, context: ThreadlikeQuadratureContext
+    ) -> Array:
+        """Return one spatial routed-path length gradient density, ``d|t|/dxi``.
 
         Args:
-            context: Node geometry from :meth:`_threadlike_local_geometry`.
+            context: Node geometry.
 
         Returns:
-            phi: Length-gradient density of shape ``(6,)``.
+            length_gradient_density: Shape ``(6,)``.
         """
         tangent = context.unit_tangent
         basis = jnp.hstack([so3.skew(context.offset) @ tangent, tangent])
         return context.active * basis
 
-    def _threadlike_wrap_density(
+    def _threadlike_path_curvature(
         self, strains: Array, routing: ThreadlikeRouting
     ) -> Array:
-        """Return the Capstan wrap-angle density of each segment and path.
+        """Return the curvature of each routed path in each segment.
 
-        The density is ``|omega x u_hat|``, the turning rate of the routed path
-        tangent with its material-frame rotation dropped. Torsion contributes
-        whenever the path is off-axis: for a constant offset at radius ``rho``
-        under pure twist ``kx`` it evaluates to ``kx**2 rho / nu``, the
-        curvature of the resulting helix. In a planar configuration the angular
-        strain is perpendicular to the unit tangent and it reduces to
-        ``|kappa|`` identically, which is what makes the planar and spatial
-        hosts agree.
+        The curvature is ``|omega x u_hat|``, the rate at which the routed-path
+        tangent turns per metre of backbone. Only the component of the angular
+        strain perpendicular to the tangent contributes, so torsion about the
+        axis of the path does not. An off-axis path under twist traces a helix,
+        and this recovers that curvature of the helix.
 
-        The offset is evaluated at the segment midpoint, so the density is
+        The offset is evaluated at the segment midpoint, so the curvature is
         exact for constant-offset routing and first order in the routing slope
         otherwise, matching the accuracy of the dropped material-frame term.
 
         Args:
             strains: Segment strains of shape ``(num_segments, 6)``.
-            routing: Routed-path family whose tangents set the density.
+            routing: Routed-path family whose tangents set the curvature.
 
         Returns:
-            w: Wrap-angle density of shape ``(num_segments, num_paths)``, in
-                radians per metre.
+            path_curvature: Shape ``(num_segments, num_paths)``, in radians per
+                metre.
         """
         params = routing.params
         midpoints = 0.5 * (self.L_cum[:-1] + self.L_cum[1:])
 
-        def density_segment(segment_index: Array, s: Array) -> Array:
+        def curvature_segment(segment_index: Array, s: Array) -> Array:
             strain = strains[segment_index]
             angular = strain[:3]
 
-            def density_path(path_params: BaseThreadlikeRoutingParams) -> Array:
+            def curvature_path(path_params: BaseThreadlikeRoutingParams) -> Array:
                 offset = jnp.append(routing.offset(path_params, s), 1.0)
                 derivative = jnp.append(routing.derivative(path_params, s), 1.0)
                 tangent = (derivative + se3.hat(strain) @ offset)[:-1]
                 unit = safe_normalize(tangent, eps=self.global_eps)
                 return safe_norm(jnp.cross(angular, unit))
 
-            return vmap(density_path)(params)
+            return vmap(curvature_path)(params)
 
-        density = vmap(density_segment)(jnp.arange(self.num_segments), midpoints)
-        if self.wrap_angle_smoothing == 0.0:
-            return density
-        return jnp.sqrt(density**2 + self.wrap_angle_smoothing**2)
+        return vmap(curvature_segment)(jnp.arange(self.num_segments), midpoints)
 
-    def _threadlike_wrap_angle(self, density: Array, s: Array) -> Array:
-        """Accumulate the wrap angle of each path from the base up to ``s``.
+    def _threadlike_safe_wrap_angle(
+        self,
+        path_curvature: Array,
+        s: Array,
+        start_segment_index: Array,
+        eps: Array,
+    ) -> Array:
+        """Integrate path curvature from each path anchor up to ``s``.
 
-        The density is piecewise constant, so the accumulated angle is
-        piecewise linear in ``s`` and therefore exact at every quadrature node.
+        Segments before a path anchor contribute nothing, because the path
+        has not turned there yet. ``safe_norm`` floors the curvature at
+        ``eps`` to keep a Capstan coefficient identifiable near a straight
+        configuration; its zero tangent at the origin reproduces the exact
+        curvature at ``eps == 0`` with a finite gradient, which a plain
+        ``sqrt`` would not.
 
         Args:
-            density: Wrap density of shape ``(num_segments, num_paths)``.
-            s: Scalar arc-length coordinate.
+            path_curvature: Shape ``(num_segments, num_paths)``.
+            s: Scalar abscissa coordinate.
+            start_segment_index: First segment of each path, ``(num_paths,)``.
+            eps: Curvature floor in radians per metre.
 
         Returns:
-            Theta: Accumulated wrap angle of shape ``(num_paths,)``, in radians.
+            wrap_angle: Shape ``(num_paths,)``, in radians.
         """
+        floored = safe_norm(
+            jnp.stack(
+                [path_curvature, jnp.broadcast_to(eps, path_curvature.shape)],
+                axis=-1,
+            ),
+            axis=-1,
+        )
         arc_in_segment = jnp.clip(jnp.asarray(s) - self.L_cum[:-1], 0.0, self.L)
-        return arc_in_segment @ density
+        segments = jnp.arange(self.num_segments)
+        spanned = segments[:, None] >= jnp.asarray(start_segment_index)[None, :]
+        return (spanned * floored * arc_in_segment[:, None]).sum(axis=0)
 
     def _threadlike_moment_matrix(
         self,
@@ -3237,17 +3248,11 @@ class PCS(SoftRobot):
     ) -> Array:
         """Integrate routed-length moment arms in the PCS strain basis.
 
-        When a lossy ``friction`` law is installed, its transmission ratio
-        weights the local basis inside the arc-length integral, because a
-        transmission loss accumulates along the path rather than scaling the
-        applied effort. A lossless law is skipped entirely and reproduces the
-        frictionless matrix exactly.
-
         Args:
             q: Generalized coordinates of shape ``(num_dofs,)``.
             routing: Routed-path family to integrate.
-            friction: Optional transmission-loss law. ``None`` or any law whose
-                ``is_lossless`` is set skips the weighting entirely.
+            friction: Optional friction model. ``None`` or any model whose
+                ``is_frictionless`` is set skips the weighting entirely.
 
         Returns:
             A: Moment-arm matrix of shape ``(num_dofs, num_paths)``.
@@ -3258,10 +3263,10 @@ class PCS(SoftRobot):
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         strains = self.strain(q).reshape((self.num_segments, 6))
 
-        lossy = friction is not None and not friction.is_lossless
-        wrap_density = None
-        if lossy and friction.requires_wrap_angle:
-            wrap_density = self._threadlike_wrap_density(strains, routing)
+        has_friction = friction is not None and not friction.is_frictionless
+        path_curvature = None
+        if has_friction and friction.requires_wrap_angle:
+            path_curvature = self._threadlike_path_curvature(strains, routing)
 
         def segment_matrix(segment_index: Array) -> Array:
             points, weights = scale_gaussian_quadrature(
@@ -3285,13 +3290,20 @@ class PCS(SoftRobot):
                     params.start_segment_index_array,
                     params.end_segment_index_array,
                 )
-                basis = vmap(self._threadlike_local_basis, out_axes=1)(context)
+                basis = vmap(self._threadlike_local_length_gradient, out_axes=1)(
+                    context
+                )
                 weighted = weights[point_index] * basis
-                if not lossy:
+                if not has_friction:
                     return weighted
-                if wrap_density is not None:
+                if path_curvature is not None:
                     context = context.with_wrap_angle(
-                        self._threadlike_wrap_angle(wrap_density, points[point_index])
+                        self._threadlike_safe_wrap_angle(
+                            path_curvature,
+                            points[point_index],
+                            params.start_segment_index_array,
+                            getattr(friction.params, "eps", 0.0),
+                        )
                     )
                 return weighted * friction.transmission_ratio(context)[None, :]
 

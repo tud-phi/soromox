@@ -130,7 +130,6 @@ class PlanarPCS(SoftRobot):
     )
     _segment_dof_ends: tuple[int, ...] = eqx.field(static=True, default=())
     scale_rotational_basis_by_length: bool = eqx.field(static=True, default=False)
-    wrap_angle_smoothing: float = eqx.field(static=True, default=0.0)
 
     xi_ref: Array | None = eqx.field(default=None)  # Reference configuration strain
     B_xi_unscaled: Array | None = eqx.field(
@@ -357,12 +356,6 @@ class PlanarPCS(SoftRobot):
         self.scale_rotational_basis_by_length = bool(
             structure.scale_rotational_basis_by_length
         )
-        self.wrap_angle_smoothing = float(structure.wrap_angle_smoothing)
-        if self.wrap_angle_smoothing < 0.0:
-            raise ValueError(
-                "wrap_angle_smoothing must be non-negative, got "
-                f"{self.wrap_angle_smoothing}."
-            )
 
         # Number of segments
         num_segments = int(params.link.length.shape[0])
@@ -3008,11 +3001,14 @@ class PlanarPCS(SoftRobot):
 
         Returns:
             context: Node geometry for one path, consumed by
-                :meth:`_threadlike_local_basis` and by the installed
-                transmission-loss law.
+                :meth:`_threadlike_local_length_gradient` and by the installed
+                friction model.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
+        )
+        path_abscissa = jnp.clip(
+            jnp.asarray(s) - self.L_cum[start_segment_index], 0.0, self.L_cum[-1]
         )
         offset = routing.offset(path_params, s)
         offset_derivative = routing.derivative(path_params, s)
@@ -3026,7 +3022,8 @@ class PlanarPCS(SoftRobot):
             ]
         )
         return ThreadlikeQuadratureContext(
-            arc_length=jnp.asarray(s),
+            abscissa=jnp.asarray(s),
+            path_abscissa=path_abscissa,
             segment_index=jnp.asarray(segment_index),
             offset=offset,
             offset_derivative=offset_derivative,
@@ -3036,14 +3033,16 @@ class PlanarPCS(SoftRobot):
             strain=strain,
         )
 
-    def _threadlike_local_basis(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return one planar routed-path length gradient density.
+    def _threadlike_local_length_gradient(
+        self, context: ThreadlikeQuadratureContext
+    ) -> Array:
+        """Return one planar routed-path length gradient density, ``d|t|/dxi``.
 
         Args:
-            context: Node geometry from :meth:`_threadlike_local_geometry`.
+            context: Node geometry.
 
         Returns:
-            phi: Length-gradient density of shape ``(3,)``.
+            length_gradient_density: Shape ``(3,)``.
         """
         offset = context.offset[1]
         axial_ratio = context.unit_tangent[0]
@@ -3052,45 +3051,58 @@ class PlanarPCS(SoftRobot):
             [-offset * axial_ratio, axial_ratio, shear_ratio]
         )
 
-    def _threadlike_wrap_density(self, strains: Array) -> Array:
-        """Return the Capstan wrap-angle density of each segment.
+    def _threadlike_path_curvature(self, strains: Array) -> Array:
+        """Return the curvature of the routed paths in each segment,
+        ``|omega x u_hat|``.
 
-        The density is ``|omega x u_hat|``, the turning rate of the routed path
-        tangent with its material-frame rotation dropped. In the plane the
-        angular strain is perpendicular to the in-plane unit tangent, so this
-        reduces to ``|kappa|`` identically, for any routing offset and any
-        strain, and is therefore shared by every path.
+        In the plane the angular strain is perpendicular to the in-plane unit
+        tangent, so this reduces to ``|kappa|`` identically, for any routing
+        offset and any strain, and is therefore shared by every path.
 
         Args:
             strains: Segment strains of shape ``(num_segments, 3)``.
 
         Returns:
-            w: Wrap-angle density per segment, shape ``(num_segments,)``, in
-                radians per metre.
+            path_curvature: Shape ``(num_segments,)``, in radians per metre.
         """
-        density = jnp.abs(strains[:, 0])
-        if self.wrap_angle_smoothing == 0.0:
-            return density
-        return jnp.sqrt(density**2 + self.wrap_angle_smoothing**2)
+        return jnp.abs(strains[:, 0])
 
-    def _threadlike_wrap_angle(self, density: Array, s: Array) -> Array:
-        """Accumulate the wrap angle from the base up to ``s``.
+    def _threadlike_safe_wrap_angle(
+        self,
+        path_curvature: Array,
+        s: Array,
+        start_segment_index: Array,
+        eps: Array,
+    ) -> Array:
+        """Integrate path curvature from each path anchor up to ``s``.
 
-        The density is piecewise constant, so the accumulated angle is
-        piecewise linear in ``s`` and therefore exact at every quadrature node.
+        Segments before a path anchor contribute nothing, because the path
+        has not turned there yet. ``safe_norm`` floors the curvature at
+        ``eps`` to keep a Capstan coefficient identifiable near a straight
+        configuration; its zero tangent at the origin reproduces the exact
+        curvature at ``eps == 0`` with a finite gradient, which a plain
+        ``sqrt`` would not.
 
         Args:
-            density: Per-segment wrap density of shape ``(num_segments,)``.
-            s: Arc-length coordinate, scalar or shape ``(num_points,)``.
+            path_curvature: Per-segment curvature of shape ``(num_segments,)``.
+            s: Scalar abscissa coordinate.
+            start_segment_index: First segment of each path, ``(num_paths,)``.
+            eps: Curvature floor in radians per metre.
 
         Returns:
-            Theta: Accumulated wrap angle in radians, matching the shape of
-                ``s``.
+            wrap_angle: Shape ``(num_paths,)``, in radians.
         """
-        arc_in_segment = jnp.clip(
-            jnp.asarray(s)[..., None] - self.L_cum[:-1], 0.0, self.L
+        floored = safe_norm(
+            jnp.stack(
+                [path_curvature, jnp.broadcast_to(eps, path_curvature.shape)],
+                axis=-1,
+            ),
+            axis=-1,
         )
-        return jnp.sum(density * arc_in_segment, axis=-1)
+        arc_in_segment = jnp.clip(jnp.asarray(s) - self.L_cum[:-1], 0.0, self.L)
+        segments = jnp.arange(self.num_segments)
+        spanned = segments[None, :] >= jnp.asarray(start_segment_index)[:, None]
+        return (spanned * (floored * arc_in_segment)[None, :]).sum(axis=-1)
 
     def _threadlike_moment_matrix(
         self,
@@ -3100,17 +3112,10 @@ class PlanarPCS(SoftRobot):
     ) -> Array:
         """Integrate routed-length moment arms in the planar PCS basis.
 
-        When a lossy ``friction`` law is installed, its transmission ratio
-        weights the local basis inside the arc-length integral, because a
-        transmission loss accumulates along the path rather than scaling the
-        applied effort. A lossless law is skipped entirely and reproduces the
-        frictionless matrix exactly.
-
         Args:
             q: Generalized coordinates of shape ``(num_dofs,)``.
             routing: Routed-path family to integrate.
-            friction: Optional transmission-loss law. ``None`` or any law whose
-                ``is_lossless`` is set skips the weighting entirely.
+            friction: Optional friction model.
 
         Returns:
             A: Moment-arm matrix of shape ``(num_dofs, num_paths)``.
@@ -3121,10 +3126,10 @@ class PlanarPCS(SoftRobot):
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         strains = self.strain(q).reshape((self.num_segments, 3))
 
-        lossy = friction is not None and not friction.is_lossless
-        wrap_density = None
-        if lossy and friction.requires_wrap_angle:
-            wrap_density = self._threadlike_wrap_density(strains)
+        has_friction = friction is not None and not friction.is_frictionless
+        path_curvature = None
+        if has_friction and friction.requires_wrap_angle:
+            path_curvature = self._threadlike_path_curvature(strains)
 
         def segment_matrix(segment_index: Array) -> Array:
             points, weights = scale_gaussian_quadrature(
@@ -3148,19 +3153,19 @@ class PlanarPCS(SoftRobot):
                     params.start_segment_index_array,
                     params.end_segment_index_array,
                 )
-                basis = vmap(self._threadlike_local_basis, out_axes=1)(context)
-                weighted = weights[point_index] * basis
-                if not lossy:
+                gradient = vmap(self._threadlike_local_length_gradient, out_axes=1)(
+                    context
+                )
+                weighted = weights[point_index] * gradient
+                if not has_friction:
                     return weighted
-                if wrap_density is not None:
-                    # The planar wrap angle is path-independent, so broadcast it
-                    # to one entry per path before the law consumes it.
+                if path_curvature is not None:
                     context = context.with_wrap_angle(
-                        jnp.broadcast_to(
-                            self._threadlike_wrap_angle(
-                                wrap_density, points[point_index]
-                            ),
-                            (count,),
+                        self._threadlike_safe_wrap_angle(
+                            path_curvature,
+                            points[point_index],
+                            params.start_segment_index_array,
+                            getattr(friction.params, "eps", 0.0),
                         )
                     )
                 return weighted * friction.transmission_ratio(context)[None, :]

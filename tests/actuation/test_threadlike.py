@@ -16,12 +16,11 @@ from system_param_builders import (
 
 from soromox.actuation import (
     BaseThreadlikeRoutingParams,
-    CapstanFriction,
     EffortModel,
-    ExponentialLengthFriction,
     IdentityActuator,
     IdentityTransmission,
     ThreadlikeActuator,
+    ThreadlikeFriction,
     ThreadlikeImpedance,
     ThreadlikeRouting,
 )
@@ -491,12 +490,12 @@ def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
     ("factory", "axial_index", "friction"),
     [
         (_spatial_pcs, 3, None),
-        (_spatial_pcs, 3, CapstanFriction(coefficient=0.7)),
+        (_spatial_pcs, 3, ThreadlikeFriction.capstan(coefficient=0.7)),
         (_planar_pcs, 1, None),
-        (_planar_pcs, 1, CapstanFriction(coefficient=0.7)),
+        (_planar_pcs, 1, ThreadlikeFriction.capstan(coefficient=0.7)),
         # GVS supplies no wrap angle, so it hosts only wrap-angle-free laws.
         (_gvs, 3, None),
-        (_gvs, 3, ExponentialLengthFriction(rate=3.0)),
+        (_gvs, 3, ThreadlikeFriction.exponential_length(rate=3.0)),
     ],
 )
 def test_collapsed_threadlike_tangent_has_finite_reverse_mode(

@@ -19,15 +19,11 @@ from .core import (
     Transmission,
 )
 from .friction import (
-    CapstanFriction,
-    Frictionless,
+    BaseThreadlikeFrictionParams,
+    FrictionlessParams,
     ThreadlikeFriction,
+    validate_friction_for_robot,
 )
-
-# Sentinel distinguishing "caller passed nothing" from an explicit friction
-# law, so the deprecated friction_coefficient sugar can be rejected when both
-# spellings are supplied.
-_UNSET: Any = object()
 
 ThreadlikeKind = Literal["tendon", "push_rod", "muscle", "pneumatic", "generic"]
 
@@ -111,65 +107,13 @@ def _channel_array(value: Any, count: int, name: str) -> Array:
     return array
 
 
-def _resolve_friction(
-    friction: ThreadlikeFriction | None,
-    friction_coefficient: Any,
-) -> ThreadlikeFriction:
-    """Resolve the two spellings of a transmission-loss law into one model.
-
-    ``friction_coefficient`` is retained sugar for the common Capstan case and
-    builds a :class:`CapstanFriction`. Supplying both spellings is a mistake
-    rather than a merge, because the two would silently disagree.
-
-    Args:
-        friction: Explicit transmission-loss law, or ``None`` for the default.
-        friction_coefficient: Capstan coefficient sugar, or ``_UNSET``.
-
-    Returns:
-        model: The law to install. Defaults to :class:`Frictionless`.
-
-    Raises:
-        TypeError: If ``friction`` is not a :class:`ThreadlikeFriction`.
-        ValueError: If both spellings are supplied.
-    """
-    if friction_coefficient is not _UNSET:
-        if friction is not None:
-            raise ValueError(
-                "Pass either friction= or friction_coefficient=, not both. "
-                "friction_coefficient is sugar for "
-                "CapstanFriction(coefficient=...)."
-            )
-        return CapstanFriction(coefficient=jnp.asarray(friction_coefficient))
-    if friction is None:
-        return Frictionless()
-    if not isinstance(friction, ThreadlikeFriction):
+def _normalize_friction(friction: Any) -> ThreadlikeFriction | None:
+    if friction is not None and not isinstance(friction, ThreadlikeFriction):
         raise TypeError(
             "friction must be a ThreadlikeFriction instance, got "
             f"{type(friction).__name__}."
         )
     return friction
-
-
-def _validate_friction_for_robot(friction: ThreadlikeFriction, robot) -> None:
-    """Reject a transmission-loss law the host cannot serve.
-
-    A law reading the accumulated turn of the routed path needs a host that
-    implements ``_threadlike_wrap_density``. Hosts without it would silently
-    ignore the law, so it is refused here rather than dropped. Laws that read
-    only host-agnostic geometry, such as a length-based loss, are accepted
-    everywhere. This runs only on concrete values, through the tracer guard in
-    ``validate_for_robot``.
-    """
-    if friction.is_lossless or not friction.requires_wrap_angle:
-        return
-    if not callable(getattr(robot, "_threadlike_wrap_density", None)):
-        raise TypeError(
-            f"{type(robot).__name__} does not implement the threadlike "
-            f"wrap-angle model, so {type(friction).__name__} cannot be "
-            "honoured. Install the component on PCS or PlanarPCS, or choose a "
-            "law that does not require the wrap angle, such as "
-            "ExponentialLengthFriction."
-        )
 
 
 def _path_vector_array(value: Any, name: str, *, count: int | None = None) -> Array:
@@ -404,24 +348,15 @@ class ThreadlikeRouting(eqx.Module):
 
 
 class ThreadlikeTransmissionParams(BaseSystemParams):
-    """Routing parameters, work-coordinate scale, and the transmission loss.
-
-    ``friction`` is the law describing how much of the effort applied at the
-    base of a path survives to arc length ``s``. It weights the integrand of
-    the moment matrix, so a loss accumulates along the path instead of scaling
-    the input. The default :class:`~soromox.actuation.friction.Frictionless`
-    delivers the full effort everywhere and reproduces the frictionless
-    transmission exactly.
-
-    Swapping the law changes the parameter PyTree structure and so triggers a
-    retrace; replacing a value inside a law does not. Identification should
-    therefore start from a lossy law at a zero parameter, such as
-    ``CapstanFriction(coefficient=0.0)``, rather than from ``Frictionless()``.
+    """Routing parameters, constant work-coordinate scale per path, and
+    friction paramters.
     """
 
     routing: BaseThreadlikeRoutingParams
     coordinate_scale: Array
-    friction: ThreadlikeFriction = eqx.field(default_factory=Frictionless)
+    friction: BaseThreadlikeFrictionParams = eqx.field(
+        default_factory=FrictionlessParams
+    )
 
     def __check_init__(self) -> None:
         self.validate_for_update()
@@ -435,16 +370,16 @@ class ThreadlikeTransmissionParams(BaseSystemParams):
                 "coordinate_scale must have shape "
                 f"({self.routing.num_paths},), got {scale.shape}."
             )
-        if not isinstance(self.friction, ThreadlikeFriction):
+        if not isinstance(self.friction, BaseThreadlikeFrictionParams):
             raise TypeError(
-                "friction must be a ThreadlikeFriction instance, got "
+                "friction must be a BaseThreadlikeFrictionParams instance, got "
                 f"{type(self.friction).__name__}."
             )
         self.friction.validate_structure()
-        self.friction.validate_for_paths(self.routing.num_paths)
+        self.friction.validate_structure_compatibility(self.routing.num_paths)
 
     def validate_values(self) -> None:
-        """Validate eager nested routing and transmission-loss values."""
+        """Validate eager nested routing and friction values."""
         self.routing.validate_values()
         self.friction.validate_values()
 
@@ -454,12 +389,14 @@ class ThreadlikeTransmission(Transmission):
 
     params: ThreadlikeTransmissionParams
     routing: ThreadlikeRouting
+    friction: ThreadlikeFriction
 
     def __init__(
         self,
         params: ThreadlikeTransmissionParams,
         *,
         routing: ThreadlikeRouting | None = None,
+        friction: ThreadlikeFriction | None = None,
     ) -> None:
         if not isinstance(params, ThreadlikeTransmissionParams):
             raise TypeError("params must be ThreadlikeTransmissionParams.")
@@ -475,6 +412,16 @@ class ThreadlikeTransmission(Transmission):
         else:
             routing = routing.with_params(params.routing)
         self.routing = routing
+        if friction is None:
+            if not isinstance(params.friction, FrictionlessParams):
+                raise TypeError(
+                    "friction params require their matching "
+                    "ThreadlikeFriction runtime object."
+                )
+            friction = ThreadlikeFriction()
+        else:
+            friction = friction.with_params(params.friction)
+        self.friction = friction
 
     @property
     def num_channels(self) -> int:
@@ -485,11 +432,6 @@ class ThreadlikeTransmission(Transmission):
             q, self.routing
         )
 
-    @property
-    def friction(self) -> ThreadlikeFriction:
-        """Transmission-loss law installed on this path family."""
-        return self.params.friction
-
     def moment_matrix(self, robot, q: Array) -> Array:
         raw_matrix = robot._threadlike_moment_matrix(
             q, self.routing, friction=self.friction
@@ -497,13 +439,7 @@ class ThreadlikeTransmission(Transmission):
         return raw_matrix * self.params.coordinate_scale[None, :]
 
     def kinematic_matrix(self, robot, q: Array) -> Array:
-        """Return the frictionless length gradient ``(dl/dq).T`` of the paths.
-
-        This is the exact geometric Jacobian at any friction coefficient,
-        because path length is pure geometry. It coincides with
-        :meth:`moment_matrix` only when the coefficient is zero and the
-        coordinate scale is one.
-        """
+        """Return the frictionless length gradient ``(dl/dq).T`` of the paths."""
         return robot._threadlike_moment_matrix(q, self.routing)
 
     def path_lengths(self, robot, q: Array) -> Array:
@@ -522,7 +458,9 @@ class ThreadlikeTransmission(Transmission):
             raise TypeError("params must be ThreadlikeTransmissionParams.")
         self.params.routing.assert_same_topology(params.routing)
         params.validate_for_update()
-        return ThreadlikeTransmission(params, routing=self.routing)
+        return ThreadlikeTransmission(
+            params, routing=self.routing, friction=self.friction
+        )
 
     def update_params(self, **updates: Any) -> ThreadlikeTransmission:
         return self.with_params(self.params.replace(**updates))
@@ -569,6 +507,7 @@ class ThreadlikeActuator(Actuator):
         *,
         params: ThreadlikeActuatorParams,
         routing: ThreadlikeRouting | None = None,
+        friction: ThreadlikeFriction | None = None,
         labels: tuple[str, ...],
         units: str | tuple[str, ...],
         name: str,
@@ -580,7 +519,7 @@ class ThreadlikeActuator(Actuator):
             raise ValueError("labels must contain one entry per threadlike path.")
         self._params = params
         self._transmission = ThreadlikeTransmission(
-            params.transmission, routing=routing
+            params.transmission, routing=routing, friction=friction
         )
         self._effort_model = DirectEffort()
         self._metadata = ActuatorMetadata(
@@ -624,9 +563,9 @@ class ThreadlikeActuator(Actuator):
         upper_bounds: Array | float = jnp.inf,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
-        friction_coefficient: Any = _UNSET,
     ) -> ThreadlikeActuator:
         routing = cls._normalize_routing(routings)
+        friction = _normalize_friction(friction)
         count = routing.num_paths
         params = ThreadlikeActuatorParams(
             transmission=ThreadlikeTransmissionParams(
@@ -634,7 +573,9 @@ class ThreadlikeActuator(Actuator):
                 coordinate_scale=_channel_array(
                     coordinate_scale, count, "coordinate_scale"
                 ),
-                friction=_resolve_friction(friction, friction_coefficient),
+                friction=(
+                    friction.params if friction is not None else FrictionlessParams()
+                ),
             ),
             lower_bounds=_channel_array(lower_bounds, count, "lower_bounds"),
             upper_bounds=_channel_array(upper_bounds, count, "upper_bounds"),
@@ -644,6 +585,7 @@ class ThreadlikeActuator(Actuator):
         return cls(
             params=params,
             routing=routing,
+            friction=friction,
             labels=labels,
             units=unit,
             name=name,
@@ -657,7 +599,6 @@ class ThreadlikeActuator(Actuator):
         *,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
-        friction_coefficient: Any = _UNSET,
     ) -> ThreadlikeActuator:
         routing = cls._normalize_routing(routings)
         return cls._preset(
@@ -669,7 +610,6 @@ class ThreadlikeActuator(Actuator):
             label_prefix="tendon_tension",
             labels=labels,
             friction=friction,
-            friction_coefficient=friction_coefficient,
         )
 
     @classmethod
@@ -679,7 +619,6 @@ class ThreadlikeActuator(Actuator):
         *,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
-        friction_coefficient: Any = _UNSET,
     ) -> ThreadlikeActuator:
         routing = cls._normalize_routing(routings)
         return cls._preset(
@@ -691,7 +630,6 @@ class ThreadlikeActuator(Actuator):
             label_prefix="rod_compression",
             labels=labels,
             friction=friction,
-            friction_coefficient=friction_coefficient,
         )
 
     @classmethod
@@ -701,7 +639,6 @@ class ThreadlikeActuator(Actuator):
         *,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
-        friction_coefficient: Any = _UNSET,
     ) -> ThreadlikeActuator:
         routing = cls._normalize_routing(routings)
         return cls._preset(
@@ -713,7 +650,6 @@ class ThreadlikeActuator(Actuator):
             label_prefix="muscle_tension",
             labels=labels,
             friction=friction,
-            friction_coefficient=friction_coefficient,
         )
 
     @classmethod
@@ -724,7 +660,6 @@ class ThreadlikeActuator(Actuator):
         effective_areas: Array,
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
-        friction_coefficient: Any = _UNSET,
     ) -> ThreadlikeActuator:
         routing = cls._normalize_routing(routings)
         return cls._preset(
@@ -738,7 +673,6 @@ class ThreadlikeActuator(Actuator):
             label_prefix="chamber_pressure",
             labels=labels,
             friction=friction,
-            friction_coefficient=friction_coefficient,
         )
 
     @property
@@ -767,6 +701,7 @@ class ThreadlikeActuator(Actuator):
         return ThreadlikeActuator(
             params=params,
             routing=self.transmission.routing,
+            friction=self.transmission.friction,
             labels=self.metadata.labels,
             units=self.metadata.units,
             name=self.name,
@@ -778,12 +713,9 @@ class ThreadlikeActuator(Actuator):
 
     def validate_values_for_robot(self, robot) -> None:
         _validate_routing_values_for_robot(self.transmission.routing, robot)
-        _validate_friction_for_robot(self.params.transmission.friction, robot)
+        validate_friction_for_robot(self.transmission.friction, robot)
 
     def _robot_value_validation_tree(self):
-        # The friction coefficient must be part of this subtree: validate_for_robot
-        # uses it to detect tracers, and a traced coefficient alongside concrete
-        # routing would otherwise let the eager value checks run on a tracer.
         return (
             self.transmission.routing.params,
             self.params.transmission.friction,
@@ -800,13 +732,7 @@ class ThreadlikeActuator(Actuator):
 
 
 class ThreadlikeImpedanceParams(BaseSystemParams):
-    """Spring-damper parameters for passive routed paths.
-
-    The routed path is described by a nested ``transmission``, matching
-    ``ArticulatedTendonImpedanceParams``, so guide friction is declared in one
-    place for active and passive paths alike. Its coordinate scale is one,
-    because a passive path's natural coordinate is its raw length.
-    """
+    """Spring-damper parameters for passive routed paths."""
 
     transmission: ThreadlikeTransmissionParams
     stiffness: Array
@@ -852,23 +778,25 @@ class ThreadlikeImpedance(PassiveElement):
         damping: Array,
         rest_length: Array,
         friction: ThreadlikeFriction | None = None,
-        friction_coefficient: Any = _UNSET,
         name: str = "passive_threadlike",
     ) -> None:
         routing = ThreadlikeActuator._normalize_routing(routing)
+        friction = _normalize_friction(friction)
         count = routing.num_paths
         self._params = ThreadlikeImpedanceParams(
             transmission=ThreadlikeTransmissionParams(
                 routing=routing.params,
                 coordinate_scale=jnp.ones((count,)),
-                friction=_resolve_friction(friction, friction_coefficient),
+                friction=(
+                    friction.params if friction is not None else FrictionlessParams()
+                ),
             ),
             stiffness=_channel_array(stiffness, count, "stiffness"),
             damping=_channel_array(damping, count, "damping"),
             rest_length=_channel_array(rest_length, count, "rest_length"),
         )
         self._transmission = ThreadlikeTransmission(
-            self._params.transmission, routing=routing
+            self._params.transmission, routing=routing, friction=friction
         )
         self.name = name
 
@@ -879,13 +807,14 @@ class ThreadlikeImpedance(PassiveElement):
         *,
         name: str,
         routing: ThreadlikeRouting,
+        friction: ThreadlikeFriction,
     ) -> ThreadlikeImpedance:
         return cls(
             routing=routing.with_params(params.transmission.routing),
             stiffness=params.stiffness,
             damping=params.damping,
             rest_length=params.rest_length,
-            friction=params.transmission.friction,
+            friction=friction.with_params(params.transmission.friction),
             name=name,
         )
 
@@ -909,18 +838,21 @@ class ThreadlikeImpedance(PassiveElement):
             params.transmission.routing
         )
         params.validate_for_update()
-        return self._from_params(params, name=self.name, routing=self.routing)
+        return self._from_params(
+            params,
+            name=self.name,
+            routing=self.routing,
+            friction=self._transmission.friction,
+        )
 
     def validate_structure_for_robot(self, robot) -> None:
         _validate_routing_structure_for_robot(self.routing, robot)
 
     def validate_values_for_robot(self, robot) -> None:
         _validate_routing_values_for_robot(self.routing, robot)
-        _validate_friction_for_robot(self.params.transmission.friction, robot)
+        validate_friction_for_robot(self.transmission.friction, robot)
 
     def _robot_value_validation_tree(self):
-        # See ThreadlikeActuator._robot_value_validation_tree: the coefficient
-        # belongs here so a traced value is detected by validate_for_robot.
         return (
             self.routing.params,
             self.params.transmission.friction,
@@ -939,26 +871,13 @@ class ThreadlikeImpedance(PassiveElement):
         return self._transmission.path_poses(robot, q, s)
 
     def _length_jacobian(self, robot, q: Array) -> Array:
-        """Return the exact kinematic length Jacobian ``dl/dq``.
-
-        Path length is pure geometry, so this is exact at any friction
-        coefficient. The friction-weighted force transmission is
-        :meth:`_transmission_matrix`.
-        """
         return self._transmission.kinematic_matrix(robot, q).T
 
     def _transmission_matrix(self, robot, q: Array) -> Array:
-        """Return the Capstan-weighted force transmission map of the paths."""
         return self._transmission.moment_matrix(robot, q)
 
     def elastic_force(self, robot, q: Array) -> Array:
-        """Return the conservative part of the passive path force.
-
-        This uses the exact kinematic Jacobian, so it stays exactly the
-        gradient of :meth:`elastic_energy` at any friction coefficient. The
-        remainder that friction stops from reaching the backbone is reported by
-        :meth:`nonconservative_force`.
-        """
+        """Return the conservative part of the passive path force."""
         lengths = self.path_lengths(robot, q)
         jacobian = self._length_jacobian(robot, q)
         return jacobian.T @ (
@@ -966,14 +885,7 @@ class ThreadlikeImpedance(PassiveElement):
         )
 
     def nonconservative_force(self, robot, q: Array) -> Array:
-        """Return the part of the spring force that friction makes non-potential.
-
-        Guide friction attenuates the spring force transmitted to the backbone
-        without changing the energy stored in the spring, so the transmitted
-        force is not the gradient of anything. Splitting it off keeps
-        :meth:`elastic_force` conservative and the host's ``elastic_energy``
-        custom JVP truthful. It is zero when the friction coefficient is zero.
-        """
+        """Return the part of the spring force that friction makes non-potential."""
         lengths = self.path_lengths(robot, q)
         transmission = self._transmission_matrix(robot, q)
         jacobian = self._length_jacobian(robot, q)
@@ -982,13 +894,6 @@ class ThreadlikeImpedance(PassiveElement):
         )
 
     def damping_matrix(self, robot, q: Array) -> Array:
-        """Return the passive damping contribution of the routed paths.
-
-        Both sides use the Capstan-weighted transmission map, which keeps the
-        result symmetric positive semi-definite and therefore dissipative at
-        any friction coefficient. Reading the rate through the exact Jacobian
-        instead would make the matrix indefinite.
-        """
         matrix = self._transmission_matrix(robot, q)
         return matrix @ (self.params.damping[:, None] * matrix.T)
 
