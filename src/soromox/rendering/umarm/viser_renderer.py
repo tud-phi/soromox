@@ -152,7 +152,7 @@ class UMArmViserRenderer(ViserRenderer):
         rod_radius = (
             float(np.max(rod_candidates))
             if rod_candidates.size
-            else float(np.mean(np.asarray(self._robot_radii)))
+            else float(np.mean(self._backbone_marker_scales))
         )
         return ujoint_radius, rod_radius
 

@@ -13,7 +13,13 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Added renderer-neutral cross-section contours and loft construction, with a
+  registration hook for extending both swept 3D renderers with new geometries.
+
 ### Changed
+
+- Open3D and Viser swept backbones now preserve circular, elliptical, and
+  rectangular cross-sections, including dimensions that vary with abscissa.
 
 ### Performance
 
@@ -21,7 +27,18 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Renamed the Viser `cylinder_sections` and Open3D `tube_resolution` options to
+  the geometry-neutral `cross_section_resolution`.
+
 ### Fixed
+
+- Made Viser discrete cross-section markers consistent with Open3D: circular,
+  rectangular, and elliptical sections now use spheres, boxes, and ellipsoids,
+  respectively.
+- Fixed Open3D and Viser lofting across link boundaries, which produced a short
+  shape-morphing funnel when adjacent links used different cross-sections.
+- Fixed Open3D swept meshes reusing the first endpoint cross-section at both
+  ends, which previously rendered tapered profiles as piecewise-constant.
 
 ### Documentation
 

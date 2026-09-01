@@ -48,8 +48,12 @@ from soromox.rendering.actuators import resolve_actuator_rgba
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
+from soromox.rendering.cross_sections import (
+    cross_section_sweep_layout,
+    evaluate_cross_sections,
+    loft_cross_section_contours,
+)
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
-from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.soft_robot import SoftRobot
 
 # =============================================================================
@@ -85,6 +89,9 @@ class SceneHandles:
     base_plates: list = field(default_factory=list)
     ground_planes: list = field(default_factory=list)
     backbone_points: list[list] = field(default_factory=list)
+    discrete_backbone_batches: list[list[DiscreteBackboneBatch]] = field(
+        default_factory=list
+    )
     swept_backbone_batches: list[list[SweptBackboneBatch]] = field(default_factory=list)
     actuator_lines: list = field(default_factory=list)
     actuator_line_keys: list[str] = field(default_factory=list)
@@ -114,6 +121,15 @@ class SweptBackboneBatch:
 
     handle: Any
     segment_indices: tuple[int, ...]
+
+
+@dataclass
+class DiscreteBackboneBatch:
+    """One Viser instanced-mesh handle for a discrete marker primitive."""
+
+    handle: Any
+    point_indices: tuple[int, ...]
+    align_with_material_frame: bool
 
 
 # =============================================================================
@@ -153,6 +169,31 @@ def _viser_batched_colors_and_opacities(
     rgb = np.clip(np.rint(linear_rgb * 255.0), 0.0, 255.0).astype(np.uint8)
     opacities = np.clip(rgba[:, 3], 0.0, 1.0).astype(np.float32)
     return rgb, None if np.all(opacities >= 0.999) else opacities
+
+
+def _discrete_marker_wxyzs(
+    material_frames: np.ndarray, *, align_with_material_frame: bool
+) -> np.ndarray:
+    """Return Viser orientations for shared discrete marker primitives.
+
+    Args:
+        material_frames: Material-frame rotation matrices with shape ``(N, 3, 3)``.
+        align_with_material_frame: Whether to align each marker with its material
+            frame. Otherwise, all markers use the identity orientation.
+
+    Returns:
+        Scalar-first quaternions with shape ``(N, 4)``.
+    """
+    frames = np.asarray(material_frames, dtype=np.float64)
+    if not align_with_material_frame:
+        return np.broadcast_to(
+            np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            (frames.shape[0], 4),
+        ).copy()
+    rotations = frames[:, :, [1, 2, 0]]
+    return np.asarray(
+        viser.transforms.SO3.from_matrix(rotations).wxyz, dtype=np.float32
+    )
 
 
 def _direction_to_quaternion(
@@ -196,55 +237,6 @@ def _direction_to_quaternion(
     return (float(w), float(xyz[0]), float(xyz[1]), float(xyz[2]))
 
 
-def _oriented_tube_segment_mesh(
-    p0: np.ndarray,
-    p1: np.ndarray,
-    frame0: np.ndarray,
-    frame1: np.ndarray,
-    radius0: float,
-    radius1: float,
-    sections: int,
-    *,
-    cap_end: bool = False,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return a tube segment whose endpoint rings use the FK material frames."""
-    angles = np.linspace(0.0, 2.0 * np.pi, int(sections), endpoint=False)
-    local_offset0 = np.stack(
-        [
-            np.zeros_like(angles),
-            float(radius0) * np.cos(angles),
-            float(radius0) * np.sin(angles),
-        ],
-        axis=1,
-    )
-    local_offset1 = np.stack(
-        [
-            np.zeros_like(angles),
-            float(radius1) * np.cos(angles),
-            float(radius1) * np.sin(angles),
-        ],
-        axis=1,
-    )
-    ring0 = np.asarray(p0) + local_offset0 @ np.asarray(frame0).T
-    ring1 = np.asarray(p1) + local_offset1 @ np.asarray(frame1).T
-    vertex_groups = [ring0, ring1]
-    if cap_end:
-        vertex_groups.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
-    vertices = np.concatenate(vertex_groups, axis=0).astype(np.float32)
-
-    faces: list[tuple[int, int, int]] = []
-    for idx in range(int(sections)):
-        nxt = (idx + 1) % int(sections)
-        faces.append((idx, nxt, int(sections) + idx))
-        faces.append((nxt, int(sections) + nxt, int(sections) + idx))
-    if cap_end:
-        center_idx = 2 * int(sections)
-        for idx in range(int(sections)):
-            nxt = (idx + 1) % int(sections)
-            faces.append((center_idx, int(sections) + idx, int(sections) + nxt))
-    return vertices, np.asarray(faces, dtype=np.uint32)
-
-
 # =============================================================================
 # ViserRenderer
 # =============================================================================
@@ -281,7 +273,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         port: int = 8080,
         backbone_style: Literal["discrete", "swept"] = "swept",
         sphere_resolution: int = 3,
-        cylinder_sections: int = 48,
+        cross_section_resolution: int = 48,
         grid_spacing: tuple[float, float] = (0.5, 0.5),
         base_offsets: Array | None = None,
         base_plate_radius_scale: float = 2.0,
@@ -323,10 +315,13 @@ class ViserRenderer(BaseSoftRobotRenderer):
             port: Server port number
             backbone_style: "swept" (material-frame surface) or "discrete" (spheres)
             sphere_resolution: Icosphere subdivision level (1=low, 2=medium, 3=good, 4=high)
-            cylinder_sections: Number of cylinder cross-section segments (higher=smoother)
+            cross_section_resolution: Number of contour points used to construct
+                swept cross-sections. Higher values produce smoother curved sections;
+                ignored when ``backbone_style="discrete"``.
             grid_spacing: (x, y) spacing for multi-robot grid layout
             base_offsets: Explicit base position offsets (N, 3)
-            base_plate_radius_scale: Base plate radius relative to robot radius
+            base_plate_radius_scale: Base plate radius relative to the
+                base-contour transverse extent
             base_plate_thickness: Base plate thickness in meters
             show_ground_plane: Whether to add Viser's native ground grid
             ground_plane_size: Optional side length of the ground grid in meters
@@ -369,8 +364,31 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._host = host
         self._port = port
         self._backbone_style = backbone_style
+        self._sweep_layout = None
+        self._swept_edge_caps: dict[int, tuple[bool, bool]] = {}
+        if self._backbone_style == "swept":
+            self._sweep_layout = cross_section_sweep_layout(
+                np.asarray(self.robot.segment_length, dtype=np.float64),
+                self.num_points,
+            )
+            self._backbone_abscissae = jnp.asarray(self._sweep_layout.abscissae)
+            self._segment_cache[self.num_points] = (
+                self._sweep_layout.segment_starts,
+                self._sweep_layout.segment_ends,
+            )
+            for segment_index, (start, end) in enumerate(
+                zip(
+                    self._sweep_layout.segment_starts,
+                    self._sweep_layout.segment_ends,
+                )
+            ):
+                for edge_index in range(int(start), int(end) - 1):
+                    self._swept_edge_caps[edge_index] = (
+                        segment_index > 0 and edge_index == int(start),
+                        edge_index == int(end) - 2,
+                    )
         self._sphere_resolution = sphere_resolution
-        self._cylinder_sections = cylinder_sections
+        self._cross_section_resolution = int(cross_section_resolution)
         self._grid_spacing = grid_spacing
         self._base_offsets = base_offsets
         self._base_plate_radius_scale = base_plate_radius_scale
@@ -399,8 +417,26 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._backbone_cast_shadow = backbone_cast_shadow
         self._sphere_cast_shadow = sphere_cast_shadow
 
-        # Get robot radii for sizing
-        self._robot_radii = self._get_robot_radii()
+        # Cross-sections are geometry metadata and are independent of robot state.
+        s_points = np.asarray(self._backbone_abscissae, dtype=np.float64)
+        q_reference = jnp.zeros(self.robot.num_coordinates)
+        self._cross_sections = evaluate_cross_sections(
+            self.robot, q_reference, s_points
+        )
+        self._cross_section_contours = tuple(
+            section.contour(self._cross_section_resolution)
+            for section in self._cross_sections
+        )
+        self._discrete_cross_section_markers = tuple(
+            section.discrete_marker() for section in self._cross_sections
+        )
+        self._backbone_marker_scales = np.asarray(
+            [
+                np.max(np.linalg.norm(contour[:, 1:], axis=1))
+                for contour in self._cross_section_contours
+            ],
+            dtype=np.float32,
+        )
 
         # Server and scene state
         self._server: viser.ViserServer | None = None
@@ -417,27 +453,6 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         if auto_start:
             self.start()
-
-    @staticmethod
-    def _effective_radii(tags: Array, dims: Array) -> Array:
-        """Collapse batched cross-section dimensions into per-point rendering radii."""
-        circular = dims[:, 0]
-        rectangular = 0.5 * jnp.maximum(dims[:, 0], dims[:, 1])
-        elliptical = jnp.maximum(dims[:, 0], dims[:, 1])
-        return jnp.where(
-            tags == CrossSectionGeometry.RECTANGULAR,
-            rectangular,
-            jnp.where(tags == CrossSectionGeometry.ELLIPTICAL, elliptical, circular),
-        )
-
-    def _get_robot_radii(self) -> Array:
-        """Get per-point effective robot radii for tapered visualization."""
-        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
-        q_dummy = jnp.zeros(self.robot.num_dofs)
-        tags, dims = jax.vmap(self.robot.cross_section_geometry, in_axes=(None, 0))(
-            q_dummy, s_ps
-        )
-        return self._effective_radii(tags, dims)
 
     @property
     def is_3d(self) -> bool:
@@ -605,19 +620,26 @@ class ViserRenderer(BaseSoftRobotRenderer):
 
         num_robots = curves.shape[0]
         num_points = curves.shape[1]
+        edge_caps = self._swept_edge_caps_for_num_points(num_points)
         self._add_ground_plane(curves[:, 0])
 
         # Clear existing robot geometry
         self._scene_handles.backbone_points = []
+        self._scene_handles.discrete_backbone_batches = []
         self._scene_handles.swept_backbone_batches = []
         self._scene_handles.base_plates = []
 
-        unit_sphere = None
+        discrete_unit_meshes = None
         if self._backbone_style == "discrete":
             unit_sphere = trimesh.creation.icosphere(
                 subdivisions=self._sphere_resolution,
                 radius=1.0,
             )
+            discrete_unit_meshes = {
+                "sphere": unit_sphere,
+                "ellipsoid": unit_sphere,
+                "box": trimesh.creation.box(extents=(1.0, 1.0, 1.0)),
+            }
 
         for robot_idx in range(num_robots):
             curve = curves[robot_idx]  # (num_points, 3)
@@ -627,36 +649,63 @@ class ViserRenderer(BaseSoftRobotRenderer):
             robot_points = []
 
             if self._backbone_style == "discrete":
-                # One instanced mesh per robot replaces one scene node per point.
-                assert unit_sphere is not None
-                colors, opacities = _viser_batched_colors_and_opacities(
-                    point_colors[robot_idx]
-                )
-                handle = self._server.scene.add_batched_meshes_simple(
-                    name=f"/robots/robot_{robot_idx}/backbone",
-                    vertices=np.asarray(unit_sphere.vertices, dtype=np.float32),
-                    faces=np.asarray(unit_sphere.faces, dtype=np.uint32),
-                    batched_wxyzs=np.broadcast_to(
-                        np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32),
-                        (num_points, 4),
-                    ).copy(),
-                    batched_positions=np.asarray(curve, dtype=np.float32),
-                    batched_scales=np.asarray(self._robot_radii, dtype=np.float32),
-                    batched_colors=colors,
-                    batched_opacities=opacities,
-                    wireframe=self._wireframe,
-                    material=self._material,
-                    flat_shading=self._flat_shading,
-                    cast_shadow=self._backbone_cast_shadow,
-                )
-                robot_points.append(handle)
+                assert discrete_unit_meshes is not None
+                marker_specs = self._discrete_cross_section_markers[:num_points]
+                primitive_groups: dict[str, list[int]] = {}
+                for point_index, marker in enumerate(marker_specs):
+                    primitive_groups.setdefault(marker.primitive, []).append(
+                        point_index
+                    )
+
+                discrete_batches: list[DiscreteBackboneBatch] = []
+                for primitive, point_indices_list in primitive_groups.items():
+                    point_indices = np.asarray(point_indices_list, dtype=np.int64)
+                    markers = [marker_specs[index] for index in point_indices]
+                    align_with_material_frame = markers[0].align_with_material_frame
+                    unit_mesh = discrete_unit_meshes[primitive]
+                    colors, opacities = _viser_batched_colors_and_opacities(
+                        point_colors[robot_idx, point_indices]
+                    )
+                    handle = self._server.scene.add_batched_meshes_simple(
+                        name=(
+                            f"/robots/robot_{robot_idx}/backbone/{primitive}_markers"
+                        ),
+                        vertices=np.asarray(unit_mesh.vertices, dtype=np.float32),
+                        faces=np.asarray(unit_mesh.faces, dtype=np.uint32),
+                        batched_wxyzs=_discrete_marker_wxyzs(
+                            robot_frames[point_indices],
+                            align_with_material_frame=align_with_material_frame,
+                        ),
+                        batched_positions=np.asarray(
+                            curve[point_indices], dtype=np.float32
+                        ),
+                        batched_scales=np.asarray(
+                            [marker.scale_xyz for marker in markers],
+                            dtype=np.float32,
+                        ),
+                        batched_colors=colors,
+                        batched_opacities=opacities,
+                        wireframe=self._wireframe,
+                        material=self._material,
+                        flat_shading=self._flat_shading,
+                        cast_shadow=self._backbone_cast_shadow,
+                    )
+                    robot_points.append(handle)
+                    discrete_batches.append(
+                        DiscreteBackboneBatch(
+                            handle=handle,
+                            point_indices=tuple(point_indices_list),
+                            align_with_material_frame=align_with_material_frame,
+                        )
+                    )
+                self._scene_handles.discrete_backbone_batches.append(discrete_batches)
                 self._scene_handles.swept_backbone_batches.append([])
 
             else:  # "swept" style - cylinders between points
+                self._scene_handles.discrete_backbone_batches.append([])
                 color_groups: dict[tuple[float, ...], list[int]] = {}
-                for pt_idx, color_rgba in enumerate(
-                    point_colors[robot_idx, : num_points - 1]
-                ):
+                for pt_idx in edge_caps:
+                    color_rgba = point_colors[robot_idx, pt_idx]
                     color_groups.setdefault(tuple(color_rgba.tolist()), []).append(
                         pt_idx
                     )
@@ -669,18 +718,19 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     face_parts = []
                     vertex_offset = 0
                     for pt_idx in segment_indices:
-                        vertices, faces = _oriented_tube_segment_mesh(
+                        cap_start, cap_end = edge_caps[pt_idx]
+                        vertices, faces = loft_cross_section_contours(
                             curve[pt_idx],
                             curve[pt_idx + 1],
                             robot_frames[pt_idx],
                             robot_frames[pt_idx + 1],
-                            self._robot_radii[pt_idx],
-                            self._robot_radii[pt_idx + 1],
-                            self._cylinder_sections,
-                            cap_end=pt_idx == num_points - 2,
+                            self._cross_section_contours[pt_idx],
+                            self._cross_section_contours[pt_idx + 1],
+                            cap_start=cap_start,
+                            cap_end=cap_end,
                         )
-                        vertex_parts.append(vertices)
-                        face_parts.append(faces + vertex_offset)
+                        vertex_parts.append(vertices.astype(np.float32))
+                        face_parts.append(faces.astype(np.uint32) + vertex_offset)
                         vertex_offset += len(vertices)
                     color, opacity = _rgba_to_viser_color_and_opacity(
                         np.asarray(color_key)
@@ -718,6 +768,24 @@ class ViserRenderer(BaseSoftRobotRenderer):
         self._scene_handles.num_robots = num_robots
         self._scene_handles.num_backbone_points = num_points
 
+    def _swept_edge_caps_for_num_points(
+        self, num_points: int
+    ) -> dict[int, tuple[bool, bool]]:
+        """Return cap flags for link-local swept edges.
+
+        Args:
+            num_points: Number of backbone stations in the rendered configuration.
+
+        Returns:
+            Mapping from each swept edge index to its start- and end-cap flags.
+        """
+        if num_points == self.num_points:
+            return self._swept_edge_caps
+        return {
+            edge_index: (False, edge_index == num_points - 2)
+            for edge_index in range(max(0, num_points - 1))
+        }
+
     def _base_plate_pose(
         self, base_point: np.ndarray
     ) -> tuple[np.ndarray, tuple[float, float, float, float]]:
@@ -741,7 +809,9 @@ class ViserRenderer(BaseSoftRobotRenderer):
             name=f"/robots/robot_{robot_idx}/base_plate",
             mesh=self._make_cylinder_trimesh(
                 length=self._base_plate_thickness,
-                radius=self._robot_radii[0] * self._base_plate_radius_scale,
+                radius=(
+                    self._backbone_marker_scales[0] * self._base_plate_radius_scale
+                ),
                 color=base_plate_color,
                 direction=None,  # Already Z-aligned
             ),
@@ -937,7 +1007,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         cylinder = trimesh.creation.cylinder(
             radius=radius,
             height=length,
-            sections=self._cylinder_sections,
+            sections=self._cross_section_resolution,
         )
 
         # Apply rotation only if direction is provided
@@ -989,6 +1059,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
         with update_context:
             num_robots = min(len(curves), len(self._scene_handles.backbone_points))
             num_points = curves.shape[1]
+            edge_caps = self._swept_edge_caps_for_num_points(num_points)
 
             for robot_idx in range(num_robots):
                 curve = curves[robot_idx]  # (num_points, 3)
@@ -999,12 +1070,17 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     base_handle.position = tuple(base_pos)
                     base_handle.wxyz = base_wxyz
 
-                robot_points = self._scene_handles.backbone_points[robot_idx]
-
                 if self._backbone_style == "discrete":
-                    if robot_points:
-                        robot_points[0].batched_positions = np.asarray(
-                            curve, dtype=np.float32
+                    for batch in self._scene_handles.discrete_backbone_batches[
+                        robot_idx
+                    ]:
+                        point_indices = np.asarray(batch.point_indices, dtype=np.int64)
+                        batch.handle.batched_positions = np.asarray(
+                            curve[point_indices], dtype=np.float32
+                        )
+                        batch.handle.batched_wxyzs = _discrete_marker_wxyzs(
+                            robot_frames[point_indices],
+                            align_with_material_frame=(batch.align_with_material_frame),
                         )
                 else:
                     robot_batches = self._scene_handles.swept_backbone_batches[
@@ -1013,17 +1089,18 @@ class ViserRenderer(BaseSoftRobotRenderer):
                     for batch in robot_batches:
                         vertex_parts = []
                         for seg_idx in batch.segment_indices:
-                            vertices, _ = _oriented_tube_segment_mesh(
+                            cap_start, cap_end = edge_caps[seg_idx]
+                            vertices, _ = loft_cross_section_contours(
                                 curve[seg_idx],
                                 curve[seg_idx + 1],
                                 robot_frames[seg_idx],
                                 robot_frames[seg_idx + 1],
-                                self._robot_radii[seg_idx],
-                                self._robot_radii[seg_idx + 1],
-                                self._cylinder_sections,
-                                cap_end=seg_idx == num_points - 2,
+                                self._cross_section_contours[seg_idx],
+                                self._cross_section_contours[seg_idx + 1],
+                                cap_start=cap_start,
+                                cap_end=cap_end,
                             )
-                            vertex_parts.append(vertices)
+                            vertex_parts.append(vertices.astype(np.float32))
                         batch.handle.vertices = np.concatenate(vertex_parts, axis=0)
 
     def _add_batched_spheres(

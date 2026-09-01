@@ -265,7 +265,10 @@ def add_controller_visibility_selector(
             return
         points = make_tube_wire_segments(
             target_curves[frame_idx],
-            radius=float(np.mean(renderer._robot_radii)) * TARGET_WIREFRAME_RADIUS_SCALE,
+            radius=(
+                float(np.mean(renderer._backbone_marker_scales))
+                * TARGET_WIREFRAME_RADIUS_SCALE
+            ),
             radial_segments=target_radial_segments,
         )
         color = target_wire_color(target_opacity)

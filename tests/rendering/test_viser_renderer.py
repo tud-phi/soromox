@@ -19,7 +19,7 @@ class DummySpatialRobot:
     floating_base = False
     length = jnp.array(1.0)
     segment_length = jnp.array([1.0])
-    num_dofs = 0
+    num_coordinates = 0
 
     def __init__(self, base_pose: jnp.ndarray):
         self.fixed_base_pose = jnp.asarray(base_pose)
@@ -35,6 +35,31 @@ class DummySpatialRobot:
 
     def cross_section_geometry(self, q, s):
         return CrossSectionGeometry.CIRCULAR, jnp.array([0.02])
+
+
+class ProfiledSpatialRobot(DummySpatialRobot):
+    def __init__(self, geometry, base_dimensions, tip_dimensions):
+        super().__init__(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+        self.geometry = geometry
+        self.base_dimensions = jnp.asarray(base_dimensions)
+        self.tip_dimensions = jnp.asarray(tip_dimensions)
+
+    def cross_section_geometry(self, q, s):
+        del q
+        dimensions = self.base_dimensions + s * (
+            self.tip_dimensions - self.base_dimensions
+        )
+        return self.geometry, dimensions
+
+
+class DiscontinuousTwoLinkRobot(DummySpatialRobot):
+    segment_length = jnp.array([0.6, 0.4])
+
+    def cross_section_geometry(self, q, s):
+        del q
+        if float(s) < 0.6:
+            return CrossSectionGeometry.RECTANGULAR, jnp.array([0.2, 0.4])
+        return CrossSectionGeometry.CIRCULAR, jnp.array([0.05])
 
 
 class DummyActuatedSpatialRobot(DummySpatialRobot):
@@ -649,7 +674,7 @@ def test_viser_capture_timeout_is_explicit():
         renderer._capture_viser_frame(client, timeout=0.001)
 
 
-def test_viser_discrete_backbone_batches_positions_colors_and_robot_radius():
+def test_viser_discrete_backbone_batches_positions_colors_and_marker_scale():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
@@ -674,10 +699,58 @@ def test_viser_discrete_backbone_batches_positions_colors_and_robot_radius():
     assert_allclose(handle.batched_positions, curves[0], atol=1e-12)
     assert_allclose(
         handle.batched_scales,
-        renderer._robot_radii,
+        np.full((2, 3), 0.02),
         atol=1e-12,
     )
     assert_array_equal(handle.batched_colors, np.full((2, 3), 255))
+
+
+def test_viser_discrete_backbone_uses_boxes_for_rectangular_sections():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    robot = DiscontinuousTwoLinkRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]))
+    renderer = ViserRenderer(
+        robot,
+        auto_start=False,
+        backbone_style="discrete",
+        num_points=8,
+        sphere_resolution=1,
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 0)), jnp.zeros((1, 3))
+    )
+
+    renderer._build_robot_geometry(
+        np.asarray(curves),
+        renderer.resolve_backbone_colors(1).per_robot_point_rgba,
+        material_frames=np.asarray(frames),
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    batches = renderer._scene_handles.discrete_backbone_batches[0]
+    assert len(batches) == 2
+    box_batch = next(batch for batch in batches if "box_markers" in batch.handle.name)
+    sphere_batch = next(
+        batch for batch in batches if "sphere_markers" in batch.handle.name
+    )
+    assert len(box_batch.handle.vertices) == 8
+    assert_allclose(
+        box_batch.handle.batched_scales,
+        np.tile([0.4, 0.2, 0.4], (len(box_batch.point_indices), 1)),
+    )
+    assert_allclose(
+        sphere_batch.handle.batched_scales,
+        np.tile([0.05, 0.05, 0.05], (len(sphere_batch.point_indices), 1)),
+    )
+
+    rotated_frames = np.asarray(frames).copy()
+    rotated_frames[:, :, :, 1:] *= -1.0
+    original_wxyzs = box_batch.handle.batched_wxyzs.copy()
+    renderer._update_robot_geometry(np.asarray(curves), rotated_frames)
+    assert not np.allclose(box_batch.handle.batched_wxyzs, original_wxyzs)
 
 
 def test_viser_batched_instance_colors_preserve_regular_handle_srgb_appearance():
@@ -741,12 +814,15 @@ def test_viser_automatic_ground_plane_covers_batched_base_layout():
     assert_allclose(ground.position, [-0.06, 0.0, 0.0])
 
 
-def test_viser_swept_backbone_uses_material_frame_rings():
+def test_viser_swept_backbone_uses_material_frame_contours():
     from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
-        robot, auto_start=False, backbone_style="swept", cylinder_sections=8
+        robot,
+        auto_start=False,
+        backbone_style="swept",
+        cross_section_resolution=8,
     )
     server = FakeViserActuatorServer()
     renderer._server = server
@@ -761,9 +837,106 @@ def test_viser_swept_backbone_uses_material_frame_rings():
         base_plate_color=(0.15, 0.15, 0.15),
     )
 
-    first_ring = server.scene.simple_meshes[0].vertices[:8]
-    assert_allclose(first_ring[:, 0], 0.0, atol=1e-7)
-    assert np.ptp(first_ring[:, 1]) > renderer._robot_radii[0]
+    first_contour = server.scene.simple_meshes[0].vertices[:8]
+    assert_allclose(first_contour[:, 0], 0.0, atol=1e-7)
+    assert np.ptp(first_contour[:, 1]) == pytest.approx(0.04)
+
+
+@pytest.mark.parametrize(
+    (
+        "geometry",
+        "base_dimensions",
+        "tip_dimensions",
+        "base_spans_yz",
+        "tip_spans_yz",
+    ),
+    [
+        (CrossSectionGeometry.CIRCULAR, [0.2], [0.1], [0.4, 0.4], [0.2, 0.2]),
+        (
+            CrossSectionGeometry.ELLIPTICAL,
+            [0.3, 0.1],
+            [0.15, 0.05],
+            [0.6, 0.2],
+            [0.3, 0.1],
+        ),
+        (
+            CrossSectionGeometry.RECTANGULAR,
+            [0.4, 0.2],
+            [0.2, 0.1],
+            [0.2, 0.4],
+            [0.1, 0.2],
+        ),
+    ],
+)
+def test_viser_swept_backbone_preserves_varying_cross_section_contours(
+    geometry,
+    base_dimensions,
+    tip_dimensions,
+    base_spans_yz,
+    tip_spans_yz,
+):
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    renderer = ViserRenderer(
+        ProfiledSpatialRobot(geometry, base_dimensions, tip_dimensions),
+        auto_start=False,
+        backbone_style="swept",
+        num_points=2,
+        cross_section_resolution=8,
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    curves = np.array([[[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]])
+    material_frames = np.broadcast_to(np.eye(3), (1, 2, 3, 3)).copy()
+
+    renderer._build_robot_geometry(
+        curves,
+        np.ones((1, 2, 4), dtype=np.float64),
+        material_frames=material_frames,
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    vertices = server.scene.simple_meshes[0].vertices
+    assert_allclose(np.ptp(vertices[:8, 1:], axis=0), base_spans_yz)
+    assert_allclose(np.ptp(vertices[8:16, 1:], axis=0), tip_spans_yz)
+
+
+def test_viser_swept_backbone_keeps_link_interfaces_discontinuous():
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
+
+    renderer = ViserRenderer(
+        DiscontinuousTwoLinkRobot(jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])),
+        auto_start=False,
+        backbone_style="swept",
+        num_points=8,
+        cross_section_resolution=8,
+    )
+    server = FakeViserActuatorServer()
+    renderer._server = server
+    renderer._scene_handles = SceneHandles()
+    curves, frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 0)), jnp.zeros((1, 3))
+    )
+    colors = renderer.resolve_backbone_colors(1).per_robot_point_rgba
+
+    renderer._build_robot_geometry(
+        np.asarray(curves),
+        colors,
+        material_frames=np.asarray(frames),
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    edge_indices = {
+        edge_index
+        for batch in renderer._scene_handles.swept_backbone_batches[0]
+        for edge_index in batch.segment_indices
+    }
+    assert edge_indices == {0, 1, 2, 4, 5, 6}
+    assert renderer._cross_sections[3].geometry == CrossSectionGeometry.RECTANGULAR
+    assert renderer._cross_sections[4].geometry == CrossSectionGeometry.CIRCULAR
+    assert renderer._swept_edge_caps[2] == (False, True)
+    assert renderer._swept_edge_caps[4] == (True, False)
 
 
 def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
@@ -771,7 +944,10 @@ def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
 
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
-        robot, auto_start=False, backbone_style="swept", cylinder_sections=8
+        robot,
+        auto_start=False,
+        backbone_style="swept",
+        cross_section_resolution=8,
     )
     server = FakeViserActuatorServer()
     renderer._server = server
@@ -790,10 +966,10 @@ def test_viser_swept_body_owns_closed_tip_and_updates_atomically():
     renderer._update_robot_geometry(updated_curve, frames)
 
     tip_mesh = server.scene.simple_meshes[0]
-    body_tip_ring = tip_mesh.vertices[8:16]
+    body_tip_contour = tip_mesh.vertices[8:16]
     cap_triangles = tip_mesh.faces[-8:]
     assert server.atomic_calls == 1
-    assert_allclose(body_tip_ring.mean(axis=0), updated_curve[0, -1], atol=1e-7)
+    assert_allclose(body_tip_contour.mean(axis=0), updated_curve[0, -1], atol=1e-7)
     assert_allclose(tip_mesh.vertices[-1], updated_curve[0, -1], atol=1e-7)
     assert np.all(cap_triangles[:, 0] == 16)
     assert server.scene.icospheres == []
@@ -807,7 +983,7 @@ def test_viser_frame_update_uses_one_atomic_transaction():
         robot,
         auto_start=False,
         backbone_style="swept",
-        cylinder_sections=8,
+        cross_section_resolution=8,
         show_ground_plane=False,
     )
     server = FakeViserActuatorServer()
@@ -839,18 +1015,15 @@ def test_viser_frame_update_uses_one_atomic_transaction():
 
 
 def test_viser_swept_batches_match_segment_geometry_across_animation_frames():
-    from soromox.rendering.viser_renderer import (
-        SceneHandles,
-        ViserRenderer,
-        _oriented_tube_segment_mesh,
-    )
+    from soromox.rendering.cross_sections import loft_cross_section_contours
+    from soromox.rendering.viser_renderer import SceneHandles, ViserRenderer
 
     robot = DummySpatialRobot(jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]))
     renderer = ViserRenderer(
         robot,
         auto_start=False,
         backbone_style="swept",
-        cylinder_sections=8,
+        cross_section_resolution=8,
     )
     server = FakeViserActuatorServer()
     renderer._server = server
@@ -891,14 +1064,13 @@ def test_viser_swept_batches_match_segment_geometry_across_animation_frames():
             expected_faces = []
             vertex_offset = 0
             for segment_idx in batch.segment_indices:
-                vertices, faces = _oriented_tube_segment_mesh(
+                vertices, faces = loft_cross_section_contours(
                     curves[0, frame_idx, segment_idx],
                     curves[0, frame_idx, segment_idx + 1],
                     frames[0, segment_idx],
                     frames[0, segment_idx + 1],
-                    renderer._robot_radii[segment_idx],
-                    renderer._robot_radii[segment_idx + 1],
-                    renderer._cylinder_sections,
+                    renderer._cross_section_contours[segment_idx],
+                    renderer._cross_section_contours[segment_idx + 1],
                     cap_end=segment_idx == curves.shape[2] - 2,
                 )
                 expected_vertices.append(vertices)

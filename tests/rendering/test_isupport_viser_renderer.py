@@ -149,7 +149,7 @@ def _renderer(robot: ISupport, **kwargs) -> ISupportViserRenderer:
         robot,
         auto_start=False,
         open_browser=False,
-        cylinder_sections=12,
+        cross_section_resolution=12,
         **kwargs,
     )
 

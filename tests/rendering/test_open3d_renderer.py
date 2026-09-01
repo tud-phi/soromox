@@ -9,9 +9,12 @@ pytest.importorskip("open3d")
 
 from soromox.rendering import open3d_renderer as open3d_renderer_module  # noqa: E402
 from soromox.rendering.camera_config import CameraConfig  # noqa: E402
+from soromox.rendering.cross_sections import (  # noqa: E402
+    CrossSection,
+    loft_cross_sections,
+)
 from soromox.rendering.open3d_renderer import (  # noqa: E402
     Open3DRenderer,
-    _cross_section_ring_offsets,
     _make_polyline_lineset,
     _make_polylines_lineset,
     _make_sphere,
@@ -19,7 +22,6 @@ from soromox.rendering.open3d_renderer import (  # noqa: E402
     _make_swept_cross_section_segment,
     _merge_triangle_meshes,
     _refresh_merged_triangle_mesh,
-    _swept_segment_vertices,
     _update_polylines_lineset,
 )
 from soromox.systems.components import CrossSectionGeometry  # noqa: E402
@@ -62,6 +64,16 @@ class _AnimatingSpatialRobot:
         return CrossSectionGeometry.CIRCULAR, jnp.array([0.05])
 
 
+class _DiscontinuousTwoLinkRobot(_AnimatingSpatialRobot):
+    segment_length = jnp.array([0.6, 0.4])
+
+    def cross_section_geometry(self, q, s):
+        del q
+        if float(s) < 0.6:
+            return CrossSectionGeometry.RECTANGULAR, jnp.array([0.2, 0.4])
+        return CrossSectionGeometry.CIRCULAR, jnp.array([0.05])
+
+
 class FakeOpen3DVisualizer:
     def __init__(self):
         self.reset_view_point_arg = None
@@ -98,7 +110,7 @@ class FakeOpen3DViewControl:
         self.zoom = float(zoom)
 
 
-def test_swept_cylinder_rings_follow_material_frame_not_curve_chord():
+def test_swept_circular_contours_follow_material_frame_not_curve_chord():
     p0 = np.array([0.0, 0.0, 0.0])
     p1 = np.array([0.0, 1.0, 0.0])
     frame = np.eye(3)
@@ -108,21 +120,181 @@ def test_swept_cylinder_rings_follow_material_frame_not_curve_chord():
         p1,
         frame,
         frame,
-        CrossSectionGeometry.CIRCULAR,
-        np.array([0.2]),
+        CrossSection(CrossSectionGeometry.CIRCULAR, np.array([0.2])),
+        CrossSection(CrossSectionGeometry.CIRCULAR, np.array([0.2])),
         (1.0, 0.0, 0.0),
         resolution=8,
     )
 
-    first_ring = np.asarray(mesh.vertices)[:8]
-    assert_allclose(first_ring[:, 0], 0.0, atol=1e-12)
-    assert np.ptp(first_ring[:, 1]) > 0.39
+    first_contour = np.asarray(mesh.vertices)[:8]
+    assert_allclose(first_contour[:, 0], 0.0, atol=1e-12)
+    assert np.ptp(first_contour[:, 1]) > 0.39
+
+
+@pytest.mark.parametrize(
+    ("geometry", "base_dimensions", "tip_dimensions", "base_spans", "tip_spans"),
+    [
+        (CrossSectionGeometry.CIRCULAR, [0.2], [0.1], [0.4, 0.4], [0.2, 0.2]),
+        (
+            CrossSectionGeometry.ELLIPTICAL,
+            [0.3, 0.1],
+            [0.15, 0.05],
+            [0.6, 0.2],
+            [0.3, 0.1],
+        ),
+        (
+            CrossSectionGeometry.RECTANGULAR,
+            [0.4, 0.2],
+            [0.2, 0.1],
+            [0.2, 0.4],
+            [0.1, 0.2],
+        ),
+    ],
+)
+def test_open3d_swept_segment_uses_varying_endpoint_contours(
+    geometry, base_dimensions, tip_dimensions, base_spans, tip_spans
+):
+    mesh = _make_swept_cross_section_segment(
+        np.zeros(3),
+        np.array([1.0, 0.0, 0.0]),
+        np.eye(3),
+        np.eye(3),
+        CrossSection(geometry, np.asarray(base_dimensions)),
+        CrossSection(geometry, np.asarray(tip_dimensions)),
+        (1.0, 0.0, 0.0),
+        resolution=8,
+    )
+
+    vertices = np.asarray(mesh.vertices)
+    assert_allclose(np.ptp(vertices[:8, 1:], axis=0), base_spans)
+    assert_allclose(np.ptp(vertices[8:16, 1:], axis=0), tip_spans)
+
+
+def test_open3d_cached_swept_geometry_preserves_tapered_endpoint_sections():
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(), num_points=2, cross_section_resolution=8
+    )
+    vis = Mock()
+    curve = np.array([[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]])
+    material_frames = np.broadcast_to(np.eye(3), (2, 3, 3)).copy()
+    sections = (
+        CrossSection(CrossSectionGeometry.ELLIPTICAL, np.array([0.3, 0.1])),
+        CrossSection(CrossSectionGeometry.ELLIPTICAL, np.array([0.15, 0.05])),
+    )
+
+    _, mesh_groups = renderer._build_robot_geometry(
+        vis,
+        curve,
+        material_frames,
+        sections,
+        renderer._compute_segment_layout(2),
+        segment_colors=np.array([[1.0, 0.0, 0.0, 1.0]]),
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    cached = mesh_groups[0][0]
+    vertices = np.asarray(cached.mesh.vertices)
+    assert_allclose(np.ptp(vertices[:8, 1:], axis=0), [0.6, 0.2])
+    assert_allclose(np.ptp(vertices[8:16, 1:], axis=0), [0.3, 0.1])
+
+    updated_curve = curve + np.array([0.0, 1.0, 0.0])
+    renderer._apply_swept_cached_mesh(
+        cached,
+        updated_curve[0],
+        updated_curve[1],
+        material_frames[0],
+        material_frames[1],
+    )
+    updated_vertices = np.asarray(cached.mesh.vertices)
+    assert_allclose(np.ptp(updated_vertices[:8, 1:], axis=0), [0.6, 0.2])
+    assert_allclose(np.ptp(updated_vertices[8:16, 1:], axis=0), [0.3, 0.1])
+
+
+def test_open3d_discrete_marker_uses_shared_rectangular_box_specification():
+    renderer = Open3DRenderer(
+        _AnimatingSpatialRobot(), backbone_style="discrete", num_points=2
+    )
+    section = CrossSection(CrossSectionGeometry.RECTANGULAR, np.array([0.2, 0.6]))
+
+    primitive, scale, dynamic_length, aligned = renderer._primitive_from_section(
+        section
+    )
+
+    assert primitive == "box"
+    assert_allclose(scale, [0.6, 0.2, 0.6])
+    assert not dynamic_length
+    assert aligned
+
+
+def test_open3d_swept_backbone_keeps_link_interfaces_discontinuous():
+    renderer = Open3DRenderer(
+        _DiscontinuousTwoLinkRobot(),
+        num_points=8,
+        cross_section_resolution=8,
+        show_ground_plane=False,
+    )
+    vis = Mock()
+    curve, material_frames = renderer.compute_backbone_curves_and_frames_batched(
+        jnp.zeros((1, 3)), jnp.zeros((1, 3))
+    )
+    abscissae = np.asarray(renderer._backbone_abscissae)
+    sections = renderer._cross_sections_for_points(np.zeros(3), abscissae)
+    layout = renderer._compute_segment_layout(8)
+
+    _, mesh_groups = renderer._build_robot_geometry(
+        vis,
+        np.asarray(curve[0]),
+        np.asarray(material_frames[0]),
+        sections,
+        layout,
+        segment_colors=np.ones((2, 4)),
+        base_plate_color=(0.15, 0.15, 0.15),
+    )
+
+    assert_array_equal(layout.starts, [0, 4])
+    assert_array_equal(layout.ends, [4, 8])
+    assert [len(group) for group in mesh_groups] == [3, 3]
+    assert sections[3].geometry == CrossSectionGeometry.RECTANGULAR
+    assert sections[4].geometry == CrossSectionGeometry.CIRCULAR
+    assert mesh_groups[0][-1].cap_end
+    assert mesh_groups[1][0].cap_start
+
+    class FakeRenderingScene:
+        def __init__(self):
+            self.geometry_names = []
+
+        def clear_geometry(self):
+            self.geometry_names.clear()
+
+        def add_geometry(self, name, geometry, material):
+            del geometry, material
+            self.geometry_names.append(name)
+
+    scene_data = open3d_renderer_module.SceneData(
+        curves=np.asarray(curve)[:, None],
+        material_frames=np.asarray(material_frames)[:, None],
+        q_ts=np.zeros((1, 1, 3)),
+        ts=np.zeros(1),
+        layout=layout,
+        segment_colors_rgba=np.ones((1, 2, 4)),
+    )
+    rendering_scene = FakeRenderingScene()
+    renderer._populate_rendering_scene(rendering_scene, scene_data, frame_idx=0)
+    assert {
+        name for name in rendering_scene.geometry_names if name.startswith("body_")
+    } == {
+        "body_0_0_0",
+        "body_0_0_1",
+        "body_0_0_2",
+        "body_0_1_4",
+        "body_0_1_5",
+        "body_0_1_6",
+    }
 
 
 def test_swept_segment_applies_each_endpoint_material_frame():
-    offsets = _cross_section_ring_offsets(
-        CrossSectionGeometry.RECTANGULAR, np.array([0.4, 0.2]), resolution=8
-    )
+    section0 = CrossSection(CrossSectionGeometry.RECTANGULAR, np.array([0.4, 0.2]))
+    section1 = CrossSection(CrossSectionGeometry.RECTANGULAR, np.array([0.2, 0.1]))
     frame0 = np.eye(3)
     frame1 = np.array(
         [
@@ -134,10 +306,12 @@ def test_swept_segment_applies_each_endpoint_material_frame():
     p0 = np.zeros(3)
     p1 = np.array([1.0, 0.0, 0.0])
 
-    vertices = _swept_segment_vertices(p0, p1, frame0, frame1, offsets)
+    vertices, _ = loft_cross_sections(
+        p0, p1, frame0, frame1, section0, section1, resolution=8
+    )
 
-    assert_allclose(vertices[:4], p0 + offsets @ frame0.T, atol=1e-12)
-    assert_allclose(vertices[4:], p1 + offsets @ frame1.T, atol=1e-12)
+    assert_allclose(vertices[:8], p0 + section0.contour(8) @ frame0.T, atol=1e-12)
+    assert_allclose(vertices[8:], p1 + section1.contour(8) @ frame1.T, atol=1e-12)
 
 
 def test_swept_segment_terminal_cap_closes_tip_with_outward_faces():
@@ -150,8 +324,8 @@ def test_swept_segment_terminal_cap_closes_tip_with_outward_faces():
         p1,
         frame,
         frame,
-        CrossSectionGeometry.CIRCULAR,
-        np.array([0.2]),
+        CrossSection(CrossSectionGeometry.CIRCULAR, np.array([0.2])),
+        CrossSection(CrossSectionGeometry.CIRCULAR, np.array([0.1])),
         (1.0, 0.0, 0.0),
         resolution=8,
         cap_end=True,

@@ -667,7 +667,7 @@ def render_operational_space_tracking(
         open_browser=open_browser,
         color_config=color_config,
         backbone_style="swept",
-        cylinder_sections=64,
+        cross_section_resolution=64,
         background_color=(1.0, 1.0, 1.0),
         material="standard",
         flat_shading=False,

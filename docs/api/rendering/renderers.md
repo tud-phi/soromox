@@ -28,6 +28,56 @@ BaseSoftRobotRenderer (abstract base)
 | Base plate | `base_plate_radius_scale` and `base_plate_thickness` configure the base geometry | Open3D and Viser; Matplotlib draws a lightweight base marker |
 | Ground plane | `show_ground_plane` and `ground_plane_size` configure a base-aligned reference plane; its colors come from `RendererColorConfig` | Matplotlib, Open3D, and Viser |
 
+### Swept Cross-Sections
+
+Open3D and Viser share the same renderer-neutral contour and loft construction.
+This contour-based surface construction applies only to
+`backbone_style="swept"`. Discrete mode renders independent 3D markers: spheres
+for circular sections, boxes for rectangular sections, and ellipsoids for
+elliptical sections. It does not construct a continuous cross-sectional surface
+or use registered contour builders.
+
+In swept mode, both backends evaluate `robot.cross_section_geometry(q, s)` at
+every backbone point and connect the two endpoint contours of each surface
+segment. Circular, elliptical, and rectangular sections therefore retain their
+actual shape, including dimensions that vary with abscissa such as
+`LinearProfile` tapers.
+
+Each link owns its base and tip contour. Internal boundaries therefore use two
+one-sided backbone stations at the same physical interface, and the renderers
+do not loft across links. This preserves an intentional discontinuity, such as
+a rectangular link followed by a circular link, instead of drawing a short
+shape-morphing funnel. Both sides of such an interface are capped. Swept mode
+requires `num_points` to provide at least two stations per link.
+
+`num_points` controls the longitudinal discretization: it is the number of
+markers in discrete mode and the number of backbone stations used to form
+link-local surface segments in swept mode. `cross_section_resolution` controls
+the transverse discretization around each swept contour. It has no effect in
+discrete mode. Rectangles remain piecewise-linear contours with explicit
+corners; increasing the cross-section resolution only adds points along their
+straight edges. Additional geometry families can be enabled for both swept
+renderers with `register_cross_section_contour(...)`, whose builder returns an
+ordered, implicitly closed material-frame contour.
+
+The frames below show the same deformed three-link GVS robot in both backends.
+Its rectangular base link tapers linearly in height, its elliptical middle link
+combines a constant semi-major axis with a linearly varying semi-minor axis, and
+its circular tip link tapers linearly in radius.
+
+| Backend | Swept surface | Discrete markers |
+| --- | --- | --- |
+| Open3D | ![Bent rectangular, elliptical, and circular links rendered as continuous swept surfaces in Open3D](../../assets/rendering/cross-sections-open3d-swept.png) | ![Bent rectangular, elliptical, and circular links rendered as discrete boxes, ellipsoids, and spheres in Open3D](../../assets/rendering/cross-sections-open3d-discrete.png) |
+| Viser | ![Bent rectangular, elliptical, and circular links rendered as continuous swept surfaces in Viser](../../assets/rendering/cross-sections-viser-swept.png) | ![Bent rectangular, elliptical, and circular links rendered as discrete boxes, ellipsoids, and spheres in Viser](../../assets/rendering/cross-sections-viser-discrete.png) |
+
+::: soromox.rendering.cross_sections
+    options:
+      show_root_heading: true
+      show_source: false
+      heading_level: 4
+      docstring_section_style: table
+      members_order: source
+
 ### Actuator and Helper Geometry
 
 For `SoftRobot` systems, the rendering layer automatically adapts supported
@@ -82,8 +132,8 @@ camera controls, playback, screenshots, and offline frame or video capture.
 Open3D currently requires Python 3.12 or earlier because Python 3.13 wheels are
 not yet available.
 
-Set `backbone_style="discrete"` for per-point spheres or `"swept"` for
-cylinders, boxes, or ellipses generated from the robot cross section.
+Set `backbone_style="discrete"` for per-point markers or `"swept"` for a
+material-frame surface lofted from the robot's cross-section contours.
 Multi-robot sequence scenes automatically merge each robot's backbone
 primitives to reduce Open3D registrations; `merge_backbone_meshes` can force or
 disable this behavior when measuring a particular workload.
@@ -143,7 +193,7 @@ Viser exposes backend-specific controls for:
 - lighting through `enable_default_lights`, directional-light, and
   ambient-light parameters;
 - materials through `material`, `flat_shading`, and `wireframe`;
-- mesh quality through `sphere_resolution` and `cylinder_sections`;
+- mesh quality through `sphere_resolution` and `cross_section_resolution`;
 - shadows through `cast_shadows`, `backbone_cast_shadow`, and
   `sphere_cast_shadow`.
 

@@ -45,8 +45,14 @@ from soromox.rendering.actuators import (
 from soromox.rendering.base import BaseSoftRobotRenderer
 from soromox.rendering.camera_config import CameraConfig
 from soromox.rendering.color_config import RendererColorConfig, ensure_rgba
+from soromox.rendering.cross_sections import (
+    CrossSection,
+    cross_section_sweep_layout,
+    evaluate_cross_sections,
+    loft_cross_section_contours,
+    loft_cross_sections,
+)
 from soromox.rendering.video_encoding import FFmpegVideoWriter, VideoEncodingConfig
-from soromox.systems.components import CrossSectionGeometry
 from soromox.systems.soft_robot import SoftRobot
 
 # ======================================================================================
@@ -323,7 +329,8 @@ class CachedMesh:
     scale_base: np.ndarray
     dynamic_length: bool
     rotate_to_axis: bool
-    swept_ring_offsets: np.ndarray | None = None
+    swept_contours: tuple[np.ndarray, np.ndarray] | None = None
+    cap_start: bool = False
     cap_end: bool = False
 
 
@@ -593,94 +600,34 @@ def _primitive_rotation_from_material_frame(frame: np.ndarray) -> np.ndarray:
     return frame[:, [1, 2, 0]]
 
 
-def _cross_section_ring_offsets(
-    geom_tag: int, params: np.ndarray, resolution: int
-) -> np.ndarray:
-    """Return cross-section offsets in material-frame coordinates."""
-    params = np.asarray(params, dtype=np.float64).reshape(-1)
-    eps = 1e-6
-    if geom_tag == CrossSectionGeometry.RECTANGULAR:
-        height = max(float(params[0]) if params.size else 0.0, eps)
-        width = max(float(params[1]) if params.size > 1 else 0.0, eps)
-        return np.array(
-            [
-                [0.0, -0.5 * width, -0.5 * height],
-                [0.0, 0.5 * width, -0.5 * height],
-                [0.0, 0.5 * width, 0.5 * height],
-                [0.0, -0.5 * width, 0.5 * height],
-            ],
-            dtype=np.float64,
-        )
-
-    angles = np.linspace(0.0, 2.0 * np.pi, int(resolution), endpoint=False)
-    if geom_tag == CrossSectionGeometry.CIRCULAR:
-        a_val = b_val = max(float(params[0]) if params.size else 0.0, eps)
-    else:
-        a_val = max(float(params[0]) if params.size else 0.0, eps)
-        b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
-    return np.stack(
-        [
-            np.zeros_like(angles),
-            a_val * np.cos(angles),
-            b_val * np.sin(angles),
-        ],
-        axis=1,
-    )
-
-
-def _swept_segment_vertices(
-    p0: np.ndarray,
-    p1: np.ndarray,
-    frame0: np.ndarray,
-    frame1: np.ndarray,
-    ring_offsets: np.ndarray,
-    *,
-    cap_end: bool = False,
-) -> np.ndarray:
-    """Place both cross-section rings using their sampled material frames."""
-    ring0 = np.asarray(p0) + ring_offsets @ np.asarray(frame0).T
-    ring1 = np.asarray(p1) + ring_offsets @ np.asarray(frame1).T
-    vertices = [ring0, ring1]
-    if cap_end:
-        vertices.append(np.asarray(p1, dtype=np.float64).reshape(1, 3))
-    return np.concatenate(vertices, axis=0)
-
-
-def _swept_segment_faces(ring_size: int, *, cap_end: bool = False) -> np.ndarray:
-    faces: list[tuple[int, int, int]] = []
-    for idx in range(int(ring_size)):
-        nxt = (idx + 1) % int(ring_size)
-        faces.append((idx, nxt, int(ring_size) + idx))
-        faces.append((nxt, int(ring_size) + nxt, int(ring_size) + idx))
-    if cap_end:
-        center_idx = 2 * int(ring_size)
-        for idx in range(int(ring_size)):
-            nxt = (idx + 1) % int(ring_size)
-            faces.append((center_idx, int(ring_size) + idx, int(ring_size) + nxt))
-    return np.asarray(faces, dtype=np.int32)
-
-
 def _make_swept_cross_section_segment(
     p0: np.ndarray,
     p1: np.ndarray,
     frame0: np.ndarray,
     frame1: np.ndarray,
-    geom_tag: int,
-    params: np.ndarray,
+    section0: CrossSection,
+    section1: CrossSection,
     color: tuple[float, float, float],
     resolution: int,
     apply_color: bool = True,
+    cap_start: bool = False,
     cap_end: bool = False,
 ) -> o3d.geometry.TriangleMesh:
-    """Create a body segment by connecting FK-oriented cross-section rings."""
-    offsets = _cross_section_ring_offsets(geom_tag, params, resolution)
+    """Create a body segment by lofting FK-oriented cross-section contours."""
+    vertices, faces = loft_cross_sections(
+        p0,
+        p1,
+        frame0,
+        frame1,
+        section0,
+        section1,
+        resolution,
+        cap_start=cap_start,
+        cap_end=cap_end,
+    )
     mesh = o3d.geometry.TriangleMesh()
-    mesh.vertices = o3d.utility.Vector3dVector(
-        _swept_segment_vertices(p0, p1, frame0, frame1, offsets, cap_end=cap_end)
-    )
-    mesh.triangles = o3d.utility.Vector3iVector(
-        _swept_segment_faces(offsets.shape[0], cap_end=cap_end)
-    )
+    mesh.vertices = o3d.utility.Vector3dVector(vertices)
+    mesh.triangles = o3d.utility.Vector3iVector(faces)
     mesh.compute_vertex_normals()
     if apply_color:
         mesh.paint_uniform_color(np.asarray(color, dtype=np.float64))
@@ -817,7 +764,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         color_config: RendererColorConfig | None = None,
         backbone_style: str = "swept",
         recompute_normals: bool = True,
-        tube_resolution: int = 20,
+        cross_section_resolution: int = 20,
         sphere_resolution: int = 32,
         base_plate_radius_scale: float = 2.0,
         base_plate_thickness: float = 0.06,
@@ -840,9 +787,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             color_config: Shared renderer color configuration
             backbone_style: "swept" (material-frame surface) or "discrete" (markers)
             recompute_normals: Whether to recompute vertex normals per segment update
-            tube_resolution: Radial resolution for tube segments
+            cross_section_resolution: Number of contour points used to construct
+                swept cross-sections. Higher values produce smoother curved sections;
+                ignored when ``backbone_style="discrete"``.
             sphere_resolution: Resolution for backbone spheres
-            base_plate_radius_scale: Multiplier applied to the maximum cross-section radius to size the base plate
+            base_plate_radius_scale: Multiplier applied to the base-contour
+                transverse extent to size the circular base plate
             base_plate_thickness: Absolute thickness of the base plate geometry
             show_ground_plane: Whether to render a base-aligned ground plane
             ground_plane_size: Optional side length of the ground plane in meters
@@ -873,10 +823,21 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         self.backbone_style = backbone_style
         self._backbone_mode = self._resolve_backbone_mode(backbone_style)
+        self._sweep_layout = None
+        if self._backbone_mode == "swept":
+            self._sweep_layout = cross_section_sweep_layout(
+                np.asarray(self.robot.segment_length, dtype=np.float64),
+                self.num_points,
+            )
+            self._backbone_abscissae = jnp.asarray(self._sweep_layout.abscissae)
+            self._segment_cache[self.num_points] = (
+                self._sweep_layout.segment_starts,
+                self._sweep_layout.segment_ends,
+            )
         self.recompute_normals = bool(recompute_normals)
 
         self.sphere_resolution = sphere_resolution
-        self.tube_resolution = int(tube_resolution)
+        self.cross_section_resolution = int(cross_section_resolution)
         self.grid_spacing = grid_spacing
         self._base_offsets = base_offsets
         self.actuator_line_width = actuator_line_width
@@ -892,8 +853,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             "sphere": _make_unit_sphere_mesh(self.sphere_resolution),
             "ellipsoid": _make_unit_sphere_mesh(self.sphere_resolution),
             "box": _make_unit_box_mesh(),
-            "cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
-            "elliptical_cylinder": _make_unit_cylinder_mesh(self.tube_resolution),
+            "cylinder": _make_unit_cylinder_mesh(self.cross_section_resolution),
+            "elliptical_cylinder": _make_unit_cylinder_mesh(
+                self.cross_section_resolution
+            ),
         }
 
     @staticmethod
@@ -1027,14 +990,16 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         frame0: np.ndarray,
         frame1: np.ndarray,
     ) -> None:
-        if cached.swept_ring_offsets is None:
-            raise ValueError("Swept mesh is missing cross-section ring offsets.")
-        vertices = _swept_segment_vertices(
+        if cached.swept_contours is None:
+            raise ValueError("Swept mesh is missing cross-section contours.")
+        vertices, _ = loft_cross_section_contours(
             p0,
             p1,
             frame0,
             frame1,
-            cached.swept_ring_offsets,
+            cached.swept_contours[0],
+            cached.swept_contours[1],
+            cap_start=cached.cap_start,
             cap_end=cached.cap_end,
         )
         cached.mesh.vertices = o3d.utility.Vector3dVector(vertices)
@@ -1064,9 +1029,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             r_seg = np.asarray(self.robot.r, dtype=np.float64).reshape(-1)
         else:
             r_seg = np.zeros_like(lengths, dtype=np.float64)
-        counts = self._split_counts_by_lengths(P, lengths)
-        starts = np.cumsum([0] + counts[:-1]).astype(int)
-        ends = np.cumsum(counts).astype(int)
+        starts, ends = self._segment_bounds(P)
         return SegmentLayout(
             starts=starts,
             ends=ends,
@@ -1161,64 +1124,27 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         colors = self._normalize_color_array(dynamic_spheres_colors, N, default_color)
         return DynamicSpheres(trajectories=centers, radii=radii, colors=colors)
 
-    @staticmethod
-    def _effective_radius(geom_tag: int, params: np.ndarray) -> float:
-        params = np.asarray(params, dtype=np.float64).reshape(-1)
-        if geom_tag == CrossSectionGeometry.CIRCULAR:
-            return float(params[0]) if params.size else 0.0
-        if geom_tag == CrossSectionGeometry.RECTANGULAR:
-            return 0.5 * float(max(params[0], params[1])) if params.size >= 2 else 0.0
-        if geom_tag == CrossSectionGeometry.ELLIPTICAL:
-            return float(max(params[0], params[1])) if params.size >= 2 else 0.0
-        return float(max(params[0], params[1])) if params.size >= 2 else 0.0
-
     def _cross_sections_for_points(
         self, q: Array, s_ps: np.ndarray
-    ) -> tuple[list[tuple[int, np.ndarray]], float]:
-        sections: list[tuple[int, np.ndarray]] = []
-        max_radius = 0.0
-        q_arr = jnp.asarray(q)
-        for s_val in s_ps:
-            geom_tag, geom_params = self.robot.cross_section_geometry(q_arr, s_val)
-            tag = int(np.asarray(geom_tag).item())
-            params = np.asarray(geom_params, dtype=np.float64).reshape(-1)
-            sections.append((tag, params))
-            max_radius = max(max_radius, self._effective_radius(tag, params))
-        if max_radius <= 0.0:
-            max_radius = 0.02 * self.L_max
-        return sections, max_radius
+    ) -> tuple[CrossSection, ...]:
+        return evaluate_cross_sections(self.robot, jnp.asarray(q), s_ps)
+
+    def _base_plate_radius_for_section(self, section: CrossSection) -> float:
+        """Size the circular base plate from the actual base contour."""
+        contour = section.contour(self.cross_section_resolution)
+        transverse_distance = np.linalg.norm(contour[:, 1:], axis=1)
+        return float(self.base_plate_radius_scale * np.max(transverse_distance))
 
     def _primitive_from_section(
-        self, geom_tag: int, params: np.ndarray
+        self, section: CrossSection
     ) -> tuple[str, np.ndarray, bool, bool]:
-        params = np.asarray(params, dtype=np.float64).reshape(-1)
-        mode = self._backbone_mode
-        eps = 1e-6
-        if geom_tag == CrossSectionGeometry.CIRCULAR:
-            radius = max(float(params[0]) if params.size else 0.0, eps)
-            if mode == "swept":
-                return "cylinder", np.array([radius, radius, 1.0]), True, True
-            return "sphere", np.array([radius, radius, radius]), False, False
-        if geom_tag == CrossSectionGeometry.RECTANGULAR:
-            height = max(float(params[0]) if params.size else 0.0, eps)
-            width = max(float(params[1]) if params.size > 1 else 0.0, eps)
-            if mode == "swept":
-                return "box", np.array([width, height, 1.0]), True, True
-            depth = max(width, height)
-            return "box", np.array([width, height, depth]), False, True
-        if geom_tag == CrossSectionGeometry.ELLIPTICAL:
-            a_val = max(float(params[0]) if params.size else 0.0, eps)
-            b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
-            if mode == "swept":
-                return "elliptical_cylinder", np.array([a_val, b_val, 1.0]), True, True
-            rz = max(a_val, b_val)
-            return "ellipsoid", np.array([a_val, b_val, rz]), False, True
-        a_val = max(float(params[0]) if params.size else 0.0, eps)
-        b_val = max(float(params[1]) if params.size > 1 else 0.0, eps)
-        if mode == "swept":
-            return "elliptical_cylinder", np.array([a_val, b_val, 1.0]), True, True
-        rz = max(a_val, b_val)
-        return "ellipsoid", np.array([a_val, b_val, rz]), False, True
+        marker = section.discrete_marker()
+        return (
+            marker.primitive,
+            marker.scale_xyz,
+            False,
+            marker.align_with_material_frame,
+        )
 
     def _prepare_scene_data(
         self,
@@ -1349,17 +1275,17 @@ class Open3DRenderer(BaseSoftRobotRenderer):
 
         scene.clear_geometry()
         layout = scene_data.layout
-        s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
+        s_ps = np.asarray(self._backbone_abscissae, dtype=np.float64)
 
         for robot_idx in range(scene_data.num_robots):
             curve = scene_data.curves[robot_idx, frame_idx]
             material_frames = scene_data.material_frames[robot_idx, frame_idx]
             q_frame = scene_data.q_ts[robot_idx, frame_idx]
-            sections, max_radius = self._cross_sections_for_points(q_frame, s_ps)
+            sections = self._cross_sections_for_points(q_frame, s_ps)
             base_color_rgba = ensure_rgba(np.asarray(cfg.base_plate_color))[0]
             base_axis = material_frames[0, :, 0]
             if self.show_ground_plane:
-                ground_size = self._resolve_ground_plane_size(12.0 * max_radius)
+                ground_size = self._resolve_ground_plane_size()
                 ground_plane, ground_grid = _make_ground_plane(
                     curve[0] - self.base_plate_thickness * base_axis,
                     base_axis,
@@ -1380,7 +1306,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 )
             base_mesh = _make_base_plate(
                 curve[0] - 0.5 * self.base_plate_thickness * base_axis,
-                radius=float(self.base_plate_radius_scale * max_radius),
+                radius=self._base_plate_radius_for_section(sections[0]),
                 thickness=self.base_plate_thickness,
                 color=tuple(base_color_rgba[:3]),
                 apply_color=False,
@@ -1394,20 +1320,19 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 raw_color_rgba = scene_data.segment_colors_rgba[robot_idx, s]
                 raw_color_rgb = tuple(np.asarray(raw_color_rgba).reshape(-1)[:3])
                 if self._backbone_mode == "swept" and c1 - c0 >= 1:
-                    edge_end = min(c1, curve.shape[0] - 1)
-                    for p in range(c0, edge_end):
-                        geom_type, params = sections[p]
+                    for p in range(c0, c1 - 1):
                         body = _make_swept_cross_section_segment(
                             curve[p],
                             curve[p + 1],
                             material_frames[p],
                             material_frames[p + 1],
-                            geom_type,
-                            params,
+                            sections[p],
+                            sections[p + 1],
                             raw_color_rgb,
-                            self.tube_resolution,
+                            self.cross_section_resolution,
                             apply_color=False,
-                            cap_end=p == curve.shape[0] - 2,
+                            cap_start=s > 0 and p == c0,
+                            cap_end=p == c1 - 2,
                         )
                         scene.add_geometry(
                             f"body_{robot_idx}_{s}_{p}",
@@ -1416,13 +1341,12 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         )
                 else:
                     for p in range(c0, c1):
-                        geom_type, params = sections[p]
-                        if geom_type == CrossSectionGeometry.CIRCULAR:
-                            radius = float(params[0]) if params.size else 0.0
-                            radius = max(radius, 1e-6)
+                        section = sections[p]
+                        marker = section.discrete_marker()
+                        if marker.primitive == "sphere":
                             sp = _make_sphere(
                                 curve[p],
-                                radius=radius,
+                                radius=float(marker.scale_xyz[0]),
                                 color=raw_color_rgb,
                                 resolution=self.sphere_resolution,
                                 apply_color=False,
@@ -1433,17 +1357,13 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 sp,
                                 mat_for(raw_color_rgba),
                             )
-                        elif geom_type == CrossSectionGeometry.RECTANGULAR:
-                            if params.size < 2:
-                                continue
-                            height = max(float(params[0]), 1e-6)
-                            width = max(float(params[1]), 1e-6)
-                            depth = max(width, height)
+                        elif marker.primitive == "box":
+                            width, height, depth = marker.scale_xyz
                             box = _make_box_centered(
                                 curve[p],
-                                width=width,
-                                height=height,
-                                depth=depth,
+                                width=float(width),
+                                height=float(height),
+                                depth=float(depth),
                                 color=raw_color_rgb,
                                 apply_color=False,
                                 apply_translation=True,
@@ -1460,14 +1380,9 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                                 mat_for(raw_color_rgba),
                             )
                         else:
-                            if params.size < 2:
-                                continue
-                            a_val = max(float(params[0]), 1e-6)
-                            b_val = max(float(params[1]), 1e-6)
-                            rz = max(a_val, b_val)
                             ell = _make_ellipsoid(
                                 curve[p],
-                                radii=(a_val, b_val, rz),
+                                radii=tuple(marker.scale_xyz),
                                 color=raw_color_rgb,
                                 resolution=self.sphere_resolution,
                                 apply_color=False,
@@ -1932,8 +1847,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         vis,
         curve0: np.ndarray,
         material_frames0: np.ndarray,
-        sections: list[tuple[int, np.ndarray]],
-        max_radius: float,
+        sections: tuple[CrossSection, ...],
         layout: SegmentLayout,
         segment_colors: np.ndarray,
         base_plate_color: tuple[float, float, float],
@@ -1944,7 +1858,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         base_axis = material_frames0[0, :, 0]
         base_mesh = _make_base_plate(
             curve0[0] - 0.5 * self.base_plate_thickness * base_axis,
-            radius=float(self.base_plate_radius_scale * max_radius),
+            radius=self._base_plate_radius_for_section(sections[0]),
             thickness=self.base_plate_thickness,
             color=base_color,
             normal_xyz=base_axis,
@@ -1958,27 +1872,22 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             raw_color_rgba = segment_colors[s]
             seg_color = self._blend_with_background(raw_color_rgba)
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
-                edge_end = min(c1, curve0.shape[0] - 1)
-                for p in range(c0, edge_end):
-                    geom_tag, params = sections[p]
-                    ring_offsets = _cross_section_ring_offsets(
-                        geom_tag, params, self.tube_resolution
-                    )
-                    cap_end = p == curve0.shape[0] - 2
-                    vertices = _swept_segment_vertices(
+                for p in range(c0, c1 - 1):
+                    cap_start = s > 0 and p == c0
+                    cap_end = p == c1 - 2
+                    mesh = _make_swept_cross_section_segment(
                         curve0[p],
                         curve0[p + 1],
                         material_frames0[p],
                         material_frames0[p + 1],
-                        ring_offsets,
+                        sections[p],
+                        sections[p + 1],
+                        seg_color,
+                        self.cross_section_resolution,
+                        cap_start=cap_start,
                         cap_end=cap_end,
                     )
-                    faces = _swept_segment_faces(ring_offsets.shape[0], cap_end=cap_end)
-                    mesh = o3d.geometry.TriangleMesh()
-                    mesh.vertices = o3d.utility.Vector3dVector(vertices)
-                    mesh.triangles = o3d.utility.Vector3iVector(faces)
-                    mesh.compute_vertex_normals()
-                    mesh.paint_uniform_color(np.asarray(seg_color, dtype=np.float64))
+                    vertices = np.asarray(mesh.vertices).copy()
                     cached = CachedMesh(
                         mesh=mesh,
                         base_vertices=vertices,
@@ -1986,7 +1895,11 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         scale_base=np.ones(3),
                         dynamic_length=False,
                         rotate_to_axis=False,
-                        swept_ring_offsets=ring_offsets,
+                        swept_contours=(
+                            sections[p].contour(self.cross_section_resolution),
+                            sections[p + 1].contour(self.cross_section_resolution),
+                        ),
+                        cap_start=cap_start,
                         cap_end=cap_end,
                     )
                     seg_meshes.append(cached)
@@ -1994,9 +1907,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                         vis.add_geometry(mesh)
             else:
                 for p in range(c0, c1):
-                    geom_tag, params = sections[p]
                     unit_key, scale_base, dynamic_length, rotate_to_axis = (
-                        self._primitive_from_section(geom_tag, params)
+                        self._primitive_from_section(sections[p])
                     )
                     unit = self._unit_meshes[unit_key]
                     mesh = self._instantiate_mesh(unit, seg_color)
@@ -2039,8 +1951,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             c0, c1 = int(layout.starts[s]), int(layout.ends[s])
             seg_meshes = meshes_groups[s]
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
-                edge_end = min(c1, curve.shape[0] - 1)
-                for i_local, p in enumerate(range(c0, edge_end)):
+                for i_local, p in enumerate(range(c0, c1 - 1)):
                     if i_local >= len(seg_meshes):
                         break
                     cached = seg_meshes[i_local]
@@ -2074,7 +1985,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         """Construct initial geometry for the viewer."""
         cfg = color_config or self.color_config
         layout = scene_data.layout
-        s_ps = np.linspace(0.0, self.L_max, scene_data.curves.shape[2])
+        s_ps = np.asarray(self._backbone_abscissae, dtype=np.float64)
         ground_meshes: list = []
         ground_lines: list = []
         base_meshes: list = []
@@ -2097,10 +2008,10 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             curve0 = scene_data.curves[robot_idx, frame_idx]
             material_frames0 = scene_data.material_frames[robot_idx, frame_idx]
             q0 = scene_data.q_ts[robot_idx, frame_idx]
-            sections, max_radius = self._cross_sections_for_points(q0, s_ps)
+            sections = self._cross_sections_for_points(q0, s_ps)
             if self.show_ground_plane:
                 base_axis = material_frames0[0, :, 0]
-                ground_size = self._resolve_ground_plane_size(12.0 * max_radius)
+                ground_size = self._resolve_ground_plane_size()
                 ground_plane, ground_grid = _make_ground_plane(
                     curve0[0] - self.base_plate_thickness * base_axis,
                     base_axis,
@@ -2117,7 +2028,6 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 curve0,
                 material_frames0,
                 sections,
-                max_radius,
                 layout,
                 segment_colors=scene_data.segment_colors_rgba[robot_idx],
                 base_plate_color=cfg.base_plate_color,

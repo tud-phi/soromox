@@ -190,7 +190,10 @@ class SecVdTrackingRenderer(ViserRenderer):
         curve = self._target_curves[idx]
         points = make_tube_wire_segments(
             curve,
-            radius=float(np.mean(self._robot_radii)) * TARGET_WIREFRAME_RADIUS_SCALE,
+            radius=(
+                float(np.mean(self._backbone_marker_scales))
+                * TARGET_WIREFRAME_RADIUS_SCALE
+            ),
         )
         if self._target_wire_handle is None:
             self._target_wire_handle = self._server.scene.add_line_segments(
@@ -353,7 +356,7 @@ def render_method(
             opacity=SYNERGISTIC_ROBOT_OPACITY if name == "synergistic" else 1.0,
         ),
         backbone_style="swept",
-        cylinder_sections=64,
+        cross_section_resolution=64,
         background_color=(1.0, 1.0, 1.0),
         material="standard",
         flat_shading=False,

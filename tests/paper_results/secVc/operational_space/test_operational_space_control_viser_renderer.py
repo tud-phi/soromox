@@ -2,6 +2,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -27,6 +28,62 @@ assert spec.loader is not None
 renderer = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = renderer
 spec.loader.exec_module(renderer)
+
+
+def test_render_entrypoint_uses_geometry_neutral_resolution_option(tmp_path):
+    captured = {}
+
+    class FakeRenderer:
+        def __init__(self, robot, **kwargs):
+            captured["robot"] = robot
+            captured["init"] = kwargs
+
+        def render_sequence(self, **kwargs):
+            captured["render"] = kwargs
+
+        def stop(self):
+            captured["stopped"] = True
+
+    robot = object()
+    osd = SimpleNamespace(
+        n_orientation_dim=4,
+        is_planar=False,
+        rotation_representation=renderer.RotationRepresentation.QUATERNION,
+    )
+    trajectory_config = SimpleNamespace(
+        tracking="position",
+        orientation_primitive="none",
+        surface="none",
+        period=1.0,
+    )
+    t = np.linspace(0.0, 1.0, 5)
+    pose = np.column_stack(
+        (
+            np.ones_like(t),
+            np.zeros((len(t), 3)),
+            0.01 * t,
+            np.zeros((len(t), 2)),
+        )
+    )
+
+    renderer.render_operational_space_tracking(
+        robot=robot,
+        osd=osd,
+        trajectory_config=trajectory_config,
+        t_traj=t,
+        q_traj=np.zeros((len(t), 1)),
+        x_traj_full=pose,
+        x_des_traj_full=pose,
+        video_output=tmp_path / "tracking.mp4",
+        snapshot_paths={},
+        open_browser=False,
+        renderer_cls=FakeRenderer,
+    )
+
+    assert captured["robot"] is robot
+    assert captured["init"]["cross_section_resolution"] == 64
+    assert "cylinder_sections" not in captured["init"]
+    assert captured["stopped"]
 
 
 def test_paper_robot_color_config_is_opaque_coral_with_dark_base():

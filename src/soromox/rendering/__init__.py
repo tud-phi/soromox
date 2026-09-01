@@ -28,6 +28,16 @@ from soromox.rendering.color_config import (
     list_builtin_palettes,
     list_builtin_themes,
 )
+from soromox.rendering.cross_sections import (
+    CrossSection,
+    CrossSectionSweepLayout,
+    DiscreteCrossSectionMarker,
+    cross_section_sweep_layout,
+    evaluate_cross_sections,
+    loft_cross_section_contours,
+    loft_cross_sections,
+    register_cross_section_contour,
+)
 from soromox.rendering.matplotlib_renderer import MatplotlibRenderer
 from soromox.rendering.video_encoding import VideoEncodingConfig
 
@@ -81,6 +91,14 @@ __all__ = [
     "list_builtin_themes",
     "get_color_theme",
     "VideoEncodingConfig",
+    "CrossSection",
+    "CrossSectionSweepLayout",
+    "DiscreteCrossSectionMarker",
+    "cross_section_sweep_layout",
+    "evaluate_cross_sections",
+    "loft_cross_section_contours",
+    "loft_cross_sections",
+    "register_cross_section_contour",
     "ActuatorVisualLayer",
     "BatchedActuatorVisualLayer",
     "TrajectoryActuatorVisualLayer",

@@ -150,6 +150,8 @@ def test_mock_viser_receives_robot_trail_target_and_paths(monkeypatch, tmp_path)
     assert outputs == [tmp_path / "synergistic_tracking.mp4"]
     assert captured["render"]["q_ts"].shape == (5, 6)
     assert captured["init"][1]["desired_q_ts"] is None
+    assert captured["init"][1]["cross_section_resolution"] == 64
+    assert "cylinder_sections" not in captured["init"][1]
     backbone_colors = captured["init"][1]["color_config"].backbone.point_colors
     np.testing.assert_allclose(
         backbone_colors[:, 3], renderer.SYNERGISTIC_ROBOT_OPACITY

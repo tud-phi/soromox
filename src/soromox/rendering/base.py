@@ -115,6 +115,7 @@ class BaseSoftRobotRenderer(ABC):
 
         # Total robot length
         self.L_max = float(jnp.asarray(robot.length))
+        self._backbone_abscissae = jnp.linspace(0.0, self.L_max, self.num_points)
 
         # Explicit hooks let specialized and third-party robots override the
         # generic renderer-owned SoftRobot adapter.
@@ -324,7 +325,7 @@ class BaseSoftRobotRenderer(ABC):
             self.base_transform = jnp.asarray(
                 self.robot.base_transform_from_configuration(q)
             )
-        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        s_ps = self._backbone_abscissae
         return self.robot.forward_kinematics_abscissa_batched(q, s_ps)
 
     def compute_actuator_visual_layers(
@@ -336,7 +337,7 @@ class BaseSoftRobotRenderer(ABC):
         """Compute renderer-facing actuator visual layers for one robot."""
         if not self._has_actuator_visual_layers:
             return ()
-        s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+        s_ps = self._backbone_abscissae
         if self._uses_generic_actuator_visual_adapter:
             layers = actuator_visual_layers(
                 self.robot, q, s_ps, actuator_inputs=actuator_inputs
@@ -504,7 +505,7 @@ class BaseSoftRobotRenderer(ABC):
         num_robots = int(q_batch.shape[0])
 
         if self._has_batched_actuator_visual_layers:
-            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            s_ps = self._backbone_abscissae
             raw_layers = self.robot.actuator_visual_layers_batched(  # type: ignore[attr-defined]
                 q_batch,
                 s_ps,
@@ -572,7 +573,7 @@ class BaseSoftRobotRenderer(ABC):
         num_robots, num_steps, _ = q_ts.shape
 
         if self._has_trajectory_actuator_visual_layers:
-            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            s_ps = self._backbone_abscissae
             raw_layers = self.robot.actuator_visual_layers_trajectory(  # type: ignore[attr-defined]
                 q_ts,
                 s_ps,
@@ -588,7 +589,7 @@ class BaseSoftRobotRenderer(ABC):
         # Generic SoftRobot geometry is renderer-owned and JAX-vectorizable.
         # Specialized robot hooks take precedence in the branch above.
         if self._uses_generic_actuator_visual_adapter:
-            s_ps = jnp.linspace(0.0, self.L_max, self.num_points)
+            s_ps = self._backbone_abscissae
             raw_layers = vectorized_actuator_visual_layers_trajectory(
                 self.robot,
                 q_ts,
