@@ -5859,13 +5859,15 @@ class GVS(SoftRobot):
         """Return one routed-path geometry at a GVS quadrature node.
 
         Returns:
-            context: Node geometry for one path. ``wrap_angle`` is never
-                populated: GVS strain varies along the arc length, so the
-                accumulated turn is not piecewise linear and would need its own
-                cumulative quadrature.
+            context: Node geometry for one path.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
+        )
+        path_abscissa = jnp.clip(
+            jnp.asarray(s) - self.segment_end_positions[start_segment_index],
+            0.0,
+            self.segment_end_positions[-1],
         )
         basis = self.B_Xs[segment_index, point_index]
         length = self.segment_lengths[segment_index]
@@ -5878,7 +5880,8 @@ class GVS(SoftRobot):
         homogeneous_derivative = jnp.append(offset_derivative, 1.0)
         tangent = (homogeneous_derivative + se3.hat(strain) @ homogeneous_offset)[:-1]
         return ThreadlikeQuadratureContext(
-            arc_length=jnp.asarray(s),
+            abscissa=jnp.asarray(s),
+            path_abscissa=path_abscissa,
             segment_index=jnp.asarray(segment_index),
             offset=offset,
             offset_derivative=offset_derivative,
@@ -5888,8 +5891,17 @@ class GVS(SoftRobot):
             strain=strain,
         )
 
-    def _threadlike_local_basis(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return one routed-path length gradient density in the GVS basis."""
+    def _threadlike_local_length_gradient(
+        self, context: ThreadlikeQuadratureContext
+    ) -> Array:
+        """Return one routed-path length gradient density in the GVS basis.
+
+        Args:
+            context: Node geometry.
+
+        Returns:
+            length_gradient_density: Shape ``(6,)``.
+        """
         tangent = context.unit_tangent
         local = jnp.hstack([so3.skew(context.offset) @ tangent, tangent])
         return context.active * local
@@ -5900,20 +5912,12 @@ class GVS(SoftRobot):
         routing: ThreadlikeRouting,
         friction: ThreadlikeFriction | None = None,
     ) -> Array:
-        """Integrate routed-length moment arms in the native GVS basis.
-
-        GVS strain varies along the arc length, so the Capstan wrap angle is
-        not piecewise linear and would need its own cumulative quadrature. This
-        host therefore supplies no ``wrap_angle``, and a law requiring one is
-        refused at construction rather than silently dropped. Laws reading only
-        host-agnostic geometry, such as a length-based loss, are honoured here
-        exactly as on the PCS hosts.
-        """
+        """Integrate routed-length moment arms in the native GVS basis."""
         params = routing.params
         count = params.num_paths
         if count == 0:
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
-        lossy = friction is not None and not friction.is_lossless
+        has_friction = friction is not None and not friction.is_frictionless
         q_gathered = self._min_size_gathered(q)
 
         def segment_matrix(segment_index: Array) -> Array:
@@ -5940,8 +5944,10 @@ class GVS(SoftRobot):
                     segment_index,
                     point_index,
                 )
-                local = vmap(self._threadlike_local_basis, out_axes=1)(context)
-                if lossy:
+                local = vmap(self._threadlike_local_length_gradient, out_axes=1)(
+                    context
+                )
+                if has_friction:
                     local = local * friction.transmission_ratio(context)[None, :]
                 basis = self.B_Xs[segment_index, point_index]
                 if self.scale_rotational_basis_by_length:

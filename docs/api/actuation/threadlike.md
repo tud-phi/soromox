@@ -19,7 +19,7 @@ The transmission model assumes that:
 - the actuator coordinate is determined by path length, scaled by a constant
   effective area for the pressure-chamber preset; and
 - each path carries one scalar work-conjugate effort, attenuated along its
-  route only by the optional Capstan friction model described below.
+  route by an optional friction model described below.
 
 Consequently, configuration- or time-dependent rerouting, changes in chamber
 cross-section, path slack, and internal actuator dynamics are outside the
@@ -182,76 +182,106 @@ coordinates = robot.actuator_coordinates(q)
 For tendons, `coordinates == -lengths`; for a pressure preset, coordinates are
 equivalent volumes. Without guide friction,
 `jax.jacrev(robot.actuator_coordinates)(q) == robot.actuation_matrix(q).T` up
-to quadrature tolerance. A lossy friction law breaks that identity by
-design, because the moment matrix then carries a transmission loss that path
-length does not; see [Guide friction](#guide-friction).
+to quadrature tolerance. A friction model breaks that identity by design,
+because the moment matrix then carries an attenuation that path length does
+not; see [Routing friction](#routing-friction).
 
-PCS integrates the local path basis and performs the constant-strain projection
+PCS integrates the local length gradient and performs the constant-strain projection
 once. GVS applies its strain basis inside the existing quadrature. The public
 behavior is common, while each host keeps its native evaluation path.
 
-## Guide friction
+## Routing friction
 
-By default a path transmits its effort undiminished along its whole route. Pass
-a `friction=` law to model a transmission loss. The law is an object, so a new
-loss model needs no change to any host, and a third-party model needs no change
-to soromox.
+Ideally, effort is transmitted undiminished along its route, from the motor
+until its attachment point. However, friction between the routing and the
+robot body is often non-negligible in real applications, and attenuates the
+effort along the path. It is possible to simulate this behavior via the
+`ThreadlikeFriction` model, which is installed on a `ThreadlikeTransmission`
+through the `friction=` keyword of `ThreadlikeActuator` and
+`ThreadlikeImpedance`.
+The current implemented models are the following:
 
-soromox ships three:
-
-| Law | Ratio | Parameter | Hosts |
+| Model | Ratio | Parameter | Hosts |
 |---|---|---|---|
-| `Frictionless` | \(1\) | none | all; the default |
-| `CapstanFriction` | \(e^{-\mu\Theta}\) | \(\mu\), Coulomb coefficient | `PCS`, `PlanarPCS` |
-| `ExponentialLengthFriction` | \(e^{-ks}\) | \(k\), per metre | all, including `GVS` |
+| `ThreadlikeFriction.frictionless()` | \(1\) | none | all; the default |
+| `ThreadlikeFriction.exponential_length(...)` | \(e^{-k\ell}\) | `rate` \(k\), per metre | all |
+| `ThreadlikeFriction.capstan(...)` | \(e^{-\mu\Theta}\) | `coefficient` \(\mu\), Coulomb; `eps` \(\epsilon\), per metre | `PCS`, `PlanarPCS` |
 
-Both lossy laws solve the same tension ODE
-\(\mathrm{d}T/\mathrm{d}s = -\lambda(s)T\), whose solution is
-\(\eta = e^{-\int\lambda\,\mathrm{d}s}\). They differ only in where the normal
-load pressing the path against its guide comes from. Under `CapstanFriction`
-it is curvature-induced, \(N = Tw\), giving \(\lambda = \mu w\). Under
-`ExponentialLengthFriction` it comes from a snug sheath gripping in proportion
-to tension, \(N = cT\), giving a constant \(\lambda = \mu c = k\), so loss
-accrues with distance travelled rather than with turning.
 
-That makes \(k\) phenomenological in a way \(\mu\) is not: it lumps the
-friction coefficient together with the radial grip, so it has to be fitted
-rather than looked up. It suits a tendon in a close-fitting sheath or lumen,
-and because it never reads the wrap angle it is the one law `GVS` can host.
+### Friction models
 
-`CapstanFriction` models Coulomb friction against the guides a path runs
-through, following the force model of
-[Feliu-Talegon et al. (2025)](https://doi.org/10.1109/TMECH.2025.3550846). A
-tendon threaded through spacer disks loses tension at every contact, and the
-loss at each contact obeys the classical Capstan (Euler) law
-\(T_{out} = T_{in}e^{-\mu\varphi}\), which depends on the accumulated turn
-\(\varphi\) alone and not on the guide radius.
-
-Taking the guide spacing to zero turns the product of per-contact losses into
+The exponential length and Capstan models follow from the same tension balance along the routed path, with \(T\) the tension, \(\lambda\) the attenuation rate per unit arc length, and \(s_0\) the abscissa of the path anchor:
 
 \[
-\eta(q, s) = e^{-\mu\Theta(q, s)}, \qquad
-\Theta(q, s) = \int_0^s \lVert\omega \times \hat{u}\rVert\,\mathrm{d}s'
+\frac{\mathrm{d}T}{\mathrm{d}s} = -\lambda\,T,
+\qquad
+\eta(s) = \frac{T(s)}{T(s_0)} = \exp\!\left(-\int_{s_0}^{s}\lambda\,
+\mathrm{d}s'\right)
 \]
 
-the fraction of the base effort that survives to arc length \(s\), with
-\(\hat{u}\) the unit routed-path tangent. Because \(\eta\) weights the integrand
-of the moment matrix rather than scaling its result, the distal part of a path
-contributes less than the proximal part:
+They differ in the origin of the normal load \(N\) pressing the path against the
+body.
+
+**Configuration-independent friction.** A first approximation scales uniformly the tension along the path, \(N = cT\), so \(\lambda = \mu c \equiv k\) is
+constant and the attenuation depends only on the arc length \(\ell = s - s_0\)
+travelled from the anchor:
 
 \[
-A_\mu(q) = B_\xi^\top \int_0^L \eta(q, s)\,\Phi(q, s)\,\mathrm{d}s
+\eta(\ell) = e^{-k\ell}
 \]
 
-Every law obeys the same two rules. \(\eta\) depends on the configuration only,
-never on the effort, so the actuation force stays linear in the effort and every
-controller keeps working; and \(\eta \in (0, 1]\), so a law can only ever remove
-effort, never add it. The lossless default reproduces the frictionless matrix
-exactly and is skipped entirely, at no cost.
+**Configuration-dependent friction (Capstan).** The normal load is induced by
+the curvature of the path, \(N = Tk_p\), so \(\lambda = \mu k_p(q, s)\):
 
-The wrap density reduces to \(\lvert\kappa\rvert\) identically in the plane, for
-any offset and any strain. Under torsion it recovers the helix curvature of an
-off-axis path, so a twisted robot correctly reports a nonzero wrap angle.
+\[
+k_p(q, s) = \lVert\omega \times \hat{u}\rVert,
+\qquad
+\eta(q, s) = e^{-\mu\Theta(q, s)},
+\quad
+\Theta(q, s) = \int_{s_0}^{s} k_p(q, s')\,\mathrm{d}s'
+\]
+
+Here \(\omega\) is the angular strain, \(\hat{u}\) the unit routed-path tangent,
+and \(\Theta\) the wrap angle accumulated from the anchor. Since
+\(\mathrm{d}\hat{u}/\mathrm{d}s = \omega \times \hat{u}\), only the component of
+\(\omega\) orthogonal to \(\hat{u}\) contributes, so torsion about the axis of
+the path does not attenuate. In the plane \(k_p\) reduces to
+\(\lvert\kappa_z\rvert\); under torsion an off-axis path traces a helix, whose
+curvature \(k_p\) recovers.
+
+Because \(\Theta\) vanishes at a straight configuration, so does
+\(\partial\eta/\partial\mu\), and \(\mu\) is not identifiable there. The `eps`
+argument floors the curvature at \(\epsilon\), replacing \(k_p\) by
+\(\sqrt{k_p^2 + \epsilon^2}\). It never under-estimates \(\Theta\) and
+over-estimates it by at most \(\epsilon L\); the default \(\epsilon = 0\)
+reproduces the exact curvature.
+
+This model is the continuum limit of the discrete tendon force model of
+[Feliu-Talegon et al. (2025)](https://doi.org/10.1109/TMECH.2025.3550846), in
+which the tendon passes through a finite set of spacer disks and each contact
+attenuates the tension by the classical Capstan (Euler) relation
+
+\[
+T_i = T_{i-1}\,e^{-\mu\varphi_i}
+\qquad\Longrightarrow\qquad
+T_n = T_0\,\exp\!\left(-\mu\sum_{i=1}^{n}\varphi_i\right)
+\]
+
+with \(\varphi_i\) the turn at the \(i\)-th contact, independent of the guide
+radius. As the disk spacing tends to zero at fixed total turning,
+\(\sum_i \varphi_i \to \Theta\) and the product recovers \(\eta\) above, which
+can then be evaluated at every quadrature node rather than at discrete guides.
+
+### Applying the friction
+
+\(\eta\) weights the integrand of the moment matrix rather than scaling its
+result, so the distal part of a path contributes less than the proximal part:
+
+\[
+A_\mu(q) = B_\xi^\top \int_0^L \eta(q, s)\,
+\frac{\partial\lVert t\rVert}{\partial\xi}(q, s)\,\mathrm{d}s
+\]
+
 
 ```python
 robot = PCS.from_links(
@@ -259,94 +289,54 @@ robot = PCS.from_links(
     structure=PCSStructure(num_gauss_points=5),
     # a scalar shares one coefficient; pass shape (num_paths,) for per-path values
     actuators=ThreadlikeActuator.tendons(
-        routing, friction=CapstanFriction(coefficient=0.2)
+        routing, friction=ThreadlikeFriction.capstan(coefficient=0.2)
     ),
 )
 
 tau = robot.actuation_force(q, jnp.array([5.0, 0.0]))
 ```
 
-`friction_coefficient=0.2` is kept as sugar for the same thing. Passing both it
-and `friction=` raises, because the two would silently disagree.
+### Custom friction models
 
-A law declares what it needs, and a host refuses a law it cannot serve.
-`CapstanFriction` sets `requires_wrap_angle`, which `PCS` and `PlanarPCS`
-supply. `GVS` strain varies along arc length, so its wrap angle is not
-piecewise linear and it supplies none; it rejects a wrap-angle law during
-construction with a descriptive `TypeError`, at any coefficient including zero,
-because capability follows the law you install rather than the value you gave
-it. `ExponentialLengthFriction` reads only arc length, so it runs on `GVS` too.
-
-### Identifying a loss parameter
-
-Loss parameters are ordinary dynamic leaves, so they are traceable and
-differentiable under `jit`:
+A model is a plain function of `(params, context)`, paired with its parameters by
+`ThreadlikeFriction`. The hosts depend only on that contract, not on the shipped
+models:
 
 ```python
-def with_friction(mu):
-    transmission = robot.actuators[0].params.transmission
-    return robot.update_actuator_params(
-        0,
-        transmission=transmission.replace(
-            friction=transmission.friction.replace(coefficient=mu)
-        ),
-    )
+from soromox.actuation import BaseThreadlikeFrictionParams, ThreadlikeFriction
 
 
-@jax.jit
-def loss(mu):
-    identified = with_friction(mu)
-    residual = (
-        identified.elastic_force(q_meas)
-        + identified.gravitational_force(q_meas)
-        - identified.actuation_force(q_meas, u_meas)
-    )
-    return jnp.sum(residual**2)
-
-
-value, grad = jax.value_and_grad(loss)(jnp.array(0.2))
-```
-
-Swapping the law changes the parameter PyTree structure and so retraces, while
-replacing a value inside a law does not. Start identification from a lossy law
-at a zero parameter, `CapstanFriction(coefficient=0.0)`, rather than from
-`Frictionless()`. Zero is a valid optimizer start, but
-\(\mathrm{d}A/\mathrm{d}\mu\) vanishes wherever \(\Theta = 0\), so a perfectly
-straight pose carries no information about \(\mu\). Set `wrap_angle_smoothing` on the host structure to replace
-\(\lvert\kappa\rvert\) with \(\sqrt{\kappa^2 + \epsilon^2}\) if the fit can
-approach a straight configuration. It never under-estimates the wrap angle and
-over-estimates it by at most \(\epsilon L\), and it also removes the \(C^0\)
-kink at zero curvature.
-
-### Custom friction laws
-
-The hosts depend only on the law contract, not on the shipped models. A custom
-law supplies the parameters it needs, declares its requirements, and returns the
-surviving effort fraction per path:
-
-```python
-from soromox.actuation import ThreadlikeFriction
-
-
-class HyperbolicFriction(ThreadlikeFriction):
+class HyperbolicFrictionParams(BaseThreadlikeFrictionParams):
     a: Array
 
-    def transmission_ratio(self, context):
-        return 1.0 / (1.0 + self.a * context.wrap_angle)
+
+def hyperbolic_transmission_ratio(params, context):
+    return 1.0 / (1.0 + params.a * context.wrap_angle)
 
 
 actuator = ThreadlikeActuator.tendons(
-    routing, friction=HyperbolicFriction(a=jnp.asarray(0.5))
+    routing,
+    friction=ThreadlikeFriction(
+        params=HyperbolicFrictionParams(a=jnp.asarray(0.5)),
+        ratio_fn=hyperbolic_transmission_ratio,
+        requires_wrap_angle=True,
+        is_frictionless=False,
+    ),
 )
 ```
 
+Parameters live in the transmission parameter tree, so they stay differentiable
+and replaceable; the model itself is static, so swapping it leads to retracing.
+This mirrors how `ThreadlikeRouting` pairs routing parameters with a static
+offset function.
+
 The `context` is a `ThreadlikeQuadratureContext` describing the routed path at
-one quadrature node, batched over paths. Some of its fields mean the same thing
-on every host and some do not:
+one quadrature node.
 
 | Field | Meaning | Portable |
 |---|---|---|
-| `arc_length` | backbone coordinate \(s\) | yes |
+| `abscissa` | backbone coordinate \(s\), from the robot base | yes |
+| `path_abscissa` | arc length travelled from this path's anchor | yes |
 | `segment_index` | segment containing the node | yes |
 | `offset`, `offset_derivative` | material-frame offset `(n, 3)` and its \(s\)-derivative | yes |
 | `tangent_norm` | routed-path stretch relative to the backbone | yes |
@@ -355,16 +345,14 @@ on every host and some do not:
 | `strain` | `(n, 3)` planar and `(n, 6)` spatial | no |
 | `wrap_angle` | accumulated turn \(\Theta\), or `None` | only where supplied |
 
-A law reading only the portable fields runs unchanged on every host. A law
-reading `strain` or `unit_tangent` must document which host it targets.
+Set `requires_wrap_angle=False` if the model does not read `wrap_angle`, and the
+hosts will neither compute it nor refuse the model. Set `is_frictionless=True`
+only
+for a model that always returns one, and the hosts will skip it entirely. A model
+must keep its ratio in \((0, 1]\) and must not read the effort, which would make
+the actuation force nonlinear in the control.
 
-Set `requires_wrap_angle = False` if the law does not read `wrap_angle`, and the
-hosts will neither compute it nor refuse the law. Set `is_lossless = True` for a
-law that always returns one, and the hosts will skip it entirely. A law must
-keep its ratio in \((0, 1]\) and must not read the effort, which would make the
-actuation force nonlinear in the control.
-
-### What changes under a lossy law
+### What changes under a friction model
 
 - `moment_matrix` is no longer the transpose of the length gradient, so
   `actuation_space` conversions that assume the identity do not apply.
@@ -377,7 +365,7 @@ actuation force nonlinear in the control.
 - The moment matrix acquires a mild dependence on `num_gauss_points`, because
   the attenuated integrand is no longer polynomial.
 - `path_lengths`, `path_velocities`, and `path_poses` are unchanged. They are
-  pure geometry at any coefficient.
+  pure geometry under any friction model.
 - The model assumes the effort drives the path. A back-driven path is still
   modelled with the driving branch of Euler's law, so keep the passive
   coefficient conservative or zero for long dynamic rollouts with
@@ -407,9 +395,9 @@ robot = PCS(
 
 The passive element contributes to elastic force, damping, and elastic energy;
 it never consumes an active control channel. A passive path may also declare a
-`friction=` law, in which case part of its spring force becomes
+`friction=` model, in which case part of its spring force becomes
 non-conservative and is applied through `actuation_force`; see
-[Guide friction](#guide-friction).
+[Routing friction](#routing-friction).
 
 ## Updating routing and actuator parameters
 

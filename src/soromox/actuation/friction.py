@@ -1,23 +1,9 @@
-"""Transmission-loss laws along threadlike routed paths.
-
-A threadlike transmission carries effort from the base of a routed path toward
-its tip. Guides, seals, and the surrounding material remove some of that effort
-before it reaches the backbone. A :class:`ThreadlikeFriction` model expresses
-how much survives, as a fraction ``eta(q, s)`` of the base effort, and the host
-folds that fraction into the arc-length quadrature that assembles the moment
-matrix.
-
-Because the fraction weights the integrand rather than scaling the result, the
-loss accumulates along the path: distal material contributes less than proximal
-material. The fraction depends on the configuration only, never on the effort,
-which keeps the generalized actuation force linear in the effort and every
-controller structurally unchanged.
-"""
+"""Friction models along threadlike routed paths that attenuate the effort."""
 
 from __future__ import annotations
 
-from abc import abstractmethod
-from typing import Any, ClassVar
+from collections.abc import Callable
+from typing import Any, cast
 
 import equinox as eqx
 from jax import Array
@@ -26,12 +12,12 @@ from jax import numpy as jnp
 from soromox.systems.params import BaseSystemParams
 
 
-def validate_loss_parameter_shape(value: Any, count: int, name: str) -> None:
-    """Validate a per-path loss parameter shape without concretizing it.
+def validate_friction_parameter_shape(value: Any, count: int, name: str) -> None:
+    """Validate a per-path friction parameter shape.
 
     Args:
-        value: Candidate loss parameter.
-        count: Number of routed paths in the family.
+        value: Candidate friction parameter.
+        count: Number of routed paths.
         name: Field name used in the error message.
 
     Raises:
@@ -44,48 +30,53 @@ def validate_loss_parameter_shape(value: Any, count: int, name: str) -> None:
         )
 
 
+def validate_friction_parameter_values(value: Any, name: str) -> None:
+    """Validate that a friction parameter is finite and non-negative.
+
+    A negative or non-finite parameter pushes the transmission ratio outside
+    ``(0, 1]``, causing the transmission to generate effort.
+
+    Args:
+        value: Concrete friction parameter.
+        name: Field name used in the error message.
+
+    Raises:
+        ValueError: If the value is non-finite or negative.
+    """
+    array = jnp.asarray(value)
+    if not bool(jnp.all(jnp.isfinite(array))):
+        raise ValueError(f"{name} must be finite, got {array}.")
+    if bool(jnp.any(array < 0.0)):
+        raise ValueError(f"{name} must be non-negative, got {array}.")
+
+
 class ThreadlikeQuadratureContext(eqx.Module):
-    """Routed-path geometry at one arc-length quadrature node.
-
-    Instances are produced by the host inside its per-path ``vmap``, so every
-    array field carries a leading ``(num_paths,)`` axis.
-
-    Some fields mean the same thing on every host and some do not. A law that
-    reads only the host-agnostic fields runs unchanged on ``PlanarPCS``,
-    ``PCS``, and ``GVS``; a law that reads a host-shaped field must document
-    which host it targets.
+    """Routed-path geometry at one abscissa quadrature point.
 
     Attributes:
-        arc_length: Backbone coordinate ``s`` of the node, in metres.
-            Host-agnostic.
-        segment_index: Index of the segment containing the node. Host-agnostic.
+        abscissa: Backbone coordinate of the node from the robot base, in
+        metres.
+        path_abscissa: Arc-length covered along the span of each path from
+        the path anchor, in metres.
+        segment_index: Index of the segment containing the node.
         offset: Material-frame path offset of shape ``(num_paths, 3)``, ordered
-            ``[x, y, z]`` with local x along the backbone. Host-agnostic.
-        offset_derivative: Arc-length derivative of ``offset``, same shape.
-            Host-agnostic.
-        tangent_norm: Length of the routed-path tangent, ``(num_paths,)``. This
-            is the local stretch of the path relative to the backbone, so it is
-            the quantity a length-based loss integrates. Host-agnostic.
-        active: Whether the node lies inside each path's segment span, shape
-            ``(num_paths,)``. Host-agnostic.
+            ``[x, y, z]``.
+        offset_derivative: Arc-length derivative of ``offset``.
+        tangent_norm: Length of the routed-path tangent, ``(num_paths,)``.
+        active: True if the node lies inside the segment span of each path,
+            shape ``(num_paths,)``.
         unit_tangent: Normalized routed-path tangent. Host-shaped:
             ``(num_paths, 2)`` in the plane and ``(num_paths, 3)`` in space.
         strain: Segment strain at the node. Host-shaped: ``(num_paths, 3)``
             ordered ``[kappa_z, sigma_x, sigma_y]`` in the plane, and
             ``(num_paths, 6)`` ordered ``[omega, v]`` in space.
-        wrap_angle: Accumulated turn ``Theta`` of the routed path from the base
-            to this node, in radians, shape ``(num_paths,)``. ``None`` unless
-            the installed law sets ``requires_wrap_angle``, because computing
-            it costs the host extra work.
-
-    Note:
-        There is no path-count field. The host assembles the context inside a
-        ``vmap`` over paths, where a static count could not be set safely, so a
-        law that needs the count reads it from a batched field, for example
-        ``context.tangent_norm.shape[0]``.
+        wrap_angle: Routed-path curvature integrated from the path anchor to
+            the node, in radians, shape ``(num_paths,)``. ``None`` unless the
+            installed model sets ``requires_wrap_angle``.
     """
 
-    arc_length: Array
+    abscissa: Array
+    path_abscissa: Array
     segment_index: Array
     offset: Array
     offset_derivative: Array
@@ -98,12 +89,8 @@ class ThreadlikeQuadratureContext(eqx.Module):
     def with_wrap_angle(self, wrap_angle: Array) -> ThreadlikeQuadratureContext:
         """Return a copy carrying the accumulated wrap angle.
 
-        The host builds the geometric fields inside its per-path ``vmap`` and
-        attaches the wrap angle afterwards, because the wrap density is
-        assembled once per segment rather than once per path.
-
         Args:
-            wrap_angle: Accumulated turn of shape ``(num_paths,)``.
+            wrap_angle: Wrap angle of shape ``(num_paths,)``, in radians.
 
         Returns:
             context: A copy whose ``wrap_angle`` is populated.
@@ -116,144 +103,223 @@ class ThreadlikeQuadratureContext(eqx.Module):
         )
 
 
-class ThreadlikeFriction(BaseSystemParams):
-    """Fraction of routed-path effort that survives to a quadrature node.
+class BaseThreadlikeFrictionParams(BaseSystemParams):
+    """Base PyTree contract for threadlike friction parameters."""
 
-    Subclasses declare what they need from the host through the class
-    variables below, so a host computes only what the installed law reads and
-    can refuse a law it cannot serve.
-
-    Attributes:
-        is_lossless: Whether the law returns exactly one everywhere. Hosts skip
-            the friction path entirely when it is set, which keeps the default
-            bit-identical to the frictionless model at no cost.
-        requires_wrap_angle: Whether :meth:`transmission_ratio` reads
-            ``context.wrap_angle``. Hosts that cannot supply an exact
-            accumulated turn refuse such a law at construction.
-    """
-
-    is_lossless: ClassVar[bool] = False
-    requires_wrap_angle: ClassVar[bool] = True
-
-    @abstractmethod
-    def transmission_ratio(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return the surviving effort fraction at one quadrature node.
-
-        Args:
-            context: Routed-path geometry at the node, batched over paths.
-
-        Returns:
-            eta: Surviving fraction of shape ``(num_paths,)``. Implementations
-                must stay within ``(0, 1]`` so a transmission can never
-                generate effort, and must not depend on the applied effort,
-                which would make the actuation force nonlinear in the control.
-        """
-        ...
-
-    def validate_for_paths(self, num_paths: int) -> None:
-        """Validate loss parameters against the routed-path count.
+    def validate_structure_compatibility(self, num_paths: int) -> None:
+        """Validate per-path friction parameter shapes against the path count.
 
         Args:
             num_paths: Number of paths in the routing family.
-
-        Returns:
-            ``None``. Subclasses override this hook to check per-path shapes.
-            Implementations must be safe when leaves are JAX tracers.
         """
         del num_paths
 
 
-class Frictionless(ThreadlikeFriction):
-    """Ideal transmission that delivers the full effort to every node."""
-
-    is_lossless: ClassVar[bool] = True
-    requires_wrap_angle: ClassVar[bool] = False
-
-    def transmission_ratio(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return ones, the identity of the weighted quadrature."""
-        return jnp.ones_like(context.tangent_norm)
+class FrictionlessParams(BaseThreadlikeFrictionParams):
+    """Parameters of the ideal transmission. None."""
 
 
-class CapstanFriction(ThreadlikeFriction):
-    """Coulomb guide friction following the Capstan (Euler) belt law.
-
-    A band drawn over a guide with total wrap angle ``phi`` transmits
-    ``exp(-mu * phi)`` of its input tension, independently of the guide radius.
-    Accumulating that loss over a continuum of guides gives
-
-    ``eta(q, s) = exp(-mu * Theta(q, s))``
-
-    with ``Theta`` the accumulated turn of the routed path. The law follows the
-    tendon force model of Feliu-Talegon, Alkayas, Adamu, Mathew and Renda,
-    "Actuation Reading Insights: Estimating Shape and Forces in Tendon-Driven
-    Slender Soft Robots", IEEE/ASME Transactions on Mechatronics 30(6), 2025.
+class CapstanFrictionParams(BaseThreadlikeFrictionParams):
+    """Parameters of the Capstan (Euler) belt model.
 
     Attributes:
-        coefficient: Coulomb coefficient between a path and its guides, either
-            a scalar shared by the family or shaped ``(num_paths,)``. Zero
-            reproduces the frictionless transmission exactly.
+        coefficient: Coulomb coefficient between a routing and the robot, either
+            a scalar shared by the family or shaped ``(num_paths,)``.
+        eps: Curvature floor in radians per metre.
     """
 
     coefficient: Array = eqx.field(
         default_factory=lambda: jnp.zeros((), dtype=jnp.float64)
     )
+    eps: Array = eqx.field(default_factory=lambda: jnp.zeros((), dtype=jnp.float64))
 
-    requires_wrap_angle: ClassVar[bool] = True
+    def __check_init__(self) -> None:
+        self.validate_for_update()
 
-    def transmission_ratio(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return the Capstan ratio ``exp(-mu * Theta)`` at the node."""
-        return jnp.exp(-jnp.asarray(self.coefficient) * context.wrap_angle)
-
-    def validate_for_paths(self, num_paths: int) -> None:
+    def validate_structure_compatibility(self, num_paths: int) -> None:
         """Validate the coefficient shape against the routed-path count."""
-        validate_loss_parameter_shape(self.coefficient, num_paths, "coefficient")
+        validate_friction_parameter_shape(self.coefficient, num_paths, "coefficient")
+
+    def validate_values(self) -> None:
+        """Validate eager Capstan parameter values."""
+        validate_friction_parameter_values(self.coefficient, "coefficient")
+        validate_friction_parameter_values(self.eps, "eps")
 
 
-class ExponentialLengthFriction(ThreadlikeFriction):
-    """Loss accumulating with routed-path length rather than with turning.
-
-    Both shipped laws solve the same tension ODE ``dT/ds = -lambda(s) T``,
-    whose solution is ``eta = exp(-integral lambda ds)``. They differ only in
-    where the normal load pressing the path against its guide comes from.
-    :class:`CapstanFriction` takes it from curvature, ``N = T w``, giving
-    ``lambda = mu w``. This law takes it from a snug sheath that grips in
-    proportion to tension, ``N = c T``, giving a constant ``lambda = mu c``
-    and
-
-    ``eta(q, s) = exp(-rate * s)``
-
-    so loss accrues with distance travelled rather than with turning. It suits
-    a tendon in a close-fitting sheath or lumen. It reads no host-shaped field
-    and needs no wrap angle, so unlike :class:`CapstanFriction` it runs on
-    every threadlike host, ``GVS`` included.
+class ExponentialLengthFrictionParams(BaseThreadlikeFrictionParams):
+    """Parameters of a configuration-independent friction proportional
+    to the routed-path length.
 
     Attributes:
-        rate: Loss per unit arc length ``mu c``, in inverse metres, either a
-            scalar shared by the family or shaped ``(num_paths,)``. Unlike a
-            Coulomb coefficient it is phenomenological: it lumps the friction
-            coefficient together with the radial grip and has to be fitted
-            rather than looked up. Zero reproduces the frictionless
-            transmission exactly.
+        rate: Attenuation per unit arc length, in inverse metres, either a scalar
+            shared by the family or shaped ``(num_paths,)``.
     """
 
     rate: Array = eqx.field(default_factory=lambda: jnp.zeros((), dtype=jnp.float64))
 
-    requires_wrap_angle: ClassVar[bool] = False
+    def __check_init__(self) -> None:
+        self.validate_for_update()
+
+    def validate_structure_compatibility(self, num_paths: int) -> None:
+        """Validate the rate shape against the routed-path count."""
+        validate_friction_parameter_shape(self.rate, num_paths, "rate")
+
+    def validate_values(self) -> None:
+        """Validate eager exponential-length parameter values."""
+        validate_friction_parameter_values(self.rate, "rate")
+
+
+def frictionless_transmission_ratio(
+    params: FrictionlessParams, context: ThreadlikeQuadratureContext
+) -> Array:
+    """Return ones, the identity of the weighted quadrature."""
+    del params
+    return jnp.ones_like(context.tangent_norm)
+
+
+def capstan_transmission_ratio(
+    params: CapstanFrictionParams, context: ThreadlikeQuadratureContext
+) -> Array:
+    """Return ``exp(-coefficient * wrap_angle)`` at the node."""
+    if context.wrap_angle is None:
+        raise ValueError(
+            "the Capstan law reads context.wrap_angle, which this host did not "
+            "supply. Declare requires_wrap_angle on the installed law."
+        )
+    return jnp.exp(-jnp.asarray(params.coefficient) * context.wrap_angle)
+
+
+def exponential_length_transmission_ratio(
+    params: ExponentialLengthFrictionParams, context: ThreadlikeQuadratureContext
+) -> Array:
+    """Return ``exp(-rate * path_abscissa)`` at the node."""
+    return jnp.exp(-jnp.asarray(params.rate) * context.path_abscissa)
+
+
+class ThreadlikeFriction(eqx.Module):
+    """Runtime friction model for a routed-path family.
+
+    Attributes:
+        params: Friction parameters.
+        ratio_fn: Model mapping ``(params, context)`` to the surviving fraction
+            of shape ``(num_paths,)``.
+        requires_wrap_angle: True if ``ratio_fn`` reads ``context.wrap_angle``.
+        is_frictionless: True if the law returns exactly one everywhere.
+    """
+
+    params: BaseThreadlikeFrictionParams = eqx.field(default_factory=FrictionlessParams)
+    ratio_fn: Callable = eqx.field(static=True, default=frictionless_transmission_ratio)
+    requires_wrap_angle: bool = eqx.field(static=True, default=False)
+    is_frictionless: bool = eqx.field(static=True, default=True)
+
+    def __check_init__(self) -> None:
+        if (
+            self.is_frictionless
+            and self.ratio_fn is not frictionless_transmission_ratio
+        ):
+            raise ValueError(
+                "is_frictionless=True requires frictionless_transmission_ratio. "
+                "A friction model requires is_frictionless=False."
+            )
+
+    @classmethod
+    def frictionless(cls) -> ThreadlikeFriction:
+        """Build the ideal transmission."""
+        return cls()
+
+    @classmethod
+    def capstan(cls, *, coefficient: Any = 0.0, eps: Any = 0.0) -> ThreadlikeFriction:
+        """Build the Capstan belt model.
+
+        Args:
+            coefficient: Coulomb coefficient, scalar or shaped ``(num_paths,)``.
+            eps: Curvature floor in radians per metre.
+
+        Returns:
+            friction: Capstan model.
+        """
+        return cls(
+            params=CapstanFrictionParams(
+                coefficient=jnp.asarray(coefficient), eps=jnp.asarray(eps)
+            ),
+            ratio_fn=capstan_transmission_ratio,
+            requires_wrap_angle=True,
+            is_frictionless=False,
+        )
+
+    @classmethod
+    def exponential_length(cls, *, rate: Any = 0.0) -> ThreadlikeFriction:
+        """Build the length-decay model.
+
+        Args:
+            rate: Attenuation per unit arc length, scalar or ``(num_paths,)``.
+
+        Returns:
+            friction: Length-decay law.
+        """
+        return cls(
+            params=ExponentialLengthFrictionParams(rate=jnp.asarray(rate)),
+            ratio_fn=exponential_length_transmission_ratio,
+            requires_wrap_angle=False,
+            is_frictionless=False,
+        )
 
     def transmission_ratio(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return the length-decay ratio ``exp(-rate * s)`` at the node."""
-        return jnp.exp(-jnp.asarray(self.rate) * context.arc_length)
+        """Return the transmission ratio at one quadrature node.
 
-    def validate_for_paths(self, num_paths: int) -> None:
-        """Validate the rate shape against the routed-path count."""
-        validate_loss_parameter_shape(self.rate, num_paths, "rate")
+        Args:
+            context: Routed-path geometry at the node, batched over paths.
+
+        Returns:
+            transmission_ratio: shape ``(num_paths,)``.
+        """
+        return self.ratio_fn(self.params, context)
+
+    def with_params(self, params: BaseThreadlikeFrictionParams) -> ThreadlikeFriction:
+        """Return a copy carrying replacement friction parameters."""
+        if not isinstance(params, BaseThreadlikeFrictionParams):
+            raise TypeError("params must be BaseThreadlikeFrictionParams.")
+        if type(params) is not type(self.params):
+            raise TypeError(
+                "friction params must keep their type; got "
+                f"{type(params).__name__} for an installed "
+                f"{type(self.params).__name__} model."
+            )
+        params.validate_for_update()
+        return ThreadlikeFriction(
+            params=params,
+            ratio_fn=self.ratio_fn,
+            requires_wrap_angle=self.requires_wrap_angle,
+            is_frictionless=self.is_frictionless,
+        )
+
+    def update_params(self, **updates: Any) -> ThreadlikeFriction:
+        """Return a copy with replaced friction parameter leaves."""
+        return self.with_params(
+            cast(BaseThreadlikeFrictionParams, self.params.replace(**updates))
+        )
+
+
+def validate_friction_for_robot(friction: ThreadlikeFriction, robot) -> None:
+    if friction.is_frictionless or not friction.requires_wrap_angle:
+        return
+    if not callable(getattr(robot, "_threadlike_path_curvature", None)):
+        raise TypeError(
+            f"{type(robot).__name__} does not support the threadlike wrap-angle model."
+        )
 
 
 __all__ = [
-    "CapstanFriction",
-    "ExponentialLengthFriction",
-    "Frictionless",
+    "BaseThreadlikeFrictionParams",
+    "CapstanFrictionParams",
+    "ExponentialLengthFrictionParams",
+    "FrictionlessParams",
     "ThreadlikeFriction",
     "ThreadlikeQuadratureContext",
-    "validate_loss_parameter_shape",
+    "capstan_transmission_ratio",
+    "exponential_length_transmission_ratio",
+    "frictionless_transmission_ratio",
+    "validate_friction_for_robot",
+    "validate_friction_parameter_shape",
+    "validate_friction_parameter_values",
 ]

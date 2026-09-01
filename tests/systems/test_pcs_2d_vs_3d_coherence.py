@@ -10,7 +10,11 @@ from system_param_builders import (
     spatial_base_pose,
 )
 
-from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
+from soromox.actuation import (
+    ThreadlikeActuator,
+    ThreadlikeFriction,
+    ThreadlikeRouting,
+)
 from soromox.systems import PCS, PCSStructure, PlanarPCS, PlanarPCSStructure
 from soromox.utils.tolerance import Tolerance
 
@@ -480,8 +484,8 @@ if __name__ == "__main__":
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-@pytest.mark.parametrize("friction_coefficient", [0.0, 0.7])
-def test_threadlike_actuation_coherence(num_segments, friction_coefficient):
+@pytest.mark.parametrize("coefficient", [0.0, 0.7])
+def test_threadlike_actuation_coherence(num_segments, coefficient):
     """The planar and spatial hosts must route and attenuate identically."""
     routing = ThreadlikeRouting.linear(
         intercept=jnp.array([[0.0, 2e-2, 0.0], [0.0, -1.5e-2, 0.0]]),
@@ -489,11 +493,13 @@ def test_threadlike_actuation_coherence(num_segments, friction_coefficient):
         end_segment_index=(num_segments - 1,) * 2,
     )
 
-    def tendons(coefficient):
-        return ThreadlikeActuator.tendons(routing, friction_coefficient=coefficient)
+    def tendons(value):
+        return ThreadlikeActuator.tendons(
+            routing, friction=ThreadlikeFriction.capstan(coefficient=value)
+        )
 
-    planar = make_planar_model(num_segments, actuators=tendons(friction_coefficient))
-    spatial = make_spatial_model(num_segments, actuators=tendons(friction_coefficient))
+    planar = make_planar_model(num_segments, actuators=tendons(coefficient))
+    spatial = make_spatial_model(num_segments, actuators=tendons(coefficient))
 
     q_planar = jnp.concatenate(
         [jnp.array([4.0 + 2.0 * seg, 2e-2, -1e-2]) for seg in range(num_segments)]
@@ -509,7 +515,7 @@ def test_threadlike_actuation_coherence(num_segments, friction_coefficient):
         atol=ATOL,
     )
 
-    if friction_coefficient > 0.0:
+    if coefficient > 0.0:
         frictionless = make_planar_model(num_segments, actuators=tendons(0.0))
         attenuated = jnp.abs(planar_matrix)
         reference = jnp.abs(frictionless.actuation_matrix(q_planar))

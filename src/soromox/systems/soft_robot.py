@@ -2594,15 +2594,32 @@ class SoftRobot(DynamicalSystem):
         split and no system implementation needs to be modified.
 
         Args:
-            q: Generalized coordinates of shape ``(num_dofs,)``.
+            q: Generalized coordinates of shape ``(num_coordinates,)``.
 
         Returns:
             tau_nc: Non-conservative passive generalized force of shape
-                ``(num_dofs,)``, in the same sign convention as
+                ``(num_velocities,)``, in the same sign convention as
                 :meth:`elastic_force`. A robot whose passive elements are all
                 conservative returns zeros.
         """
-        force = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        if self.floating_base:
+            total_input = q.shape[-1] == self.num_coordinates
+            q_internal = (
+                self.split_configuration(q)[1]
+                if total_input
+                else self._check_trailing_dimension(
+                    "q_internal", q, self.num_internal_dofs
+                )
+            )
+            internal = self._fixed_base_robot_at_pose().passive_nonconservative_force(
+                q_internal
+            )
+            return (
+                jnp.pad(internal, (self.num_base_velocities, 0))
+                if total_input
+                else internal
+            )
+        force = jnp.zeros((self.num_velocities,), dtype=q.dtype)
         for element in self.passive_elements:
             force = force + element.nonconservative_force(self, q)
         return force

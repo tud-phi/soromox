@@ -169,24 +169,7 @@ class PassiveElement(eqx.Module):
         return jnp.zeros((), dtype=q.dtype)
 
     def nonconservative_force(self, robot: SoftRobot, q: Array) -> Array:
-        """Return the part of this element's force that has no potential.
-
-        ``elastic_force`` is contracted to be the gradient of
-        ``elastic_energy``, so a force an element transmits but cannot derive
-        from a potential belongs here instead, keeping both contracts
-        truthful. ``SoftRobot.actuation_force`` applies the summed result, so
-        the total generalized force is unchanged by the split.
-
-        Args:
-            robot: Soft robot on which the element is installed.
-            q: Generalized coordinates of shape ``(robot.num_dofs,)``.
-
-        Returns:
-            tau_nc: Generalized force of shape ``(robot.num_dofs,)``, in the
-                same sign convention as :meth:`elastic_force`. Zero unless an
-                element overrides it.
-        """
-        return jnp.zeros((robot.num_dofs,), dtype=q.dtype)
+        return jnp.zeros((robot.num_velocities,), dtype=q.dtype)
 
 
 class Actuator(eqx.Module):

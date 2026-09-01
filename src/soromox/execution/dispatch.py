@@ -122,7 +122,7 @@ def dispatch_actuation_matrix(
     if configured == "warp" and not eligible:
         raise NotImplementedError(
             f"Warp {capabilities.family_name} actuation_matrix requires only "
-            "built-in linear ThreadlikeActuator transmissions."
+            "built-in frictionless linear ThreadlikeActuator transmissions."
         )
     if configured == "warp" and eligible and not capabilities.matrix_enabled:
         raise NotImplementedError(
@@ -174,7 +174,8 @@ def dispatch_actuation_force(
     if configured == "warp" and not eligible:
         raise NotImplementedError(
             f"Warp {capabilities.family_name} actuation_force requires only "
-            "built-in linear ThreadlikeActuator transmissions with DirectEffort."
+            "built-in frictionless linear ThreadlikeActuator transmissions with "
+            "DirectEffort and no non-conservative passive forces."
         )
     if configured == "warp" and eligible and not capabilities.force_enabled:
         raise NotImplementedError(

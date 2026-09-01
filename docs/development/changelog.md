@@ -15,29 +15,18 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
-- Added opt-in Capstan guide friction to threadlike transmissions. A
-  `friction_coefficient` on `ThreadlikeActuator` and `ThreadlikeImpedance`
-  attenuates effort along a routed path as `exp(-mu * Theta(s))`, where `Theta`
-  is the accumulated turn of the path, instead of applying it uniformly. `PCS`
-  and `PlanarPCS` implement the wrap-angle model; `GVS` rejects a nonzero
-  coefficient during construction. The coefficient is a differentiable leaf and
-  can be identified under `jit`. Zero is the default and reproduces the
-  frictionless model exactly. See
-  [threadlike actuation](../api/actuation/threadlike.md#guide-friction).
-- Added `wrap_angle_smoothing` to `PCSStructure` and `PlanarPCSStructure`, which
-  replaces `|kappa|` with `sqrt(kappa**2 + eps**2)` in the wrap-angle density so
-  the friction coefficient stays identifiable near a straight configuration.
-- Made the threadlike transmission loss a pluggable `ThreadlikeFriction` model
-  chosen at construction through `friction=`, so a new loss law needs no host
-  change and a third-party law needs no soromox change. A law receives a
-  `ThreadlikeQuadratureContext` describing the routed path at one quadrature
-  node and returns the surviving effort fraction per path. `Frictionless` is the
-  default, `CapstanFriction` carries the Euler belt law, and
-  `ExponentialLengthFriction` applies a loss per unit arc length. See
-  [threadlike actuation](../api/actuation/threadlike.md#guide-friction).
-- Added `GVS` support for transmission-loss laws that do not need the wrap
-  angle, such as `ExponentialLengthFriction`. `GVS` strain varies along arc
-  length, so it still cannot supply the Capstan wrap angle.
+- Added opt-in routing friction to threadlike transmissions, selected with
+  `friction=`. It weights the moment-matrix integrand, so the attenuation
+  accumulates from the path anchor rather than scaling the applied effort.
+  `ThreadlikeFriction.frictionless()` is the default,
+  `.capstan(coefficient=..., eps=...)` applies `exp(-mu * Theta)` with `Theta`
+  the integrated routed-path curvature floored at `eps`, which keeps the
+  coefficient identifiable near a straight configuration, and
+  `.exponential_length(rate=...)` a constant attenuation per unit arc length.
+  Parameters are differentiable leaves, identifiable under `jit`. A model is a
+  parameter container plus a static `ratio_fn`, so adding one needs no host
+  change. See
+  [threadlike actuation](../api/actuation/threadlike.md#routing-friction).
 
 ### Changed
 
@@ -54,17 +43,11 @@ and include benchmark baseline and measurement context for performance claims.
   `sigma_x - d * kappa`. Planar routings must negate their `y` offsets to
   reproduce previous behavior, which is exactly equivalent when the routing
   slope is zero.
-- Replaced `ThreadlikeTransmissionParams.friction_coefficient` with `friction`,
-  which holds a `ThreadlikeFriction` law. The `friction_coefficient=` keyword is
-  kept as sugar for `CapstanFriction` on every preset and on
-  `ThreadlikeImpedance`, and passing it together with `friction=` raises.
-  Identification becomes
-  `transmission.replace(friction=transmission.friction.replace(coefficient=mu))`.
-- Made host support for a transmission loss depend on the law rather than on its
-  value: a wrap-angle law such as `CapstanFriction` is now refused on `GVS` at
-  any coefficient, including zero, where `friction_coefficient=0.0` was
-  previously accepted. Drop the argument or install
-  `ExponentialLengthFriction` instead.
+- Made host support for friction depend on the installed model rather than on
+  its value. `PCS` and `PlanarPCS` supply the wrap angle; `GVS` strain varies
+  along arc length and does not, so it refuses a wrap-angle model at any
+  coefficient, zero included. Use `ThreadlikeFriction.exponential_length(...)`
+  there instead.
 
 ### Performance
 
@@ -95,13 +78,11 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Documentation
 
-- Documented guide friction on the threadlike actuation page, replacing the
-  paragraph that listed along-path friction as outside the transmission model,
-  and recorded the invariants a nonzero coefficient deliberately breaks.
-- Documented the pluggable transmission-loss model, including which
-  quadrature-context fields are portable across hosts and which are host-shaped,
-  and added a custom friction law example alongside the existing custom routing
-  law example.
+- Documented routing friction on the threadlike actuation page: the two
+  friction models and their derivation, the invariants a friction model
+  deliberately breaks, which quadrature-context fields are portable across
+  hosts, and a custom-model example alongside the existing custom routing one.
+  Replaced the paragraph that listed along-path friction as out of scope.
 
 ### Contributors
 
