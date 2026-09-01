@@ -352,6 +352,10 @@ exclude = [
     "build",
     "dist",
     "*.egg-info",
+    # Byte-exact archival copy of the recovered Section Vd generator. It targets
+    # APIs removed in #117 and is kept verbatim as provenance, so it must not be
+    # reformatted or linted. See the directory's README.
+    "paper_results/secVd_control_gain_optimization/legacy/soromox_synergistic.py",
 ]
 
 [tool.ruff.lint]
