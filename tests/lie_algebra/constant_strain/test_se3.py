@@ -317,6 +317,75 @@ def test_prepared_powers_match_pointwise_operator_evaluation(dtype, rtol, atol):
 
 
 @pytest.mark.parametrize(
+    "xi",
+    [
+        jnp.array([0.2, -0.1, 0.3, 0.7, -0.4, 0.2]),
+        jnp.array([0.0, 0.0, 0.0, 0.7, -0.4, 0.2]),
+    ],
+)
+def test_prepared_state_directional_operators_match_autodiff(xi):
+    xid = jnp.array([0.1, -0.2, 0.05, -0.3, 0.4, 0.2])
+    configuration_direction = jnp.array([-0.2, 0.3, 0.1, 0.5, -0.1, 0.4])
+    rate_direction = jnp.array([0.15, 0.05, -0.2, -0.4, 0.3, 0.1])
+    s = jnp.asarray(0.73)
+    eps = jnp.asarray(1e-8)
+
+    def transported_tangent(value):
+        return constant_strain_se3.adjoint_inverse(value, s, eps) @ (
+            constant_strain_se3.tangent(value, s, eps)
+        )
+
+    prepared = constant_strain_se3._prepare_state_directional_powers(
+        xi,
+        xid,
+        configuration_direction,
+        rate_direction,
+    )
+    actual = constant_strain_se3._kinematic_operators_from_state_directional_powers(
+        prepared,
+        s,
+        eps,
+        eps,
+    )
+    transported = transported_tangent(xi)
+    transported_velocity = jax.jvp(
+        transported_tangent,
+        (xi,),
+        (xid,),
+    )[1]
+    transported_configuration = jax.jvp(
+        transported_tangent,
+        (xi,),
+        (configuration_direction,),
+    )[1]
+    transported_mixed = jax.jvp(
+        lambda value: jax.jvp(
+            transported_tangent,
+            (value,),
+            (xid,),
+        )[1],
+        (xi,),
+        (configuration_direction,),
+    )[1]
+    transported_rate = jax.jvp(
+        transported_tangent,
+        (xi,),
+        (rate_direction,),
+    )[1]
+    expected = (
+        constant_strain_se3.adjoint_inverse(xi, s, eps),
+        transported,
+        transported_velocity,
+        transported_configuration,
+        transported_mixed,
+        transported_rate,
+    )
+
+    for actual_operator, expected_operator in zip(actual, expected, strict=True):
+        assert_allclose(actual_operator, expected_operator, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize(
     ("dtype", "rtol", "atol"),
     [(jnp.float64, 2e-9, 2e-10), (jnp.float32, 1e-3, 1e-4)],
 )

@@ -4,12 +4,14 @@ __all__ = ["PCS"]
 from typing import Any, Self
 
 import equinox as eqx
-from jax import Array, jvp, lax, vmap
+from jax import Array, lax, tree_util, vmap
 from jax import numpy as jnp
 
-from soromox.actuation.core import Actuator, PassiveElement
+from soromox.actuation.core import Actuator, IdentityActuator, PassiveElement
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
+    ThreadlikeActuator,
+    ThreadlikeImpedance,
     ThreadlikeRouting,
 )
 from soromox.autodiff import custom_jvp_enabled
@@ -32,12 +34,14 @@ from soromox.utils.integration import (
     scale_interior_gaussian_quadrature,
 )
 from soromox.utils.joint_motion_subspace import (
-    joint_dSdq_qd,
+    joint_dSTF_dq,
     joint_motion_subspace_with_derivatives,
 )
 from soromox.utils.lie_algebra import se3, so3
 from soromox.utils.lie_algebra.constant_strain import se3 as constant_strain_se3
 from soromox.utils.numerics import safe_divide, safe_norm, safe_normalize
+
+_FUSED_STATE_PUSHFORWARD_MAX_DOFS = 64
 
 
 class PCS(SoftRobot):
@@ -2733,6 +2737,240 @@ class PCS(SoftRobot):
         )
         return self.B_xi.T @ full_matrix
 
+    def _threadlike_local_basis_state_pushforward(
+        self,
+        segment_index: Array,
+        strain: Array,
+        strain_tangent: Array,
+        s: Array,
+        routing: ThreadlikeRouting,
+        path_params: BaseThreadlikeRoutingParams,
+        start_segment_index: Array,
+        end_segment_index: Array,
+    ) -> Array:
+        """
+        Compute the directional derivative of one routed-path basis density.
+
+        Args:
+            segment_index (Array): Index of the PCS segment containing the
+                integration point. Shape is ``()``.
+            strain (Array): Spatial strain of the segment. Shape is ``(6,)``.
+            strain_tangent (Array): Directional derivative of ``strain``.
+                Shape is ``(6,)``.
+            s (Array): Backbone coordinate of the integration point. Shape is
+                ``()``.
+            routing (ThreadlikeRouting): Runtime routing functions for the
+                threadlike paths.
+            path_params (BaseThreadlikeRoutingParams): Parameters of one
+                routed path.
+            start_segment_index (Array): First segment traversed by the path.
+                Shape is ``()``.
+            end_segment_index (Array): Last segment traversed by the path.
+                Shape is ``()``.
+
+        Returns:
+            basis_tangent (Array): Directional derivative of the spatial
+            routed-path length-gradient density. Shape is ``(6,)``.
+        """
+        active = (start_segment_index <= segment_index) & (
+            segment_index <= end_segment_index
+        )
+        offset = jnp.append(routing.offset(path_params, s), 1.0)
+        offset_derivative = jnp.append(routing.derivative(path_params, s), 1.0)
+        tangent_unnormalized = (offset_derivative + se3.hat(strain) @ offset)[:-1]
+        tangent_unnormalized_tangent = (se3.hat(strain_tangent) @ offset)[:-1]
+        tangent_norm = safe_norm(tangent_unnormalized)
+        tangent = safe_normalize(tangent_unnormalized, eps=self.global_eps)
+        tangent_tangent = safe_divide(
+            tangent_unnormalized_tangent
+            - tangent * (tangent @ tangent_unnormalized_tangent),
+            tangent_norm,
+            self.global_eps,
+        )
+        basis_tangent = jnp.hstack(
+            [so3.skew(offset[:-1]) @ tangent_tangent, tangent_tangent]
+        )
+        return active * basis_tangent
+
+    def _threadlike_moment_matrix_state_pushforward(
+        self,
+        q: Array,
+        q_tangent: Array,
+        routing: ThreadlikeRouting,
+    ) -> Array:
+        """
+        Compute the routed-length moment-matrix directional derivative.
+
+        Args:
+            q (Array): Generalized coordinates. Shape is ``(self.num_dofs,)``.
+            q_tangent (Array): Directional derivative of ``q``. Shape is
+                ``(self.num_dofs,)``.
+            routing (ThreadlikeRouting): Runtime routing functions for the
+                threadlike paths.
+
+        Returns:
+            moment_matrix_tangent (Array): Directional derivative of the raw
+            routed-length moment matrix. Shape is
+            ``(self.num_dofs, routing.num_paths)``.
+        """
+        params = routing.params
+        count = params.num_paths
+        if count == 0:
+            return jnp.zeros((self.num_dofs, 0), dtype=q.dtype)
+        strains = self.strain(q).reshape((self.num_segments, 6))
+        strain_tangents = (self.B_xi @ q_tangent).reshape((self.num_segments, 6))
+
+        def segment_matrix_tangent(segment_index: Array) -> Array:
+            points, weights = scale_gaussian_quadrature(
+                self.integration_points,
+                self.integration_weights,
+                self.L_cum[segment_index],
+                self.L_cum[segment_index + 1],
+            )
+
+            def point_matrix_tangent(point_index: Array) -> Array:
+                basis_tangent = vmap(
+                    self._threadlike_local_basis_state_pushforward,
+                    in_axes=(None, None, None, None, None, 0, 0, 0),
+                    out_axes=1,
+                )(
+                    segment_index,
+                    strains[segment_index],
+                    strain_tangents[segment_index],
+                    points[point_index],
+                    routing,
+                    params,
+                    params.start_segment_index_array,
+                    params.end_segment_index_array,
+                )
+                return weights[point_index] * basis_tangent
+
+            return jnp.sum(
+                vmap(point_matrix_tangent)(jnp.arange(self.num_integration_points)),
+                axis=0,
+            )
+
+        full_matrix_tangent = vmap(segment_matrix_tangent)(
+            jnp.arange(self.num_segments)
+        ).reshape(self.num_strains, count)
+        return self.B_xi.T @ full_matrix_tangent
+
+    def _actuation_force_state_pushforward(
+        self,
+        q: Array,
+        u: Array,
+        q_tangent: Array,
+    ) -> Array:
+        """
+        Compute the actuation-force directional derivative with respect to state.
+
+        Args:
+            q (Array): Generalized coordinates. Shape is ``(self.num_dofs,)``.
+            u (Array): Ordered actuator controls. Shape is
+                ``(self.num_actuators,)``.
+            q_tangent (Array): Directional derivative of ``q``. Shape is
+                ``(self.num_dofs,)``.
+
+        Returns:
+            force_tangent (Array): Directional derivative of the generalized
+            actuation force. Shape is ``(self.num_dofs,)``.
+
+        Raises:
+            NotImplementedError: If an installed actuator has no analytical
+                PCS state-pushforward implementation.
+        """
+        force_tangent = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        start = 0
+        for actuator in self.actuators:
+            stop = start + actuator.num_channels
+            if isinstance(actuator, IdentityActuator):
+                pass
+            elif isinstance(actuator, ThreadlikeActuator):
+                moment_matrix_tangent = (
+                    self._threadlike_moment_matrix_state_pushforward(
+                        q,
+                        q_tangent,
+                        actuator.transmission.routing,
+                    )
+                    * actuator.transmission.params.coordinate_scale[None, :]
+                )
+                force_tangent = force_tangent + moment_matrix_tangent @ u[start:stop]
+            else:
+                raise NotImplementedError(
+                    "Analytical PCS state JVPs require an analytical actuator "
+                    f"pushforward; unsupported component: {type(actuator).__name__}."
+                )
+            start = stop
+        return force_tangent
+
+    def _passive_force_state_pushforward(
+        self,
+        q: Array,
+        qd: Array,
+        q_tangent: Array,
+        qd_tangent: Array,
+    ) -> Array:
+        """
+        Compute the passive applied-force state directional derivative.
+
+        The differentiated applied force is the negative sum of the passive
+        elastic force and the passive damping force.
+
+        Args:
+            q (Array): Generalized coordinates. Shape is ``(self.num_dofs,)``.
+            qd (Array): Generalized velocities. Shape is ``(self.num_dofs,)``.
+            q_tangent (Array): Directional derivative of ``q``. Shape is
+                ``(self.num_dofs,)``.
+            qd_tangent (Array): Directional derivative of ``qd``. Shape is
+                ``(self.num_dofs,)``.
+
+        Returns:
+            force_tangent (Array): Directional derivative of the generalized
+            passive applied force. Shape is ``(self.num_dofs,)``.
+
+        Raises:
+            NotImplementedError: If an installed passive element has no
+                analytical PCS state-pushforward implementation.
+        """
+        force_tangent = jnp.zeros((self.num_dofs,), dtype=q.dtype)
+        for element in self.passive_elements:
+            if not isinstance(element, ThreadlikeImpedance):
+                raise NotImplementedError(
+                    "Analytical PCS state JVPs require an analytical passive-force "
+                    f"pushforward; unsupported component: {type(element).__name__}."
+                )
+
+            moment_matrix = self._threadlike_moment_matrix(q, element.routing)
+            moment_matrix_tangent = self._threadlike_moment_matrix_state_pushforward(
+                q,
+                q_tangent,
+                element.routing,
+            )
+            path_extension = (
+                self._threadlike_path_lengths(q, element.routing)
+                - element.params.rest_length
+            )
+            spring_effort = element.params.stiffness * path_extension
+            spring_effort_tangent = element.params.stiffness * (
+                moment_matrix.T @ q_tangent
+            )
+            elastic_force_tangent = (
+                moment_matrix_tangent @ spring_effort
+                + moment_matrix @ spring_effort_tangent
+            )
+
+            path_velocity = moment_matrix.T @ qd
+            path_velocity_tangent = (
+                moment_matrix_tangent.T @ qd + moment_matrix.T @ qd_tangent
+            )
+            damping_force_tangent = moment_matrix_tangent @ (
+                element.params.damping * path_velocity
+            ) + moment_matrix @ (element.params.damping * path_velocity_tangent)
+            force_tangent = (
+                force_tangent - elastic_force_tangent - damping_force_tangent
+            )
+        return force_tangent
+
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
         """Integrate raw threadlike path lengths without signed work scaling."""
         params = routing.params
@@ -3134,6 +3372,48 @@ class PCS(SoftRobot):
 
         return Ws_inner, g_ps, J_ps, Jd_or_Jd_qd_ps
 
+    def _dynamics_strain_inputs(
+        self,
+        q: Array,
+        qd: Array,
+    ) -> tuple[Array, Array, Array]:
+        """
+        Return segment strains, strain rates, and active strain bases.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+
+        Returns:
+            Tuple ``(xi, xid, B_xi_segments)``. The strain arrays have shape
+            ``(self.num_segments, 6)`` and the basis has shape
+            ``(self.num_segments, 6, self.num_dofs)``.
+        """
+        return (
+            self.strain(q).reshape(self.num_segments, 6),
+            (self.B_xi @ qd).reshape(self.num_segments, 6),
+            self.B_xi.reshape(self.num_segments, 6, self.num_dofs),
+        )
+
+    def _dynamics_quadrature(self) -> tuple[Array, Array]:
+        """
+        Return dynamics quadrature weights and segment-local abscissae.
+
+        Returns:
+            Tuple ``(weights, s_local)``. Both arrays have shape
+            ``(self.num_segments, self.num_gauss_points)``.
+        """
+        abscissae, weights = vmap(
+            scale_interior_gaussian_quadrature,
+            in_axes=(None, None, 0, 0),
+        )(
+            self.integration_points,
+            self.integration_weights,
+            self.L_cum[:-1],
+            self.L_cum[1:],
+        )
+        return weights, abscissae - self.L_cum[:-1, None]
+
     @eqx.filter_jit
     def _dynamics_integration_kinematics(
         self, q: Array, qd: Array
@@ -3159,22 +3439,11 @@ class PCS(SoftRobot):
             ``jacobians`` has shape
             ``(self.num_segments, self.num_gauss_points, 6, self.num_dofs)``.
         """
-        xi = self.strain(q).reshape(self.num_segments, 6)
-        xid = (self.B_xi @ qd).reshape(self.num_segments, 6)
-        B_xi_segments = self.B_xi.reshape(self.num_segments, 6, self.num_dofs)
+        xi, xid, B_xi_segments = self._dynamics_strain_inputs(q, qd)
         prepared_adjoint_powers = vmap(constant_strain_se3._prepare_adjoint_powers)(
             xi, xid
         )
-
-        Xs_inner, Ws_inner = vmap(
-            scale_interior_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
-        )
-        s_local = Xs_inner - self.L_cum[:-1, None]
+        weights, s_local = self._dynamics_quadrature()
 
         J_tips, Jd_qd_tips, Ad_inv_tips = self._active_J_Jd_local_tips_from_strain(
             xi,
@@ -3241,7 +3510,421 @@ class PCS(SoftRobot):
             Jd_qd_bases,
             s_local,
         )
-        return Ws_inner, gravity_ps, J_ps, Jd_qd_ps
+        return weights, gravity_ps, J_ps, Jd_qd_ps
+
+    def _assemble_dynamics_terms_from_kinematics(
+        self,
+        qd: Array,
+        weights: Array,
+        gravity: Array,
+        jacobians: Array,
+        convective: Array,
+        *,
+        qd_direction: Array | None = None,
+        gravity_directions: Array | None = None,
+        jacobian_directions: Array | None = None,
+        convective_directions: Array | None = None,
+    ) -> tuple[Array, Array, Array] | tuple[Array, Array, Array, Array, Array, Array]:
+        """
+        Assemble dynamics terms and optional contracted state derivatives.
+
+        Args:
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            weights: Segment quadrature weights, shape
+                ``(self.num_segments, self.num_gauss_points)``.
+            gravity: Body-frame gravity at each quadrature point.
+            jacobians: Active body Jacobians at each quadrature point.
+            convective: Contractions ``Jdot @ qd`` at each quadrature point.
+            qd_direction: Optional contracted velocity direction.
+            gravity_directions: Optional directional gravity derivatives.
+            jacobian_directions: Optional directional Jacobian derivatives.
+            convective_directions: Optional directional derivatives of
+                ``Jdot @ qd``.
+
+        Returns:
+            Tuple ``(B, Cqd, G)`` when no directional arrays are supplied.
+            Supplying them appends ``(dB, dCqd, dG)``. Matrices have shape
+            ``(self.num_dofs, self.num_dofs)`` and vectors have shape
+            ``(self.num_dofs,)``.
+        """
+        directional_arguments = (
+            qd_direction,
+            gravity_directions,
+            jacobian_directions,
+            convective_directions,
+        )
+        has_direction = all(value is not None for value in directional_arguments)
+        if (
+            any(value is not None for value in directional_arguments)
+            and not has_direction
+        ):
+            raise ValueError("Directional kinematics must be supplied together.")
+        if has_direction:
+            assert qd_direction is not None
+            assert gravity_directions is not None
+            assert jacobian_directions is not None
+            assert convective_directions is not None
+
+        inertia = jnp.zeros((self.num_dofs, self.num_dofs), dtype=jacobians.dtype)
+        coriolis_qd = jnp.zeros((self.num_dofs,), dtype=jacobians.dtype)
+        gravity_force = jnp.zeros((self.num_dofs,), dtype=jacobians.dtype)
+        if has_direction:
+            inertia_direction = jnp.zeros_like(inertia)
+            coriolis_qd_direction = jnp.zeros_like(coriolis_qd)
+            gravity_force_direction = jnp.zeros_like(gravity_force)
+
+        # This trace-time loop intentionally keeps each contraction at its causal
+        # prefix width; scan/fori_loop require a fixed-width body and do extra work.
+        for segment_index, dof_end in enumerate(self._segment_dof_ends):
+            mass_diagonal = jnp.diagonal(self.M_segments[segment_index])
+            jacobian = jacobians[segment_index, :, :, :dof_end]
+            weight = weights[segment_index]
+
+            def mass_action(
+                value: Array,
+                diagonal: Array = mass_diagonal,
+            ) -> Array:
+                shape = (1, diagonal.shape[0]) + (1,) * (value.ndim - 2)
+                return diagonal.reshape(shape) * value
+
+            flattened_rows = self.num_gauss_points * 6
+            jacobian_flat = jacobian.reshape(flattened_rows, dof_end)
+            weighted_mass_jacobian = (
+                weight[:, None, None] * mass_action(jacobian)
+            ).reshape(flattened_rows, dof_end)
+            inertia_segment = jacobian_flat.T @ weighted_mass_jacobian
+
+            eta = jacobian @ qd[:dof_end]
+            momentum = mass_action(eta)
+            wrench = mass_action(convective[segment_index]) + vmap(
+                se3.coadjoint_action,
+            )(eta, momentum)
+            weighted_wrench = (weight[:, None] * wrench).reshape(-1)
+            coriolis_segment = jacobian_flat.T @ weighted_wrench
+
+            weighted_mass_gravity = (
+                weight[:, None] * mass_action(gravity[segment_index])
+            ).reshape(-1)
+            gravity_segment = -jacobian_flat.T @ weighted_mass_gravity
+
+            inertia = inertia.at[:dof_end, :dof_end].add(inertia_segment)
+            coriolis_qd = coriolis_qd.at[:dof_end].add(coriolis_segment)
+            gravity_force = gravity_force.at[:dof_end].add(gravity_segment)
+
+            if has_direction:
+                jacobian_direction = jacobian_directions[
+                    segment_index,
+                    :,
+                    :,
+                    :dof_end,
+                ]
+                jacobian_direction_flat = jacobian_direction.reshape(
+                    flattened_rows,
+                    dof_end,
+                )
+                weighted_mass_jacobian_direction = (
+                    weight[:, None, None] * mass_action(jacobian_direction)
+                ).reshape(flattened_rows, dof_end)
+                inertia_direction_segment = (
+                    jacobian_direction_flat.T @ weighted_mass_jacobian
+                    + jacobian_flat.T @ weighted_mass_jacobian_direction
+                )
+
+                eta_direction = (
+                    jacobian_direction @ qd[:dof_end]
+                    + jacobian @ qd_direction[:dof_end]
+                )
+                momentum_direction = mass_action(eta_direction)
+                wrench_direction = (
+                    mass_action(convective_directions[segment_index])
+                    + vmap(se3.coadjoint_action)(eta_direction, momentum)
+                    + vmap(se3.coadjoint_action)(eta, momentum_direction)
+                )
+                weighted_wrench_direction = (
+                    weight[:, None] * wrench_direction
+                ).reshape(-1)
+                coriolis_direction_segment = (
+                    jacobian_direction_flat.T @ weighted_wrench
+                    + jacobian_flat.T @ weighted_wrench_direction
+                )
+
+                weighted_mass_gravity_direction = (
+                    weight[:, None] * mass_action(gravity_directions[segment_index])
+                ).reshape(-1)
+                gravity_direction_segment = -(
+                    jacobian_direction_flat.T @ weighted_mass_gravity
+                    + jacobian_flat.T @ weighted_mass_gravity_direction
+                )
+
+                inertia_direction = inertia_direction.at[
+                    :dof_end,
+                    :dof_end,
+                ].add(inertia_direction_segment)
+                coriolis_qd_direction = coriolis_qd_direction.at[:dof_end].add(
+                    coriolis_direction_segment
+                )
+                gravity_force_direction = gravity_force_direction.at[:dof_end].add(
+                    gravity_direction_segment
+                )
+
+        if not has_direction:
+            return inertia, coriolis_qd, gravity_force
+        return (
+            inertia,
+            coriolis_qd,
+            gravity_force,
+            inertia_direction,
+            coriolis_qd_direction,
+            gravity_force_direction,
+        )
+
+    @eqx.filter_jit
+    def _dynamics_terms_with_state_pushforward(
+        self,
+        q: Array,
+        qd: Array,
+        q_direction: Array,
+        qd_direction: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array]:
+        """
+        Assemble dynamics terms and one analytical state pushforward.
+
+        Segment power preparation is shared by every quadrature point and the
+        segment tip. The recurrence propagates the body Jacobian, convective
+        acceleration, and gravity together with one contracted state
+        direction; no autodiff or full state Jacobian is used.
+
+        Args:
+            q: Active generalized coordinates, shape ``(self.num_dofs,)``.
+            qd: Active generalized velocities, shape ``(self.num_dofs,)``.
+            q_direction: Contracted configuration direction with the same
+                shape as ``q``.
+            qd_direction: Contracted velocity direction with the same shape
+                as ``qd``.
+
+        Returns:
+            Tuple ``(B, Cqd, G, dB, dCqd, dG)``. The first three arrays are
+            the primal dynamics terms. The final three are their directional
+            state derivatives; ``B`` and ``dB`` have shape
+            ``(self.num_dofs, self.num_dofs)`` and all vectors have shape
+            ``(self.num_dofs,)``.
+        """
+        xi, xid, B_xi_segments = self._dynamics_strain_inputs(q, qd)
+        configuration_directions = (self.B_xi @ q_direction).reshape(
+            self.num_segments,
+            6,
+        )
+        rate_directions = (self.B_xi @ qd_direction).reshape(
+            self.num_segments,
+            6,
+        )
+        prepared = vmap(constant_strain_se3._prepare_state_directional_powers)(
+            xi,
+            xid,
+            configuration_directions,
+            rate_directions,
+        )
+
+        weights, s_local = self._dynamics_quadrature()
+
+        zeros_6 = jnp.zeros((6,), dtype=q.dtype)
+        zeros_6n = jnp.zeros((6, self.num_dofs), dtype=q.dtype)
+        gravity_initial = se3.adjoint_inverse(self.g0) @ self.g
+        carry_initial = (
+            zeros_6n,
+            zeros_6n,
+            zeros_6,
+            zeros_6,
+            gravity_initial,
+            zeros_6,
+        )
+
+        def propagate_kinematics(
+            carry: tuple[Array, Array, Array, Array, Array, Array],
+            prepared_i: constant_strain_se3._PreparedStateDirectionalPowers,
+            basis_i: Array,
+            xid_i: Array,
+            configuration_direction_i: Array,
+            rate_direction_i: Array,
+            s_i: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
+            (
+                jacobian_base,
+                jacobian_direction_base,
+                convective_base,
+                convective_direction_base,
+                gravity_base,
+                gravity_direction_base,
+            ) = carry
+            (
+                inverse_adjoint,
+                transported_tangent,
+                transported_tangent_velocity_direction,
+                transported_tangent_configuration_direction,
+                transported_tangent_mixed_direction,
+                transported_tangent_rate_direction,
+            ) = constant_strain_se3._kinematic_operators_from_state_directional_powers(
+                prepared_i,
+                s_i,
+                self.global_eps,
+                self.tangent_eps,
+            )
+
+            pose_direction_local = transported_tangent @ configuration_direction_i
+            inverse_adjoint_direction = -vmap(
+                se3.small_adjoint_action,
+                in_axes=(None, 1),
+                out_axes=1,
+            )(pose_direction_local, inverse_adjoint)
+            eta_local = transported_tangent @ xid_i
+            eta_direction_local = (
+                transported_tangent_configuration_direction @ xid_i
+                + transported_tangent @ rate_direction_i
+            )
+            base_velocity = jacobian_base @ qd
+            base_velocity_direction = (
+                jacobian_direction_base @ qd + jacobian_base @ qd_direction
+            )
+            transported_base_velocity = inverse_adjoint @ base_velocity
+            transported_base_velocity_direction = (
+                inverse_adjoint_direction @ base_velocity
+                + inverse_adjoint @ base_velocity_direction
+            )
+
+            transported_tangent_velocity_direction_direction = (
+                transported_tangent_mixed_direction + transported_tangent_rate_direction
+            )
+            local_convective = transported_tangent_velocity_direction @ xid_i
+            local_convective_direction = (
+                transported_tangent_velocity_direction_direction @ xid_i
+                + transported_tangent_velocity_direction @ rate_direction_i
+            )
+
+            jacobian = inverse_adjoint @ jacobian_base + transported_tangent @ basis_i
+            jacobian_direction = (
+                inverse_adjoint_direction @ jacobian_base
+                + inverse_adjoint @ jacobian_direction_base
+                + transported_tangent_configuration_direction @ basis_i
+            )
+            convective = (
+                inverse_adjoint @ convective_base
+                - se3.small_adjoint_action(
+                    eta_local,
+                    transported_base_velocity,
+                )
+                + local_convective
+            )
+            convective_direction = (
+                inverse_adjoint_direction @ convective_base
+                + inverse_adjoint @ convective_direction_base
+                - se3.small_adjoint_action(
+                    eta_direction_local,
+                    transported_base_velocity,
+                )
+                - se3.small_adjoint_action(
+                    eta_local,
+                    transported_base_velocity_direction,
+                )
+                + local_convective_direction
+            )
+            gravity = inverse_adjoint @ gravity_base
+            gravity_direction = (
+                inverse_adjoint_direction @ gravity_base
+                + inverse_adjoint @ gravity_direction_base
+            )
+            return (
+                jacobian,
+                jacobian_direction,
+                convective,
+                convective_direction,
+                gravity,
+                gravity_direction,
+            )
+
+        def propagate_tip(
+            carry: tuple[Array, Array, Array, Array, Array, Array],
+            inputs: tuple[
+                constant_strain_se3._PreparedStateDirectionalPowers,
+                Array,
+                Array,
+                Array,
+                Array,
+                Array,
+            ],
+        ) -> tuple[
+            tuple[Array, Array, Array, Array, Array, Array],
+            tuple[Array, Array, Array, Array, Array, Array],
+        ]:
+            next_carry = propagate_kinematics(carry, *inputs)
+            return next_carry, next_carry
+
+        _, tip_values = lax.scan(
+            propagate_tip,
+            carry_initial,
+            (
+                prepared,
+                B_xi_segments,
+                xid,
+                configuration_directions,
+                rate_directions,
+                self.L,
+            ),
+        )
+        base_values = tree_util.tree_map(
+            lambda initial, tips: jnp.concatenate([initial[None], tips[:-1]]),
+            carry_initial,
+            tip_values,
+        )
+
+        def segment_kinematics(
+            carry_i: tuple[Array, Array, Array, Array, Array, Array],
+            prepared_i: constant_strain_se3._PreparedStateDirectionalPowers,
+            basis_i: Array,
+            xid_i: Array,
+            configuration_direction_i: Array,
+            rate_direction_i: Array,
+            s_local_i: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
+            return vmap(
+                lambda s_i: propagate_kinematics(
+                    carry_i,
+                    prepared_i,
+                    basis_i,
+                    xid_i,
+                    configuration_direction_i,
+                    rate_direction_i,
+                    s_i,
+                )
+            )(s_local_i)
+
+        (
+            jacobians,
+            jacobian_directions,
+            convective,
+            convective_directions,
+            gravity,
+            gravity_directions,
+        ) = vmap(segment_kinematics)(
+            base_values,
+            prepared,
+            B_xi_segments,
+            xid,
+            configuration_directions,
+            rate_directions,
+            s_local,
+        )
+
+        return self._assemble_dynamics_terms_from_kinematics(
+            qd,
+            weights,
+            gravity,
+            jacobians,
+            convective,
+            qd_direction=qd_direction,
+            gravity_directions=gravity_directions,
+            jacobian_directions=jacobian_directions,
+            convective_directions=convective_directions,
+        )
 
     @eqx.filter_jit
     def dynamics_terms(self, q: Array, qd: Array) -> tuple[Array, Array, Array]:
@@ -3265,42 +3948,13 @@ class PCS(SoftRobot):
         weights, gravity, jacobians, jacobian_dot_qd = (
             self._dynamics_integration_kinematics(q, qd)
         )
-        inertia = jnp.zeros((self.num_dofs, self.num_dofs), dtype=jacobians.dtype)
-        coriolis_qd = jnp.zeros((self.num_dofs,), dtype=jacobians.dtype)
-        gravity_force = jnp.zeros((self.num_dofs,), dtype=jacobians.dtype)
-
-        # This trace-time loop intentionally keeps each contraction at its causal
-        # prefix width; scan/fori_loop require a fixed-width body and do extra work.
-        for segment_index, dof_end in enumerate(self._segment_dof_ends):
-            mass_diagonal = jnp.diagonal(self.M_segments[segment_index])
-            jacobian = jacobians[segment_index, :, :, :dof_end]
-            weight = weights[segment_index]
-
-            def mass_action(value: Array, diagonal: Array = mass_diagonal) -> Array:
-                shape = (1, diagonal.shape[0]) + (1,) * (value.ndim - 2)
-                return diagonal.reshape(shape) * value
-
-            flattened_rows = self.num_gauss_points * 6
-            jacobian_flat = jacobian.reshape(flattened_rows, dof_end)
-            weighted_mass_jacobian = (
-                weight[:, None, None] * mass_action(jacobian)
-            ).reshape(flattened_rows, dof_end)
-            inertia_segment = jacobian_flat.T @ weighted_mass_jacobian
-
-            eta = jacobian @ qd[:dof_end]
-            momentum = mass_action(eta)
-            coadjoint_momentum = vmap(se3.coadjoint_action)(eta, momentum)
-            wrench = mass_action(jacobian_dot_qd[segment_index]) + coadjoint_momentum
-            coriolis_segment = jacobian_flat.T @ (weight[:, None] * wrench).reshape(-1)
-            gravity_segment = -jacobian_flat.T @ (
-                weight[:, None] * mass_action(gravity[segment_index])
-            ).reshape(-1)
-
-            inertia = inertia.at[:dof_end, :dof_end].add(inertia_segment)
-            coriolis_qd = coriolis_qd.at[:dof_end].add(coriolis_segment)
-            gravity_force = gravity_force.at[:dof_end].add(gravity_segment)
-
-        return inertia, coriolis_qd, gravity_force
+        return self._assemble_dynamics_terms_from_kinematics(
+            qd,
+            weights,
+            gravity,
+            jacobians,
+            jacobian_dot_qd,
+        )
 
     @eqx.filter_jit
     def forward_dynamics(
@@ -3327,6 +3981,13 @@ class PCS(SoftRobot):
         self, t: Array, y: Array, actuation_args: tuple | None = None
     ) -> Array:
         """Evaluate the PCS forward-dynamics primal without a custom JVP."""
+        yd, _ = self._forward_dynamics_with_inertia(t, y, actuation_args)
+        return yd
+
+    def _forward_dynamics_with_inertia(
+        self, t: Array, y: Array, actuation_args: tuple | None = None
+    ) -> tuple[Array, Array]:
+        """Evaluate forward dynamics and return its assembled inertia matrix."""
         del t
 
         # Split the state vector into configuration and velocity
@@ -3353,11 +4014,12 @@ class PCS(SoftRobot):
         tau_u = self.actuation_force(q, u, qd=qd)
 
         rhs = tau_u + tau_ext - Cqd - G - tau_el - self.damping_matrix(q) @ qd
+
         qdd = self._solve_inertia(B, rhs)
 
         yd = jnp.concatenate([qd, qdd])
 
-        return yd
+        return yd, B
 
     @eqx.filter_custom_jvp
     @staticmethod
@@ -3376,19 +4038,26 @@ class PCS(SoftRobot):
         tangents: tuple[Any, Array | None, Array | None, tuple | None],
     ) -> tuple[Array, Array]:
         """
-        Evaluate a hybrid analytical/autodiff forward-dynamics JVP.
+        Evaluate the analytical PCS forward-dynamics state JVP.
 
-        The inertial, Coriolis, and gravity directions use the analytical
-        inverse-dynamics Jacobian passes. Actuator and passive-element force
-        directions remain under JAX autodiff so configuration-dependent
-        components retain their exact derivatives.
+        State directions use a fused analytical dynamics assembly and apply
+        ``dID/dqdd = M`` through an implicit acceleration solve instead of
+        differentiating the Cholesky solve. PCS actuator and passive-element
+        state directions use explicit directional kernels as well.
+        Model-parameter directions are handled separately below because they
+        are outside the state-only analytical contract.
         """
         robot, t, y, actuation_args = primals
-        _, _, y_tangent, actuation_args_tangent = tangents
+        robot_tangent, _, y_tangent, actuation_args_tangent = tangents
 
-        yd = robot._forward_dynamics(t, y, actuation_args)
+        robot_has_tangent = any(
+            tangent is not None
+            for tangent in tree_util.tree_leaves(
+                robot_tangent,
+                is_leaf=lambda value: value is None,
+            )
+        )
         q, qd = jnp.split(y, 2)
-        _, qdd = jnp.split(yd, 2)
 
         if y_tangent is None:
             q_tangent = jnp.zeros_like(q)
@@ -3401,6 +4070,8 @@ class PCS(SoftRobot):
             tau_ext = jnp.zeros_like(q)
             u_tangent = jnp.zeros_like(u)
             tau_ext_tangent = jnp.zeros_like(tau_ext)
+            u_has_tangent = False
+            tau_ext_has_tangent = False
         else:
             u = actuation_args[0]
             tau_ext = actuation_args[1] if len(actuation_args) == 2 else None
@@ -3419,48 +4090,118 @@ class PCS(SoftRobot):
                 u = jnp.zeros((robot.num_actuators,), dtype=q.dtype)
             if tau_ext is None:
                 tau_ext = jnp.zeros_like(q)
+            u_has_tangent = u_tangent is not None
+            tau_ext_has_tangent = tau_ext_tangent is not None
             if u_tangent is None:
                 u_tangent = jnp.zeros_like(u)
             if tau_ext_tangent is None:
                 tau_ext_tangent = jnp.zeros_like(tau_ext)
 
-        def applied_force(
-            q_value: Array,
-            qd_value: Array,
-            u_value: Array,
-            tau_ext_value: Array,
-        ) -> Array:
-            return (
-                robot.actuation_force(q_value, u_value, qd=qd_value)
-                + tau_ext_value
-                - robot.elastic_force(q_value)
-                - robot.damping_matrix(q_value) @ qd_value
-            )
-
-        _, applied_force_tangent = jvp(
-            applied_force,
-            (q, qd, u, tau_ext),
-            (q_tangent, qd_tangent, u_tangent, tau_ext_tangent),
-        )
-
         if y_tangent is None:
-            mass_matrix = robot.inertia_matrix(q)
+            yd, mass_matrix = robot._forward_dynamics_with_inertia(
+                t,
+                y,
+                actuation_args,
+            )
+            _, qdd = jnp.split(yd, 2)
             inverse_dynamics_tangent = jnp.zeros_like(q)
+        elif robot.num_dofs > _FUSED_STATE_PUSHFORWARD_MAX_DOFS:
+            # For large dense systems, carrying one contracted wrench direction
+            # is cheaper than materializing the directional inertia matrix.
+            yd, mass_matrix = robot._forward_dynamics_with_inertia(
+                t,
+                y,
+                actuation_args,
+            )
+            _, qdd = jnp.split(yd, 2)
+            inverse_dynamics_tangent = robot.inverse_dynamics_state_pushforward(
+                q,
+                qd,
+                qdd,
+                q_tangent[:, None],
+                qd_tangent[:, None],
+            )[:, 0]
         else:
             (
-                dID_dq,
-                dID_dqd,
                 mass_matrix,
-                _,
-                _,
-                _,
-                _,
-            ) = robot.inverse_dynamics_backward_pass(q, qd, qdd)
-            inverse_dynamics_tangent = dID_dq @ q_tangent + dID_dqd @ qd_tangent
+                coriolis_qd,
+                gravity_force,
+                mass_matrix_tangent,
+                coriolis_qd_tangent,
+                gravity_force_tangent,
+            ) = robot._dynamics_terms_with_state_pushforward(
+                q,
+                qd,
+                q_tangent,
+                qd_tangent,
+            )
+            applied_force = (
+                robot.actuation_force(q, u, qd=qd)
+                + tau_ext
+                - robot.elastic_force(q)
+                - robot.damping_matrix(q) @ qd
+            )
+            qdd = robot._solve_inertia(
+                mass_matrix,
+                applied_force - coriolis_qd - gravity_force,
+            )
+            yd = jnp.concatenate([qd, qdd])
+            inverse_dynamics_tangent = (
+                mass_matrix_tangent @ qdd + coriolis_qd_tangent + gravity_force_tangent
+            )
+
+        if y_tangent is None:
+            applied_force_tangent = jnp.zeros_like(q)
+        else:
+            applied_force_tangent = (
+                -robot.K_active @ q_tangent - robot.D_active @ qd_tangent
+            )
+            applied_force_tangent = (
+                applied_force_tangent
+                + robot._actuation_force_state_pushforward(q, u, q_tangent)
+                + robot._passive_force_state_pushforward(
+                    q,
+                    qd,
+                    q_tangent,
+                    qd_tangent,
+                )
+            )
+        if u_has_tangent:
+            applied_force_tangent = (
+                applied_force_tangent
+                + robot.actuation_force_derivative_u(q) @ u_tangent
+            )
+        if tau_ext_has_tangent:
+            applied_force_tangent = applied_force_tangent + tau_ext_tangent
+
+        if robot_has_tangent:
+
+            def dynamics_residual(robot_value: "PCS") -> Array:
+                mass_matrix_value, coriolis_qd, gravity_force = (
+                    robot_value.dynamics_terms(q, qd)
+                )
+                inverse_dynamics = mass_matrix_value @ qdd + coriolis_qd + gravity_force
+                applied_force = (
+                    robot_value.actuation_force(q, u, qd=qd)
+                    + tau_ext
+                    - robot_value.elastic_force(q)
+                    - robot_value.damping_matrix(q) @ qd
+                )
+                return applied_force - inverse_dynamics
+
+            _, robot_parameter_rhs_tangent = eqx.filter_jvp(
+                dynamics_residual,
+                (robot,),
+                (robot_tangent,),
+            )
+        else:
+            robot_parameter_rhs_tangent = jnp.zeros_like(q)
 
         qdd_tangent = robot._solve_inertia(
             mass_matrix,
-            applied_force_tangent - inverse_dynamics_tangent,
+            applied_force_tangent
+            + robot_parameter_rhs_tangent
+            - inverse_dynamics_tangent,
         )
         yd_tangent = jnp.concatenate([qd_tangent, qdd_tangent])
         return yd, yd_tangent
@@ -3527,6 +4268,223 @@ class PCS(SoftRobot):
 
         return g_local, S, Sd, deta_dq, detad_dq
 
+    def _inverse_dynamics_interval_kinematics(
+        self,
+        q: Array,
+        qd: Array,
+        qdd: Array,
+    ) -> tuple[
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ]:
+        """Evaluate interval-local quantities shared by both derivative passes."""
+        Xs_nodes, Ws_nodes = vmap(
+            scale_gaussian_quadrature,
+            in_axes=(None, None, 0, 0),
+        )(
+            self.integration_points,
+            self.integration_weights,
+            self.L_cum[:-1],
+            self.L_cum[1:],
+        )
+        s_local_nodes = Xs_nodes - self.L_cum[:-1, None]
+        H_steps = jnp.diff(s_local_nodes, axis=1)
+        n_steps = self.num_integration_points - 1
+        segment_indices = jnp.repeat(
+            jnp.arange(self.num_segments, dtype=jnp.int32),
+            n_steps,
+        )
+        H_flat = H_steps.reshape(-1)
+        mass_weights = Ws_nodes[:, 1:].reshape(-1)
+        g_local, S, Sd, deta_dq, detad_dq = vmap(
+            self._local_id_jacobian_kinematics,
+            in_axes=(0, 0, None, None, None),
+        )(
+            segment_indices,
+            H_flat,
+            q,
+            qd,
+            qdd,
+        )
+        Adginv = vmap(se3.adjoint_inverse)(g_local)
+        return (
+            segment_indices,
+            H_flat,
+            mass_weights,
+            g_local,
+            S,
+            Sd,
+            deta_dq,
+            detad_dq,
+            Adginv,
+        )
+
+    def _segment_local_dof_layout(self) -> tuple[Array, Array]:
+        """Return padded segment-local active-DOF indices and their mask."""
+        dof_starts = (0, *self._segment_dof_ends[:-1])
+        dof_counts = tuple(
+            end - start
+            for start, end in zip(
+                dof_starts,
+                self._segment_dof_ends,
+                strict=True,
+            )
+        )
+        max_local_dofs = max(dof_counts, default=0)
+        indices = jnp.asarray(
+            [
+                [
+                    start + offset if offset < count else 0
+                    for offset in range(max_local_dofs)
+                ]
+                for start, count in zip(dof_starts, dof_counts, strict=True)
+            ],
+            dtype=jnp.int32,
+        )
+        mask = jnp.asarray(
+            [
+                [offset < count for offset in range(max_local_dofs)]
+                for count in dof_counts
+            ],
+        )
+        return indices, mask
+
+    @eqx.filter_jit
+    def _local_id_state_pushforward_kinematics(
+        self,
+        H: Array,
+        B_xi_local: Array,
+        xi_ref_local: Array,
+        q_local: Array,
+        qd_local: Array,
+        qdd_local: Array,
+        q_directions_local: Array,
+        qd_directions_local: Array,
+    ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
+        """Evaluate one interval using only segment-local active DOFs.
+
+        Args:
+            H: Local quadrature-interval length.
+            B_xi_local: Padded active strain basis for the interval's segment.
+            xi_ref_local: Reference strain for the interval's segment.
+            q_local: Segment-local generalized coordinates.
+            qd_local: Segment-local generalized velocities.
+            qdd_local: Segment-local generalized accelerations.
+            q_directions_local: Contracted local configuration directions.
+            qd_directions_local: Contracted local velocity directions.
+
+        Returns:
+            Tuple containing the inverse adjoint, motion subspace, its
+            contracted configuration derivatives, local velocity and
+            acceleration twists, and their contracted state derivatives.
+        """
+        xi = B_xi_local @ q_local + xi_ref_local
+        xid = B_xi_local @ qd_local
+        xidd = B_xi_local @ qdd_local
+        strain_directions = B_xi_local @ q_directions_local
+        strain_rate_directions = B_xi_local @ qd_directions_local
+        accumulated_xi = H * xi
+        accumulated_xid = H * xid
+
+        def directional_operators(
+            strain_direction: Array,
+            strain_rate_direction: Array,
+        ) -> tuple[Array, Array, Array, Array, Array, Array]:
+            (
+                inverse_adjoint,
+                tangent,
+                tangent_velocity_direction,
+                tangent_configuration_direction,
+                tangent_mixed_direction,
+                tangent_rate_direction,
+            ) = se3._kinematic_operators_with_state_directional_derivatives(
+                accumulated_xi,
+                accumulated_xid,
+                H * strain_direction,
+                H * strain_rate_direction,
+                self.global_eps,
+                self.tangent_eps,
+            )
+            return (
+                inverse_adjoint,
+                tangent,
+                tangent_velocity_direction,
+                tangent_configuration_direction,
+                tangent_mixed_direction,
+                tangent_rate_direction,
+            )
+
+        (
+            inverse_adjoints,
+            tangents,
+            tangent_velocity_directions,
+            tangent_configuration_directions,
+            tangent_mixed_directions,
+            tangent_rate_directions,
+        ) = vmap(
+            directional_operators,
+            in_axes=(1, 1),
+        )(strain_directions, strain_rate_directions)
+        tangent = H * tangents[0]
+        tangent_velocity_direction = H * tangent_velocity_directions[0]
+        tangent_configuration_directions = H * tangent_configuration_directions
+        tangent_mixed_directions = H * tangent_mixed_directions
+        tangent_rate_directions = H * tangent_rate_directions
+
+        Adginv_local = inverse_adjoints[0]
+        S_local = tangent @ B_xi_local
+        S_directions_local = jnp.einsum(
+            "kij,jm->imk",
+            tangent_configuration_directions,
+            B_xi_local,
+        )
+        eta_local = tangent @ xid
+        etad_local = tangent @ xidd + tangent_velocity_direction @ xid
+        pose_directions_local = tangent @ strain_directions
+        eta_directions_local = (
+            jnp.einsum(
+                "kij,j->ik",
+                tangent_configuration_directions,
+                xid,
+            )
+            + tangent @ strain_rate_directions
+        )
+        etad_directions_local = (
+            jnp.einsum(
+                "kij,j->ik",
+                tangent_configuration_directions,
+                xidd,
+            )
+            + jnp.einsum(
+                "kij,j->ik",
+                tangent_mixed_directions,
+                xid,
+            )
+            + jnp.einsum(
+                "kij,j->ik",
+                tangent_rate_directions,
+                xid,
+            )
+            + tangent_velocity_direction @ strain_rate_directions
+        )
+        return (
+            Adginv_local,
+            S_local,
+            S_directions_local,
+            eta_local,
+            etad_local,
+            pose_directions_local,
+            eta_directions_local,
+            etad_directions_local,
+        )
+
     @eqx.filter_jit
     def _inverse_dynamics_jacobian_forward_pass(
         self,
@@ -3580,42 +4538,21 @@ class PCS(SoftRobot):
             ``(num_intervals, 6, self.num_dofs)``; and ``Adginv`` has shape
             ``(num_intervals, 6, 6)``.
         """
-        Xs_nodes, Ws_nodes = vmap(
-            scale_gaussian_quadrature, in_axes=(None, None, 0, 0)
-        )(
-            self.integration_points,
-            self.integration_weights,
-            self.L_cum[:-1],
-            self.L_cum[1:],
-        )
-        s_local_nodes = Xs_nodes - self.L_cum[:-1, None]
-        H_steps = jnp.diff(s_local_nodes, axis=1)
-
-        n_steps = self.num_integration_points - 1
-        segment_indices = jnp.repeat(
-            jnp.arange(self.num_segments, dtype=jnp.int32),
-            n_steps,
-        )
-        H_flat = H_steps.reshape(-1)
-        mass_weights = Ws_nodes[:, 1:].reshape(-1)
-
         (
+            segment_indices,
+            H_flat,
+            mass_weights,
             g_local,
             S,
             Sd,
             deta_dq,
             detad_dq,
-        ) = vmap(
-            self._local_id_jacobian_kinematics,
-            in_axes=(0, 0, None, None, None),
-        )(
-            segment_indices,
-            H_flat,
+            Adginv,
+        ) = self._inverse_dynamics_interval_kinematics(
             q,
             qd,
             qdd,
         )
-        Adginv = vmap(se3.adjoint_inverse)(g_local)
 
         zeros_6n = jnp.zeros((6, self.num_dofs), dtype=q.dtype)
         zeros_6 = jnp.zeros((6,), dtype=q.dtype)
@@ -3729,12 +4666,244 @@ class PCS(SoftRobot):
         )
 
     @eqx.filter_jit
+    def _inverse_dynamics_state_pushforward_forward_pass(
+        self,
+        q: Array,
+        qd: Array,
+        qdd: Array,
+        q_directions: Array,
+        qd_directions: Array,
+    ) -> tuple[
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+        Array,
+    ]:
+        """Propagate primal kinematics and contracted state directions."""
+        Xs_nodes, Ws_nodes = vmap(
+            scale_gaussian_quadrature,
+            in_axes=(None, None, 0, 0),
+        )(
+            self.integration_points,
+            self.integration_weights,
+            self.L_cum[:-1],
+            self.L_cum[1:],
+        )
+        H_steps = jnp.diff(Xs_nodes - self.L_cum[:-1, None], axis=1)
+        n_steps = self.num_integration_points - 1
+        segment_indices = jnp.repeat(
+            jnp.arange(self.num_segments, dtype=jnp.int32),
+            n_steps,
+        )
+        H_flat = H_steps.reshape(-1)
+        mass_weights = Ws_nodes[:, 1:].reshape(-1)
+
+        dof_indices, dof_mask = self._segment_local_dof_layout()
+        dof_mask_values = dof_mask.astype(q.dtype)
+        B_xi_segments = self.B_xi.reshape(
+            self.num_segments,
+            6,
+            self.num_dofs,
+        )
+        B_xi_local_segments = vmap(
+            lambda basis, indices, mask: basis[:, indices] * mask[None, :]
+        )(B_xi_segments, dof_indices, dof_mask_values)
+        xi_ref_segments = self.xi_ref.reshape(self.num_segments, 6)
+        q_local_segments = q[dof_indices] * dof_mask_values
+        qd_local_segments = qd[dof_indices] * dof_mask_values
+        qdd_local_segments = qdd[dof_indices] * dof_mask_values
+        q_directions_local_segments = (
+            q_directions[dof_indices] * dof_mask_values[:, :, None]
+        )
+        qd_directions_local_segments = (
+            qd_directions[dof_indices] * dof_mask_values[:, :, None]
+        )
+
+        (
+            Adginv,
+            S,
+            S_directions,
+            eta_local,
+            etad_local,
+            pose_directions_local,
+            eta_directions_local,
+            etad_directions_local,
+        ) = vmap(self._local_id_state_pushforward_kinematics)(
+            H_flat,
+            B_xi_local_segments[segment_indices],
+            xi_ref_segments[segment_indices],
+            q_local_segments[segment_indices],
+            qd_local_segments[segment_indices],
+            qdd_local_segments[segment_indices],
+            q_directions_local_segments[segment_indices],
+            qd_directions_local_segments[segment_indices],
+        )
+        num_directions = q_directions.shape[1]
+        zeros_6 = jnp.zeros((6,), dtype=q.dtype)
+        zeros_6k = jnp.zeros((6, num_directions), dtype=q.dtype)
+        gravity_base_initial = se3.adjoint_inverse(self.g0) @ self.g
+        carry_init = (
+            gravity_base_initial,
+            zeros_6,
+            zeros_6,
+            zeros_6k,
+            zeros_6k,
+            zeros_6k,
+        )
+
+        def propagate_interval(
+            carry: tuple[Array, Array, Array, Array, Array, Array],
+            local: tuple[Array, Array, Array, Array, Array, Array],
+        ) -> tuple[
+            tuple[Array, Array, Array, Array, Array, Array],
+            tuple[Array, Array, Array, Array, Array, Array],
+        ]:
+            (
+                gravity_base,
+                eta_base,
+                etad_base,
+                pose_directions_base,
+                eta_directions_base,
+                etad_directions_base,
+            ) = carry
+            (
+                Adginv_i,
+                eta_local_i,
+                etad_local_i,
+                pose_directions_local_i,
+                eta_directions_local_i,
+                etad_directions_local_i,
+            ) = local
+
+            eta_plus = eta_base + eta_local_i
+            etad_plus = (
+                etad_base
+                + etad_local_i
+                + se3.small_adjoint_action(eta_base, eta_local_i)
+            )
+            eta_directions_plus = eta_directions_base + eta_directions_local_i
+            etad_directions_plus = (
+                etad_directions_base
+                + etad_directions_local_i
+                + vmap(
+                    se3.small_adjoint_action,
+                    in_axes=(1, None),
+                    out_axes=1,
+                )(eta_directions_base, eta_local_i)
+                + vmap(
+                    se3.small_adjoint_action,
+                    in_axes=(None, 1),
+                    out_axes=1,
+                )(eta_base, eta_directions_local_i)
+            )
+
+            gravity_tip = Adginv_i @ gravity_base
+            pose_directions_tip = Adginv_i @ (
+                pose_directions_base + pose_directions_local_i
+            )
+            eta_tip = Adginv_i @ eta_plus
+            eta_directions_tip = Adginv_i @ (
+                eta_directions_plus
+                + vmap(
+                    se3.small_adjoint_action,
+                    in_axes=(None, 1),
+                    out_axes=1,
+                )(eta_plus, pose_directions_local_i)
+            )
+            etad_tip = Adginv_i @ etad_plus
+            etad_directions_tip = Adginv_i @ (
+                etad_directions_plus
+                + vmap(
+                    se3.small_adjoint_action,
+                    in_axes=(None, 1),
+                    out_axes=1,
+                )(etad_plus, pose_directions_local_i)
+            )
+
+            carry_next = (
+                gravity_tip,
+                eta_tip,
+                etad_tip,
+                pose_directions_tip,
+                eta_directions_tip,
+                etad_directions_tip,
+            )
+            return carry_next, carry_next
+
+        interval_values = (
+            Adginv,
+            eta_local,
+            etad_local,
+            pose_directions_local,
+            eta_directions_local,
+            etad_directions_local,
+        )
+        num_intervals = segment_indices.shape[0]
+        if num_intervals <= 16:
+            carry = carry_init
+            outputs = []
+            for step_idx in range(num_intervals):
+                local_values = tree_util.tree_map(
+                    lambda value, step=step_idx: value[step],
+                    interval_values,
+                )
+                carry, output = propagate_interval(carry, local_values)
+                outputs.append(output)
+            (
+                gravity,
+                eta,
+                etad,
+                pose_directions,
+                eta_directions,
+                etad_directions,
+            ) = tree_util.tree_map(lambda *values: jnp.stack(values), *outputs)
+        else:
+            (
+                _,
+                (
+                    gravity,
+                    eta,
+                    etad,
+                    pose_directions,
+                    eta_directions,
+                    etad_directions,
+                ),
+            ) = lax.scan(
+                propagate_interval,
+                carry_init,
+                interval_values,
+            )
+
+        return (
+            segment_indices,
+            mass_weights,
+            gravity,
+            eta,
+            etad,
+            pose_directions,
+            eta_directions,
+            etad_directions,
+            Adginv,
+            S,
+            S_directions,
+            pose_directions_local,
+        )
+
+    @eqx.filter_jit
     def inverse_dynamics_backward_pass(
         self,
         q: Array,
         qd: Array,
         qdd: Array,
-    ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
+    ) -> tuple[Array, Array]:
         """
         Recurse the composite wrench and its Jacobians from tip to base.
 
@@ -3753,15 +4922,11 @@ class PCS(SoftRobot):
                 ``(self.num_dofs,)``.
 
         Returns:
-            tuple[Array, Array, Array, Array, Array, Array, Array]: Tuple
-            ``(dID_dq, dID_dqd, dID_dqdd, F_res, dF_res_dq,
-            dF_res_dqd, dF_res_dqdd)``. The first three inverse-dynamics
-            derivatives have shape ``(self.num_dofs, self.num_dofs)``;
-            ``dID_dqdd`` is also the generalized inertia matrix. ``F_res``
-            has shape ``(self.num_segments,
-            self.num_integration_points - 1, 6)``. Its three derivatives
-            have shape ``(self.num_segments,
-            self.num_integration_points - 1, 6, self.num_dofs)``.
+            tuple[Array, Array]: The inverse-dynamics derivatives
+            ``(dID_dq, dID_dqd)``. Each derivative has shape
+            ``(self.num_dofs, self.num_dofs)``. The acceleration derivative
+            ``dID/dqdd`` is the generalized inertia matrix and should be
+            obtained from the forward-dynamics primal or ``inertia_matrix``.
         """
         (
             segment_indices,
@@ -3782,43 +4947,39 @@ class PCS(SoftRobot):
         zeros_6 = jnp.zeros((6,), dtype=q.dtype)
         zeros_6n = jnp.zeros((6, self.num_dofs), dtype=q.dtype)
         zeros_nn = jnp.zeros((self.num_dofs, self.num_dofs), dtype=q.dtype)
-        q_basis = jnp.eye(self.num_dofs, dtype=q.dtype)
         B_xi_segments = self.B_xi.reshape(
             self.num_segments,
             6,
             self.num_dofs,
         )
         xi_ref_segments = self.xi_ref.reshape(self.num_segments, 6)
-
         carry_init = (
             zeros_6,
             zeros_6n,
             zeros_6n,
-            zeros_6n,
-            zeros_nn,
             zeros_nn,
             zeros_nn,
         )
 
         def propagate_interval_backward(
-            carry: tuple[Array, Array, Array, Array, Array, Array, Array],
+            carry: tuple[Array, Array, Array, Array, Array],
             step_idx: Array,
         ) -> tuple[
-            tuple[Array, Array, Array, Array, Array, Array, Array],
-            tuple[Array, Array, Array, Array],
+            tuple[Array, Array, Array, Array, Array],
+            None,
         ]:
             (
                 F_res_child,
                 dF_res_dq_child,
                 dF_res_dqd_child,
-                dF_res_dqdd_child,
                 dID_dq,
                 dID_dqd,
-                dID_dqdd,
             ) = carry
 
             segment_idx = segment_indices[step_idx]
-            M = mass_weights[step_idx] * self.M_segments[segment_idx]
+            mass_diagonal = mass_weights[step_idx] * jnp.diagonal(
+                self.M_segments[segment_idx]
+            )
             g_i = g[step_idx]
             eta_i = eta[step_idx]
             etad_i = etad[step_idx]
@@ -3829,66 +4990,84 @@ class PCS(SoftRobot):
             Adginv_i = Adginv[step_idx]
             S_i = S[step_idx]
 
-            M_eta = M @ eta_i
+            def mass_action(value: Array) -> Array:
+                shape = (mass_diagonal.shape[0],) + (1,) * (value.ndim - 1)
+                return mass_diagonal.reshape(shape) * value
+
+            M_eta = mass_action(eta_i)
             gravity_i = se3.adjoint_inverse(g_i) @ self.g
-            F_i = M @ etad_i + se3.coadjoint(eta_i) @ M_eta - M @ gravity_i
-            N = se3.coadjoint(eta_i) @ M + se3.coadjoint_bar(M_eta)
+            F_i = (
+                mass_action(etad_i)
+                + se3.coadjoint_action(eta_i, M_eta)
+                - mass_action(gravity_i)
+            )
+
+            def convective_force_jacobian(twist_jacobian: Array) -> Array:
+                mass_twist_jacobian = mass_action(twist_jacobian)
+                return vmap(
+                    se3.coadjoint_action,
+                    in_axes=(None, 1),
+                    out_axes=1,
+                )(eta_i, mass_twist_jacobian) + vmap(
+                    se3.coadjoint_action,
+                    in_axes=(1, None),
+                    out_axes=1,
+                )(twist_jacobian, M_eta)
+
+            configuration_convective_jacobian = convective_force_jacobian(R_i)
+            velocity_convective_jacobian = convective_force_jacobian(J_i)
+            gravity_twist_jacobian = vmap(
+                se3.small_adjoint_action,
+                in_axes=(None, 1),
+                out_axes=1,
+            )(gravity_i, J_i)
 
             F_res_tip = F_res_child + F_i
             dF_res_dq_tip = (
                 dF_res_dq_child
-                + M @ A_i
-                + N @ R_i
-                - M @ se3.small_adjoint(gravity_i) @ J_i
+                + mass_action(A_i)
+                + configuration_convective_jacobian
+                - mass_action(gravity_twist_jacobian)
             )
-            dF_res_dqd_tip = dF_res_dqd_child + M @ Y_i + N @ J_i
-            dF_res_dqdd_tip = dF_res_dqdd_child + M @ J_i
+            dF_res_dqd_tip = (
+                dF_res_dqd_child + mass_action(Y_i) + velocity_convective_jacobian
+            )
 
             coAdg = Adginv_i.T
             F_res = coAdg @ F_res_tip
             dF_res_dq = coAdg @ dF_res_dq_tip
             dF_res_dqd = coAdg @ dF_res_dqd_tip
-            dF_res_dqdd = coAdg @ dF_res_dqdd_tip
 
-            dF_res_dq = dF_res_dq + se3.coadjoint_bar(F_res) @ S_i
+            dF_res_dq = dF_res_dq + vmap(
+                se3.coadjoint_action,
+                in_axes=(1, None),
+                out_axes=1,
+            )(S_i, F_res)
 
             B_xi_i = B_xi_segments[segment_idx]
             xi_ref_i = xi_ref_segments[segment_idx]
             H_i = H_steps[step_idx]
 
-            def projected_wrench_row(q_unit: Array) -> Array:
-                dS_dq_direction = joint_dSdq_qd(
-                    H_i,
-                    B_xi_i,
-                    xi_ref_i,
-                    q,
-                    q_unit,
-                    self.global_eps,
-                )
-                return F_res @ dS_dq_direction
-
-            dSTF_res_dq = vmap(projected_wrench_row)(q_basis)
+            dSTF_res_dq = joint_dSTF_dq(
+                H_i,
+                B_xi_i,
+                xi_ref_i,
+                q,
+                F_res,
+                self.global_eps,
+            )
 
             dID_dq = dID_dq + S_i.T @ dF_res_dq + dSTF_res_dq
             dID_dqd = dID_dqd + S_i.T @ dF_res_dqd
-            dID_dqdd = dID_dqdd + S_i.T @ dF_res_dqdd
 
             carry_next = (
                 F_res,
                 dF_res_dq,
                 dF_res_dqd,
-                dF_res_dqdd,
                 dID_dq,
                 dID_dqd,
-                dID_dqdd,
             )
-            output = (
-                F_res,
-                dF_res_dq,
-                dF_res_dqd,
-                dF_res_dqdd,
-            )
-            return carry_next, output
+            return carry_next, None
 
         num_intervals = segment_indices.shape[0]
         reverse_indices = jnp.arange(
@@ -3902,39 +5081,174 @@ class PCS(SoftRobot):
                 _,
                 _,
                 _,
-                _,
                 dID_dq,
                 dID_dqd,
-                dID_dqdd,
             ),
-            reverse_outputs,
+            _,
         ) = lax.scan(
             propagate_interval_backward,
             carry_init,
             reverse_indices,
         )
 
-        (
-            F_res,
-            dF_res_dq,
-            dF_res_dqd,
-            dF_res_dqdd,
-        ) = (jnp.flip(value, axis=0) for value in reverse_outputs)
-        step_shape = (self.num_segments, self.num_integration_points - 1)
-        F_res = F_res.reshape(*step_shape, 6)
-        dF_res_dq = dF_res_dq.reshape(*step_shape, 6, self.num_dofs)
-        dF_res_dqd = dF_res_dqd.reshape(*step_shape, 6, self.num_dofs)
-        dF_res_dqdd = dF_res_dqdd.reshape(*step_shape, 6, self.num_dofs)
+        return dID_dq, dID_dqd
 
-        return (
-            dID_dq,
-            dID_dqd,
-            dID_dqdd,
-            F_res,
-            dF_res_dq,
-            dF_res_dqd,
-            dF_res_dqdd,
+    @eqx.filter_jit
+    def inverse_dynamics_state_pushforward(
+        self,
+        q: Array,
+        qd: Array,
+        qdd: Array,
+        q_directions: Array,
+        qd_directions: Array,
+    ) -> Array:
+        """Apply the state derivative of inverse dynamics to directions.
+
+        Unlike :meth:`inverse_dynamics_backward_pass`, this recurrence
+        contracts the requested directions before the tip-to-base scan. It
+        therefore carries arrays with shape ``(6, num_directions)`` and
+        ``(num_dofs, num_directions)`` instead of materializing the square
+        inverse-dynamics Jacobians.
+
+        Args:
+            q: Generalized coordinates with shape ``(self.num_dofs,)``.
+            qd: Generalized velocities with shape ``(self.num_dofs,)``.
+            qdd: Generalized accelerations with shape ``(self.num_dofs,)``.
+            q_directions: Configuration directions with shape
+                ``(self.num_dofs, num_directions)``.
+            qd_directions: Velocity directions with shape
+                ``(self.num_dofs, num_directions)``.
+
+        Returns:
+            The directional inverse-dynamics derivatives with shape
+            ``(self.num_dofs, num_directions)``.
+        """
+        (
+            segment_indices,
+            mass_weights,
+            gravity,
+            eta,
+            etad,
+            pose_directions,
+            eta_directions,
+            etad_directions,
+            Adginv,
+            S,
+            S_directions,
+            pose_directions_local,
+        ) = self._inverse_dynamics_state_pushforward_forward_pass(
+            q,
+            qd,
+            qdd,
+            q_directions,
+            qd_directions,
         )
+        num_directions = q_directions.shape[1]
+        zeros_6 = jnp.zeros((6,), dtype=q.dtype)
+        zeros_6k = jnp.zeros((6, num_directions), dtype=q.dtype)
+        zeros_nk = jnp.zeros(
+            (self.num_dofs, num_directions),
+            dtype=q.dtype,
+        )
+        dof_indices, dof_mask = self._segment_local_dof_layout()
+        dof_mask_values = dof_mask.astype(q.dtype)
+
+        def propagate_interval_backward(
+            carry: tuple[Array, Array, Array],
+            step_idx: Array,
+        ) -> tuple[tuple[Array, Array, Array], None]:
+            F_res_child, dF_res_child, dID = carry
+
+            segment_idx = segment_indices[step_idx]
+            mass_diagonal = mass_weights[step_idx] * jnp.diagonal(
+                self.M_segments[segment_idx]
+            )
+            gravity_i = gravity[step_idx]
+            eta_i = eta[step_idx]
+            etad_i = etad[step_idx]
+            pose_directions_i = pose_directions[step_idx]
+            eta_directions_i = eta_directions[step_idx]
+            etad_directions_i = etad_directions[step_idx]
+            Adginv_i = Adginv[step_idx]
+            S_i = S[step_idx]
+            S_directions_i = S_directions[step_idx]
+            pose_directions_local_i = pose_directions_local[step_idx]
+            dof_indices_i = dof_indices[segment_idx]
+            dof_mask_i = dof_mask_values[segment_idx]
+
+            def mass_action(value: Array) -> Array:
+                shape = (mass_diagonal.shape[0],) + (1,) * (value.ndim - 1)
+                return mass_diagonal.reshape(shape) * value
+
+            M_eta = mass_action(eta_i)
+            F_i = (
+                mass_action(etad_i)
+                + se3.coadjoint_action(eta_i, M_eta)
+                - mass_action(gravity_i)
+            )
+            convective_directions = vmap(
+                se3.coadjoint_action,
+                in_axes=(None, 1),
+                out_axes=1,
+            )(eta_i, mass_action(eta_directions_i)) + vmap(
+                se3.coadjoint_action,
+                in_axes=(1, None),
+                out_axes=1,
+            )(eta_directions_i, M_eta)
+            gravity_directions = vmap(
+                se3.small_adjoint_action,
+                in_axes=(None, 1),
+                out_axes=1,
+            )(gravity_i, pose_directions_i)
+
+            F_res_tip = F_res_child + F_i
+            dF_res_tip = (
+                dF_res_child
+                + mass_action(etad_directions_i)
+                + convective_directions
+                - mass_action(gravity_directions)
+            )
+
+            coAdg = Adginv_i.T
+            F_res = coAdg @ F_res_tip
+            dF_res = coAdg @ dF_res_tip
+            dF_res = dF_res + vmap(
+                se3.coadjoint_action,
+                in_axes=(1, None),
+                out_axes=1,
+            )(pose_directions_local_i, F_res)
+
+            dSTF_res = jnp.einsum(
+                "imk,i->mk",
+                S_directions_i,
+                F_res,
+            )
+            dID_local = (S_i.T @ dF_res + dSTF_res) * dof_mask_i[:, None]
+            dID = dID.at[dof_indices_i].add(dID_local)
+            return (F_res, dF_res, dID), None
+
+        num_intervals = segment_indices.shape[0]
+        reverse_indices = jnp.arange(
+            num_intervals - 1,
+            -1,
+            -1,
+            dtype=jnp.int32,
+        )
+        backward_carry = (zeros_6, zeros_6k, zeros_nk)
+        if num_intervals <= 16:
+            for step_idx in range(num_intervals - 1, -1, -1):
+                backward_carry, _ = propagate_interval_backward(
+                    backward_carry,
+                    jnp.asarray(step_idx, dtype=jnp.int32),
+                )
+            _, _, dID = backward_carry
+        else:
+            (_, _, dID), _ = lax.scan(
+                propagate_interval_backward,
+                backward_carry,
+                reverse_indices,
+            )
+        return dID
 
     @eqx.filter_jit
     def inverse_dynamics_derivatives(
@@ -3958,7 +5272,7 @@ class PCS(SoftRobot):
             tuple[Array, Array]: The derivatives ``(dID_dq, dID_dqd)``. Both
             arrays have shape ``(self.num_dofs, self.num_dofs)``.
         """
-        dID_dq, dID_dqd, _, _, _, _, _ = self.inverse_dynamics_backward_pass(
+        dID_dq, dID_dqd = self.inverse_dynamics_backward_pass(
             q,
             qd,
             qdd,
@@ -4082,15 +5396,25 @@ class PCS(SoftRobot):
         if u is None:
             u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
 
-        (
-            dID_dq,
-            dID_dqd,
+        mass_matrix = self.inertia_matrix(q)
+        return self._forward_dynamics_derivatives_with_inertia(
+            q,
+            qd,
+            qdd,
+            u,
             mass_matrix,
-            _,
-            _,
-            _,
-            _,
-        ) = self.inverse_dynamics_backward_pass(q, qd, qdd)
+        )
+
+    def _forward_dynamics_derivatives_with_inertia(
+        self,
+        q: Array,
+        qd: Array,
+        qdd: Array,
+        u: Array,
+        mass_matrix: Array,
+    ) -> tuple[Array, Array]:
+        """Return state derivatives while reusing an assembled inertia matrix."""
+        dID_dq, dID_dqd = self.inverse_dynamics_backward_pass(q, qd, qdd)
 
         d_elastic_dq = self.elastic_force_derivative_q(q)
         d_damping_dq, d_damping_dqd = self.damping_force_derivatives(q, qd)
@@ -4125,6 +5449,14 @@ class PCS(SoftRobot):
             ``(self.num_dofs, self.num_dofs)``, respectively.
         """
         mass_matrix = self.inertia_matrix(q)
+        return self._forward_dynamics_input_derivatives_with_inertia(q, mass_matrix)
+
+    def _forward_dynamics_input_derivatives_with_inertia(
+        self,
+        q: Array,
+        mass_matrix: Array,
+    ) -> tuple[Array, Array]:
+        """Return input derivatives while reusing an assembled inertia matrix."""
         dqdd_du = self._solve_inertia(
             mass_matrix,
             self.actuation_force_derivative_u(q),
@@ -4177,9 +5509,19 @@ class PCS(SoftRobot):
         if tau_ext is None:
             tau_ext = jnp.zeros((q.shape[0],), dtype=q.dtype)
 
-        yd = self.forward_dynamics(t, y, (u, tau_ext))
+        yd, mass_matrix = self._forward_dynamics_with_inertia(
+            t,
+            y,
+            (u, tau_ext),
+        )
         _, qdd = jnp.split(yd, 2)
-        dqdd_dq, dqdd_dqd = self.forward_dynamics_derivatives(q, qd, qdd, u)
+        dqdd_dq, dqdd_dqd = self._forward_dynamics_derivatives_with_inertia(
+            q,
+            qd,
+            qdd,
+            u,
+            mass_matrix,
+        )
 
         eye = jnp.eye(q.shape[0], dtype=q.dtype)
         zeros = jnp.zeros_like(eye)
@@ -4216,18 +5558,40 @@ class PCS(SoftRobot):
         q, qd = jnp.split(y, 2)
 
         if actuation_args is None:
-            u = None
-        elif len(actuation_args) == 1 or len(actuation_args) == 2:
+            u, tau_ext = None, None
+        elif len(actuation_args) == 1:
             u = actuation_args[0]
+            tau_ext = None
+        elif len(actuation_args) == 2:
+            u, tau_ext = actuation_args
         else:
             raise ValueError("actuation_args must be a tuple of length 1 or 2.")
 
         if u is None:
             u = jnp.zeros((self.num_actuators,), dtype=q.dtype)
+        if tau_ext is None:
+            tau_ext = jnp.zeros((q.shape[0],), dtype=q.dtype)
 
-        dyd_dy = self.forward_dynamics_state_jacobian(t, y, actuation_args)
-        dqdd_du, dqdd_dtau_ext = self.forward_dynamics_input_derivatives(q)
+        yd, mass_matrix = self._forward_dynamics_with_inertia(
+            t,
+            y,
+            (u, tau_ext),
+        )
+        _, qdd = jnp.split(yd, 2)
+        dqdd_dq, dqdd_dqd = self._forward_dynamics_derivatives_with_inertia(
+            q,
+            qd,
+            qdd,
+            u,
+            mass_matrix,
+        )
+        dqdd_du, dqdd_dtau_ext = self._forward_dynamics_input_derivatives_with_inertia(
+            q, mass_matrix
+        )
 
+        eye = jnp.eye(q.shape[0], dtype=q.dtype)
+        zeros = jnp.zeros_like(eye)
+        dyd_dy = jnp.block([[zeros, eye], [dqdd_dq, dqdd_dqd]])
         zeros_du = jnp.zeros((q.shape[0], u.shape[0]), dtype=q.dtype)
         zeros_tau = jnp.zeros((q.shape[0], q.shape[0]), dtype=q.dtype)
         dyd_du = jnp.concatenate([zeros_du, dqdd_du], axis=0)

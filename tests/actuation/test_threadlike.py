@@ -192,6 +192,36 @@ def test_threadlike_actuator_and_passive_parameter_updates_compile_once():
     assert_allclose(actual, _threadlike_component_summary(eager, q))
 
 
+def test_pcs_custom_jvp_includes_threadlike_passive_state_tangent():
+    actuator, passive = _threadlike_components()
+    robot = _spatial_pcs(actuators=actuator, passive_elements=(passive,))
+    q = jnp.array([0.01, -0.02, 0.03, 0.01, 0.02, -0.01])
+    qd = jnp.linspace(-0.03, 0.04, robot.num_dofs)
+    y = jnp.concatenate([q, qd])
+    y_direction = jnp.linspace(0.1, -0.2, y.shape[0])
+    u = jnp.array([0.05, 0.07])
+    tau_ext = jnp.zeros((robot.num_dofs,))
+
+    reference = jax.jvp(
+        lambda y_value: robot._forward_dynamics(0.0, y_value, (u, tau_ext)),
+        (y,),
+        (y_direction,),
+    )
+    candidate = jax.jvp(
+        lambda y_value: PCS._forward_dynamics_custom_jvp(
+            robot,
+            jnp.array(0.0),
+            y_value,
+            (u, tau_ext),
+        ),
+        (y,),
+        (y_direction,),
+    )
+
+    assert_allclose(candidate[0], reference[0], rtol=1e-5, atol=1e-8)
+    assert_allclose(candidate[1], reference[1], rtol=1e-5, atol=1e-8)
+
+
 def test_threadlike_compiled_partial_component_updates_match_eager_behavior():
     actuator, passive = _threadlike_components()
     robot = _spatial_pcs(actuators=actuator, passive_elements=(passive,))
@@ -649,6 +679,36 @@ def test_passive_impedance_superposition_and_parameter_updates():
     updated = robot.update_passive_element_params(0, stiffness=jnp.array([75.0]))
     assert_allclose(updated.passive_elements[0].params.stiffness, jnp.array([75.0]))
     assert_allclose(robot.passive_elements[0].params.stiffness, jnp.array([50.0]))
+
+
+def test_pcs_analytical_state_jvp_covers_threadlike_actuation_and_impedance():
+    actuator, passive = _threadlike_components()
+    robot = _spatial_pcs(actuators=actuator, passive_elements=(passive,))
+    q = jnp.linspace(-0.015, 0.02, robot.num_dofs)
+    qd = jnp.linspace(0.025, -0.01, robot.num_dofs)
+    y = jnp.concatenate((q, qd))
+    y_tangent = jnp.linspace(-0.2, 0.25, y.size)
+    u = jnp.array([0.3, 0.2])
+    tau_ext = jnp.linspace(-0.01, 0.015, robot.num_dofs)
+    t = jnp.array(0.0)
+
+    _, expected = jax.jvp(
+        lambda y_value: robot._forward_dynamics(t, y_value, (u, tau_ext)),
+        (y,),
+        (y_tangent,),
+    )
+    _, actual = jax.jvp(
+        lambda y_value: PCS._forward_dynamics_custom_jvp(
+            robot,
+            t,
+            y_value,
+            (u, tau_ext),
+        ),
+        (y,),
+        (y_tangent,),
+    )
+
+    assert_allclose(actual, expected, rtol=1e-6, atol=1e-8)
 
 
 def test_gvs_forward_dynamics_includes_passive_threadlike_damping():

@@ -7,6 +7,7 @@ from jax import numpy as jnp
 from numpy.testing import assert_allclose
 from system_param_builders import pcs_params, spatial_base_pose
 
+from soromox.autodiff import custom_jvp_mode
 from soromox.systems import PCS, CrossSectionGeometry, PCSStructure
 from soromox.utils.integration import scale_interior_gaussian_quadrature
 from soromox.utils.lie_algebra import se3
@@ -1352,15 +1353,27 @@ def test_forward_dynamics_matches_manual_computation(num_segments: int):
         assert_allclose(yd, yd_expected, rtol=RTOL, atol=ATOL)
 
 
-def test_inverse_dynamics_jacobian_passes_match_autodiff() -> None:
-    selector_per_segment = jnp.array(
-        [False, False, True, True, False, False],
-        dtype=bool,
+@pytest.mark.parametrize(
+    ("num_segments", "num_gauss_points", "selector_per_segment"),
+    [
+        (1, 5, None),
+        (2, 3, (False, False, True, True, False, False)),
+    ],
+)
+def test_inverse_dynamics_jacobian_passes_match_autodiff(
+    num_segments: int,
+    num_gauss_points: int,
+    selector_per_segment: tuple[bool, ...] | None,
+) -> None:
+    strain_selector = (
+        None
+        if selector_per_segment is None
+        else jnp.tile(jnp.asarray(selector_per_segment, dtype=bool), num_segments)
     )
     model, _ = make_pcs(
-        num_segments=2,
-        num_gauss_points=2,
-        strain_selector=jnp.tile(selector_per_segment, 2),
+        num_segments=num_segments,
+        num_gauss_points=num_gauss_points,
+        strain_selector=strain_selector,
     )
 
     key_q, key_qd, key_qdd, key_tau = jax.random.split(
@@ -1376,16 +1389,31 @@ def test_inverse_dynamics_jacobian_passes_match_autodiff() -> None:
         inertia, coriolis_qd, gravity = model.dynamics_terms(q_, qd_)
         return inertia @ qdd_ + coriolis_qd + gravity
 
-    dID_dq, dID_dqd, dID_dqdd, _, _, _, _ = model.inverse_dynamics_backward_pass(
-        q, qd, qdd
-    )
+    dID_dq, dID_dqd = model.inverse_dynamics_backward_pass(q, qd, qdd)
+    mass_matrix = model.inertia_matrix(q)
     expected_dID_dq = jacfwd(lambda q_: inverse_dynamics_force(q_, qd, qdd))(q)
     expected_dID_dqd = jacfwd(lambda qd_: inverse_dynamics_force(q, qd_, qdd))(qd)
     expected_dID_dqdd = jacfwd(lambda qdd_: inverse_dynamics_force(q, qd, qdd_))(qdd)
 
     assert_allclose(dID_dq, expected_dID_dq, rtol=RTOL, atol=ATOL)
     assert_allclose(dID_dqd, expected_dID_dqd, rtol=RTOL, atol=ATOL)
-    assert_allclose(dID_dqdd, expected_dID_dqdd, rtol=RTOL, atol=ATOL)
+    assert_allclose(mass_matrix, expected_dID_dqdd, rtol=RTOL, atol=ATOL)
+
+    q_directions = jnp.stack((qd, tau_ext), axis=1)
+    qd_directions = jnp.stack((qdd, q), axis=1)
+    directional_dID = model.inverse_dynamics_state_pushforward(
+        q,
+        qd,
+        qdd,
+        q_directions,
+        qd_directions,
+    )
+    assert_allclose(
+        directional_dID,
+        expected_dID_dq @ q_directions + expected_dID_dqd @ qd_directions,
+        rtol=RTOL,
+        atol=ATOL,
+    )
 
     zero_q = jnp.zeros_like(q)
     zero_results = model.inverse_dynamics_backward_pass(zero_q, qd, qdd)
@@ -1414,6 +1442,197 @@ def test_inverse_dynamics_jacobian_passes_match_autodiff() -> None:
         rtol=RTOL,
         atol=ATOL,
     )
+
+    inverse_dynamics_derivatives = model.inverse_dynamics_derivatives(q, qd, qdd)
+    assert_allclose(
+        inverse_dynamics_derivatives[0],
+        expected_dID_dq,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+    assert_allclose(
+        inverse_dynamics_derivatives[1],
+        expected_dID_dqd,
+        rtol=RTOL,
+        atol=ATOL,
+    )
+
+
+def test_forward_dynamics_jacobian_helpers_match_autodiff() -> None:
+    selector_per_segment = jnp.array(
+        [False, False, True, True, False, False],
+        dtype=bool,
+    )
+    model, _ = make_pcs(
+        num_segments=2,
+        num_gauss_points=5,
+        strain_selector=jnp.tile(selector_per_segment, 2),
+    )
+    key_q, key_qd, key_u, key_tau = jax.random.split(jax.random.PRNGKey(8241), 4)
+    q = random_q(model, key_q, scale=0.04)
+    qd = random_q(model, key_qd, scale=0.03)
+    u = jax.random.normal(key_u, (model.num_actuators,)) * 0.02
+    tau_ext = random_q(model, key_tau, scale=0.01)
+    y = jnp.concatenate([q, qd])
+    t = jnp.array(0.0)
+
+    actual_state, actual_input, actual_external = model.forward_dynamics_jacobians(
+        t,
+        y,
+        (u, tau_ext),
+    )
+    expected_state = jacfwd(
+        lambda y_value: model._forward_dynamics(t, y_value, (u, tau_ext))
+    )(y)
+    expected_input = jacfwd(
+        lambda u_value: model._forward_dynamics(t, y, (u_value, tau_ext))
+    )(u)
+    expected_external = jacfwd(
+        lambda tau_value: model._forward_dynamics(t, y, (u, tau_value))
+    )(tau_ext)
+
+    assert_allclose(actual_state, expected_state, rtol=RTOL, atol=ATOL)
+    assert_allclose(actual_input, expected_input, rtol=RTOL, atol=ATOL)
+    assert_allclose(actual_external, expected_external, rtol=RTOL, atol=ATOL)
+
+
+@pytest.mark.parametrize(
+    "actuation_args",
+    [
+        pytest.param(None, id="none"),
+        pytest.param((None,), id="default-input"),
+        pytest.param((None, None), id="default-input-and-external-force"),
+    ],
+)
+def test_forward_dynamics_state_jacobian_accepts_optional_inputs(
+    actuation_args: tuple | None,
+) -> None:
+    selector = jnp.array([False, False, False, True, False, False], dtype=bool)
+    model, _ = make_pcs(
+        num_segments=1,
+        num_gauss_points=3,
+        strain_selector=selector,
+    )
+    y = jnp.array([0.02, -0.03])
+    t = jnp.array(0.0)
+
+    actual_state, actual_input, actual_external = model.forward_dynamics_jacobians(
+        t,
+        y,
+        actuation_args,
+    )
+    expected_state = jacfwd(
+        lambda y_value: model._forward_dynamics(t, y_value, actuation_args)
+    )(y)
+    zero_input = jnp.zeros((model.num_actuators,), dtype=y.dtype)
+    zero_external = jnp.zeros((model.num_dofs,), dtype=y.dtype)
+    expected_input = jacfwd(
+        lambda u_value: model._forward_dynamics(
+            t,
+            y,
+            (u_value, zero_external),
+        )
+    )(zero_input)
+    expected_external = jacfwd(
+        lambda tau_value: model._forward_dynamics(
+            t,
+            y,
+            (zero_input, tau_value),
+        )
+    )(zero_external)
+
+    assert_allclose(actual_state, expected_state, rtol=RTOL, atol=ATOL)
+    assert_allclose(actual_input, expected_input, rtol=RTOL, atol=ATOL)
+    assert_allclose(actual_external, expected_external, rtol=RTOL, atol=ATOL)
+
+
+def test_forward_dynamics_derivatives_default_input_matches_autodiff() -> None:
+    selector = jnp.array([False, False, False, True, False, False], dtype=bool)
+    model, _ = make_pcs(
+        num_segments=1,
+        num_gauss_points=3,
+        strain_selector=selector,
+    )
+    q = jnp.array([0.02])
+    qd = jnp.array([-0.03])
+    y = jnp.concatenate([q, qd])
+    yd = model._forward_dynamics(jnp.array(0.0), y, None)
+    _, qdd = jnp.split(yd, 2)
+
+    actual_dq, actual_dqd = model.forward_dynamics_derivatives(q, qd, qdd)
+    expected = jacfwd(
+        lambda y_value: model._forward_dynamics(jnp.array(0.0), y_value, None)
+    )(y)
+
+    assert_allclose(actual_dq, expected[1:, :1], rtol=RTOL, atol=ATOL)
+    assert_allclose(actual_dqd, expected[1:, 1:], rtol=RTOL, atol=ATOL)
+
+
+def test_forward_dynamics_rejects_invalid_actuation_argument_length() -> None:
+    selector = jnp.array([False, False, False, True, False, False], dtype=bool)
+    model, _ = make_pcs(num_segments=1, strain_selector=selector)
+    y = jnp.array([0.02, -0.03])
+    invalid_args = (jnp.zeros(1), jnp.zeros(1), jnp.zeros(1))
+
+    with pytest.raises(ValueError, match="tuple of length 1 or 2"):
+        model._forward_dynamics(jnp.array(0.0), y, invalid_args)
+    with pytest.raises(ValueError, match="tuple of length 1 or 2"):
+        model.forward_dynamics_state_jacobian(jnp.array(0.0), y, invalid_args)
+    with pytest.raises(ValueError, match="tuple of length 1 or 2"):
+        model.forward_dynamics_jacobians(jnp.array(0.0), y, invalid_args)
+
+
+def test_forward_dynamics_disabled_custom_jvp_uses_autodiff_primal() -> None:
+    selector = jnp.array([False, False, False, True, False, False], dtype=bool)
+    model, _ = make_pcs(num_segments=1, strain_selector=selector)
+    y = jnp.array([0.02, -0.03])
+    expected = model._forward_dynamics(jnp.array(0.0), y, None)
+
+    jax.clear_caches()
+    with custom_jvp_mode(False):
+        actual = model.forward_dynamics(jnp.array(0.0), y, None)
+    jax.clear_caches()
+
+    assert_allclose(actual, expected, rtol=RTOL, atol=ATOL)
+
+
+def test_forward_dynamics_custom_jvp_includes_model_parameter_tangent() -> None:
+    selector = jnp.array([False, False, False, True, False, False], dtype=bool)
+    model, _ = make_pcs(
+        num_segments=1,
+        num_gauss_points=5,
+        strain_selector=selector,
+    )
+    y = jnp.array([0.02, -0.03])
+    u = jnp.array([0.05])
+    tau_ext = jnp.array([0.01])
+    density = model.rho
+    density_direction = 0.01 * density
+
+    def dynamics(density_value: Array, *, use_custom_jvp: bool) -> Array:
+        updated = model.update_link_params(density=density_value)
+        if use_custom_jvp:
+            return PCS._forward_dynamics_custom_jvp(
+                updated,
+                jnp.array(0.0),
+                y,
+                (u, tau_ext),
+            )
+        return updated._forward_dynamics(jnp.array(0.0), y, (u, tau_ext))
+
+    _, reference = jvp(
+        lambda value: dynamics(value, use_custom_jvp=False),
+        (density,),
+        (density_direction,),
+    )
+    _, candidate = jvp(
+        lambda value: dynamics(value, use_custom_jvp=True),
+        (density,),
+        (density_direction,),
+    )
+
+    assert jnp.linalg.norm(reference) > 0.0
+    assert_allclose(candidate, reference, rtol=RTOL, atol=ATOL)
 
 
 @pytest.mark.parametrize("num_segments", [1, 3])

@@ -67,6 +67,244 @@ class _PreparedAdjointPowers(NamedTuple):
     dot_powers: Array
 
 
+class _PreparedStateDirectionalPowers(NamedTuple):
+    """Unscaled adjoint powers and contracted state derivatives.
+
+    Every matrix field stacks powers from order zero through four. The
+    rotational invariants are stored before arclength scaling so one segment
+    preparation can serve its tip and all quadrature points.
+    """
+
+    angle_sq: Array
+    angle_sq_velocity: Array
+    angle_sq_configuration: Array
+    angle_sq_rate: Array
+    angle_sq_mixed: Array
+    powers: Array
+    velocity_power_derivatives: Array
+    configuration_power_derivatives: Array
+    rate_power_derivatives: Array
+    mixed_power_derivatives: Array
+
+
+def _prepare_state_directional_powers(
+    xi: Array,
+    xid: Array,
+    configuration_direction: Array,
+    rate_direction: Array,
+) -> _PreparedStateDirectionalPowers:
+    """Precompute arclength-independent powers for one PCS state direction.
+
+    Args:
+        xi: Constant spatial strain in angular-first order.
+        xid: Spatial strain rate with the same shape as ``xi``.
+        configuration_direction: Contracted configuration direction in strain
+            coordinates.
+        rate_direction: Contracted velocity direction in strain-rate
+            coordinates.
+
+    Returns:
+        Prepared powers, first directional derivatives, the mixed
+        strain-rate/configuration derivative, and their rotational
+        invariants.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    xid = jnp.asarray(xid).reshape(-1)
+    configuration_direction = jnp.asarray(configuration_direction).reshape(-1)
+    rate_direction = jnp.asarray(rate_direction).reshape(-1)
+    (
+        powers,
+        velocity_power_derivatives,
+        configuration_power_derivatives,
+        rate_power_derivatives,
+        mixed_power_derivatives,
+    ) = _matrix_polynomials.powers_and_state_directional_derivatives(
+        lie_se3.small_adjoint(xi),
+        lie_se3.small_adjoint(xid),
+        lie_se3.small_adjoint(configuration_direction),
+        lie_se3.small_adjoint(rate_direction),
+        _REDUCED_POLYNOMIAL_DEGREE,
+    )
+    return _PreparedStateDirectionalPowers(
+        angle_sq=jnp.dot(xi[:3], xi[:3]),
+        angle_sq_velocity=2.0 * jnp.dot(xi[:3], xid[:3]),
+        angle_sq_configuration=2.0 * jnp.dot(xi[:3], configuration_direction[:3]),
+        angle_sq_rate=2.0 * jnp.dot(xi[:3], rate_direction[:3]),
+        angle_sq_mixed=2.0 * jnp.dot(xid[:3], configuration_direction[:3]),
+        powers=jnp.stack(powers),
+        velocity_power_derivatives=jnp.stack(velocity_power_derivatives),
+        configuration_power_derivatives=jnp.stack(configuration_power_derivatives),
+        rate_power_derivatives=jnp.stack(rate_power_derivatives),
+        mixed_power_derivatives=jnp.stack(mixed_power_derivatives),
+    )
+
+
+def _kinematic_operators_from_state_directional_powers(
+    prepared: _PreparedStateDirectionalPowers,
+    s: Array,
+    adjoint_eps: float | Array,
+    tangent_eps: float | Array,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Evaluate transported operators and one contracted state direction.
+
+    The tangent operators are returned after transport by the inverse
+    adjoint. This directly supplies the body-frame PCS recurrence and avoids
+    multiplying each tangent derivative by the inverse adjoint afterward.
+
+    Args:
+        prepared: Arclength-independent segment powers and state derivatives.
+        s: Local arclength at which to evaluate the operators.
+        adjoint_eps: Rotational-strain threshold for the adjoint exponential.
+        tangent_eps: Rotational-strain threshold for tangent coefficients.
+
+    Returns:
+        Tuple ``(Ad_inv, P, Pv, Ph, Pvh, Pk)``. Here ``P = Ad_inv @ T``;
+        ``Pv`` and ``Ph`` are its strain-rate and configuration directional
+        derivatives; ``Pvh`` is their mixed derivative; and ``Pk`` is the
+        derivative along the contracted velocity direction.
+    """
+    s = jnp.asarray(s, dtype=prepared.powers.dtype)
+    scale = jnp.ones((), dtype=prepared.powers.dtype)
+    powers: list[Array] = []
+    velocity_power_derivatives: list[Array] = []
+    configuration_power_derivatives: list[Array] = []
+    rate_power_derivatives: list[Array] = []
+    mixed_power_derivatives: list[Array] = []
+    for order in range(_REDUCED_POLYNOMIAL_DEGREE + 1):
+        powers.append(scale * prepared.powers[order])
+        velocity_power_derivatives.append(
+            scale * prepared.velocity_power_derivatives[order]
+        )
+        configuration_power_derivatives.append(
+            scale * prepared.configuration_power_derivatives[order]
+        )
+        rate_power_derivatives.append(scale * prepared.rate_power_derivatives[order])
+        mixed_power_derivatives.append(scale * prepared.mixed_power_derivatives[order])
+        scale = scale * s
+
+    s_sq = s**2
+    angle_sq = s_sq * prepared.angle_sq
+    coefficients, derivatives, second_derivatives = (
+        lie_se3._left_jacobian_coefficients_with_x_derivatives(
+            angle_sq,
+            _accumulated_eps(s, tangent_eps, angle_sq.dtype),
+        )
+    )
+    angle_sq_velocity = s_sq * prepared.angle_sq_velocity
+    angle_sq_configuration = s_sq * prepared.angle_sq_configuration
+    velocity_coefficient_derivatives = tuple(
+        derivative * angle_sq_velocity for derivative in derivatives
+    )
+    configuration_coefficient_derivatives = tuple(
+        derivative * angle_sq_configuration for derivative in derivatives
+    )
+    rate_coefficient_derivatives = tuple(
+        derivative * s_sq * prepared.angle_sq_rate for derivative in derivatives
+    )
+    mixed_coefficient_derivatives = tuple(
+        second_derivative * angle_sq_velocity * angle_sq_configuration
+        + derivative * s_sq * prepared.angle_sq_mixed
+        for derivative, second_derivative in zip(
+            derivatives,
+            second_derivatives,
+            strict=True,
+        )
+    )
+
+    signs = tuple(
+        -1.0 if order % 2 else 1.0 for order in range(1, _REDUCED_POLYNOMIAL_DEGREE + 1)
+    )
+    transported_coefficients = tuple(
+        sign * coefficient
+        for sign, coefficient in zip(signs, coefficients, strict=True)
+    )
+    transported_velocity_coefficient_derivatives = tuple(
+        sign * derivative
+        for sign, derivative in zip(
+            signs,
+            velocity_coefficient_derivatives,
+            strict=True,
+        )
+    )
+    transported_configuration_coefficient_derivatives = tuple(
+        sign * derivative
+        for sign, derivative in zip(
+            signs,
+            configuration_coefficient_derivatives,
+            strict=True,
+        )
+    )
+    transported_rate_coefficient_derivatives = tuple(
+        sign * derivative
+        for sign, derivative in zip(
+            signs,
+            rate_coefficient_derivatives,
+            strict=True,
+        )
+    )
+    transported_mixed_coefficient_derivatives = tuple(
+        sign * derivative
+        for sign, derivative in zip(
+            signs,
+            mixed_coefficient_derivatives,
+            strict=True,
+        )
+    )
+
+    transported_tangent = s * _matrix_polynomials.evaluate(
+        powers,
+        transported_coefficients,
+    )
+    transported_tangent_velocity_direction = s * (
+        _matrix_polynomials.evaluate_directional_derivative(
+            powers,
+            velocity_power_derivatives,
+            transported_coefficients,
+            transported_velocity_coefficient_derivatives,
+        )
+    )
+    transported_tangent_configuration_direction = s * (
+        _matrix_polynomials.evaluate_directional_derivative(
+            powers,
+            configuration_power_derivatives,
+            transported_coefficients,
+            transported_configuration_coefficient_derivatives,
+        )
+    )
+    transported_tangent_rate_direction = s * (
+        _matrix_polynomials.evaluate_directional_derivative(
+            powers,
+            rate_power_derivatives,
+            transported_coefficients,
+            transported_rate_coefficient_derivatives,
+        )
+    )
+    transported_tangent_mixed_direction = s * (
+        _matrix_polynomials.evaluate_mixed_directional_derivative(
+            powers,
+            velocity_power_derivatives,
+            configuration_power_derivatives,
+            mixed_power_derivatives,
+            transported_coefficients,
+            transported_velocity_coefficient_derivatives,
+            transported_configuration_coefficient_derivatives,
+            transported_mixed_coefficient_derivatives,
+        )
+    )
+    adjoint = lie_se3._adjoint_from_powers(
+        powers,
+        _adjoint_coefficients(prepared.angle_sq, s, adjoint_eps),
+    )
+    return (
+        lie_se3._adjoint_inverse_from_adjoint(adjoint),
+        transported_tangent,
+        transported_tangent_velocity_direction,
+        transported_tangent_configuration_direction,
+        transported_tangent_mixed_direction,
+        transported_tangent_rate_direction,
+    )
+
+
 def _prepare_adjoint_powers(xi: Array, xid: Array) -> _PreparedAdjointPowers:
     r"""Precompute SE(3) powers that do not depend on arclength.
 

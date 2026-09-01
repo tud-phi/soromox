@@ -66,23 +66,23 @@ def _left_jacobian_series_arguments(
     return angle_sq, use_series, jnp.sqrt(angle_sq_safe)
 
 
-def _left_jacobian_coefficients_and_x_derivatives(
+def _left_jacobian_coefficients_with_x_derivatives(
     angle_sq: Array, eps: float | Array
-) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
-    r"""Return reduced left-Jacobian coefficients and their derivatives in ``x``.
+) -> tuple[tuple[Array, ...], tuple[Array, ...], tuple[Array, ...]]:
+    r"""Return left-Jacobian coefficients and two derivatives in ``x``.
 
     For ``A = ad_xi`` and ``x = dot(omega, omega)``, the Jacobian is
     ``I + c1 A + c2 A**2 + c3 A**3 + c4 A**4``. The second tuple contains
-    ``dc_k / dx``.
+    ``dc_k / dx`` and the third tuple contains ``d2c_k / dx2``.
 
     Args:
         angle_sq: Scalar squared rotational magnitude ``x``.
         eps: Requested non-negative dimensionless small-angle threshold.
 
     Returns:
-        Tuple ``(coefficients, x_derivatives)``. Each element is a four-item
-        tuple for ``c1`` through ``c4`` and their derivatives with respect to
-        ``x``.
+        Tuple ``(coefficients, x_derivatives, x_second_derivatives)``. Each
+        element is a four-item tuple for ``c1`` through ``c4`` and their first
+        and second derivatives with respect to ``x``.
     """
     x, use_series, theta_safe = _left_jacobian_series_arguments(angle_sq, eps)
     series = (
@@ -104,6 +104,12 @@ def _left_jacobian_coefficients_and_x_derivatives(
         -1.0 / 360.0 + x * (1.0 / 6720.0 + x * (-1.0 / 302400.0 + x / 23950080.0)),
         -1.0 / 2520.0 + x * (1.0 / 60480.0 + x * (-1.0 / 3326400.0 + x / 311351040.0)),
     )
+    second_derivative_series = (
+        -1.0 / 360.0 + x * (1.0 / 3360.0 - x / 100800.0),
+        -1.0 / 2520.0 + x * (1.0 / 30240.0 - x / 1108800.0),
+        1.0 / 6720.0 + x * (-1.0 / 151200.0 + x / 7983360.0),
+        1.0 / 60480.0 + x * (-1.0 / 1663200.0 + x / 103783680.0),
+    )
     if strict_singularities_enabled():
         theta_safe = jnp.sqrt(x)
         use_series = jnp.zeros_like(x, dtype=jnp.bool_)
@@ -114,6 +120,17 @@ def _left_jacobian_coefficients_and_x_derivatives(
         -8.0 * theta_safe
         + (15.0 - theta_safe**2) * sin_theta
         - 7.0 * theta_safe * cos_theta
+    )
+    common_derivative = (
+        5.0 * sin_theta
+        + sin_theta * (theta_safe**2 - 8.0)
+        + 3.0 * theta_safe * cos_theta
+    )
+    alternate_derivative = (
+        -8.0
+        + 5.0 * theta_safe * sin_theta
+        + (15.0 - theta_safe**2) * cos_theta
+        - 7.0 * cos_theta
     )
     closed = (
         (4.0 - 4.0 * cos_theta - theta_safe * sin_theta) / (2.0 * theta_safe**2),
@@ -129,6 +146,12 @@ def _left_jacobian_coefficients_and_x_derivatives(
         common / (4.0 * theta_safe**6),
         alternate / (4.0 * theta_safe**7),
     )
+    second_derivative_closed = (
+        (theta_safe * common_derivative - 4.0 * common) / (8.0 * theta_safe**6),
+        (theta_safe * alternate_derivative - 5.0 * alternate) / (8.0 * theta_safe**7),
+        (theta_safe * common_derivative - 6.0 * common) / (8.0 * theta_safe**8),
+        (theta_safe * alternate_derivative - 7.0 * alternate) / (8.0 * theta_safe**9),
+    )
     coefficients = tuple(
         jnp.where(use_series, series_value, closed_value)
         for series_value, closed_value in zip(series, closed, strict=True)
@@ -138,6 +161,25 @@ def _left_jacobian_coefficients_and_x_derivatives(
         for series_value, closed_value in zip(
             derivative_series, derivative_closed, strict=True
         )
+    )
+    second_derivatives = tuple(
+        jnp.where(use_series, series_value, closed_value)
+        for series_value, closed_value in zip(
+            second_derivative_series,
+            second_derivative_closed,
+            strict=True,
+        )
+    )
+    return coefficients, derivatives, second_derivatives
+
+
+def _left_jacobian_coefficients_and_x_derivatives(
+    angle_sq: Array, eps: float | Array
+) -> tuple[tuple[Array, ...], tuple[Array, ...]]:
+    """Return reduced left-Jacobian coefficients and first derivatives."""
+    coefficients, derivatives, _ = _left_jacobian_coefficients_with_x_derivatives(
+        angle_sq,
+        eps,
     )
     return coefficients, derivatives
 
@@ -559,6 +601,242 @@ def left_jacobian_and_directional_derivative(
         angle_sq_dot,
     )
     return jacobian, jacobian_direction
+
+
+def _kinematic_operators_with_state_directional_derivatives(
+    xi: Array,
+    velocity_direction: Array,
+    configuration_direction: Array,
+    rate_direction: Array,
+    adjoint_eps: float | Array,
+    tangent_eps: float | Array,
+) -> tuple[Array, Array, Array, Array, Array, Array]:
+    """Evaluate analytical inverse-adjoint and Jacobian state derivatives.
+
+    Args:
+        xi: Accumulated spatial strain in angular-first order.
+        velocity_direction: Accumulated strain-rate direction.
+        configuration_direction: Accumulated configuration direction.
+        rate_direction: Accumulated velocity direction.
+        adjoint_eps: Small-angle threshold for the adjoint exponential.
+        tangent_eps: Small-angle threshold for left-Jacobian coefficients.
+
+    Returns:
+        Tuple containing the inverse adjoint, left Jacobian, its derivatives
+        along ``velocity_direction`` and ``configuration_direction``, their
+        mixed derivative, and its derivative along ``rate_direction``.
+    """
+    xi = jnp.asarray(xi).reshape(-1)
+    velocity_direction = jnp.asarray(velocity_direction).reshape(-1)
+    configuration_direction = jnp.asarray(configuration_direction).reshape(-1)
+    rate_direction = jnp.asarray(rate_direction).reshape(-1)
+    angle_sq = jnp.dot(xi[:3], xi[:3])
+    angle_sq_velocity = 2.0 * jnp.dot(xi[:3], velocity_direction[:3])
+    angle_sq_configuration = 2.0 * jnp.dot(
+        xi[:3],
+        configuration_direction[:3],
+    )
+    angle_sq_rate = 2.0 * jnp.dot(xi[:3], rate_direction[:3])
+    angle_sq_mixed = 2.0 * jnp.dot(
+        velocity_direction[:3],
+        configuration_direction[:3],
+    )
+
+    def structured_adjoint(value: Array) -> tuple[Array, Array]:
+        return so3.skew(value[:3]), so3.skew(value[3:])
+
+    def structured_product(
+        left: tuple[Array, Array],
+        right: tuple[Array, Array],
+    ) -> tuple[Array, Array]:
+        left_diagonal, left_lower = left
+        right_diagonal, right_lower = right
+        return (
+            left_diagonal @ right_diagonal,
+            left_lower @ right_diagonal + left_diagonal @ right_lower,
+        )
+
+    def structured_sum(
+        *values: tuple[Array, Array],
+    ) -> tuple[Array, Array]:
+        return (
+            sum(value[0] for value in values),
+            sum(value[1] for value in values),
+        )
+
+    adjoint = structured_adjoint(xi)
+    adjoint_velocity = structured_adjoint(velocity_direction)
+    adjoint_configuration = structured_adjoint(configuration_direction)
+    adjoint_rate = structured_adjoint(rate_direction)
+    identity = jnp.eye(3, dtype=xi.dtype)
+    zero = jnp.zeros((3, 3), dtype=xi.dtype)
+    current = (identity, zero)
+    current_velocity = (zero, zero)
+    current_configuration = (zero, zero)
+    current_rate = (zero, zero)
+    current_mixed = (zero, zero)
+    powers = [current]
+    velocity_power_derivatives = [current_velocity]
+    configuration_power_derivatives = [current_configuration]
+    rate_power_derivatives = [current_rate]
+    mixed_power_derivatives = [current_mixed]
+    for _ in range(_REDUCED_POLYNOMIAL_DEGREE):
+        next_mixed = structured_sum(
+            structured_product(current_mixed, adjoint),
+            structured_product(current_velocity, adjoint_configuration),
+            structured_product(current_configuration, adjoint_velocity),
+        )
+        next_velocity = structured_sum(
+            structured_product(current_velocity, adjoint),
+            structured_product(current, adjoint_velocity),
+        )
+        next_configuration = structured_sum(
+            structured_product(current_configuration, adjoint),
+            structured_product(current, adjoint_configuration),
+        )
+        next_rate = structured_sum(
+            structured_product(current_rate, adjoint),
+            structured_product(current, adjoint_rate),
+        )
+        current = structured_product(current, adjoint)
+        powers.append(current)
+        velocity_power_derivatives.append(next_velocity)
+        configuration_power_derivatives.append(next_configuration)
+        rate_power_derivatives.append(next_rate)
+        mixed_power_derivatives.append(next_mixed)
+        current_velocity = next_velocity
+        current_configuration = next_configuration
+        current_rate = next_rate
+        current_mixed = next_mixed
+
+    coefficients, derivatives, second_derivatives = (
+        _left_jacobian_coefficients_with_x_derivatives(angle_sq, tangent_eps)
+    )
+    velocity_coefficient_derivatives = tuple(
+        derivative * angle_sq_velocity for derivative in derivatives
+    )
+    configuration_coefficient_derivatives = tuple(
+        derivative * angle_sq_configuration for derivative in derivatives
+    )
+    rate_coefficient_derivatives = tuple(
+        derivative * angle_sq_rate for derivative in derivatives
+    )
+    mixed_coefficient_derivatives = tuple(
+        second_derivative * angle_sq_velocity * angle_sq_configuration
+        + derivative * angle_sq_mixed
+        for derivative, second_derivative in zip(
+            derivatives,
+            second_derivatives,
+            strict=True,
+        )
+    )
+
+    def evaluate(
+        power_values: list[tuple[Array, Array]],
+        coefficient_values: tuple[Array, ...],
+    ) -> tuple[Array, Array]:
+        result = power_values[0]
+        for coefficient, power in zip(
+            coefficient_values,
+            power_values[1:],
+            strict=True,
+        ):
+            result = structured_sum(
+                result,
+                (coefficient * power[0], coefficient * power[1]),
+            )
+        return result
+
+    def evaluate_direction(
+        power_derivatives: list[tuple[Array, Array]],
+        coefficient_derivatives: tuple[Array, ...],
+    ) -> tuple[Array, Array]:
+        result = (zero, zero)
+        for coefficient, coefficient_direction, power, power_direction in zip(
+            coefficients,
+            coefficient_derivatives,
+            powers[1:],
+            power_derivatives[1:],
+            strict=True,
+        ):
+            result = structured_sum(
+                result,
+                (
+                    coefficient_direction * power[0] + coefficient * power_direction[0],
+                    coefficient_direction * power[1] + coefficient * power_direction[1],
+                ),
+            )
+        return result
+
+    def evaluate_mixed() -> tuple[Array, Array]:
+        result = (zero, zero)
+        for (
+            coefficient,
+            coefficient_velocity,
+            coefficient_configuration,
+            coefficient_mixed,
+            power,
+            power_velocity,
+            power_configuration,
+            power_mixed,
+        ) in zip(
+            coefficients,
+            velocity_coefficient_derivatives,
+            configuration_coefficient_derivatives,
+            mixed_coefficient_derivatives,
+            powers[1:],
+            velocity_power_derivatives[1:],
+            configuration_power_derivatives[1:],
+            mixed_power_derivatives[1:],
+            strict=True,
+        ):
+            result = structured_sum(
+                result,
+                (
+                    coefficient_mixed * power[0]
+                    + coefficient_velocity * power_configuration[0]
+                    + coefficient_configuration * power_velocity[0]
+                    + coefficient * power_mixed[0],
+                    coefficient_mixed * power[1]
+                    + coefficient_velocity * power_configuration[1]
+                    + coefficient_configuration * power_velocity[1]
+                    + coefficient * power_mixed[1],
+                ),
+            )
+        return result
+
+    def assemble(value: tuple[Array, Array]) -> Array:
+        diagonal, lower = value
+        return jnp.block([[diagonal, zero], [lower, diagonal]])
+
+    jacobian = evaluate(powers, coefficients)
+    velocity_jacobian_direction = evaluate_direction(
+        velocity_power_derivatives,
+        velocity_coefficient_derivatives,
+    )
+    configuration_jacobian_direction = evaluate_direction(
+        configuration_power_derivatives,
+        configuration_coefficient_derivatives,
+    )
+    rate_jacobian_direction = evaluate_direction(
+        rate_power_derivatives,
+        rate_coefficient_derivatives,
+    )
+    mixed_jacobian_direction = evaluate_mixed()
+    adjoint = assemble(
+        evaluate(
+            powers,
+            _adjoint_exponential_coefficients(angle_sq, adjoint_eps),
+        )
+    )
+    return (
+        _adjoint_inverse_from_adjoint(adjoint),
+        assemble(jacobian),
+        assemble(velocity_jacobian_direction),
+        assemble(configuration_jacobian_direction),
+        assemble(mixed_jacobian_direction),
+        assemble(rate_jacobian_direction),
+    )
 
 
 def _exp_with_left_jacobian_and_directional_derivative(
