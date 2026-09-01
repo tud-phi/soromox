@@ -1,5 +1,7 @@
 import jax
+import jax.numpy as jnp
 import pytest
+from numpy.testing import assert_allclose
 
 from tools.benchmarks._benchmark_common import (
     SystemConfig,
@@ -38,6 +40,18 @@ def test_benchmark_registry_builds_current_system_api(system_name: str) -> None:
     assert context["u"].shape == (system.num_actuators,)
     assert context["tau_ext"].shape == context["q"].shape
     assert context["y"].shape == (2 * context["q"].shape[0],)
+
+
+def test_spatial_pcs_benchmark_uses_scalar_last_identity_base_pose() -> None:
+    config = get_system_registry()["pcs"]
+
+    system = build_system_with_gauss_points(config, size=1, gauss_points=None)
+
+    assert_allclose(
+        system.fixed_base_pose,
+        jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
+    )
+    assert_allclose(system.base_transform, jnp.eye(4), atol=1e-12)
 
 
 def test_gvs_basis_order_registry_builds_current_system_api() -> None:

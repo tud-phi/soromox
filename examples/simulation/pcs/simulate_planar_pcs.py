@@ -45,14 +45,16 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         gravity=jnp.array([0.0, 9.81]),  # gravity vector [m/s^2] UP!
     )
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PlanarPCS(params=params)
+    robot = PlanarPCS(
+        params=params,
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
+    )
 
     J, Jd = robot.jacobian_and_time_derivative(
         q=jnp.zeros((3 * num_segments,)),

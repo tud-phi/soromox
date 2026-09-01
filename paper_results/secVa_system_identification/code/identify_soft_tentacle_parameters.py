@@ -515,7 +515,7 @@ if __name__ == "__main__":
         start_segment_index=0,
         end_segment_index=(0, 0),
     )
-    p0 = jnp.array([jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0, 0.0])
+    p0 = jnp.array([0.0, jnp.sqrt(0.5), 0.0, jnp.sqrt(0.5), 0.0, 0.0, 0.0])
 
     segments = [
         GVSSegment(

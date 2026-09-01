@@ -35,7 +35,6 @@ if __name__ == "__main__":
             )
             for index in range(num_segments)
         ],
-        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         gravity=0 * jnp.array([0.0, 9.81]),
     )
     tendon_offsets = 2e-2 * jnp.array([[1.0, -1.0]]).repeat(num_segments, axis=0)
@@ -62,6 +61,7 @@ if __name__ == "__main__":
     # ======================================================
     robot = PlanarPCS(
         params=body,
+        base_pose=jnp.array([jnp.pi / 2, 0.0, 0.0]),
         structure=PlanarPCSStructure(strain_selector=strain_selector),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )

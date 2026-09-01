@@ -311,7 +311,6 @@ def build_simulation_setup() -> SimulationSetup:
             )
             for index in range(num_segments)
         ],
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, 9.81]),
     )
 
@@ -330,6 +329,7 @@ def build_simulation_setup() -> SimulationSetup:
 
     robot = PCS(
         params=body_params,
+        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 
@@ -358,7 +358,7 @@ def build_simulation_setup() -> SimulationSetup:
         "tendon_mz": tendon_mz,
         "tendon_idx_seg_att": tendon_idx_seg_att,
         "strain_selector": strain_selector,
-        "base_pose": body_params.base_pose,
+        "base_pose": robot.fixed_base_pose,
         "gravity": body_params.gravity,
         "young_modulus": 20e3 * jnp.ones((num_segments,)),
         "shear_modulus": 20e3 * jnp.ones((num_segments,)),

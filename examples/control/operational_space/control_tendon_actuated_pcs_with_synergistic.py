@@ -69,7 +69,6 @@ def main(
             )
             for index in range(num_segments)
         ],
-        base_pose=p0,
         gravity=jnp.array([0.0, 0.0, 9.81]),
     )
 
@@ -94,6 +93,7 @@ def main(
     # Initialize robot
     robot = PCS(
         params=body_params,
+        base_pose=p0,
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
     num_dofs = robot.num_active_strains

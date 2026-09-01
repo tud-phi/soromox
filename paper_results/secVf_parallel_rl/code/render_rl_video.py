@@ -262,11 +262,11 @@ def build_rl_robot(
             )
             for index in range(num_segments)
         ],
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, 9.81]),
     )
     return PCS(
         params=body_params,
+        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
         actuators=ThreadlikeActuator.tendons(active_tendon_routing),
     )
 

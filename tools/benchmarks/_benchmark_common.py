@@ -282,7 +282,7 @@ def _pcs_factory(
             )
             for _ in range(num_segments)
         ],
-        base_pose=jnp.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0]),
         gravity=jnp.array([0.0, 0.0, -9.81]),
         structure=PCSStructure(num_gauss_points=gauss_points),
         backend=backend,

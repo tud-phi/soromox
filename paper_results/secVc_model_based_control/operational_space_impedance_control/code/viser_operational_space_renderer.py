@@ -730,7 +730,8 @@ def _poses_to_quaternions(osd: Any, x_full: np.ndarray) -> np.ndarray:
             raise ValueError(
                 f"Unsupported rotation representation: {osd.rotation_representation}"
             )
-        quaternions.append(_normalize(np.asarray(quaternion, dtype=np.float64)))
+        xyzw = _normalize(np.asarray(quaternion, dtype=np.float64))
+        quaternions.append(xyzw[[3, 0, 1, 2]])
     return np.asarray(quaternions, dtype=np.float64)
 
 

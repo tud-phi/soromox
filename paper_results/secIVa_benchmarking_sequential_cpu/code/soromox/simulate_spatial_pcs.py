@@ -51,16 +51,18 @@ if __name__ == "__main__":
     ]
     params = PCS.params_from_links(
         links,
-        base_pose=jnp.array(
-            [0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]
-        ),  # Initial position and orientation
         gravity=jnp.array([-9.81 * 1, -9.81 * 1, 9.81 * 0]),  # Gravity vector [m/s^2]
     )
 
     # ======================================================
     # Robot initialization
     # ======================================================
-    robot = PCS(params=params)
+    robot = PCS(
+        params=params,
+        base_pose=jnp.array(
+            [0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]
+        ),  # Initial position and orientation
+    )
 
     # =====================================================
     # Simulation upon time

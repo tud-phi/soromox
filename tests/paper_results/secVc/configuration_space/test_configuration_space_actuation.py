@@ -106,6 +106,7 @@ def test_regulation_tracking_robot_is_horizontal_and_gravity_loaded():
             configuration_space_comparison_simulation.HORIZONTAL_BASE_POSE,
         ),
     )
+    assert_allclose(robot.base_transform, jnp.eye(4), atol=1e-12)
     assert abs(gravity_force[1]) > 1e-3
     assert_allclose(gravity_force[2], 0.0, atol=1e-12)
 

@@ -92,7 +92,7 @@ if __name__ == "__main__":
         segments,
         gravity=jnp.array([-9.81, -9.81, -9.81 * 0]),
         max_dof=6,
-        base_pose=jnp.array([0.5, 0.5, -0.5, 0.5, 0.0, 0.0, 0.0]),
+        base_pose=jnp.array([0.5, -0.5, 0.5, 0.5, 0.0, 0.0, 0.0]),
     )
 
     print(f"System initialized with {robot.num_segments} segments")

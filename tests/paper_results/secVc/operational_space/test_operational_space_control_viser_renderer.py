@@ -97,6 +97,41 @@ def test_transformed_disk_segments_follow_desired_tangent_axes():
     assert np.allclose(np.abs(directions @ rotation[:, 1:]), np.eye(2), atol=1e-7)
 
 
+@pytest.mark.parametrize(
+    ("representation", "orientation"),
+    [
+        (
+            renderer.RotationRepresentation.QUATERNION,
+            [0.0, 0.0, 2**-0.5, 2**-0.5],
+        ),
+        (
+            renderer.RotationRepresentation.ROTATION_VECTOR,
+            [0.0, 0.0, np.pi / 2.0],
+        ),
+    ],
+)
+def test_pose_quaternions_are_reordered_for_viser_wxyz(representation, orientation):
+    osd = type(
+        "OperationalSpaceDescription",
+        (),
+        {
+            "is_planar": False,
+            "n_orientation_dim": len(orientation),
+            "rotation_representation": representation,
+        },
+    )()
+    pose = np.asarray([*orientation, 0.0, 0.0, 0.0])[None, :]
+
+    wxyz = renderer._poses_to_quaternions(osd, pose)
+
+    assert np.allclose(wxyz, [[2**-0.5, 0.0, 0.0, 2**-0.5]])
+    assert np.allclose(
+        renderer._quaternion_to_rotation_matrix(wxyz[0]),
+        [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+        atol=1e-12,
+    )
+
+
 def test_reference_beads_use_one_period_and_near_uniform_spacing():
     t = np.linspace(0.0, 8.0, 801)
     phase = 2.0 * np.pi * t / 4.0
