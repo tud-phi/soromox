@@ -1,19 +1,31 @@
-"""Shared gain-optimization loop for the Section Vd study.
+"""Shared multi-start gain-optimization loop for the Section Vd study.
 
-Both Section Vd generators run the same Optax loop over closed-loop rollouts,
-so it lives here and each generator supplies only its own loss and optimizer.
+Both Section Vd generators run the same Optax loop over closed-loop rollouts, so
+it lives here and each generator supplies only its own loss and optimizer.
+
+The published Section Vd results optimized six gain initializations at once
+(issue #154). That is reproduced here as a ``vmap`` over both the optimization
+variables and the optimizer state: ``B`` independent optimizers stepping in
+lockstep, with gradients never averaged across starts. This is *multi-start*, not
+multiple shooting -- each start is one forward integration from one initial
+condition, with no segment boundaries and no continuity constraints. A
+single-start run is the ``B = 1`` special case of the same code path.
 
 The loop records the parameters each loss was measured at, not the ones the
-subsequent update produced, so ``argmin`` over the losses indexes the matching
-gains. No unused update is computed after the final requested evaluation.
+subsequent update produced, so ``argmin`` over a start's losses indexes its
+matching gains (issue #129). No unused update is computed after the final
+requested evaluation.
 
-A candidate is stored only when its loss, trajectory, gradient and parameters
-are all finite. The first non-finite candidate stops the loop without being
-stored, which keeps the saved history and the best-candidate selection clean.
+A start whose evaluation, gradient or update turns non-finite is **frozen** at
+its last good iterate rather than aborting the whole run, and
+:attr:`OptimizationHistory.finite_mask` records exactly which entries are real.
 Checking the gradient matters as much as the trajectory: a forward rollout can
-stay healthy while the reverse pass produces ``NaN``. If only an optimizer
-update is non-finite, its finite input iterate remains available as the best
-fallback and the loop stops before adopting the invalid next state.
+stay healthy while the reverse pass produces ``NaN``.
+
+**Per-iteration trajectory histories are deliberately not kept.** At 100
+iterations and six starts, storing every rollout would run to gigabytes, so the
+loop retains each start's initial rollout and its own best rollout only. The loss
+and gain histories remain complete.
 """
 
 from __future__ import annotations
@@ -27,35 +39,101 @@ import jax
 from jax import Array
 from jax import numpy as jnp
 
-from soromox.utils.diagnostics import format_nonfinite_report, nonfinite_leaves
-
 __all__ = ["OptimizationHistory", "run_gain_optimization"]
+
+
+def _tree_batched_finite(tree: Any, batch_size: int) -> Array:
+    """Return a ``(B,)`` mask of which starts are finite across a whole pytree.
+
+    Leaves carrying a leading axis of width ``batch_size`` are reduced per start.
+    Any other leaf is shared, so its finiteness applies to every start.
+    """
+    flags = jnp.ones((batch_size,), dtype=bool)
+    for leaf in jax.tree_util.tree_leaves(tree):
+        value = jnp.asarray(leaf)
+        if value.ndim >= 1 and value.shape[0] == batch_size:
+            per_start = jnp.all(jnp.isfinite(value.reshape(batch_size, -1)), axis=1)
+        else:
+            per_start = jnp.broadcast_to(jnp.all(jnp.isfinite(value)), (batch_size,))
+        flags = flags & per_start
+    return flags
+
+
+def _tree_global_norm(tree: Any, batch_size: int) -> Array:
+    """Return the per-start global L2 norm over a batched pytree.
+
+    Reported alongside the loss so optimizer learning rates and clipping
+    thresholds can be tuned against something observable, rather than inferred
+    from how the loss moves (issue #154 follow-up, item 6).
+    """
+    total = jnp.zeros((batch_size,))
+    for leaf in jax.tree_util.tree_leaves(tree):
+        value = jnp.asarray(leaf)
+        if value.ndim >= 1 and value.shape[0] == batch_size:
+            total = total + jnp.sum(
+                jnp.square(value.reshape(batch_size, -1)).astype(jnp.float64), axis=1
+            )
+    return jnp.sqrt(total)
+
+
+def _tree_select(new_tree: Any, old_tree: Any, take_new: Array) -> Any:
+    """Per-start choice between two like-shaped batched pytrees.
+
+    Args:
+        new_tree: Candidate values.
+        old_tree: Values to retain where ``take_new`` is ``False``.
+        take_new: Boolean mask of shape ``(B,)``.
+
+    Returns:
+        A pytree with each start taken from one side or the other.
+    """
+
+    def pick(new: Any, old: Any) -> Array:
+        new_value, old_value = jnp.asarray(new), jnp.asarray(old)
+        mask = take_new.reshape((-1,) + (1,) * (new_value.ndim - 1))
+        return jnp.where(mask, new_value, old_value)
+
+    return jax.tree_util.tree_map(pick, new_tree, old_tree)
 
 
 @dataclass
 class OptimizationHistory:
-    """Per-iteration record of a gain-optimization run.
+    """Per-iteration record of a multi-start gain-optimization run.
 
     Every list is indexed by completed iteration and all lists have the same
     length. Entry ``k`` of :attr:`opt_vars` holds the parameters that produced
-    entry ``k`` of :attr:`loss` and :attr:`aux`, so ``argmin(loss)`` indexes the
-    parameters that actually attained the best loss.
+    entry ``k`` of :attr:`loss`, so a start's ``argmin`` over its own losses
+    indexes the parameters that attained them.
 
     Attributes:
-        loss: Scalar loss measured at each recorded iterate.
-        opt_vars: Optimization variables the corresponding loss was measured at.
-        aux: Auxiliary rollout outputs returned alongside each loss.
+        loss: Per-iteration losses, each of shape ``(B,)``. Entries for a frozen
+            start repeat its last finite value and are masked out by
+            :attr:`finite_mask`.
+        opt_vars: Batched optimization variables each loss was measured at.
+        finite_mask: Per-iteration validity, each of shape ``(B,)``.
+        grad_norm: Per-start global gradient L2 norm, each of shape ``(B,)``.
+        update_norm: Per-start global update L2 norm, each of shape ``(B,)``.
+            Zero on the final iteration, where no update is computed.
         time_iter: Wall-clock duration of each iteration in seconds. The first
             entry includes tracing and compilation.
-        stopped_early: Whether the loop halted before ``num_iters`` because a
-            candidate was non-finite.
+        init_aux: Auxiliary rollout outputs at iteration zero, batched over ``B``.
+        best_aux: Each start's own lowest-loss rollout, batched over ``B``.
+        best_iteration: Each start's own lowest-loss iteration, shape ``(B,)``.
+        batch_size: Number of independently optimized starts.
+        stopped_early: Whether the loop halted before ``num_iters``.
         stop_reason: Human-readable description of the early stop, or ``None``.
     """
 
     loss: list[Array] = field(default_factory=list)
     opt_vars: list[Any] = field(default_factory=list)
-    aux: list[dict[str, Array]] = field(default_factory=list)
+    finite_mask: list[Array] = field(default_factory=list)
+    grad_norm: list[Array] = field(default_factory=list)
+    update_norm: list[Array] = field(default_factory=list)
     time_iter: list[float] = field(default_factory=list)
+    init_aux: dict[str, Array] | None = None
+    best_aux: dict[str, Array] | None = None
+    best_iteration: Array | None = None
+    batch_size: int = 1
     stopped_early: bool = False
     stop_reason: str | None = None
 
@@ -78,32 +156,45 @@ class OptimizationHistory:
                 f"Stop reason: {self.stop_reason}"
             )
 
-    def best_index(self) -> int:
-        """Return the index of the lowest recorded loss.
+    def loss_history(self) -> Array:
+        """Return all losses as ``(iterations, B)``."""
+        self._require_recorded("stack")
+        return jnp.stack(self.loss, axis=0)
 
-        Returns:
-            Index into every history list.
+    def mask_history(self) -> Array:
+        """Return the validity mask as ``(iterations, B)``."""
+        self._require_recorded("stack")
+        return jnp.stack(self.finite_mask, axis=0)
 
-        Raises:
-            RuntimeError: If no finite iterate was recorded.
+    def grad_norm_history(self) -> Array:
+        """Return the gradient norms as ``(iterations, B)``."""
+        self._require_recorded("stack")
+        return jnp.stack(self.grad_norm, axis=0)
+
+    def update_norm_history(self) -> Array:
+        """Return the update norms as ``(iterations, B)``."""
+        self._require_recorded("stack")
+        return jnp.stack(self.update_norm, axis=0)
+
+    def masked_loss_history(self) -> Array:
+        """Return the losses with frozen entries replaced by ``inf``."""
+        return jnp.where(self.mask_history(), self.loss_history(), jnp.inf)
+
+    def dead_starts(self) -> list[int]:
+        """Return starts that never produced a single finite iterate."""
+        self._require_recorded("inspect")
+        alive = jnp.any(self.mask_history(), axis=0)
+        return [index for index, ok in enumerate(alive.tolist()) if not ok]
+
+    def best_batch(self) -> int:
+        """Return the start attaining the lowest loss over all iterations.
+
+        This is the single definition of "best start". Issue #128 arose from the
+        plotter deriving the index from one method's losses and reusing it for
+        the other, so callers must apply this to each archive separately.
         """
         self._require_recorded("select")
-        return int(jnp.argmin(jnp.asarray(self.loss)))
-
-    def stacked_aux(self, key: str) -> Array:
-        """Stack one auxiliary field across iterations.
-
-        Args:
-            key: Auxiliary dictionary key, e.g. ``"q_ts"``.
-
-        Returns:
-            Array with a leading iteration axis.
-
-        Raises:
-            RuntimeError: If no finite iterate was recorded.
-        """
-        self._require_recorded("stack")
-        return jnp.stack([entry[key] for entry in self.aux], axis=0)
+        return int(jnp.argmin(jnp.min(self.masked_loss_history(), axis=0)))
 
 
 def run_gain_optimization(
@@ -111,35 +202,46 @@ def run_gain_optimization(
     optimizer,
     opt_vars: Any,
     num_iters: int,
+    batch_size: int = 1,
     progress_label: str = "Optimization",
 ) -> OptimizationHistory:
-    """Run the Optax gain-optimization loop with consistent history pairing.
+    """Run the batched Optax gain-optimization loop.
 
     Args:
-        gradient_fn: Callable mapping the optimization variables to
+        gradient_fn: Callable mapping **one start's** optimization variables to
             ``((loss, aux), gradient)``, typically
-            ``jit(value_and_grad(evaluate_closed_loop_system, has_aux=True))``
-            with the controller already bound.
-        optimizer: Initialized Optax optimizer (an object exposing ``init`` and
-            ``update``).
-        opt_vars: Initial optimization variables as a pytree.
+            ``value_and_grad(evaluate_closed_loop_system, has_aux=True)`` with the
+            controller already bound. It is vmapped over the batch axis here, so
+            it must not be pre-vmapped by the caller.
+        optimizer: Initialized Optax optimizer, vmapped over the batch here.
+        opt_vars: Initial optimization variables as a pytree whose leaves carry a
+            leading batch axis of width ``batch_size``.
         num_iters: Number of iterations to attempt. Must be at least one.
+        batch_size: Number of independently optimized starts ``B``.
         progress_label: Prefix used in the progress log line.
 
     Returns:
-        :class:`OptimizationHistory` whose entries are pairwise consistent and
-        contain only finite values.
+        :class:`OptimizationHistory` whose entries are pairwise consistent.
 
     Raises:
-        ValueError: If ``num_iters`` is smaller than one.
+        ValueError: If ``num_iters`` or ``batch_size`` is smaller than one.
     """
     if num_iters < 1:
         raise ValueError("num_iters must be at least 1")
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
 
     import optax  # Imported lazily; only the paper_results extra provides it.
 
-    opt_state = optimizer.init(opt_vars)
-    history = OptimizationHistory()
+    batched_gradient_fn = jax.jit(jax.vmap(gradient_fn))
+    opt_state = jax.vmap(optimizer.init)(opt_vars)
+    history = OptimizationHistory(batch_size=batch_size)
+
+    alive = jnp.ones((batch_size,), dtype=bool)
+    best_loss = jnp.full((batch_size,), jnp.inf)
+    best_iteration = jnp.zeros((batch_size,), dtype=jnp.int64)
+    best_aux: dict[str, Array] | None = None
+    last_loss = jnp.zeros((batch_size,))
 
     for iteration in range(num_iters):
         iter_start = time.time()
@@ -147,8 +249,8 @@ def run_gain_optimization(
         # Keep the parameters the loss belongs to before the update moves them.
         opt_vars_evaluated = opt_vars
         try:
-            (loss, aux), grad = gradient_fn(opt_vars)
-            jax.block_until_ready((loss, aux, grad, opt_vars_evaluated))
+            (loss, aux), grad = batched_gradient_fn(opt_vars)
+            jax.block_until_ready((loss, aux, grad))
         except KeyboardInterrupt:
             history.stopped_early = True
             history.stop_reason = (
@@ -158,64 +260,76 @@ def run_gain_optimization(
             print(f"\n[WARNING] {history.stop_reason}.")
             break
 
-        # Reject an invalid evaluation without poisoning the history.
-        candidate = {
-            "loss": loss,
-            "aux": aux,
-            "gradient": grad,
-            "opt_vars": opt_vars_evaluated,
-        }
-        report = nonfinite_leaves(candidate)
-        if report:
-            history.stopped_early = True
-            history.stop_reason = format_nonfinite_report(
-                f"iteration {iteration}", report
-            )
-            print(f"\n[WARNING] {history.stop_reason}. Stopping without recording.")
-            break
+        # Freeze, per start, on any non-finite evaluation. Checking the gradient
+        # matters as much as the trajectory: the reverse pass can produce NaN
+        # from a perfectly healthy rollout.
+        evaluation_ok = _tree_batched_finite(
+            {"loss": loss, "aux": aux, "gradient": grad}, batch_size
+        )
+        alive = alive & evaluation_ok
+
+        # A frozen start contributes its last finite loss, which the mask hides.
+        loss = jnp.where(alive, loss, last_loss)
+        last_loss = loss
+
+        if iteration == 0:
+            history.init_aux = aux
+            best_aux = aux
+
+        improved = alive & (loss < best_loss)
+        best_loss = jnp.where(improved, loss, best_loss)
+        best_iteration = jnp.where(improved, iteration, best_iteration)
+        best_aux = _tree_select(aux, best_aux, improved)
+
+        iteration_grad_norm = _tree_global_norm(grad, batch_size)
+        iteration_update_norm = jnp.zeros((batch_size,))
 
         # Do not compute an update after the final requested evaluation. For
-        # earlier iterations, validate the entire next optimizer state before
-        # adopting it. A failed update must not discard this finite evaluation.
-        next_report = []
-        if iteration < num_iters - 1:
-            updates, opt_state_next = optimizer.update(
-                grad, opt_state, params=opt_vars_evaluated
+        # earlier iterations, only starts that are still alive and whose entire
+        # next state is finite actually move.
+        if iteration < num_iters - 1 and bool(jnp.any(alive)):
+            updates, opt_state_next = jax.vmap(optimizer.update)(
+                grad, opt_state, opt_vars_evaluated
             )
             opt_vars_next = optax.apply_updates(opt_vars_evaluated, updates)
             jax.block_until_ready((updates, opt_state_next, opt_vars_next))
-            next_report = nonfinite_leaves(
+            update_ok = _tree_batched_finite(
                 {
                     "updates": updates,
                     "opt_state_next": opt_state_next,
                     "opt_vars_next": opt_vars_next,
-                }
+                },
+                batch_size,
             )
-            if not next_report:
-                opt_state = opt_state_next
-                opt_vars = opt_vars_next
-
-        iter_duration = time.time() - iter_start
+            iteration_update_norm = _tree_global_norm(updates, batch_size)
+            advancing = alive & update_ok
+            opt_state = _tree_select(opt_state_next, opt_state, advancing)
+            opt_vars = _tree_select(opt_vars_next, opt_vars_evaluated, advancing)
+            # A start whose update failed keeps its recorded finite evaluation
+            # but takes no further steps.
+            alive = advancing
 
         history.loss.append(loss)
         history.opt_vars.append(opt_vars_evaluated)
-        history.aux.append(aux)
-        history.time_iter.append(iter_duration)
+        history.finite_mask.append(evaluation_ok & jnp.isfinite(loss))
+        history.grad_norm.append(iteration_grad_norm)
+        history.update_norm.append(iteration_update_norm)
+        history.time_iter.append(time.time() - iter_start)
 
-        if next_report:
+        frozen = int(batch_size - int(jnp.sum(alive)))
+        if not bool(jnp.any(alive)) and iteration < num_iters - 1:
             history.stopped_early = True
-            history.stop_reason = format_nonfinite_report(
-                f"iteration {iteration} next optimizer state", next_report
+            history.stop_reason = (
+                f"all {batch_size} starts became non-finite by iteration "
+                f"{iteration}; recorded {len(history)} iterations"
             )
-            print(
-                f"\n[WARNING] {history.stop_reason}. "
-                "Stopping after recording the finite evaluation."
-            )
+            print(f"\n[WARNING] {history.stop_reason}.")
             break
 
         if iteration == 0:
             print(
-                f"\n[INFO] Compilation + first execution time = {iter_duration:.2f} s"
+                f"\n[INFO] Compilation + first execution time = "
+                f"{history.time_iter[0]:.2f} s"
             )
             continue
 
@@ -225,15 +339,17 @@ def run_gain_optimization(
         print(
             f"{progress_label}: {100 * (iteration + 1) / num_iters:3.1f} %  |  "
             f"iteration {iteration + 1:>4d} of {num_iters:<4d}  |  "
-            f"iter time = {iter_duration:>.2f} s  |  "
+            f"iter time = {history.time_iter[-1]:>.2f} s  |  "
+            f"frozen {frozen}/{batch_size}  |  "
             f"ETA = {eta.tm_mday:02d}/{eta.tm_mon:02d}/{eta.tm_year} "
             f"{eta.tm_hour:02d}:{eta.tm_min:02d}",
             end="\r",
         )
 
+    history.best_aux = best_aux
+    history.best_iteration = best_iteration
     print(
         f"\n{progress_label}: recorded {len(history)} of {num_iters} iterations"
         + ("  (stopped early)" if history.stopped_early else "")
     )
-
     return history
