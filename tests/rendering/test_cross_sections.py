@@ -26,8 +26,34 @@ def test_sweep_layout_duplicates_link_boundaries_without_cross_link_edges():
 
 
 def test_sweep_layout_requires_two_stations_per_link():
-    with pytest.raises(ValueError, match="at least two backbone points per link"):
+    with pytest.raises(
+        ValueError, match="at least two backbone points per positive-length link"
+    ):
         cross_section_sweep_layout([0.5, 0.5], num_points=3)
+
+
+def test_sweep_layout_skips_zero_length_articulated_chain_entries():
+    layout = cross_section_sweep_layout([0.0, 0.6, 0.0, 0.4, 0.0], num_points=8)
+
+    assert_array_equal(layout.segment_starts, [0, 0, 4, 4, 8])
+    assert_array_equal(layout.segment_ends, [0, 4, 4, 8, 8])
+    assert layout.abscissae[0] > 0.0
+    assert layout.abscissae[3] < 0.6 < layout.abscissae[4]
+    assert layout.abscissae[-1] == pytest.approx(1.0)
+    assert layout.edge_caps() == {
+        0: (False, False),
+        1: (False, False),
+        2: (False, True),
+        4: (True, False),
+        5: (False, False),
+        6: (False, True),
+    }
+
+
+@pytest.mark.parametrize("lengths", [[0.0], [0.0, 0.0], [-0.1, 0.2]])
+def test_sweep_layout_rejects_invalid_segment_lengths(lengths):
+    with pytest.raises(ValueError, match="segment_lengths"):
+        cross_section_sweep_layout(lengths, num_points=4)
 
 
 @pytest.mark.parametrize(

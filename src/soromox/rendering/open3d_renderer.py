@@ -824,6 +824,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
         self.backbone_style = backbone_style
         self._backbone_mode = self._resolve_backbone_mode(backbone_style)
         self._sweep_layout = None
+        self._swept_edge_caps: dict[int, tuple[bool, bool]] = {}
         if self._backbone_mode == "swept":
             self._sweep_layout = cross_section_sweep_layout(
                 np.asarray(self.robot.segment_length, dtype=np.float64),
@@ -834,6 +835,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                 self._sweep_layout.segment_starts,
                 self._sweep_layout.segment_ends,
             )
+            self._swept_edge_caps = self._sweep_layout.edge_caps()
         self.recompute_normals = bool(recompute_normals)
 
         self.sphere_resolution = sphere_resolution
@@ -1331,8 +1333,8 @@ class Open3DRenderer(BaseSoftRobotRenderer):
                             raw_color_rgb,
                             self.cross_section_resolution,
                             apply_color=False,
-                            cap_start=s > 0 and p == c0,
-                            cap_end=p == c1 - 2,
+                            cap_start=self._swept_edge_caps[p][0],
+                            cap_end=self._swept_edge_caps[p][1],
                         )
                         scene.add_geometry(
                             f"body_{robot_idx}_{s}_{p}",
@@ -1873,8 +1875,7 @@ class Open3DRenderer(BaseSoftRobotRenderer):
             seg_color = self._blend_with_background(raw_color_rgba)
             if self._backbone_mode == "swept" and c1 - c0 >= 1:
                 for p in range(c0, c1 - 1):
-                    cap_start = s > 0 and p == c0
-                    cap_end = p == c1 - 2
+                    cap_start, cap_end = self._swept_edge_caps[p]
                     mesh = _make_swept_cross_section_segment(
                         curve0[p],
                         curve0[p + 1],

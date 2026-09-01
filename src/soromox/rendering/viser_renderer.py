@@ -376,17 +376,7 @@ class ViserRenderer(BaseSoftRobotRenderer):
                 self._sweep_layout.segment_starts,
                 self._sweep_layout.segment_ends,
             )
-            for segment_index, (start, end) in enumerate(
-                zip(
-                    self._sweep_layout.segment_starts,
-                    self._sweep_layout.segment_ends,
-                )
-            ):
-                for edge_index in range(int(start), int(end) - 1):
-                    self._swept_edge_caps[edge_index] = (
-                        segment_index > 0 and edge_index == int(start),
-                        edge_index == int(end) - 2,
-                    )
+            self._swept_edge_caps = self._sweep_layout.edge_caps()
         self._sphere_resolution = sphere_resolution
         self._cross_section_resolution = int(cross_section_resolution)
         self._grid_spacing = grid_spacing

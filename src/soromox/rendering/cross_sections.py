@@ -122,48 +122,83 @@ class CrossSectionSweepLayout:
     segment_starts: NDArray[np.int64]
     segment_ends: NDArray[np.int64]
 
+    def edge_caps(self) -> dict[int, tuple[bool, bool]]:
+        """Return start- and end-cap flags for every link-local surface edge.
+
+        Returns:
+            Mapping from surface-edge indices to ``(cap_start, cap_end)``.
+            Zero-length links have empty station ranges and therefore contribute
+            no edges. The first positive-length link is open at its base; every
+            later positive-length link is capped at both sides of the preceding
+            interface.
+        """
+        caps: dict[int, tuple[bool, bool]] = {}
+        has_previous_surface = False
+        for start, end in zip(self.segment_starts, self.segment_ends):
+            start_index = int(start)
+            end_index = int(end)
+            if end_index - start_index < 2:
+                continue
+            for edge_index in range(start_index, end_index - 1):
+                caps[edge_index] = (
+                    has_previous_surface and edge_index == start_index,
+                    edge_index == end_index - 2,
+                )
+            has_previous_surface = True
+        return caps
+
 
 def cross_section_sweep_layout(
     segment_lengths: Iterable[float], num_points: int
 ) -> CrossSectionSweepLayout:
     """Distribute swept-surface stations across links with explicit interfaces.
 
-    ``num_points`` remains the total number of stations. Each link receives at
-    least a base and tip station, so at least twice as many points as links are
-    required. Internal boundary stations are moved by one float32 ULP into their
-    owning link. The offset survives JAX's default float32 conversion while
-    remaining negligible at rendering scale.
+    ``num_points`` remains the total number of stations. Each positive-length
+    link receives at least a base and tip station; zero-length articulated-chain
+    entries receive an empty station range. Internal boundary stations are moved
+    by one float32 ULP into their owning link. The offset survives JAX's default
+    float32 conversion while remaining negligible at rendering scale.
     """
     lengths = np.asarray(segment_lengths, dtype=np.float64).reshape(-1)
     if lengths.size == 0:
         raise ValueError("segment_lengths must contain at least one link")
-    if not np.all(np.isfinite(lengths)) or np.any(lengths <= 0.0):
-        raise ValueError("segment_lengths must be finite and strictly positive")
+    if not np.all(np.isfinite(lengths)) or np.any(lengths < 0.0):
+        raise ValueError("segment_lengths must be finite and nonnegative")
+
+    positive_indices = np.flatnonzero(lengths > 0.0)
+    if positive_indices.size == 0:
+        raise ValueError("segment_lengths must contain at least one positive length")
 
     point_count = int(num_points)
-    minimum_points = 2 * int(lengths.size)
+    minimum_points = 2 * int(positive_indices.size)
     if point_count < minimum_points:
         raise ValueError(
-            "swept rendering requires at least two backbone points per link; "
-            f"got num_points={point_count} for {lengths.size} links "
+            "swept rendering requires at least two backbone points per "
+            "positive-length link; "
+            f"got num_points={point_count} for {positive_indices.size} "
+            "positive-length links "
             f"(minimum {minimum_points})"
         )
 
-    counts = np.full(lengths.size, 2, dtype=np.int64)
+    counts = np.zeros(lengths.size, dtype=np.int64)
+    counts[positive_indices] = 2
     remaining = point_count - minimum_points
     if remaining:
-        raw_extra = remaining * lengths / lengths.sum()
+        positive_lengths = lengths[positive_indices]
+        raw_extra = remaining * positive_lengths / positive_lengths.sum()
         extra = np.floor(raw_extra).astype(np.int64)
         remainder = remaining - int(extra.sum())
         if remainder:
             fractional = raw_extra - extra
             order = np.argsort(-fractional, kind="stable")
             extra[order[:remainder]] += 1
-        counts += extra
+        counts[positive_indices] += extra
 
     boundaries = np.concatenate(([0.0], np.cumsum(lengths)))
     station_parts: list[NDArray[np.float64]] = []
     for segment_index, count in enumerate(counts):
+        if count == 0:
+            continue
         start = boundaries[segment_index]
         end = boundaries[segment_index + 1]
         stations = np.linspace(start, end, int(count), dtype=np.float64)
@@ -171,7 +206,7 @@ def cross_section_sweep_layout(
             stations[0] = float(
                 np.nextafter(np.float32(start), np.float32(end), dtype=np.float32)
             )
-        if segment_index < lengths.size - 1:
+        if segment_index < positive_indices[-1]:
             stations[-1] = float(
                 np.nextafter(np.float32(end), np.float32(start), dtype=np.float32)
             )
