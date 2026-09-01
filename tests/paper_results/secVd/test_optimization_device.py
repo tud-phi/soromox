@@ -18,6 +18,7 @@ if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
 from secvd_optimization import (  # noqa: E402
+    batch_size_from_argv,
     configure_optimization_device,
     jax_platforms_for,
     prepare_result_dir,
@@ -27,9 +28,9 @@ from secvd_optimization import (  # noqa: E402
 
 @pytest.mark.parametrize(
     ("batch_size", "expected"),
-    [(1, "cpu"), (2, "gpu"), (6, "gpu")],
+    [(1, "cpu"), (2, "cpu"), (6, "cpu")],
 )
-def test_auto_device_depends_on_optimization_batch_size(batch_size, expected):
+def test_auto_device_is_cpu_at_every_batch_size(batch_size, expected):
     assert (
         resolve_optimization_device(requested="auto", batch_size=batch_size) == expected
     )
@@ -82,16 +83,19 @@ def test_unknown_device_has_no_platform_mapping():
 
 
 @pytest.mark.parametrize(
-    ("argv", "expected"),
+    ("argv", "device", "platforms"),
     [
-        ([], "cuda,cpu"),
-        (["--device", "gpu"], "cuda"),
+        ([], "cpu", "cpu"),
+        (["--device", "gpu"], "gpu", "cuda"),
     ],
 )
-def test_only_an_automatic_gpu_choice_falls_back(monkeypatch, argv, expected):
+def test_the_selected_device_maps_to_a_platform_jax_accepts(
+    monkeypatch, argv, device, platforms
+):
+    """An explicit GPU request must be strict, never silently landing on CPU."""
     monkeypatch.delenv("JAX_PLATFORMS", raising=False)
-    assert configure_optimization_device(batch_size=6, argv=argv) == "gpu"
-    assert os.environ["JAX_PLATFORMS"] == expected
+    assert configure_optimization_device(batch_size=6, argv=argv) == device
+    assert os.environ["JAX_PLATFORMS"] == platforms
 
 
 def _prepare_args(tmp_path, *, requested, resolved, batch_size):
@@ -116,6 +120,8 @@ def _fake_jax(actual_device):
 def test_automatic_gpu_choice_warns_when_it_falls_back_to_cpu(
     monkeypatch, tmp_path, capsys
 ):
+    """Defensive: auto no longer picks the GPU, but the fallback must still warn
+    rather than fail if that rule is ever changed back."""
     monkeypatch.setitem(sys.modules, "jax", _fake_jax("cpu"))
     args = _prepare_args(tmp_path, requested="auto", resolved="gpu", batch_size=6)
 
@@ -156,3 +162,29 @@ def test_cli_module_does_not_import_jax():
         [sys.executable, "-c", probe], cwd=CODE_DIR, capture_output=True, text=True
     )
     assert result.returncode == 0, "importing the CLI layer pulled in jax"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        ([], 6),
+        (["--batch-size", "1"], 1),
+        (["--batch-size", "3", "--num-iters", "5"], 3),
+        (["--num-iters", "5"], 6),
+    ],
+)
+def test_batch_size_is_read_from_argv_before_jax_is_imported(argv, expected):
+    """Device selection needs the batch size before JAX exists, so it is parsed early."""
+    assert batch_size_from_argv(6, argv) == expected
+
+
+@pytest.mark.parametrize("argv", [[], ["--batch-size", "1"], ["--batch-size", "6"]])
+def test_auto_selects_cpu_at_every_requested_batch_size(monkeypatch, argv):
+    """Batching adds width, not sequential depth, so it never justifies the GPU.
+
+    A Section Vd rollout is 50000 sequential solver steps, which makes the GPU
+    launch-latency bound: measured at B=1 it did not finish a single iteration in
+    950 s, against 40.5 s on CPU.
+    """
+    monkeypatch.delenv("JAX_PLATFORMS", raising=False)
+    assert configure_optimization_device(batch_size=6, argv=argv) == "cpu"
