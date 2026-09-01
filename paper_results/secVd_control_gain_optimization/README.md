@@ -1,7 +1,7 @@
 # Section Vd: Control-Gain Optimization
 
-This case compares single-start gain optimization for collocated
-actuation-space control and synergistic operational-space control.
+This case compares six-start gain optimization for collocated actuation-space
+control and synergistic operational-space control.
 
 > [!WARNING]
 > The committed archives and comparison figures are single-start results from
@@ -12,23 +12,174 @@ actuation-space control and synergistic operational-space control.
 
 ## Canonical result format
 
-Each optimizer writes only `optimization_results.npz`. The archive uses schema
-version 1 and an explicit batch dimension of one, even though the optimizer is
-currently single-start. Pose vectors use
+Each optimizer writes only `optimization_results.npz`, using schema version 2.
+The archive carries a real multi-start batch axis of width `B`, and that axis
+appears **only** on quantities that genuinely vary per start:
+
+| field | shape |
+| --- | --- |
+| `history_loss`, `history_finite_mask` | `(iterations, B)` |
+| `history_time` | `(iterations,)` |
+| `history_Kp`, `history_Ki`, `history_Kd` | `(iterations, B, m)` |
+| `init_Kp`, `init_Ki`, `init_Kd` | `(B, m)` |
+| `q_ts_init/best`, `qd_ts_init/best` | `(B, timesteps, dofs)` |
+| `u_ts_init/best` | `(B, timesteps, actuators)` |
+| `x_ts_init/best` | `(B, timesteps, 6)` |
+| `best_iteration` | `(B,)` |
+| `best_batch`, `batch_size`, `completed_iterations` | scalars |
+| `t_ts`, `x_des_ts`, `q_des_ts` | `(timesteps,)`, `(timesteps, 6)`, `(timesteps, dofs)` |
+
+The time grid and the references are shared by every start and so carry no batch
+axis at all: a batch axis in this archive always means something. Pose vectors
+use
 
 ```text
 [rotation-vector x, y, z, Cartesian position x, y, z].
 ```
 
-`q_ts_best` is the authoritative trajectory for reconstructing the complete
-robot geometry. `x_ts_best` provides a directly validated full end-effector
-pose trajectory. The archive also retains iteration-aligned loss, gain,
-velocity, control-input, and timing histories. Legacy archives,
-`animation_data.pkl`, and `intermediate_metrics.json` are not supported.
+`q_ts_best` is the authoritative trajectory for reconstructing the complete robot
+geometry. `x_ts_best` provides a directly validated full end-effector pose
+trajectory. Schema-v1 archives, legacy MAT archives, `animation_data.pkl` and
+`intermediate_metrics.json` are not supported.
+
+**Per-iteration trajectory histories are deliberately absent.** Storing every
+start's rollout at every iteration would reach several gigabytes at 100
+iterations and six starts, so the archive keeps each start's initial and best
+rollouts only. The loss and gain histories remain complete.
+
+`init_Kp` / `init_Ki` / `init_Kd`, together with `init_seed`, `init_scheme` and
+`init_spread`, record the initialization directly rather than leaving it to be
+inferred from the history. The legacy results were unrecoverable from their
+archives precisely because this was never written; see the provenance section
+below.
+
+A start whose evaluation becomes non-finite is frozen rather than aborting the
+whole run, and `history_finite_mask` marks exactly which entries are real. Every
+start must still reach at least one finite iterate: one that was non-finite from
+its first evaluation has no trajectory worth archiving and indicates an
+initialization that should be resampled with a different `--init-seed`.
+
+Selection is recorded and re-checked on load. `best_iteration` is each start's
+own lowest-loss iteration and `best_batch` is `argmin_b min_i loss[i, b]`,
+derived from **that archive's** losses alone -- the defect behind issue #128 was
+a single index taken from one method and reused for the other.
 
 `completed_iterations` records the actual run length and is validated against
 the stored histories. `is_placeholder` identifies development-only archives;
 omit `--placeholder` when producing full results.
+
+### Initialization
+
+Start 0 is always the nominal gain set, so a single-start run stays a strict
+subset of a batched one. Starts 1 to `B-1` scale the nominal by one factor per
+gain, drawn log-uniformly from `[1 / spread, spread]` -- gains are scale
+parameters, so the neighbourhood is multiplicative rather than additive. Every
+run prints its table and records the initialization in the archive.
+
+| flag | default | meaning |
+| --- | --- | --- |
+| `--batch-size` | `6` | independent starts `B` |
+| `--init-seed` | `0` | PRNG seed behind the sampled starts |
+| `--init-scheme` | `log_uniform_v1` | sampling scheme, recorded in the archive |
+| `--init-spread` | `3.0` | multiplicative half-width for `log_uniform_v1` |
+
+The alternative `legacy_mixed_v1` scheme reproduces the recovered generator
+exactly, for regenerating or checking against the legacy results. Its box is
+absolute and belongs to the legacy two-segment robot, so it is not appropriate
+for new work.
+
+### Device
+
+`--device auto` selects the **CPU at any batch size**. A rollout here is 50000
+strictly sequential solver steps, so the GPU is bound by kernel-launch latency
+rather than throughput, and batching adds parallel width without reducing that
+sequential depth. Measured on this case (Threadripper PRO 5975WX, RTX 4070 Ti
+SUPER, three iterations timed at the 100-iteration settings):
+
+| device | compile + iteration 0 | steady iteration |
+| --- | --- | --- |
+| CPU, `B=1` | 51.5 s | 40.5 s |
+| CPU, `B=6` | 132.8 s | 120.7 s |
+| GPU, `B=1` | did not finish one iteration in 950 s | -- |
+
+So a six-start run costs about three times a single-start one, not six, and a
+full 100-iteration run takes roughly **3 h 20 m per method** on CPU. The two
+methods are independent and each uses under two cores, so running them
+concurrently costs no more wall time than one.
+
+`--device gpu` remains available for settings with far fewer solver steps, where
+the trade-off reverses. Note that JAX names the CUDA backend `cuda`, not `gpu`;
+`JAX_PLATFORMS=gpu` is rejected outright, so an explicit `--device gpu` requests
+`cuda` and fails loudly rather than running somewhere the user did not ask for.
+Device selection must happen before JAX is imported, since JAX ignores
+`JAX_PLATFORMS` afterwards, which is why the CLI and initialization modules
+import JAX lazily.
+
+## Objective
+
+Both optimizers import one definition, from
+[`code/secvd_objective.py`](code/secvd_objective.py), so "Loss" means the same
+thing in both panels of the figure:
+
+```text
+L = (1 / T) * integral_0^T ||e_hat(t)||^2 dt
+
+collocated   e_hat = [L_seg * e_kappa ; e_sigma]     (strains)
+synergistic  e_hat = [e_theta ; e_x / L_seg]         (pose)
+```
+
+Angular strains are `1/m` and shear/axial strains already dimensionless;
+task-space orientation error is in radians and position in metres. Both sides
+come out **dimensionless**, so there is no global factor and no per-controller
+divisor in the plotter.
+
+The characteristic scale is not a free choice. The legacy collocated weighting
+recovered from the archives, `W = diag([1, 1, 1, 100, 100, 100])`, equals
+`(1/L^2) * diag(L^2, L^2, L^2, 1, 1, 1)` for `L = 0.1 m` -- it was already
+non-dimensionalization by segment length, with only the leading constant
+arbitrary. `test_strain_scales_reproduce_the_recovered_legacy_weighting` pins
+that correspondence.
+
+**There is no early/late weighting.** The legacy runs disagreed on it -- 1:2
+collocated against 1:5 synergistic -- and the previous scripts had harmonized on
+1:5, which was never the original on either side. The transient/steady-state
+split is *reported* instead, via `steady_state_report`, reusing Section Vc's
+`evaluation_metrics` rather than being folded into the loss.
+
+Every archive records `objective_name` and `objective_scales`, so a stored loss
+can always be traced to the definition that produced it and recomputed from the
+archive alone. `recompute_archive_losses` does exactly that, and a regression
+test asserts the stored initial and best losses match their own trajectories --
+the check that would have caught the order-of-magnitude discrepancy reported on
+issue #154.
+
+### Optimizer diagnostics
+
+`history_grad_norm` and `history_update_norm` record the per-start global L2
+norms of the gradient and of the applied update, and `optimizer_metadata`
+records the transforms, learning rates and clipping thresholds. These are stored
+so learning rates and clipping can be tuned against something observable,
+separately from the loss definition. Note the legacy run is not a guide here: it
+used a single `yogi(4e-3)` on `[0, 1]`-normalized, box-clipped gains, and its
+optimizer state was frozen by a bug after the first iteration.
+
+### Integral-error saturation
+
+The collocated controller integrates tendon-length errors in metres and uses the
+unit-preserving saturation
+
+```text
+sat(e) = tanh(gamma * e) / gamma,   gamma = 1 / e_sat.
+```
+
+The default is `e_sat = 10 mm` (`gamma = 100 1/m`), settable with
+`--integral-error-saturation-scale` in metres and recorded in the archive as
+`saturation_config`. The recovered legacy generator gives no guidance on this
+value: the synergistic program saturated *torque* with `tanh` at
+`tau_max = 30`, not the integral error, and the collocated generator was never
+recovered. Retuning it therefore has to be done against the current model --
+sweep the flag and compare tracking, windup, the gradient and update norms above,
+and the optimized gains.
 
 ## Optimization
 
@@ -45,44 +196,43 @@ uv run python paper_results/secVd_control_gain_optimization/code/control_gain_op
 running a shorter or longer optimization.
 
 Use `--result-dir` to stage results elsewhere. A run is saved only if every
-requested iteration completed with finite data, so an interrupted or non-finite
-run cannot replace an archive.
+requested iteration completed and every start produced at least one finite
+iterate, so an interrupted run cannot replace an archive.
 
-Device selection defaults to `--device auto`. The current optimizers have one
-optimization start (`B=1`), so auto mode selects the CPU; the `vmap` used by the
-synergistic controller over rollout timesteps does not make it a batched
-optimization. The shared selector chooses the GPU when an optimizer supplies
-multiple independent starts (`B>1`) in a future batched implementation. Use
-`--device cpu` or `--device gpu` to override either automatic choice. The GPU
-label maps to JAX's `cuda` platform name. An automatically selected GPU may fall
-back to CPU with a warning, while an explicit `--device gpu` request fails if
-CUDA is unavailable.
-
-The collocated controller integrates tendon-length errors in metres and uses
-the unit-preserving saturation
-
-```text
-sat(e) = tanh(gamma * e) / gamma,
-gamma = 1 / e_sat.
-```
-
-The default is `e_sat = 10 mm` (`gamma = 100 1/m`) and can be changed with
-`--integral-error-saturation-scale` in metres.
+Both optimizers optimize six independent gain initializations at once, matching
+the width of the published Section Vd results. Use `--batch-size` to change that;
+see [Initialization](#initialization) and [Device](#device) above.
 
 ## Plotting
 
 The standalone plotter is the only comparison-figure entrypoint. It requires
-schema version 1, plots the single run without synthetic min/max bands, and
-writes both the canonical PDF and PNG:
+schema version 2 and writes both the canonical PDF and PNG:
 
 ```bash
 uv run python paper_results/secVd_control_gain_optimization/code/plot_control_gain_optimization.py \
   --force
 ```
 
+The loss panels show the min-max range across starts with the best loss per
+iteration drawn on top; the tracking panels show the initial spread as a median
+with a band, and the best start as the solid line. Starts frozen by
+`history_finite_mask` are excluded from the bands rather than plotted as gaps. A
+single-start archive is drawn without bands, since there is no spread to shade.
+
+Each panel takes its best start from **its own** archive's `best_batch`. The
+defect in issue #128 was one index derived from the collocated losses and reused
+for the synergistic panel; it went unnoticed only because both methods happened
+to peak at start 3 in the legacy data.
+
+The plotter also prints the loss reduction for each method, computed by the same
+formula the paper reports, so the published percentages are regenerated rather
+than retyped.
+
 ## Robot rendering
 
-The renderer reconstructs the optimized robot from `q_ts_best`, validates it
+The renderer reconstructs the optimized robot from `q_ts_best` for that
+archive's own `best_batch`, validates every start's stored pose against forward
+kinematics,, validates it
 against the stored full pose, resamples the dense rollout to the requested FPS,
 and follows the paper rendering style in Viser. The solid coral body is the
 current robot. Collocated control additionally shows the desired configuration

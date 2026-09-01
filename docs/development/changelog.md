@@ -13,11 +13,42 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Added
 
+- Recovered and archived the generator behind the published Section Vd
+  six-start results, together with scripts that verify it: the collocated
+  objective is re-derived from the archived trajectories to 6.1e-16 relative,
+  and re-running the generator reproduces the archived initial losses to 1.8e-9.
+  This answers [issue #154](https://github.com/tud-phi/soromox/issues/154) --
+  the six initial gain sets, `PRNGKey(15)`, the sampling procedure, the
+  vectorized multi-start execution, and how selection and aggregation worked;
+  see `paper_results/secVd_control_gain_optimization/legacy/`.
+- Restored multi-start Section Vd gain optimization: both optimizers now run six
+  independent gain initializations at once through a `vmap` over the
+  optimization variables and the optimizer state, with `--batch-size`,
+  `--init-seed`, `--init-scheme` and `--init-spread`. A start that turns
+  non-finite is frozen at its last good iterate instead of aborting the run.
+- Added a canonical dimensionless Section Vd objective shared by both
+  controllers, `(1/T) * integral ||e_hat||^2 dt`, whose characteristic scale is
+  the segment length recovered from the legacy weighting. Archives record
+  `objective_name`, `objective_scales`, `saturation_config`,
+  `optimizer_metadata`, and per-start gradient and update norms, and a
+  regression check recomputes the stored initial and best losses from their own
+  trajectories.
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
 
 ### Changed
 
+- Section Vd archives use schema version 2, carrying a real multi-start batch
+  axis only on quantities that vary per start; the shared time grid and
+  references lose their previously degenerate axis. Archives now record the
+  initialization directly (`init_Kp`/`init_Ki`/`init_Kd`, `init_seed`,
+  `init_scheme`), which is what the legacy archives lacked. Per-iteration
+  trajectory histories are no longer stored, as they reach several gigabytes at
+  six starts and 100 iterations.
+- The Section Vd comparison figure selects the best start from each archive's
+  own losses and no longer divides the collocated loss by 100. The former
+  divisor was cosmetic axis alignment, needed only because the two controllers
+  optimized differently scaled objectives.
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
 
