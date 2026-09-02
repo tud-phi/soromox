@@ -90,30 +90,27 @@ for new work.
 
 ### Device
 
-`--device auto` selects the **CPU at any batch size**. A rollout here is 50000
-strictly sequential solver steps, so the GPU is bound by kernel-launch latency
-rather than throughput, and batching adds parallel width without reducing that
-sequential depth. Measured on this case (Threadripper PRO 5975WX, RTX 4070 Ti
-SUPER, three iterations timed at the 100-iteration settings):
+`--device auto` is the default and **leaves the choice to JAX**. Which backend
+runs this case faster is a property of the machine -- the relative FP64
+throughput of its CPU and GPU, and how its GPU handles a long chain of small
+sequential kernels -- not of Section Vd, so nothing here prescribes one. Pass
+`--device cpu` or `--device gpu` to pin one; the run then fails rather than
+starting on another backend, so a timing claim is never attached to hardware
+that did not produce it.
 
-| device | compile + iteration 0 | steady iteration |
-| --- | --- | --- |
-| CPU, `B=1` | 51.5 s | 40.5 s |
-| CPU, `B=6` | 132.8 s | 120.7 s |
-| GPU, `B=1` | did not finish one iteration in 950 s | -- |
+The cost structure is worth knowing before choosing, because it is unusual for
+a batched optimization. A rollout is 50000 strictly sequential solver steps on
+a state of a few dozen degrees of freedom, so per-step work is tiny and cannot
+be parallelized along time; `--batch-size` adds parallel width without reducing
+that sequential depth. A GPU therefore tends to be bound by kernel-launch
+latency rather than throughput here, and double precision -- which
+[`legacy/`](legacy/) reproduction requires -- runs at a small fraction of
+single-precision rate on consumer GPUs.
 
-So a six-start run costs about three times a single-start one, not six, and a
-full 100-iteration run takes roughly **3 h 20 m per method** on CPU. The two
-methods are independent and each uses under two cores, so running them
-concurrently costs no more wall time than one.
-
-`--device gpu` remains available for settings with far fewer solver steps, where
-the trade-off reverses. Note that JAX names the CUDA backend `cuda`, not `gpu`;
-`JAX_PLATFORMS=gpu` is rejected outright, so an explicit `--device gpu` requests
-`cuda` and fails loudly rather than running somewhere the user did not ask for.
-Device selection must happen before JAX is imported, since JAX ignores
-`JAX_PLATFORMS` afterwards, which is why the CLI and initialization modules
-import JAX lazily.
+Note that JAX names the CUDA backend `cuda`, not `gpu`; `JAX_PLATFORMS=gpu` is
+rejected outright, so an explicit `--device gpu` requests `cuda`. Device
+selection must happen before JAX is imported, since JAX ignores `JAX_PLATFORMS`
+afterwards, which is why the CLI and initialization modules import JAX lazily.
 
 ## Objective
 

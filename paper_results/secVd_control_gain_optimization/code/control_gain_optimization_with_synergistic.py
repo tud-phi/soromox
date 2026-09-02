@@ -14,7 +14,7 @@ from secvd_optimization import configure_optimization_device  # noqa: E402
 
 # Number of independently optimized gain initializations; timestep vmaps do not count.
 OPTIMIZATION_BATCH_SIZE = SECVD_BATCH_SIZE
-configure_optimization_device(batch_size=OPTIMIZATION_BATCH_SIZE)
+configure_optimization_device()
 
 import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402

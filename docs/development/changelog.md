@@ -38,6 +38,15 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
+- Section Vd optimization no longer chooses a compute backend for the user.
+  `--device auto` is the default and defers to JAX; `--device cpu` or
+  `--device gpu` pins one strictly. Which backend is faster depends on the
+  machine's relative FP64 throughput and on how its GPU handles a long chain of
+  small sequential kernels, so the case measures nothing and prescribes nothing.
+  The earlier batch-size rule and the CPU-always rule that replaced it both
+  encoded one machine's benchmark as library behaviour; the measurement now
+  lives in the case README as an illustration, with the numbers it was taken on.
+
 - Section Vd archives use schema version 2, carrying a real multi-start batch
   axis only on quantities that vary per start; the shared time grid and
   references lose their previously degenerate axis. Archives now record the
