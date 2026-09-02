@@ -89,10 +89,11 @@ import numpy as np  # noqa: E402
 import optax  # noqa: E402
 from jax import vmap  # noqa: E402
 from secvd_case import (  # noqa: E402
-    COMMITTED_ALPHA,
+    CASE_HORIZON,
     COMMITTED_LR_RATIO,
     METHODS,
     build_evaluator,
+    build_sec_vd_case,
 )
 from secvd_init import (  # noqa: E402
     SECVD_BATCH_SIZE,
@@ -119,13 +120,27 @@ LR_RATIO = COMMITTED_LR_RATIO
 # rather than silently changing the configuration under test.
 CLIP_THRESHOLD = 10.0
 
+STAGES = ("solver-dt", "lr-range", "lr-confirm", "ratio", "saturation", "verify")
+
+# A committed learning rate within this many decades of the located optimum is
+# treated as adequately scaled, and the later stages are reported as unnecessary
+# rather than run. The band is generous because a ramp locates rather than
+# measures: on the collocated problem it recommended 6.4e4 where the
+# constant-rate scan found 1000, a 64x overshoot.
+HEALTHY_ALPHA_DECADES = 1.0
+
+# Relative gradient error, against the finest step compared, that a coarser step
+# may introduce before it is rejected. The study only has to locate a learning
+# rate to within a factor of a few, so this is far tighter than it needs to be.
+SOLVER_DT_GRADIENT_TOLERANCE = 1e-3
+
 
 def _family_norms(tree: dict) -> dict:
     """Per-gain-family L2 norm over components, keeping the batch axis."""
     return {name: jnp.linalg.norm(tree[name], axis=-1) for name in GAIN_FAMILIES}
 
 
-def run_range_test(
+def run_alpha_schedule(
     *,
     gradient_fn,
     init_gains: dict,
@@ -274,11 +289,11 @@ def report_step_efficiency(result: dict) -> None:
     )
 
 
-def save_range_test(result: dict, out_dir: Path, tag: str) -> Path:
+def save_schedule(result: dict, out_dir: Path, tag: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
-    npz_path = out_dir / f"range_test_{tag}.npz"
+    npz_path = out_dir / f"{tag}.npz"
     np.savez_compressed(npz_path, **result)
-    csv_path = out_dir / f"range_test_{tag}.csv"
+    csv_path = out_dir / f"{tag}.csv"
     with csv_path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
@@ -297,11 +312,242 @@ def save_range_test(result: dict, out_dir: Path, tag: str) -> Path:
     return npz_path
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+def _sample_starts(problem, batch_size: int, seed: int) -> dict:
+    """Draw the same starts the generators use, so losses stay comparable."""
+    return sample_initial_gains(
+        problem.nominal_gains,
+        batch_size=batch_size,
+        seed=seed,
+        scheme=SECVD_INIT_SCHEME,
+        spread=SECVD_INIT_SPREAD,
+    )
+
+
+def stiffest_start(init_gains: dict) -> int:
+    """Return the start whose closed loop is hardest to integrate.
+
+    Every start shares the plant, the initial state and the setpoint -- only the
+    gains differ -- so the most demanding system is the one with the largest
+    proportional gain, not the one that tracks worst. Those are different starts
+    on the committed collocated batch: ``Kp`` peaks at start 2, which also has
+    the *best* tracking, while the worst tracking belongs to start 1, which has
+    the lowest ``Kp`` and is the easiest thing the solver ever sees.
+    """
+    return int(np.argmax(np.linalg.norm(np.asarray(init_gains["Kp"]), axis=-1)))
+
+
+def _gradient_vector(grad: dict) -> np.ndarray:
+    return np.concatenate(
+        [np.asarray(grad["opt_ctr_params"][n]).reshape(-1) for n in GAIN_FAMILIES]
+    )
+
+
+def stage_solver_dt(args, case) -> dict:
+    """Measure how far the integration step can be raised.
+
+    Cost is linear in the step count, so this is by far the largest speed lever
+    in the study, and every later stage inherits what it settles on. It runs on
+    one start -- the stiffest -- because this asks how hard the dynamics are to
+    integrate, not how the optimizer behaves, and one representative system
+    answers that.
+
+    The gate is the **gradient**, not the loss: the study exists to compute
+    gradients, and a loss can stay accurate while its derivative drifts.
+    """
+    reference = build_evaluator(
+        args.method, case=case, horizon=args.horizon, e_sat=args.e_sat
+    )
+    init_gains = _sample_starts(reference, args.batch_size, args.seed)
+    index = stiffest_start(init_gains)
+    gains = {name: value[index] for name, value in init_gains.items()}
+    print(
+        f"Stiffest of {args.batch_size} starts is index {index} "
+        f"(|Kp| = {float(np.linalg.norm(np.asarray(gains['Kp']))):.1f})",
+        flush=True,
+    )
+    header = (
+        f"{'solver_dt':>10} {'steps':>8} {'eval':>8} {'loss':>14} "
+        f"{'d_loss':>9} {'d_grad':>9}  verdict"
+    )
+    print(header, flush=True)
+    baseline = None
+    rows = []
+    for solver_dt in sorted(args.solver_dts):
+        problem = build_evaluator(
+            args.method,
+            case=case,
+            horizon=args.horizon,
+            solver_dt=solver_dt,
+            e_sat=args.e_sat,
+        )
+        opt_vars = {"opt_ctr_params": gains, "opt_atr_params": {}}
+        # Time the second call: the first pays compilation, which is a fixed
+        # cost per configuration and would swamp the ratio this stage reports.
+        (loss, _aux), grad = problem.gradient_fn(opt_vars)
+        float(loss)
+        started = time.time()
+        (loss, _aux), grad = problem.gradient_fn(opt_vars)
+        vector = _gradient_vector(grad)
+        elapsed = time.time() - started
+        loss = float(loss)
+        if baseline is None:
+            baseline = (loss, vector)
+        d_loss = abs(loss - baseline[0]) / abs(baseline[0])
+        d_grad = float(
+            np.linalg.norm(vector - baseline[1]) / np.linalg.norm(baseline[1])
+        )
+        finite = bool(np.isfinite(loss) and np.all(np.isfinite(vector)))
+        accepted = bool(finite and d_grad <= SOLVER_DT_GRADIENT_TOLERANCE)
+        rows.append((solver_dt, elapsed, loss, d_loss, d_grad, accepted))
+        print(
+            f"{solver_dt:>10.1e} {int(args.horizon / solver_dt):>8d} "
+            f"{elapsed:>7.1f}s {loss:>14.6e} {d_loss:>9.2e} {d_grad:>9.2e}  "
+            f"{'ok' if accepted else 'REJECTED'}",
+            flush=True,
+        )
+    accepted = [row for row in rows if row[5]]
+    largest = max(row[0] for row in accepted)
+    fastest = next(row[1] for row in rows if row[0] == largest)
+    print("")
+    print(
+        f"Largest step within {SOLVER_DT_GRADIENT_TOLERANCE:g} relative gradient "
+        f"error: solver_dt = {largest:g}, {rows[0][1] / fastest:.1f}x faster than "
+        f"{rows[0][0]:g}"
+    )
+    print(
+        "The controller is queried at every integration step, so this is also "
+        "the effective control rate."
+    )
+    return {
+        "stage": np.asarray("solver-dt"),
+        "solver_dt": np.asarray([row[0] for row in rows]),
+        "eval_seconds": np.asarray([row[1] for row in rows]),
+        "loss": np.asarray([row[2] for row in rows]),
+        "rel_loss_error": np.asarray([row[3] for row in rows]),
+        "rel_gradient_error": np.asarray([row[4] for row in rows]),
+        "accepted": np.asarray([row[5] for row in rows]),
+        "recommended_solver_dt": np.asarray(largest),
+        "start_index": np.asarray(index),
+    }
+
+
+def locate_alpha(result: dict) -> tuple[float, float]:
+    """Return ``(recommended, divergence)`` alpha from a ramp.
+
+    Standard range-test practice takes a third of the divergence point rather
+    than the minimum, which sits adjacent to it and is usually already
+    oscillating. A ramp that never diverged reports its own top, and the caller
+    should widen the span rather than trust it.
+    """
+    alpha = np.asarray(result["alpha"])
+    loss = np.median(np.asarray(result["loss"]), axis=-1)
+    finite = np.isfinite(loss)
+    divergence = float(alpha[~finite][0]) if (~finite).any() else float(alpha[-1])
+    return divergence / 3.0, divergence
+
+
+def report_alpha_gate(result: dict, committed_alpha: float) -> bool:
+    """Say whether the committed rate is short, and by how much.
+
+    A method that passes is reported as adequately scaled *with the measured
+    number*, which is a result rather than a skipped stage.
+    """
+    recommended, divergence = locate_alpha(result)
+    decades = float(np.log10(recommended / committed_alpha))
+    short = decades > HEALTHY_ALPHA_DECADES
+    print("")
+    print(
+        f"Located alpha ~ {recommended:.3g} (diverged at {divergence:.3g}); "
+        f"committed is {committed_alpha:g}, {decades:+.2f} decades away."
+    )
+    if short:
+        print("  SHORT: run lr-confirm to measure a usable constant rate.")
+    else:
+        print(
+            f"  Adequately scaled: inside the {HEALTHY_ALPHA_DECADES:g}-decade "
+            "band, so no retuning is needed."
+        )
+    return short
+
+
+def stage_constant_rates(args, case, alphas, ratio, label) -> dict:
+    """Run one independent constant-rate optimization per configuration.
+
+    A ramp locates a region but cannot measure it: it carries warmed-up
+    optimizer moments and already-moved gains into every new rate. These runs
+    each start cold from the same initializations, which is what makes their
+    final losses comparable, and is why the collocated ramp's 6.4e4
+    recommendation collapsed to 1000 when measured this way.
+    """
+    problem = build_evaluator(
+        args.method,
+        case=case,
+        horizon=args.horizon,
+        solver_dt=args.solver_dt,
+        e_sat=args.e_sat,
+        loss_scale=args.loss_scale,
+    )
+    init_gains = _sample_starts(problem, args.batch_size, args.seed)
+    results = {}
+    for alpha in alphas:
+        print("")
+        print(f"[{label}] alpha = {alpha:g}, ratio = {ratio}", flush=True)
+        results[alpha] = run_alpha_schedule(
+            gradient_fn=problem.gradient_fn,
+            init_gains=init_gains,
+            alpha_low=alpha,
+            alpha_high=alpha,
+            num_points=args.num_iters,
+            eps=args.eps,
+            use_clip=not args.no_clip,
+            ratio=ratio,
+        )
+    print("")
+    print(f"{label} summary:")
+    print(f"  {'alpha':>12}  {'final loss':>13}  {'improvement':>11}")
+    best = None
+    for alpha, result in results.items():
+        loss = np.median(np.asarray(result["loss"]), axis=-1)
+        finite = loss[np.isfinite(loss)]
+        if finite.size == 0:
+            print(f"  {alpha:>12.4g}  {'diverged':>13}")
+            continue
+        improvement = 100 * (1 - finite.min() / finite[0])
+        print(f"  {alpha:>12.4g}  {finite.min():>13.6e}  {improvement:>10.2f} %")
+        if best is None or finite.min() < best[1]:
+            best = (alpha, float(finite.min()))
+    if best is not None:
+        print("")
+        print(f"Best: alpha = {best[0]:g} at loss {best[1]:.6e}")
+    return results
+
+
+def _parse_args():
+    parser = argparse.ArgumentParser(description=__doc__.split(chr(10))[0])
+    parser.add_argument("--stage", choices=STAGES, default="lr-range")
     parser.add_argument("--method", choices=METHODS, default="collocated")
-    parser.add_argument("--horizon", type=float, default=1.0)
+    parser.add_argument("--horizon", type=float, default=CASE_HORIZON)
+    parser.add_argument(
+        "--solver-dt",
+        type=float,
+        default=None,
+        help="Integration step for every stage but solver-dt; defaults to the case value.",
+    )
+    parser.add_argument(
+        "--solver-dts",
+        type=float,
+        nargs="+",
+        default=[1e-4, 2e-4, 5e-4, 1e-3, 2e-3, 5e-3, 1e-2],
+        help="Steps the solver-dt stage compares against the finest.",
+    )
     parser.add_argument("--e-sat", type=float, default=1e-2)
+    parser.add_argument(
+        "--e-sats",
+        type=float,
+        nargs="+",
+        default=[1e-3, 3.2e-3, 1e-2, 3.2e-2, 1e-1],
+        help="Saturation scales in metres, swept by the saturation stage.",
+    )
     parser.add_argument("--loss-scale", type=float, default=1.0)
     parser.add_argument(
         "--ratio",
@@ -309,12 +555,22 @@ def main() -> None:
         nargs=3,
         metavar=("KP", "KI", "KD"),
         default=[LR_RATIO[n] for n in GAIN_FAMILIES],
-        help="Per-family learning-rate ratio multiplying alpha.",
     )
-    parser.add_argument("--alpha-low", type=float, default=1e-3)
-    parser.add_argument("--alpha-high", type=float, default=1e3)
-    parser.add_argument("--num-points", type=int, default=60)
-    parser.add_argument("--eps", type=float, default=1e-3)
+    parser.add_argument("--alpha", type=float, default=None)
+    parser.add_argument(
+        "--alphas",
+        type=float,
+        nargs="+",
+        default=[30.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0],
+        help="Constant rates the lr-confirm stage compares.",
+    )
+    parser.add_argument("--alpha-low", type=float, default=1e-2)
+    parser.add_argument("--alpha-high", type=float, default=1e6)
+    # Three points per decade. The ramp only has to say whether the committed
+    # rate is short and which way; lr-confirm measures the value actually used.
+    parser.add_argument("--num-points", type=int, default=25)
+    parser.add_argument("--num-iters", type=int, default=20)
+    parser.add_argument("--eps", type=float, default=1e-8)
     parser.add_argument("--no-clip", action="store_true")
     parser.add_argument("--batch-size", type=int, default=SECVD_BATCH_SIZE)
     parser.add_argument("--seed", type=int, default=SECVD_INIT_SEED)
@@ -322,51 +578,90 @@ def main() -> None:
     # Consumed before JAX is imported; declared so argparse accepts it here too.
     parser.add_argument("--device", choices=DEVICE_CHOICES, default="auto")
     parser.add_argument("--tag", type=str, default=None)
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    tag = args.tag or f"{args.method}_eps{args.eps:g}_T{args.horizon:g}"
+
+def main() -> None:
+    args = _parse_args()
+    tag = args.tag or f"{args.stage}_{args.method}_T{args.horizon:g}"
+    case = build_sec_vd_case()
+    probe = build_evaluator(args.method, case=case, horizon=args.horizon)
     print(
-        f"Range test [{tag}] on {args.method}: "
-        f"alpha {args.alpha_low:g} -> {args.alpha_high:g} "
-        f"over {args.num_points} points, horizon {args.horizon} s, "
-        f"eps {args.eps:g}, clip {'off' if args.no_clip else CLIP_THRESHOLD}",
+        f"[{args.stage}] {args.method}, horizon {args.horizon} s, "
+        f"batch {args.batch_size}, eps {args.eps:g}, "
+        f"clip {'off' if args.no_clip else CLIP_THRESHOLD}",
         flush=True,
     )
-    print(f"Committed setting is alpha = {COMMITTED_ALPHA}", flush=True)
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    problem = build_evaluator(
-        args.method,
-        horizon=args.horizon,
-        e_sat=args.e_sat,
-        loss_scale=args.loss_scale,
-    )
-    init_gains = sample_initial_gains(
-        problem.nominal_gains,
-        batch_size=args.batch_size,
-        seed=args.seed,
-        scheme=SECVD_INIT_SCHEME,
-        spread=SECVD_INIT_SPREAD,
-    )
-    result = run_range_test(
-        gradient_fn=problem.gradient_fn,
-        init_gains=init_gains,
-        alpha_low=args.alpha_low,
-        alpha_high=args.alpha_high,
-        num_points=args.num_points,
-        eps=args.eps,
-        use_clip=not args.no_clip,
-        ratio=dict(zip(GAIN_FAMILIES, args.ratio)),
-    )
-    print("\nStep efficiency, per gain family:")
-    report_step_efficiency(result)
+    if args.stage == "solver-dt":
+        result = stage_solver_dt(args, case)
+        np.savez_compressed(args.out_dir / f"{tag}.npz", **result)
+        print(f"Saved {args.out_dir / (tag + '.npz')}")
+        return
 
-    loss = np.median(result["loss"], axis=-1)
-    best = int(np.nanargmin(loss))
-    print(
-        f"\nLowest median loss {loss[best]:.6e} at alpha = "
-        f"{result['alpha'][best]:.4g} (committed {COMMITTED_ALPHA})"
-    )
-    print(f"Saved {save_range_test(result, args.out_dir, tag)}")
+    if args.stage == "saturation" and not probe.supports_saturation:
+        # Gated on the problem, never on the method name: a controller that does
+        # not saturate its integral error has nothing for item 2 to sweep.
+        print("")
+        print(
+            f"Skipped: the {args.method} controller does not saturate its "
+            "integral error, so there is no saturation scale to tune."
+        )
+        return
+
+    ratio = dict(zip(GAIN_FAMILIES, args.ratio, strict=True))
+    if args.stage in ("lr-range", "verify"):
+        problem = build_evaluator(
+            args.method,
+            case=case,
+            horizon=args.horizon,
+            solver_dt=args.solver_dt,
+            e_sat=args.e_sat,
+            loss_scale=args.loss_scale,
+        )
+        result = run_alpha_schedule(
+            gradient_fn=problem.gradient_fn,
+            init_gains=_sample_starts(problem, args.batch_size, args.seed),
+            alpha_low=args.alpha_low,
+            alpha_high=args.alpha_high,
+            num_points=args.num_points,
+            eps=args.eps,
+            use_clip=not args.no_clip,
+            ratio=ratio,
+        )
+        print("")
+        print("Step efficiency, per gain family:")
+        report_step_efficiency(result)
+        report_alpha_gate(result, probe.committed_alpha)
+        print(f"Saved {save_schedule(result, args.out_dir, tag)}")
+        return
+
+    if args.stage == "lr-confirm":
+        results = stage_constant_rates(args, case, args.alphas, ratio, "lr-confirm")
+    elif args.stage == "ratio":
+        alpha = args.alpha or args.alphas[len(args.alphas) // 2]
+        results = {}
+        for name, candidate in (
+            ("committed", dict(LR_RATIO)),
+            ("equal", dict.fromkeys(GAIN_FAMILIES, 1.0)),
+            ("custom", ratio),
+        ):
+            results[name] = stage_constant_rates(
+                args, case, [alpha], candidate, f"ratio:{name}"
+            )[alpha]
+    else:
+        alpha = args.alpha or 1000.0
+        results = {}
+        for e_sat in args.e_sats:
+            args.e_sat = e_sat
+            results[e_sat] = stage_constant_rates(
+                args, case, [alpha], ratio, f"e_sat={e_sat:g}"
+            )[alpha]
+
+    for key, result in results.items():
+        suffix = f"{key:g}" if isinstance(key, float) else str(key)
+        print(f"Saved {save_schedule(result, args.out_dir, tag + '_' + suffix)}")
 
 
 if __name__ == "__main__":
