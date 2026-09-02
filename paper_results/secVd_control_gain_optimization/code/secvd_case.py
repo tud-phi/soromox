@@ -160,6 +160,7 @@ class SecVdProblem:
         method: ``"collocated"`` or ``"synergistic"``.
         case: The robot, setpoint and time grid the problem is built on.
         horizon: Rollout length in seconds.
+        solver_dt: Integration step the rollout uses.
         gradient_fn: ``value_and_grad``-shaped callable over **one** start's
             ``opt_vars``. The optimization loop vmaps it over the batch.
         nominal_gains: Gains the initializations are drawn around.
@@ -177,6 +178,7 @@ class SecVdProblem:
     method: str
     case: SecVdCase
     horizon: float
+    solver_dt: float
     gradient_fn: Callable
     nominal_gains: dict[str, Array]
     objective_scales: Array
@@ -187,13 +189,23 @@ class SecVdProblem:
     saturation_config: str
 
 
-def _save_times(case: SecVdCase, horizon: float) -> Array:
+def _save_times(case: SecVdCase, horizon: float, solver_dt: float) -> Array:
     """Return the time grid for a horizon, reusing the case grid when it fits."""
-    if horizon == CASE_HORIZON:
+    if horizon == CASE_HORIZON and solver_dt == case.solver_dt:
         return case.save_ts
     return case.robot._compute_save_times(
-        0.0, horizon, solver_dt=case.solver_dt, save_dt=case.solver_dt
+        0.0, horizon, solver_dt=solver_dt, save_dt=solver_dt
     )
+
+
+def _max_solver_steps(horizon: float, solver_dt: float) -> int:
+    """Bound the solver step count for a rollout.
+
+    This counts **solver** steps, not saved points. The two coincide only
+    because the published runs save every step; sizing it from the save grid
+    instead means a caller who coarsens that grid gets an opaque solver failure.
+    """
+    return int(round(horizon / solver_dt)) + 16
 
 
 def _rollout_aux(trajectory) -> tuple[Array, Array, dict]:
@@ -212,7 +224,11 @@ def _rollout_aux(trajectory) -> tuple[Array, Array, dict]:
 
 
 def _build_collocated(
-    case: SecVdCase, horizon: float, e_sat: float, loss_scale: float
+    case: SecVdCase,
+    horizon: float,
+    solver_dt: float,
+    e_sat: float,
+    loss_scale: float,
 ) -> SecVdProblem:
     robot = case.robot
     asd = ActuationSpaceDynamics(robot)
@@ -221,7 +237,7 @@ def _build_collocated(
     if minimum_length <= 1e-2 * case.total_length:
         raise RuntimeError("Generated setpoint is too close to tendon path collapse")
 
-    save_ts = _save_times(case, horizon)
+    save_ts = _save_times(case, horizon, solver_dt)
     reference = ReferenceTrajectory(ts=save_ts, x_des_fn=lambda _t: case.q_des)
     q_des_ts = reference.x_des_ts
     nominal = {
@@ -240,7 +256,7 @@ def _build_collocated(
         u=jnp.zeros(robot.num_actuators),
         control_state=PIDControllerState.zero(robot.num_actuators),
     )
-    num_ts = len(save_ts)
+    max_steps = _max_solver_steps(horizon, solver_dt)
     # Angular strains are 1/m and shear/axial strains already dimensionless;
     # scaling by segment length reproduces the recovered legacy weighting.
     scales = configuration_space_scales(robot.params.link.length)
@@ -251,9 +267,9 @@ def _build_collocated(
             initial_state=initial_state,
             controller=active,
             t1=horizon,
-            solver_dt=case.solver_dt,
+            solver_dt=solver_dt,
             save_ts=save_ts,
-            max_steps=num_ts + 1,
+            max_steps=max_steps,
         )
         q_ts, _qd_ts, aux = _rollout_aux(trajectory)
         loss = time_averaged_squared_error(q_des_ts - q_ts, scales, trajectory.t)
@@ -263,6 +279,7 @@ def _build_collocated(
         method="collocated",
         case=case,
         horizon=horizon,
+        solver_dt=solver_dt,
         gradient_fn=value_and_grad(evaluate, has_aux=True),
         nominal_gains=nominal,
         objective_scales=scales,
@@ -275,7 +292,7 @@ def _build_collocated(
 
 
 def _build_synergistic(
-    case: SecVdCase, horizon: float, loss_scale: float
+    case: SecVdCase, horizon: float, solver_dt: float, loss_scale: float
 ) -> SecVdProblem:
     robot = case.robot
     osd = OperationalSpaceDynamics(
@@ -283,7 +300,7 @@ def _build_synergistic(
         s_ps=jnp.array([case.total_length]),
         task_selector=jnp.array([False, False, False, True, True, True]),
     )
-    save_ts = _save_times(case, horizon)
+    save_ts = _save_times(case, horizon, solver_dt)
     reference = ReferenceTrajectory(
         ts=save_ts,
         x_des_fn=lambda _t: case.x_des,
@@ -308,7 +325,7 @@ def _build_synergistic(
         u=jnp.zeros(robot.num_actuators),
         control_state=PIDControllerState.zero(osd.n_operational_space),
     )
-    num_ts = len(save_ts)
+    max_steps = _max_solver_steps(horizon, solver_dt)
     # Position error in metres becomes dimensionless against the backbone
     # length; orientation error is already in radians.
     scales = operational_space_scales(osd.task_selector, case.total_length)
@@ -319,9 +336,9 @@ def _build_synergistic(
             initial_state=initial_state,
             controller=active,
             t1=horizon,
-            solver_dt=case.solver_dt,
+            solver_dt=solver_dt,
             save_ts=save_ts,
-            max_steps=num_ts + 1,
+            max_steps=max_steps,
         )
         q_ts, _qd_ts, aux = _rollout_aux(trajectory)
         x_ts = vmap(osd.operational_space_poses)(q_ts)
@@ -333,6 +350,7 @@ def _build_synergistic(
         method="synergistic",
         case=case,
         horizon=horizon,
+        solver_dt=solver_dt,
         gradient_fn=value_and_grad(evaluate, has_aux=True),
         nominal_gains=nominal,
         objective_scales=scales,
@@ -351,6 +369,7 @@ def build_evaluator(
     *,
     case: SecVdCase | None = None,
     horizon: float = CASE_HORIZON,
+    solver_dt: float | None = None,
     e_sat: float = 1e-2,
     loss_scale: float = 1.0,
 ) -> SecVdProblem:
@@ -361,6 +380,12 @@ def build_evaluator(
         case: A prebuilt case, to avoid repeating the setpoint rollout. Built on
             demand when omitted.
         horizon: Rollout length in seconds. Only the tuning study varies this.
+        solver_dt: Integration step. Defaults to the case value. Coarsening it
+            is the largest speed lever available -- cost is linear in the step
+            count -- but it changes the gradient the study is measuring, and
+            because the controller is queried at every integration step it also
+            silently sets the effective control rate. The tuning study's first
+            stage measures how far it can be raised before the gradient moves.
         e_sat: Integral-error saturation scale in metres. Ignored by methods
             whose controller does not saturate.
         loss_scale: Constant multiplying the objective. Adam-family optimizers
@@ -382,6 +407,11 @@ def build_evaluator(
     if not e_sat > 0:
         raise ValueError(f"e_sat must be positive, got {e_sat}")
     case = build_sec_vd_case() if case is None else case
+    solver_dt = case.solver_dt if solver_dt is None else solver_dt
+    if not solver_dt > 0:
+        raise ValueError(f"solver_dt must be positive, got {solver_dt}")
+    if solver_dt > horizon:
+        raise ValueError(f"solver_dt {solver_dt} exceeds the {horizon} s horizon")
     if method == "collocated":
-        return _build_collocated(case, horizon, e_sat, loss_scale)
-    return _build_synergistic(case, horizon, loss_scale)
+        return _build_collocated(case, horizon, solver_dt, e_sat, loss_scale)
+    return _build_synergistic(case, horizon, solver_dt, loss_scale)
