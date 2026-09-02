@@ -6,10 +6,15 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal
 
+import equinox as eqx
+import jax
+import jax.numpy as jnp
 import numpy as np
+from jax import Array
 from numpy.typing import NDArray
 
 from soromox.systems.components import CrossSectionGeometry
+from soromox.systems.soft_robot import SoftRobot
 
 __all__ = [
     "CrossSection",
@@ -355,12 +360,41 @@ def evaluate_cross_sections(
     q: Any,
     abscissae: Iterable[float],
 ) -> tuple[CrossSection, ...]:
-    """Evaluate a robot's cross-section descriptor at each backbone position."""
+    """Evaluate a robot's cross-section descriptor at each backbone position.
+
+    SoRoMoX :class:`~soromox.systems.soft_robot.SoftRobot` models use one
+    compiled, vectorized evaluation. The scalar path remains available for
+    lightweight renderer adapters that implement only ``cross_section_geometry``.
+    """
+    stations = np.asarray(tuple(abscissae), dtype=np.float64).reshape(-1)
+    if isinstance(robot, SoftRobot):
+        geometries, dimensions = _evaluate_cross_section_arrays(
+            robot,
+            jnp.asarray(q),
+            jnp.asarray(stations),
+        )
+        return tuple(
+            CrossSection(geometry, dimension)
+            for geometry, dimension in zip(
+                np.asarray(geometries), np.asarray(dimensions)
+            )
+        )
+
     sections = []
-    for abscissa in np.asarray(tuple(abscissae), dtype=np.float64).reshape(-1):
+    for abscissa in stations:
         geometry, dimensions = robot.cross_section_geometry(q, abscissa)
         sections.append(CrossSection(geometry, dimensions))
     return tuple(sections)
+
+
+@eqx.filter_jit
+def _evaluate_cross_section_arrays(
+    robot: SoftRobot,
+    q: Array,
+    abscissae: Array,
+) -> tuple[Array, Array]:
+    """Evaluate cross-section arrays with one compiled batched dispatch."""
+    return jax.vmap(robot.cross_section_geometry, in_axes=(None, 0))(q, abscissae)
 
 
 def loft_cross_sections(

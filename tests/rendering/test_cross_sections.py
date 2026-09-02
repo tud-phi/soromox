@@ -11,6 +11,14 @@ from soromox.rendering.cross_sections import (
     loft_cross_sections,
     register_cross_section_contour,
 )
+from soromox.systems import (
+    GVS,
+    GVSSegment,
+    JointSpec,
+    LinearProfile,
+    LinkSpec,
+    StrainBasisSpec,
+)
 from soromox.systems.components import CrossSectionGeometry
 
 
@@ -196,6 +204,64 @@ def test_cross_sections_evaluate_varying_profiles_at_each_abscissa():
     assert_allclose(sections[0].dimensions, [0.3, 0.2])
     assert_allclose(sections[1].dimensions, [0.25, 0.1625])
     assert_allclose(sections[2].dimensions, [0.1, 0.05])
+
+
+@pytest.mark.filterwarnings("ignore:Explicitly requested dtype float64")
+def test_soft_robot_cross_sections_use_vectorized_mixed_profile_evaluation():
+    material = {
+        "young_modulus": 1e6,
+        "shear_modulus": 1e6 / 3.0,
+        "density": 1000.0,
+        "reference_strain": [0.0, 0.0, 0.0, 1.0, 0.0, 0.0],
+    }
+    links = (
+        LinkSpec.rectangular(
+            length=0.4,
+            height=LinearProfile(0.2, 0.1),
+            width=0.3,
+            **material,
+        ),
+        LinkSpec.elliptical(
+            length=0.3,
+            semi_major=0.15,
+            semi_minor=LinearProfile(0.1, 0.05),
+            **material,
+        ),
+        LinkSpec.circular(
+            length=0.2,
+            radius=LinearProfile(0.08, 0.04),
+            **material,
+        ),
+    )
+    segments = tuple(
+        GVSSegment(
+            link=link,
+            joint=JointSpec(type="fixed"),
+            basis=StrainBasisSpec(
+                type="monomial",
+                strain_selector=[1, 0, 0, 0, 0, 0],
+                basis_order=[0, 0, 0, 0, 0, 0],
+            ),
+            num_gauss_points=5,
+        )
+        for link in links
+    )
+    robot = GVS.from_segments(segments)
+
+    sections = evaluate_cross_sections(
+        robot,
+        np.zeros(robot.num_coordinates),
+        [0.2, 0.55, 0.8],
+    )
+
+    assert [section.geometry for section in sections] == [
+        CrossSectionGeometry.RECTANGULAR,
+        CrossSectionGeometry.ELLIPTICAL,
+        CrossSectionGeometry.CIRCULAR,
+    ]
+    assert_allclose(sections[0].dimensions, [0.15, 0.3], rtol=1e-6)
+    assert_allclose(sections[1].dimensions, [0.15, 0.075], rtol=1e-6)
+    assert_allclose(sections[2].dimensions, [0.06, 0.06], rtol=1e-6)
 
 
 def test_additional_geometry_can_register_a_contour_without_renderer_changes():
