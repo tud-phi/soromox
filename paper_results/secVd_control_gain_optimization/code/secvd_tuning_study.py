@@ -87,8 +87,13 @@ import jax  # noqa: E402
 import jax.numpy as jnp  # noqa: E402
 import numpy as np  # noqa: E402
 import optax  # noqa: E402
-from jax import value_and_grad, vmap  # noqa: E402
-from secvd_case import build_sec_vd_case  # noqa: E402
+from jax import vmap  # noqa: E402
+from secvd_case import (  # noqa: E402
+    COMMITTED_ALPHA,
+    COMMITTED_LR_RATIO,
+    METHODS,
+    build_evaluator,
+)
 from secvd_init import (  # noqa: E402
     SECVD_BATCH_SIZE,
     SECVD_INIT_SCHEME,
@@ -96,15 +101,6 @@ from secvd_init import (  # noqa: E402
     SECVD_INIT_SPREAD,
     sample_initial_gains,
 )
-from secvd_objective import (  # noqa: E402
-    configuration_space_scales,
-    time_averaged_squared_error,
-)
-
-from soromox.control import PIDControl, PIDControllerState, ReferenceTrajectory
-from soromox.control.actuation_space import PotentialCompensationRegulator
-from soromox.coordinate_transformations import ActuationSpaceDynamics
-from soromox.systems import SystemState
 
 jax.config.update("jax_enable_x64", True)
 
@@ -115,78 +111,13 @@ TUNING_DIR = CASE_DIR / "data" / "tuning"
 # committed setting (0.5, 0.25, 0.05) is exactly alpha = 0.5.
 GAIN_FAMILIES = ("Kp", "Ki", "Kd")
 FAMILY_LABEL = {"Kp": "P", "Ki": "I", "Kd": "D"}
-LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
-COMMITTED_ALPHA = 0.5
+# The committed scaling comes from secvd_case, so the study cannot drift from
+# what the generators actually run.
+LR_RATIO = COMMITTED_LR_RATIO
 
 # The committed clip threshold. Kept so the ramp reports when it starts to bind
 # rather than silently changing the configuration under test.
 CLIP_THRESHOLD = 10.0
-
-
-def build_collocated_evaluator(
-    *, horizon: float, e_sat: float, loss_scale: float = 1.0
-):
-    """Return ``(gradient_fn, nominal_gains)`` for the collocated problem.
-
-    Mirrors ``control_gain_optimization_with_collocated.py`` exactly, except that
-    the rollout horizon is settable. The solver step stays at the case value:
-    gradient magnitude is what this study tunes against, so changing the
-    discretization would move the target.
-
-    Args:
-        horizon: Rollout length in seconds.
-        e_sat: Integral-error saturation scale in metres.
-        loss_scale: Constant multiplying the objective. Adam-family optimizers
-            are scale-invariant in the gradient, so this should do nothing
-            except through ``eps`` and through ``clip_by_global_norm``, which is
-            not scale-invariant. Exposed to test that rather than assume it.
-
-    Returns:
-        A ``value_and_grad``-shaped callable over one start's variables, and the
-        nominal gains the initializations are drawn around.
-    """
-    case = build_sec_vd_case()
-    robot = case.robot
-    asd = ActuationSpaceDynamics(robot)
-    save_ts = robot._compute_save_times(
-        0.0, horizon, solver_dt=case.solver_dt, save_dt=case.solver_dt
-    )
-    reference = ReferenceTrajectory(ts=save_ts, x_des_fn=lambda _t: case.q_des)
-    q_des_ts = reference.x_des_ts
-    nominal = {
-        "Kp": 5e1 * jnp.ones(robot.num_actuators),
-        "Ki": 5e0 * jnp.ones(robot.num_actuators),
-        "Kd": 1e0 * jnp.ones(robot.num_actuators),
-    }
-    controller = PotentialCompensationRegulator(
-        actuation_space_dynamics=asd,
-        reference_trajectory=reference,
-        pid_control=PIDControl(**nominal, saturation_fn="tanh", gamma=1.0 / e_sat),
-    )
-    initial_state = SystemState(
-        t=jnp.array(0.0),
-        y=jnp.concatenate([case.q0, case.qd0]),
-        u=jnp.zeros(robot.num_actuators),
-        control_state=PIDControllerState.zero(robot.num_actuators),
-    )
-    num_ts = len(save_ts)
-    strain_scales = configuration_space_scales(robot.params.link.length)
-
-    def evaluate(opt_vars):
-        active = controller.update_gains(opt_vars["opt_ctr_params"])
-        trajectory = robot.rollout_closed_loop_to(
-            initial_state=initial_state,
-            controller=active,
-            t1=horizon,
-            solver_dt=case.solver_dt,
-            save_ts=save_ts,
-            max_steps=num_ts + 1,
-        )
-        q_ts, _qd_ts = jnp.split(trajectory.y, 2, axis=1)
-        loss = time_averaged_squared_error(q_des_ts - q_ts, strain_scales, trajectory.t)
-        return loss_scale * loss, {}
-
-    return value_and_grad(evaluate, has_aux=True), nominal
 
 
 def _family_norms(tree: dict) -> dict:
@@ -368,6 +299,7 @@ def save_range_test(result: dict, out_dir: Path, tag: str) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser.add_argument("--method", choices=METHODS, default="collocated")
     parser.add_argument("--horizon", type=float, default=1.0)
     parser.add_argument("--e-sat", type=float, default=1e-2)
     parser.add_argument("--loss-scale", type=float, default=1.0)
@@ -392,27 +324,31 @@ def main() -> None:
     parser.add_argument("--tag", type=str, default=None)
     args = parser.parse_args()
 
-    tag = args.tag or f"eps{args.eps:g}_T{args.horizon:g}"
+    tag = args.tag or f"{args.method}_eps{args.eps:g}_T{args.horizon:g}"
     print(
-        f"Range test [{tag}]: alpha {args.alpha_low:g} -> {args.alpha_high:g} "
+        f"Range test [{tag}] on {args.method}: "
+        f"alpha {args.alpha_low:g} -> {args.alpha_high:g} "
         f"over {args.num_points} points, horizon {args.horizon} s, "
         f"eps {args.eps:g}, clip {'off' if args.no_clip else CLIP_THRESHOLD}",
         flush=True,
     )
     print(f"Committed setting is alpha = {COMMITTED_ALPHA}", flush=True)
 
-    gradient_fn, nominal = build_collocated_evaluator(
-        horizon=args.horizon, e_sat=args.e_sat, loss_scale=args.loss_scale
+    problem = build_evaluator(
+        args.method,
+        horizon=args.horizon,
+        e_sat=args.e_sat,
+        loss_scale=args.loss_scale,
     )
     init_gains = sample_initial_gains(
-        nominal,
+        problem.nominal_gains,
         batch_size=args.batch_size,
         seed=args.seed,
         scheme=SECVD_INIT_SCHEME,
         spread=SECVD_INIT_SPREAD,
     )
     result = run_range_test(
-        gradient_fn=gradient_fn,
+        gradient_fn=problem.gradient_fn,
         init_gains=init_gains,
         alpha_low=args.alpha_low,
         alpha_high=args.alpha_high,

@@ -325,6 +325,7 @@ build-backend = "setuptools.build_meta"
 [tool.pytest.ini_options]
 markers = [
     "memory_intensive: tests isolated in CI because they require substantial JAX/XLA memory",
+    "slow: tests that integrate a full-length rollout; deselect with -m 'not slow'",
 ]
 
 # ==================== Coverage Configuration ====================

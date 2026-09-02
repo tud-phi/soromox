@@ -17,20 +17,15 @@ OPTIMIZATION_BATCH_SIZE = SECVD_BATCH_SIZE
 configure_optimization_device()
 
 import jax  # noqa: E402
-import jax.numpy as jnp  # noqa: E402
 import optax  # noqa: E402
 from gain_optimization_loop import run_gain_optimization  # noqa: E402
-from jax import value_and_grad, vmap  # noqa: E402
-from secvd_case import build_sec_vd_case, end_effector_pose_trajectory  # noqa: E402
+from jax import vmap  # noqa: E402
+from secvd_case import build_evaluator, end_effector_pose_trajectory  # noqa: E402
 from secvd_init import (  # noqa: E402
     describe_initial_gains,
     sample_initial_gains,
 )
-from secvd_objective import (  # noqa: E402
-    OBJECTIVE_NAME,
-    operational_space_scales,
-    time_averaged_squared_error,
-)
+from secvd_objective import OBJECTIVE_NAME  # noqa: E402
 from secvd_optimization import (  # noqa: E402
     parse_optimization_args,
     prepare_result_dir,
@@ -39,15 +34,6 @@ from secvd_results import (  # noqa: E402
     improvement_over_initial_median,
     save_optimization_outputs,
 )
-
-from soromox.control import (
-    OperationalSpaceSynergisticController,
-    PIDControl,
-    PIDControllerState,
-    ReferenceTrajectory,
-)
-from soromox.coordinate_transformations import OperationalSpaceDynamics
-from soromox.systems import SystemState
 
 jax.config.update("jax_enable_x64", True)
 
@@ -61,28 +47,14 @@ def main() -> None:
         optimization_batch_size=OPTIMIZATION_BATCH_SIZE,
     )
     result_dir = prepare_result_dir(args)
-    case = build_sec_vd_case()
+    # The problem is defined once, in secvd_case, so the tuning study provably
+    # tunes what this script runs (issue #154 follow-up, item 6).
+    problem = build_evaluator("synergistic")
+    case = problem.case
     robot = case.robot
-    osd = OperationalSpaceDynamics(
-        robot=robot,
-        s_ps=jnp.array([case.total_length]),
-        task_selector=jnp.array([False, False, False, True, True, True]),
-    )
-    reference = ReferenceTrajectory(
-        ts=case.save_ts,
-        x_des_fn=lambda _t: case.x_des,
-        rotation_representation=osd.rotation_representation,
-        n_points=osd.n_points,
-        is_planar=osd.is_planar,
-    )
-    x_des_ts = reference.x_des_ts
-    gains = {
-        "Kp": 10.0 * jnp.ones(osd.n_operational_space),
-        "Ki": 2.0 * jnp.ones(osd.n_operational_space),
-        "Kd": 0.25 * jnp.ones(osd.n_operational_space),
-    }
+    x_des_ts = problem.reference_ts
     init_gains = sample_initial_gains(
-        gains,
+        problem.nominal_gains,
         batch_size=args.batch_size,
         seed=args.init_seed,
         scheme=args.init_scheme,
@@ -90,42 +62,6 @@ def main() -> None:
     )
     print(f"Gain initializations ({args.init_scheme}, seed {args.init_seed}):")
     print(describe_initial_gains(init_gains))
-    controller = OperationalSpaceSynergisticController(
-        operational_space_dynamics=osd,
-        reference_trajectory=reference,
-        pid_control=PIDControl(**gains),
-    )
-    initial_state = SystemState(
-        t=jnp.array(0.0),
-        y=jnp.concatenate([case.q0, case.qd0]),
-        u=jnp.zeros(robot.num_actuators),
-        control_state=PIDControllerState.zero(osd.n_operational_space),
-    )
-    num_ts = len(case.save_ts)
-    # Position error in metres becomes dimensionless against the
-    # backbone length; orientation error is already in radians.
-    task_scales = operational_space_scales(osd.task_selector, case.total_length)
-
-    def evaluate(opt_vars):
-        active_controller = controller.update_gains(opt_vars["opt_ctr_params"])
-        trajectory = robot.rollout_closed_loop_to(
-            initial_state=initial_state,
-            controller=active_controller,
-            t1=5.0,
-            solver_dt=case.solver_dt,
-            save_ts=case.save_ts,
-            max_steps=num_ts + 1,
-        )
-        q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
-        x_ts = vmap(osd.operational_space_poses)(q_ts)
-        error = vmap(osd.compute_task_pose_error)(x_ts, x_des_ts)
-        loss = time_averaged_squared_error(error, task_scales, trajectory.t)
-        return loss, {
-            "t_ts": trajectory.t,
-            "q_ts": q_ts,
-            "qd_ts": qd_ts,
-            "u_ts": trajectory.u,
-        }
 
     opt_vars = {"opt_ctr_params": init_gains, "opt_atr_params": {}}
     labels = {
@@ -140,7 +76,6 @@ def main() -> None:
         },
         labels,
     )
-    gradient_fn = value_and_grad(evaluate, has_aux=True)
     # Recorded in the archive so optimizer tuning can be reported and compared
     # separately from the loss definition (issue #154 follow-up, item 6).
     optimizer_metadata = (
@@ -149,7 +84,7 @@ def main() -> None:
         "D: clip_by_global_norm(10.0)+yogi(0.05)}"
     )
     history = run_gain_optimization(
-        gradient_fn=gradient_fn,
+        gradient_fn=problem.gradient_fn,
         optimizer=optimizer,
         opt_vars=opt_vars,
         num_iters=args.num_iters,
@@ -190,8 +125,8 @@ def main() -> None:
         init_scheme=args.init_scheme,
         init_spread=args.init_spread,
         objective_name=OBJECTIVE_NAME,
-        objective_scales=task_scales,
-        saturation_config="none",
+        objective_scales=problem.objective_scales,
+        saturation_config=problem.saturation_config,
         optimizer_metadata=optimizer_metadata,
         t_ts=t_ts,
         q_ts_init=init_aux["q_ts"],
