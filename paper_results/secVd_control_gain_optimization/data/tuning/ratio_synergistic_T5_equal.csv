@@ -1,0 +1,3 @@
+alpha,loss_median,grad_Kp,grad_Ki,grad_Kd,update_Kp,update_Ki,update_Kd,rel_Kp,rel_Ki,rel_Kd
+490,3.963801e-02,1.860005e-03,4.433784e-03,2.200189e-04,2.862166e+01,6.789141e+01,3.436812e+00,1.169106e+00,2.178138e+01,1.085112e+01
+490,nan,nan,nan,nan,nan,nan,nan,nan,nan,nan

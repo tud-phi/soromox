@@ -190,10 +190,60 @@ def test_gradient_is_finite_and_shaped_like_the_gains(problems):
         }
         (loss, aux), grad = problem.gradient_fn(opt_vars)
         assert jnp.isfinite(loss)
-        assert sorted(aux) == ["q_ts", "qd_ts", "t_ts", "u_ts"]
+        assert sorted(aux) == [
+            "integral_error_ts",
+            "q_ts",
+            "qd_ts",
+            "t_ts",
+            "u_ts",
+        ]
         for name, value in grad["opt_ctr_params"].items():
             assert value.shape == problem.nominal_gains[name].shape
             assert bool(jnp.all(jnp.isfinite(value)))
+
+
+def test_control_error_is_the_controllers_own_not_the_objectives(problems, cheap_case):
+    """The error ``e_sat`` saturates, in the controller's space and units.
+
+    This exists because the saturation sweep first measured the wrong signal.
+    ``e_sat`` is a metre scale on the error the PID integrates -- actuated
+    coordinates for the collocated regulator -- while the loss is built from the
+    configuration-space strain error. Comparing that to ``e_sat`` compares
+    different spaces in different units, and reports a saturated fraction that
+    means nothing.
+    """
+    for problem in problems.values():
+        opt_vars = {"opt_ctr_params": problem.nominal_gains, "opt_atr_params": {}}
+        (_loss, aux), _grad = problem.gradient_fn(opt_vars)
+        error = problem.control_error_fn(aux)
+        assert error.shape[0] == aux["q_ts"].shape[0]
+        # One column per gain the controller carries, which is what e_sat and
+        # the integral state are sized against.
+        assert error.shape[1] == problem.nominal_gains["Kp"].shape[0]
+        assert error.shape == aux["integral_error_ts"].shape
+        assert bool(jnp.all(jnp.isfinite(error)))
+
+
+def test_collocated_control_error_is_not_the_strain_error(problems):
+    """Pin the specific confusion: actuation space is not configuration space.
+
+    The regulator is underactuated -- three tendons against six active strains --
+    so the two errors do not even share a shape. The sweep's original metric
+    thresholded the six-column strain error against ``e_sat``, a metre scale on
+    the three-column actuated error, and averaged the result.
+    """
+    problem = problems["collocated"]
+    opt_vars = {"opt_ctr_params": problem.nominal_gains, "opt_atr_params": {}}
+    (_loss, aux), _grad = problem.gradient_fn(opt_vars)
+    control_error = np.asarray(problem.control_error_fn(aux))
+    strain_error = np.asarray(problem.reference_ts - aux["q_ts"])
+    assert control_error.shape[1] == problem.case.robot.num_actuators
+    assert strain_error.shape[1] == problem.case.robot.num_active_strains
+    assert control_error.shape[1] != strain_error.shape[1]
+    # Tendon lengths, so metres and small; the strain error carries 1/m
+    # components and is orders larger on this setpoint.
+    assert np.abs(control_error).max() < 0.1
+    assert np.abs(strain_error).max() > np.abs(control_error).max()
 
 
 @pytest.mark.slow

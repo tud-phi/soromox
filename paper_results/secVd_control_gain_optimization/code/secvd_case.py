@@ -22,6 +22,7 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 from jax import Array, value_and_grad, vmap
+from secvd_init import GAIN_ORDER
 from secvd_objective import (
     configuration_space_scales,
     operational_space_scales,
@@ -48,8 +49,8 @@ jax.config.update("jax_enable_x64", True)
 METHODS = ("collocated", "synergistic")
 
 # The rollout horizon the published runs use. Only the tuning study varies it,
-# to buy sweep throughput; solver_dt is never varied, because gradient magnitude
-# is what the study tunes against.
+# to buy sweep throughput. It varies solver_dt too, but gates that on gradient
+# error rather than loss error, since the gradient is what the study tunes.
 CASE_HORIZON = 5.0
 
 # The committed learning-rate structure, split into a magnitude and a per-family
@@ -57,6 +58,18 @@ CASE_HORIZON = 5.0
 # (0.5, 0.25, 0.05) are exactly COMMITTED_ALPHA * COMMITTED_LR_RATIO.
 COMMITTED_ALPHA = 0.5
 COMMITTED_LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
+
+# The optax label each gain family is optimized under. Only the optimizer needs
+# these; the ordering itself is secvd_init.GAIN_ORDER, shared with the sampler.
+FAMILY_LABEL = {"Kp": "P", "Ki": "I", "Kd": "D"}
+
+# Yogi's numerical floor. The committed runs took optax's 1e-3 default, which
+# sits four orders above this problem's gradients (~1e-4) and looked like the
+# reason the collocated optimizer stalled. It was not: rerunning at 1e-8 gave
+# nearly the same curve, and the stall turned out to be the learning rate. The
+# lower value is kept anyway, because a floor above the signal is indefensible
+# whether or not it happened to bind.
+YOGI_EPS = 1e-8
 
 
 @dataclass(frozen=True)
@@ -185,6 +198,7 @@ class SecVdProblem:
     reference_ts: Array
     committed_alpha: float
     committed_lr_ratio: dict[str, float]
+    control_error_fn: Callable[[dict], Array]
     supports_saturation: bool
     saturation_config: str
 
@@ -209,7 +223,14 @@ def _max_solver_steps(horizon: float, solver_dt: float) -> int:
 
 
 def _rollout_aux(trajectory) -> tuple[Array, Array, dict]:
-    """Split a closed-loop rollout into strains, rates, and the archived aux."""
+    """Split a closed-loop rollout into strains, rates, and the aux signals.
+
+    ``integral_error_ts`` is what makes the saturation sweep measurable rather
+    than a loss comparison: follow-up item 2 asks what the anti-windup scale is
+    doing, and that is a statement about the integrator, not about tracking. The
+    generators select the keys they archive, so carrying it here does not change
+    the schema.
+    """
     q_ts, qd_ts = jnp.split(trajectory.y, 2, axis=1)
     return (
         q_ts,
@@ -219,6 +240,7 @@ def _rollout_aux(trajectory) -> tuple[Array, Array, dict]:
             "q_ts": q_ts,
             "qd_ts": qd_ts,
             "u_ts": trajectory.u,
+            "integral_error_ts": trajectory.control_state.integral_error,
         },
     )
 
@@ -261,6 +283,17 @@ def _build_collocated(
     # scaling by segment length reproduces the recovered legacy weighting.
     scales = configuration_space_scales(robot.params.link.length)
 
+    def control_error(aux: dict) -> Array:
+        """The error the PID integrates: actuated coordinates, in metres.
+
+        Not the configuration-space error the loss is built from. ``e_sat``
+        saturates *this* signal, so any claim about whether the saturation is
+        active has to be made against it -- the two differ in space and in units.
+        """
+        n_a = robot.num_actuators
+        y_a = vmap(lambda q: asd.actuated_unactuated_coordinates(q)[:n_a])(aux["q_ts"])
+        return y_des[:n_a] - y_a
+
     def evaluate(opt_vars):
         active = controller.update_gains(opt_vars["opt_ctr_params"])
         trajectory = robot.rollout_closed_loop_to(
@@ -286,6 +319,7 @@ def _build_collocated(
         reference_ts=q_des_ts,
         committed_alpha=COMMITTED_ALPHA,
         committed_lr_ratio=dict(COMMITTED_LR_RATIO),
+        control_error_fn=control_error,
         supports_saturation=True,
         saturation_config=f"tanh, e_sat={e_sat} m",
     )
@@ -330,6 +364,11 @@ def _build_synergistic(
     # length; orientation error is already in radians.
     scales = operational_space_scales(osd.task_selector, case.total_length)
 
+    def control_error(aux: dict) -> Array:
+        """The task-space pose error this controller's PID integrates."""
+        x_ts = vmap(osd.operational_space_poses)(aux["q_ts"])
+        return vmap(osd.compute_task_pose_error)(x_ts, x_des_ts)
+
     def evaluate(opt_vars):
         active = controller.update_gains(opt_vars["opt_ctr_params"])
         trajectory = robot.rollout_closed_loop_to(
@@ -355,6 +394,7 @@ def _build_synergistic(
         nominal_gains=nominal,
         objective_scales=scales,
         reference_ts=x_des_ts,
+        control_error_fn=control_error,
         committed_alpha=COMMITTED_ALPHA,
         committed_lr_ratio=dict(COMMITTED_LR_RATIO),
         # This controller does not saturate its integral error at all, so
@@ -415,3 +455,99 @@ def build_evaluator(
     if method == "collocated":
         return _build_collocated(case, horizon, solver_dt, e_sat, loss_scale)
     return _build_synergistic(case, horizon, solver_dt, loss_scale)
+
+
+def build_optimizer(
+    alpha: float | Callable[[Array], Array],
+    *,
+    ratio: dict[str, float] | None = None,
+    eps: float = YOGI_EPS,
+    clip: float | None = None,
+):
+    """Build the Section Vd gain optimizer: one Yogi, per-family learning rates.
+
+    Both generators and every stage of the tuning study construct their
+    optimizer here, for the same reason they build their problem in
+    :func:`build_evaluator`: a rate the study measured has to be the rate a
+    generator runs.
+
+    The learning rate is expressed as a magnitude times a per-family ratio, and
+    the ratio is applied as a **final rescaling of one Yogi's update** rather
+    than as three separate Yogi instances at three rates. Those are the same
+    thing -- ``scale_by_yogi``'s moment estimates do not see the learning rate,
+    so the rate factors out of the state entirely -- but the single-state form
+    says what is actually going on: one adaptive optimizer, three rates, not
+    three optimizers. Verified against the committed ``multi_transform`` of
+    three ``optax.yogi`` calls over 40 steps: parameters agree to 5e-13
+    absolute, which is floating-point reassociation.
+
+    Args:
+        alpha: Learning-rate magnitude. Either a constant or an optax schedule
+            (a callable of the step count), which is how the study's ramp
+            expresses a learning rate that changes every iteration.
+        ratio: Per-family multipliers on ``alpha``. Defaults to
+            :data:`COMMITTED_LR_RATIO`.
+        eps: Yogi's epsilon. See :data:`YOGI_EPS`.
+        clip: Gradient-norm clip, or ``None`` for no clipping, which is the
+            default because the committed threshold of 10.0 never binds: the
+            largest gain-family gradient norm measured anywhere in the study is
+            0.84, and that was at the learning rate that diverges on its second
+            iteration. Divergence here is a step-size effect, not a gradient
+            blow-up -- Yogi's update magnitude is set by the learning rate
+            almost independently of the gradient -- so a gradient clip cannot
+            prevent it and is not a safety net being removed. Supplied here as a
+            **global** clip over all three families, where the committed
+            configuration clipped each family separately; with a bound this
+            slack the distinction is moot, and it exists only so the study can
+            still reproduce the committed configuration.
+
+    Returns:
+        An initialized ``optax`` gradient transformation over the
+        ``{"opt_ctr_params": ..., "opt_atr_params": ...}`` pytree.
+
+    Raises:
+        ValueError: If ``ratio`` does not cover exactly the gain families.
+    """
+    import optax  # Imported lazily; only the paper_results extra provides it.
+
+    ratio = dict(COMMITTED_LR_RATIO if ratio is None else ratio)
+    if set(ratio) != set(GAIN_ORDER):
+        raise ValueError(f"ratio must cover exactly {GAIN_ORDER}, got {sorted(ratio)}")
+    rate = alpha if callable(alpha) else (lambda _count: alpha)
+
+    def scale_for(family: str):
+        factor = ratio[family]
+        return optax.scale_by_schedule(lambda count, f=factor: -f * rate(count))
+
+    stages = []
+    if clip is not None:
+        stages.append(optax.clip_by_global_norm(clip))
+    stages.append(optax.scale_by_yogi(eps=eps))
+    stages.append(
+        optax.multi_transform(
+            {FAMILY_LABEL[name]: scale_for(name) for name in GAIN_ORDER},
+            {
+                "opt_ctr_params": {name: FAMILY_LABEL[name] for name in GAIN_ORDER},
+                "opt_atr_params": {},
+            },
+        )
+    )
+    return optax.chain(*stages)
+
+
+def describe_optimizer(
+    alpha: float,
+    *,
+    ratio: dict[str, float] | None = None,
+    eps: float = YOGI_EPS,
+    clip: float | None = None,
+) -> str:
+    """Render :func:`build_optimizer`'s configuration for the archive.
+
+    Archived so a run's optimizer can be reported and compared separately from
+    its loss definition (issue #154 follow-up, item 6).
+    """
+    ratio = dict(COMMITTED_LR_RATIO if ratio is None else ratio)
+    rates = ", ".join(f"{FAMILY_LABEL[n]}: {alpha * ratio[n]:g}" for n in GAIN_ORDER)
+    prefix = "" if clip is None else f"clip_by_global_norm({clip:g}) + "
+    return f"{prefix}scale_by_yogi(eps={eps:g}) + per-family rate{{{rates}}}"

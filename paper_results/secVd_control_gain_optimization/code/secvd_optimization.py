@@ -86,9 +86,40 @@ def parse_optimization_args(
     include_integral_error_saturation_scale: bool = False,
     optimization_batch_size: int = SECVD_BATCH_SIZE,
 ) -> argparse.Namespace:
+    # Imported here rather than at module scope: secvd_case imports JAX, and
+    # this module is read by the entrypoints to pick a device before JAX loads.
+    # By the time this function runs, JAX is already imported.
+    from secvd_case import COMMITTED_ALPHA, COMMITTED_LR_RATIO, GAIN_ORDER
+
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--result-dir", type=Path, default=default_result_dir)
     parser.add_argument("--num-iters", type=int, default=100)
+    parser.add_argument(
+        "--learning-rate",
+        type=float,
+        default=COMMITTED_ALPHA,
+        help=(
+            "Learning-rate magnitude alpha; the per-family rates are "
+            "alpha * --lr-ratio. Tuned by secvd_tuning_study."
+        ),
+    )
+    parser.add_argument(
+        "--lr-ratio",
+        type=float,
+        nargs=3,
+        metavar=tuple(GAIN_ORDER),
+        default=[COMMITTED_LR_RATIO[name] for name in GAIN_ORDER],
+        help="Per-family multipliers on the learning-rate magnitude.",
+    )
+    parser.add_argument(
+        "--clip",
+        type=float,
+        default=None,
+        help=(
+            "Global gradient-norm clip. Off by default: the committed threshold "
+            "of 10.0 never bound in any measured run."
+        ),
+    )
     _add_batch_size_argument(parser, optimization_batch_size)
     parser.add_argument(
         "--init-seed",
@@ -123,7 +154,12 @@ def parse_optimization_args(
     args = parser.parse_args()
     if args.batch_size < 1:
         raise ValueError("--batch-size must be at least 1")
+    if not args.learning_rate > 0:
+        raise ValueError("--learning-rate must be positive")
+    if args.clip is not None and not args.clip > 0:
+        raise ValueError("--clip must be positive when given")
     args.optimization_batch_size = args.batch_size
+    args.lr_ratio = dict(zip(GAIN_ORDER, args.lr_ratio, strict=True))
     return args
 
 

@@ -17,10 +17,14 @@ OPTIMIZATION_BATCH_SIZE = SECVD_BATCH_SIZE
 configure_optimization_device()
 
 import jax  # noqa: E402
-import optax  # noqa: E402
 from gain_optimization_loop import run_gain_optimization  # noqa: E402
 from jax import vmap  # noqa: E402
-from secvd_case import build_evaluator, end_effector_pose_trajectory  # noqa: E402
+from secvd_case import (  # noqa: E402
+    build_evaluator,
+    build_optimizer,
+    describe_optimizer,
+    end_effector_pose_trajectory,
+)
 from secvd_init import (  # noqa: E402
     describe_initial_gains,
     sample_initial_gains,
@@ -64,24 +68,13 @@ def main() -> None:
     print(describe_initial_gains(init_gains))
 
     opt_vars = {"opt_ctr_params": init_gains, "opt_atr_params": {}}
-    labels = {
-        "opt_ctr_params": {"Kp": "P", "Ki": "I", "Kd": "D"},
-        "opt_atr_params": {},
-    }
-    optimizer = optax.multi_transform(
-        {
-            "P": optax.chain(optax.clip_by_global_norm(10.0), optax.yogi(0.5)),
-            "I": optax.chain(optax.clip_by_global_norm(10.0), optax.yogi(0.25)),
-            "D": optax.chain(optax.clip_by_global_norm(10.0), optax.yogi(0.05)),
-        },
-        labels,
-    )
-    # Recorded in the archive so optimizer tuning can be reported and compared
-    # separately from the loss definition (issue #154 follow-up, item 6).
-    optimizer_metadata = (
-        "multi_transform{P: clip_by_global_norm(10.0)+yogi(0.5), "
-        "I: clip_by_global_norm(10.0)+yogi(0.25), "
-        "D: clip_by_global_norm(10.0)+yogi(0.05)}"
+    # Built in secvd_case, so the rates the tuning study measures are applied by
+    # the transform this script runs. The metadata is recorded in the archive so
+    # optimizer tuning can be reported and compared separately from the loss
+    # definition (issue #154 follow-up, item 6).
+    optimizer = build_optimizer(args.learning_rate, ratio=args.lr_ratio, clip=args.clip)
+    optimizer_metadata = describe_optimizer(
+        args.learning_rate, ratio=args.lr_ratio, clip=args.clip
     )
     history = run_gain_optimization(
         gradient_fn=problem.gradient_fn,

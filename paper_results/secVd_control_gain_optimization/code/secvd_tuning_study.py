@@ -4,62 +4,124 @@ This is a study, not a results generator: it writes small summaries to
 ``data/tuning/`` and never a schema-v2 paper archive. Follow-up items 2 and 6 on
 [issue #154](https://github.com/tud-phi/soromox/issues/154) both ask for values
 to be *tuned* against something observable, and the first regenerated collocated
-run showed why that has to come before any further results.
+run showed why that has to come before any further results: at 100 iterations
+and six starts its median per-start improvement was 1.11 %, with the loss still
+descending at the last iteration. The optimizer was not converged, it was barely
+moving.
 
-## What the first full run showed
+Every stage builds its problem with :func:`secvd_case.build_evaluator` and its
+optimizer with :func:`secvd_case.build_optimizer`, the same two calls the
+generators make, so a setting measured here is measured on what actually runs.
 
-At 100 iterations and six starts the median per-start improvement was 1.11 %.
-The loss was still descending at the last iteration -- the optimizer was not
-converged, it was barely moving. Two measurements from that archive explain it:
+## Stages
 
-* gradient norms peaked at ``4.8e-4``, five orders of magnitude below the
-  ``clip_by_global_norm(10.0)`` threshold, so the clip never bound once;
-* ``optax.yogi`` defaults to ``eps=1e-3``, not Adam's ``1e-8``.
+Run one at a time with ``--stage``; each writes its own summary.
 
-Yogi is scale-invariant only while ``sqrt(v) >> eps``. Below that floor it
-degenerates into SGD with an effective rate of ``lr / eps``. With gradients at
-``1.8e-4`` the case sits firmly below the floor, which is exactly the failure
-the follow-up predicted when it warned that removing the ``1e3`` global factor
-"would not be equivalent for Yogi and gradient clipping". Making the objective
-dimensionless was right; leaving the learning rates calibrated for the old
-scale was not.
+``solver-dt``
+    How coarse the integration step can be before the *gradient* moves. Cost is
+    linear in the step count, so this is the study's largest speed lever and
+    every later stage inherits it. Gated on the gradient rather than the loss,
+    because a loss can stay accurate while its derivative drifts -- and here it
+    does, by two orders of magnitude.
 
-## Stage 1: the coupled range test
+    Both methods answer the same way, which is what one would expect of a limit
+    set by the plant and a fixed-step solver rather than by a controller: every
+    step up to ``2e-3`` holds the gradient to ``3e-5`` relative or better,
+    ``5e-3`` produces ``NaN``, and there is nothing in between. The published
+    ``1e-4`` is therefore about 20x finer than it needs to be. The later stages
+    run at ``1e-3``, keeping a factor of five below the failure, because this is
+    measured at the *initial* gains and an optimizer that works raises them.
+
+``lr-range``
+    A geometric ramp over the learning-rate magnitude, locating the usable
+    region in one run.
+
+``lr-confirm``
+    Independent constant-rate runs over a bracketing set, measuring the value
+    the ramp located.
+
+``ratio``
+    The per-family split, compared at the confirmed magnitude.
+
+``saturation``
+    The collocated integral-error saturation scale ``e_sat`` -- follow-up item 2.
+    Skipped, with a reason, on a controller that does not saturate.
+
+``verify``
+    One more ramp at the chosen ``e_sat``, checking that treating the two
+    sequentially held.
+
+## Why the magnitude and the ratio are searched separately
 
 Three learning rates cannot be searched directly at full fidelity -- even a
-coarse ``4x4x4`` grid is tens of hours. So the search is decomposed into a
-magnitude and a ratio,
+coarse ``4x4x4`` grid is tens of hours -- so the search is decomposed into
 
 ```text
 (lr_P, lr_I, lr_D) = alpha * (1, 0.5, 0.1)
 ```
 
-where the ratio is the one currently in the generators (``0.5, 0.25, 0.05``, so
-the current ``alpha`` is 0.5). Only ``alpha`` is ramped here, geometrically over
-one run: 60 points across six decades. Six decades because the two hypotheses
-sit far apart -- an ``eps``-dominated optimizer needs ``alpha`` above 100 to
-move at all, a scale-invariant one wants ``alpha`` near 1 -- and one ramp should
-discriminate between them rather than assume.
+where the ratio is the committed one (``0.5, 0.25, 0.05``, so the committed
+``alpha`` is 0.5). ``lr-range`` and ``lr-confirm`` move ``alpha``; ``ratio``
+moves the split.
+
+## A ramp locates, it does not measure
 
 A range test is a single trajectory through parameter space, not independent
 runs at each rate: the loss at high ``alpha`` reflects where the earlier steps
-left the parameters. That is what makes it cheap, and why it locates a region
-rather than measuring a value. The chosen rate is confirmed on independent runs
-in a later stage.
-
-## Reading the regime
-
-Rather than reaching into the optimizer's internal state, whose layout differs
-across optax versions and nests under ``multi_transform``, each iteration
-records the observed update norm against the two regimes' predictions:
+left the parameters. That is what makes it cheap, and it is also why the
+divergence point is a property of the *ramp* rather than of the problem. Three
+ramps over the identical collocated problem:
 
 ```text
-scale-invariant   |update| ~ lr * sqrt(n)        (independent of |grad|)
-eps-dominated     |update| ~ lr * |grad| / eps
+starts at   step    diverged at   recommends   loss cut on the way up
+    100     1.27x        1.91e5       6.4e4        67 %
+    100     1.22x        1.12e5       3.7e4        76 %
+   0.01     2.15x        1.00e4       3.3e3        -8 %
 ```
 
-Whichever prediction tracks the observation identifies the regime, and the
-comparison holds whatever optax does internally.
+A 19x spread, tracking the last column exactly. The first two started *above*
+the usable rate and banked two thirds of the available loss reduction climbing
+to their divergence point, arriving in a far better-conditioned region that
+genuinely tolerates rates a cold start cannot. The third arrives at ``1e4``
+having made no net progress and dies there, which is what the constant-rate scan
+independently finds: ``1e4`` diverges on its second iteration.
+
+Two consequences. Start the ramp well *below* the rate being looked for --
+:data:`DEFAULT_ALPHA_LOW` does -- or the overshoot is guaranteed. And read the
+result as a screening test with an order-of-magnitude dependence on the ramp
+itself, never as a located value: ``lr-confirm`` measures, this stage only says
+which direction to measure in.
+
+## What was actually wrong, and what was not
+
+The stall is a learning-rate magnitude, nothing subtler. ``alpha = 1000``
+against a committed ``0.5`` -- roughly 2000x -- where 20 iterations already beat
+the committed run's 100, and 100 iterations reach ``1.487e-3`` against
+``1.890e-3``. Three other explanations were tested first and are recorded here
+because each is plausible enough to be worth not re-deriving:
+
+* **Yogi's ``eps``.** ``optax.yogi`` defaults to ``eps=1e-3``, four orders above
+  this problem's gradients, which should degenerate it into SGD at ``lr / eps``.
+  Rerunning at ``1e-8`` gave nearly the same curve, so this was not the cause.
+  The lower value is kept anyway -- a numerical floor above the signal is
+  indefensible whether or not it binds.
+* **Gradient clipping.** ``clip_by_global_norm(10.0)`` never bound: the largest
+  family gradient norm measured anywhere in this study is 0.84, at the rate that
+  diverges on iteration 2. Divergence here is a step-size effect, so a gradient
+  clip could not have prevented it either. Dropped.
+* **Loss scaling.** Scaling the objective by ``1e4`` does move Yogi -- 539x
+  larger steps at low ``alpha``, decaying to 2.7x at high ``alpha`` -- so it is
+  not the no-op that Adam-family scale invariance suggests. But it is
+  interchangeable with the learning rate and reaches a worse optimum, so it is
+  not a substitute for tuning one.
+
+## Reading the step size
+
+Rather than reaching into the optimizer's internal state, whose layout differs
+across optax versions and nests under ``multi_transform``,
+:func:`report_step_efficiency` records the observed ``|update| / lr`` per gain
+family. A well-scaled adaptive optimizer sits near 1; a small constant value
+means the step is linear in the rate and the rate is short by that factor.
 """
 
 from __future__ import annotations
@@ -67,6 +129,7 @@ from __future__ import annotations
 import csv
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 CODE_DIR = Path(__file__).resolve().parent
@@ -93,9 +156,11 @@ from secvd_case import (  # noqa: E402
     COMMITTED_LR_RATIO,
     METHODS,
     build_evaluator,
+    build_optimizer,
     build_sec_vd_case,
 )
 from secvd_init import (  # noqa: E402
+    GAIN_ORDER,
     SECVD_BATCH_SIZE,
     SECVD_INIT_SCHEME,
     SECVD_INIT_SEED,
@@ -110,8 +175,7 @@ TUNING_DIR = CASE_DIR / "data" / "tuning"
 
 # The learning-rate ratio currently in both generators, normalized so that the
 # committed setting (0.5, 0.25, 0.05) is exactly alpha = 0.5.
-GAIN_FAMILIES = ("Kp", "Ki", "Kd")
-FAMILY_LABEL = {"Kp": "P", "Ki": "I", "Kd": "D"}
+GAIN_FAMILIES = GAIN_ORDER
 # The committed scaling comes from secvd_case, so the study cannot drift from
 # what the generators actually run.
 LR_RATIO = COMMITTED_LR_RATIO
@@ -124,10 +188,22 @@ STAGES = ("solver-dt", "lr-range", "lr-confirm", "ratio", "saturation", "verify"
 
 # A committed learning rate within this many decades of the located optimum is
 # treated as adequately scaled, and the later stages are reported as unnecessary
-# rather than run. The band is generous because a ramp locates rather than
-# measures: on the collocated problem it recommended 6.4e4 where the
-# constant-rate scan found 1000, a 64x overshoot.
+# rather than run. The band is generous, and has to be: the ramp's divergence
+# point moved by 19x across three ramps of the same problem, depending only on
+# where each started and how coarsely it stepped. One decade is wide enough to
+# survive that, which is exactly why this is a screening test and lr-confirm is
+# the measurement.
 HEALTHY_ALPHA_DECADES = 1.0
+
+# Ramps must start well below the rate being looked for. One that starts above
+# it banks real loss reduction on the way up and then tolerates rates a cold
+# start cannot, overshooting by more than an order of magnitude.
+DEFAULT_ALPHA_LOW = 1e-2
+
+# How much later a ramp diverges than a constant rate does, so the bracket it
+# hands lr-confirm can be shifted back down. Measured on the collocated problem:
+# the ramp survived alpha = 1e4 where a constant 3000 dies on iteration 3.
+RAMP_DIVERGENCE_BIAS = 3.0
 
 # Relative gradient error, against the finest step compared, that a coarser step
 # may introduce before it is rejected. The study only has to locate a learning
@@ -140,6 +216,22 @@ def _family_norms(tree: dict) -> dict:
     return {name: jnp.linalg.norm(tree[name], axis=-1) for name in GAIN_FAMILIES}
 
 
+def windup_metrics(aux: dict) -> dict:
+    """Per-start integrator diagnostics from a batched rollout.
+
+    What the anti-windup scale controls is the integrator, so that is what
+    follow-up item 2 has to be judged on. Two numbers separate the cases a loss
+    comparison cannot: a large ``integral_peak`` with a small
+    ``integral_terminal`` is a transient the integrator recovered from, while
+    the two being equal and large is accumulated windup that never unwound.
+    """
+    integral = jnp.abs(aux["integral_error_ts"])
+    return {
+        "integral_peak": jnp.max(integral, axis=(1, 2)),
+        "integral_terminal": jnp.linalg.norm(integral[:, -1, :], axis=-1),
+    }
+
+
 def run_alpha_schedule(
     *,
     gradient_fn,
@@ -150,6 +242,7 @@ def run_alpha_schedule(
     eps: float,
     use_clip: bool,
     ratio: dict | None = None,
+    aux_metrics: Callable[[dict], dict] | None = None,
 ) -> dict:
     """Ramp the learning-rate magnitude geometrically, one point per iteration.
 
@@ -159,37 +252,35 @@ def run_alpha_schedule(
         alpha_low: First learning-rate magnitude.
         alpha_high: Last learning-rate magnitude.
         num_points: Number of ramp points, one per iteration.
-        eps: ``optax.yogi`` epsilon. The default of ``1e-3`` is what puts this
-            case below Yogi's adaptivity floor.
-        use_clip: Whether to keep the committed ``clip_by_global_norm``.
+        eps: Yogi epsilon, passed through to :func:`build_optimizer`.
+        use_clip: Whether to reinstate the committed ``clip_by_global_norm``,
+            which :func:`build_optimizer` omits by default.
         ratio: Per-family learning-rate ratio; defaults to :data:`LR_RATIO`.
             Setting ``alpha_low == alpha_high`` turns the ramp into a constant
             rate, which is how the confirmation runs are expressed.
+        aux_metrics: Optional callable mapping a batched rollout ``aux`` to
+            named per-start scalars, recorded alongside the standard
+            diagnostics. Defaults to :func:`windup_metrics`, so every stage
+            reports what the integrator is doing, not only the saturation sweep.
 
     Returns:
         Arrays of shape ``(num_points,)`` or ``(num_points, batch)`` recording
-        the ramp and every diagnostic taken along it.
+        the ramp and every diagnostic taken along it, plus ``final_gains`` of
+        shape ``(batch, families, actuators)`` in :data:`GAIN_FAMILIES` order.
     """
     batch_size = int(init_gains["Kp"].shape[0])
     alphas = jnp.geomspace(alpha_low, alpha_high, num_points)
     ratio = dict(LR_RATIO if ratio is None else ratio)
+    aux_metrics = windup_metrics if aux_metrics is None else aux_metrics
 
-    def schedule_for(family: str):
-        scale = ratio[family]
-        return lambda count: scale * jnp.take(alphas, count, mode="clip")
-
-    def transform_for(family: str):
-        yogi = optax.yogi(schedule_for(family), eps=eps)
-        if not use_clip:
-            return yogi
-        return optax.chain(optax.clip_by_global_norm(CLIP_THRESHOLD), yogi)
-
-    optimizer = optax.multi_transform(
-        {FAMILY_LABEL[name]: transform_for(name) for name in GAIN_FAMILIES},
-        {
-            "opt_ctr_params": {name: FAMILY_LABEL[name] for name in GAIN_FAMILIES},
-            "opt_atr_params": {},
-        },
+    # One ramp point per iteration, held at the last value if the loop outlives
+    # the schedule. The optimizer comes from secvd_case, so a rate measured here
+    # is applied by exactly the transform the generators run.
+    optimizer = build_optimizer(
+        lambda count: jnp.take(alphas, count, mode="clip"),
+        ratio=ratio,
+        eps=eps,
+        clip=CLIP_THRESHOLD if use_clip else None,
     )
     opt_vars = {"opt_ctr_params": init_gains, "opt_atr_params": {}}
     opt_state = vmap(optimizer.init)(opt_vars)
@@ -202,7 +293,7 @@ def run_alpha_schedule(
 
     for index in range(num_points):
         started = time.time()
-        (loss, _aux), grad = vmap(gradient_fn)(opt_vars)
+        (loss, aux), grad = vmap(gradient_fn)(opt_vars)
         gains = opt_vars["opt_ctr_params"]
         grad_families = _family_norms(grad["opt_ctr_params"])
         gain_families = _family_norms(gains)
@@ -213,6 +304,8 @@ def run_alpha_schedule(
         jax.block_until_ready((loss, opt_vars))
 
         record["loss"].append(np.asarray(loss))
+        for key, value in aux_metrics(aux).items():
+            record.setdefault(key, []).append(np.asarray(value))
         for key, families in (
             ("grad_norm", grad_families),
             ("update_norm", update_families),
@@ -243,6 +336,9 @@ def run_alpha_schedule(
             break
 
     stacked = {key: np.asarray(values) for key, values in record.items()}
+    stacked["final_gains"] = np.stack(
+        [np.asarray(opt_vars["opt_ctr_params"][n]) for n in GAIN_FAMILIES], axis=1
+    )
     stacked["alpha"] = np.asarray(alphas)[: len(stacked["loss"])]
     stacked["batch_size"] = np.asarray(batch_size)
     stacked["eps"] = np.asarray(eps)
@@ -432,18 +528,46 @@ def stage_solver_dt(args, case) -> dict:
 
 
 def locate_alpha(result: dict) -> tuple[float, float]:
-    """Return ``(recommended, divergence)`` alpha from a ramp.
+    """Return the ``(low, high)`` bracket a ramp puts the usable rate in.
 
-    Standard range-test practice takes a third of the divergence point rather
-    than the minimum, which sits adjacent to it and is usually already
-    oscillating. A ramp that never diverged reports its own top, and the caller
-    should widen the span rather than trust it.
+    A ramp yields one trustworthy number -- where it diverged -- and one that is
+    an artefact of how it was configured. Standard range-test practice reports a
+    third of the divergence point as *the* learning rate; on this problem that
+    was 3.3x high, so this returns the bracket instead and leaves the point
+    estimate to :func:`stage_constant_rates`, which measures it from cold.
+
+    The bracket is a decade wide and sits below the divergence point, because a
+    ramp diverges *later* than a cold run at the same rate, for the same reason
+    its point estimate is high. Measured once, on the collocated problem: the
+    ramp survived to ``1e4`` where a constant ``3000`` dies on its third
+    iteration, a factor of :data:`RAMP_DIVERGENCE_BIAS`. That gives a bracket of
+    ``[333, 3333]``, which contains both the confirmed rate of 1000 and the cold
+    divergence point of 3000.
+
+    One method is one calibration point, so the shift is deliberately modest and
+    the bracket deliberately wide; the confirm scan straddles the boundary
+    either way, and a diverging point costs two iterations to discover.
+
+    Why not the divergence point alone: it moved by 19x across three ramps of
+    the same problem, tracking only how much loss reduction each had banked on
+    the way up. A ramp starting above the usable rate arrives at high rates
+    already optimized and survives rates a cold start cannot -- which is why
+    :data:`DEFAULT_ALPHA_LOW` starts two decades below the committed rate.
+
+    A ramp that never diverged brackets its own top, and the caller should widen
+    the span rather than trust it.
     """
     alpha = np.asarray(result["alpha"])
     loss = np.median(np.asarray(result["loss"]), axis=-1)
     finite = np.isfinite(loss)
     divergence = float(alpha[~finite][0]) if (~finite).any() else float(alpha[-1])
-    return divergence / 3.0, divergence
+    high = divergence / RAMP_DIVERGENCE_BIAS
+    return high / 10.0, high
+
+
+def bracket_alphas(low: float, high: float, count: int = 3) -> list[float]:
+    """Constant rates spanning a bracket, for :func:`stage_constant_rates`."""
+    return [float(value) for value in np.geomspace(low, high, count)]
 
 
 def report_alpha_gate(result: dict, committed_alpha: float) -> bool:
@@ -452,20 +576,24 @@ def report_alpha_gate(result: dict, committed_alpha: float) -> bool:
     A method that passes is reported as adequately scaled *with the measured
     number*, which is a result rather than a skipped stage.
     """
-    recommended, divergence = locate_alpha(result)
-    decades = float(np.log10(recommended / committed_alpha))
+    low, high = locate_alpha(result)
+    divergence = high
+    decades = float(np.log10(low / committed_alpha))
     short = decades > HEALTHY_ALPHA_DECADES
     print("")
     print(
-        f"Located alpha ~ {recommended:.3g} (diverged at {divergence:.3g}); "
-        f"committed is {committed_alpha:g}, {decades:+.2f} decades away."
+        f"Ramp diverged at alpha = {divergence * RAMP_DIVERGENCE_BIAS:.3g}, "
+        f"bracketing the usable rate in [{low:.3g}, {divergence:.3g}]; "
+        f"committed is {committed_alpha:g}, {decades:+.2f} decades below it."
     )
     if short:
-        print("  SHORT: run lr-confirm to measure a usable constant rate.")
+        rates = " ".join(f"{value:g}" for value in bracket_alphas(low, divergence))
+        print("  SHORT. Measure it from cold:")
+        print(f"    --stage lr-confirm --alphas {rates}")
     else:
         print(
-            f"  Adequately scaled: inside the {HEALTHY_ALPHA_DECADES:g}-decade "
-            "band, so no retuning is needed."
+            f"  Adequately scaled: within the {HEALTHY_ALPHA_DECADES:g}-decade "
+            "band of the bracket, so no retuning is needed."
         )
     return short
 
@@ -522,6 +650,154 @@ def stage_constant_rates(args, case, alphas, ratio, label) -> dict:
     return results
 
 
+def saturation_window(problem) -> tuple[float, float]:
+    """The physically meaningful range for ``e_sat``, measured from the model.
+
+    ``e_sat`` is a *metre* scale on the error the PID integrates, so it can be
+    bounded from both sides by errors this plant actually produces, without any
+    sweep:
+
+    * **Lower bound, the steady-state error.** Below it the integrator is
+      clamped at a level it can never integrate away, so the offset the I-term
+      exists to remove becomes permanent.
+    * **Upper bound, the initial step.** Above it ``tanh`` never leaves its
+      linear region, so the saturation is not merely mild -- it is absent, and
+      the controller is a plain PID.
+
+    Anything outside that window is a knob that provably does nothing or a
+    controller that provably cannot converge, so a sweep belongs inside it.
+    Measured at the nominal gains, which is what makes it a model-based bound
+    rather than a result of the tuning.
+    """
+    (_loss, aux), _grad = problem.gradient_fn(
+        {"opt_ctr_params": problem.nominal_gains, "opt_atr_params": {}}
+    )
+    error = np.abs(np.asarray(problem.control_error_fn(aux)))
+    return float(error[-1].max()), float(error[0].max())
+
+
+def stage_saturation(args, case, alpha, ratio) -> dict:
+    """Sweep the integral-error saturation scale -- follow-up item 2.
+
+    ``e_sat`` is the error magnitude above which the ``tanh`` saturation starts
+    compressing what reaches the integrator, so it trades steady-state accuracy
+    against windup. Sweeping it on tracking loss alone cannot separate those:
+    a scale so tight that the integrator is starved and one so loose that it is
+    effectively absent can land at similar losses for different reasons. Each
+    point therefore also reports how much of the rollout was actually in
+    saturation and how far the integrator wound up.
+
+    The optimizer runs at the confirmed learning rate, because the question is
+    which ``e_sat`` an optimizer that actually moves ends up preferring, not
+    which one looks best at the initial gains.
+    """
+    probe = build_evaluator(
+        args.method, case=case, horizon=args.horizon, solver_dt=args.solver_dt
+    )
+    steady, step = saturation_window(probe)
+    print("")
+    print(
+        f"Model-based window for e_sat: [{steady:.3g}, {step:.3g}] m -- the "
+        f"steady-state error up to the initial step, at the nominal gains."
+    )
+    e_sats = args.e_sats
+    if e_sats is None:
+        e_sats = [float(v) for v in np.geomspace(steady, step, 5)]
+        print(f"  Sweeping it: {' '.join(f'{v:.3g}' for v in e_sats)}")
+    else:
+        outside = [v for v in e_sats if not steady <= v <= step]
+        if outside:
+            print(
+                "  Requested "
+                + ", ".join(f"{v:g}" for v in outside)
+                + " m falls outside it, so those points measure a controller "
+                "that is either permanently offset or unsaturated."
+            )
+    results = {}
+    summary = []
+    for e_sat in e_sats:
+        problem = build_evaluator(
+            args.method,
+            case=case,
+            horizon=args.horizon,
+            solver_dt=args.solver_dt,
+            e_sat=e_sat,
+            loss_scale=args.loss_scale,
+        )
+
+        def metrics(aux, e_sat=e_sat, problem=problem):
+            # Against the error the PID *integrates*, which is the controller's
+            # own -- actuated coordinates in metres for the collocated
+            # regulator, task-space pose for the synergistic one. Not the
+            # configuration-space error the loss is built from: comparing that
+            # to e_sat compares different spaces in different units.
+            error = jnp.abs(vmap(problem.control_error_fn)(aux))
+            return windup_metrics(aux) | {
+                "saturated_fraction": jnp.mean(error > e_sat, axis=(1, 2))
+            }
+
+        print("")
+        print(f"[saturation] e_sat = {e_sat:g} m, alpha = {alpha:g}", flush=True)
+        result = run_alpha_schedule(
+            gradient_fn=problem.gradient_fn,
+            init_gains=_sample_starts(problem, args.batch_size, args.seed),
+            alpha_low=alpha,
+            alpha_high=alpha,
+            num_points=args.num_iters,
+            eps=args.eps,
+            use_clip=not args.no_clip,
+            ratio=ratio,
+            aux_metrics=metrics,
+        )
+        result["e_sat"] = np.asarray(e_sat)
+        results[e_sat] = result
+        # Diagnostics are read off the iterations that actually evaluated. A
+        # start that goes non-finite poisons the later rows, and reporting an
+        # integral norm of NaN says nothing about the saturation scale.
+        loss = np.median(np.asarray(result["loss"]), axis=-1)
+        live = np.isfinite(loss)
+        last = int(np.flatnonzero(live)[-1]) if live.any() else 0
+        summary.append(
+            (
+                e_sat,
+                float(loss[live].min()) if live.any() else float("nan"),
+                float(np.median(result["saturated_fraction"][last])),
+                float(np.median(result["integral_peak"][live].max(axis=0)))
+                if live.any()
+                else float("nan"),
+                float(np.median(result["integral_terminal"][last])),
+                int(live.sum()),
+            )
+        )
+
+    print("")
+    print(f"Saturation sweep, medians over starts, {args.num_iters} iterations.")
+    print("'saturated' is the fraction of the rollout with |e| > e_sat, on the")
+    print("error the PID integrates -- actuation space here, not the loss's.")
+    print(
+        f"  {'e_sat [m]':>10}  {'best loss':>13}  {'saturated':>10}  "
+        f"{'peak |I|':>10}  {'final |I|':>10}  {'iters':>6}"
+    )
+    for e_sat, loss, fraction, peak, terminal, live in summary:
+        print(
+            f"  {e_sat:>10.4g}  {loss:>13.6e}  {100 * fraction:>9.1f}%  "
+            f"{peak:>10.3e}  {terminal:>10.3e}  {live:>6d}"
+        )
+    usable = [row for row in summary if np.isfinite(row[1])]
+    if usable:
+        best = min(usable, key=lambda row: row[1])
+        print("")
+        print(f"Best tracking at e_sat = {best[0]:g} m, loss {best[1]:.6e}")
+        inert = [row[0] for row in usable if row[2] < 1e-3]
+        if inert:
+            print(
+                "  Saturation was inactive (<0.1 % of the rollout) at "
+                + ", ".join(f"{value:g}" for value in inert)
+                + " m, so those points measure the unsaturated controller."
+            )
+    return results
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__.split(chr(10))[0])
     parser.add_argument("--stage", choices=STAGES, default="lr-range")
@@ -545,8 +821,11 @@ def _parse_args():
         "--e-sats",
         type=float,
         nargs="+",
-        default=[1e-3, 3.2e-3, 1e-2, 3.2e-2, 1e-1],
-        help="Saturation scales in metres, swept by the saturation stage.",
+        default=None,
+        help=(
+            "Saturation scales in metres. Defaults to five points across the "
+            "model-based window the saturation stage measures."
+        ),
     )
     parser.add_argument("--loss-scale", type=float, default=1.0)
     parser.add_argument(
@@ -564,7 +843,7 @@ def _parse_args():
         default=[30.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0],
         help="Constant rates the lr-confirm stage compares.",
     )
-    parser.add_argument("--alpha-low", type=float, default=1e-2)
+    parser.add_argument("--alpha-low", type=float, default=DEFAULT_ALPHA_LOW)
     parser.add_argument("--alpha-high", type=float, default=1e6)
     # Three points per decade. The ramp only has to say whether the committed
     # rate is short and which way; lr-confirm measures the value actually used.
@@ -641,23 +920,25 @@ def main() -> None:
         results = stage_constant_rates(args, case, args.alphas, ratio, "lr-confirm")
     elif args.stage == "ratio":
         alpha = args.alpha or args.alphas[len(args.alphas) // 2]
-        results = {}
-        for name, candidate in (
+        candidates = [
             ("committed", dict(LR_RATIO)),
             ("equal", dict.fromkeys(GAIN_FAMILIES, 1.0)),
-            ("custom", ratio),
-        ):
-            results[name] = stage_constant_rates(
-                args, case, [alpha], candidate, f"ratio:{name}"
-            )[alpha]
+        ]
+        # --ratio defaults to the committed split, so without this the stage
+        # spends a third of its budget recomputing a number it already has.
+        if any(ratio == candidate for _, candidate in candidates):
+            print("")
+            print("--ratio matches a candidate already scanned; not repeating it.")
+        else:
+            candidates.append(("custom", ratio))
+        results = {
+            name: stage_constant_rates(args, case, [alpha], candidate, f"ratio:{name}")[
+                alpha
+            ]
+            for name, candidate in candidates
+        }
     else:
-        alpha = args.alpha or 1000.0
-        results = {}
-        for e_sat in args.e_sats:
-            args.e_sat = e_sat
-            results[e_sat] = stage_constant_rates(
-                args, case, [alpha], ratio, f"e_sat={e_sat:g}"
-            )[alpha]
+        results = stage_saturation(args, case, args.alpha or 1000.0, ratio)
 
     for key, result in results.items():
         suffix = f"{key:g}" if isinstance(key, float) else str(key)
