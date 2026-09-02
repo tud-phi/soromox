@@ -189,23 +189,6 @@ def test_loft_can_close_both_sides_of_a_link_interface():
     assert end_normal[0] > 0.0
 
 
-def test_cross_sections_evaluate_varying_profiles_at_each_abscissa():
-    class LinearProfileRobot:
-        def cross_section_geometry(self, q, s):
-            del q
-            return CrossSectionGeometry.ELLIPTICAL, np.array(
-                [0.3 - 0.2 * s, 0.2 - 0.15 * s]
-            )
-
-    sections = evaluate_cross_sections(
-        LinearProfileRobot(), np.zeros(0), [0.0, 0.25, 1.0]
-    )
-
-    assert_allclose(sections[0].dimensions, [0.3, 0.2])
-    assert_allclose(sections[1].dimensions, [0.25, 0.1625])
-    assert_allclose(sections[2].dimensions, [0.1, 0.05])
-
-
 @pytest.mark.filterwarnings("ignore:Explicitly requested dtype float64")
 def test_soft_robot_cross_sections_use_vectorized_mixed_profile_evaluation():
     material = {

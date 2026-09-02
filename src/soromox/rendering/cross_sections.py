@@ -356,35 +356,21 @@ def _cross_section_contour(
 
 
 def evaluate_cross_sections(
-    robot: Any,
+    robot: SoftRobot,
     q: Any,
     abscissae: Iterable[float],
 ) -> tuple[CrossSection, ...]:
-    """Evaluate a robot's cross-section descriptor at each backbone position.
-
-    SoRoMoX :class:`~soromox.systems.soft_robot.SoftRobot` models use one
-    compiled, vectorized evaluation. The scalar path remains available for
-    lightweight renderer adapters that implement only ``cross_section_geometry``.
-    """
+    """Evaluate cross-section descriptors with one compiled vectorized call."""
     stations = np.asarray(tuple(abscissae), dtype=np.float64).reshape(-1)
-    if isinstance(robot, SoftRobot):
-        geometries, dimensions = _evaluate_cross_section_arrays(
-            robot,
-            jnp.asarray(q),
-            jnp.asarray(stations),
-        )
-        return tuple(
-            CrossSection(geometry, dimension)
-            for geometry, dimension in zip(
-                np.asarray(geometries), np.asarray(dimensions)
-            )
-        )
-
-    sections = []
-    for abscissa in stations:
-        geometry, dimensions = robot.cross_section_geometry(q, abscissa)
-        sections.append(CrossSection(geometry, dimensions))
-    return tuple(sections)
+    geometries, dimensions = _evaluate_cross_section_arrays(
+        robot,
+        jnp.asarray(q),
+        jnp.asarray(stations),
+    )
+    return tuple(
+        CrossSection(geometry, dimension)
+        for geometry, dimension in zip(np.asarray(geometries), np.asarray(dimensions))
+    )
 
 
 @eqx.filter_jit
@@ -393,7 +379,12 @@ def _evaluate_cross_section_arrays(
     q: Array,
     abscissae: Array,
 ) -> tuple[Array, Array]:
-    """Evaluate cross-section arrays with one compiled batched dispatch."""
+    """Provide a persistent JIT boundary for vectorized array evaluation.
+
+    This array-only function remains separate from :func:`evaluate_cross_sections`
+    so JAX can reuse its compiled executable. The caller converts the results to
+    NumPy-backed :class:`CrossSection` objects, which cannot happen while tracing.
+    """
     return jax.vmap(robot.cross_section_geometry, in_axes=(None, 0))(q, abscissae)
 
 

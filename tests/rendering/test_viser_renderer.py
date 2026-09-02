@@ -57,9 +57,18 @@ class DiscontinuousTwoLinkRobot(DummySpatialRobot):
 
     def cross_section_geometry(self, q, s):
         del q
-        if float(s) < 0.6:
-            return CrossSectionGeometry.RECTANGULAR, jnp.array([0.2, 0.4])
-        return CrossSectionGeometry.CIRCULAR, jnp.array([0.05])
+        is_first_link = s < 0.6
+        geometry = jnp.where(
+            is_first_link,
+            CrossSectionGeometry.RECTANGULAR,
+            CrossSectionGeometry.CIRCULAR,
+        )
+        dimensions = jnp.where(
+            is_first_link,
+            jnp.array([0.2, 0.4]),
+            jnp.array([0.05, 0.05]),
+        )
+        return geometry, dimensions
 
 
 class DummyActuatedSpatialRobot(DummySpatialRobot):
