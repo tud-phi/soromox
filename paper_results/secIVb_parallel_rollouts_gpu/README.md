@@ -23,6 +23,20 @@ PlanarPCS. Run each backend in a separate process for a controlled comparison;
 JAX-only systems continue to use JAX. The CSV records the requested backend,
 the backend resolved for each system, and whether backend selection applies.
 
+Each `(system, size, Gauss-point setting, batch size)` case runs in a fresh
+process. Successful rows are checkpointed to the results CSV immediately, so
+an out-of-memory failure cannot discard earlier measurements. Failed cases are
+skipped and summarized after the remaining cases finish; the machine-readable
+report defaults to `data/benchmark_results_failures.csv`. Pass
+`--failures-csv PATH` to choose another location. Expected OOM-only failures do
+not make the generator exit unsuccessfully, while unexpected worker errors do.
+
+Use `--solver` to select `euler`, `semi-implicit-euler`, `heun`, `bosh3`,
+`tsit5`, or `dopri5`; the default remains `tsit5`. The selected solver applies
+to every requested system and model size. The CSV records the solver together
+with `rollout_finite` and `max_abs_state`, so throughput measurements can be
+screened for numerical divergence rather than interpreted on timing alone.
+
 Install dependencies and confirm that JAX sees the intended GPU:
 
 ```bash
@@ -37,7 +51,7 @@ uv run python paper_results/secIVb_parallel_rollouts_gpu/code/generate_parallel_
   --systems articulated_soft_robot planar_pcs pcs gvs \
   --gvs-scaling segments --segment-counts 1 2 4 8 16 32 \
   --batch-sizes 1 2 4 8 16 32 64 128 256 \
-  --duration 1 --solver-dt 1e-4 --save-dt 1e-2
+  --duration 1 --solver tsit5 --solver-dt 1e-4 --save-dt 1e-2
 ```
 
 Generate the GVS strain-basis-order sweep:

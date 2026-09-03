@@ -84,6 +84,8 @@ nav:
           - GVS Systems:
             - Overview: api/systems/gvs/index.md
             - GVS: api/systems/gvs/gvs.md
+      - Simulation:
+          - Integrators: api/simulation/integrators.md
       - Execution Backends:
           - Overview: api/execution/index.md
           - Configuration: api/execution/configuration.md
