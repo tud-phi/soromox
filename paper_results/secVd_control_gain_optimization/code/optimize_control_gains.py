@@ -25,11 +25,7 @@ from secvd_case import (  # noqa: E402
     end_effector_pose_trajectory,
 )
 from secvd_cli import parse_optimization_args, prepare_result_dir  # noqa: E402
-from secvd_init import (  # noqa: E402
-    SECVD_BATCH_SIZE,
-    describe_initial_gains,
-    sample_initial_gains,
-)
+from secvd_init import describe_initial_gains, sample_initial_gains  # noqa: E402
 from secvd_loop import run_gain_optimization  # noqa: E402
 from secvd_objective import OBJECTIVE_NAME  # noqa: E402
 from secvd_results import (  # noqa: E402
@@ -46,16 +42,11 @@ def main() -> None:
     args = parse_optimization_args(
         description="Optimize control gains for Section Vd.",
         default_result_dir_for=lambda method: CASE_DIR / "data" / method,
-        optimization_batch_size=SECVD_BATCH_SIZE,
     )
     method = args.method
     result_dir = prepare_result_dir(args)
 
-    saturation = (
-        {"e_sat": args.integral_error_saturation_scale}
-        if method == "collocated"
-        else {}
-    )
+    saturation = {"e_sat": args.e_sat} if method == "collocated" else {}
     problem = build_evaluator(method, solver_dt=args.solver_dt, **saturation)
     case = problem.case
     robot = case.robot
@@ -76,7 +67,7 @@ def main() -> None:
 
     history = run_gain_optimization(
         gradient_fn=problem.gradient_fn,
-        optimizer=build_optimizer(args.learning_rate, ratio=args.lr_ratio),
+        optimizer=build_optimizer(args.alpha, ratio=args.ratio),
         opt_vars={"opt_ctr_params": init_gains, "opt_atr_params": {}},
         num_iters=args.num_iters,
         batch_size=args.batch_size,
@@ -125,7 +116,7 @@ def main() -> None:
         objective_name=OBJECTIVE_NAME,
         objective_scales=problem.objective_scales,
         saturation_config=problem.saturation_config,
-        optimizer_metadata=describe_optimizer(args.learning_rate, ratio=args.lr_ratio),
+        optimizer_metadata=describe_optimizer(args.alpha, ratio=args.ratio),
         solver_dt=problem.solver_dt,
         material_damping_coefficient=MATERIAL_DAMPING,
         t_ts=t_ts,

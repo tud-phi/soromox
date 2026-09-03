@@ -6,12 +6,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-
+from secvd_init import GAIN_ORDER
 
 SCHEMA_VERSION = 3
 RESULTS_FILENAME = "optimization_results.npz"
 METHODS = ("collocated", "synergistic")
-GAIN_NAMES = ("Kp", "Ki", "Kd")
 
 
 def best_batch_from_loss(
@@ -189,7 +188,7 @@ def save_optimization_outputs(
         "best_iteration": arr(best_iteration, dtype=np.int64),
         "best_batch": arr(int(best_batch), dtype=np.int64),
     }
-    for gain in GAIN_NAMES:
+    for gain in GAIN_ORDER:
         result_data[f"history_{gain}"] = _stack_gain_history(opt_vars_history, gain)
         result_data[f"init_{gain}"] = arr(init_gains[gain])
     if q_des_ts is not None:
@@ -271,8 +270,8 @@ _REQUIRED_FIELDS = frozenset(
         "best_iteration",
         "best_batch",
     }
-    | {f"history_{gain}" for gain in GAIN_NAMES}
-    | {f"init_{gain}" for gain in GAIN_NAMES}
+    | {f"history_{gain}" for gain in GAIN_ORDER}
+    | {f"init_{gain}" for gain in GAIN_ORDER}
 )
 
 
@@ -364,7 +363,7 @@ def validate_results(
         if actual != expected:
             raise ValueError(f"{key} must have shape {expected}, got {actual}")
 
-    for gain in GAIN_NAMES:
+    for gain in GAIN_ORDER:
         history = np.asarray(data[f"history_{gain}"])
         if history.ndim != 3 or history.shape[:2] != (iterations, batch):
             raise ValueError(

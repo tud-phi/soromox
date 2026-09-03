@@ -192,5 +192,5 @@ def test_the_entrypoint_does_not_hardcode_its_optimizer():
         assert isinstance(magnitude, ast.Attribute), (
             "the entrypoint passes a literal learning rate; it must come from args"
         )
-        assert magnitude.attr == "learning_rate"
+        assert magnitude.attr == "alpha"
     assert "optax." not in source, "the entrypoint still constructs optax transforms"

@@ -12,7 +12,7 @@ control and synergistic operational-space control.
 
 ## Canonical result format
 
-Each optimizer writes only `optimization_results.npz`, using schema version 2.
+Each optimizer writes only `optimization_results.npz`, using schema version 3.
 The archive carries a real multi-start batch axis of width `B`, and that axis
 appears **only** on quantities that genuinely vary per start:
 
@@ -274,9 +274,8 @@ sat(e) = tanh(gamma * e) / gamma,   gamma = 1 / e_sat.
 ```
 
 The default is `e_sat = 10 mm` (`gamma = 100 1/m`), defined once as
-`secvd_case.COMMITTED_E_SAT`, settable with
-`--integral-error-saturation-scale` in metres and recorded in the archive as
-`saturation_config`.
+`secvd_case.COMMITTED_E_SAT`, settable with `--e-sat` in metres and recorded in
+the archive as `saturation_config`.
 
 **This is a controller design parameter, not an optimizer setting, and it is not
 tuned against the loss.** Its job is to bound the integral state. The objective
@@ -364,7 +363,7 @@ uv run python $S --method collocated --stage learning-rate
 # The stage ranks candidates at 10 iterations; it does not prove one survives
 # 100. It ends by printing this, which confirms the winner and yields the
 # archive to promote rather than discarding the work:
-uv run python $G --method collocated --learning-rate 3000 \
+uv run python $G --method collocated --alpha 3000 --ratio 1 0.5 0.1 \
   --num-iters 100 --result-dir /tmp/secvd-confirm-3000 --force
 ```
 
@@ -576,6 +575,11 @@ uv run python $G --method synergistic --num-iters 100 --force
 `--num-iters` defaults to 100. Pass another positive value when intentionally
 running a shorter or longer optimization.
 
+The generator and the study name the same quantity the same way: `--alpha`,
+`--ratio`, `--e-sat`, `--solver-dt`, `--batch-size`, `--init-seed` and
+`--device` mean the same thing in both, so a rate the study recommends is pasted
+into a generator run unchanged.
+
 Use `--result-dir` to stage results elsewhere. A run is saved only if every
 requested iteration completed and every start produced at least one finite
 iterate, so an interrupted run cannot replace an archive.
@@ -637,8 +641,7 @@ than retyped.
 
 The renderer reconstructs the optimized robot from `q_ts_best` for that
 archive's own `best_batch`, validates every start's stored pose against forward
-kinematics,, validates it
-against the stored full pose, resamples the dense rollout to the requested FPS,
+kinematics, resamples the dense rollout to the requested FPS,
 and follows the paper rendering style in Viser. The solid coral body is the
 current robot. Collocated control additionally shows the desired configuration
 as a pale blue-gray wireframe, without task-space markers. Synergistic control

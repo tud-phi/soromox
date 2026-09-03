@@ -54,7 +54,6 @@ from secvd_case import (  # noqa: E402
     COMMITTED_E_SAT,
     COMMITTED_LR_RATIO,
     INIT_GAIN_SCALE,
-    METHODS,
     TUNED_ALPHA,
     build_evaluator,
     build_optimizer,
@@ -68,14 +67,13 @@ from secvd_init import (  # noqa: E402
     SECVD_INIT_SPREAD,
     sample_initial_gains,
 )
+from secvd_results import METHODS  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
 
 CASE_DIR = CODE_DIR.parent
 TUNING_DIR = CASE_DIR / "data" / "tuning"
 
-GAIN_FAMILIES = GAIN_ORDER
-LR_RATIO = COMMITTED_LR_RATIO
 STAGES = ("solver-dt", "saturation", "learning-rate")
 SOLVER_DT_GRADIENT_TOLERANCE = 1e-3
 
@@ -85,7 +83,7 @@ DEFAULT_ALPHAS = (30.0, 120.0, 480.0, 1900.0, 7600.0, 30000.0)
 
 def _family_norms(tree: dict) -> dict:
     """Per-gain-family L2 norm over components, keeping the batch axis."""
-    return {name: jnp.linalg.norm(tree[name], axis=-1) for name in GAIN_FAMILIES}
+    return {name: jnp.linalg.norm(tree[name], axis=-1) for name in GAIN_ORDER}
 
 
 def windup_metrics(aux: dict) -> dict:
@@ -120,7 +118,7 @@ def run_constant_rate(
     Returns:
         Arrays of shape ``(iterations,)`` or ``(iterations, batch)`` recording
         every diagnostic taken along the run, plus ``final_gains`` of shape
-        ``(batch, families, actuators)`` in :data:`GAIN_FAMILIES` order.
+        ``(batch, families, actuators)`` in :data:`GAIN_ORDER` order.
     """
     batch_size = int(init_gains["Kp"].shape[0])
     aux_metrics = windup_metrics if aux_metrics is None else aux_metrics
@@ -156,7 +154,7 @@ def run_constant_rate(
             ("gain_norm", gain_families),
         ):
             record[key].append(
-                np.stack([np.asarray(families[n]) for n in GAIN_FAMILIES], axis=-1)
+                np.stack([np.asarray(families[n]) for n in GAIN_ORDER], axis=-1)
             )
         record["relative_step"].append(
             record["update_norm"][-1] / np.maximum(record["gain_norm"][-1], 1e-30)
@@ -178,11 +176,11 @@ def run_constant_rate(
 
     stacked = {key: np.asarray(values) for key, values in record.items()}
     stacked["final_gains"] = np.stack(
-        [np.asarray(opt_vars["opt_ctr_params"][n]) for n in GAIN_FAMILIES], axis=1
+        [np.asarray(opt_vars["opt_ctr_params"][n]) for n in GAIN_ORDER], axis=1
     )
-    stacked["alpha"] = np.full(len(stacked["loss"]), float(alpha))
+    stacked["alpha"] = np.asarray(float(alpha))
     stacked["batch_size"] = np.asarray(batch_size)
-    stacked["ratio"] = np.asarray([ratio[n] for n in GAIN_FAMILIES])
+    stacked["ratio"] = np.asarray([ratio[n] for n in GAIN_ORDER])
     return stacked
 
 
@@ -313,10 +311,10 @@ def report_sweep(results: dict, *, axis: str, num_iters: int) -> tuple[Any, bool
 
 def report_step_efficiency(result: dict) -> None:
     """How much of the requested learning rate reaches the parameters."""
-    alpha = result["alpha"]
+    alpha = float(result["alpha"])
     ratio = result["ratio"]
     print("  family   median |update|/lr   spread over the run")
-    for position, name in enumerate(GAIN_FAMILIES):
+    for position, name in enumerate(GAIN_ORDER):
         lr = alpha * float(ratio[position])
         observed = np.median(result["update_norm"][..., position], axis=-1)
         efficiency = observed / np.maximum(lr, 1e-30)
@@ -330,7 +328,8 @@ def report_step_efficiency(result: dict) -> None:
         )
 
 
-def save_schedule(result: dict, out_dir: Path, tag: str) -> Path:
+def save_run(result: dict, out_dir: Path, tag: str) -> Path:
+    """Write one candidate's run as an NPZ archive and a per-iteration CSV."""
     out_dir.mkdir(parents=True, exist_ok=True)
     npz_path = out_dir / f"{tag}.npz"
     np.savez_compressed(npz_path, **result)
@@ -338,15 +337,15 @@ def save_schedule(result: dict, out_dir: Path, tag: str) -> Path:
     with csv_path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
-            ["alpha", "loss_median"]
+            ["iteration", "loss_median"]
             + [
                 f"{key}_{name}"
                 for key in ("grad", "update", "rel")
-                for name in GAIN_FAMILIES
+                for name in GAIN_ORDER
             ]
         )
-        for index, alpha in enumerate(result["alpha"]):
-            row = [f"{alpha:.6g}", f"{np.median(result['loss'][index]):.6e}"]
+        for index in range(len(result["loss"])):
+            row = [str(index + 1), f"{np.median(result['loss'][index]):.6e}"]
             for key in ("grad_norm", "update_norm", "relative_step"):
                 row += [f"{np.median(result[key][index, :, p]):.6e}" for p in range(3)]
             writer.writerow(row)
@@ -375,7 +374,7 @@ def stiffest_start(init_gains: dict) -> int:
 
 def _gradient_vector(grad: dict) -> np.ndarray:
     return np.concatenate(
-        [np.asarray(grad["opt_ctr_params"][n]).reshape(-1) for n in GAIN_FAMILIES]
+        [np.asarray(grad["opt_ctr_params"][n]).reshape(-1) for n in GAIN_ORDER]
     )
 
 
@@ -384,7 +383,7 @@ def stage_solver_dt(args, case) -> dict:
     reference = build_evaluator(
         args.method, case=case, horizon=args.horizon, e_sat=args.e_sat
     )
-    init_gains = _sample_starts(reference, args.batch_size, args.seed)
+    init_gains = _sample_starts(reference, args.batch_size, args.init_seed)
     index = stiffest_start(init_gains)
     gains = {name: value[index] for name, value in init_gains.items()}
     print(
@@ -482,9 +481,8 @@ def stage_saturation(args, case, alpha: float) -> dict:
     else:
         outside = [v for v in e_sats if not steady <= v <= step]
         if outside:
-            print(
-                "  Outside that range: ".join(f"{v:g}" for v in outside) + " m."
-            )
+            joined = ", ".join(f"{v:g}" for v in outside)
+            print(f"  Outside that range: {joined} m.")
 
     candidates = []
     for e_sat in e_sats:
@@ -516,7 +514,7 @@ def stage_saturation(args, case, alpha: float) -> dict:
         candidates,
         num_iters=args.num_iters,
         batch_size=args.batch_size,
-        seed=args.seed,
+        seed=args.init_seed,
         label="saturation",
     )
     summary = []
@@ -598,7 +596,19 @@ def report_saturation_sensitivity(summary: list, num_iters: int) -> None:
 
 
 def _ratio_label(ratio: dict[str, float]) -> str:
-    return ",".join(f"{ratio[name]:g}" for name in GAIN_FAMILIES)
+    return ",".join(f"{ratio[name]:g}" for name in GAIN_ORDER)
+
+
+def _confirm_command(method: str, key, result: dict) -> str:
+    """The generator run that confirms one candidate at the production budget."""
+    generator = CODE_DIR.relative_to(CODE_DIR.parents[2]) / "optimize_control_gains.py"
+    slug = f"{key:g}" if isinstance(key, float) else str(key).replace(",", "-")
+    ratio = " ".join(f"{value:g}" for value in np.asarray(result["ratio"]))
+    return (
+        f"  python {generator} --method {method} \\\n"
+        f"      --alpha {float(result['alpha']):g} --ratio {ratio} \\\n"
+        f"      --num-iters 100 --result-dir /tmp/secvd-confirm-{slug} --force"
+    )
 
 
 def stage_learning_rate(args, case) -> dict:
@@ -611,10 +621,12 @@ def stage_learning_rate(args, case) -> dict:
         e_sat=args.e_sat,
     )
     if args.ratios is not None:
-        alpha = args.alpha or TUNED_ALPHA[args.method]
         candidates = [
             Candidate(
-                key=_ratio_label(ratio), problem=problem, alpha=alpha, ratio=ratio
+                key=_ratio_label(ratio),
+                problem=problem,
+                alpha=args.alpha,
+                ratio=ratio,
             )
             for ratio in args.ratios
         ]
@@ -630,7 +642,7 @@ def stage_learning_rate(args, case) -> dict:
         candidates,
         num_iters=args.num_iters,
         batch_size=args.batch_size,
-        seed=args.seed,
+        seed=args.init_seed,
         label="learning-rate",
     )
     winner, separated = report_sweep(results, axis=axis, num_iters=args.num_iters)
@@ -638,18 +650,21 @@ def stage_learning_rate(args, case) -> dict:
         return results
 
     best = results[winner]
-    alpha = float(best["alpha"][0])
-    ratio = {name: float(best["ratio"][i]) for i, name in enumerate(GAIN_FAMILIES)}
+    alpha = float(best["alpha"])
+    ratio = {name: float(best["ratio"][i]) for i, name in enumerate(GAIN_ORDER)}
     print("")
     print("Step efficiency at the winner, per gain family:")
     report_step_efficiency(best)
     print("")
     print(
         "  (lr_P, lr_I, lr_D) = ("
-        + ", ".join(f"{alpha * ratio[name]:g}" for name in GAIN_FAMILIES)
+        + ", ".join(f"{alpha * ratio[name]:g}" for name in GAIN_ORDER)
         + ")"
     )
-    print(f'  TUNED_ALPHA["{args.method}"] = {alpha}')
+    if axis == "alpha":
+        print(f'  TUNED_ALPHA["{args.method}"] = {alpha}')
+    else:
+        print(f"  COMMITTED_LR_RATIO = {ratio}")
     print("")
     print(
         f"Confirm it at the production budget -- {args.num_iters} iterations rank "
@@ -661,24 +676,18 @@ def stage_learning_rate(args, case) -> dict:
         if len(r["loss"]) == args.num_iters and np.isfinite(_best_loss(r))
     )
     confirm = [winner] if separated else [key for _loss, key in ranked[:2]]
-    generator = CODE_DIR.relative_to(CODE_DIR.parents[2]) / "optimize_control_gains.py"
     for key in confirm:
-        rate = float(results[key]["alpha"][0])
-        print(
-            f"  python {generator} --method {args.method} "
-            f"--learning-rate {rate:g} \\\n"
-            f"      --num-iters 100 --result-dir /tmp/secvd-confirm-{rate:g} --force"
-        )
+        print(_confirm_command(args.method, key, results[key]))
     return results
 
 
 def _parse_ratio(text: str) -> dict[str, float]:
     values = [float(part) for part in text.split(",")]
-    if len(values) != len(GAIN_FAMILIES):
+    if len(values) != len(GAIN_ORDER):
         raise argparse.ArgumentTypeError(
-            f"a ratio needs {len(GAIN_FAMILIES)} comma-separated values, got {text!r}"
+            f"a ratio needs {len(GAIN_ORDER)} comma-separated values, got {text!r}"
         )
-    return dict(zip(GAIN_FAMILIES, values, strict=True))
+    return dict(zip(GAIN_ORDER, values, strict=True))
 
 
 def _parse_args():
@@ -690,7 +699,7 @@ def _parse_args():
         "--solver-dt",
         type=float,
         default=None,
-        help="Integration step for every stage but solver-dt; defaults to the case value.",
+        help="Integration step for every stage but solver-dt; the case value by default.",
     )
     parser.add_argument(
         "--solver-dts",
@@ -713,7 +722,7 @@ def _parse_args():
     parser.add_argument(
         "--ratio",
         type=_parse_ratio,
-        default=dict(LR_RATIO),
+        default=dict(COMMITTED_LR_RATIO),
         metavar="KP,KI,KD",
         help="Per-family learning-rate split used wherever one is not swept.",
     )
@@ -723,16 +732,14 @@ def _parse_args():
         nargs="+",
         default=None,
         metavar="KP,KI,KD",
-        help=(
-            "Sweep the per-family split at a fixed --alpha."
-        ),
+        help="Sweep the per-family split at a fixed --alpha.",
     )
     parser.add_argument(
         "--alpha",
         type=float,
         default=None,
-        help="Fixed magnitude for the stages that do not sweep it; defaults to "
-        "TUNED_ALPHA.",
+        help="Fixed magnitude for the stages that do not sweep it; TUNED_ALPHA "
+        "by default.",
     )
     parser.add_argument(
         "--alphas",
@@ -742,15 +749,10 @@ def _parse_args():
         help="Magnitudes the learning-rate stage compares.",
     )
     parser.add_argument(
-        "--num-iters",
-        type=int,
-        default=10,
-        help=(
-            "Iterations per candidate."
-        ),
+        "--num-iters", type=int, default=10, help="Iterations per candidate."
     )
     parser.add_argument("--batch-size", type=int, default=SECVD_BATCH_SIZE)
-    parser.add_argument("--seed", type=int, default=SECVD_INIT_SEED)
+    parser.add_argument("--init-seed", type=int, default=SECVD_INIT_SEED)
     parser.add_argument("--out-dir", type=Path, default=TUNING_DIR)
     parser.add_argument("--device", choices=DEVICE_CHOICES, default="auto")
     parser.add_argument("--tag", type=str, default=None)
@@ -759,6 +761,8 @@ def _parse_args():
 
 def main() -> None:
     args = _parse_args()
+    if args.alpha is None:
+        args.alpha = TUNED_ALPHA[args.method]
     tag = args.tag or f"{args.stage}_{args.method}_T{args.horizon:g}"
     case = build_sec_vd_case()
     probe = build_evaluator(args.method, case=case, horizon=args.horizon)
@@ -783,13 +787,13 @@ def main() -> None:
                 "saturation of the integral error."
             )
             return
-        results = stage_saturation(args, case, args.alpha or TUNED_ALPHA[args.method])
+        results = stage_saturation(args, case, args.alpha)
     else:
         results = stage_learning_rate(args, case)
 
     for key, result in results.items():
         suffix = f"{key:g}" if isinstance(key, float) else str(key)
-        print(f"Saved {save_schedule(result, args.out_dir, tag + '_' + suffix)}")
+        print(f"Saved {save_run(result, args.out_dir, tag + '_' + suffix)}")
 
 
 if __name__ == "__main__":

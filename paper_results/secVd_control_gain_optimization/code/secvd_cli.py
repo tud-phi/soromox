@@ -9,6 +9,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from secvd_init import (
+    GAIN_ORDER,
     INIT_SCHEMES,
     SECVD_BATCH_SIZE,
     SECVD_INIT_SCHEME,
@@ -29,20 +30,7 @@ def _add_device_argument(parser: argparse.ArgumentParser) -> None:
         "--device",
         choices=DEVICE_CHOICES,
         default="auto",
-        help=(
-            "Backend for the optimization. 'auto' leaves the choice to JAX."
-        ),
-    )
-
-
-def _add_batch_size_argument(parser: argparse.ArgumentParser, default: int) -> None:
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        default=default,
-        help=(
-            "Number of independently optimized gain initializations."
-        ),
+        help="Backend for the optimization. 'auto' leaves the choice to JAX.",
     )
 
 
@@ -85,7 +73,6 @@ def parse_optimization_args(
     description: str,
     default_result_dir_for: Callable[[str], Path],
     argv: Sequence[str] | None = None,
-    optimization_batch_size: int = SECVD_BATCH_SIZE,
 ) -> argparse.Namespace:
     """Parse the generator's arguments, with every default keyed on ``--method``.
 
@@ -93,20 +80,14 @@ def parse_optimization_args(
         description: Program description for ``--help``.
         default_result_dir_for: Maps a method to its archive directory.
         argv: Argument list, for tests. Defaults to ``sys.argv``.
-        optimization_batch_size: Default number of starts.
 
     Returns:
-        The parsed arguments, with ``lr_ratio`` as a dict keyed by gain family.
+        The parsed arguments, with ``ratio`` as a dict keyed by gain family.
 
     Raises:
         ValueError: If an argument is outside its supported range.
     """
-    from secvd_case import (
-        COMMITTED_E_SAT,
-        COMMITTED_LR_RATIO,
-        GAIN_ORDER,
-        TUNED_ALPHA,
-    )
+    from secvd_case import COMMITTED_E_SAT, COMMITTED_LR_RATIO, TUNED_ALPHA
 
     method = requested_method_from_argv(argv)
     parser = argparse.ArgumentParser(description=description)
@@ -116,30 +97,28 @@ def parse_optimization_args(
     )
     parser.add_argument("--num-iters", type=int, default=100)
     parser.add_argument(
-        "--solver-dt",
-        type=float,
-        default=None,
-        help=(
-            "Integration step."
-        ),
+        "--solver-dt", type=float, default=None, help="Integration step."
     )
     parser.add_argument(
-        "--learning-rate",
+        "--alpha",
         type=float,
         default=TUNED_ALPHA[method],
-        help=(
-            "Learning-rate magnitude alpha."
-        ),
+        help="Learning-rate magnitude.",
     )
     parser.add_argument(
-        "--lr-ratio",
+        "--ratio",
         type=float,
         nargs=3,
         metavar=tuple(GAIN_ORDER),
         default=[COMMITTED_LR_RATIO[name] for name in GAIN_ORDER],
         help="Per-family multipliers on the learning-rate magnitude.",
     )
-    _add_batch_size_argument(parser, optimization_batch_size)
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=SECVD_BATCH_SIZE,
+        help="Number of independently optimized gain initializations.",
+    )
     parser.add_argument(
         "--init-seed",
         type=int,
@@ -160,12 +139,10 @@ def parse_optimization_args(
     )
     if method == "collocated":
         parser.add_argument(
-            "--integral-error-saturation-scale",
+            "--e-sat",
             type=float,
             default=COMMITTED_E_SAT,
-            help=(
-                "Integral-error saturation scale, in metres."
-            ),
+            help="Integral-error saturation scale, in metres.",
         )
     parser.add_argument(
         "--placeholder",
@@ -178,18 +155,13 @@ def parse_optimization_args(
     args = parser.parse_args(argv)
     if args.batch_size < 1:
         raise ValueError("--batch-size must be at least 1")
-    if not args.learning_rate > 0:
-        raise ValueError("--learning-rate must be positive")
+    if not args.alpha > 0:
+        raise ValueError("--alpha must be positive")
     if args.solver_dt is not None and not args.solver_dt > 0:
         raise ValueError("--solver-dt must be positive when given")
-    if method == "collocated":
-        e_sat = args.integral_error_saturation_scale
-        if not (math.isfinite(e_sat) and e_sat > 0):
-            raise ValueError(
-                "--integral-error-saturation-scale must be finite and positive"
-            )
-    args.optimization_batch_size = args.batch_size
-    args.lr_ratio = dict(zip(GAIN_ORDER, args.lr_ratio, strict=True))
+    if method == "collocated" and not (math.isfinite(args.e_sat) and args.e_sat > 0):
+        raise ValueError("--e-sat must be finite and positive")
+    args.ratio = dict(zip(GAIN_ORDER, args.ratio, strict=True))
     return args
 
 
@@ -219,6 +191,6 @@ def prepare_result_dir(args: argparse.Namespace) -> Path:
     args.resolved_device = actual_device
     print(
         f"Optimization device: {actual_device} "
-        f"(batch size {args.optimization_batch_size}, requested {args.device})"
+        f"(batch size {args.batch_size}, requested {args.device})"
     )
     return result_dir

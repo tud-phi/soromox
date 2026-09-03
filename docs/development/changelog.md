@@ -69,7 +69,12 @@ and include benchmark baseline and measurement context for performance claims.
   95 % the same file, and two static tests existed only to police the drift
   between them. Renamed `gain_optimization_loop.py` to `secvd_loop.py` and
   `secvd_optimization.py` to `secvd_cli.py`, which holds argparse and device
-  selection and no optimization.
+  selection and no optimization. The generator and the study now name the same
+  quantity the same way, so a rate the study recommends is pasted into a
+  generator run unchanged: `--learning-rate` is now `--alpha`, `--lr-ratio` is
+  `--ratio`, `--integral-error-saturation-scale` is `--e-sat`, and the study's
+  `--seed` is `--init-seed`. `METHODS` and the gain-family order were each
+  defined twice under two names; each now has one home.
 - Removed the 111 committed Section Vd tuning-stage summaries (18 MB, over half
   the case's data footprint). They were a by-product of the search, nothing
   reads them, and the study regenerates any of them from the README recipes;

@@ -24,6 +24,7 @@ __all__ = [
     "STEADY_STATE_FRACTION",
     "configuration_space_scales",
     "operational_space_scales",
+    "recompute_archive_losses",
     "steady_state_report",
     "time_averaged_squared_error",
 ]
@@ -100,7 +101,7 @@ def steady_state_report(
     t: np.ndarray,
     *,
     fraction: float = STEADY_STATE_FRACTION,
-) -> dict[str, float]:
+) -> dict[str, float | list[float]]:
     """Report transient and steady-state error without weighting the objective.
 
     Args:
@@ -130,7 +131,7 @@ def recompute_archive_losses(data: dict) -> dict[str, np.ndarray]:
     """Rescore an archive's stored trajectories with its own objective.
 
     Args:
-        data: A loaded schema-v2 archive.
+        data: A loaded archive.
 
     Returns:
         ``stored_init``, ``recomputed_init``, ``stored_best`` and

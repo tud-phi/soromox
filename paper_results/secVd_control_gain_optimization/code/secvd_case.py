@@ -14,6 +14,7 @@ from secvd_objective import (
     operational_space_scales,
     time_averaged_squared_error,
 )
+from secvd_results import METHODS
 
 from soromox.actuation import ThreadlikeActuator, ThreadlikeRouting
 from soromox.control import (
@@ -32,7 +33,6 @@ from soromox.utils.geometry.rotations import rotation_matrix_to_rotation_vector
 
 jax.config.update("jax_enable_x64", True)
 
-METHODS = ("collocated", "synergistic")
 CASE_HORIZON = 5.0
 COMMITTED_ALPHA = 0.5
 COMMITTED_LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
@@ -236,8 +236,6 @@ def _build_collocated(
         control_state=PIDControllerState.zero(robot.num_actuators),
     )
     max_steps = _max_solver_steps(horizon, solver_dt)
-    # Angular strains are 1/m and shear/axial strains already dimensionless;
-    # scaling by segment length reproduces the recovered legacy weighting.
     scales = configuration_space_scales(robot.params.link.length)
 
     def control_error(aux: dict) -> Array:

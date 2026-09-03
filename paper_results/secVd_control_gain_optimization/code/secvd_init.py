@@ -116,7 +116,7 @@ def _sample_legacy_mixed(nominal, batch_size, seed):
     """Reproduce ``generate_mixed_batch`` from the recovered generator."""
     import jax
     import jax.numpy as jnp
-    
+
     if not jax.config.jax_enable_x64:
         raise RuntimeError(
             "legacy_mixed_v1 reproduces the recovered Section Vd initialization "

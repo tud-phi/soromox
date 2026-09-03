@@ -27,8 +27,10 @@ if str(CODE_DIR) not in sys.path:
 from secvd_cli import (  # noqa: E402
     configure_optimization_device,
     jax_platforms_for,
+    parse_optimization_args,
     prepare_result_dir,
 )
+from secvd_init import SECVD_BATCH_SIZE  # noqa: E402
 
 
 @pytest.mark.parametrize("argv", [[], ["--num-iters", "5"], ["--batch-size", "6"]])
@@ -84,7 +86,7 @@ def _prepare_args(tmp_path, *, device):
         force=False,
         debug_nans=False,
         device=device,
-        optimization_batch_size=6,
+        batch_size=6,
     )
 
 
@@ -126,27 +128,17 @@ def test_cli_module_does_not_import_jax():
     assert result.returncode == 0, "importing the CLI layer pulled in jax"
 
 
-def test_the_entrypoint_does_not_hardcode_its_batch_size():
-    """The generator must pass the shared batch size, not a local literal.
+def test_the_batch_size_default_is_the_shared_constant(tmp_path):
+    """A run must restore as many starts as it reports.
 
-    The collocated entrypoint once hardcoded ``OPTIMIZATION_BATCH_SIZE = 1``
-    while the synergistic one used the shared constant, so a run that reported
-    itself as restoring six starts silently optimized one, and the two archives
-    were not comparable. Merging the two entrypoints makes that particular
-    divergence impossible, but a literal here would still misreport a run.
+    The collocated entrypoint once hardcoded a batch size of one while the
+    synergistic one used the shared constant, so a run that reported itself as
+    optimizing six starts silently optimized one, and the two archives were not
+    comparable. The parser now owns the default outright.
     """
-    import ast
-
-    source = (CODE_DIR / "optimize_control_gains.py").read_text()
-    passed = [
-        keyword.value
-        for node in ast.walk(ast.parse(source))
-        if isinstance(node, ast.Call)
-        for keyword in node.keywords
-        if keyword.arg == "optimization_batch_size"
-    ]
-    assert len(passed) == 1, "expected one optimization_batch_size argument"
-    assert isinstance(passed[0], ast.Name) and passed[0].id == "SECVD_BATCH_SIZE", (
-        "the entrypoint passes a literal batch size instead of SECVD_BATCH_SIZE, "
-        "so a run can report more starts than it optimized"
+    args = parse_optimization_args(
+        description="test",
+        default_result_dir_for=lambda _method: tmp_path,
+        argv=[],
     )
+    assert args.batch_size == SECVD_BATCH_SIZE
