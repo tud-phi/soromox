@@ -1,17 +1,11 @@
 """Shared robot, setpoint, and optimization problem for Section Vd.
 
-Both gain-optimization generators and the tuning study build their problem here,
-so there is one definition of what "the collocated problem" and "the synergistic
-problem" are. Each generator previously constructed its own controller,
-reference and objective inline, and the tuning study held a hand-copy of the
-collocated setup. Nothing kept those in sync, so the study could silently tune a
-different problem than the generator ran.
+The generator and the tuning study both build their problem here, so a setting
+the study measures is provably the setting the generator runs.
 
 :func:`build_evaluator` returns a :class:`SecVdProblem` rather than a bare
-callable. A consumer that needs to know what a problem supports -- the tuning
-study deciding whether a saturation sweep applies, for instance -- reads a field
-instead of branching on the method name, so adding a controller does not mean
-editing every consumer.
+callable, so a consumer reads a field to learn what a problem supports instead
+of branching on the method name.
 """
 
 from __future__ import annotations
@@ -117,23 +111,25 @@ MATERIAL_DAMPING = 7.2e1
 # sensitivity ~8e-4 of Kp's), so its response is set by Kp and it needs a
 # stiffer proportional start to ring at all.
 #
-# The requirement is on *every* start, not on their median, because the figure
-# draws whichever start reaches the lowest loss and the sampling spread is 3x.
-# The synergistic Kp scale is 5.0 rather than 3.0 for exactly that reason: at
-# 3.0 one of the six sampled starts drew Kp = 11.9 and began *over*-damped at
-# zeta = 0.590, with only 10 % overshoot. Being the slowest start it also had
-# the most loss to recover, so it improved 99.5 %, won the best-start selection,
-# and was drawn in the figure -- where optimization quadrupled its Kp, correctly
-# for the loss, and its overshoot rose from 10 % to 28 %. The start that gains
-# the most loss is the start with the least overshoot to remove.
+# The condition is on the *median* start, not on every one of them, because that
+# is what the figure draws: its initial curve is the pointwise median across
+# starts with a min-max band, and only the optimized curve is a single start.
+# Measured on the drawn curves, the synergistic panel goes from 48.0 % overshoot
+# (zeta = 0.227) to 28.2 % (zeta = 0.374).
 #
-# At 5.0 all six sampled starts begin under-damped (worst zeta = 0.333) with
-# every rollout finite at solver_dt = 1e-3, so the plotted overshoot falls
-# whichever start wins. 8.0 also achieves this but buys nothing: the initial
-# overshoot saturates near 62 % while Kp reaches 203, stiffening the ODE.
+# A synergistic Kp scale of 5.0 was measured and rejected. It does put all six
+# sampled starts below zeta = 0.5 -- at 3.0 one start draws Kp = 11.9 and begins
+# over-damped at zeta = 0.590 -- and it survives the full budget at the tuned
+# rate with no frozen starts. But it converges to the same controller: optimized
+# overshoot 28.1 % against 28.2 %, zeta 0.375 against 0.374, and Kd negative in
+# 5/18 either way. Its larger apparent improvement (-27.3 points against -20.0)
+# comes entirely from starting worse, at 55.4 % initial overshoot rather than
+# 48.0 %, while its best loss is worse (2.09e-04 against 1.85e-04). Widening the
+# initial condition to enlarge a reported delta, with no better end state to show
+# for it, is not a defensible reason to move a published constant.
 INIT_GAIN_SCALE = {
     "collocated": {"Kp": 1.0, "Ki": 1.0, "Kd": 0.2},
-    "synergistic": {"Kp": 5.0, "Ki": 1.0, "Kd": 0.2},
+    "synergistic": {"Kp": 3.0, "Ki": 1.0, "Kd": 0.2},
 }
 
 # The integral-error saturation scale, in metres: the error magnitude above

@@ -171,6 +171,12 @@ def _write_archive(tmp_path: Path, method: str, scales: np.ndarray, errors: np.n
         objective_scales=scales,
         saturation_config="none",
         optimizer_metadata="sgd(0.1)",
+        # Schema v3 records the two settings that previously changed a result
+        # without leaving a trace in the archive. Nothing here depends on their
+        # values -- these losses are scored from the stored trajectories -- but
+        # they are required, so a synthetic archive has to carry them too.
+        solver_dt=1e-3,
+        material_damping_coefficient=7.2e1,
         t_ts=t,
         q_ts_init=trajectory if method == "collocated" else np.zeros_like(trajectory),
         q_ts_best=trajectory if method == "collocated" else np.zeros_like(trajectory),

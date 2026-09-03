@@ -276,8 +276,14 @@ def test_collocated_control_error_is_not_the_strain_error(problems):
 def test_builder_reproduces_the_committed_archive_initial_loss(method):
     """The check that makes the shared builder provably the generators' problem.
 
-    Batch entry 0 of every initialization scheme is the nominal gain set, so the
-    archive's ``history_loss[0, 0]`` is this problem evaluated at the nominal.
+    Everything needed to reproduce ``history_loss[0, 0]`` is read back out of the
+    archive -- batch entry 0's gains and the integration step -- rather than
+    reconstructed from module constants. That matters: this test used to assume
+    batch entry 0 was the *nominal* gain set, which stopped being true when the
+    generators began sampling around ``INIT_GAIN_SCALE``, and it used the case's
+    default solver step after the archives moved to a coarser one. Both made it
+    fail for reasons that had nothing to do with the property under test. Schema
+    v3 records ``solver_dt``, so the archive can now describe itself completely.
 
     Bit-identity is not expected: the archives were produced under ``vmap`` at
     six starts, this evaluates one start unbatched, and batched matmuls
@@ -287,9 +293,16 @@ def test_builder_reproduces_the_committed_archive_initial_loss(method):
     archive = SECTION_DIR / "data" / method / "optimization_results.npz"
     if not archive.exists():
         pytest.skip(f"no committed {method} archive to compare against")
-    problem = build_evaluator(method)
-    (loss, _aux), _grad = problem.gradient_fn(
-        {"opt_ctr_params": problem.nominal_gains, "opt_atr_params": {}}
+    stored = load_results(archive)
+    start_gains = {
+        name: jnp.asarray(np.asarray(stored[f"init_{name}"])[0])
+        for name in ("Kp", "Ki", "Kd")
+    }
+    problem = build_evaluator(
+        method, solver_dt=float(np.asarray(stored["solver_dt"]).ravel()[0])
     )
-    stored = float(np.asarray(load_results(archive)["history_loss"])[0, 0])
-    assert float(loss) == pytest.approx(stored, rel=1e-8)
+    (loss, _aux), _grad = problem.gradient_fn(
+        {"opt_ctr_params": start_gains, "opt_atr_params": {}}
+    )
+    expected = float(np.asarray(stored["history_loss"])[0, 0])
+    assert float(loss) == pytest.approx(expected, rel=1e-8)

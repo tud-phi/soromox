@@ -13,7 +13,6 @@ if str(CODE_DIR) not in sys.path:
 from secvd_init import SECVD_BATCH_SIZE  # noqa: E402
 from secvd_optimization import configure_optimization_device  # noqa: E402
 
-# Number of independently optimized gain initializations; timestep maps do not count.
 OPTIMIZATION_BATCH_SIZE = SECVD_BATCH_SIZE
 configure_optimization_device()
 

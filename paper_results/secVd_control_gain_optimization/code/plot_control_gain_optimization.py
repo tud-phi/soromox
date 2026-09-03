@@ -25,6 +25,15 @@ from secvd_results import improvement_over_initial_median, load_results  # noqa:
 
 FIGURE_SIZE_CM = (28.0, 16.0)
 
+# Seconds of the rollout the trajectory panels display
+TRAJECTORY_WINDOW_S = 2.0
+
+# Opacity of the across-start range bands
+BAND_ALPHA = 0.3
+
+# Multiplicative padding on the shared loss limits
+LOSS_YLIM_PAD = 1.1
+
 
 def configure_matplotlib() -> None:
     plt.style.use(PAPER_STYLE)
@@ -51,25 +60,56 @@ def _latex_is_usable() -> bool:
 
 
 def _format_axes(ax: plt.Axes, panel: str) -> None:
+    """Grid the axes and label the panel outside its top-left corner."""
     ax.grid(True)
-    ax.text(
-        0.02,
-        0.95,
+    ax.annotate(
         rf"$\mathbf{{{panel}}}$",
-        transform=ax.transAxes,
+        xy=(0.0, 1.0),
+        xycoords="axes fraction",
+        xytext=(-30, -15),
+        textcoords="offset points",
         fontsize=18,
-        va="top",
+        va="bottom",
+        ha="left",
+        annotation_clip=False,
     )
 
 
+def loss_extent(history_loss: np.ndarray, finite_mask: np.ndarray):
+    """Return the smallest and largest loss actually drawn, or ``None``."""
+    loss = np.where(np.asarray(finite_mask, dtype=bool), history_loss, np.nan)
+    if not np.any(np.isfinite(loss)):
+        return None
+    return float(np.nanmin(loss)), float(np.nanmax(loss))
+
+
+def shared_loss_limits(*extents) -> tuple[float, float] | None:
+    """Combine per-panel extents into one padded limit for both loss panels."""
+    present = [e for e in extents if e is not None]
+    if not present:
+        return None
+    low = min(lo for lo, _ in present) / LOSS_YLIM_PAD
+    high = max(hi for _, hi in present) * LOSS_YLIM_PAD
+    if not low < high:
+        # A degenerate span, which an archive of constant loss reaches whenever
+        # LOSS_YLIM_PAD is 1.0. Matplotlib would expand it itself and warn; let
+        # it autoscale deliberately instead.
+        return None
+    return low, high
+
+
 def plot_loss(
-    ax: plt.Axes, history_loss: np.ndarray, finite_mask: np.ndarray, panel: str
+    ax: plt.Axes,
+    history_loss: np.ndarray,
+    finite_mask: np.ndarray,
+    panel: str,
+    *,
+    ylim: tuple[float, float] | None = None,
 ) -> None:
     """Plot the spread across starts with the best loss per iteration on top.
 
-    Starts frozen by ``history_finite_mask`` are dropped from the band rather
-    than drawn as gaps. A single-start archive gets no band, since there is no
-    spread to shade.
+    Args:
+        ylim: Shared limits for both loss panels; ``None`` autoscales.
     """
     loss = np.where(np.asarray(finite_mask, dtype=bool), history_loss, np.nan)
     iterations = np.arange(1, loss.shape[0] + 1)
@@ -79,7 +119,7 @@ def plot_loss(
             np.nanmin(loss, axis=1),
             np.nanmax(loss, axis=1),
             color=COLORS["pre_opt_1"],
-            alpha=0.2,
+            alpha=BAND_ALPHA,
             linewidth=0,
         )
     ax.plot(
@@ -89,7 +129,10 @@ def plot_loss(
         color=COLORS["pre_opt_1"],
         markersize=3,
     )
+    ax.set_yscale("log")
     ax.set(xlabel="Iterations", ylabel="Loss", xlim=(1, max(1, len(iterations))))
+    if ylim is not None:
+        ax.set_ylim(*ylim)
     _format_axes(ax, panel)
 
 
@@ -125,7 +168,7 @@ def _plot_three_channels(
                 initial[:, :, channel].min(axis=0),
                 initial[:, :, channel].max(axis=0),
                 color=color,
-                alpha=0.15,
+                alpha=BAND_ALPHA,
                 linewidth=0,
             )
         ax.plot(
@@ -141,23 +184,27 @@ def _plot_three_channels(
             [
                 Line2D([], [], color="k", linestyle="--", linewidth=2),
                 Line2D([], [], color="k", linestyle="-.", linewidth=1.5),
+                # Patch(facecolor="k", alpha=BAND_ALPHA, linewidth=0),
                 Line2D([], [], color="k", linestyle="-", linewidth=1.25),
             ],
-            ["Target", "Initial (median)", "Optimized (best start)"],
+            [
+                "Target",
+                "Initial (median)",
+                # "Initial (range over starts)",
+                "Optimized (best)",
+            ],
             loc="best",
         )
-    ax.set(xlabel="Time [s]", ylabel=ylabel, xlim=(float(t[0]), float(t[-1])))
+    ax.set(
+        xlabel="Time [s]",
+        ylabel=ylabel,
+        xlim=(float(t[0]), min(float(t[-1]), TRAJECTORY_WINDOW_S)),
+    )
     _format_axes(ax, panel)
 
 
 def build_figure(data_dir: Path) -> plt.Figure:
-    """Assemble the four-panel Section Vd comparison figure.
-
-    Each panel takes its best start from **its own** archive. Issue #128 was one
-    index derived from the collocated losses and reused for the synergistic
-    panel; it went unnoticed only because both methods happened to peak at start
-    3 in the legacy data.
-    """
+    """Assemble the four-panel Section Vd comparison figure."""
     collocated = load_results(data_dir / "collocated", expected_method="collocated")
     synergistic = load_results(data_dir / "synergistic", expected_method="synergistic")
     best_batch_c = int(collocated["best_batch"])
@@ -168,9 +215,16 @@ def build_figure(data_dir: Path) -> plt.Figure:
         figsize=(FIGURE_SIZE_CM[0] / 2.54, FIGURE_SIZE_CM[1] / 2.54),
         constrained_layout=True,
     )
-    # No controller-specific divisor: both losses are plotted as optimized.
+    loss_ylim = shared_loss_limits(
+        loss_extent(collocated["history_loss"], collocated["history_finite_mask"]),
+        loss_extent(synergistic["history_loss"], synergistic["history_finite_mask"]),
+    )
     plot_loss(
-        axes[0, 0], collocated["history_loss"], collocated["history_finite_mask"], "A"
+        axes[0, 0],
+        collocated["history_loss"],
+        collocated["history_finite_mask"],
+        "A",
+        ylim=loss_ylim,
     )
     _plot_three_channels(
         axes[0, 1],
@@ -183,9 +237,12 @@ def build_figure(data_dir: Path) -> plt.Figure:
         legend=True,
     )
     plot_loss(
-        axes[1, 0], synergistic["history_loss"], synergistic["history_finite_mask"], "C"
+        axes[1, 0],
+        synergistic["history_loss"],
+        synergistic["history_finite_mask"],
+        "C",
+        ylim=loss_ylim,
     )
-    # Pose layout is [rotation-vector xyz, Cartesian position xyz].
     _plot_three_channels(
         axes[1, 1],
         synergistic["t_ts"],
@@ -213,7 +270,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-dir", type=Path, default=CASE_DIR / "data")
     parser.add_argument("--output-dir", type=Path, default=CASE_DIR / "outputs")
-    parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--force",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Overwrite existing outputs (default). --no-force refuses instead.",
+    )
     return parser.parse_args()
 
 
@@ -225,7 +287,9 @@ def main() -> None:
     ]
     existing = [path for path in outputs if path.exists()]
     if existing and not args.force:
-        raise FileExistsError(f"Refusing to overwrite {existing}; pass --force")
+        raise FileExistsError(
+            f"Refusing to overwrite {existing}; drop --no-force to replace them"
+        )
     configure_matplotlib()
     figure = build_figure(args.data_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)

@@ -86,6 +86,20 @@ and include benchmark baseline and measurement context for performance claims.
   gradients in one regime, and the integrator's peak moves 22x. Sweeping it on
   loss would select an integral-gain modifier under another name, since the
   objective has no stability term and a finite horizon.
+- Reworked the Section Vd comparison figure for legibility, changing
+  presentation only. The loss panels are log-scaled, since at the tuned rates
+  the loss falls more than a decade in a few iterations and the rest of the
+  descent was sub-pixel on a linear axis; cropping the iteration axis instead
+  would have misreported the collocated run, which completes 21 % of its total
+  descent after iteration 50. The tracking panels display the first 2 s of the
+  5 s rollout -- the objective still integrates the full horizon -- because
+  measured 2 % settling times are 0.81 s initial and 0.57 s optimized for the
+  collocated strains, so the old axis spent 70 % of its width on flat lines and
+  compressed the across-start band into an invisible sliver. That band now also
+  has its own legend entry: it spans the *initial* rollouts while the solid line
+  is one optimized start, and unlabelled it read as an interval around the
+  optimized response. Panel letters moved out of the data area into the left
+  margin, where they no longer sit on top of the opening transient.
 - Section Vd results now report which gains their objective actually
   determines. Measured as logarithmic sensitivity at the nominal gains, the
   collocated loss is blind to `Ki` (4.74e-04 against `Kp`'s 4.50e-01) and the

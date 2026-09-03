@@ -532,18 +532,42 @@ see [Initialization](#initialization) and [Device](#device) above.
 ## Plotting
 
 The standalone plotter is the only comparison-figure entrypoint. It requires
-schema version 2 and writes both the canonical PDF and PNG:
+schema version 3 and writes both the canonical PDF and PNG:
 
 ```bash
-uv run python paper_results/secVd_control_gain_optimization/code/plot_control_gain_optimization.py \
-  --force
+uv run python paper_results/secVd_control_gain_optimization/code/plot_control_gain_optimization.py
 ```
+
+It overwrites its outputs by default, so it runs with no arguments; pass
+`--no-force` to refuse instead. That is the opposite of the generators, and
+deliberately: an overwrite here re-renders committed archives in seconds, while
+an overwrite there destroys a completed optimization.
 
 The loss panels show the min-max range across starts with the best loss per
 iteration drawn on top; the tracking panels show the initial spread as a median
 with a band, and the best start as the solid line. Starts frozen by
 `history_finite_mask` are excluded from the bands rather than plotted as gaps. A
 single-start archive is drawn without bands, since there is no spread to shade.
+
+The band is the range over starts of the **initial** rollouts, and it has its own
+legend entry for that reason: it sits behind a solid line that is one *optimized*
+start, so without a label it reads as an interval around the optimized response,
+which it is not.
+
+Two presentation choices follow from what the tuned optimizer does, and neither
+changes a number:
+
+- **The loss panels are log-scaled.** At the tuned rates the loss falls by more
+  than a decade within a few iterations, so on a linear axis everything after
+  that is sub-pixel. Cropping the axis instead would misreport the collocated
+  run, which still completes 21 % of its total descent after iteration 50
+  (synergistic completes 99.75 % by then -- the two panels are not alike).
+- **The tracking panels display the first `TRAJECTORY_WINDOW_S = 2.0` s** of the
+  5 s rollout. The objective still integrates the whole horizon; this is the
+  display window only. Measured 2 % settling times are 0.81 s initial and 0.57 s
+  optimized for the collocated strains and 2.02 s initial for the synergistic
+  position, so a 5 s axis spent its last 70 % on flat lines and compressed the
+  across-start band into an invisible sliver at the left edge.
 
 Each panel takes its best start from **its own** archive's `best_batch`. The
 defect in issue #128 was one index derived from the collocated losses and reused
