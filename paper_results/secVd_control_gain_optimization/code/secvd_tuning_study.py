@@ -108,9 +108,6 @@ def run_constant_rate(
 ) -> dict:
     """Run one independent optimization at a fixed learning rate.
 
-    Every candidate restarts from ``init_gains``, so its result is a property of
-    the rate rather than of where an earlier candidate left the parameters.
-
     Args:
         gradient_fn: ``value_and_grad``-shaped callable over one start.
         init_gains: Batched initial gains, each of shape ``(batch, actuators)``.
@@ -258,7 +255,7 @@ def _start_spread(result: dict) -> float:
 
 
 def report_sweep(results: dict, *, axis: str, num_iters: int) -> tuple[Any, bool]:
-    """Print each candidate's outcome and name the winner.
+    """Print each candidate's outcome and explicit the winner.
 
     Args:
         results: Output of :func:`sweep`.
@@ -315,7 +312,7 @@ def report_sweep(results: dict, *, axis: str, num_iters: int) -> tuple[Any, bool
 
 
 def report_step_efficiency(result: dict) -> None:
-    """Report how much of the requested learning rate reaches the parameters."""
+    """How much of the requested learning rate reaches the parameters."""
     alpha = result["alpha"]
     ratio = result["ratio"]
     print("  family   median |update|/lr   spread over the run")
@@ -331,10 +328,6 @@ def report_step_efficiency(result: dict) -> None:
             f"  {name:>5}   {np.median(finite):16.3e}   "
             f"{finite.min():.2e} .. {finite.max():.2e}"
         )
-    print(
-        "  (a well-scaled adaptive optimizer sits near 1; a small constant "
-        "value means\n   the step is linear in lr and lr is short by that factor)"
-    )
 
 
 def save_schedule(result: dict, out_dir: Path, tag: str) -> Path:
@@ -464,7 +457,7 @@ def stage_solver_dt(args, case) -> dict:
 
 
 def saturation_window(problem) -> tuple[float, float]:
-    """The physically meaningful range for ``e_sat``, measured from the model."""
+    """Physically meaningful range for ``e_sat``."""
     (_loss, aux), _grad = problem.gradient_fn(
         {"opt_ctr_params": problem.nominal_gains, "opt_atr_params": {}}
     )
@@ -490,8 +483,7 @@ def stage_saturation(args, case, alpha: float) -> dict:
         outside = [v for v in e_sats if not steady <= v <= step]
         if outside:
             print(
-                "  Outside that range, so the tanh is either always or never "
-                "active: " + ", ".join(f"{v:g}" for v in outside) + " m."
+                "  Outside that range: ".join(f"{v:g}" for v in outside) + " m."
             )
 
     candidates = []
@@ -550,9 +542,8 @@ def stage_saturation(args, case, alpha: float) -> dict:
         )
 
     print("")
-    print(f"Saturation sensitivity, medians over starts, {args.num_iters} iterations.")
-    print("'saturated' is the fraction of the rollout with |e| > e_sat, on the")
-    print("error the PID integrates -- actuation space here, not the loss's.")
+    print(f"Median saturation sensitivity over {args.num_iters} iterations.")
+    print("'saturated' is the fraction of the rollout with |e| > e_sat")
     print(
         f"  {'e_sat [m]':>10}  {'best loss':>13}  {'saturated':>10}  "
         f"{'peak |I|':>10}  {'final |I|':>10}  {'|grad|':>10}  {'iters':>6}"
@@ -567,7 +558,7 @@ def stage_saturation(args, case, alpha: float) -> dict:
 
 
 def report_saturation_sensitivity(summary: list, num_iters: int) -> None:
-    """State whether the saturation scale reached the optimization at all."""
+    """Check the sensitivity of the optimization to the saturation scale."""
     usable = [row for row in summary if np.isfinite(row[1])]
     print("")
     if len(usable) < 2:
@@ -620,10 +611,6 @@ def stage_learning_rate(args, case) -> dict:
         e_sat=args.e_sat,
     )
     if args.ratios is not None:
-        # The split is settled and shipped -- both archives record (1, 0.5, 0.1)
-        # -- so this axis is reachable but never on the default path. It is worth
-        # re-measuring when the plant changes, since it states how large a step
-        # Kd tolerates relative to Kp.
         alpha = args.alpha or TUNED_ALPHA[args.method]
         candidates = [
             Candidate(
@@ -737,10 +724,7 @@ def _parse_args():
         default=None,
         metavar="KP,KI,KD",
         help=(
-            "Sweep the per-family split at a fixed --alpha instead of sweeping "
-            "the magnitude. Off by default: the committed (1, 0.5, 0.1) is what "
-            "both archives record, and equal weighting goes non-finite on its "
-            "first update."
+            "Sweep the per-family split at a fixed --alpha."
         ),
     )
     parser.add_argument(
@@ -748,22 +732,21 @@ def _parse_args():
         type=float,
         default=None,
         help="Fixed magnitude for the stages that do not sweep it; defaults to "
-        "the method's TUNED_ALPHA.",
+        "TUNED_ALPHA.",
     )
     parser.add_argument(
         "--alphas",
         type=float,
         nargs="+",
         default=list(DEFAULT_ALPHAS),
-        help="Magnitudes the learning-rate stage compares, one run each.",
+        help="Magnitudes the learning-rate stage compares.",
     )
     parser.add_argument(
         "--num-iters",
         type=int,
         default=10,
         help=(
-            "Iterations per candidate. Ten covers every divergence measured on "
-            "this case, the latest of which was at iteration 8."
+            "Iterations per candidate."
         ),
     )
     parser.add_argument("--batch-size", type=int, default=SECVD_BATCH_SIZE)
