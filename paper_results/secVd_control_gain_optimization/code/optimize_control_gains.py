@@ -51,9 +51,6 @@ def main() -> None:
     method = args.method
     result_dir = prepare_result_dir(args)
 
-    # The problem and the optimizer are both defined in secvd_case, so the rates
-    # the tuning study measures are applied to the problem it measured them on
-    # (issue #154 follow-up, items 2 and 6).
     saturation = (
         {"e_sat": args.integral_error_saturation_scale}
         if method == "collocated"
@@ -63,8 +60,6 @@ def main() -> None:
     case = problem.case
     robot = case.robot
 
-    # Scaled off the nominal gains so the loop starts below zeta = 0.5, which is
-    # where the objective's optimum sits (see INIT_GAIN_SCALE in secvd_case).
     init_center = {
         name: value * INIT_GAIN_SCALE[method][name]
         for name, value in problem.nominal_gains.items()
@@ -102,7 +97,7 @@ def main() -> None:
     init_aux, best_aux = history.init_aux, history.best_aux
     loss_history = history.loss_history()
     mask_history = history.mask_history()
-    # The time grid is shared by every start, so archive one copy.
+
     t_ts = init_aux["t_ts"][0]
     pose_of = vmap(lambda q: end_effector_pose_trajectory(robot, q, case.total_length))
     reference = (
@@ -142,8 +137,6 @@ def main() -> None:
         u_ts_best=best_aux["u_ts"],
         x_ts_init=pose_of(init_aux["q_ts"]),
         x_ts_best=pose_of(best_aux["q_ts"]),
-        # Supplied by the loop and re-derived by the validator, so the two
-        # cannot silently disagree.
         best_iteration=history.best_iteration,
         best_batch=history.best_batch(),
         is_placeholder=args.placeholder,
