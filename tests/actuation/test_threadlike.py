@@ -117,6 +117,35 @@ def _routing(*, count=2):
     )
 
 
+def test_planar_positive_y_path_shortens_under_positive_curvature():
+    """Regress the right-handed PlanarPCS threadlike sign convention."""
+    offset = 0.02
+    routing = ThreadlikeRouting.linear(
+        intercept=jnp.array([0.0, offset, 0.0]),
+        slope=jnp.zeros((3,)),
+        start_segment_index=(0,),
+        end_segment_index=(0,),
+    )
+    robot = _planar_pcs(actuators=ThreadlikeActuator.tendons(routing))
+    curvature = 2.0
+    q = jnp.array([curvature, 0.0, 0.0])
+
+    path_length = robot._threadlike_path_lengths(q, routing)[0]
+    expected_length = robot.L[0] * (1.0 - offset * curvature)
+    assert_allclose(path_length, expected_length)
+
+    # Tendon coordinates are negative path lengths, so positive tendon effort
+    # produces a positive generalized bending force for this routing.
+    assert_allclose(robot.actuation_matrix(q)[0, 0], offset * robot.L[0])
+
+    s = jnp.linspace(0.0, robot.L[0], 2001)
+    positions = jax.vmap(
+        lambda current_s: robot._threadlike_path_positions(q, current_s, routing)[0]
+    )(s)
+    rendered_length = jnp.sum(jnp.linalg.norm(jnp.diff(positions, axis=0), axis=1))
+    assert_allclose(rendered_length, path_length, rtol=2e-7, atol=2e-9)
+
+
 def _threadlike_components():
     routing = _routing()
     actuator = ThreadlikeActuator.tendons(routing)

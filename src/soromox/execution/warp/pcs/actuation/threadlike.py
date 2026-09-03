@@ -68,7 +68,7 @@ def planar_threadlike_matrix_kernel(
         if active_path:
             s = physical_points[segment, point]
             offset = routing_intercepts[path, 1] + s * routing_slopes[path, 1]
-            axial = strain[1] + offset * strain[0]
+            axial = strain[1] - offset * strain[0]
             shear = strain[2] + routing_slopes[path, 1]
             norm = wp.sqrt(axial * axial + shear * shear)
             axial_ratio = wp.float64(0.0)
@@ -77,7 +77,7 @@ def planar_threadlike_matrix_kernel(
                 axial_ratio = axial / norm
                 shear_ratio = shear / norm
             weight = physical_weights[segment, point]
-            integrated[0] += weight * offset * axial_ratio
+            integrated[0] -= weight * offset * axial_ratio
             integrated[1] += weight * axial_ratio
             integrated[2] += weight * shear_ratio
         point += 1
@@ -134,7 +134,7 @@ def planar_threadlike_force_kernel(
             while point < physical_points.shape[1]:
                 s = physical_points[segment, point]
                 offset = routing_intercepts[path, 1] + s * routing_slopes[path, 1]
-                axial = strain[1] + offset * strain[0]
+                axial = strain[1] - offset * strain[0]
                 shear = strain[2] + routing_slopes[path, 1]
                 norm = wp.sqrt(axial * axial + shear * shear)
                 axial_ratio = wp.float64(0.0)
@@ -143,7 +143,7 @@ def planar_threadlike_force_kernel(
                     axial_ratio = axial / norm
                     shear_ratio = shear / norm
                 weight = physical_weights[segment, point] * effort
-                accumulated[0] += weight * offset * axial_ratio
+                accumulated[0] -= weight * offset * axial_ratio
                 accumulated[1] += weight * axial_ratio
                 accumulated[2] += weight * shear_ratio
                 point += 1

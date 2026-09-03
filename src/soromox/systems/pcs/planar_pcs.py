@@ -2977,20 +2977,50 @@ class PlanarPCS(SoftRobot):
         start_segment_index: Array,
         end_segment_index: Array,
     ) -> Array:
+        """Return the routed-path length gradient in one planar segment.
+
+        The planar strain is ordered as ``[kappa_z, sigma_x, sigma_y]`` and
+        the routing offset is positive along material ``+y``. With the
+        backbone directed along material ``+x``, the local path tangent is
+        ``[sigma_x - offset * kappa_z, sigma_y + offset_derivative]``.
+
+        Args:
+            segment_index: Index of the segment containing ``s``.
+            strain: Planar material strain for the segment.
+            s: Arc-length coordinate in the undeformed backbone.
+            routing: Threadlike routing law.
+            path_params: Parameters for one routed path.
+            start_segment_index: First segment traversed by the path.
+            end_segment_index: Last segment traversed by the path.
+
+        Returns:
+            The local path-length gradient with respect to planar strain,
+            ordered as ``[kappa_z, sigma_x, sigma_y]``. The result is zero
+            outside the path's inclusive segment range.
+        """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
         )
         offset = routing.offset(path_params, s)[1]
         offset_derivative = routing.derivative(path_params, s)[1]
-        axial = strain[1] + offset * strain[0]
+        axial = strain[1] - offset * strain[0]
         shear = strain[2] + offset_derivative
         norm = safe_norm(jnp.stack([axial, shear]))
         axial_ratio = safe_divide(axial, norm, self.global_eps)
         shear_ratio = safe_divide(shear, norm, self.global_eps)
-        return active * jnp.asarray([offset * axial_ratio, axial_ratio, shear_ratio])
+        return active * jnp.asarray([-offset * axial_ratio, axial_ratio, shear_ratio])
 
     def _threadlike_moment_matrix(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw routed-length moment arms in the planar PCS basis."""
+        """Integrate raw routed-length moment arms in the planar PCS basis.
+
+        Args:
+            q: Generalized configuration of the robot.
+            routing: Threadlike routing whose paths are integrated.
+
+        Returns:
+            Matrix whose columns are routed-path length gradients with respect
+            to the generalized coordinates.
+        """
         params = routing.params
         count = params.num_paths
         if count == 0:
@@ -3031,7 +3061,15 @@ class PlanarPCS(SoftRobot):
         return self.B_xi.T @ full_matrix
 
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw planar threadlike path lengths."""
+        """Integrate raw planar threadlike path lengths.
+
+        Args:
+            q: Generalized configuration of the robot.
+            routing: Threadlike routing whose paths are integrated.
+
+        Returns:
+            One physical length for each routed path.
+        """
         params = routing.params
         if params.num_paths == 0:
             return jnp.zeros((0,), dtype=q.dtype)
@@ -3059,7 +3097,7 @@ class PlanarPCS(SoftRobot):
                     offset = routing.offset(path_params, s)[1]
                     derivative = routing.derivative(path_params, s)[1]
                     axial = (
-                        strains[segment_index, 1] + offset * strains[segment_index, 0]
+                        strains[segment_index, 1] - offset * strains[segment_index, 0]
                     )
                     shear = strains[segment_index, 2] + derivative
                     return active * safe_norm(jnp.stack([axial, shear]))

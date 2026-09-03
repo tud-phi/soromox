@@ -57,7 +57,24 @@ routing = ThreadlikeRouting.linear(
 ```
 
 Planar PCS uses the local `y` offset and requires the local `x` and `z`
-components to be zero.
+components to be zero. Its material `+x` axis points along the undeformed
+backbone, material `+y` is the transverse direction, and positive
+`kappa_z` rotates `+x` toward `+y` (counter-clockwise in a right-handed
+`xy` frame). Therefore a path at positive offset `d_y` has local tangent
+
+\[
+a(s) =
+\begin{bmatrix}
+\sigma_x-d_y\kappa_z \\
+\sigma_y+d_y'
+\end{bmatrix}.
+\]
+
+In particular, a positive-`y` path lies on the inside of a
+positive-curvature bend and shortens relative to the backbone. A renderer
+whose screen `y` coordinate points downward may display the same positive
+rotation as clockwise; that display convention does not change the model's
+right-handed material-frame convention.
 
 ### Custom routing laws
 

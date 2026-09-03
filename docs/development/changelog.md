@@ -27,6 +27,10 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Breaking changes
 
+- Corrected the `PlanarPCS` threadlike routing convention so a positive
+  material-`y` offset shortens under positive `kappa_z`. Existing planar
+  threadlike models that compensated for the previous sign must update their
+  routing offsets or actuator directions.
 - Renamed the Viser `cylinder_sections` and Open3D `tube_resolution` options to
   the geometry-neutral `cross_section_resolution`.
 

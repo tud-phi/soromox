@@ -36,7 +36,7 @@ def _planar_contribution(
     """Evaluate one weighted PlanarPCS path-point contribution."""
     s = physical_points[segment, point]
     offset = routing_intercepts[path, 1] + s * routing_slopes[path, 1]
-    axial = strain[1] + offset * strain[0]
+    axial = strain[1] - offset * strain[0]
     shear = strain[2] + routing_slopes[path, 1]
     norm = wp.sqrt(axial * axial + shear * shear)
     axial_ratio = wp.float64(0.0)
@@ -46,7 +46,7 @@ def _planar_contribution(
         shear_ratio = shear / norm
     weight = physical_weights[segment, point]
     return wp.vec3d(
-        weight * offset * axial_ratio,
+        -weight * offset * axial_ratio,
         weight * axial_ratio,
         weight * shear_ratio,
     )
