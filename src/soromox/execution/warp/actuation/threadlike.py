@@ -6,12 +6,13 @@ import equinox as eqx
 import jax.numpy as jnp
 from jax import Array
 
-from soromox.actuation.core import DirectEffort, PassiveElement
+from soromox.actuation.core import DirectEffort
 from soromox.actuation.threadlike import (
     LinearThreadlikeRoutingParams,
     ThreadlikeActuator,
     linear_threadlike_routing,
     linear_threadlike_routing_derivative,
+    linear_threadlike_routing_second_derivative,
 )
 
 
@@ -77,19 +78,9 @@ def _uses_builtin_linear_routing(actuator) -> bool:
         isinstance(routing.params, LinearThreadlikeRoutingParams)
         and routing.offset_fn is linear_threadlike_routing
         and routing.derivative_fn is linear_threadlike_routing_derivative
+        and routing.second_derivative_fn
+        in (None, linear_threadlike_routing_second_derivative)
         and actuator.transmission.friction.is_frictionless
-    )
-
-
-def _has_nonconservative_passive_force(element) -> bool:
-    """Return whether a passive element contributes outside an elastic potential."""
-
-    transmission = getattr(element, "transmission", None)
-    friction = getattr(transmission, "friction", None)
-    if friction is not None:
-        return not friction.is_frictionless
-    return (
-        type(element).nonconservative_force is not PassiveElement.nonconservative_force
     )
 
 
@@ -103,15 +94,8 @@ def supports_linear_threadlike_matrix(model) -> bool:
 def supports_linear_threadlike_force(model) -> bool:
     """Return whether frictionless direct controls may use the fused Warp force."""
 
-    return (
-        supports_linear_threadlike_matrix(model)
-        and all(
-            type(actuator.effort_model) is DirectEffort for actuator in model.actuators
-        )
-        and not any(
-            _has_nonconservative_passive_force(element)
-            for element in getattr(model, "passive_elements", ())
-        )
+    return supports_linear_threadlike_matrix(model) and all(
+        type(actuator.effort_model) is DirectEffort for actuator in model.actuators
     )
 
 

@@ -16,38 +16,25 @@ and include benchmark baseline and measurement context for performance claims.
 - Added renderer-neutral cross-section contours and loft construction, with a
   registration hook for extending both swept 3D renderers with new geometries.
 - Added opt-in routing friction to threadlike transmissions, selected with
-  `friction=`. It weights the moment-matrix integrand, so the attenuation
-  accumulates from the path anchor rather than scaling the applied effort.
-  `ThreadlikeFriction.frictionless()` is the default,
-  `.capstan(coefficient=..., eps=...)` applies `exp(-mu * Theta)` with `Theta`
-  the integrated routed-path curvature floored at `eps`, which keeps the
-  coefficient identifiable near a straight configuration, and
-  `.exponential_length(rate=...)` a constant attenuation per unit arc length.
-  Parameters are differentiable leaves, identifiable under `jit`. A model is a
-  parameter container plus a static `ratio_fn`, so adding one needs no host
-  change. See
-  [threadlike actuation](../api/actuation/threadlike.md#routing-friction).
+  `friction=` on active `ThreadlikeActuator` presets. The continuum Capstan
+  model applies `exp(-mu * accumulated_turn)` to each local force contribution
+  and supports `PCS`, `PlanarPCS`, and `GVS`. Routed-path turn includes the
+  analytical material-tangent derivative; custom routings provide an
+  analytical second derivative. Parameters remain differentiable leaves under
+  JAX transformations. See
+  [threadlike actuation](../api/actuation/threadlike.md#continuum-capstan-friction).
 
 ### Changed
 
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
-- Replaced `ThreadlikeImpedanceParams.routing` with a nested
-  `transmission` field, so a passive routed path now carries a
-  `ThreadlikeTransmission` like its articulated counterpart. The
-  `ThreadlikeImpedance` constructor keeps its `routing=` keyword; direct
-  construction of `ThreadlikeImpedanceParams` and `update_params(routing=...)`
-  become `transmission=...`.
 - Corrected the planar routed-path offset sign, which used
   `sigma_x + d * kappa` where `PlanarPCS` kinematics require
   `sigma_x - d * kappa`. Planar routings must negate their `y` offsets to
   reproduce previous behavior, which is exactly equivalent when the routing
   slope is zero.
-- Made host support for friction depend on the installed model rather than on
-  its value. `PCS` and `PlanarPCS` supply the wrap angle; `GVS` strain varies
-  along arc length and does not, so it refuses a wrap-angle model at any
-  coefficient, zero included. Use `ThreadlikeFriction.exponential_length(...)`
-  there instead.
+- Made `ActuationSpaceDynamics` use the actuator-coordinate Jacobian for its
+  coordinate map and transform a potentially lossy actuation matrix explicitly.
 
 ### Performance
 
@@ -59,6 +46,11 @@ and include benchmark baseline and measurement context for performance claims.
   material-`y` offset shortens under positive `kappa_z`. Existing planar
   threadlike models that compensated for the previous sign must update their
   routing offsets or actuator directions.
+- Replaced `Transmission.moment_matrix(...)` with the explicit
+  `coordinate_jacobian(...)` and `actuation_matrix(...)` contracts. Added
+  `SoftRobot.actuator_coordinate_jacobian(...)`. For ideal transmissions the
+  two matrices remain transposes; lossy transmissions need not satisfy that
+  identity. No compatibility alias is retained.
 - Renamed the Viser `cylinder_sections` and Open3D `tube_resolution` options to
   the geometry-neutral `cross_section_resolution`.
 
@@ -71,18 +63,16 @@ and include benchmark baseline and measurement context for performance claims.
   shape-morphing funnel when adjacent links used different cross-sections.
 - Fixed Open3D swept meshes reusing the first endpoint cross-section at both
   ends, which previously rendered tapered profiles as piecewise-constant.
-- Fixed planar threadlike path lengths and moment arms disagreeing with `PCS`
+- Fixed planar threadlike path lengths and actuation matrices disagreeing with `PCS`
   and with the path positions the renderer draws. At `kappa = 10`, `L = 0.1`
   and offset `0.02` the model reported `0.120` for a path whose rendered arc
   length is `0.080`; planar and spatial hosts now agree exactly.
 
 ### Documentation
 
-- Documented routing friction on the threadlike actuation page: the two
-  friction models and their derivation, the invariants a friction model
-  deliberately breaks, which quadrature-context fields are portable across
-  hosts, and a custom-model example alongside the existing custom routing one.
-  Replaced the paragraph that listed along-path friction as out of scope.
+- Documented the continuum Capstan adaptation, complete path-turn derivation,
+  all symbols, distinction from discrete spacer disks, explicit matrix
+  contracts, and custom routing and effort-ratio laws.
 
 ### Contributors
 

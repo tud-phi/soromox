@@ -226,12 +226,12 @@ def test_affine_joint_transmission_coordinates_jacobian_and_power():
     assert_allclose(transmission.coordinates(robot, q), expected_coordinate)
     assert_allclose(
         jax.jacrev(transmission.coordinates, argnums=1)(robot, q),
-        transmission.moment_matrix(robot, q).T,
+        transmission.actuation_matrix(robot, q).T,
         rtol=1e-12,
         atol=1e-12,
     )
     yad = transmission.velocities(robot, q, qd)
-    tau = transmission.moment_matrix(robot, q) @ effort
+    tau = transmission.actuation_matrix(robot, q) @ effort
     assert_allclose(qd @ tau, yad @ effort, rtol=1e-12, atol=1e-12)
 
 
@@ -365,7 +365,7 @@ def test_generic_affine_map_accepts_pcs_coordinates_but_tendon_preset_rejects_pc
     q = jnp.linspace(-0.1, 0.2, robot.num_internal_dofs)
 
     assert_allclose(transmission.coordinates(robot, q), matrix @ q + jnp.array([0.2]))
-    assert_allclose(transmission.moment_matrix(robot, q), matrix.T)
+    assert_allclose(transmission.actuation_matrix(robot, q), matrix.T)
 
     with pytest.raises(TypeError, match="serial articulated host"):
         _spatial_pcs(

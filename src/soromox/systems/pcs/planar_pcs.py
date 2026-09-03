@@ -10,7 +10,10 @@ from jax import numpy as jnp
 from soromox.actuation.core import Actuator, PassiveElement
 from soromox.actuation.friction import (
     ThreadlikeFriction,
-    ThreadlikeQuadratureContext,
+    integrate_accumulated_turn,
+    threadlike_tangent,
+    threadlike_turn_rate,
+    threadlike_turning_angle,
 )
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
@@ -50,7 +53,7 @@ from soromox.utils.integration import (
 )
 from soromox.utils.lie_algebra import se2
 from soromox.utils.lie_algebra.constant_strain import se2 as constant_strain_se2
-from soromox.utils.numerics import safe_divide, safe_norm
+from soromox.utils.numerics import safe_divide, safe_norm, safe_normalize
 
 
 class PlanarPCS(SoftRobot):
@@ -2980,7 +2983,7 @@ class PlanarPCS(SoftRobot):
         path_params: BaseThreadlikeRoutingParams,
         start_segment_index: Array,
         end_segment_index: Array,
-    ) -> ThreadlikeQuadratureContext:
+    ) -> tuple[Array, Array, Array]:
         """Return one planar routed-path geometry at a quadrature node.
 
         The offset is measured along the local ``+y`` axis, so a path at
@@ -3000,15 +3003,10 @@ class PlanarPCS(SoftRobot):
             end_segment_index: Last segment the path spans.
 
         Returns:
-            context: Node geometry for one path, consumed by
-                :meth:`_threadlike_local_length_gradient` and by the installed
-                friction model.
+            Tuple ``(offset, unit_tangent, active)`` for one path.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
-        )
-        path_abscissa = jnp.clip(
-            jnp.asarray(s) - self.L_cum[start_segment_index], 0.0, self.L_cum[-1]
         )
         offset = routing.offset(path_params, s)
         offset_derivative = routing.derivative(path_params, s)
@@ -3021,96 +3019,152 @@ class PlanarPCS(SoftRobot):
                 safe_divide(shear, norm, self.global_eps),
             ]
         )
-        return ThreadlikeQuadratureContext(
-            abscissa=jnp.asarray(s),
-            path_abscissa=path_abscissa,
-            segment_index=jnp.asarray(segment_index),
-            offset=offset,
-            offset_derivative=offset_derivative,
-            tangent_norm=norm,
-            active=active,
-            unit_tangent=unit_tangent,
-            strain=strain,
-        )
+        return offset, unit_tangent, active
 
     def _threadlike_local_length_gradient(
-        self, context: ThreadlikeQuadratureContext
+        self, offset: Array, unit_tangent: Array, active: Array
     ) -> Array:
         """Return one planar routed-path length gradient density, ``d|t|/dxi``.
 
         Args:
-            context: Node geometry.
+            offset: Material-frame routing offset.
+            unit_tangent: Planar material-frame unit tangent.
+            active: Whether the path traverses the current segment.
 
         Returns:
             length_gradient_density: Shape ``(3,)``.
         """
-        offset = context.offset[1]
-        axial_ratio = context.unit_tangent[0]
-        shear_ratio = context.unit_tangent[1]
-        return context.active * jnp.asarray(
-            [-offset * axial_ratio, axial_ratio, shear_ratio]
+        lateral_offset = offset[1]
+        axial_ratio = unit_tangent[0]
+        shear_ratio = unit_tangent[1]
+        return active * jnp.asarray(
+            [-lateral_offset * axial_ratio, axial_ratio, shear_ratio]
         )
 
-    def _threadlike_path_curvature(self, strains: Array) -> Array:
-        """Return the curvature of the routed paths in each segment,
-        ``|omega x u_hat|``.
-
-        In the plane the angular strain is perpendicular to the in-plane unit
-        tangent, so this reduces to ``|kappa|`` identically, for any routing
-        offset and any strain, and is therefore shared by every path.
-
-        Args:
-            strains: Segment strains of shape ``(num_segments, 3)``.
-
-        Returns:
-            path_curvature: Shape ``(num_segments,)``, in radians per metre.
-        """
-        return jnp.abs(strains[:, 0])
-
-    def _threadlike_safe_wrap_angle(
+    def _threadlike_turn_rates(
         self,
-        path_curvature: Array,
-        s: Array,
-        start_segment_index: Array,
-        eps: Array,
+        strains: Array,
+        routing: ThreadlikeRouting,
+        segment_index: Array,
+        points: Array,
     ) -> Array:
-        """Integrate path curvature from each path anchor up to ``s``.
-
-        Segments before a path anchor contribute nothing, because the path
-        has not turned there yet. ``safe_norm`` floors the curvature at
-        ``eps`` to keep a Capstan coefficient identifiable near a straight
-        configuration; its zero tangent at the origin reproduces the exact
-        curvature at ``eps == 0`` with a finite gradient, which a plain
-        ``sqrt`` would not.
+        """Evaluate analytical planar-path turn rates at physical points.
 
         Args:
-            path_curvature: Per-segment curvature of shape ``(num_segments,)``.
-            s: Scalar abscissa coordinate.
-            start_segment_index: First segment of each path, ``(num_paths,)``.
-            eps: Curvature floor in radians per metre.
+            strains: Piecewise-constant planar PCS strains.
+            routing: Routed-path family.
+            segment_index: Segment containing every supplied point.
+            points: Physical backbone coordinates with shape ``(num_points,)``.
 
         Returns:
-            wrap_angle: Shape ``(num_paths,)``, in radians.
+            Turn rates shaped ``(num_points, num_paths)``.
         """
-        floored = safe_norm(
-            jnp.stack(
-                [path_curvature, jnp.broadcast_to(eps, path_curvature.shape)],
-                axis=-1,
-            ),
-            axis=-1,
-        )
-        arc_in_segment = jnp.clip(jnp.asarray(s) - self.L_cum[:-1], 0.0, self.L)
-        segments = jnp.arange(self.num_segments)
-        spanned = segments[None, :] >= jnp.asarray(start_segment_index)[:, None]
-        return (spanned * (floored * arc_in_segment)[None, :]).sum(axis=-1)
+        strain = strains[segment_index]
+        angular = jnp.asarray([0.0, 0.0, strain[0]])
+        linear = jnp.asarray([strain[1], strain[2], 0.0])
+        zero = jnp.zeros((3,), dtype=strain.dtype)
 
-    def _threadlike_moment_matrix(
+        def point_rates(s: Array) -> Array:
+            """Return all path-turn rates at one backbone coordinate."""
+
+            def path_rate(path_params: BaseThreadlikeRoutingParams) -> Array:
+                """Return one routed path's turn rate at the coordinate."""
+                return threadlike_turn_rate(
+                    angular,
+                    linear,
+                    zero,
+                    zero,
+                    routing.offset(path_params, s),
+                    routing.derivative(path_params, s),
+                    routing.second_derivative(path_params, s),
+                    eps=self.global_eps,
+                )
+
+            return vmap(path_rate)(routing.params)
+
+        return vmap(point_rates)(points)
+
+    def _threadlike_boundary_turn(
+        self,
+        strains: Array,
+        routing: ThreadlikeRouting,
+        left_segment_index: Array,
+    ) -> Array:
+        """Return one-sided path-turn angles at a planar PCS boundary.
+
+        Args:
+            strains: Piecewise-constant planar PCS strains.
+            routing: Routed-path family.
+            left_segment_index: Segment immediately before the boundary.
+
+        Returns:
+            One unsigned tangent angle per routed path.
+        """
+        s = self.L_cum[left_segment_index + 1]
+
+        def path_angle(path_params: BaseThreadlikeRoutingParams) -> Array:
+            """Return one routed path's tangent jump at the boundary."""
+            offset = routing.offset(path_params, s)
+            offset_derivative = routing.derivative(path_params, s)
+
+            def unit_tangent(strain: Array) -> Array:
+                """Return the path unit tangent for one-sided segment strain."""
+                angular = jnp.asarray([0.0, 0.0, strain[0]])
+                linear = jnp.asarray([strain[1], strain[2], 0.0])
+                tangent = threadlike_tangent(angular, linear, offset, offset_derivative)
+                return safe_normalize(tangent, eps=self.global_eps)
+
+            return threadlike_turning_angle(
+                unit_tangent(strains[left_segment_index]),
+                unit_tangent(strains[left_segment_index + 1]),
+            )
+
+        return vmap(path_angle)(routing.params)
+
+    def _threadlike_accumulated_turn(
+        self,
+        strains: Array,
+        routing: ThreadlikeRouting,
+        s: Array,
+    ) -> Array:
+        """Integrate unsigned routed-path turn from each anchor through ``s``.
+
+        Args:
+            strains: Piecewise-constant planar PCS strains.
+            routing: Routed-path family.
+            s: Physical backbone coordinate.
+
+        Returns:
+            Accumulated turn in radians for every path.
+        """
+        points = jnp.broadcast_to(
+            self.integration_points[None, :],
+            (self.num_segments, self.num_integration_points),
+        )
+        weights = jnp.broadcast_to(self.integration_weights[None, :], points.shape)
+        return integrate_accumulated_turn(
+            lambda segment_index, physical_points: self._threadlike_turn_rates(
+                strains, routing, segment_index, physical_points
+            ),
+            lambda left_segment_index: self._threadlike_boundary_turn(
+                strains, routing, left_segment_index
+            ),
+            s,
+            self.L_cum[:-1],
+            self.L,
+            points,
+            weights,
+            routing.params.start_segment_index_array,
+            routing.params.end_segment_index_array,
+        )
+
+    def _threadlike_actuation_matrix(
         self,
         q: Array,
         routing: ThreadlikeRouting,
         friction: ThreadlikeFriction | None = None,
     ) -> Array:
-        """Integrate routed-length moment arms in the planar PCS basis.
+        """Integrate the threadlike anchor-effort map in the planar PCS basis.
 
         Args:
             q: Generalized coordinates of shape ``(num_dofs,)``.
@@ -3118,7 +3172,7 @@ class PlanarPCS(SoftRobot):
             friction: Optional friction model.
 
         Returns:
-            A: Moment-arm matrix of shape ``(num_dofs, num_paths)``.
+            Effort-to-generalized-force matrix shaped ``(num_dofs, num_paths)``.
         """
         params = routing.params
         count = params.num_paths
@@ -3127,11 +3181,20 @@ class PlanarPCS(SoftRobot):
         strains = self.strain(q).reshape((self.num_segments, 3))
 
         has_friction = friction is not None and not friction.is_frictionless
-        path_curvature = None
-        if has_friction and friction.requires_wrap_angle:
-            path_curvature = self._threadlike_path_curvature(strains)
+        accumulated_turn = None
+        if has_friction:
+            physical_points = (
+                self.L_cum[:-1, None]
+                + self.L[:, None] * (self.integration_points[None, :])
+            )
+            accumulated_turn = vmap(
+                lambda segment_points: vmap(
+                    lambda s: self._threadlike_accumulated_turn(strains, routing, s)
+                )(segment_points)
+            )(physical_points)
 
         def segment_matrix(segment_index: Array) -> Array:
+            """Integrate the effort map over one planar PCS segment."""
             points, weights = scale_gaussian_quadrature(
                 self.integration_points,
                 self.integration_weights,
@@ -3140,7 +3203,8 @@ class PlanarPCS(SoftRobot):
             )
 
             def point_matrix(point_index: Array) -> Array:
-                context = vmap(
+                """Return one quadrature node's weighted effort-map density."""
+                offset, unit_tangent, active = vmap(
                     self._threadlike_local_geometry,
                     in_axes=(None, None, None, None, 0, 0, 0),
                     out_axes=0,
@@ -3154,21 +3218,18 @@ class PlanarPCS(SoftRobot):
                     params.end_segment_index_array,
                 )
                 gradient = vmap(self._threadlike_local_length_gradient, out_axes=1)(
-                    context
+                    offset, unit_tangent, active
                 )
                 weighted = weights[point_index] * gradient
                 if not has_friction:
                     return weighted
-                if path_curvature is not None:
-                    context = context.with_wrap_angle(
-                        self._threadlike_safe_wrap_angle(
-                            path_curvature,
-                            points[point_index],
-                            params.start_segment_index_array,
-                            getattr(friction.params, "eps", 0.0),
-                        )
-                    )
-                return weighted * friction.transmission_ratio(context)[None, :]
+                assert accumulated_turn is not None
+                return (
+                    weighted
+                    * friction.effort_ratio(
+                        accumulated_turn[segment_index, point_index]
+                    )[None, :]
+                )
 
             return jnp.sum(
                 vmap(point_matrix)(jnp.arange(self.num_integration_points)), axis=0
@@ -3178,6 +3239,20 @@ class PlanarPCS(SoftRobot):
             self.num_strains, count
         )
         return self.B_xi.T @ full_matrix
+
+    def _threadlike_path_length_jacobian(
+        self, q: Array, routing: ThreadlikeRouting
+    ) -> Array:
+        """Return the Jacobian of unscaled planar routed-path lengths.
+
+        Args:
+            q: Generalized configuration.
+            routing: Routed-path family.
+
+        Returns:
+            Jacobian shaped ``(num_paths, num_internal_dofs)``.
+        """
+        return self._threadlike_actuation_matrix(q, routing).T
 
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
         """Integrate raw planar threadlike path lengths.

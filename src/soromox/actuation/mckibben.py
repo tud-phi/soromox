@@ -142,7 +142,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
     The transmission owns fixed and moving attachment geometry for grouped
     universal joints on a spatial articulated host. It computes effective
     muscle lengths, the volume-like coordinate work-conjugate to pressure, its
-    analytic moment matrix, and renderer-facing endpoint segments without
+    analytic actuation matrix, and renderer-facing endpoint segments without
     embedding those mechanics in a particular articulated robot class.
     """
 
@@ -303,7 +303,7 @@ class ArticulatedMcKibbenTransmission(Transmission):
         )
         return effective_length, jnp.stack([dlength_dqx, dlength_dqy], axis=-1)
 
-    def _moment_matrix_group(self, robot, q: Array, group_index: Array) -> Array:
+    def _actuation_matrix_group(self, robot, q: Array, group_index: Array) -> Array:
         """Scatter one group's analytic pressure-to-generalized-force block.
 
         The local block is ``d(y_a)/d(length) * d(length)/d(q_pair)`` and is
@@ -325,14 +325,18 @@ class ArticulatedMcKibbenTransmission(Transmission):
             .set(local_block.T)
         )
 
-    def moment_matrix(self, robot, q: Array) -> Array:
+    def coordinate_jacobian(self, robot, q: Array) -> Array:
+        """Return the pressure-work coordinate Jacobian."""
+        return self.actuation_matrix(robot, q).T
+
+    def actuation_matrix(self, robot, q: Array) -> Array:
         """Return the analytic pressure-to-generalized-force matrix ``A(q)``."""
         if self.num_channels == 0:
             return jnp.zeros((robot.num_velocities, 0), dtype=q.dtype)
         indices = jnp.arange(self.params.num_groups)
-        matrices = jax.vmap(lambda index: self._moment_matrix_group(robot, q, index))(
-            indices
-        )
+        matrices = jax.vmap(
+            lambda index: self._actuation_matrix_group(robot, q, index)
+        )(indices)
         return jnp.sum(matrices, axis=0)
 
     def axial_forces(self, q: Array, pressures: Array) -> Array:

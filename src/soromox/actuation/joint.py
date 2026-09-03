@@ -143,7 +143,13 @@ class AffineJointTransmission(Transmission):
             + self.params.coordinate_offset
         )
 
-    def moment_matrix(self, robot, q: Array) -> Array:
+    def coordinate_jacobian(self, robot, q: Array) -> Array:
+        """Return the constant actuator-coordinate Jacobian."""
+        del robot, q
+        return self.params.routing_matrix
+
+    def actuation_matrix(self, robot, q: Array) -> Array:
+        """Return the ideal transpose map from effort to generalized force."""
         del robot, q
         return self.params.routing_matrix.T
 
@@ -446,13 +452,15 @@ class ArticulatedTendonImpedance(PassiveElement):
         return self.transmission.velocities(robot, q, qd)
 
     def elastic_force(self, robot, q: Array) -> Array:
+        """Return generalized elastic force from the routed joint tendons."""
         coordinate = self.coordinates(robot, q)
-        return self.transmission.moment_matrix(robot, q) @ (
+        return self.transmission.actuation_matrix(robot, q) @ (
             self.params.stiffness * coordinate
         )
 
     def damping_matrix(self, robot, q: Array) -> Array:
-        matrix = self.transmission.moment_matrix(robot, q)
+        """Return generalized viscous damping from the routed joint tendons."""
+        matrix = self.transmission.actuation_matrix(robot, q)
         return matrix @ (self.params.damping[:, None] * matrix.T)
 
     def elastic_energy(self, robot, q: Array) -> Array:

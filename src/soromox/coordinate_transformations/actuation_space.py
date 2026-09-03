@@ -20,23 +20,31 @@ class ActuationSpaceDynamics(eqx.Module):
     This class transforms the configuration-space dynamics of a soft robot to actuation
     space using the Jacobian of the coordinate transformation. The actuation space is
     defined by work-conjugate actuator coordinates and unactuated coordinates
-    that span the null space of the actuation matrix.
+    that complete the actuator-coordinate Jacobian.
 
-    The actuation space dynamics follow the formulation:
-        M_y @ ydd + eta_y @ yd + h_y = [tau, 0_{n-m}]
+    The actuation space dynamics follow the general formulation:
+        M_y @ ydd + eta_y @ yd + h_y = A_y @ e
+
+    with ``A_y = J(q)^(-T) @ A_q(q)``. For an ideal transmission this reduces
+    to ``A_y = [[I], [0]]`` and the right-hand side is ``[e, 0]``.
 
     where:
         - M_y: Actuation space inertia matrix
         - eta_y: Actuation space Coriolis/centrifugal matrix
         - h_y: Sum of actuation space forces (gravitational, elastic, damping)
-        - tau: Applied actuator forces (only on the first num_actuators coordinates)
+        - e: Work-conjugate actuator efforts
+        - A_y: Effort-to-generalized-force map in actuation coordinates
         - y: Actuation space coordinates = [actuated_coords, unactuated_coords]
 
     The actuated coordinates are obtained from a (generally nonlinear) map from
     configuration space. They are accessed through the robot's
     `actuator_coordinates` method. The Jacobian of this
-    map is the transpose of the actuation matrix:
-        J_actuated = dy_a/dq = A_at^T
+    map is provided explicitly by the robot:
+        J_actuated = dy_a/dq
+
+    For an ideal transmission, ``J_actuated = A_at^T``. Losses such as
+    threadlike friction can make the generalized-force map ``A_at`` differ
+    from the transpose of the purely kinematic coordinate Jacobian.
 
     The unactuated coordinates can be specified by the user or computed via basis
     expansion using QR decomposition to find a set of linearly independent coordinates.
@@ -54,9 +62,9 @@ class ActuationSpaceDynamics(eqx.Module):
         n_unactuated: Number of unactuated coordinates (equals num_dofs - num_actuators).
 
     Notes:
-        The new actuation matrix in actuation space is:
-            A_y = [[I_{num_actuators}], [0_{num_dofs - num_actuators, num_actuators}]]
-        where only the first num_actuators coordinates are directly actuated.
+        For ideal transmissions, the actuation matrix in actuation space is
+        ``[[I], [0]]``. Lossy transmissions are transformed explicitly and can
+        produce a different matrix.
 
         The robot must implement `actuator_coordinates(q)` and return one
         independent work coordinate per actuator channel.
@@ -97,7 +105,8 @@ class ActuationSpaceDynamics(eqx.Module):
         Args:
             robot: A soft robot implementing the SoftRobot interface.
                 Must have `num_actuators`, `num_internal_dofs`,
-                `actuation_matrix`, and `actuator_coordinates`
+                `actuation_matrix`, `actuator_coordinates`, and
+                `actuator_coordinate_jacobian`
                 attributes/methods.
             H_unactuated: Optional matrix of shape (num_dofs - num_actuators, num_dofs) that
                 maps configurations to unactuated coordinates. If None, the unactuated
@@ -123,11 +132,11 @@ class ActuationSpaceDynamics(eqx.Module):
                 f"num_actuators ({num_actuators}) cannot exceed num_dofs ({num_dofs})"
             )
 
-        # Get the actuation matrix at a reference configuration for basis expansion
-        # A_at has shape (num_dofs, num_actuators)
+        # Use the coordinate differential, rather than a potentially lossy
+        # effort map, to complete the coordinate basis.
         q_ref = jnp.zeros(num_dofs)
-        A_at = self.fixed_base_robot.actuation_matrix(q_ref)
-        rank = int(jnp.linalg.matrix_rank(A_at))
+        coordinate_jacobian = self.fixed_base_robot.actuator_coordinate_jacobian(q_ref)
+        rank = int(jnp.linalg.matrix_rank(coordinate_jacobian))
         if rank != num_actuators:
             raise ValueError(
                 "ActuationSpaceDynamics requires independent actuator coordinates "
@@ -138,7 +147,9 @@ class ActuationSpaceDynamics(eqx.Module):
         # Compute or validate unactuated coordinate mapping
         if H_unactuated is None:
             # Compute via basis expansion using QR decomposition
-            H_unactuated = self._compute_unactuated_coordinates_mapping(A_at)
+            H_unactuated = self._compute_unactuated_coordinates_mapping(
+                coordinate_jacobian.T
+            )
         else:
             H_unactuated = jnp.asarray(H_unactuated)
             expected_shape = (n_unactuated, num_dofs)
@@ -257,10 +268,9 @@ class ActuationSpaceDynamics(eqx.Module):
         """
         Compute the Jacobian of the map from configuration space to actuated coordinates.
 
-        For tendon-actuated robots, this is the transpose of the actuation matrix:
-            J_actuated = A_at^T = d(actuated_coordinates)/dq
-
-        where the actuation matrix A_at maps tendon forces to generalized forces.
+        This is the purely kinematic differential
+        ``d(actuated_coordinates)/dq``. It remains independent of losses in the
+        effort-to-generalized-force map.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -268,8 +278,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             J_a: Jacobian of shape (n_actuated, num_dofs).
         """
-        A_at = self.fixed_base_robot.actuation_matrix(q)
-        return A_at.T
+        return self.fixed_base_robot.actuator_coordinate_jacobian(q)
 
     @eqx.filter_jit
     def jacobian_unactuated(self, q: Array) -> Array:
@@ -581,12 +590,10 @@ class ActuationSpaceDynamics(eqx.Module):
         """
         Compute the actuation matrix in actuation space.
 
-        In actuation space, the actuation matrix has a special structure:
-            A_y = [[I_{num_actuators}], [0_{n_unactuated, num_actuators}]]
-
-        This means that actuator forces directly affect only the first num_actuators
-        coordinates (the actuated ones), while the unactuated coordinates receive
-        no direct actuation input.
+        The generalized-force covector transforms as
+        ``A_y = J(q)^(-T) @ A_q(q)``. This reduces to ``[[I], [0]]`` for an
+        ideal transmission whose force map is the transpose of its coordinate
+        Jacobian, while preserving explicit losses when those maps differ.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,) (unused, for API consistency).
@@ -594,18 +601,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Returns:
             A_y: Actuation matrix in actuation space of shape (num_dofs, num_actuators).
         """
-        num_dofs = self.fixed_base_robot.num_internal_dofs
-        num_actuators = self.fixed_base_robot.num_actuators
-
-        # Build the actuation matrix: [[I], [0]]
-        A_y = jnp.vstack(
-            [
-                jnp.eye(num_actuators),
-                jnp.zeros((num_dofs - num_actuators, num_actuators)),
-            ]
-        )
-
-        return A_y
+        return self.jacobian_inverse(q).T @ self.fixed_base_robot.actuation_matrix(q)
 
     # =========================================================================
     # Reference trajectory conversion

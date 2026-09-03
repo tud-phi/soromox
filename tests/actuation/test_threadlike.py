@@ -172,13 +172,12 @@ def _updated_threadlike_component_params(actuator, passive):
     updated_actuator = actuator_params.replace(transmission=actuator_transmission)
 
     passive_params = passive.params
-    passive_routing = passive_params.transmission.routing.replace(
-        intercept=1.01 * passive_params.transmission.routing.intercept,
-        slope=1.02 * passive_params.transmission.routing.slope,
+    passive_routing = passive_params.routing.replace(
+        intercept=1.01 * passive_params.routing.intercept,
+        slope=1.02 * passive_params.routing.slope,
     )
-    passive_transmission = passive_params.transmission.replace(routing=passive_routing)
     updated_passive = passive_params.replace(
-        transmission=passive_transmission,
+        routing=passive_routing,
         stiffness=1.03 * passive_params.stiffness,
         damping=1.04 * passive_params.damping,
         rest_length=1.01 * passive_params.rest_length,
@@ -362,7 +361,7 @@ def test_identity_unactuated_and_mixed_construction():
         )
     )
     q = jnp.zeros(mixed.num_internal_dofs)
-    raw = mixed._threadlike_moment_matrix(q, routing)
+    raw = mixed._threadlike_actuation_matrix(q, routing)
     assert_allclose(mixed.actuation_matrix(q), jnp.concatenate((-raw, raw), axis=1))
     assert [metadata.kind for metadata in mixed.actuator_input_metadata] == [
         "tendon",
@@ -410,28 +409,28 @@ def test_direct_effort_skips_unused_threadlike_state(monkeypatch):
     qd = jnp.linspace(0.04, -0.01, robot.num_internal_dofs)
     control = jnp.array([3.0, 4.0])
     expected_force = robot.actuation_matrix(q) @ control
-    calls = {"moment_matrix": 0}
-    original_moment_matrix = PCS._threadlike_moment_matrix
+    calls = {"actuation_matrix": 0}
+    original_actuation_matrix = PCS._threadlike_actuation_matrix
 
-    def counted_moment_matrix(self, q, routing, friction=None):
-        calls["moment_matrix"] += 1
-        return original_moment_matrix(self, q, routing)
+    def counted_actuation_matrix(self, q, routing, friction=None):
+        calls["actuation_matrix"] += 1
+        return original_actuation_matrix(self, q, routing, friction=friction)
 
     def unexpected_path_lengths(self, q, routing, friction=None):
         del self, q, routing
         raise AssertionError("DirectEffort must not evaluate actuator coordinates.")
 
-    monkeypatch.setattr(PCS, "_threadlike_moment_matrix", counted_moment_matrix)
+    monkeypatch.setattr(PCS, "_threadlike_actuation_matrix", counted_actuation_matrix)
     monkeypatch.setattr(PCS, "_threadlike_path_lengths", unexpected_path_lengths)
 
     assert_allclose(robot.actuator_efforts(q, control, qd=qd), control)
-    assert calls["moment_matrix"] == 0
+    assert calls["actuation_matrix"] == 0
 
     assert_allclose(
         robot.actuation_force(q, control, qd=qd),
         expected_force,
     )
-    assert calls["moment_matrix"] == 1
+    assert calls["actuation_matrix"] == 1
 
 
 class CoordinateVelocityEffort(EffortModel):
@@ -443,7 +442,7 @@ class CoordinateVelocityEffort(EffortModel):
         return control + coordinate + velocity
 
 
-def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypatch):
+def test_state_dependent_effort_uses_coordinate_jacobian(monkeypatch):
     actuator = ThreadlikeActuator.tendons(_routing())
     actuator = eqx.tree_at(
         lambda current: current._effort_model,
@@ -456,63 +455,72 @@ def test_state_dependent_effort_reuses_generalized_force_moment_matrix(monkeypat
     control = jnp.array([3.0, 4.0])
 
     matrix = robot.actuation_matrix(q)
+    coordinate_jacobian = robot.actuator_coordinate_jacobian(q)
     coordinate = robot.actuator_coordinates(q)
     expected_effort = robot.actuator_efforts(q, control, qd=qd)
-    assert_allclose(expected_effort, control + coordinate + matrix.T @ qd)
+    assert_allclose(expected_effort, control + coordinate + coordinate_jacobian @ qd)
     expected_force = matrix @ expected_effort
 
-    calls = {"moment_matrix": 0, "path_lengths": 0}
-    original_moment_matrix = PCS._threadlike_moment_matrix
+    calls = {"actuation_matrix": 0, "path_lengths": 0}
+    original_actuation_matrix = PCS._threadlike_actuation_matrix
     original_path_lengths = PCS._threadlike_path_lengths
 
-    def counted_moment_matrix(self, q, routing, friction=None):
-        calls["moment_matrix"] += 1
-        return original_moment_matrix(self, q, routing)
+    def counted_actuation_matrix(self, q, routing, friction=None):
+        calls["actuation_matrix"] += 1
+        return original_actuation_matrix(self, q, routing, friction=friction)
 
     def counted_path_lengths(self, q, routing, friction=None):
         calls["path_lengths"] += 1
         return original_path_lengths(self, q, routing)
 
-    monkeypatch.setattr(PCS, "_threadlike_moment_matrix", counted_moment_matrix)
+    monkeypatch.setattr(PCS, "_threadlike_actuation_matrix", counted_actuation_matrix)
     monkeypatch.setattr(PCS, "_threadlike_path_lengths", counted_path_lengths)
 
     assert_allclose(robot.actuation_force(q, control, qd=qd), expected_force)
-    assert calls == {"moment_matrix": 1, "path_lengths": 1}
+    assert calls == {"actuation_matrix": 2, "path_lengths": 1}
 
 
-def test_precomputed_transmission_matrices_require_compatible_shapes():
+def test_precomputed_coordinate_jacobians_require_compatible_shapes():
     actuator = ThreadlikeActuator.tendons(_routing())
     robot = _spatial_pcs(actuators=actuator)
     q = jnp.zeros(robot.num_internal_dofs)
     control = jnp.ones(robot.num_actuators)
 
-    with pytest.raises(ValueError, match="actuation_matrix must have shape"):
+    with pytest.raises(ValueError, match="coordinate_jacobian must have shape"):
         robot.actuator_efforts(
             q,
             control,
-            actuation_matrix=jnp.zeros(
-                (robot.num_internal_dofs, robot.num_actuators + 1)
+            coordinate_jacobian=jnp.zeros(
+                (robot.num_actuators + 1, robot.num_internal_dofs)
             ),
         )
 
-    with pytest.raises(ValueError, match="transmission_matrix must have shape"):
+    with pytest.raises(ValueError, match="coordinate_jacobian must have shape"):
         actuator.efforts(
             robot,
             q,
             control,
-            transmission_matrix=jnp.zeros(
-                (robot.num_internal_dofs, actuator.num_channels + 1)
+            coordinate_jacobian=jnp.zeros(
+                (actuator.num_channels + 1, robot.num_internal_dofs)
             ),
         )
 
 
 @pytest.mark.parametrize("factory", [_spatial_pcs, _planar_pcs, _gvs])
-def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
+def test_lossless_coordinate_jacobian_equals_actuation_matrix_transpose(factory):
     actuator = ThreadlikeActuator.tendons(_routing())
     robot = factory(actuators=actuator)
     q = jnp.linspace(-0.02, 0.03, robot.num_internal_dofs)
     jacobian = jax.jacrev(robot.actuator_coordinates)(q)
-    assert_allclose(jacobian, robot.actuation_matrix(q).T, rtol=2e-7, atol=2e-9)
+    assert_allclose(
+        jacobian, robot.actuator_coordinate_jacobian(q), rtol=2e-7, atol=2e-9
+    )
+    assert_allclose(
+        robot.actuator_coordinate_jacobian(q),
+        robot.actuation_matrix(q).T,
+        rtol=2e-7,
+        atol=2e-9,
+    )
 
 
 @pytest.mark.parametrize(
@@ -522,9 +530,8 @@ def test_coordinate_jacobian_equals_moment_matrix_transpose(factory):
         (_spatial_pcs, 3, ThreadlikeFriction.capstan(coefficient=0.7)),
         (_planar_pcs, 1, None),
         (_planar_pcs, 1, ThreadlikeFriction.capstan(coefficient=0.7)),
-        # GVS supplies no wrap angle, so it hosts only wrap-angle-free laws.
         (_gvs, 3, None),
-        (_gvs, 3, ThreadlikeFriction.exponential_length(rate=3.0)),
+        (_gvs, 3, ThreadlikeFriction.capstan(coefficient=0.7)),
     ],
 )
 def test_collapsed_threadlike_tangent_has_finite_reverse_mode(

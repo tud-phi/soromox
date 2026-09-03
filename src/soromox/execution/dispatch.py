@@ -175,7 +175,7 @@ def dispatch_actuation_force(
         raise NotImplementedError(
             f"Warp {capabilities.family_name} actuation_force requires only "
             "built-in frictionless linear ThreadlikeActuator transmissions with "
-            "DirectEffort and no non-conservative passive forces."
+            "DirectEffort."
         )
     if configured == "warp" and eligible and not capabilities.force_enabled:
         raise NotImplementedError(

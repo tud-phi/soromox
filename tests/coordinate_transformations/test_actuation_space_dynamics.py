@@ -307,18 +307,18 @@ class TestCoordinateTransformations:
 class TestJacobians:
     """Tests for Jacobian computations."""
 
-    def test_jacobian_actuated_equals_actuation_matrix_transpose(
+    def test_jacobian_actuated_equals_robot_coordinate_jacobian(
         self, underactuated_pendulum
     ):
-        """Test that jacobian_actuated equals A_at^T."""
+        """Test that the transformed Jacobian uses coordinate kinematics."""
         robot = underactuated_pendulum
         asd = ActuationSpaceDynamics(robot)
 
         q = jnp.array([0.1, 0.2, 0.3])
         J_a = asd.jacobian_actuated(q)
-        A_at = robot.actuation_matrix(q)
+        expected = robot.actuator_coordinate_jacobian(q)
 
-        assert_allclose(J_a, A_at.T, rtol=1e-10)
+        assert_allclose(J_a, expected, rtol=1e-10)
 
     def test_jacobian_unactuated_equals_h_unactuated(self, underactuated_pendulum):
         """Test that jacobian_unactuated equals H_unactuated."""
@@ -507,7 +507,7 @@ class TestActuationMatrix:
         A_y = asd.actuation_matrix(q)
 
         # For fully actuated: A_y = I
-        assert_allclose(A_y, jnp.eye(robot.num_internal_dofs), rtol=1e-10)
+        assert_allclose(A_y, jnp.eye(robot.num_internal_dofs), rtol=1e-10, atol=1e-12)
 
     def test_actuation_matrix_structure_underactuated(self, underactuated_pendulum):
         """Test actuation matrix structure for underactuated system."""
@@ -522,10 +522,10 @@ class TestActuationMatrix:
         n_u = asd.n_unactuated
 
         # Top block should be identity
-        assert_allclose(A_y[:n_a, :n_a], jnp.eye(n_a), rtol=1e-10)
+        assert_allclose(A_y[:n_a, :n_a], jnp.eye(n_a), rtol=1e-10, atol=1e-12)
 
         # Bottom block should be zeros
-        assert_allclose(A_y[n_a:, :], jnp.zeros((n_u, n_a)), rtol=1e-10)
+        assert_allclose(A_y[n_a:, :], jnp.zeros((n_u, n_a)), rtol=1e-10, atol=1e-12)
 
     def test_actuation_matrix_shape(self, underactuated_pendulum):
         """Test actuation matrix has correct shape."""
@@ -945,15 +945,15 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         assert J_a.shape == (asd.n_actuated, robot.num_internal_dofs)
 
-    def test_jacobian_actuated_equals_actuation_matrix_transpose(self, robot):
-        """Test that jacobian_actuated equals A_at^T."""
+    def test_jacobian_actuated_equals_robot_coordinate_jacobian(self, robot):
+        """Test that jacobian_actuated uses the robot coordinate Jacobian."""
         asd = ActuationSpaceDynamics(robot)
         q = random_configuration(robot)
 
         J_a = asd.jacobian_actuated(q)
-        A_at = robot.actuation_matrix(q)
+        expected = robot.actuator_coordinate_jacobian(q)
 
-        assert_allclose(J_a, A_at.T, rtol=1e-10)
+        assert_allclose(J_a, expected, rtol=1e-10)
 
     def test_jacobian_stacks_correctly(self, robot):
         """Test that jacobian stacks actuated and unactuated Jacobians."""
@@ -1088,11 +1088,11 @@ class TestActuationSpaceDynamicsSystemIndependent:
         n_u = asd.n_unactuated
 
         # Top block should be identity
-        assert_allclose(A_y[:n_a, :n_a], jnp.eye(n_a), rtol=1e-10)
+        assert_allclose(A_y[:n_a, :n_a], jnp.eye(n_a), rtol=1e-10, atol=1e-12)
 
         # Bottom block should be zeros (if underactuated)
         if n_u > 0:
-            assert_allclose(A_y[n_a:, :], jnp.zeros((n_u, n_a)), rtol=1e-10)
+            assert_allclose(A_y[n_a:, :], jnp.zeros((n_u, n_a)), rtol=1e-10, atol=1e-12)
 
     def test_actuation_matrix_fully_actuated_is_identity(self, fully_actuated_robot):
         """Test actuation matrix is identity for fully actuated system."""
@@ -1102,7 +1102,7 @@ class TestActuationSpaceDynamicsSystemIndependent:
 
         A_y = asd.actuation_matrix(q)
 
-        assert_allclose(A_y, jnp.eye(robot.num_internal_dofs), rtol=1e-10)
+        assert_allclose(A_y, jnp.eye(robot.num_internal_dofs), rtol=1e-10, atol=1e-12)
 
     # -----------------------
     # Reference trajectory conversion tests

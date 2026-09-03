@@ -9,7 +9,10 @@ from jax import Array, lax, vmap
 from soromox.actuation.core import Actuator, PassiveElement
 from soromox.actuation.friction import (
     ThreadlikeFriction,
-    ThreadlikeQuadratureContext,
+    integrate_accumulated_turn,
+    threadlike_tangent,
+    threadlike_turn_rate,
+    threadlike_turning_angle,
 )
 from soromox.actuation.threadlike import (
     BaseThreadlikeRoutingParams,
@@ -5855,19 +5858,24 @@ class GVS(SoftRobot):
         s: Array,
         segment_index: Array,
         point_index: Array,
-    ) -> ThreadlikeQuadratureContext:
-        """Return one routed-path geometry at a GVS quadrature node.
+    ) -> tuple[Array, Array, Array]:
+        """Return one GVS routed-path offset, unit tangent, and activity.
+
+        Args:
+            routing: Routed-path family.
+            path_params: Parameters of one path.
+            start_segment_index: First segment traversed by the path.
+            end_segment_index: Last segment traversed by the path.
+            q_link: Padded generalized link coordinates.
+            s: Physical backbone coordinate.
+            segment_index: Segment containing ``s``.
+            point_index: Host quadrature-point index.
 
         Returns:
-            context: Node geometry for one path.
+            Tuple ``(offset, unit_tangent, active)`` for one path.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
-        )
-        path_abscissa = jnp.clip(
-            jnp.asarray(s) - self.segment_end_positions[start_segment_index],
-            0.0,
-            self.segment_end_positions[-1],
         )
         basis = self.B_Xs[segment_index, point_index]
         length = self.segment_lengths[segment_index]
@@ -5876,61 +5884,222 @@ class GVS(SoftRobot):
         strain = basis @ q_link + self.xi_ref_Xs[segment_index, point_index]
         offset = routing.offset(path_params, s)
         offset_derivative = routing.derivative(path_params, s)
-        homogeneous_offset = jnp.append(offset, 1.0)
-        homogeneous_derivative = jnp.append(offset_derivative, 1.0)
-        tangent = (homogeneous_derivative + se3.hat(strain) @ homogeneous_offset)[:-1]
-        return ThreadlikeQuadratureContext(
-            abscissa=jnp.asarray(s),
-            path_abscissa=path_abscissa,
-            segment_index=jnp.asarray(segment_index),
-            offset=offset,
-            offset_derivative=offset_derivative,
-            tangent_norm=safe_norm(tangent),
-            active=active,
-            unit_tangent=safe_normalize(tangent, eps=self.global_eps),
-            strain=strain,
-        )
+        tangent = threadlike_tangent(strain[:3], strain[3:], offset, offset_derivative)
+        return offset, safe_normalize(tangent, eps=self.global_eps), active
 
     def _threadlike_local_length_gradient(
-        self, context: ThreadlikeQuadratureContext
+        self, offset: Array, unit_tangent: Array, active: Array
     ) -> Array:
         """Return one routed-path length gradient density in the GVS basis.
 
         Args:
-            context: Node geometry.
+            offset: Material-frame routing offset.
+            unit_tangent: Material-frame unit tangent.
+            active: Whether the path traverses the current segment.
 
         Returns:
             length_gradient_density: Shape ``(6,)``.
         """
-        tangent = context.unit_tangent
-        local = jnp.hstack([so3.skew(context.offset) @ tangent, tangent])
-        return context.active * local
+        local = jnp.hstack([so3.skew(offset) @ unit_tangent, unit_tangent])
+        return active * local
 
-    def _threadlike_moment_matrix(
+    def _threadlike_strain_and_derivative(
+        self,
+        q_link: Array,
+        segment_index: Array,
+        points: Array,
+    ) -> tuple[Array, Array]:
+        """Evaluate GVS strain and its physical arc-length derivative.
+
+        Args:
+            q_link: Padded generalized link coordinates.
+            segment_index: Segment containing all supplied points.
+            points: Physical backbone coordinates with shape ``(num_points,)``.
+
+        Returns:
+            Tuple of strain and strain derivative arrays, each shaped
+            ``(num_points, 6)``.
+        """
+        length = self.segment_lengths[segment_index]
+        normalized = (points - self.segment_end_positions[segment_index]) / length
+        basis = self._eval_B_segment(segment_index, normalized)
+        basis_derivative = self._eval_dB_segment(segment_index, normalized)
+        if self.scale_rotational_basis_by_length:
+            basis = basis.at[:, :3, :].divide(length)
+            basis_derivative = basis_derivative.at[:, :3, :].divide(length)
+        reference = self.xi_ref_Xs[segment_index, 0]
+        strain = jnp.einsum("pij,j->pi", basis, q_link) + reference
+        strain_derivative = jnp.einsum("pij,j->pi", basis_derivative, q_link) / length
+        return strain, strain_derivative
+
+    def _threadlike_turn_rates(
+        self,
+        q_gathered: Array,
+        routing: ThreadlikeRouting,
+        segment_index: Array,
+        points: Array,
+    ) -> Array:
+        """Evaluate analytical GVS path-turn rates at physical points.
+
+        Args:
+            q_gathered: Per-segment padded generalized coordinates.
+            routing: Routed-path family.
+            segment_index: Segment containing every supplied point.
+            points: Physical backbone coordinates with shape ``(num_points,)``.
+
+        Returns:
+            Turn rates shaped ``(num_points, num_paths)``.
+        """
+        strain, strain_derivative = self._threadlike_strain_and_derivative(
+            q_gathered[segment_index, 1], segment_index, points
+        )
+
+        def point_rates(
+            s: Array, current_strain: Array, current_derivative: Array
+        ) -> Array:
+            """Return all path-turn rates at one backbone coordinate."""
+
+            def path_rate(path_params: BaseThreadlikeRoutingParams) -> Array:
+                """Return one routed path's turn rate at the coordinate."""
+                return threadlike_turn_rate(
+                    current_strain[:3],
+                    current_strain[3:],
+                    current_derivative[:3],
+                    current_derivative[3:],
+                    routing.offset(path_params, s),
+                    routing.derivative(path_params, s),
+                    routing.second_derivative(path_params, s),
+                    eps=self.global_eps,
+                )
+
+            return vmap(path_rate)(routing.params)
+
+        return vmap(point_rates)(points, strain, strain_derivative)
+
+    def _threadlike_boundary_turn(
+        self,
+        q_gathered: Array,
+        routing: ThreadlikeRouting,
+        left_segment_index: Array,
+    ) -> Array:
+        """Return one-sided path-turn angles at a fixed GVS link interface.
+
+        Args:
+            q_gathered: Per-segment padded generalized coordinates.
+            routing: Routed-path family.
+            left_segment_index: Segment immediately before the interface.
+
+        Returns:
+            One unsigned tangent angle per routed path.
+        """
+        s = self.segment_end_positions[left_segment_index + 1]
+        left_strain, _ = self._threadlike_strain_and_derivative(
+            q_gathered[left_segment_index, 1],
+            left_segment_index,
+            jnp.ones((1,)) * s,
+        )
+        right_strain, _ = self._threadlike_strain_and_derivative(
+            q_gathered[left_segment_index + 1, 1],
+            left_segment_index + 1,
+            jnp.ones((1,)) * s,
+        )
+
+        def path_angle(path_params: BaseThreadlikeRoutingParams) -> Array:
+            """Return one routed path's tangent jump at the interface."""
+            offset = routing.offset(path_params, s)
+            offset_derivative = routing.derivative(path_params, s)
+
+            def unit_tangent(strain: Array) -> Array:
+                """Return the path unit tangent for one-sided link strain."""
+                tangent = threadlike_tangent(
+                    strain[:3], strain[3:], offset, offset_derivative
+                )
+                return safe_normalize(tangent, eps=self.global_eps)
+
+            return threadlike_turning_angle(
+                unit_tangent(left_strain[0]), unit_tangent(right_strain[0])
+            )
+
+        return vmap(path_angle)(routing.params)
+
+    def _threadlike_accumulated_turn(
+        self,
+        q_gathered: Array,
+        routing: ThreadlikeRouting,
+        s: Array,
+    ) -> Array:
+        """Integrate unsigned routed-path turn from each anchor through ``s``.
+
+        Args:
+            q_gathered: Per-segment padded generalized coordinates.
+            routing: Routed-path family.
+            s: Physical backbone coordinate.
+
+        Returns:
+            Accumulated turn in radians for every path.
+        """
+        return integrate_accumulated_turn(
+            lambda segment_index, physical_points: self._threadlike_turn_rates(
+                q_gathered, routing, segment_index, physical_points
+            ),
+            lambda left_segment_index: self._threadlike_boundary_turn(
+                q_gathered, routing, left_segment_index
+            ),
+            s,
+            self.segment_end_positions[:-1],
+            self.segment_lengths,
+            self.integration_points,
+            self.integration_weights,
+            routing.params.start_segment_index_array,
+            routing.params.end_segment_index_array,
+        )
+
+    def _threadlike_actuation_matrix(
         self,
         q: Array,
         routing: ThreadlikeRouting,
         friction: ThreadlikeFriction | None = None,
     ) -> Array:
-        """Integrate routed-length moment arms in the native GVS basis."""
+        """Integrate the threadlike anchor-effort map in the GVS basis.
+
+        Args:
+            q: Generalized configuration.
+            routing: Routed-path family.
+            friction: Optional effort-loss model.
+
+        Returns:
+            Effort-to-generalized-force matrix shaped ``(num_dofs, num_paths)``.
+        """
         params = routing.params
         count = params.num_paths
         if count == 0:
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
         has_friction = friction is not None and not friction.is_frictionless
         q_gathered = self._min_size_gathered(q)
+        accumulated_turn = None
+        if has_friction:
+            physical_points = self.segment_end_positions[:-1, None] + (
+                self.segment_lengths[:, None] * self.integration_points
+            )
+            accumulated_turn = vmap(
+                lambda segment_points: vmap(
+                    lambda s: self._threadlike_accumulated_turn(q_gathered, routing, s)
+                )(segment_points)
+            )(physical_points)
 
         def segment_matrix(segment_index: Array) -> Array:
+            """Integrate the effort map over one GVS body segment."""
             length = self.segment_lengths[segment_index]
             q_link = q_gathered[segment_index, 1]
             joint = jnp.zeros((self.max_dof, count), dtype=q.dtype)
 
             def point_matrix(point_index: Array) -> Array:
+                """Return one quadrature node's weighted effort-map density."""
                 s = (
                     self.segment_end_positions[segment_index]
                     + self.integration_points[segment_index, point_index] * length
                 )
-                context = vmap(
+                offset, unit_tangent, active = vmap(
                     self._threadlike_local_geometry,
                     in_axes=(None, 0, 0, 0, None, None, None, None),
                     out_axes=0,
@@ -5945,10 +6114,16 @@ class GVS(SoftRobot):
                     point_index,
                 )
                 local = vmap(self._threadlike_local_length_gradient, out_axes=1)(
-                    context
+                    offset, unit_tangent, active
                 )
                 if has_friction:
-                    local = local * friction.transmission_ratio(context)[None, :]
+                    assert accumulated_turn is not None
+                    local = (
+                        local
+                        * friction.effort_ratio(
+                            accumulated_turn[segment_index, point_index]
+                        )[None, :]
+                    )
                 basis = self.B_Xs[segment_index, point_index]
                 if self.scale_rotational_basis_by_length:
                     basis = basis.at[:3, :].divide(length)
@@ -5966,6 +6141,20 @@ class GVS(SoftRobot):
             self.num_padded_dofs, count
         )
         return self.active_dof_map.T @ full
+
+    def _threadlike_path_length_jacobian(
+        self, q: Array, routing: ThreadlikeRouting
+    ) -> Array:
+        """Return the Jacobian of unscaled GVS routed-path lengths.
+
+        Args:
+            q: Generalized configuration.
+            routing: Routed-path family.
+
+        Returns:
+            Jacobian shaped ``(num_paths, num_internal_dofs)``.
+        """
+        return self._threadlike_actuation_matrix(q, routing).T
 
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
         """Integrate raw threadlike path lengths over the GVS quadrature."""

@@ -13,13 +13,14 @@ from .core import (
 from .friction import (
     BaseThreadlikeFrictionParams,
     CapstanFrictionParams,
-    ExponentialLengthFrictionParams,
     FrictionlessParams,
     ThreadlikeFriction,
-    ThreadlikeQuadratureContext,
-    capstan_transmission_ratio,
-    exponential_length_transmission_ratio,
-    frictionless_transmission_ratio,
+    capstan_effort_ratio,
+    frictionless_effort_ratio,
+    threadlike_tangent,
+    threadlike_tangent_derivative,
+    threadlike_turn_rate,
+    threadlike_unit_tangent_derivative,
 )
 from .joint import (
     AffineJointTransmission,
@@ -47,6 +48,7 @@ from .threadlike import (
     ThreadlikeTransmissionParams,
     linear_threadlike_routing,
     linear_threadlike_routing_derivative,
+    linear_threadlike_routing_second_derivative,
 )
 
 __all__ = [
@@ -71,12 +73,10 @@ __all__ = [
     "BaseThreadlikeFrictionParams",
     "BaseThreadlikeRoutingParams",
     "CapstanFrictionParams",
-    "ExponentialLengthFrictionParams",
     "FrictionlessParams",
     "LinearThreadlikeRoutingParams",
     "PassiveElement",
     "ThreadlikeFriction",
-    "ThreadlikeQuadratureContext",
     "ThreadlikeActuator",
     "ThreadlikeActuatorParams",
     "ThreadlikeImpedance",
@@ -85,9 +85,13 @@ __all__ = [
     "ThreadlikeTransmission",
     "ThreadlikeTransmissionParams",
     "Transmission",
-    "capstan_transmission_ratio",
-    "exponential_length_transmission_ratio",
-    "frictionless_transmission_ratio",
+    "capstan_effort_ratio",
+    "frictionless_effort_ratio",
     "linear_threadlike_routing",
     "linear_threadlike_routing_derivative",
+    "linear_threadlike_routing_second_derivative",
+    "threadlike_tangent",
+    "threadlike_tangent_derivative",
+    "threadlike_turn_rate",
+    "threadlike_unit_tangent_derivative",
 ]

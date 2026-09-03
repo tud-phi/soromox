@@ -449,7 +449,7 @@ def test_forward_dynamics_coherence(num_segments):
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
-def test_threadlike_actuation_coherence(num_segments):
+def test_sloped_threadlike_actuation_coherence(num_segments):
     """Match planar routing to the corresponding in-plane spatial routing."""
     routing = ThreadlikeRouting.linear(
         intercept=jnp.array([0.0, 0.012, 0.0]),
@@ -476,11 +476,6 @@ def test_threadlike_actuation_coherence(num_segments):
         rtol=RTOL,
         atol=ATOL,
     )
-
-
-if __name__ == "__main__":
-    # run pytest with activated stdout
-    pytest.main([__file__])
 
 
 @pytest.mark.parametrize("num_segments", [1, 2, 3])
@@ -521,3 +516,8 @@ def test_threadlike_actuation_coherence(num_segments, coefficient):
         reference = jnp.abs(frictionless.actuation_matrix(q_planar))
         assert jnp.all(attenuated <= reference + ATOL)
         assert jnp.max(reference - attenuated) > 1e-4
+
+
+if __name__ == "__main__":
+    # run pytest with activated stdout
+    pytest.main([__file__])

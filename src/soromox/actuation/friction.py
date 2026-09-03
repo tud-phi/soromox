@@ -1,4 +1,4 @@
-"""Friction models along threadlike routed paths that attenuate the effort."""
+"""Friction models and geometry helpers for threadlike actuation."""
 
 from __future__ import annotations
 
@@ -6,22 +6,23 @@ from collections.abc import Callable
 from typing import Any, cast
 
 import equinox as eqx
-from jax import Array
+from jax import Array, vmap
 from jax import numpy as jnp
 
 from soromox.systems.params import BaseSystemParams
+from soromox.utils.numerics import safe_divide, safe_norm
 
 
-def validate_friction_parameter_shape(value: Any, count: int, name: str) -> None:
-    """Validate a per-path friction parameter shape.
+def _validate_parameter_shape(value: Any, count: int, name: str) -> None:
+    """Validate a scalar or per-path parameter shape.
 
     Args:
-        value: Candidate friction parameter.
+        value: Candidate parameter value.
         count: Number of routed paths.
         name: Field name used in the error message.
 
     Raises:
-        ValueError: If the value is neither a scalar nor shaped ``(count,)``.
+        ValueError: If ``value`` is neither scalar nor shaped ``(count,)``.
     """
     shape = jnp.asarray(value).shape
     if shape not in ((), (count,)):
@@ -30,18 +31,15 @@ def validate_friction_parameter_shape(value: Any, count: int, name: str) -> None
         )
 
 
-def validate_friction_parameter_values(value: Any, name: str) -> None:
-    """Validate that a friction parameter is finite and non-negative.
-
-    A negative or non-finite parameter pushes the transmission ratio outside
-    ``(0, 1]``, causing the transmission to generate effort.
+def _validate_nonnegative_values(value: Any, name: str) -> None:
+    """Validate that a concrete friction parameter is finite and nonnegative.
 
     Args:
-        value: Concrete friction parameter.
+        value: Candidate parameter value.
         name: Field name used in the error message.
 
     Raises:
-        ValueError: If the value is non-finite or negative.
+        ValueError: If any value is negative or non-finite.
     """
     array = jnp.asarray(value)
     if not bool(jnp.all(jnp.isfinite(array))):
@@ -50,64 +48,259 @@ def validate_friction_parameter_values(value: Any, name: str) -> None:
         raise ValueError(f"{name} must be non-negative, got {array}.")
 
 
-class ThreadlikeQuadratureContext(eqx.Module):
-    """Routed-path geometry at one abscissa quadrature point.
+def threadlike_tangent(
+    angular_strain: Array,
+    linear_strain: Array,
+    offset: Array,
+    offset_derivative: Array,
+) -> Array:
+    r"""Return the material-frame tangent of a routed path.
 
-    Attributes:
-        abscissa: Backbone coordinate of the node from the robot base, in
-        metres.
-        path_abscissa: Arc-length covered along the span of each path from
-        the path anchor, in metres.
-        segment_index: Index of the segment containing the node.
-        offset: Material-frame path offset of shape ``(num_paths, 3)``, ordered
-            ``[x, y, z]``.
-        offset_derivative: Arc-length derivative of ``offset``.
-        tangent_norm: Length of the routed-path tangent, ``(num_paths,)``.
-        active: True if the node lies inside the segment span of each path,
-            shape ``(num_paths,)``.
-        unit_tangent: Normalized routed-path tangent. Host-shaped:
-            ``(num_paths, 2)`` in the plane and ``(num_paths, 3)`` in space.
-        strain: Segment strain at the node. Host-shaped: ``(num_paths, 3)``
-            ordered ``[kappa_z, sigma_x, sigma_y]`` in the plane, and
-            ``(num_paths, 6)`` ordered ``[omega, v]`` in space.
-        wrap_angle: Routed-path curvature integrated from the path anchor to
-            the node, in radians, shape ``(num_paths,)``. ``None`` unless the
-            installed model sets ``requires_wrap_angle``.
+    For backbone pose ``g(s) = (R(s), p(s))`` and material-frame routing
+    offset ``r(s)``, the spatial path is ``x(s) = p(s) + R(s) r(s)``. The
+    Cosserat relations ``R' = R hat(omega)`` and ``p' = R v`` give
+
+    .. math::
+
+        x' = R a, \qquad a = v + \omega \times r + r'.
+
+    Args:
+        angular_strain: Material angular strain ``omega`` with shape ``(3,)``.
+        linear_strain: Material linear strain ``v`` with shape ``(3,)``.
+        offset: Material-frame routing offset ``r`` with shape ``(3,)``.
+        offset_derivative: Arc-length derivative ``r'`` with shape ``(3,)``.
+
+    Returns:
+        Material-frame path tangent ``a`` with shape ``(3,)``.
     """
+    return linear_strain + jnp.cross(angular_strain, offset) + offset_derivative
 
-    abscissa: Array
-    path_abscissa: Array
-    segment_index: Array
-    offset: Array
-    offset_derivative: Array
-    tangent_norm: Array
-    active: Array
-    unit_tangent: Array
-    strain: Array
-    wrap_angle: Array | None = None
 
-    def with_wrap_angle(self, wrap_angle: Array) -> ThreadlikeQuadratureContext:
-        """Return a copy carrying the accumulated wrap angle.
+def threadlike_tangent_derivative(
+    angular_strain: Array,
+    linear_strain_derivative: Array,
+    angular_strain_derivative: Array,
+    offset: Array,
+    offset_derivative: Array,
+    offset_second_derivative: Array,
+) -> Array:
+    r"""Return the arc-length derivative of the material path tangent.
 
-        Args:
-            wrap_angle: Wrap angle of shape ``(num_paths,)``, in radians.
+    Differentiating ``a = v + omega cross r + r'`` analytically gives
 
-        Returns:
-            context: A copy whose ``wrap_angle`` is populated.
-        """
-        return eqx.tree_at(
-            lambda context: context.wrap_angle,
-            self,
-            wrap_angle,
-            is_leaf=lambda leaf: leaf is None,
+    .. math::
+
+        a' = v' + \omega' \times r + \omega \times r' + r''.
+
+    Args:
+        angular_strain: Material angular strain ``omega``.
+        linear_strain_derivative: Arc-length derivative ``v'``.
+        angular_strain_derivative: Arc-length derivative ``omega'``.
+        offset: Material-frame routing offset ``r``.
+        offset_derivative: Arc-length derivative ``r'``.
+        offset_second_derivative: Arc-length derivative ``r''`` of ``r'``.
+
+    Returns:
+        Material-frame tangent derivative ``a'`` with shape ``(3,)``.
+    """
+    return (
+        linear_strain_derivative
+        + jnp.cross(angular_strain_derivative, offset)
+        + jnp.cross(angular_strain, offset_derivative)
+        + offset_second_derivative
+    )
+
+
+def threadlike_unit_tangent_derivative(
+    tangent: Array,
+    tangent_derivative: Array,
+    *,
+    eps: Array | float,
+) -> Array:
+    r"""Return the derivative of a normalized material path tangent.
+
+    With ``u = a / ||a||``, differentiation gives
+
+    .. math::
+
+        u' = \frac{(I-u u^T)a'}{\lVert a\rVert}.
+
+    A collapsed path tangent has no defined direction. SoRoMoX returns the
+    finite zero convention there, consistent with its other ``safe_*``
+    numerical helpers.
+
+    Args:
+        tangent: Material-frame path tangent ``a``.
+        tangent_derivative: Arc-length derivative ``a'``.
+        eps: Threshold below which ``||a||`` is treated as zero.
+
+    Returns:
+        Material-frame unit-tangent derivative ``u'``.
+    """
+    tangent_norm = safe_norm(tangent)
+    unit_tangent = safe_divide(tangent, tangent_norm, eps)
+    projected = tangent_derivative - unit_tangent * jnp.dot(
+        unit_tangent, tangent_derivative
+    )
+    return safe_divide(projected, tangent_norm, eps)
+
+
+def threadlike_turn_rate(
+    angular_strain: Array,
+    linear_strain: Array,
+    angular_strain_derivative: Array,
+    linear_strain_derivative: Array,
+    offset: Array,
+    offset_derivative: Array,
+    offset_second_derivative: Array,
+    *,
+    eps: Array | float,
+) -> Array:
+    r"""Return how quickly the routed path direction turns in space.
+
+    The spatial unit tangent is ``t_hat = R u``, where ``u`` is the normalized
+    material tangent. Since ``R' = R hat(omega)``,
+
+    .. math::
+
+        \frac{d\hat t}{ds}
+        = R(\omega \times u + u'), \qquad
+        \rho = \left\|\omega \times u + u'\right\|.
+
+    Rotation preserves the Euclidean norm, so ``rho`` is evaluated entirely
+    in the material frame. It has units of radians per metre of undeformed
+    backbone coordinate and includes both backbone strain variation and
+    routing-offset variation.
+
+    Args:
+        angular_strain: Material angular strain ``omega``.
+        linear_strain: Material linear strain ``v``.
+        angular_strain_derivative: Arc-length derivative ``omega'``.
+        linear_strain_derivative: Arc-length derivative ``v'``.
+        offset: Material-frame routing offset ``r``.
+        offset_derivative: Arc-length derivative ``r'``.
+        offset_second_derivative: Arc-length derivative ``r''``.
+        eps: Threshold used for a collapsed tangent.
+
+    Returns:
+        Nonnegative turn rate ``rho`` as a scalar.
+    """
+    tangent = threadlike_tangent(
+        angular_strain, linear_strain, offset, offset_derivative
+    )
+    tangent_derivative = threadlike_tangent_derivative(
+        angular_strain,
+        linear_strain_derivative,
+        angular_strain_derivative,
+        offset,
+        offset_derivative,
+        offset_second_derivative,
+    )
+    tangent_norm = safe_norm(tangent)
+    unit_tangent = safe_divide(tangent, tangent_norm, eps)
+    unit_tangent_derivative = threadlike_unit_tangent_derivative(
+        tangent, tangent_derivative, eps=eps
+    )
+    return safe_norm(jnp.cross(angular_strain, unit_tangent) + unit_tangent_derivative)
+
+
+def threadlike_turning_angle(
+    left_unit_tangent: Array,
+    right_unit_tangent: Array,
+) -> Array:
+    """Return the unsigned turning angle between two unit tangents.
+
+    Args:
+        left_unit_tangent: Unit tangent immediately before a segment boundary.
+        right_unit_tangent: Unit tangent immediately after the boundary.
+
+    Returns:
+        Angle in radians in the closed interval ``[0, pi]``.
+    """
+    sine = safe_norm(jnp.cross(left_unit_tangent, right_unit_tangent))
+    cosine = jnp.clip(jnp.dot(left_unit_tangent, right_unit_tangent), -1.0, 1.0)
+    return jnp.arctan2(sine, cosine)
+
+
+def integrate_accumulated_turn(
+    turn_rate_fn: Callable[[Array, Array], Array],
+    boundary_turn_fn: Callable[[Array], Array],
+    s: Array,
+    segment_starts: Array,
+    segment_lengths: Array,
+    normalized_points: Array,
+    normalized_weights: Array,
+    start_segment_index: Array,
+    end_segment_index: Array,
+) -> Array:
+    """Integrate path turn from each anchor through backbone coordinate ``s``.
+
+    The integral uses the host quadrature rule on every complete segment and a
+    rescaled copy of that rule on the final partial segment. One-sided tangent
+    jumps caused by the host discretization are added at crossed segment
+    boundaries. These are continuum-model interfaces, not discrete friction
+    guides.
+
+    Args:
+        turn_rate_fn: Function accepting ``(segment_index, physical_points)``
+            and returning turn rates shaped ``(num_points, num_paths)``.
+        boundary_turn_fn: Function accepting a left segment index and returning
+            one-sided tangent angles shaped ``(num_paths,)``.
+        s: Physical backbone coordinate through which to integrate.
+        segment_starts: Physical start coordinate of every segment.
+        segment_lengths: Physical length of every segment.
+        normalized_points: Quadrature nodes in ``[0, 1]`` shaped
+            ``(num_segments, num_points)``.
+        normalized_weights: Corresponding quadrature weights with the same
+            shape as ``normalized_points``.
+        start_segment_index: First segment of every routed path.
+        end_segment_index: Last segment of every routed path.
+
+    Returns:
+        Accumulated unsigned turn, in radians, shaped ``(num_paths,)``.
+    """
+    segment_indices = jnp.arange(segment_lengths.shape[0])
+
+    def integrate_segment(segment_index: Array) -> Array:
+        """Integrate turn over the covered part of one segment."""
+        covered_length = jnp.clip(
+            jnp.asarray(s) - segment_starts[segment_index],
+            0.0,
+            segment_lengths[segment_index],
         )
+        points = (
+            segment_starts[segment_index]
+            + covered_length * normalized_points[segment_index]
+        )
+        rates = turn_rate_fn(segment_index, points)
+        return covered_length * jnp.sum(
+            normalized_weights[segment_index, :, None] * rates, axis=0
+        )
+
+    distributed = vmap(integrate_segment)(segment_indices)
+    active_segments = (segment_indices[:, None] >= start_segment_index[None, :]) & (
+        segment_indices[:, None] <= end_segment_index[None, :]
+    )
+    accumulated = jnp.sum(distributed * active_segments, axis=0)
+
+    if segment_lengths.shape[0] <= 1:
+        return accumulated
+
+    boundary_indices = jnp.arange(segment_lengths.shape[0] - 1)
+    boundary_coordinates = segment_starts[1:]
+    boundary_angles = vmap(boundary_turn_fn)(boundary_indices)
+    crossed = boundary_coordinates[:, None] <= jnp.asarray(s)
+    spans_boundary = (boundary_indices[:, None] >= start_segment_index[None, :]) & (
+        boundary_indices[:, None] + 1 <= end_segment_index[None, :]
+    )
+    return accumulated + jnp.sum(boundary_angles * crossed * spans_boundary, axis=0)
 
 
 class BaseThreadlikeFrictionParams(BaseSystemParams):
     """Base PyTree contract for threadlike friction parameters."""
 
     def validate_structure_compatibility(self, num_paths: int) -> None:
-        """Validate per-path friction parameter shapes against the path count.
+        """Validate parameter shapes against the number of routed paths.
 
         Args:
             num_paths: Number of paths in the routing family.
@@ -116,167 +309,141 @@ class BaseThreadlikeFrictionParams(BaseSystemParams):
 
 
 class FrictionlessParams(BaseThreadlikeFrictionParams):
-    """Parameters of the ideal transmission. None."""
+    """Parameter-free ideal threadlike transmission."""
 
 
 class CapstanFrictionParams(BaseThreadlikeFrictionParams):
-    """Parameters of the Capstan (Euler) belt model.
+    """Coulomb coefficient of the continuum Capstan model.
 
     Attributes:
-        coefficient: Coulomb coefficient between a routing and the robot, either
-            a scalar shared by the family or shaped ``(num_paths,)``.
-        eps: Curvature floor in radians per metre.
+        coefficient: Nonnegative friction coefficient, either scalar or one
+            value per routed path.
     """
 
     coefficient: Array = eqx.field(
         default_factory=lambda: jnp.zeros((), dtype=jnp.float64)
     )
-    eps: Array = eqx.field(default_factory=lambda: jnp.zeros((), dtype=jnp.float64))
 
     def __check_init__(self) -> None:
+        """Validate newly constructed Capstan parameters."""
         self.validate_for_update()
 
     def validate_structure_compatibility(self, num_paths: int) -> None:
-        """Validate the coefficient shape against the routed-path count."""
-        validate_friction_parameter_shape(self.coefficient, num_paths, "coefficient")
+        """Validate the coefficient shape against the path count.
+
+        Args:
+            num_paths: Number of paths in the routing family.
+        """
+        _validate_parameter_shape(self.coefficient, num_paths, "coefficient")
 
     def validate_values(self) -> None:
-        """Validate eager Capstan parameter values."""
-        validate_friction_parameter_values(self.coefficient, "coefficient")
-        validate_friction_parameter_values(self.eps, "eps")
+        """Validate concrete Capstan coefficient values."""
+        _validate_nonnegative_values(self.coefficient, "coefficient")
 
 
-class ExponentialLengthFrictionParams(BaseThreadlikeFrictionParams):
-    """Parameters of a configuration-independent friction proportional
-    to the routed-path length.
+def frictionless_effort_ratio(
+    params: FrictionlessParams, accumulated_turn: Array
+) -> Array:
+    """Return the unit effort ratio for an ideal transmission.
 
-    Attributes:
-        rate: Attenuation per unit arc length, in inverse metres, either a scalar
-            shared by the family or shaped ``(num_paths,)``.
+    Args:
+        params: Parameter-free frictionless model parameters.
+        accumulated_turn: Accumulated routed-path turn in radians.
+
+    Returns:
+        Ones with the same shape as ``accumulated_turn``.
     """
-
-    rate: Array = eqx.field(default_factory=lambda: jnp.zeros((), dtype=jnp.float64))
-
-    def __check_init__(self) -> None:
-        self.validate_for_update()
-
-    def validate_structure_compatibility(self, num_paths: int) -> None:
-        """Validate the rate shape against the routed-path count."""
-        validate_friction_parameter_shape(self.rate, num_paths, "rate")
-
-    def validate_values(self) -> None:
-        """Validate eager exponential-length parameter values."""
-        validate_friction_parameter_values(self.rate, "rate")
-
-
-def frictionless_transmission_ratio(
-    params: FrictionlessParams, context: ThreadlikeQuadratureContext
-) -> Array:
-    """Return ones, the identity of the weighted quadrature."""
     del params
-    return jnp.ones_like(context.tangent_norm)
+    return jnp.ones_like(accumulated_turn)
 
 
-def capstan_transmission_ratio(
-    params: CapstanFrictionParams, context: ThreadlikeQuadratureContext
+def capstan_effort_ratio(
+    params: CapstanFrictionParams, accumulated_turn: Array
 ) -> Array:
-    """Return ``exp(-coefficient * wrap_angle)`` at the node."""
-    if context.wrap_angle is None:
-        raise ValueError(
-            "the Capstan law reads context.wrap_angle, which this host did not "
-            "supply. Declare requires_wrap_angle on the installed law."
-        )
-    return jnp.exp(-jnp.asarray(params.coefficient) * context.wrap_angle)
+    r"""Return the surviving effort fraction ``exp(-mu * Theta)``.
 
+    Args:
+        params: Capstan parameters containing ``mu``.
+        accumulated_turn: Unsigned turn ``Theta`` from each path anchor to the
+            evaluation point, in radians.
 
-def exponential_length_transmission_ratio(
-    params: ExponentialLengthFrictionParams, context: ThreadlikeQuadratureContext
-) -> Array:
-    """Return ``exp(-rate * path_abscissa)`` at the node."""
-    return jnp.exp(-jnp.asarray(params.rate) * context.path_abscissa)
+    Returns:
+        Effort ratio in ``(0, 1]`` with one value per routed path.
+    """
+    return jnp.exp(-jnp.asarray(params.coefficient) * accumulated_turn)
 
 
 class ThreadlikeFriction(eqx.Module):
-    """Runtime friction model for a routed-path family.
+    """Runtime effort-loss law for a routed-path family.
+
+    The effort supplied by the actuator is defined at each path anchor. The
+    model returns the fraction that remains after the path has accumulated a
+    given unsigned turn while moving along increasing backbone coordinate.
 
     Attributes:
-        params: Friction parameters.
-        ratio_fn: Model mapping ``(params, context)`` to the surviving fraction
-            of shape ``(num_paths,)``.
-        requires_wrap_angle: True if ``ratio_fn`` reads ``context.wrap_angle``.
-        is_frictionless: True if the law returns exactly one everywhere.
+        params: Dynamic friction parameters.
+        effort_ratio_fn: Function of ``(params, accumulated_turn)``.
+        is_frictionless: Whether the ratio is identically one.
     """
 
     params: BaseThreadlikeFrictionParams = eqx.field(default_factory=FrictionlessParams)
-    ratio_fn: Callable = eqx.field(static=True, default=frictionless_transmission_ratio)
-    requires_wrap_angle: bool = eqx.field(static=True, default=False)
+    effort_ratio_fn: Callable = eqx.field(
+        static=True, default=frictionless_effort_ratio
+    )
     is_frictionless: bool = eqx.field(static=True, default=True)
 
     def __check_init__(self) -> None:
+        """Validate consistency between the law and frictionless marker."""
         if (
             self.is_frictionless
-            and self.ratio_fn is not frictionless_transmission_ratio
+            and self.effort_ratio_fn is not frictionless_effort_ratio
         ):
-            raise ValueError(
-                "is_frictionless=True requires frictionless_transmission_ratio. "
-                "A friction model requires is_frictionless=False."
-            )
+            raise ValueError("is_frictionless=True requires frictionless_effort_ratio.")
 
     @classmethod
     def frictionless(cls) -> ThreadlikeFriction:
-        """Build the ideal transmission."""
+        """Construct the ideal threadlike transmission."""
         return cls()
 
     @classmethod
-    def capstan(cls, *, coefficient: Any = 0.0, eps: Any = 0.0) -> ThreadlikeFriction:
-        """Build the Capstan belt model.
+    def capstan(cls, *, coefficient: Any = 0.0) -> ThreadlikeFriction:
+        """Construct the continuum Capstan effort-loss model.
 
         Args:
-            coefficient: Coulomb coefficient, scalar or shaped ``(num_paths,)``.
-            eps: Curvature floor in radians per metre.
+            coefficient: Nonnegative scalar or one value per routed path.
 
         Returns:
-            friction: Capstan model.
+            A Capstan friction model.
         """
         return cls(
-            params=CapstanFrictionParams(
-                coefficient=jnp.asarray(coefficient), eps=jnp.asarray(eps)
-            ),
-            ratio_fn=capstan_transmission_ratio,
-            requires_wrap_angle=True,
+            params=CapstanFrictionParams(coefficient=jnp.asarray(coefficient)),
+            effort_ratio_fn=capstan_effort_ratio,
             is_frictionless=False,
         )
 
-    @classmethod
-    def exponential_length(cls, *, rate: Any = 0.0) -> ThreadlikeFriction:
-        """Build the length-decay model.
+    def effort_ratio(self, accumulated_turn: Array) -> Array:
+        """Return the surviving effort fraction after accumulated turn.
 
         Args:
-            rate: Attenuation per unit arc length, scalar or ``(num_paths,)``.
+            accumulated_turn: Unsigned turn from each path anchor in radians.
 
         Returns:
-            friction: Length-decay law.
+            One effort ratio per routed path.
         """
-        return cls(
-            params=ExponentialLengthFrictionParams(rate=jnp.asarray(rate)),
-            ratio_fn=exponential_length_transmission_ratio,
-            requires_wrap_angle=False,
-            is_frictionless=False,
-        )
-
-    def transmission_ratio(self, context: ThreadlikeQuadratureContext) -> Array:
-        """Return the transmission ratio at one quadrature node.
-
-        Args:
-            context: Routed-path geometry at the node, batched over paths.
-
-        Returns:
-            transmission_ratio: shape ``(num_paths,)``.
-        """
-        return self.ratio_fn(self.params, context)
+        return self.effort_ratio_fn(self.params, accumulated_turn)
 
     def with_params(self, params: BaseThreadlikeFrictionParams) -> ThreadlikeFriction:
-        """Return a copy carrying replacement friction parameters."""
+        """Return a copy carrying replacement friction parameters.
+
+        Args:
+            params: Replacement parameters of the installed model type.
+
+        Returns:
+            A friction model with updated dynamic leaves.
+
+        Raises:
+            TypeError: If the parameter type changes.
+        """
         if not isinstance(params, BaseThreadlikeFrictionParams):
             raise TypeError("params must be BaseThreadlikeFrictionParams.")
         if type(params) is not type(self.params):
@@ -288,38 +455,55 @@ class ThreadlikeFriction(eqx.Module):
         params.validate_for_update()
         return ThreadlikeFriction(
             params=params,
-            ratio_fn=self.ratio_fn,
-            requires_wrap_angle=self.requires_wrap_angle,
+            effort_ratio_fn=self.effort_ratio_fn,
             is_frictionless=self.is_frictionless,
         )
 
     def update_params(self, **updates: Any) -> ThreadlikeFriction:
-        """Return a copy with replaced friction parameter leaves."""
+        """Return a copy with replaced friction-parameter leaves.
+
+        Args:
+            **updates: Named parameter-leaf replacements.
+
+        Returns:
+            A friction model with updated parameter leaves.
+        """
         return self.with_params(
             cast(BaseThreadlikeFrictionParams, self.params.replace(**updates))
         )
 
 
-def validate_friction_for_robot(friction: ThreadlikeFriction, robot) -> None:
-    if friction.is_frictionless or not friction.requires_wrap_angle:
+def _validate_friction_model(friction: ThreadlikeFriction, routing: Any) -> None:
+    """Validate a friction model against a routing family.
+
+    Args:
+        friction: Installed threadlike friction model.
+        routing: Installed threadlike routing family.
+
+    Raises:
+        ValueError: If nonzero friction is paired with a custom routing that
+            does not provide an analytical second derivative.
+    """
+    if friction.is_frictionless:
         return
-    if not callable(getattr(robot, "_threadlike_path_curvature", None)):
-        raise TypeError(
-            f"{type(robot).__name__} does not support the threadlike wrap-angle model."
+    if not routing.has_analytical_second_derivative:
+        raise ValueError(
+            "threadlike friction requires an analytical routing second_derivative_fn."
         )
 
 
 __all__ = [
     "BaseThreadlikeFrictionParams",
     "CapstanFrictionParams",
-    "ExponentialLengthFrictionParams",
     "FrictionlessParams",
     "ThreadlikeFriction",
-    "ThreadlikeQuadratureContext",
-    "capstan_transmission_ratio",
-    "exponential_length_transmission_ratio",
-    "frictionless_transmission_ratio",
-    "validate_friction_for_robot",
-    "validate_friction_parameter_shape",
-    "validate_friction_parameter_values",
+    "_validate_friction_model",
+    "capstan_effort_ratio",
+    "frictionless_effort_ratio",
+    "integrate_accumulated_turn",
+    "threadlike_tangent",
+    "threadlike_tangent_derivative",
+    "threadlike_turn_rate",
+    "threadlike_turning_angle",
+    "threadlike_unit_tangent_derivative",
 ]
