@@ -1,10 +1,11 @@
-"""Shared command-line handling for the two Section Vd optimizers."""
+"""Shared command-line handling for the Section Vd optimizer."""
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from secvd_init import (
@@ -14,7 +15,7 @@ from secvd_init import (
     SECVD_INIT_SEED,
     SECVD_INIT_SPREAD,
 )
-from secvd_results import RESULTS_FILENAME
+from secvd_results import METHODS, RESULTS_FILENAME
 
 DEVICE_CHOICES = ("auto", "cpu", "gpu")
 
@@ -48,12 +49,28 @@ def _add_batch_size_argument(parser: argparse.ArgumentParser, default: int) -> N
     )
 
 
-def requested_device_from_argv(argv: Sequence[str] | None = None) -> str:
-    """Read only the early device option, leaving all other arguments untouched."""
+def _early_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Read the options needed before the full parser exists.
+
+    The device must be known before JAX is imported, and the method selects the
+    result directory, the tuned learning rate and whether a saturation scale
+    applies -- all of which are defaults of the full parser.
+    """
     parser = argparse.ArgumentParser(add_help=False)
     _add_device_argument(parser)
+    parser.add_argument("--method", choices=METHODS, default=METHODS[0])
     args, _unknown = parser.parse_known_args(argv)
-    return str(args.device)
+    return args
+
+
+def requested_device_from_argv(argv: Sequence[str] | None = None) -> str:
+    """Read only the early device option, leaving all other arguments untouched."""
+    return str(_early_args(argv).device)
+
+
+def requested_method_from_argv(argv: Sequence[str] | None = None) -> str:
+    """Read only the early method option, leaving all other arguments untouched."""
+    return str(_early_args(argv).method)
 
 
 def jax_platforms_for(device: str) -> str:
@@ -82,11 +99,24 @@ def configure_optimization_device(argv: Sequence[str] | None = None) -> str:
 def parse_optimization_args(
     *,
     description: str,
-    default_result_dir: Path,
-    method: str,
-    include_integral_error_saturation_scale: bool = False,
+    default_result_dir_for: Callable[[str], Path],
+    argv: Sequence[str] | None = None,
     optimization_batch_size: int = SECVD_BATCH_SIZE,
 ) -> argparse.Namespace:
+    """Parse the generator's arguments, with every default keyed on ``--method``.
+
+    Args:
+        description: Program description for ``--help``.
+        default_result_dir_for: Maps a method to its archive directory.
+        argv: Argument list, for tests. Defaults to ``sys.argv``.
+        optimization_batch_size: Default number of starts.
+
+    Returns:
+        The parsed arguments, with ``lr_ratio`` as a dict keyed by gain family.
+
+    Raises:
+        ValueError: If an argument is outside its supported range.
+    """
     # Imported here rather than at module scope: secvd_case imports JAX, and
     # this module is read by the entrypoints to pick a device before JAX loads.
     # By the time this function runs, JAX is already imported.
@@ -97,8 +127,12 @@ def parse_optimization_args(
         TUNED_ALPHA,
     )
 
+    method = requested_method_from_argv(argv)
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--result-dir", type=Path, default=default_result_dir)
+    parser.add_argument("--method", choices=METHODS, default=METHODS[0])
+    parser.add_argument(
+        "--result-dir", type=Path, default=default_result_dir_for(method)
+    )
     parser.add_argument("--num-iters", type=int, default=100)
     parser.add_argument(
         "--solver-dt",
@@ -130,15 +164,6 @@ def parse_optimization_args(
         default=[COMMITTED_LR_RATIO[name] for name in GAIN_ORDER],
         help="Per-family multipliers on the learning-rate magnitude.",
     )
-    parser.add_argument(
-        "--clip",
-        type=float,
-        default=None,
-        help=(
-            "Global gradient-norm clip. Off by default: the committed threshold "
-            "of 10.0 never bound in any measured run."
-        ),
-    )
     _add_batch_size_argument(parser, optimization_batch_size)
     parser.add_argument(
         "--init-seed",
@@ -158,7 +183,7 @@ def parse_optimization_args(
         default=SECVD_INIT_SPREAD,
         help="Multiplicative half-width for the log-uniform scheme.",
     )
-    if include_integral_error_saturation_scale:
+    if method == "collocated":
         parser.add_argument(
             "--integral-error-saturation-scale",
             type=float,
@@ -177,15 +202,19 @@ def parse_optimization_args(
     parser.add_argument("--debug-nans", action="store_true")
     parser.add_argument("--force", action="store_true")
     _add_device_argument(parser)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.batch_size < 1:
         raise ValueError("--batch-size must be at least 1")
     if not args.learning_rate > 0:
         raise ValueError("--learning-rate must be positive")
     if args.solver_dt is not None and not args.solver_dt > 0:
         raise ValueError("--solver-dt must be positive when given")
-    if args.clip is not None and not args.clip > 0:
-        raise ValueError("--clip must be positive when given")
+    if method == "collocated":
+        e_sat = args.integral_error_saturation_scale
+        if not (math.isfinite(e_sat) and e_sat > 0):
+            raise ValueError(
+                "--integral-error-saturation-scale must be finite and positive"
+            )
     args.optimization_batch_size = args.batch_size
     args.lr_ratio = dict(zip(GAIN_ORDER, args.lr_ratio, strict=True))
     return args

@@ -32,7 +32,7 @@ MODULE_DIR = SECTION_DIR / "code"
 if str(MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(MODULE_DIR))
 
-from gain_optimization_loop import run_gain_optimization  # noqa: E402
+from secvd_loop import run_gain_optimization  # noqa: E402
 
 jax.config.update("jax_enable_x64", True)
 

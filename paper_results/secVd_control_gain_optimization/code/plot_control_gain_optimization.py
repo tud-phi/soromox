@@ -127,7 +127,7 @@ def plot_loss(
         np.nanmin(loss, axis=1),
         "-o",
         color=COLORS["pre_opt_1"],
-        markersize=3,
+        markersize=2,
     )
     ax.set_yscale("log")
     ax.set(xlabel="Iterations", ylabel="Loss", xlim=(1, max(1, len(iterations))))
@@ -184,13 +184,11 @@ def _plot_three_channels(
             [
                 Line2D([], [], color="k", linestyle="--", linewidth=2),
                 Line2D([], [], color="k", linestyle="-.", linewidth=1.5),
-                # Patch(facecolor="k", alpha=BAND_ALPHA, linewidth=0),
                 Line2D([], [], color="k", linestyle="-", linewidth=1.25),
             ],
             [
                 "Target",
                 "Initial (median)",
-                # "Initial (range over starts)",
                 "Optimized (best)",
             ],
             loc="best",

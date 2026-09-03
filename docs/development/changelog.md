@@ -46,6 +46,35 @@ and include benchmark baseline and measurement context for performance claims.
 
 ### Changed
 
+- Simplified the Section Vd case now that its tuning questions are answered.
+  The optimizer knobs the study measured and ruled out are removed rather than
+  defaulted off -- `clip_by_global_norm`, a parameterized Yogi `eps`, and
+  `--loss-scale` -- since a knob only ever run at one value still has to be
+  reasoned about by every reader; `describe_optimizer` renders exactly the
+  string both committed archives already store, so the shipped results still
+  describe themselves. The tuning study drops from six stages to three
+  (`--stage {solver-dt, saturation, learning-rate}`), ordered by what each
+  depends on: the integration step is a property of the plant and the solver,
+  the saturation scale of the plant and the controller, and only the learning
+  rate of the optimizer. `lr-confirm`, `ratio` and `saturation` were one
+  operation behind three names -- an independent constant-rate run per candidate
+  -- and now share one engine; the `lr-range` ramp is gone, because a rate ramped
+  inside a single run is measured at parameters the earlier rates moved (three
+  ramps over one problem recommended values spanning 19x). `verify` was a no-op
+  sharing the ramp's code path. This also fixes a stale literal the retune left
+  behind: the saturation and ratio stages swept at `alpha = 1000`, a rate
+  neither method uses.
+- Merged the two Section Vd generators into
+  `code/optimize_control_gains.py --method {collocated,synergistic}`. They were
+  95 % the same file, and two static tests existed only to police the drift
+  between them. Renamed `gain_optimization_loop.py` to `secvd_loop.py` and
+  `secvd_optimization.py` to `secvd_cli.py`, which holds argparse and device
+  selection and no optimization.
+- Removed the 111 committed Section Vd tuning-stage summaries (18 MB, over half
+  the case's data footprint). They were a by-product of the search, nothing
+  reads them, and the study regenerates any of them from the README recipes;
+  `data/tuning/` is now git-ignored so stage output cannot be committed again.
+
 - Retuned the Section Vd optimizer learning rates against measurement. The
   committed magnitude of 0.5 was 3-4 decades too small, which left the optimizer
   effectively stalled: at 100 iterations and six starts it moved the gains by a

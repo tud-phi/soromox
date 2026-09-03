@@ -42,116 +42,50 @@ jax.config.update("jax_enable_x64", True)
 
 METHODS = ("collocated", "synergistic")
 
-# The rollout horizon the published runs use. Only the tuning study varies it,
-# to buy sweep throughput. It varies solver_dt too, but gates that on gradient
-# error rather than loss error, since the gradient is what the study tunes.
+# The rollout horizon the published runs use; only the tuning study varies it.
 CASE_HORIZON = 5.0
 
-# The committed learning-rate structure, split into a magnitude and a per-family
-# ratio so the two can be tuned separately. The committed rates
-# (0.5, 0.25, 0.05) are exactly COMMITTED_ALPHA * COMMITTED_LR_RATIO.
+# The committed learning rates (0.5, 0.25, 0.05), factored into a magnitude and a
+# per-family ratio so the two can be tuned separately.
 COMMITTED_ALPHA = 0.5
 COMMITTED_LR_RATIO = {"Kp": 1.0, "Ki": 0.5, "Kd": 0.1}
 
-# The learning-rate magnitudes the tuning study measured, per method, on the
-# MATERIAL_DAMPING plant. The committed 0.5 is roughly 3-4 decades too small and
-# barely moves in 100 iterations. The ratio is unchanged -- the study compared it
-# against equal weighting, which goes non-finite on its first update on both
-# problems, so the committed split is kept by measurement rather than by
-# inheritance.
-#
-# Both values are confirmed over the full 100-iteration production budget with
-# every start alive, not merely over the study's 20-iteration screening budget.
-# The two methods are bracketed differently, and the difference matters when
-# these are re-measured:
-#
-#   collocated  3000 is the largest rate that survives. 6000 goes non-finite at
-#               iteration 6 and 12000 at iteration 3, so this sits near the edge
-#               and a further increase must be re-confirmed at 100 iterations,
-#               never at 20 -- a short run flatters an aggressive rate.
-#   synergistic 1547 is an interior optimum rather than a survivor: it beats
-#               4893 outright at equal budget (7.49e-4 against 8.83e-4) while
-#               15472 diverges at iteration 3.
+# Learning-rate magnitudes measured by secvd_tuning_study on the MATERIAL_DAMPING
+# plant, against a committed 0.5 that is 3-4 decades too small. Collocated 3000
+# is the largest rate that survives; synergistic 1547 is an interior optimum.
+# See README, "Tuning study".
 TUNED_ALPHA = {"collocated": 3000.0, "synergistic": 1547.0}
 
-# The segment's material damping coefficient. The published case used 3.6e2,
-# which puts the closed loop at a damping ratio of zeta = 0.816 at the nominal
-# gains -- well *above* what the objective wants.
-#
-# For a second-order step response, ISE has the closed form
-#
-#     J(zeta, wn) = (4 zeta^2 + 1) / (4 zeta wn)
-#
-# whose minimum over zeta is 1/2, independent of wn, giving 16.3 % overshoot.
-# Critical damping has no overshoot but 1.25x the ISE. So on a plant already at
-# zeta = 0.816 the optimizer reaches zeta = 0.5 by *removing* damping, which is
-# why the published configuration drives Kd negative: that is the correct
-# control action for this objective, not an optimizer defect.
-#
-# At 7.2e1 the plant sits near zeta = 0.5 at nominal gains, so dL/dKd is
-# positive, the derivative gain is identified, and it stays positive across a
-# full optimization (measured: median +0.75, 0/18 negative at iteration 85).
-# Lower values were measured and rejected: below this the setpoint rollout in
-# build_sec_vd_case no longer settles inside its 10 s window (11.0 s at 3.6e1,
-# 21.1 s at 1.8e1).
+# Segment material damping, down from the published 3.6e2. It places the nominal
+# closed loop at zeta = 0.505, essentially on the objective's own ISE optimum of
+# 0.5, and is close to a lower bound: below it the setpoint rollout in
+# build_sec_vd_case stops settling inside its 10 s window. See README, "Plant".
 MATERIAL_DAMPING = 7.2e1
 
-# Multipliers on the nominal gains that set where each method's optimization
-# *starts*, as distinct from the gains the controller is specified with.
-#
-# They exist so the initial closed loop sits below zeta = 0.5 and the optimizer
-# has visible damping to add: starts below the ISE optimum get damped, starts
-# above get un-damped, and every start converges on zeta ~ 0.5 regardless. The
-# published initialization was at zeta = 0.816, so optimization could only ever
-# *increase* its overshoot.
-#
-# The two methods need different scales because their objectives identify
-# different gains. The collocated loss responds to Kd directly, so lowering the
-# initial Kd is enough. The synergistic loss barely sees Kd at all (logarithmic
-# sensitivity ~8e-4 of Kp's), so its response is set by Kp and it needs a
-# stiffer proportional start to ring at all.
-#
-# The condition is on the *median* start, not on every one of them, because that
-# is what the figure draws: its initial curve is the pointwise median across
-# starts with a min-max band, and only the optimized curve is a single start.
-# Measured on the drawn curves, the synergistic panel goes from 48.0 % overshoot
-# (zeta = 0.227) to 28.2 % (zeta = 0.374).
-#
-# A synergistic Kp scale of 5.0 was measured and rejected. It does put all six
-# sampled starts below zeta = 0.5 -- at 3.0 one start draws Kp = 11.9 and begins
-# over-damped at zeta = 0.590 -- and it survives the full budget at the tuned
-# rate with no frozen starts. But it converges to the same controller: optimized
-# overshoot 28.1 % against 28.2 %, zeta 0.375 against 0.374, and Kd negative in
-# 5/18 either way. Its larger apparent improvement (-27.3 points against -20.0)
-# comes entirely from starting worse, at 55.4 % initial overshoot rather than
-# 48.0 %, while its best loss is worse (2.09e-04 against 1.85e-04). Widening the
-# initial condition to enlarge a reported delta, with no better end state to show
-# for it, is not a defensible reason to move a published constant.
+# Multipliers on the nominal gains setting where each method's optimization
+# starts, chosen so the initial closed loop sits below zeta = 0.5 and the
+# optimizer has damping to add. The two methods need different scales because
+# their objectives identify different gains: the collocated loss responds to Kd
+# directly, while the synergistic loss barely sees it and is driven by Kp.
+# See README, "Plant" and "Gain identifiability".
 INIT_GAIN_SCALE = {
     "collocated": {"Kp": 1.0, "Ki": 1.0, "Kd": 0.2},
     "synergistic": {"Kp": 3.0, "Ki": 1.0, "Kd": 0.2},
 }
 
-# The integral-error saturation scale, in metres: the error magnitude above
-# which the collocated regulator's tanh starts compressing what reaches the
-# integrator. This is a controller design choice, made on physical grounds in
-# PR #135, and it is not an optimization hyperparameter -- its job is to bound
-# the integral state, and the objective has no stability term with which to
-# judge that. The tuning study sweeps around it to answer what follow-up item 2
-# actually asks -- whether the choice affects tracking, windup, gradients or the
-# optimized gains -- and measures that it does not.
+# Integral-error saturation scale in metres: the error above which the collocated
+# regulator's tanh compresses what reaches the integrator. A controller design
+# choice from PR #135, not an optimizer setting; the tuning study measures that
+# the optimization is insensitive to it. See README, "Integral-error saturation".
 COMMITTED_E_SAT = 1e-2
 
 # The optax label each gain family is optimized under. Only the optimizer needs
 # these; the ordering itself is secvd_init.GAIN_ORDER, shared with the sampler.
 FAMILY_LABEL = {"Kp": "P", "Ki": "I", "Kd": "D"}
 
-# Yogi's numerical floor. The committed runs took optax's 1e-3 default, which
-# sits four orders above this problem's gradients (~1e-4) and looked like the
-# reason the collocated optimizer stalled. It was not: rerunning at 1e-8 gave
-# nearly the same curve, and the stall turned out to be the learning rate. The
-# lower value is kept anyway, because a floor above the signal is indefensible
-# whether or not it happened to bind.
+# Yogi's numerical floor. optax defaults to 1e-3, four orders above this
+# problem's gradients; a floor above the signal is indefensible whether or not it
+# binds. Measured not to be the cause of the stall. See README, "Ruled out".
 YOGI_EPS = 1e-8
 
 
@@ -329,11 +263,7 @@ def _rollout_aux(trajectory) -> tuple[Array, Array, dict]:
 
 
 def _build_collocated(
-    case: SecVdCase,
-    horizon: float,
-    solver_dt: float,
-    e_sat: float,
-    loss_scale: float,
+    case: SecVdCase, horizon: float, solver_dt: float, e_sat: float
 ) -> SecVdProblem:
     robot = case.robot
     asd = ActuationSpaceDynamics(robot)
@@ -389,7 +319,7 @@ def _build_collocated(
         )
         q_ts, _qd_ts, aux = _rollout_aux(trajectory)
         loss = time_averaged_squared_error(q_des_ts - q_ts, scales, trajectory.t)
-        return loss_scale * loss, aux
+        return loss, aux
 
     return SecVdProblem(
         method="collocated",
@@ -409,7 +339,7 @@ def _build_collocated(
 
 
 def _build_synergistic(
-    case: SecVdCase, horizon: float, solver_dt: float, loss_scale: float
+    case: SecVdCase, horizon: float, solver_dt: float
 ) -> SecVdProblem:
     robot = case.robot
     osd = OperationalSpaceDynamics(
@@ -466,7 +396,7 @@ def _build_synergistic(
         x_ts = vmap(osd.operational_space_poses)(q_ts)
         error = vmap(osd.compute_task_pose_error)(x_ts, x_des_ts)
         loss = time_averaged_squared_error(error, scales, trajectory.t)
-        return loss_scale * loss, aux
+        return loss, aux
 
     return SecVdProblem(
         method="synergistic",
@@ -494,7 +424,6 @@ def build_evaluator(
     horizon: float = CASE_HORIZON,
     solver_dt: float | None = None,
     e_sat: float = COMMITTED_E_SAT,
-    loss_scale: float = 1.0,
 ) -> SecVdProblem:
     """Build the differentiable optimization problem for one Section Vd method.
 
@@ -511,10 +440,6 @@ def build_evaluator(
             stage measures how far it can be raised before the gradient moves.
         e_sat: Integral-error saturation scale in metres. Ignored by methods
             whose controller does not saturate.
-        loss_scale: Constant multiplying the objective. Adam-family optimizers
-            are largely insensitive to it, and a measured sweep found it reaches
-            a worse optimum than tuning the learning rate; it exists so that can
-            be re-tested rather than assumed.
 
     Returns:
         The problem, its nominal gains, and the metadata consumers gate on.
@@ -536,56 +461,26 @@ def build_evaluator(
     if solver_dt > horizon:
         raise ValueError(f"solver_dt {solver_dt} exceeds the {horizon} s horizon")
     if method == "collocated":
-        return _build_collocated(case, horizon, solver_dt, e_sat, loss_scale)
-    return _build_synergistic(case, horizon, solver_dt, loss_scale)
+        return _build_collocated(case, horizon, solver_dt, e_sat)
+    return _build_synergistic(case, horizon, solver_dt)
 
 
-def build_optimizer(
-    alpha: float | Callable[[Array], Array],
-    *,
-    ratio: dict[str, float] | None = None,
-    eps: float = YOGI_EPS,
-    clip: float | None = None,
-):
+def build_optimizer(alpha: float, *, ratio: dict[str, float] | None = None):
     """Build the Section Vd gain optimizer: one Yogi, per-family learning rates.
 
-    Both generators and every stage of the tuning study construct their
-    optimizer here, for the same reason they build their problem in
-    :func:`build_evaluator`: a rate the study measured has to be the rate a
-    generator runs.
-
-    The learning rate is expressed as a magnitude times a per-family ratio, and
-    the ratio is applied as a **final rescaling of one Yogi's update** rather
-    than as three separate Yogi instances at three rates. Those are the same
-    thing -- ``scale_by_yogi``'s moment estimates do not see the learning rate,
-    so the rate factors out of the state entirely -- but the single-state form
-    says what is actually going on: one adaptive optimizer, three rates, not
-    three optimizers. Verified against the committed ``multi_transform`` of
-    three ``optax.yogi`` calls over 40 steps: parameters agree to 5e-13
-    absolute, which is floating-point reassociation.
+    The learning rate is a magnitude times a per-family ratio, applied as a final
+    rescaling of one ``scale_by_yogi`` update rather than as three ``optax.yogi``
+    instances. Those are the same optimizer -- Yogi's moment estimates never see
+    the learning rate, so it factors out of the state -- and
+    ``tests/paper_results/secVd/test_optimizer.py`` pins the equivalence.
 
     Args:
-        alpha: Learning-rate magnitude. Either a constant or an optax schedule
-            (a callable of the step count), which is how the study's ramp
-            expresses a learning rate that changes every iteration.
+        alpha: Learning-rate magnitude.
         ratio: Per-family multipliers on ``alpha``. Defaults to
             :data:`COMMITTED_LR_RATIO`.
-        eps: Yogi's epsilon. See :data:`YOGI_EPS`.
-        clip: Gradient-norm clip, or ``None`` for no clipping, which is the
-            default because the committed threshold of 10.0 never binds: the
-            largest gain-family gradient norm measured on the real objective
-            anywhere in the study is 1.55, against a threshold of 10. Divergence
-            here is a step-size effect, not a gradient blow-up -- Yogi's update
-            magnitude is set by the learning rate almost independently of the
-            gradient -- so a gradient clip cannot prevent it and is not a safety
-            net being removed. Supplied here as a
-            **global** clip over all three families, where the committed
-            configuration clipped each family separately; with a bound this
-            slack the distinction is moot, and it exists only so the study can
-            still reproduce the committed configuration.
 
     Returns:
-        An initialized ``optax`` gradient transformation over the
+        An ``optax`` gradient transformation over the
         ``{"opt_ctr_params": ..., "opt_atr_params": ...}`` pytree.
 
     Raises:
@@ -596,35 +491,22 @@ def build_optimizer(
     ratio = dict(COMMITTED_LR_RATIO if ratio is None else ratio)
     if set(ratio) != set(GAIN_ORDER):
         raise ValueError(f"ratio must cover exactly {GAIN_ORDER}, got {sorted(ratio)}")
-    rate = alpha if callable(alpha) else (lambda _count: alpha)
-
-    def scale_for(family: str):
-        factor = ratio[family]
-        return optax.scale_by_schedule(lambda count, f=factor: -f * rate(count))
-
-    stages = []
-    if clip is not None:
-        stages.append(optax.clip_by_global_norm(clip))
-    stages.append(optax.scale_by_yogi(eps=eps))
-    stages.append(
+    return optax.chain(
+        optax.scale_by_yogi(eps=YOGI_EPS),
         optax.multi_transform(
-            {FAMILY_LABEL[name]: scale_for(name) for name in GAIN_ORDER},
+            {
+                FAMILY_LABEL[name]: optax.scale(-alpha * ratio[name])
+                for name in GAIN_ORDER
+            },
             {
                 "opt_ctr_params": {name: FAMILY_LABEL[name] for name in GAIN_ORDER},
                 "opt_atr_params": {},
             },
-        )
+        ),
     )
-    return optax.chain(*stages)
 
 
-def describe_optimizer(
-    alpha: float,
-    *,
-    ratio: dict[str, float] | None = None,
-    eps: float = YOGI_EPS,
-    clip: float | None = None,
-) -> str:
+def describe_optimizer(alpha: float, *, ratio: dict[str, float] | None = None) -> str:
     """Render :func:`build_optimizer`'s configuration for the archive.
 
     Archived so a run's optimizer can be reported and compared separately from
@@ -632,5 +514,4 @@ def describe_optimizer(
     """
     ratio = dict(COMMITTED_LR_RATIO if ratio is None else ratio)
     rates = ", ".join(f"{FAMILY_LABEL[n]}: {alpha * ratio[n]:g}" for n in GAIN_ORDER)
-    prefix = "" if clip is None else f"clip_by_global_norm({clip:g}) + "
-    return f"{prefix}scale_by_yogi(eps={eps:g}) + per-family rate{{{rates}}}"
+    return f"scale_by_yogi(eps={YOGI_EPS:g}) + per-family rate{{{rates}}}"

@@ -2,27 +2,23 @@
 
 ## Stages
 
-Run one at a time with ``--stage``; each writes its own summary.
+Run one at a time with ``--stage``; each writes its own summary. They are ordered
+by what they depend on: the integration step is a property of the plant and the
+solver, the saturation scale of the plant and the controller, and only the
+learning rate is a property of the optimizer.
 
 ``solver-dt``
     How coarse the integration step can be before the gradient is affected.
 
-``lr-range``
-    A geometric ramp over the learning-rate magnitude.
-
-``lr-confirm``
-    Independent constant-rate runs over a bracketing set, measuring the value
-    the located ramp.
-
-``ratio``
-    Per-family split, compared at the confirmed magnitude.
-
 ``saturation``
-    The collocated integral-error saturation scale ``e_sat``.
+    Whether the collocated integral-error saturation scale ``e_sat`` reaches the
+    optimization at all.
 
-``verify``
-    One more ramp at the chosen ``e_sat``, checking that treating the two
-    sequentially held.
+``learning-rate``
+    One independent constant-rate optimization per candidate, over the
+    learning-rate magnitude (``--alphas``) or, when asked, over the per-family
+    split (``--ratios``). Reports the rate to write into ``TUNED_ALPHA`` and the
+    generator command that confirms it at the production budget.
 """
 
 from __future__ import annotations
@@ -31,13 +27,15 @@ import csv
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 CODE_DIR = Path(__file__).resolve().parent
 if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
-from secvd_optimization import (  # noqa: E402
+from secvd_cli import (  # noqa: E402
     DEVICE_CHOICES,
     configure_optimization_device,
 )
@@ -57,6 +55,7 @@ from secvd_case import (  # noqa: E402
     COMMITTED_LR_RATIO,
     INIT_GAIN_SCALE,
     METHODS,
+    TUNED_ALPHA,
     build_evaluator,
     build_optimizer,
     build_sec_vd_case,
@@ -77,12 +76,11 @@ TUNING_DIR = CASE_DIR / "data" / "tuning"
 
 GAIN_FAMILIES = GAIN_ORDER
 LR_RATIO = COMMITTED_LR_RATIO
-CLIP_THRESHOLD = 10.0
-STAGES = ("solver-dt", "lr-range", "lr-confirm", "ratio", "saturation", "verify")
-HEALTHY_ALPHA_DECADES = 1.0
-DEFAULT_ALPHA_LOW = 1e-2
-RAMP_DIVERGENCE_BIAS = 3.0
+STAGES = ("solver-dt", "saturation", "learning-rate")
 SOLVER_DT_GRADIENT_TOLERANCE = 1e-3
+
+# Four decades in six points, so the sweep brackets the answer to within ~4x.
+DEFAULT_ALPHAS = (30.0, 120.0, 480.0, 1900.0, 7600.0, 30000.0)
 
 
 def _family_norms(tree: dict) -> dict:
@@ -99,51 +97,38 @@ def windup_metrics(aux: dict) -> dict:
     }
 
 
-def run_alpha_schedule(
+def run_constant_rate(
     *,
     gradient_fn,
     init_gains: dict,
-    alpha_low: float,
-    alpha_high: float,
-    num_points: int,
-    eps: float,
-    clip: float | None,
-    ratio: dict | None = None,
+    alpha: float,
+    ratio: dict,
+    num_iters: int,
     aux_metrics: Callable[[dict], dict] | None = None,
 ) -> dict:
-    """Ramp the learning-rate magnitude geometrically, one point per iteration.
+    """Run one independent optimization at a fixed learning rate.
+
+    Every candidate restarts from ``init_gains``, so its result is a property of
+    the rate rather than of where an earlier candidate left the parameters.
 
     Args:
         gradient_fn: ``value_and_grad``-shaped callable over one start.
         init_gains: Batched initial gains, each of shape ``(batch, actuators)``.
-        alpha_low: First learning-rate magnitude.
-        alpha_high: Last learning-rate magnitude.
-        num_points: Number of ramp points, one per iteration.
-        eps: Yogi epsilon, passed through to :func:`build_optimizer`.
-        clip: Global gradient-norm clip, or ``None`` for no clipping.
-        ratio: Per-family learning-rate ratio; defaults to :data:`LR_RATIO`.
-            Setting ``alpha_low == alpha_high`` turns the ramp into a constant
-            rate.
-        aux_metrics: Optional callable mapping a batched rollout ``aux`` to
-            named per-start scalars, recorded alongside the standard
-            diagnostics. Defaults to :func:`windup_metrics`.
+        alpha: Learning-rate magnitude.
+        ratio: Per-family learning-rate ratio.
+        num_iters: Iterations to run, stopping early on a non-finite loss.
+        aux_metrics: Optional callable mapping a batched rollout ``aux`` to named
+            per-start scalars. Defaults to :func:`windup_metrics`.
 
     Returns:
-        Arrays of shape ``(num_points,)`` or ``(num_points, batch)`` recording
-        the ramp and every diagnostic taken along it, plus ``final_gains`` of
-        shape ``(batch, families, actuators)`` in :data:`GAIN_FAMILIES` order.
+        Arrays of shape ``(iterations,)`` or ``(iterations, batch)`` recording
+        every diagnostic taken along the run, plus ``final_gains`` of shape
+        ``(batch, families, actuators)`` in :data:`GAIN_FAMILIES` order.
     """
     batch_size = int(init_gains["Kp"].shape[0])
-    alphas = jnp.geomspace(alpha_low, alpha_high, num_points)
-    ratio = dict(LR_RATIO if ratio is None else ratio)
     aux_metrics = windup_metrics if aux_metrics is None else aux_metrics
 
-    optimizer = build_optimizer(
-        lambda count: jnp.take(alphas, count, mode="clip"),
-        ratio=ratio,
-        eps=eps,
-        clip=clip,
-    )
+    optimizer = build_optimizer(alpha, ratio=ratio)
     opt_vars = {"opt_ctr_params": init_gains, "opt_atr_params": {}}
     opt_state = vmap(optimizer.init)(opt_vars)
 
@@ -153,7 +138,7 @@ def run_alpha_schedule(
     }
     record["time_iter"] = []
 
-    for index in range(num_points):
+    for index in range(num_iters):
         started = time.time()
         (loss, aux), grad = vmap(gradient_fn)(opt_vars)
         gains = opt_vars["opt_ctr_params"]
@@ -181,10 +166,9 @@ def run_alpha_schedule(
         )
         record["time_iter"].append(time.time() - started)
 
-        alpha = float(alphas[index])
         finite = bool(np.isfinite(record["loss"][-1]).all())
         print(
-            f"  {index + 1:>3d}/{num_points}  alpha = {alpha:10.4g}  "
+            f"  {index + 1:>3d}/{num_iters}  "
             f"loss = {np.median(record['loss'][-1]):.6e}  "
             f"|g| = {np.median(record['grad_norm'][-1]):.3e}  "
             f"rel step = {np.median(record['relative_step'][-1]):.3e}"
@@ -192,26 +176,149 @@ def run_alpha_schedule(
             flush=True,
         )
         if not finite:
-            print(f"  ramp diverged at alpha = {alpha:.4g}; stopping.", flush=True)
+            print(f"  diverged at iteration {index + 1}; stopping.", flush=True)
             break
 
     stacked = {key: np.asarray(values) for key, values in record.items()}
     stacked["final_gains"] = np.stack(
         [np.asarray(opt_vars["opt_ctr_params"][n]) for n in GAIN_FAMILIES], axis=1
     )
-    stacked["alpha"] = np.asarray(alphas)[: len(stacked["loss"])]
+    stacked["alpha"] = np.full(len(stacked["loss"]), float(alpha))
     stacked["batch_size"] = np.asarray(batch_size)
-    stacked["eps"] = np.asarray(eps)
-    stacked["clip"] = np.asarray(np.inf if clip is None else clip)
     stacked["ratio"] = np.asarray([ratio[n] for n in GAIN_FAMILIES])
     return stacked
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One point of a sweep: what to run, and what to label the result."""
+
+    key: Any
+    problem: Any
+    alpha: float
+    ratio: dict[str, float]
+    aux_metrics: Callable[[dict], dict] | None = None
+
+
+def sweep(
+    candidates: list[Candidate],
+    *,
+    num_iters: int,
+    batch_size: int,
+    seed: int,
+    label: str,
+) -> dict:
+    """Run one independent constant-rate optimization per candidate.
+
+    Args:
+        candidates: The points to compare. Sweeping ``alpha``, ``ratio`` or a
+            problem setting differs only in how these were built.
+        num_iters: Iteration budget for each candidate.
+        batch_size: Number of starts each candidate optimizes.
+        seed: PRNG seed behind the shared initializations.
+        label: Prefix for the per-candidate progress banner.
+
+    Returns:
+        One result per candidate, keyed by :attr:`Candidate.key`.
+    """
+    results = {}
+    for candidate in candidates:
+        print("")
+        print(
+            f"[{label}] {candidate.key}: alpha = {candidate.alpha:g}, "
+            f"ratio = {candidate.ratio}",
+            flush=True,
+        )
+        results[candidate.key] = run_constant_rate(
+            gradient_fn=candidate.problem.gradient_fn,
+            init_gains=_sample_starts(candidate.problem, batch_size, seed),
+            alpha=candidate.alpha,
+            ratio=candidate.ratio,
+            num_iters=num_iters,
+            aux_metrics=candidate.aux_metrics,
+        )
+    return results
+
+
+def _best_loss(result: dict) -> float:
+    """Lowest median-over-starts loss the run reached, or ``inf`` if it died."""
+    loss = np.median(np.asarray(result["loss"]), axis=-1)
+    finite = loss[np.isfinite(loss)]
+    return float(finite.min()) if finite.size else float("inf")
+
+
+def _start_spread(result: dict) -> float:
+    """Relative spread of the final loss across starts, at its best iteration."""
+    loss = np.asarray(result["loss"])
+    finite = np.isfinite(loss).all(axis=-1)
+    if not finite.any():
+        return float("inf")
+    row = loss[np.flatnonzero(finite)[-1]]
+    return float(row.max() / row.min() - 1.0)
+
+
+def report_sweep(results: dict, *, axis: str, num_iters: int) -> tuple[Any, bool]:
+    """Print each candidate's outcome and name the winner.
+
+    Args:
+        results: Output of :func:`sweep`.
+        axis: Name of the swept quantity, for the table header.
+        num_iters: Requested budget, so a short run reads as a divergence.
+
+    Returns:
+        ``(winner, separated)``. Only candidates that completed the whole budget
+        are ranked: a run that goes non-finite partway still has a finite last
+        loss, and ranking on that would let a rate which diverges beat one that
+        survives. ``separated`` is ``False`` when the two best survivors differ
+        by less than the spread across starts, meaning the budget was too short
+        to rank them and both are worth confirming.
+    """
+    print("")
+    print(f"  {axis:>14}  {'best loss':>13}  {'improvement':>11}  {'iters':>6}")
+    ranked = []
+    for key, result in results.items():
+        best = _best_loss(result)
+        completed = len(result["loss"])
+        if not np.isfinite(best):
+            print(f"  {key!s:>14}  {'diverged':>13}  {'':>11}  {completed:>6d}")
+            continue
+        survived = completed == num_iters
+        first = float(np.median(np.asarray(result["loss"]), axis=-1)[0])
+        print(
+            f"  {key!s:>14}  {best:>13.6e}  {100 * (1 - best / first):>10.2f} %  "
+            f"{completed:>6d}" + ("" if survived else f"   [died at {completed}]")
+        )
+        if survived:
+            ranked.append((best, key))
+    if not ranked:
+        print("")
+        print(
+            f"  No candidate completed {num_iters} iterations; every rate here "
+            "diverges. Extend the sweep downwards."
+        )
+        return None, False
+    ranked.sort()
+    winner = ranked[0][1]
+    separated = True
+    if len(ranked) > 1:
+        gap = ranked[1][0] / ranked[0][0] - 1.0
+        spread = _start_spread(results[winner])
+        separated = gap > spread
+        if not separated:
+            print("")
+            print(
+                f"  Top two are within the spread across starts "
+                f"({100 * gap:.2f} % apart against {100 * spread:.2f} %): this "
+                f"budget does not rank them. Confirm both."
+            )
+    return winner, separated
 
 
 def report_step_efficiency(result: dict) -> None:
     """Report how much of the requested learning rate reaches the parameters."""
     alpha = result["alpha"]
-    ratio = result.get("ratio", np.array([LR_RATIO[n] for n in GAIN_FAMILIES]))
-    print("  family   median |update|/lr   spread over the ramp")
+    ratio = result["ratio"]
+    print("  family   median |update|/lr   spread over the run")
     for position, name in enumerate(GAIN_FAMILIES):
         lr = alpha * float(ratio[position])
         observed = np.median(result["update_norm"][..., position], axis=-1)
@@ -254,7 +361,7 @@ def save_schedule(result: dict, out_dir: Path, tag: str) -> Path:
 
 
 def _sample_starts(problem, batch_size: int, seed: int) -> dict:
-    """Draw the same starts the generators use, so losses stay comparable."""
+    """Draw the same starts the generator uses, so losses stay comparable."""
     scale = INIT_GAIN_SCALE[problem.method]
     centre = {
         name: value * scale[name] for name, value in problem.nominal_gains.items()
@@ -356,90 +463,6 @@ def stage_solver_dt(args, case) -> dict:
     }
 
 
-def locate_alpha(result: dict) -> tuple[float, float]:
-    """Return the ``(low, high)`` bracket a ramp puts the usable rate in."""
-    alpha = np.asarray(result["alpha"])
-    loss = np.median(np.asarray(result["loss"]), axis=-1)
-    finite = np.isfinite(loss)
-    divergence = float(alpha[~finite][0]) if (~finite).any() else float(alpha[-1])
-    high = divergence / RAMP_DIVERGENCE_BIAS
-    return high / 10.0, high
-
-
-def bracket_alphas(low: float, high: float, count: int = 3) -> list[float]:
-    """Constant rates spanning a bracket, for :func:`stage_constant_rates`."""
-    return [float(value) for value in np.geomspace(low, high, count)]
-
-
-def report_alpha_gate(result: dict, committed_alpha: float) -> bool:
-    """Say if and by how much the committed rate is short."""
-    low, high = locate_alpha(result)
-    divergence = high
-    decades = float(np.log10(low / committed_alpha))
-    short = decades > HEALTHY_ALPHA_DECADES
-    print("")
-    print(
-        f"Ramp diverged at alpha = {divergence * RAMP_DIVERGENCE_BIAS:.3g}, "
-        f"bracketing the usable rate in [{low:.3g}, {divergence:.3g}]; "
-        f"committed is {committed_alpha:g}, {decades:+.2f} decades below it."
-    )
-    if short:
-        rates = " ".join(f"{value:g}" for value in bracket_alphas(low, divergence))
-        print("  SHORT. Measure it from cold:")
-        print(f"    --stage lr-confirm --alphas {rates}")
-    else:
-        print(
-            f"  Adequately scaled: within the {HEALTHY_ALPHA_DECADES:g}-decade "
-            "band of the bracket, so no retuning is needed."
-        )
-    return short
-
-
-def stage_constant_rates(args, case, alphas, ratio, label) -> dict:
-    """Run one independent constant-rate optimization per configuration."""
-    problem = build_evaluator(
-        args.method,
-        case=case,
-        horizon=args.horizon,
-        solver_dt=args.solver_dt,
-        e_sat=args.e_sat,
-        loss_scale=args.loss_scale,
-    )
-    init_gains = _sample_starts(problem, args.batch_size, args.seed)
-    results = {}
-    for alpha in alphas:
-        print("")
-        print(f"[{label}] alpha = {alpha:g}, ratio = {ratio}", flush=True)
-        results[alpha] = run_alpha_schedule(
-            gradient_fn=problem.gradient_fn,
-            init_gains=init_gains,
-            alpha_low=alpha,
-            alpha_high=alpha,
-            num_points=args.num_iters,
-            eps=args.eps,
-            clip=args.clip,
-            ratio=ratio,
-        )
-    print("")
-    print(f"{label} summary:")
-    print(f"  {'alpha':>12}  {'final loss':>13}  {'improvement':>11}")
-    best = None
-    for alpha, result in results.items():
-        loss = np.median(np.asarray(result["loss"]), axis=-1)
-        finite = loss[np.isfinite(loss)]
-        if finite.size == 0:
-            print(f"  {alpha:>12.4g}  {'diverged':>13}")
-            continue
-        improvement = 100 * (1 - finite.min() / finite[0])
-        print(f"  {alpha:>12.4g}  {finite.min():>13.6e}  {improvement:>10.2f} %")
-        if best is None or finite.min() < best[1]:
-            best = (alpha, float(finite.min()))
-    if best is not None:
-        print("")
-        print(f"Best: alpha = {best[0]:g} at loss {best[1]:.6e}")
-    return results
-
-
 def saturation_window(problem) -> tuple[float, float]:
     """The physically meaningful range for ``e_sat``, measured from the model."""
     (_loss, aux), _grad = problem.gradient_fn(
@@ -449,7 +472,7 @@ def saturation_window(problem) -> tuple[float, float]:
     return float(error[-1].max()), float(error[0].max())
 
 
-def stage_saturation(args, case, alpha, ratio) -> dict:
+def stage_saturation(args, case, alpha: float) -> dict:
     """Sensitivity of the optimization to the saturation scale."""
     probe = build_evaluator(
         args.method, case=case, horizon=args.horizon, solver_dt=args.solver_dt
@@ -457,8 +480,8 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
     steady, step = saturation_window(probe)
     print("")
     print(
-        f"Active range of e_sat: [{steady:.3g}, {step:.3g}] m "
-        )
+        f"Active range of e_sat, from the nominal rollout: [{steady:.3g}, {step:.3g}] m"
+    )
     e_sats = args.e_sats
     if e_sats is None:
         e_sats = [float(v) for v in np.geomspace(steady, step, 5)]
@@ -467,11 +490,11 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
         outside = [v for v in e_sats if not steady <= v <= step]
         if outside:
             print(
-                "  Requested "
-                + ", ".join(f"{v:g}" for v in outside)
+                "  Outside that range, so the tanh is either always or never "
+                "active: " + ", ".join(f"{v:g}" for v in outside) + " m."
             )
-    results = {}
-    summary = []
+
+    candidates = []
     for e_sat in e_sats:
         problem = build_evaluator(
             args.method,
@@ -479,7 +502,6 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
             horizon=args.horizon,
             solver_dt=args.solver_dt,
             e_sat=e_sat,
-            loss_scale=args.loss_scale,
         )
 
         def metrics(aux, e_sat=e_sat, problem=problem):
@@ -488,21 +510,26 @@ def stage_saturation(args, case, alpha, ratio) -> dict:
                 "saturated_fraction": jnp.mean(error > e_sat, axis=(1, 2))
             }
 
-        print("")
-        print(f"[saturation] e_sat = {e_sat:g} m, alpha = {alpha:g}", flush=True)
-        result = run_alpha_schedule(
-            gradient_fn=problem.gradient_fn,
-            init_gains=_sample_starts(problem, args.batch_size, args.seed),
-            alpha_low=alpha,
-            alpha_high=alpha,
-            num_points=args.num_iters,
-            eps=args.eps,
-            clip=args.clip,
-            ratio=ratio,
-            aux_metrics=metrics,
+        candidates.append(
+            Candidate(
+                key=e_sat,
+                problem=problem,
+                alpha=alpha,
+                ratio=args.ratio,
+                aux_metrics=metrics,
+            )
         )
+
+    results = sweep(
+        candidates,
+        num_iters=args.num_iters,
+        batch_size=args.batch_size,
+        seed=args.seed,
+        label="saturation",
+    )
+    summary = []
+    for e_sat, result in results.items():
         result["e_sat"] = np.asarray(e_sat)
-        results[e_sat] = result
         loss = np.median(np.asarray(result["loss"]), axis=-1)
         live = np.isfinite(loss)
         last = int(np.flatnonzero(live)[-1]) if live.any() else 0
@@ -579,9 +606,97 @@ def report_saturation_sensitivity(summary: list, num_iters: int) -> None:
     )
 
 
+def _ratio_label(ratio: dict[str, float]) -> str:
+    return ",".join(f"{ratio[name]:g}" for name in GAIN_FAMILIES)
+
+
+def stage_learning_rate(args, case) -> dict:
+    """Locate the learning rate, over the magnitude or the per-family split."""
+    problem = build_evaluator(
+        args.method,
+        case=case,
+        horizon=args.horizon,
+        solver_dt=args.solver_dt,
+        e_sat=args.e_sat,
+    )
+    if args.ratios is not None:
+        # The split is settled and shipped -- both archives record (1, 0.5, 0.1)
+        # -- so this axis is reachable but never on the default path. It is worth
+        # re-measuring when the plant changes, since it states how large a step
+        # Kd tolerates relative to Kp.
+        alpha = args.alpha or TUNED_ALPHA[args.method]
+        candidates = [
+            Candidate(
+                key=_ratio_label(ratio), problem=problem, alpha=alpha, ratio=ratio
+            )
+            for ratio in args.ratios
+        ]
+        axis = "ratio"
+    else:
+        candidates = [
+            Candidate(key=alpha, problem=problem, alpha=alpha, ratio=args.ratio)
+            for alpha in args.alphas
+        ]
+        axis = "alpha"
+
+    results = sweep(
+        candidates,
+        num_iters=args.num_iters,
+        batch_size=args.batch_size,
+        seed=args.seed,
+        label="learning-rate",
+    )
+    winner, separated = report_sweep(results, axis=axis, num_iters=args.num_iters)
+    if winner is None:
+        return results
+
+    best = results[winner]
+    alpha = float(best["alpha"][0])
+    ratio = {name: float(best["ratio"][i]) for i, name in enumerate(GAIN_FAMILIES)}
+    print("")
+    print("Step efficiency at the winner, per gain family:")
+    report_step_efficiency(best)
+    print("")
+    print(
+        "  (lr_P, lr_I, lr_D) = ("
+        + ", ".join(f"{alpha * ratio[name]:g}" for name in GAIN_FAMILIES)
+        + ")"
+    )
+    print(f'  TUNED_ALPHA["{args.method}"] = {alpha}')
+    print("")
+    print(
+        f"Confirm it at the production budget -- {args.num_iters} iterations rank "
+        "candidates,\nthey do not prove one survives 100:"
+    )
+    ranked = sorted(
+        (_best_loss(r), k)
+        for k, r in results.items()
+        if len(r["loss"]) == args.num_iters and np.isfinite(_best_loss(r))
+    )
+    confirm = [winner] if separated else [key for _loss, key in ranked[:2]]
+    generator = CODE_DIR.relative_to(CODE_DIR.parents[2]) / "optimize_control_gains.py"
+    for key in confirm:
+        rate = float(results[key]["alpha"][0])
+        print(
+            f"  python {generator} --method {args.method} "
+            f"--learning-rate {rate:g} \\\n"
+            f"      --num-iters 100 --result-dir /tmp/secvd-confirm-{rate:g} --force"
+        )
+    return results
+
+
+def _parse_ratio(text: str) -> dict[str, float]:
+    values = [float(part) for part in text.split(",")]
+    if len(values) != len(GAIN_FAMILIES):
+        raise argparse.ArgumentTypeError(
+            f"a ratio needs {len(GAIN_FAMILIES)} comma-separated values, got {text!r}"
+        )
+    return dict(zip(GAIN_FAMILIES, values, strict=True))
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description=__doc__.split(chr(10))[0])
-    parser.add_argument("--stage", choices=STAGES, default="lr-range")
+    parser.add_argument("--stage", choices=STAGES, default="learning-rate")
     parser.add_argument("--method", choices=METHODS, default="collocated")
     parser.add_argument("--horizon", type=float, default=CASE_HORIZON)
     parser.add_argument(
@@ -608,35 +723,47 @@ def _parse_args():
             "model-based window the saturation stage measures."
         ),
     )
-    parser.add_argument("--loss-scale", type=float, default=1.0)
     parser.add_argument(
         "--ratio",
-        type=float,
-        nargs=3,
-        metavar=("KP", "KI", "KD"),
-        default=[LR_RATIO[n] for n in GAIN_FAMILIES],
+        type=_parse_ratio,
+        default=dict(LR_RATIO),
+        metavar="KP,KI,KD",
+        help="Per-family learning-rate split used wherever one is not swept.",
     )
-    parser.add_argument("--alpha", type=float, default=None)
+    parser.add_argument(
+        "--ratios",
+        type=_parse_ratio,
+        nargs="+",
+        default=None,
+        metavar="KP,KI,KD",
+        help=(
+            "Sweep the per-family split at a fixed --alpha instead of sweeping "
+            "the magnitude. Off by default: the committed (1, 0.5, 0.1) is what "
+            "both archives record, and equal weighting goes non-finite on its "
+            "first update."
+        ),
+    )
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=None,
+        help="Fixed magnitude for the stages that do not sweep it; defaults to "
+        "the method's TUNED_ALPHA.",
+    )
     parser.add_argument(
         "--alphas",
         type=float,
         nargs="+",
-        default=[30.0, 100.0, 300.0, 1000.0, 3000.0, 10000.0],
-        help="Constant rates the lr-confirm stage compares.",
+        default=list(DEFAULT_ALPHAS),
+        help="Magnitudes the learning-rate stage compares, one run each.",
     )
-    parser.add_argument("--alpha-low", type=float, default=DEFAULT_ALPHA_LOW)
-    parser.add_argument("--alpha-high", type=float, default=1e6)
-    parser.add_argument("--num-points", type=int, default=25)
-    parser.add_argument("--num-iters", type=int, default=20)
-    parser.add_argument("--eps", type=float, default=1e-8)
     parser.add_argument(
-        "--clip",
-        type=float,
-        default=None,
+        "--num-iters",
+        type=int,
+        default=10,
         help=(
-            "Global gradient-norm clip. Off by default, matching the "
-            f"generators; pass --clip {CLIP_THRESHOLD:g} to reproduce the "
-            "committed configuration."
+            "Iterations per candidate. Ten covers every divergence measured on "
+            "this case, the latest of which was at iteration 8."
         ),
     )
     parser.add_argument("--batch-size", type=int, default=SECVD_BATCH_SIZE)
@@ -654,8 +781,7 @@ def main() -> None:
     probe = build_evaluator(args.method, case=case, horizon=args.horizon)
     print(
         f"[{args.stage}] {args.method}, horizon {args.horizon} s, "
-        f"batch {args.batch_size}, eps {args.eps:g}, "
-        f"clip {'off' if args.clip is None else format(args.clip, 'g')}",
+        f"batch {args.batch_size}, {args.num_iters} iterations per candidate",
         flush=True,
     )
     args.out_dir.mkdir(parents=True, exist_ok=True)
@@ -666,62 +792,17 @@ def main() -> None:
         print(f"Saved {args.out_dir / (tag + '.npz')}")
         return
 
-    if args.stage == "saturation" and not probe.supports_saturation:
-        print("")
-        print(
-            f"Skipped: the {args.method} controller does not implement "
-            "saturation of the integral error."
-        )
-        return
-
-    ratio = dict(zip(GAIN_FAMILIES, args.ratio, strict=True))
-    if args.stage in ("lr-range", "verify"):
-        problem = build_evaluator(
-            args.method,
-            case=case,
-            horizon=args.horizon,
-            solver_dt=args.solver_dt,
-            e_sat=args.e_sat,
-            loss_scale=args.loss_scale,
-        )
-        result = run_alpha_schedule(
-            gradient_fn=problem.gradient_fn,
-            init_gains=_sample_starts(problem, args.batch_size, args.seed),
-            alpha_low=args.alpha_low,
-            alpha_high=args.alpha_high,
-            num_points=args.num_points,
-            eps=args.eps,
-            clip=args.clip,
-            ratio=ratio,
-        )
-        print("")
-        print("Step efficiency, per gain family:")
-        report_step_efficiency(result)
-        report_alpha_gate(result, probe.committed_alpha)
-        print(f"Saved {save_schedule(result, args.out_dir, tag)}")
-        return
-
-    if args.stage == "lr-confirm":
-        results = stage_constant_rates(args, case, args.alphas, ratio, "lr-confirm")
-    elif args.stage == "ratio":
-        alpha = args.alpha or args.alphas[len(args.alphas) // 2]
-        candidates = [
-            ("committed", dict(LR_RATIO)),
-            ("equal", dict.fromkeys(GAIN_FAMILIES, 1.0)),
-        ]
-        if any(ratio == candidate for _, candidate in candidates):
+    if args.stage == "saturation":
+        if not probe.supports_saturation:
             print("")
-            print("--ratio matches a candidate already scanned; not repeating it.")
-        else:
-            candidates.append(("custom", ratio))
-        results = {
-            name: stage_constant_rates(args, case, [alpha], candidate, f"ratio:{name}")[
-                alpha
-            ]
-            for name, candidate in candidates
-        }
+            print(
+                f"Skipped: the {args.method} controller does not implement "
+                "saturation of the integral error."
+            )
+            return
+        results = stage_saturation(args, case, args.alpha or TUNED_ALPHA[args.method])
     else:
-        results = stage_saturation(args, case, args.alpha or 1000.0, ratio)
+        results = stage_learning_rate(args, case)
 
     for key, result in results.items():
         suffix = f"{key:g}" if isinstance(key, float) else str(key)

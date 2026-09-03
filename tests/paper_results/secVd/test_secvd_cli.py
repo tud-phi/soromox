@@ -24,7 +24,7 @@ CODE_DIR = (
 if str(CODE_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_DIR))
 
-from secvd_optimization import (  # noqa: E402
+from secvd_cli import (  # noqa: E402
     configure_optimization_device,
     jax_platforms_for,
     prepare_result_dir,
@@ -119,39 +119,34 @@ def test_an_explicit_device_rejects_a_backend_mismatch(
 
 def test_cli_module_does_not_import_jax():
     """JAX ignores JAX_PLATFORMS after import, so the CLI layer must stay JAX-free."""
-    probe = (
-        "import sys; import secvd_optimization; "
-        "sys.exit(1 if 'jax' in sys.modules else 0)"
-    )
+    probe = "import sys; import secvd_cli; sys.exit(1 if 'jax' in sys.modules else 0)"
     result = subprocess.run(
         [sys.executable, "-c", probe], cwd=CODE_DIR, capture_output=True, text=True
     )
     assert result.returncode == 0, "importing the CLI layer pulled in jax"
 
 
-@pytest.mark.parametrize("method", ["collocated", "synergistic"])
-def test_both_entrypoints_run_the_same_number_of_starts(method):
-    """Both methods must use the shared batch size, not a local literal.
+def test_the_entrypoint_does_not_hardcode_its_batch_size():
+    """The generator must pass the shared batch size, not a local literal.
 
     The collocated entrypoint once hardcoded ``OPTIMIZATION_BATCH_SIZE = 1``
     while the synergistic one used the shared constant, so a run that reported
     itself as restoring six starts silently optimized one, and the two archives
-    were not comparable.
+    were not comparable. Merging the two entrypoints makes that particular
+    divergence impossible, but a literal here would still misreport a run.
     """
     import ast
 
-    source = (CODE_DIR / f"control_gain_optimization_with_{method}.py").read_text()
-    assigned = [
-        node.value
-        for node in ast.parse(source).body
-        if isinstance(node, ast.Assign)
-        and any(
-            isinstance(t, ast.Name) and t.id == "OPTIMIZATION_BATCH_SIZE"
-            for t in node.targets
-        )
+    source = (CODE_DIR / "optimize_control_gains.py").read_text()
+    passed = [
+        keyword.value
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        for keyword in node.keywords
+        if keyword.arg == "optimization_batch_size"
     ]
-    assert len(assigned) == 1, f"{method}: expected one OPTIMIZATION_BATCH_SIZE"
-    assert isinstance(assigned[0], ast.Name) and assigned[0].id == "SECVD_BATCH_SIZE", (
-        f"{method} sets OPTIMIZATION_BATCH_SIZE to a literal instead of "
-        "SECVD_BATCH_SIZE, so the two methods can silently disagree"
+    assert len(passed) == 1, "expected one optimization_batch_size argument"
+    assert isinstance(passed[0], ast.Name) and passed[0].id == "SECVD_BATCH_SIZE", (
+        "the entrypoint passes a literal batch size instead of SECVD_BATCH_SIZE, "
+        "so a run can report more starts than it optimized"
     )

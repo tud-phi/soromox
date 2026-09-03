@@ -1,6 +1,6 @@
 """Canonical Section Vd result schema, validation, and serialization.
 
-Schema version 2 carries a real multi-start batch axis of width ``B``, restoring
+Schema version 3 carries a real multi-start batch axis of width ``B``, restoring
 the six-start structure of the published results (issue #154). The axis appears
 **only** on quantities that genuinely vary per start: the loss and gain
 histories, each start's initial and best rollouts, and the selection indices. The
@@ -326,8 +326,8 @@ def validate_results(
         expected_method: Reject an archive from the other controller.
 
     Raises:
-        ValueError: If the archive is not schema-version 2 or is internally
-            inconsistent.
+        ValueError: If the archive is not the current schema version or is
+            internally inconsistent.
     """
     missing = _REQUIRED_FIELDS.difference(data)
     if missing:

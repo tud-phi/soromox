@@ -46,16 +46,11 @@ LABELS = {
 }
 
 
-def committed_optimizer(alpha, ratio, eps, clip):
+def committed_optimizer(alpha, ratio):
     """The three-optimizer arrangement both generators used before the builder."""
     return optax.multi_transform(
         {
-            FAMILY_LABEL[name]: optax.chain(
-                optax.clip_by_global_norm(clip),
-                optax.yogi(alpha * ratio[name], eps=eps),
-            )
-            if clip is not None
-            else optax.yogi(alpha * ratio[name], eps=eps)
+            FAMILY_LABEL[name]: optax.yogi(alpha * ratio[name], eps=YOGI_EPS)
             for name in GAIN_ORDER
         },
         LABELS,
@@ -113,10 +108,7 @@ def initial_gains():
 
 
 @pytest.mark.parametrize("alpha", [COMMITTED_ALPHA, 1000.0])
-@pytest.mark.parametrize("clip", [None, 10.0])
-def test_one_yogi_with_scaled_rates_equals_three_yogis(
-    initial_gains, gradients, alpha, clip
-):
+def test_one_yogi_with_scaled_rates_equals_three_yogis(initial_gains, gradients, alpha):
     """The claim that makes the single-state form a simplification, not a change.
 
     ``scale_by_yogi``'s moment estimates never see the learning rate, so a
@@ -124,14 +116,10 @@ def test_one_yogi_with_scaled_rates_equals_three_yogis(
     floating-point reassociation should separate the two arrangements.
     """
     harmonized = run(
-        build_optimizer(alpha, ratio=COMMITTED_LR_RATIO, eps=YOGI_EPS, clip=clip),
-        initial_gains,
-        gradients,
+        build_optimizer(alpha, ratio=COMMITTED_LR_RATIO), initial_gains, gradients
     )
     committed = run(
-        committed_optimizer(alpha, COMMITTED_LR_RATIO, YOGI_EPS, clip),
-        initial_gains,
-        gradients,
+        committed_optimizer(alpha, COMMITTED_LR_RATIO), initial_gains, gradients
     )
     for name in GAIN_ORDER:
         assert harmonized["opt_ctr_params"][name] == pytest.approx(
@@ -155,18 +143,6 @@ def test_the_ratio_actually_reaches_the_families(initial_gains, gradients):
         )
 
 
-def test_a_schedule_is_accepted_as_the_magnitude(initial_gains, gradients):
-    """The tuning study's ramp passes a callable of the step count."""
-    ramped = run(
-        build_optimizer(lambda count: 1.0 + 100.0 * count), initial_gains, gradients
-    )
-    steady = run(build_optimizer(1.0), initial_gains, gradients)
-    for name in GAIN_ORDER:
-        assert ramped["opt_ctr_params"][name] != pytest.approx(
-            steady["opt_ctr_params"][name]
-        )
-
-
 def test_a_ratio_missing_a_family_is_rejected():
     with pytest.raises(ValueError, match="ratio must cover exactly"):
         build_optimizer(1.0, ratio={"Kp": 1.0, "Ki": 1.0})
@@ -179,33 +155,42 @@ def test_the_archived_description_carries_the_effective_rates():
         assert (
             f"{FAMILY_LABEL[name]}: {1000.0 * COMMITTED_LR_RATIO[name]:g}" in described
         )
-    assert "clip" not in described
-    assert "clip_by_global_norm(10)" in describe_optimizer(1000.0, clip=10.0)
 
 
-def test_neither_entrypoint_hardcodes_its_optimizer():
-    """Both must take the tuned rates from the shared parser.
+def test_the_description_still_matches_what_the_committed_archives_recorded():
+    """The knob removal must not change how an archive describes its optimizer.
 
-    The generators previously held their own copy of the optimizer, and one such
-    copy is how the collocated run silently went to a single start while the
-    synergistic one ran six. A static check costs nothing and catches the next
-    one before it burns a multi-hour run.
+    Both committed archives store this string. Had dropping the clip and eps
+    parameters changed the rendering, the shipped results would silently start
+    disagreeing with the code that claims to reproduce them.
     """
-    for name in ("collocated", "synergistic"):
-        source = (CODE_DIR / f"control_gain_optimization_with_{name}.py").read_text()
-        tree = ast.parse(source)
-        calls = [
-            node
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id in ("build_optimizer", "describe_optimizer")
-        ]
-        assert len(calls) == 2, f"{name} should build and describe one optimizer"
-        for call in calls:
-            magnitude = call.args[0]
-            assert isinstance(magnitude, ast.Attribute), (
-                f"{name} passes a literal learning rate; it must come from args"
-            )
-            assert magnitude.attr == "learning_rate"
-        assert "optax." not in source, f"{name} still constructs optax transforms"
+    assert (
+        describe_optimizer(3000.0, ratio=COMMITTED_LR_RATIO)
+        == "scale_by_yogi(eps=1e-08) + per-family rate{P: 3000, I: 1500, D: 300}"
+    )
+
+
+def test_the_entrypoint_does_not_hardcode_its_optimizer():
+    """The generator must take the tuned rates from the shared parser.
+
+    It previously held its own copy of the optimizer, and one such copy is how
+    the collocated run silently went to a single start while the synergistic one
+    ran six. A static check costs nothing and catches the next one before it
+    burns a multi-hour run.
+    """
+    source = (CODE_DIR / "optimize_control_gains.py").read_text()
+    calls = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in ("build_optimizer", "describe_optimizer")
+    ]
+    assert len(calls) == 2, "should build and describe exactly one optimizer"
+    for call in calls:
+        magnitude = call.args[0]
+        assert isinstance(magnitude, ast.Attribute), (
+            "the entrypoint passes a literal learning rate; it must come from args"
+        )
+        assert magnitude.attr == "learning_rate"
+    assert "optax." not in source, "the entrypoint still constructs optax transforms"

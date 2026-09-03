@@ -207,10 +207,10 @@ issue #154.
 
 `history_grad_norm` and `history_update_norm` record the per-start global L2
 norms of the gradient and of the applied update, and `optimizer_metadata`
-records the transforms, learning rates and clipping thresholds. These are stored
-so learning rates and clipping can be tuned against something observable,
-separately from the loss definition; see [Tuning study](#tuning-study) for what
-they measured. Note the legacy run is not a guide here: it used a single
+records the transforms and the effective per-family learning rates. These are
+stored so the optimizer can be tuned against something observable, separately
+from the loss definition; see [Tuning study](#tuning-study) for what they
+measured. Note the legacy run is not a guide here: it used a single
 `yogi(4e-3)` on `[0, 1]`-normalized, box-clipped gains, and its optimizer state
 was frozen by a bug after the first iteration.
 
@@ -219,10 +219,13 @@ The optimizer is built once, in `secvd_case.build_optimizer`: one
 `optax.yogi` instances under a `multi_transform`. Those are the same optimizer --
 Yogi's moment recursions never see the learning rate, so a per-family rate
 factors out of the state -- verified to `1e-9` relative over 30 steps spanning
-gradient magnitudes `1e-6` to `1`. Gradient clipping is **off by default**: the
-committed `clip_by_global_norm(10.0)` never bound, the largest family gradient
-norm measured on the real objective being 1.55 against a threshold of 10. Pass
-`--clip 10.0` to reproduce the committed configuration.
+gradient magnitudes `1e-6` to `1`. There is **no gradient clipping**: the
+committed `clip_by_global_norm(10.0)` never bound -- the largest family gradient
+norm measured on the real objective is 1.55 against a threshold of 10 -- so the
+transform was removed rather than left switched off. Divergence here is a
+step-size effect, not a gradient blow-up: Yogi's update magnitude is set by the
+learning rate almost independently of the gradient, so a clip could not have
+prevented it and is not a safety net being given up.
 
 ### Gain identifiability
 
@@ -323,28 +326,57 @@ share a shape.
 ## Tuning study
 
 `code/secvd_tuning_study.py` is a study, not a results generator: it writes small
-summaries to `data/tuning/` and never a schema-v3 archive. Every stage builds its
-problem with `secvd_case.build_evaluator` and its optimizer with
-`secvd_case.build_optimizer` -- the same two calls the generators make -- so a
-setting measured here is measured on what actually runs.
+summaries to `data/tuning/`, which is **git-ignored** and holds no published
+result. Every stage builds its problem with `secvd_case.build_evaluator` and its
+optimizer with `secvd_case.build_optimizer` -- the same two calls the generator
+makes -- so a setting measured here is measured on what actually runs.
 
-Three learning rates cannot be searched directly at full fidelity, so the search
-is decomposed into a magnitude and a shape, measured by different stages:
+Three stages, ordered by what each depends on. The integration step is a property
+of the plant and the solver, the saturation scale of the plant and the
+controller, and only the learning rate is a property of the optimizer:
+
+| stage | question | needs an optimizer? |
+| --- | --- | --- |
+| `solver-dt` | how coarse can the integration step be? | no -- one gradient per candidate |
+| `saturation` | does `e_sat` reach the optimization at all? | yes, at the tuned rate |
+| `learning-rate` | what are `(lr_P, lr_I, lr_D)`? | it *is* the optimizer study |
+
+The learning rate is expressed as a magnitude times a per-family split, so the
+two can be swept separately:
 
 ```text
 (lr_P, lr_I, lr_D) = alpha * (r_P, r_I, r_D)
 committed:  (0.5, 0.25, 0.05) = 0.5 * (1, 0.5, 0.1)
 ```
 
-Run one stage at a time:
+Every optimizer stage is the same operation -- one **independent** constant-rate
+optimization per candidate, each restarting from the same initializations -- so
+its result is a property of the candidate rather than of where an earlier one
+left the parameters. Run one stage at a time:
 
 ```bash
 S=paper_results/secVd_control_gain_optimization/code/secvd_tuning_study.py
+G=paper_results/secVd_control_gain_optimization/code/optimize_control_gains.py
 uv run python $S --method collocated --stage solver-dt
-uv run python $S --method collocated --stage lr-range
-uv run python $S --method collocated --stage lr-confirm --alphas 300 1500 3000
-uv run python $S --method collocated --stage ratio --alpha 3000
-uv run python $S --method collocated --stage saturation --alpha 3000
+uv run python $S --method collocated --stage saturation
+uv run python $S --method collocated --stage learning-rate
+
+# The stage ranks candidates at 10 iterations; it does not prove one survives
+# 100. It ends by printing this, which confirms the winner and yields the
+# archive to promote rather than discarding the work:
+uv run python $G --method collocated --learning-rate 3000 \
+  --num-iters 100 --result-dir /tmp/secvd-confirm-3000 --force
+```
+
+Sweeping the per-family split instead of the magnitude is the same stage on the
+other axis, and is off the default path because the answer is settled: both
+committed archives record the original `(1, 0.5, 0.1)`. It is worth re-checking
+when the plant changes, since the split states how large a step `Kd` tolerates
+relative to `Kp`:
+
+```bash
+uv run python $S --method collocated --stage learning-rate --alpha 3000 \
+  --ratios "1,0.5,0.1" "1,1,1"
 ```
 
 ### What it measured
@@ -371,16 +403,21 @@ generators actually start from, the relative gradient error at `1e-3` is 7.0e-08
 collocated and 3.2e-09 synergistic. Schema v3 records `solver_dt`, so a coarse
 run is no longer indistinguishable from a full-fidelity one.
 
-**`lr-range` -- screening.** A geometric ramp, one rate per iteration, so N rates
-cost N iterations. It **locates, it does not measure**: the loss at each point
-depends on where the earlier points left the parameters, so the divergence point
-is a property of the ramp. Three ramps over one identical problem recommended
-6.4e4, 3.7e4 and 3.3e3 -- a 19x spread -- tracking exactly how much loss each had
-banked on the way up (67 %, 76 %, -8 %). Consequences: start well *below* the
-rate being looked for, and read the output as a bracket rather than a value. The
-stage does both, and gates on `log10(located / committed)` against one decade.
+**Why there is no ramp.** Screening was originally done with a geometric ramp:
+one rate per iteration inside a *single* run, so N rates cost N iterations. It
+**locates, it does not measure** -- the loss at each point is measured at
+parameters the earlier points already moved, so the divergence point is a
+property of the walk. Three ramps over one identical problem recommended 6.4e4,
+3.7e4 and 3.3e3, a 19x spread, tracking exactly how much loss each had banked on
+the way up (67 %, 76 %, -8 %). The ramp was therefore removed: the candidate set
+is still geometric, but each candidate now gets its own run from the same
+initializations. Six points over four decades brackets the answer to within ~4x
+for ~3x the cost of a ramp, and the answer is a measurement.
 
-**`lr-confirm` -- measurement.** Independent constant-rate runs over the bracket.
+**`learning-rate` -- measurement.** One independent constant-rate run per
+candidate. Only candidates that complete the whole budget are ranked: a run that
+goes non-finite partway still has a finite last loss, and ranking on it would let
+a rate that diverges beat one that survives.
 
 | method | alpha | final loss, 20 iterations | outcome |
 | --- | --- | --- | --- |
@@ -396,22 +433,30 @@ stage does both, and gates on `log10(located / committed)` against one decade.
 The committed `alpha = 0.5` is 3.8 decades short for collocated and 3.5 for
 synergistic. `secvd_case.TUNED_ALPHA` holds the resulting defaults.
 
-**A 20-iteration ranking is not a 100-iteration ranking**, and the two methods
-illustrate opposite failure modes. Collocated's table is monotone up to the
-divergence point: every rate that survives beats every slower one, so the
-"best" is simply the last survivor and the *only* real question is where it
-dies. That makes the confirmation at the full budget mandatory rather than
-decorative -- a rate that looks best over 20 iterations may not reach 100, and
-all of the collocated candidates were still descending at iteration 20.
-Synergistic's is not monotone: 1547 beats 4893 outright at equal budget, so it
-is an interior optimum and the ranking is informative on its own.
+**A short ranking is not a full-budget ranking**, and the two methods illustrate
+opposite failure modes. Collocated's table is monotone up to the divergence
+point: every rate that survives beats every slower one, so the "best" is simply
+the last survivor and the only real question is where it dies. Synergistic's is
+not monotone -- 1547 beats 4893 outright at equal budget -- so it is an interior
+optimum and the ranking is informative on its own. Either way the winner has to
+be confirmed at the budget the generator runs, which is why the stage ends by
+printing that command rather than performing it: the confirming run *is* a
+generator run, so it yields a promotable archive instead of discarding one.
+
+The stage's own budget is **10 iterations per candidate**. Every divergence
+measured on this case happened early -- collocated 6000 at iteration 6 and 12000
+at 3; synergistic 15472 at 3 and 490 at 8 -- so ten carries 25 % margin over the
+worst observed, and no rate that survived a short screen was ever seen to die
+before 100. It runs at the full six starts rather than one: `vmap` amortizes, so
+six cost 2.7x one rather than 6x, and starts freeze individually, so a rate that
+keeps one start alive can kill another.
 
 Note that the screening rows above ran with the study's former default of
 `clip_by_global_norm(10.0)` while the 100-iteration confirmations ran with
-clipping off, matching the generators. The clip never binds at these gradient
-magnitudes, so this does not affect the ranking -- but the study's default has
-since been changed to match the generators, because "measured no difference" is
-not the same as "measured the same thing".
+clipping off, matching the generator. The clip never binds at these gradient
+magnitudes, so this does not affect the ranking -- but "measured no difference"
+is not the same as "measured the same thing", which is why the clip was
+subsequently removed everywhere rather than merely defaulted off.
 
 **Horizon.** The rollout length is a property of the case, not of the optimizer,
 but it interacts with the objective directly: `L = (1/T) * integral ||e_hat||^2`
@@ -434,11 +479,14 @@ improvement, so the case keeps `T = 5 s`. Losses are **not** comparable across
 the two columns -- the `1/T` factor alone changes them -- which is why the
 comparison is made on `zeta` and overshoot.
 
-**`ratio` -- the per-family split.** At the confirmed magnitude, the committed
-`(1, 0.5, 0.1)` is compared against equal weighting. Equal weighting goes
+**The per-family split.** At the confirmed magnitude, the committed
+`(1, 0.5, 0.1)` was compared against equal weighting. Equal weighting goes
 non-finite on its *first* update on both problems: the derivative gain tolerates
 a far smaller step than the proportional one. The committed split is therefore
-kept by measurement rather than by inheritance.
+kept by measurement rather than by inheritance -- and it is unchanged, which both
+archives record (`P: 3000, I: 1500, D: 300` and `P: 1547, I: 773.5, D: 154.7`).
+That is why the split is re-checked with `--ratios` when the plant changes rather
+than re-confirmed on every run.
 
 **`saturation` -- item 2.** See
 [Integral-error saturation](#integral-error-saturation). This stage does not
@@ -488,18 +536,23 @@ same statistics, not the same digits.
 
 ### Ruled out
 
+Each of these was measured, found not to matter, and then **removed from the
+code** rather than left switched off -- a knob that is only ever run at one value
+still has to be reasoned about by every reader.
+
 - **Yogi's `eps`.** optax defaults to `1e-3`, four orders above this problem's
   gradients, which should degenerate Yogi into SGD at `lr / eps`. Rerunning at
-  `1e-8` gave nearly the same curve, so this was not the cause. `YOGI_EPS = 1e-8`
-  is kept regardless: a numerical floor above the signal is indefensible whether
-  or not it binds.
+  `1e-8` gave nearly the same curve, so this was not the cause of the stall.
+  `YOGI_EPS = 1e-8` is kept regardless -- a numerical floor above the signal is
+  indefensible whether or not it binds -- but as a fixed constant inside
+  `build_optimizer`, not a parameter.
 - **Gradient clipping.** Never bound; see
-  [Optimizer diagnostics](#optimizer-diagnostics).
+  [Optimizer diagnostics](#optimizer-diagnostics). The transform is gone.
 - **Loss scaling.** Scaling the objective by `1e4` *does* move Yogi -- 539x
   larger steps at small `alpha`, decaying to 2.7x at large `alpha` -- so
   Adam-family scale invariance is not exact here. But it is interchangeable with
   the learning rate and reaches a worse optimum, so it is a confounder to remove
-  rather than a knob to tune.
+  rather than a knob to tune. `--loss-scale` is gone.
 
 Reading the step size directly is what made this legible. Rather than inspecting
 optimizer state, whose layout varies across optax versions and nests under
@@ -509,13 +562,15 @@ linear in the rate and the rate is short by that factor.
 
 ## Optimization
 
-The two optimization programs only run optimization and generate their NPZ:
+One program runs both optimizations and writes their NPZ, selected by
+`--method`. The two problems differ only in their controller, reference and
+objective, all of which `secvd_case.build_evaluator` supplies, so a single
+entrypoint cannot drift between them the way two files could:
 
 ```bash
-uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_collocated.py \
-  --num-iters 100 --force
-uv run python paper_results/secVd_control_gain_optimization/code/control_gain_optimization_with_synergistic.py \
-  --num-iters 100 --force
+G=paper_results/secVd_control_gain_optimization/code/optimize_control_gains.py
+uv run python $G --method collocated --num-iters 100 --force
+uv run python $G --method synergistic --num-iters 100 --force
 ```
 
 `--num-iters` defaults to 100. Pass another positive value when intentionally
