@@ -6,11 +6,18 @@ contractile muscles, and pressure chambers represented by an equivalent axial
 volume coordinate. A path may span any contiguous inclusive range of body
 segments.
 
-Following the general routed-path formulation of
-[Renda et al. (2022)](https://doi.org/10.1109/LRA.2022.3183248), a routing is a
-material-frame offset from the backbone. `PCS`, `PlanarPCS`, and `GVS` combine
-that routing with their native strain kinematics to evaluate path length,
-coordinate velocity, and generalized actuator force.
+!!! info "Threadlike-routing reference"
+    The routing geometry follows:
+
+    > Renda, F., Armanini, C., Mathew, A. T., & Boyer, F. (2022).
+    > *Geometrically-Exact Inverse Kinematic Control of Soft Manipulators With
+    > General Threadlike Actuators' Routing*. IEEE Robotics and Automation
+    > Letters, 7(3), 7311–7318.
+    > [https://doi.org/10.1109/LRA.2022.3183248](https://doi.org/10.1109/LRA.2022.3183248)
+
+A routing is a material-frame offset from the backbone. `PCS`, `PlanarPCS`, and
+`GVS` combine that routing with their native strain kinematics to evaluate path
+length, coordinate velocity, and generalized actuator force.
 
 The model assumes fixed material-frame routing, one scalar coordinate and
 effort per path, and an optional static effort loss along active paths. It does
@@ -18,6 +25,8 @@ not model configuration-dependent rerouting, slack, actuator dynamics, or
 changes in pressure-chamber cross-section.
 
 ## Routing
+
+### Linear routing
 
 `ThreadlikeRouting` stores a vectorized path family. Linear paths use
 
@@ -78,25 +87,53 @@ class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
     end_segment_index: tuple[int, ...] = eqx.field(static=True)
 
     @property
-    def num_paths(self):
-        """Return the number of paths in this parameter batch."""
+    def num_paths(self) -> int:
+        """Return the number of paths in this parameter batch.
+
+        Returns:
+            Number of routed paths.
+        """
         return self.amplitude.shape[0]
 
 
-def offset(params, s):
-    """Return material-frame sinusoidal routing offsets at ``s``."""
+def offset(params: SinusoidalRoutingParams, s: jax.Array) -> jax.Array:
+    """Return material-frame sinusoidal routing offsets.
+
+    Args:
+        params: Batched sinusoidal routing parameters.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        Material-frame offsets with shape ``(num_paths, 3)``.
+    """
     y = params.amplitude * jnp.sin(params.frequency * s)
     return jnp.stack((jnp.zeros_like(y), y, jnp.zeros_like(y)), axis=-1)
 
 
-def derivative(params, s):
-    """Return the first arc-length derivative of ``offset``."""
+def derivative(params: SinusoidalRoutingParams, s: jax.Array) -> jax.Array:
+    """Return the first derivative of the routing offset.
+
+    Args:
+        params: Batched sinusoidal routing parameters.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        First derivatives with shape ``(num_paths, 3)``.
+    """
     y_s = params.amplitude * params.frequency * jnp.cos(params.frequency * s)
     return jnp.stack((jnp.zeros_like(y_s), y_s, jnp.zeros_like(y_s)), axis=-1)
 
 
-def second_derivative(params, s):
-    """Return the second arc-length derivative of ``offset``."""
+def second_derivative(params: SinusoidalRoutingParams, s: jax.Array) -> jax.Array:
+    """Return the second derivative of the routing offset.
+
+    Args:
+        params: Batched sinusoidal routing parameters.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        Second derivatives with shape ``(num_paths, 3)``.
+    """
     y_ss = -(params.frequency**2) * params.amplitude * jnp.sin(
         params.frequency * s
     )
@@ -159,9 +196,6 @@ coordinate_jacobian = robot.actuator_coordinate_jacobian(q)
 actuation_matrix = robot.actuation_matrix(q)
 ```
 
-The singular `coordinate` in `coordinate_jacobian` follows the usual compound
-noun: it is the Jacobian of the vector returned by `actuator_coordinates`.
-The robot-level prefix is plural because all installed actuators are stacked.
 The two matrix contracts are
 
 \[
@@ -179,14 +213,14 @@ coordinates or velocities.
 ## Continuum Capstan friction
 
 `ThreadlikeFriction.capstan(coefficient=mu)` attenuates active threadlike effort
-along increasing backbone coordinate, starting at each path's configured
+along increasing backbone abscissa, starting at each path's configured
 anchor. It is available for `PCS`, `PlanarPCS`, and `GVS`. The default
 `ThreadlikeFriction.frictionless()` returns unit effort ratio.
 
 ### Path-turn derivation
 
-Let \(s\) be undeformed backbone arc length, \(R(s)\in SO(3)\) the material
-orientation, \(p(s)\in\mathbb{R}^3\) the backbone position, and
+Let \(s\) be the backbone abscissa in the undeformed configuration,
+\(R(s)\in SO(3)\) the material orientation, \(p(s)\in\mathbb{R}^3\) the backbone position, and
 \(\xi=(\omega,v)\) the angular and linear Cosserat strain. Then
 
 \[
@@ -224,9 +258,10 @@ Consequently,
 `turn_rate` is \(\rho\), in radians per metre of undeformed backbone. It
 includes both material-frame rotation and change of the tangent inside that
 frame. Omitting \(u'\) is valid only when the normalized material tangent is
-constant. Inside a PCS segment, \(\omega'=v'=0\), but routing derivatives can
-still make \(u'\ne0\). GVS computes \(\omega'\) and \(v'\) analytically from
-the derivative of its strain basis.
+constant. Inside a PCS segment, \(\omega'=v'=0\), so SoRoMoX uses the
+constant-strain specialization \(a'=\omega\times r'+r''\). Routing derivatives
+can still make \(u'\ne0\). GVS retains the full expression and computes
+\(\omega'\) and \(v'\) analytically from the derivative of its strain basis.
 
 The `accumulated_turn` from anchor \(s_0\) is
 
@@ -241,10 +276,17 @@ unsigned angle at the interface.
 ### Relation to the cited discrete model
 
 The exponential Capstan relation is established for ropes, belts, and tendons
-sliding over contact. SoRoMoX takes inspiration from the discrete spacer-disk
-tendon model of
-[Feliu-Talegon et al. (2025)](https://doi.org/10.1109/TMECH.2025.3581774), in
-which each disk obeys
+sliding over contact. SoRoMoX takes inspiration from a discrete spacer-disk
+tendon model:
+
+!!! info "Capstan-model reference"
+    > Feliu-Talegon, D., Alkayas, A. Y., Adamu, Y. A., Mathew, A. T., &
+    > Renda, F. (2025). *Actuation Reading Insights: Estimating Shape and
+    > Forces in Tendon-Driven Slender Soft Robots*. IEEE/ASME Transactions on
+    > Mechatronics, 30(6), 7878–7888.
+    > [https://doi.org/10.1109/TMECH.2025.3581774](https://doi.org/10.1109/TMECH.2025.3581774)
+
+In that model, each disk obeys
 
 \[
 T_i=T_{i-1}e^{-\mu\varphi_i},
@@ -302,8 +344,19 @@ class HyperbolicFrictionParams(BaseThreadlikeFrictionParams):
     coefficient: Array
 
 
-def hyperbolic_effort_ratio(params, accumulated_turn):
-    """Return a custom effort ratio as a function of accumulated turn."""
+def hyperbolic_effort_ratio(
+    params: HyperbolicFrictionParams,
+    accumulated_turn: Array,
+) -> Array:
+    """Return a custom effort ratio as a function of accumulated turn.
+
+    Args:
+        params: Hyperbolic friction parameters.
+        accumulated_turn: Accumulated path turn with shape ``(num_paths,)``.
+
+    Returns:
+        Surviving effort ratios with shape ``(num_paths,)``.
+    """
     return 1.0 / (1.0 + params.coefficient * accumulated_turn)
 
 
@@ -358,8 +411,7 @@ static topology and require reconstruction.
 
 ## Rendering
 
-Renderer adapters turn path queries into semantic visual layers. Physics
-objects do not import renderer primitives or store visual style. Generic
+Renderer adapters turn path queries into semantic visual layers. Generic
 renderers draw swept geometry when a radius is configured and use polylines
 otherwise. I-SUPPORT retains its detailed bellows renderer.
 

@@ -26,9 +26,11 @@ from soromox.actuation import (
     ThreadlikeImpedance,
     ThreadlikeRouting,
     capstan_effort_ratio,
+    threadlike_constant_strain_turn_rate,
     threadlike_tangent,
     threadlike_turn_rate,
 )
+from soromox.actuation.friction import threadlike_turning_angle
 from soromox.coordinate_transformations import ActuationSpaceDynamics
 from soromox.execution.warp.actuation.threadlike import (
     supports_linear_threadlike_matrix,
@@ -225,6 +227,36 @@ def test_turn_rate_formula_matches_autodiff_of_spatial_unit_tangent():
     assert_allclose(analytical, jnp.linalg.norm(derivative), rtol=2e-12, atol=2e-12)
 
 
+def test_constant_strain_turn_rate_matches_full_analytical_formula():
+    """Verify the PCS specialization of the general tangent derivative."""
+    angular = jnp.array([0.7, -0.3, 1.1])
+    linear = jnp.array([1.0, 0.2, -0.1])
+    offset = jnp.array([0.0, 0.03, -0.02])
+    offset_derivative = jnp.array([0.0, -0.2, 0.1])
+    offset_second_derivative = jnp.array([0.0, 0.4, -0.15])
+
+    specialized = threadlike_constant_strain_turn_rate(
+        angular,
+        linear,
+        offset,
+        offset_derivative,
+        offset_second_derivative,
+        eps=1e-12,
+    )
+    general = threadlike_turn_rate(
+        angular,
+        linear,
+        jnp.zeros((3,)),
+        jnp.zeros((3,)),
+        offset,
+        offset_derivative,
+        offset_second_derivative,
+        eps=1e-12,
+    )
+
+    assert_allclose(specialized, general, rtol=2e-12, atol=2e-12)
+
+
 class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
     """Parameters for an analytical sinusoidal test routing."""
 
@@ -247,19 +279,36 @@ class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
 def _sinusoidal_offset(params: SinusoidalRoutingParams, s: Array) -> Array:
     """Return a sinusoidal material-``y`` routing offset."""
     y = params.amplitude * jnp.sin(params.frequency * s)
-    return jnp.asarray([0.0, y, 0.0])
+    return jnp.stack((jnp.zeros_like(y), y, jnp.zeros_like(y)), axis=-1)
 
 
 def _sinusoidal_derivative(params: SinusoidalRoutingParams, s: Array) -> Array:
     """Return the analytical first derivative of the sinusoidal offset."""
     y = params.amplitude * params.frequency * jnp.cos(params.frequency * s)
-    return jnp.asarray([0.0, y, 0.0])
+    return jnp.stack((jnp.zeros_like(y), y, jnp.zeros_like(y)), axis=-1)
 
 
 def _sinusoidal_second_derivative(params: SinusoidalRoutingParams, s: Array) -> Array:
     """Return the analytical second derivative of the sinusoidal offset."""
     y = -(params.frequency**2) * params.amplitude * jnp.sin(params.frequency * s)
-    return jnp.asarray([0.0, y, 0.0])
+    return jnp.stack((jnp.zeros_like(y), y, jnp.zeros_like(y)), axis=-1)
+
+
+def test_custom_routing_callbacks_preserve_the_path_axis():
+    """Keep vectorized callback output shaped ``(num_paths, 3)``."""
+    params = SinusoidalRoutingParams(
+        amplitude=jnp.array([0.01, 0.02]),
+        frequency=jnp.array([8.0, 12.0]),
+        start_segment_index=(0, 0),
+        end_segment_index=(0, 0),
+    )
+
+    for callback in (
+        _sinusoidal_offset,
+        _sinusoidal_derivative,
+        _sinusoidal_second_derivative,
+    ):
+        assert callback(params, jnp.asarray(0.04)).shape == (2, 3)
 
 
 def test_custom_routing_analytical_turn_matches_dense_numerical_reference():
@@ -455,6 +504,99 @@ def test_custom_routing_requires_analytical_second_derivative_for_friction():
 
     with pytest.raises(ValueError, match="second_derivative_fn"):
         _spatial(actuators=actuator)
+
+
+def test_custom_callbacks_with_linear_params_require_a_second_derivative():
+    """Do not infer linear behavior from the parameter class alone."""
+    params = ThreadlikeRouting.linear(
+        intercept=jnp.array([0.0, 0.01, 0.0]),
+        slope=jnp.array([0.0, 0.02, 0.0]),
+    ).params
+
+    def nonlinear_offset(path_params, s):
+        """Return a nonlinear offset using linear-routing storage."""
+        return path_params.intercept + s**2 * path_params.slope
+
+    def nonlinear_derivative(path_params, s):
+        """Return the first derivative of the nonlinear offset."""
+        return 2.0 * s * path_params.slope
+
+    routing = ThreadlikeRouting(
+        params=params,
+        offset_fn=nonlinear_offset,
+        derivative_fn=nonlinear_derivative,
+    )
+    actuator = ThreadlikeActuator.tendons(
+        routing, friction=ThreadlikeFriction.capstan(coefficient=0.4)
+    )
+
+    assert not routing.has_analytical_second_derivative
+    with pytest.raises(ValueError, match="second_derivative_fn"):
+        _spatial(actuators=actuator)
+
+
+def test_builtin_linear_callbacks_supply_zero_second_derivative():
+    """Retain the implicit analytical derivative for built-in linear routing."""
+    linear = ThreadlikeRouting.linear(intercept=jnp.array([0.0, 0.01, 0.0]))
+    routing = ThreadlikeRouting(params=linear.params)
+
+    assert routing.has_analytical_second_derivative
+    assert_allclose(
+        routing.second_derivative(routing.params, jnp.asarray(0.04)),
+        jnp.zeros((1, 3)),
+    )
+
+
+@pytest.mark.parametrize(
+    "right_unit_tangent",
+    [jnp.zeros((3,)), jnp.array([1.0, 0.0, 0.0]), jnp.array([-1.0, 0.0, 0.0])],
+)
+def test_turning_angle_has_finite_values_and_derivatives(right_unit_tangent):
+    """Keep boundary-angle values and both differentiation modes finite."""
+
+    def angle(tangents: Array) -> Array:
+        """Evaluate the angle from packed left and right tangents."""
+        return threadlike_turning_angle(tangents[:3], tangents[3:])
+
+    tangents = jnp.concatenate((jnp.zeros((3,)), right_unit_tangent))
+    assert jnp.isfinite(angle(tangents))
+    assert jnp.isfinite(jax.jacfwd(angle)(tangents)).all()
+    assert jnp.isfinite(jax.jacrev(angle)(tangents)).all()
+
+
+@pytest.mark.parametrize(
+    "turn_rate",
+    [threadlike_turn_rate, threadlike_constant_strain_turn_rate],
+)
+def test_turn_rate_has_finite_values_and_derivatives_at_collapsed_tangent(turn_rate):
+    """Keep analytical turn-rate singularity handling differentiable."""
+    zeros = jnp.zeros((3,))
+
+    def rate(linear_strain: Array) -> Array:
+        """Evaluate either turn-rate formula at a collapsed path tangent."""
+        if turn_rate is threadlike_turn_rate:
+            return turn_rate(
+                zeros,
+                linear_strain,
+                zeros,
+                zeros,
+                zeros,
+                zeros,
+                zeros,
+                eps=1e-12,
+            )
+        return turn_rate(
+            zeros,
+            linear_strain,
+            zeros,
+            zeros,
+            zeros,
+            eps=1e-12,
+        )
+
+    assert jnp.isfinite(rate(zeros))
+    assert jnp.isfinite(jax.jacfwd(rate)(zeros)).all()
+    assert jnp.isfinite(jax.jacrev(rate)(zeros)).all()
 
 
 @pytest.mark.parametrize("value", [-0.1, jnp.inf, jnp.nan])

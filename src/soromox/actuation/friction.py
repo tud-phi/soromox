@@ -68,7 +68,8 @@ def threadlike_tangent(
         angular_strain: Material angular strain ``omega`` with shape ``(3,)``.
         linear_strain: Material linear strain ``v`` with shape ``(3,)``.
         offset: Material-frame routing offset ``r`` with shape ``(3,)``.
-        offset_derivative: Arc-length derivative ``r'`` with shape ``(3,)``.
+        offset_derivative: Backbone-abscissa derivative ``r'`` with shape
+            ``(3,)``.
 
     Returns:
         Material-frame path tangent ``a`` with shape ``(3,)``.
@@ -76,73 +77,42 @@ def threadlike_tangent(
     return linear_strain + jnp.cross(angular_strain, offset) + offset_derivative
 
 
-def threadlike_tangent_derivative(
+def _threadlike_turn_rate_from_tangent(
     angular_strain: Array,
-    linear_strain_derivative: Array,
-    angular_strain_derivative: Array,
-    offset: Array,
-    offset_derivative: Array,
-    offset_second_derivative: Array,
-) -> Array:
-    r"""Return the arc-length derivative of the material path tangent.
-
-    Differentiating ``a = v + omega cross r + r'`` analytically gives
-
-    .. math::
-
-        a' = v' + \omega' \times r + \omega \times r' + r''.
-
-    Args:
-        angular_strain: Material angular strain ``omega``.
-        linear_strain_derivative: Arc-length derivative ``v'``.
-        angular_strain_derivative: Arc-length derivative ``omega'``.
-        offset: Material-frame routing offset ``r``.
-        offset_derivative: Arc-length derivative ``r'``.
-        offset_second_derivative: Arc-length derivative ``r''`` of ``r'``.
-
-    Returns:
-        Material-frame tangent derivative ``a'`` with shape ``(3,)``.
-    """
-    return (
-        linear_strain_derivative
-        + jnp.cross(angular_strain_derivative, offset)
-        + jnp.cross(angular_strain, offset_derivative)
-        + offset_second_derivative
-    )
-
-
-def threadlike_unit_tangent_derivative(
     tangent: Array,
     tangent_derivative: Array,
     *,
     eps: Array | float,
 ) -> Array:
-    r"""Return the derivative of a normalized material path tangent.
+    r"""Return spatial turn rate from a material tangent and its derivative.
 
-    With ``u = a / ||a||``, differentiation gives
+    With ``u = a / ||a||``, the material unit-tangent derivative is
 
     .. math::
 
         u' = \frac{(I-u u^T)a'}{\lVert a\rVert}.
 
-    A collapsed path tangent has no defined direction. SoRoMoX returns the
-    finite zero convention there, consistent with its other ``safe_*``
-    numerical helpers.
+    The spatial unit tangent turns at
+    ``rho = ||omega cross u + u'||``. A collapsed path has no defined tangent;
+    the package's finite zero convention is used for both ``u`` and ``u'``.
 
     Args:
-        tangent: Material-frame path tangent ``a``.
-        tangent_derivative: Arc-length derivative ``a'``.
+        angular_strain: Material angular strain ``omega`` with shape ``(3,)``.
+        tangent: Material-frame path tangent ``a`` with shape ``(3,)``.
+        tangent_derivative: Backbone-abscissa derivative ``a'`` with shape
+            ``(3,)``.
         eps: Threshold below which ``||a||`` is treated as zero.
 
     Returns:
-        Material-frame unit-tangent derivative ``u'``.
+        Nonnegative spatial turn rate ``rho`` as a scalar.
     """
     tangent_norm = safe_norm(tangent)
     unit_tangent = safe_divide(tangent, tangent_norm, eps)
     projected = tangent_derivative - unit_tangent * jnp.dot(
         unit_tangent, tangent_derivative
     )
-    return safe_divide(projected, tangent_norm, eps)
+    unit_tangent_derivative = safe_divide(projected, tangent_norm, eps)
+    return safe_norm(jnp.cross(angular_strain, unit_tangent) + unit_tangent_derivative)
 
 
 def threadlike_turn_rate(
@@ -168,18 +138,22 @@ def threadlike_turn_rate(
         \rho = \left\|\omega \times u + u'\right\|.
 
     Rotation preserves the Euclidean norm, so ``rho`` is evaluated entirely
-    in the material frame. It has units of radians per metre of undeformed
-    backbone coordinate and includes both backbone strain variation and
-    routing-offset variation.
+    in the material frame. It has units of radians per metre of backbone
+    abscissa and includes both backbone strain variation and routing-offset
+    variation.
 
     Args:
-        angular_strain: Material angular strain ``omega``.
-        linear_strain: Material linear strain ``v``.
-        angular_strain_derivative: Arc-length derivative ``omega'``.
-        linear_strain_derivative: Arc-length derivative ``v'``.
-        offset: Material-frame routing offset ``r``.
-        offset_derivative: Arc-length derivative ``r'``.
-        offset_second_derivative: Arc-length derivative ``r''``.
+        angular_strain: Material angular strain ``omega`` with shape ``(3,)``.
+        linear_strain: Material linear strain ``v`` with shape ``(3,)``.
+        angular_strain_derivative: Backbone-abscissa derivative ``omega'`` with
+            shape ``(3,)``.
+        linear_strain_derivative: Backbone-abscissa derivative ``v'`` with
+            shape ``(3,)``.
+        offset: Material-frame routing offset ``r`` with shape ``(3,)``.
+        offset_derivative: Backbone-abscissa derivative ``r'`` with shape
+            ``(3,)``.
+        offset_second_derivative: Backbone-abscissa derivative ``r''`` with
+            shape ``(3,)``.
         eps: Threshold used for a collapsed tangent.
 
     Returns:
@@ -188,20 +162,66 @@ def threadlike_turn_rate(
     tangent = threadlike_tangent(
         angular_strain, linear_strain, offset, offset_derivative
     )
-    tangent_derivative = threadlike_tangent_derivative(
+    tangent_derivative = (
+        linear_strain_derivative
+        + jnp.cross(angular_strain_derivative, offset)
+        + jnp.cross(angular_strain, offset_derivative)
+        + offset_second_derivative
+    )
+    return _threadlike_turn_rate_from_tangent(
         angular_strain,
-        linear_strain_derivative,
-        angular_strain_derivative,
-        offset,
-        offset_derivative,
-        offset_second_derivative,
+        tangent,
+        tangent_derivative,
+        eps=eps,
     )
-    tangent_norm = safe_norm(tangent)
-    unit_tangent = safe_divide(tangent, tangent_norm, eps)
-    unit_tangent_derivative = threadlike_unit_tangent_derivative(
-        tangent, tangent_derivative, eps=eps
+
+
+def threadlike_constant_strain_turn_rate(
+    angular_strain: Array,
+    linear_strain: Array,
+    offset: Array,
+    offset_derivative: Array,
+    offset_second_derivative: Array,
+    *,
+    eps: Array | float,
+) -> Array:
+    r"""Return routed-path turn rate for a constant Cosserat strain.
+
+    For PCS, ``omega' = v' = 0`` within every segment, so the material tangent
+    derivative simplifies analytically to
+
+    .. math::
+
+        a' = \omega \times r' + r''.
+
+    Args:
+        angular_strain: Constant material angular strain ``omega`` with shape
+            ``(3,)``.
+        linear_strain: Constant material linear strain ``v`` with shape
+            ``(3,)``.
+        offset: Material-frame routing offset ``r`` with shape ``(3,)``.
+        offset_derivative: Backbone-abscissa derivative ``r'`` with shape
+            ``(3,)``.
+        offset_second_derivative: Backbone-abscissa derivative ``r''`` with
+            shape ``(3,)``.
+        eps: Threshold below which a collapsed tangent uses the finite zero
+            convention.
+
+    Returns:
+        Nonnegative turn rate ``rho`` as a scalar.
+    """
+    tangent = threadlike_tangent(
+        angular_strain, linear_strain, offset, offset_derivative
     )
-    return safe_norm(jnp.cross(angular_strain, unit_tangent) + unit_tangent_derivative)
+    tangent_derivative = (
+        jnp.cross(angular_strain, offset_derivative) + offset_second_derivative
+    )
+    return _threadlike_turn_rate_from_tangent(
+        angular_strain,
+        tangent,
+        tangent_derivative,
+        eps=eps,
+    )
 
 
 def threadlike_turning_angle(
@@ -219,7 +239,10 @@ def threadlike_turning_angle(
     """
     sine = safe_norm(jnp.cross(left_unit_tangent, right_unit_tangent))
     cosine = jnp.clip(jnp.dot(left_unit_tangent, right_unit_tangent), -1.0, 1.0)
-    return jnp.arctan2(sine, cosine)
+    has_direction = (sine > 0.0) | (jnp.abs(cosine) > 0.0)
+    safe_cosine = jnp.where(has_direction, cosine, jnp.ones_like(cosine))
+    angle = jnp.arctan2(sine, safe_cosine)
+    return jnp.where(has_direction, angle, jnp.zeros_like(angle))
 
 
 def integrate_accumulated_turn(
@@ -228,12 +251,12 @@ def integrate_accumulated_turn(
     s: Array,
     segment_starts: Array,
     segment_lengths: Array,
-    normalized_points: Array,
+    normalized_s_ps: Array,
     normalized_weights: Array,
     start_segment_index: Array,
     end_segment_index: Array,
 ) -> Array:
-    """Integrate path turn from each anchor through backbone coordinate ``s``.
+    """Integrate path turn from each anchor through backbone abscissa ``s``.
 
     The integral uses the host quadrature rule on every complete segment and a
     rescaled copy of that rule on the final partial segment. One-sided tangent
@@ -242,17 +265,17 @@ def integrate_accumulated_turn(
     guides.
 
     Args:
-        turn_rate_fn: Function accepting ``(segment_index, physical_points)``
+        turn_rate_fn: Function accepting ``(segment_index, s_ps)``
             and returning turn rates shaped ``(num_points, num_paths)``.
         boundary_turn_fn: Function accepting a left segment index and returning
             one-sided tangent angles shaped ``(num_paths,)``.
-        s: Physical backbone coordinate through which to integrate.
-        segment_starts: Physical start coordinate of every segment.
+        s: Backbone abscissa through which to integrate.
+        segment_starts: Backbone abscissa at the start of every segment.
         segment_lengths: Physical length of every segment.
-        normalized_points: Quadrature nodes in ``[0, 1]`` shaped
+        normalized_s_ps: Normalized quadrature abscissae in ``[0, 1]`` shaped
             ``(num_segments, num_points)``.
         normalized_weights: Corresponding quadrature weights with the same
-            shape as ``normalized_points``.
+            shape as ``normalized_s_ps``.
         start_segment_index: First segment of every routed path.
         end_segment_index: Last segment of every routed path.
 
@@ -268,11 +291,11 @@ def integrate_accumulated_turn(
             0.0,
             segment_lengths[segment_index],
         )
-        points = (
+        s_ps = (
             segment_starts[segment_index]
-            + covered_length * normalized_points[segment_index]
+            + covered_length * normalized_s_ps[segment_index]
         )
-        rates = turn_rate_fn(segment_index, points)
+        rates = turn_rate_fn(segment_index, s_ps)
         return covered_length * jnp.sum(
             normalized_weights[segment_index, :, None] * rates, axis=0
         )
@@ -287,9 +310,9 @@ def integrate_accumulated_turn(
         return accumulated
 
     boundary_indices = jnp.arange(segment_lengths.shape[0] - 1)
-    boundary_coordinates = segment_starts[1:]
+    boundary_s = segment_starts[1:]
     boundary_angles = vmap(boundary_turn_fn)(boundary_indices)
-    crossed = boundary_coordinates[:, None] <= jnp.asarray(s)
+    crossed = boundary_s[:, None] <= jnp.asarray(s)
     spans_boundary = (boundary_indices[:, None] >= start_segment_index[None, :]) & (
         boundary_indices[:, None] + 1 <= end_segment_index[None, :]
     )
@@ -378,7 +401,7 @@ class ThreadlikeFriction(eqx.Module):
 
     The effort supplied by the actuator is defined at each path anchor. The
     model returns the fraction that remains after the path has accumulated a
-    given unsigned turn while moving along increasing backbone coordinate.
+    given unsigned turn while moving along increasing backbone abscissa.
 
     Attributes:
         params: Dynamic friction parameters.
@@ -501,9 +524,8 @@ __all__ = [
     "capstan_effort_ratio",
     "frictionless_effort_ratio",
     "integrate_accumulated_turn",
+    "threadlike_constant_strain_turn_rate",
     "threadlike_tangent",
-    "threadlike_tangent_derivative",
     "threadlike_turn_rate",
     "threadlike_turning_angle",
-    "threadlike_unit_tangent_derivative",
 ]

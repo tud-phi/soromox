@@ -17,10 +17,9 @@ from .friction import (
     ThreadlikeFriction,
     capstan_effort_ratio,
     frictionless_effort_ratio,
+    threadlike_constant_strain_turn_rate,
     threadlike_tangent,
-    threadlike_tangent_derivative,
     threadlike_turn_rate,
-    threadlike_unit_tangent_derivative,
 )
 from .joint import (
     AffineJointTransmission,
@@ -90,8 +89,7 @@ __all__ = [
     "linear_threadlike_routing",
     "linear_threadlike_routing_derivative",
     "linear_threadlike_routing_second_derivative",
+    "threadlike_constant_strain_turn_rate",
     "threadlike_tangent",
-    "threadlike_tangent_derivative",
     "threadlike_turn_rate",
-    "threadlike_unit_tangent_derivative",
 ]

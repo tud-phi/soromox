@@ -28,11 +28,6 @@ and include benchmark baseline and measurement context for performance claims.
 
 - Open3D and Viser swept backbones now preserve circular, elliptical, and
   rectangular cross-sections, including dimensions that vary with abscissa.
-- Corrected the planar routed-path offset sign, which used
-  `sigma_x + d * kappa` where `PlanarPCS` kinematics require
-  `sigma_x - d * kappa`. Planar routings must negate their `y` offsets to
-  reproduce previous behavior, which is exactly equivalent when the routing
-  slope is zero.
 - Made `ActuationSpaceDynamics` use the actuator-coordinate Jacobian for its
   coordinate map and transform a potentially lossy actuation matrix explicitly.
 
@@ -63,10 +58,6 @@ and include benchmark baseline and measurement context for performance claims.
   shape-morphing funnel when adjacent links used different cross-sections.
 - Fixed Open3D swept meshes reusing the first endpoint cross-section at both
   ends, which previously rendered tapered profiles as piecewise-constant.
-- Fixed planar threadlike path lengths and actuation matrices disagreeing with `PCS`
-  and with the path positions the renderer draws. At `kappa = 10`, `L = 0.1`
-  and offset `0.02` the model reported `0.120` for a path whose rendered arc
-  length is `0.080`; planar and spatial hosts now agree exactly.
 
 ### Documentation
 

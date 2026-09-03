@@ -320,8 +320,10 @@ class TestJacobians:
 
         assert_allclose(J_a, expected, rtol=1e-10)
 
-    def test_jacobian_unactuated_equals_h_unactuated(self, underactuated_pendulum):
-        """Test that jacobian_unactuated equals H_unactuated."""
+    def test_unactuated_coordinate_jacobian_matches_configured_mapping(
+        self, underactuated_pendulum
+    ):
+        """Test the unactuated-coordinate Jacobian against its configured map."""
         robot = underactuated_pendulum
         asd = ActuationSpaceDynamics(robot)
 

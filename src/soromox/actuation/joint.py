@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import equinox as eqx
 from jax import Array
 from jax import numpy as jnp
 
 from soromox.systems.params import BaseSystemParams
+
+if TYPE_CHECKING:
+    from soromox.systems.soft_robot import SoftRobot
 
 from .core import (
     Actuator,
@@ -136,20 +139,41 @@ class AffineJointTransmission(Transmission):
     def num_channels(self) -> int:
         return self.params.num_channels
 
-    def coordinates(self, robot, q: Array) -> Array:
+    def coordinates(self, robot: SoftRobot, q: Array) -> Array:
         del robot
         return (
             self.params.routing_matrix @ (q - self.params.reference_configuration)
             + self.params.coordinate_offset
         )
 
-    def coordinate_jacobian(self, robot, q: Array) -> Array:
-        """Return the constant actuator-coordinate Jacobian."""
+    def coordinate_jacobian(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the constant actuator-coordinate Jacobian.
+
+        Args:
+            robot: Articulated robot hosting the transmission.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            J_a: Matrix mapping generalized velocities to actuator-coordinate
+                velocities, with shape
+                ``(self.num_channels, robot.num_velocities)``.
+        """
         del robot, q
         return self.params.routing_matrix
 
-    def actuation_matrix(self, robot, q: Array) -> Array:
-        """Return the ideal transpose map from effort to generalized force."""
+    def actuation_matrix(self, robot: SoftRobot, q: Array) -> Array:
+        """Return the ideal effort-to-generalized-force map.
+
+        Args:
+            robot: Articulated robot hosting the transmission.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            A: Actuation matrix with shape
+                ``(robot.num_velocities, self.num_channels)``.
+        """
         del robot, q
         return self.params.routing_matrix.T
 

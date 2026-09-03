@@ -11,8 +11,8 @@ from soromox.actuation.core import Actuator, PassiveElement
 from soromox.actuation.friction import (
     ThreadlikeFriction,
     integrate_accumulated_turn,
+    threadlike_constant_strain_turn_rate,
     threadlike_tangent,
-    threadlike_turn_rate,
     threadlike_turning_angle,
 )
 from soromox.actuation.threadlike import (
@@ -3114,16 +3114,18 @@ class PCS(SoftRobot):
         """Return one spatial routed-path offset, unit tangent, and activity.
 
         Args:
-            segment_index: Index of the segment containing the node.
-            strain: Segment strain of shape ``(6,)``.
-            s: Backbone coordinate of the node.
+            segment_index: Scalar index of the segment containing the node.
+            strain: PCS strain with shape ``(6,)``.
+            s: Scalar backbone abscissa of the node.
             routing: Routed-path family being integrated.
             path_params: Parameters of the single path.
-            start_segment_index: First segment the path spans.
-            end_segment_index: Last segment the path spans.
+            start_segment_index: Scalar index of the path's first segment.
+            end_segment_index: Scalar index of the path's last segment.
 
         Returns:
-            Tuple ``(offset, unit_tangent, active)`` for one path.
+            offset: Material-frame routing offset with shape ``(3,)``.
+            unit_tangent: Material-frame unit tangent with shape ``(3,)``.
+            active: Scalar indicating whether the path traverses the segment.
         """
         active = (start_segment_index <= segment_index) & (
             segment_index <= end_segment_index
@@ -3139,50 +3141,49 @@ class PCS(SoftRobot):
         """Return one spatial routed-path length gradient density, ``d|t|/dxi``.
 
         Args:
-            offset: Material-frame routing offset.
-            unit_tangent: Material-frame unit tangent of the path.
-            active: Whether the path traverses the current segment.
+            offset: Material-frame routing offset with shape ``(3,)``.
+            unit_tangent: Material-frame unit tangent with shape ``(3,)``.
+            active: Scalar indicating whether the path traverses the segment.
 
         Returns:
-            length_gradient_density: Shape ``(6,)``.
+            length_gradient_density: Routed-length gradient density with shape
+                ``(6,)``.
         """
         basis = jnp.hstack([so3.skew(offset) @ unit_tangent, unit_tangent])
         return active * basis
 
     def _threadlike_turn_rates(
         self,
-        strains: Array,
+        xi: Array,
         routing: ThreadlikeRouting,
         segment_index: Array,
-        points: Array,
+        s_ps: Array,
     ) -> Array:
-        """Evaluate analytical spatial-path turn rates at physical points.
+        """Evaluate analytical spatial-path turn rates at backbone abscissae.
 
         Args:
-            strains: Piecewise-constant PCS strains.
+            xi: Piecewise-constant PCS strains with shape
+                ``(self.num_segments, 6)``.
             routing: Routed-path family.
-            segment_index: Segment containing every supplied point.
-            points: Physical backbone coordinates with shape ``(num_points,)``.
+            segment_index: Segment containing every supplied abscissa.
+            s_ps: Backbone abscissae with shape ``(num_points,)``.
 
         Returns:
-            Turn rates shaped ``(num_points, num_paths)``.
+            Turn rates with shape ``(num_points, routing.num_paths)``.
         """
-        strain = strains[segment_index]
-        zero = jnp.zeros((3,), dtype=strain.dtype)
+        xi_i = xi[segment_index]
 
         def point_rates(s: Array) -> Array:
-            """Return all path-turn rates at one backbone coordinate."""
+            """Return all path-turn rates at one backbone abscissa."""
 
             def path_rate(path_params: BaseThreadlikeRoutingParams) -> Array:
-                """Return one routed path's turn rate at the coordinate."""
+                """Return one routed path's turn rate at the abscissa."""
                 offset = routing.offset(path_params, s)
                 offset_derivative = routing.derivative(path_params, s)
                 offset_second_derivative = routing.second_derivative(path_params, s)
-                return threadlike_turn_rate(
-                    strain[:3],
-                    strain[3:],
-                    zero,
-                    zero,
+                return threadlike_constant_strain_turn_rate(
+                    xi_i[:3],
+                    xi_i[3:],
                     offset,
                     offset_derivative,
                     offset_second_derivative,
@@ -3191,23 +3192,25 @@ class PCS(SoftRobot):
 
             return vmap(path_rate)(routing.params)
 
-        return vmap(point_rates)(points)
+        return vmap(point_rates)(s_ps)
 
     def _threadlike_boundary_turn(
         self,
-        strains: Array,
+        xi: Array,
         routing: ThreadlikeRouting,
         left_segment_index: Array,
     ) -> Array:
         """Return one-sided path-turn angles at a PCS segment boundary.
 
         Args:
-            strains: Piecewise-constant PCS strains.
+            xi: Piecewise-constant PCS strains with shape
+                ``(self.num_segments, 6)``.
             routing: Routed-path family.
-            left_segment_index: Segment immediately before the boundary.
+            left_segment_index: Scalar index of the segment immediately before
+                the boundary.
 
         Returns:
-            One unsigned tangent angle per routed path.
+            Unsigned tangent angles with shape ``(routing.num_paths,)``.
         """
         s = self.L_cum[left_segment_index + 1]
 
@@ -3224,44 +3227,47 @@ class PCS(SoftRobot):
                 return safe_normalize(tangent, eps=self.global_eps)
 
             return threadlike_turning_angle(
-                unit_tangent(strains[left_segment_index]),
-                unit_tangent(strains[left_segment_index + 1]),
+                unit_tangent(xi[left_segment_index]),
+                unit_tangent(xi[left_segment_index + 1]),
             )
 
         return vmap(path_angle)(routing.params)
 
     def _threadlike_accumulated_turn(
         self,
-        strains: Array,
+        xi: Array,
         routing: ThreadlikeRouting,
         s: Array,
     ) -> Array:
         """Integrate unsigned routed-path turn from each anchor through ``s``.
 
         Args:
-            strains: Piecewise-constant PCS strains.
+            xi: Piecewise-constant PCS strains with shape
+                ``(self.num_segments, 6)``.
             routing: Routed-path family.
-            s: Physical backbone coordinate.
+            s: Scalar backbone abscissa.
 
         Returns:
-            Accumulated turn in radians for every path.
+            Accumulated turn in radians with shape ``(routing.num_paths,)``.
         """
-        points = jnp.broadcast_to(
+        normalized_s_ps = jnp.broadcast_to(
             self.integration_points[None, :],
             (self.num_segments, self.num_integration_points),
         )
-        weights = jnp.broadcast_to(self.integration_weights[None, :], points.shape)
+        weights = jnp.broadcast_to(
+            self.integration_weights[None, :], normalized_s_ps.shape
+        )
         return integrate_accumulated_turn(
-            lambda segment_index, physical_points: self._threadlike_turn_rates(
-                strains, routing, segment_index, physical_points
+            lambda segment_index, s_ps: self._threadlike_turn_rates(
+                xi, routing, segment_index, s_ps
             ),
             lambda left_segment_index: self._threadlike_boundary_turn(
-                strains, routing, left_segment_index
+                xi, routing, left_segment_index
             ),
             s,
             self.L_cum[:-1],
             self.L,
-            points,
+            normalized_s_ps,
             weights,
             routing.params.start_segment_index_array,
             routing.params.end_segment_index_array,
@@ -3277,31 +3283,32 @@ class PCS(SoftRobot):
 
         Args:
             q: Generalized coordinates of shape ``(num_dofs,)``.
-            routing: Routed-path family to integrate.
+            routing: Routed-path family with ``routing.num_paths`` paths.
             friction: Optional friction model. ``None`` or any model whose
                 ``is_frictionless`` is set skips the weighting entirely.
 
         Returns:
-            Effort-to-generalized-force matrix shaped ``(num_dofs, num_paths)``.
+            A: Effort-to-generalized-force matrix with shape
+                ``(self.num_internal_dofs, routing.num_paths)``.
         """
         params = routing.params
         count = params.num_paths
         if count == 0:
             return jnp.zeros((self.num_internal_dofs, 0), dtype=q.dtype)
-        strains = self.strain(q).reshape((self.num_segments, 6))
+        xi = self.strain(q).reshape((self.num_segments, 6))
 
         has_friction = friction is not None and not friction.is_frictionless
         accumulated_turn = None
         if has_friction:
-            physical_points = (
+            s_ps = (
                 self.L_cum[:-1, None]
                 + self.L[:, None] * (self.integration_points[None, :])
             )
             accumulated_turn = vmap(
-                lambda segment_points: vmap(
-                    lambda s: self._threadlike_accumulated_turn(strains, routing, s)
-                )(segment_points)
-            )(physical_points)
+                lambda segment_s_ps: vmap(
+                    lambda s: self._threadlike_accumulated_turn(xi, routing, s)
+                )(segment_s_ps)
+            )(s_ps)
 
         def segment_matrix(segment_index: Array) -> Array:
             """Integrate the effort map over one PCS segment."""
@@ -3320,7 +3327,7 @@ class PCS(SoftRobot):
                     out_axes=0,
                 )(
                     segment_index,
-                    strains[segment_index],
+                    xi[segment_index],
                     points[point_index],
                     routing,
                     params,
@@ -3356,20 +3363,33 @@ class PCS(SoftRobot):
         """Return the Jacobian of unscaled PCS routed-path lengths.
 
         Args:
-            q: Generalized configuration.
+            q: Generalized coordinates with shape
+                ``(self.num_internal_dofs,)``.
             routing: Routed-path family.
 
         Returns:
-            Jacobian shaped ``(num_paths, num_internal_dofs)``.
+            J_l: Path-length Jacobian with shape
+                ``(routing.num_paths, self.num_internal_dofs)``. It maps
+                generalized velocity to unscaled path-length rates as
+                ``path_velocity = J_l @ qd``.
         """
         return self._threadlike_actuation_matrix(q, routing).T
 
     def _threadlike_path_lengths(self, q: Array, routing: ThreadlikeRouting) -> Array:
-        """Integrate raw threadlike path lengths without signed work scaling."""
+        """Integrate raw threadlike path lengths without signed work scaling.
+
+        Args:
+            q: Generalized coordinates with shape
+                ``(self.num_internal_dofs,)``.
+            routing: Routed-path family.
+
+        Returns:
+            Physical path lengths with shape ``(routing.num_paths,)``.
+        """
         params = routing.params
         if params.num_paths == 0:
             return jnp.zeros((0,), dtype=q.dtype)
-        strains = self.strain(q).reshape((self.num_segments, 6))
+        xi = self.strain(q).reshape((self.num_segments, 6))
 
         def segment_density(segment_index: Array) -> Array:
             points, weights = scale_gaussian_quadrature(
@@ -3392,9 +3412,7 @@ class PCS(SoftRobot):
                     )
                     offset = jnp.append(routing.offset(path_params, s), 1.0)
                     derivative = jnp.append(routing.derivative(path_params, s), 1.0)
-                    tangent = (derivative + se3.hat(strains[segment_index]) @ offset)[
-                        :-1
-                    ]
+                    tangent = (derivative + se3.hat(xi[segment_index]) @ offset)[:-1]
                     return active * safe_norm(tangent)
 
                 density = vmap(path_density)(
@@ -3413,7 +3431,17 @@ class PCS(SoftRobot):
     def _threadlike_path_positions(
         self, q: Array, s: Array, routing: ThreadlikeRouting
     ) -> Array:
-        """Return spatial positions of all routed paths at backbone coordinate ``s``."""
+        """Return spatial routed-path positions at a backbone abscissa.
+
+        Args:
+            q: Generalized coordinates with shape
+                ``(self.num_internal_dofs,)``.
+            s: Scalar backbone abscissa.
+            routing: Routed-path family.
+
+        Returns:
+            Path positions with shape ``(routing.num_paths, 3)``.
+        """
         params = routing.params
         if params.num_paths == 0:
             return jnp.zeros((0, 3), dtype=q.dtype)

@@ -2282,9 +2282,8 @@ class SoftRobot(DynamicalSystem):
     def actuator_coordinate_jacobian(self, q: Array) -> Array:
         """Return the Jacobian of all installed actuator coordinates.
 
-        The singular ``coordinate`` follows the package convention for a
-        Jacobian of the vector returned by :meth:`actuator_coordinates`.
-        Rows are concatenated in actuator and channel order and satisfy
+        Rows are concatenated in actuator and channel order. The Jacobian maps
+        generalized velocities to actuator-coordinate velocities according to
         ``actuator_velocities(q, qd) = J_a(q) @ qd``.
 
         Args:

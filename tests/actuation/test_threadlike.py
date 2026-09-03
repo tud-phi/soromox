@@ -304,12 +304,12 @@ class SinusoidalRoutingParams(BaseThreadlikeRoutingParams):
 
 def _sinusoidal_offset(params: SinusoidalRoutingParams, s):
     y = params.amplitude * jnp.sin(params.frequency * s)
-    return jnp.asarray([0.0, y, 0.0])
+    return jnp.stack((jnp.zeros_like(y), y, jnp.zeros_like(y)), axis=-1)
 
 
 def _sinusoidal_derivative(params: SinusoidalRoutingParams, s):
     y_dot = params.amplitude * params.frequency * jnp.cos(params.frequency * s)
-    return jnp.asarray([0.0, y_dot, 0.0])
+    return jnp.stack((jnp.zeros_like(y_dot), y_dot, jnp.zeros_like(y_dot)), axis=-1)
 
 
 def test_linear_routing_uses_full_material_frame_vectors():
@@ -534,19 +534,22 @@ def test_lossless_coordinate_jacobian_equals_actuation_matrix_transpose(factory)
         (_gvs, 3, ThreadlikeFriction.capstan(coefficient=0.7)),
     ],
 )
-def test_collapsed_threadlike_tangent_has_finite_reverse_mode(
+def test_collapsed_threadlike_tangent_has_finite_values_and_derivatives(
     factory, axial_index, friction
 ):
-    """Cover normalization and path density at an exactly zero routing tangent."""
+    """Cover values and both AD modes at an exactly zero routing tangent."""
     actuator = ThreadlikeActuator.tendons(_routing(count=1), friction=friction)
     robot = factory(actuators=actuator)
     q = jnp.zeros(robot.num_internal_dofs).at[axial_index].set(-1.0)
 
-    coordinate_jacobian = jax.jacrev(robot.actuator_coordinates)(q)
-    matrix_jacobian = jax.jacrev(robot.actuation_matrix)(q)
-
-    assert jnp.isfinite(coordinate_jacobian).all()
-    assert jnp.isfinite(matrix_jacobian).all()
+    for function in (
+        robot.actuator_coordinates,
+        robot.actuator_coordinate_jacobian,
+        robot.actuation_matrix,
+    ):
+        assert jnp.isfinite(function(q)).all()
+        assert jnp.isfinite(jax.jacfwd(function)(q)).all()
+        assert jnp.isfinite(jax.jacrev(function)(q)).all()
 
 
 def test_custom_nonlinear_routing_uses_the_common_host_contract():

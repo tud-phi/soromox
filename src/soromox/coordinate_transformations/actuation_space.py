@@ -25,8 +25,8 @@ class ActuationSpaceDynamics(eqx.Module):
     The actuation space dynamics follow the general formulation:
         M_y @ ydd + eta_y @ yd + h_y = A_y @ e
 
-    with ``A_y = J(q)^(-T) @ A_q(q)``. For an ideal transmission this reduces
-    to ``A_y = [[I], [0]]`` and the right-hand side is ``[e, 0]``.
+    with ``A_y = J_y(q)^(-T) @ A_q(q)``. For an ideal transmission this
+    reduces to ``A_y = [[I], [0]]`` and the right-hand side is ``[e, 0]``.
 
     where:
         - M_y: Actuation space inertia matrix
@@ -34,6 +34,8 @@ class ActuationSpaceDynamics(eqx.Module):
         - h_y: Sum of actuation space forces (gravitational, elastic, damping)
         - e: Work-conjugate actuator efforts
         - A_y: Effort-to-generalized-force map in actuation coordinates
+        - J_y: Jacobian mapping configuration velocities to actuation-space
+          coordinate velocities
         - y: Actuation space coordinates = [actuated_coords, unactuated_coords]
 
     The actuated coordinates are obtained from a (generally nonlinear) map from
@@ -302,13 +304,14 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the full Jacobian from configuration space to actuation space.
 
         The Jacobian is constructed by stacking the actuated and unactuated Jacobians:
-            J = [[J_actuated], [J_unactuated]]
+            J_y = [[J_actuated], [J_unactuated]]
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
 
         Returns:
-            J: Full Jacobian of shape (num_dofs, num_dofs).
+            J_y: Full actuation-space coordinate Jacobian of shape
+                (num_dofs, num_dofs).
         """
         J_actuated = self.jacobian_actuated(q)
         J_unactuated = self.jacobian_unactuated(q)
@@ -370,10 +373,10 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation space inertia matrix.
 
         The actuation space inertia matrix is defined as:
-            M_y = J^{-T} @ M @ J^{-1}
+            M_y = J_y^{-T} @ M @ J_y^{-1}
 
-        where M is the configuration space inertia matrix and J is the Jacobian
-        from configuration to actuation space.
+        where M is the configuration space inertia matrix and J_y is the
+        Jacobian from configuration to actuation space.
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -395,11 +398,11 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation space Coriolis/centrifugal matrix.
 
         The actuation space Coriolis matrix is defined as:
-            eta_y = M_y @ (J @ M^{-1} @ C) @ J^{-1}
+            eta_y = M_y @ (J_y @ M^{-1} @ C) @ J_y^{-1}
 
         where:
             - M_y is the actuation space inertia matrix
-            - J is the Jacobian from configuration to actuation space
+            - J_y is the Jacobian from configuration to actuation space
             - M is the configuration space inertia matrix
             - C is the configuration space Coriolis matrix
 
@@ -451,7 +454,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation space damping matrix.
 
         The actuation space damping matrix is defined as:
-            D_y = J^{-T} @ D @ J^{-1}
+            D_y = J_y^{-T} @ D @ J_y^{-1}
 
         where D is the configuration space damping matrix.
 
@@ -479,7 +482,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation space damping force.
 
         The actuation space damping force is defined as:
-            tau_d_y = D_y @ yd = J^{-T} @ D @ qd
+            tau_d_y = D_y @ yd = J_y^{-T} @ D @ qd
 
         Args:
             q: Generalized coordinates of shape (num_dofs,).
@@ -499,7 +502,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation space elastic force.
 
         The actuation space elastic force is defined as:
-            tau_el_y = J^{-T} @ tau_el
+            tau_el_y = J_y^{-T} @ tau_el
 
         where tau_el is the configuration space elastic force.
 
@@ -520,7 +523,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation space gravitational force.
 
         The actuation space gravitational force is defined as:
-            G_y = J^{-T} @ G
+            G_y = J_y^{-T} @ G
 
         where G is the configuration space gravitational force.
 
@@ -591,7 +594,7 @@ class ActuationSpaceDynamics(eqx.Module):
         Compute the actuation matrix in actuation space.
 
         The generalized-force covector transforms as
-        ``A_y = J(q)^(-T) @ A_q(q)``. This reduces to ``[[I], [0]]`` for an
+        ``A_y = J_y(q)^(-T) @ A_q(q)``. This reduces to ``[[I], [0]]`` for an
         ideal transmission whose force map is the transpose of its coordinate
         Jacobian, while preserving explicit losses when those maps differ.
 
@@ -623,11 +626,11 @@ class ActuationSpaceDynamics(eqx.Module):
 
         The transformation is:
             y = [actuated_coordinates(q), unactuated_coordinates(q)]
-            yd = J(q) @ qd
-            ydd = J(q) @ qdd + Jd(q, qd) @ qd
+            yd = J_y(q) @ qd
+            ydd = J_y(q) @ qdd + Jd_y(q, qd) @ qd
 
-        where J is the Jacobian of the coordinate transformation and Jd is its
-        time derivative.
+        where J_y is the Jacobian of the coordinate transformation and Jd_y is
+        its time derivative.
 
         Args:
             reference_trajectory: Reference trajectory in configuration space,

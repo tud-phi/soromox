@@ -150,16 +150,32 @@ class BaseThreadlikeRoutingParams(BaseSystemParams):
 
     @property
     def start_segment_index_array(self) -> Array:
-        """Return the first active segment of every path as an integer array."""
+        """Return the first active segment of every routed path.
+
+        Returns:
+            Start indices with shape ``(self.num_paths,)``.
+        """
         return jnp.asarray(self.start_segment_index, dtype=jnp.int32)
 
     @property
     def end_segment_index_array(self) -> Array:
-        """Return the last active segment of every path as an integer array."""
+        """Return the last active segment of every routed path.
+
+        Returns:
+            End indices with shape ``(self.num_paths,)``.
+        """
         return jnp.asarray(self.end_segment_index, dtype=jnp.int32)
 
     def validate_structure_for_robot(self, num_segments: int) -> None:
-        """Validate path spans against a host robot's segment count."""
+        """Validate path spans against a host robot's segment count.
+
+        Args:
+            num_segments: Number of continuum body segments in the host robot.
+
+        Raises:
+            ValueError: If a path span falls outside the host robot or its start
+                index follows its end index.
+        """
         self.validate_structure()
         for start, end in zip(self.start_segment_index, self.end_segment_index):
             if start < 0 or start > end or end >= num_segments:
@@ -169,7 +185,15 @@ class BaseThreadlikeRoutingParams(BaseSystemParams):
                 )
 
     def assert_same_topology(self, other: BaseThreadlikeRoutingParams) -> None:
-        """Reject a replacement that changes routing type, count, or spans."""
+        """Reject a replacement that changes routing type, count, or spans.
+
+        Args:
+            other: Candidate replacement routing parameters.
+
+        Raises:
+            ValueError: If ``other`` changes the parameter type, number of
+                paths, or segment spans.
+        """
         if type(other) is not type(self):
             raise ValueError("Changing routing type requires reconstruction.")
         if other.num_paths != self.num_paths:
@@ -219,16 +243,6 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
     def num_paths(self) -> int:
         """Return the number of linear paths."""
         return int(jnp.asarray(self.intercept).shape[0])
-
-    @property
-    def start_segment_index_array(self) -> Array:
-        """Return the first active segment of every path as an integer array."""
-        return jnp.asarray(self.start_segment_index, dtype=jnp.int32)
-
-    @property
-    def end_segment_index_array(self) -> Array:
-        """Return the last active segment of every path as an integer array."""
-        return jnp.asarray(self.end_segment_index, dtype=jnp.int32)
 
     @classmethod
     def empty(cls) -> LinearThreadlikeRoutingParams:
@@ -281,14 +295,31 @@ class LinearThreadlikeRoutingParams(BaseThreadlikeRoutingParams):
 
 
 def linear_threadlike_routing(params: LinearThreadlikeRoutingParams, s: Array) -> Array:
-    """Return material-frame offsets ``intercept + slope * s``."""
+    """Evaluate linear material-frame routing offsets.
+
+    Args:
+        params: Linear routing parameters for one path or a path batch.
+        s: Scalar backbone abscissa.
+
+    Returns:
+        Material-frame offsets ``params.intercept + params.slope * s`` with
+        shape ``(3,)`` or ``(num_paths, 3)``.
+    """
     return jnp.asarray(params.intercept) + jnp.asarray(params.slope) * jnp.asarray(s)
 
 
 def linear_threadlike_routing_derivative(
     params: LinearThreadlikeRoutingParams, s: Array
 ) -> Array:
-    """Return the arc-length derivative of a linear routing offset."""
+    """Evaluate the first derivative of a linear routing offset.
+
+    Args:
+        params: Linear routing parameters for one path or a path batch.
+        s: Scalar backbone abscissa, used to preserve dtype and tracing.
+
+    Returns:
+        Constant slopes with shape ``(3,)`` or ``(num_paths, 3)``.
+    """
     return jnp.asarray(params.slope) + jnp.zeros_like(
         jnp.asarray(params.slope)
     ) * jnp.asarray(s)
@@ -301,7 +332,7 @@ def linear_threadlike_routing_second_derivative(
 
     Args:
         params: Linear routing parameters for one path or a path batch.
-        s: Backbone coordinate, used only to preserve output dtype and tracing.
+        s: Scalar backbone abscissa, used to preserve output dtype and tracing.
 
     Returns:
         Zeros with the same shape as ``params.slope``.
@@ -332,6 +363,17 @@ class ThreadlikeRouting(eqx.Module):
 
         The final array axis is ``[x, y, z]``. Local x follows the backbone, so
         the x-components of ``intercept`` and ``slope`` must both be zero.
+
+        Args:
+            intercept: Offset at zero backbone abscissa with shape ``(3,)`` or
+                ``(num_paths, 3)``.
+            slope: Constant offset derivative, either scalar or shaped ``(3,)``
+                or ``(num_paths, 3)``.
+            start_segment_index: First segment traversed by each path.
+            end_segment_index: Last segment traversed by each path.
+
+        Returns:
+            Vectorized linear routing family.
         """
         intercept = _path_vector_array(intercept, "intercept")
         count = int(intercept.shape[0])
@@ -364,17 +406,40 @@ class ThreadlikeRouting(eqx.Module):
 
     @property
     def has_analytical_second_derivative(self) -> bool:
-        """Return whether the routing supplies the derivative needed for turn."""
-        return self.second_derivative_fn is not None or isinstance(
-            self.params, LinearThreadlikeRoutingParams
+        """Return whether the routing supplies the derivative needed for turn.
+
+        Returns:
+            Whether an explicit second-derivative function is installed or all
+            routing callbacks are the built-in linear functions.
+        """
+        return self.second_derivative_fn is not None or (
+            isinstance(self.params, LinearThreadlikeRoutingParams)
+            and self.offset_fn is linear_threadlike_routing
+            and self.derivative_fn is linear_threadlike_routing_derivative
         )
 
     def offset(self, path_params: BaseThreadlikeRoutingParams, s: Array) -> Array:
-        """Evaluate one path's material-frame offset at ``s``."""
+        """Evaluate one path's material-frame offset.
+
+        Args:
+            path_params: Parameters of one routed path.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            Material-frame offset with shape ``(3,)``.
+        """
         return self.offset_fn(path_params, s)
 
     def derivative(self, path_params: BaseThreadlikeRoutingParams, s: Array) -> Array:
-        """Evaluate one path's material-frame offset derivative at ``s``."""
+        """Evaluate one path's material-frame offset derivative.
+
+        Args:
+            path_params: Parameters of one routed path.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            First backbone-abscissa derivative with shape ``(3,)``.
+        """
         return self.derivative_fn(path_params, s)
 
     def second_derivative(
@@ -384,17 +449,21 @@ class ThreadlikeRouting(eqx.Module):
 
         Args:
             path_params: Parameters of one routed path.
-            s: Physical backbone coordinate.
+            s: Scalar backbone abscissa.
 
         Returns:
-            The second arc-length derivative of the material offset.
+            Second backbone-abscissa derivative with shape ``(3,)``.
 
         Raises:
             ValueError: If a custom routing does not provide an analytical
                 ``second_derivative_fn``.
         """
         if self.second_derivative_fn is None:
-            if isinstance(path_params, LinearThreadlikeRoutingParams):
+            if (
+                isinstance(path_params, LinearThreadlikeRoutingParams)
+                and self.offset_fn is linear_threadlike_routing
+                and self.derivative_fn is linear_threadlike_routing_derivative
+            ):
                 return linear_threadlike_routing_second_derivative(path_params, s)
             raise ValueError(
                 "custom threadlike routing requires second_derivative_fn for "
@@ -514,24 +583,31 @@ class ThreadlikeTransmission(Transmission):
 
         Args:
             robot: Continuum robot hosting the routing.
-            q: Generalized configuration.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
 
         Returns:
-            One work-conjugate coordinate per path.
+            y_a: Work-conjugate coordinates with shape
+                ``(self.num_channels,)``.
         """
         return self.params.coordinate_scale * robot._threadlike_path_lengths(
             q, self.routing
         )
 
     def coordinate_jacobian(self, robot: SoftRobot, q: Array) -> Array:
-        """Return the Jacobian of scaled path coordinates.
+        """Return the scaled path-coordinate Jacobian.
+
+        The Jacobian maps generalized velocity to actuator-coordinate velocity
+        as ``yd_a = J_a(q) @ qd``.
 
         Args:
             robot: Continuum robot hosting the routing.
-            q: Generalized configuration.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
 
         Returns:
-            Matrix with shape ``(num_channels, robot.num_velocities)``.
+            J_a: Coordinate Jacobian with shape
+                ``(self.num_channels, robot.num_velocities)``.
         """
         raw_jacobian = robot._threadlike_path_length_jacobian(q, self.routing)
         return self.params.coordinate_scale[:, None] * raw_jacobian
@@ -544,10 +620,12 @@ class ThreadlikeTransmission(Transmission):
 
         Args:
             robot: Continuum robot hosting the routing.
-            q: Generalized configuration.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
 
         Returns:
-            Matrix with shape ``(robot.num_velocities, num_channels)``.
+            A: Actuation matrix with shape
+                ``(robot.num_velocities, self.num_channels)``.
         """
         raw_matrix = robot._threadlike_actuation_matrix(
             q, self.routing, friction=self.friction
@@ -555,19 +633,61 @@ class ThreadlikeTransmission(Transmission):
         return raw_matrix * self.params.coordinate_scale[None, :]
 
     def path_lengths(self, robot: SoftRobot, q: Array) -> Array:
-        """Return unscaled physical routed-path lengths."""
+        """Return unscaled physical routed-path lengths.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            Path lengths with shape ``(self.num_channels,)``.
+        """
         return robot._threadlike_path_lengths(q, self.routing)
 
     def path_length_jacobian(self, robot: SoftRobot, q: Array) -> Array:
-        """Return the Jacobian of unscaled physical path lengths."""
+        """Return the unscaled physical path-length Jacobian.
+
+        This Jacobian maps generalized velocity to physical path-length rate.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            J_l: Path-length Jacobian with shape
+                ``(self.num_channels, robot.num_velocities)``.
+        """
         return robot._threadlike_path_length_jacobian(q, self.routing)
 
     def path_velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
-        """Return unscaled physical path-length rates."""
+        """Return unscaled physical path-length rates.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            qd: Generalized velocities with shape ``(robot.num_velocities,)``.
+
+        Returns:
+            Path-length rates with shape ``(self.num_channels,)``.
+        """
         return self.path_length_jacobian(robot, q) @ qd
 
     def path_poses(self, robot: SoftRobot, q: Array, s: Array) -> Array:
-        """Return routed-path positions at backbone coordinate ``s``."""
+        """Return routed-path positions at a backbone abscissa.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            Path positions with shape ``(self.num_channels, 2)`` for planar
+            hosts or ``(self.num_channels, 3)`` for spatial hosts.
+        """
         return robot._threadlike_path_positions(q, s, self.routing)
 
     def with_params(
@@ -729,7 +849,16 @@ class ThreadlikeActuator(Actuator):
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
     ) -> ThreadlikeActuator:
-        """Construct tension-only tendons with shortening-positive coordinates."""
+        """Construct tension-only tendons with shortening-positive coordinates.
+
+        Args:
+            routings: Fixed material-frame routing geometry.
+            labels: Optional label for each routed path.
+            friction: Optional active effort-loss model.
+
+        Returns:
+            Vectorized tendon actuator with one channel per path.
+        """
         routing = cls._normalize_routing(routings)
         return cls._preset(
             routing,
@@ -750,7 +879,16 @@ class ThreadlikeActuator(Actuator):
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
     ) -> ThreadlikeActuator:
-        """Construct compression push rods with lengthening-positive coordinates."""
+        """Construct compression push rods with lengthening-positive coordinates.
+
+        Args:
+            routings: Fixed material-frame routing geometry.
+            labels: Optional label for each routed path.
+            friction: Optional active effort-loss model.
+
+        Returns:
+            Vectorized push-rod actuator with one channel per path.
+        """
         routing = cls._normalize_routing(routings)
         return cls._preset(
             routing,
@@ -771,7 +909,16 @@ class ThreadlikeActuator(Actuator):
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
     ) -> ThreadlikeActuator:
-        """Construct tensile muscles with shortening-positive coordinates."""
+        """Construct tensile muscles with shortening-positive coordinates.
+
+        Args:
+            routings: Fixed material-frame routing geometry.
+            labels: Optional label for each routed path.
+            friction: Optional active effort-loss model.
+
+        Returns:
+            Vectorized muscle actuator with one channel per path.
+        """
         routing = cls._normalize_routing(routings)
         return cls._preset(
             routing,
@@ -793,7 +940,18 @@ class ThreadlikeActuator(Actuator):
         labels: tuple[str, ...] | None = None,
         friction: ThreadlikeFriction | None = None,
     ) -> ThreadlikeActuator:
-        """Construct pressure chambers scaled by their effective areas."""
+        """Construct pressure chambers scaled by their effective areas.
+
+        Args:
+            routings: Fixed material-frame routing geometry.
+            effective_areas: Effective area of each chamber with shape
+                ``(num_paths,)``.
+            labels: Optional label for each routed path.
+            friction: Optional active effort-loss model.
+
+        Returns:
+            Vectorized pressure-chamber actuator with one channel per path.
+        """
         routing = cls._normalize_routing(routings)
         return cls._preset(
             routing,
@@ -829,7 +987,18 @@ class ThreadlikeActuator(Actuator):
         return self._metadata
 
     def with_params(self, params: BaseSystemParams) -> ThreadlikeActuator:
-        """Return a copy carrying replacement actuator parameter leaves."""
+        """Return a copy carrying replacement actuator parameter leaves.
+
+        Args:
+            params: Replacement threadlike-actuator parameters.
+
+        Returns:
+            Actuator with updated differentiable parameter leaves.
+
+        Raises:
+            TypeError: If ``params`` has the wrong parameter type.
+            ValueError: If ``params`` changes the routing topology.
+        """
         if not isinstance(params, ThreadlikeActuatorParams):
             raise TypeError("params must be ThreadlikeActuatorParams.")
         self.params.transmission.routing.assert_same_topology(
@@ -863,15 +1032,45 @@ class ThreadlikeActuator(Actuator):
         )
 
     def path_lengths(self, robot: SoftRobot, q: Array) -> Array:
-        """Return physical routed-path lengths."""
+        """Return physical routed-path lengths.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            Path lengths with shape ``(self.num_channels,)``.
+        """
         return self.transmission.path_lengths(robot, q)
 
     def path_velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
-        """Return physical routed-path length rates."""
+        """Return physical routed-path length rates.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            qd: Generalized velocities with shape ``(robot.num_velocities,)``.
+
+        Returns:
+            Path-length rates with shape ``(self.num_channels,)``.
+        """
         return self.transmission.path_velocities(robot, q, qd)
 
     def path_poses(self, robot: SoftRobot, q: Array, s: Array) -> Array:
-        """Return routed-path positions at backbone coordinate ``s``."""
+        """Return routed-path positions at a backbone abscissa.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            Path positions with shape ``(self.num_channels, 2)`` for planar
+            hosts or ``(self.num_channels, 3)`` for spatial hosts.
+        """
         return self.transmission.path_poses(robot, q, s)
 
 
@@ -962,7 +1161,18 @@ class ThreadlikeImpedance(PassiveElement):
         return self._params
 
     def with_params(self, params: BaseSystemParams) -> ThreadlikeImpedance:
-        """Return a copy carrying replacement impedance parameters."""
+        """Return a copy carrying replacement impedance parameters.
+
+        Args:
+            params: Replacement threadlike-impedance parameters.
+
+        Returns:
+            Passive element with updated differentiable parameter leaves.
+
+        Raises:
+            TypeError: If ``params`` has the wrong parameter type.
+            ValueError: If ``params`` changes the routing topology.
+        """
         if not isinstance(params, ThreadlikeImpedanceParams):
             raise TypeError("params must be ThreadlikeImpedanceParams.")
         self.params.routing.assert_same_topology(params.routing)
@@ -982,19 +1192,61 @@ class ThreadlikeImpedance(PassiveElement):
         return self.routing.params
 
     def path_lengths(self, robot: SoftRobot, q: Array) -> Array:
-        """Return the raw lengths of the passive routed paths."""
+        """Return the raw lengths of the passive routed paths.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            Path lengths with shape ``(self.routing.num_paths,)``.
+        """
         return robot._threadlike_path_lengths(q, self.routing)
 
     def path_length_jacobian(self, robot: SoftRobot, q: Array) -> Array:
-        """Return the Jacobian of passive physical path lengths."""
+        """Return the Jacobian of passive physical path lengths.
+
+        The Jacobian maps generalized velocity to passive path-length rate.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+
+        Returns:
+            J_l: Path-length Jacobian with shape
+                ``(self.routing.num_paths, robot.num_velocities)``.
+        """
         return robot._threadlike_path_length_jacobian(q, self.routing)
 
     def path_velocities(self, robot: SoftRobot, q: Array, qd: Array) -> Array:
-        """Return the raw length rates of the passive routed paths."""
+        """Return the raw length rates of the passive routed paths.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            qd: Generalized velocities with shape ``(robot.num_velocities,)``.
+
+        Returns:
+            Path-length rates with shape ``(self.routing.num_paths,)``.
+        """
         return self.path_length_jacobian(robot, q) @ qd
 
     def path_poses(self, robot: SoftRobot, q: Array, s: Array) -> Array:
-        """Return passive routed-path positions at backbone coordinate ``s``."""
+        """Return passive routed-path positions at a backbone abscissa.
+
+        Args:
+            robot: Continuum robot hosting the routing.
+            q: Generalized coordinates with shape
+                ``(robot.num_coordinates,)``.
+            s: Scalar backbone abscissa.
+
+        Returns:
+            Path positions with shape ``(self.routing.num_paths, 2)`` for
+            planar hosts or ``(self.routing.num_paths, 3)`` for spatial hosts.
+        """
         return robot._threadlike_path_positions(q, s, self.routing)
 
     def elastic_force(self, robot: SoftRobot, q: Array) -> Array:
